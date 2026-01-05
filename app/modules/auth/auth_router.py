@@ -3,7 +3,6 @@ import logging
 import os
 
 import requests
-import time
 from cachetools import TTLCache
 from dotenv import load_dotenv
 from fastapi import Depends, Request
@@ -71,7 +70,9 @@ class ResendRateLimiter:
             config = ConfigProvider()
             self.redis = Redis.from_url(config.get_redis_url())
         except Exception as e:
-            logger.warning("ResendRateLimiter: Redis unavailable, using in-memory fallback: %s", e)
+            logger.warning(
+                "ResendRateLimiter: Redis unavailable, using in-memory fallback: %s", e
+            )
             self.redis = None
 
     def _memory_increment(self, key: str) -> int:
@@ -93,7 +94,9 @@ class ResendRateLimiter:
                 count, _ = pipe.execute()
                 return int(count)
             except Exception as e:
-                logger.warning("ResendRateLimiter: Redis error, falling back to memory: %s", e)
+                logger.warning(
+                    "ResendRateLimiter: Redis error, falling back to memory: %s", e
+                )
 
         # Fallback path
         return self._memory_increment(key)
@@ -908,13 +911,14 @@ class AuthAPI:
             # Check if user's primary provider is GitHub
             unified_auth = UnifiedAuthService(db)
             providers = unified_auth.get_user_providers(user_id)
-            primary_provider = next(
-                (p for p in providers if p.is_primary), None
-            )
-            
+            primary_provider = next((p for p in providers if p.is_primary), None)
+
             # If primary provider is GitHub, don't send verification email
             # User needs to sign in with work email (Google) instead
-            if primary_provider and primary_provider.provider_type == PROVIDER_TYPE_FIREBASE_GITHUB:
+            if (
+                primary_provider
+                and primary_provider.provider_type == PROVIDER_TYPE_FIREBASE_GITHUB
+            ):
                 return JSONResponse(
                     content={
                         "error": "Cannot send verification email to GitHub account",
@@ -942,7 +946,7 @@ class AuthAPI:
                 try:
                     firebase_user = firebase_auth.get_user(user_id)
                     firebase_email = firebase_user.email
-                    
+
                     # If Firebase email doesn't match work email, update it
                     if firebase_email and firebase_email.lower() != work_email.lower():
                         logger.info(
@@ -973,7 +977,7 @@ class AuthAPI:
 
                 # Send email via our email service
                 email_helper = EmailHelper()
-                
+
                 # Create verification email HTML
                 email_html = f"""
                 <html>
@@ -983,8 +987,8 @@ class AuthAPI:
                         <p>Hi {user.display_name or 'there'},</p>
                         <p>Please verify your email address by clicking the button below:</p>
                         <div style="text-align: center; margin: 30px 0;">
-                            <a href="{verification_link}" 
-                               style="background-color: #2563eb; color: white; padding: 12px 24px; 
+                            <a href="{verification_link}"
+                               style="background-color: #2563eb; color: white; padding: 12px 24px;
                                       text-decoration: none; border-radius: 6px; display: inline-block;">
                                 Verify Email Address
                             </a>
@@ -1007,18 +1011,21 @@ class AuthAPI:
 
                 # Send email using Resend
                 import resend
+
                 resend.api_key = email_helper.api_key
-                
+
                 email_params = {
                     "from": f"Potpie <{email_helper.from_address}>",
                     "to": work_email,
                     "subject": "Verify your Potpie email address",
                     "html": email_html,
                 }
-                
+
                 resend.Emails.send(email_params)
 
-                logger.info(f"Verification email sent to {work_email} for user {user_id}")
+                logger.info(
+                    f"Verification email sent to {work_email} for user {user_id}"
+                )
 
                 return JSONResponse(
                     content={
@@ -1034,7 +1041,9 @@ class AuthAPI:
                     status_code=500,
                 )
             except Exception as e:
-                logger.error(f"Failed to send verification email: {str(e)}", exc_info=True)
+                logger.error(
+                    f"Failed to send verification email: {str(e)}", exc_info=True
+                )
                 return JSONResponse(
                     content={"error": f"Failed to send verification email: {str(e)}"},
                     status_code=500,
