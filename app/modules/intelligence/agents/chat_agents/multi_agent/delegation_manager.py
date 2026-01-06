@@ -479,9 +479,10 @@ class DelegationManager:
 
                     # Publish to Redis stream if call_id is provided
                     # Only publish text content, not tool calls
+                    # Use async version to avoid blocking the event loop
                     if call_id and chunk.response:
                         try:
-                            self.tool_call_stream_manager.publish_stream_part(
+                            await self.tool_call_stream_manager.publish_stream_part_async(
                                 call_id=call_id,
                                 stream_part=chunk.response,
                                 is_complete=False,
@@ -553,13 +554,14 @@ class DelegationManager:
                 )
 
             # Publish final complete response to Redis stream if call_id is provided
+            # Use async version to avoid blocking the event loop
             if call_id:
                 try:
                     logger.info(
                         f"[SUBAGENT STREAM] Publishing final complete response to Redis: "
                         f"call_id={call_id}, response_length={len(full_response)}"
                     )
-                    self.tool_call_stream_manager.publish_complete(
+                    await self.tool_call_stream_manager.publish_complete_async(
                         call_id=call_id,
                         tool_response=full_response,
                     )
@@ -630,16 +632,17 @@ class DelegationManager:
             logger.error(f"[SUBAGENT STREAM] Error response sent: {error_message}")
 
             # Publish error to Redis stream if call_id is provided
+            # Use async version to avoid blocking the event loop
             if call_id:
                 try:
                     error_message = f"*Error in subagent execution: {str(e)}*"
-                    self.tool_call_stream_manager.publish_stream_part(
+                    await self.tool_call_stream_manager.publish_stream_part_async(
                         call_id=call_id,
                         stream_part=error_message,
                         is_complete=True,
                         tool_response=error_message,
                     )
-                    self.tool_call_stream_manager.publish_complete(
+                    await self.tool_call_stream_manager.publish_complete_async(
                         call_id=call_id,
                         tool_response=error_message,
                     )

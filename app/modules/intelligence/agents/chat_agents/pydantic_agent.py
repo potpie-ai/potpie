@@ -656,6 +656,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                         async with node.stream(run.ctx) as handle_stream:
                             async for event in handle_stream:
                                 if isinstance(event, FunctionToolCallEvent):
+                                    tool_args = event.part.args_as_dict()
                                     yield ChatAgentResponse(
                                         response="",
                                         tool_calls=[
@@ -664,12 +665,12 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                                 event_type=ToolCallEventType.CALL,
                                                 tool_name=event.part.tool_name,
                                                 tool_response=get_tool_run_message(
-                                                    event.part.tool_name
+                                                    event.part.tool_name, tool_args
                                                 ),
                                                 tool_call_details={
                                                     "summary": get_tool_call_info_content(
                                                         event.part.tool_name,
-                                                        event.part.args_as_dict(),
+                                                        tool_args,
                                                     )
                                                 },
                                             )
@@ -805,6 +806,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                     async with node.stream(run.ctx) as handle_stream:
                                         async for event in handle_stream:
                                             if isinstance(event, FunctionToolCallEvent):
+                                                tool_args = event.part.args_as_dict()
                                                 yield ChatAgentResponse(
                                                     response="",
                                                     tool_calls=[
@@ -814,12 +816,13 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                                             event_type=ToolCallEventType.CALL,
                                                             tool_name=event.part.tool_name,
                                                             tool_response=get_tool_run_message(
-                                                                event.part.tool_name
+                                                                event.part.tool_name,
+                                                                tool_args,
                                                             ),
                                                             tool_call_details={
                                                                 "summary": get_tool_call_info_content(
                                                                     event.part.tool_name,
-                                                                    event.part.args_as_dict(),
+                                                                    tool_args,
                                                                 )
                                                             },
                                                         )
@@ -971,6 +974,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                     async with node.stream(run.ctx) as handle_stream:
                                         async for event in handle_stream:
                                             if isinstance(event, FunctionToolCallEvent):
+                                                tool_args = event.part.args_as_dict()
                                                 yield ChatAgentResponse(
                                                     response="",
                                                     tool_calls=[
@@ -980,12 +984,13 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                                             event_type=ToolCallEventType.CALL,
                                                             tool_name=event.part.tool_name,
                                                             tool_response=get_tool_run_message(
-                                                                event.part.tool_name
+                                                                event.part.tool_name,
+                                                                tool_args,
                                                             ),
                                                             tool_call_details={
                                                                 "summary": get_tool_call_info_content(
                                                                     event.part.tool_name,
-                                                                    event.part.args_as_dict(),
+                                                                    tool_args,
                                                                 )
                                                             },
                                                         )

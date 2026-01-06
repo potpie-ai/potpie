@@ -346,7 +346,39 @@ class DelegationStreamer:
                     f"[SUBAGENT] agent.iter() started (agent_type={agent_type})"
                 )
 
-                async for node in run:
+                # Use manual iteration with timeout instead of async for
+                # to prevent hanging when pydantic-ai is slow to yield nodes
+                node_iter = run.__aiter__()
+                node_iteration_timeout = 60.0  # 60 seconds max to get next node
+
+                while True:
+                    # Get next node with timeout to prevent hanging
+                    try:
+                        node = await asyncio.wait_for(
+                            node_iter.__anext__(), timeout=node_iteration_timeout
+                        )
+                    except StopAsyncIteration:
+                        logger.info(
+                            f"[SUBAGENT] Node iteration completed normally (agent_type={agent_type})"
+                        )
+                        break
+                    except asyncio.TimeoutError:
+                        logger.error(
+                            f"[SUBAGENT] Node iteration TIMEOUT after {node_iteration_timeout}s (agent_type={agent_type}). "
+                            f"Pydantic-ai may be stuck waiting for something."
+                        )
+                        yield ChatAgentResponse(
+                            response=f"\n*Timed out waiting for next step after {node_iteration_timeout:.0f}s*\n",
+                            tool_calls=[],
+                            citations=[],
+                        )
+                        break
+                    except asyncio.CancelledError:
+                        logger.info(
+                            f"[SUBAGENT] Node iteration cancelled (agent_type={agent_type})"
+                        )
+                        raise
+
                     execution_state["node_count"] += 1
                     node_count = execution_state["node_count"]
                     node_start = asyncio.get_event_loop().time()
@@ -375,6 +407,10 @@ class DelegationStreamer:
                         )
                         # Continue to next node instead of failing completely
                         continue
+
+                    except asyncio.CancelledError:
+                        logger.info(f"[SUBAGENT] Node #{node_count} cancelled")
+                        raise
 
                     except Exception as e:
                         logger.error(
@@ -406,7 +442,23 @@ class DelegationStreamer:
                     raise asyncio.TimeoutError("Agent execution exceeded deadline")
                 yield response
         finally:
-            await gen.aclose()
+            # CRITICAL: Generator cleanup can hang if pydantic-ai's context manager
+            # is stuck waiting for something. Use a timeout to prevent infinite hangs.
+            try:
+                await asyncio.wait_for(gen.aclose(), timeout=10.0)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"[SUBAGENT] Generator cleanup timed out after 10s (agent_type={agent_type}). "
+                    f"This may indicate pydantic-ai's agent.iter() context manager is stuck."
+                )
+            except asyncio.CancelledError:
+                logger.debug(
+                    f"[SUBAGENT] Generator cleanup cancelled (agent_type={agent_type})"
+                )
+            except Exception as cleanup_error:
+                logger.warning(
+                    f"[SUBAGENT] Generator cleanup error (agent_type={agent_type}): {cleanup_error}"
+                )
 
     async def _process_node_with_timeout(
         self,
@@ -548,9 +600,20 @@ class DelegationStreamer:
                             yield_count = event_count
 
             finally:
-                # Always properly exit the stream context
+                # Always properly exit the stream context with timeout
+                # to prevent hanging if pydantic-ai's stream context is stuck
                 try:
-                    await stream_ctx.__aexit__(None, None, None)
+                    await asyncio.wait_for(
+                        stream_ctx.__aexit__(None, None, None), timeout=5.0
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"[SUBAGENT] Node #{node_count}: stream context exit timed out after 5s"
+                    )
+                except asyncio.CancelledError:
+                    logger.debug(
+                        f"[SUBAGENT] Node #{node_count}: stream context exit cancelled"
+                    )
                 except Exception as e:
                     logger.debug(f"[SUBAGENT] Stream exit error (ignored): {e}")
 
@@ -627,8 +690,19 @@ class DelegationStreamer:
                         )
 
             finally:
+                # Tool context exit with timeout to prevent hanging
                 try:
-                    await tool_ctx.__aexit__(None, None, None)
+                    await asyncio.wait_for(
+                        tool_ctx.__aexit__(None, None, None), timeout=5.0
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"[SUBAGENT] Node #{node_count}: tool context exit timed out after 5s"
+                    )
+                except asyncio.CancelledError:
+                    logger.debug(
+                        f"[SUBAGENT] Node #{node_count}: tool context exit cancelled"
+                    )
                 except Exception as e:
                     logger.debug(f"[SUBAGENT] Tool stream exit error (ignored): {e}")
 

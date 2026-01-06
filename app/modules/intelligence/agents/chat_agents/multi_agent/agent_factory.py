@@ -528,7 +528,7 @@ Subagents DON'T get your history. Provide comprehensive context:
             output_retries=3,
             output_type=str,
             defer_model_check=True,
-            end_strategy="early",
+            end_strategy="exhaustive",
             # NOTE: No history_processors for delegate agents - they start fresh with empty
             # history and don't need token management. The history processor's tool pairing
             # logic can also break OpenAI's message format requirements.
