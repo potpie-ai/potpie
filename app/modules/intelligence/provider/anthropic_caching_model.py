@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -245,6 +246,9 @@ _session_totals = {
     "session_start": None,
 }
 
+# Lock for thread-safe access to _session_totals
+_session_totals_lock = threading.Lock()
+
 
 def _write_cache_metrics_to_file(metrics: dict) -> None:
     """Write cache metrics to a JSONL file in .debug folder."""
@@ -266,9 +270,6 @@ def _log_cache_metrics(usage_details: dict[str, int], model_name: str) -> None:
     """
     global _session_totals
 
-    if _session_totals["session_start"] is None:
-        _session_totals["session_start"] = datetime.now().isoformat()
-
     cache_creation = usage_details.get("cache_creation_input_tokens", 0)
     cache_read = usage_details.get("cache_read_input_tokens", 0)
     input_tokens = usage_details.get("input_tokens", 0)
@@ -276,12 +277,25 @@ def _log_cache_metrics(usage_details: dict[str, int], model_name: str) -> None:
 
     total_input = input_tokens + cache_creation + cache_read
 
-    # Update session totals
-    _session_totals["total_requests"] += 1
-    _session_totals["total_cache_read_tokens"] += cache_read
-    _session_totals["total_cache_write_tokens"] += cache_creation
-    _session_totals["total_uncached_tokens"] += input_tokens
-    _session_totals["total_output_tokens"] += output_tokens
+    # Update session totals with thread-safe locking
+    with _session_totals_lock:
+        if _session_totals["session_start"] is None:
+            _session_totals["session_start"] = datetime.now().isoformat()
+
+        _session_totals["total_requests"] += 1
+        _session_totals["total_cache_read_tokens"] += cache_read
+        _session_totals["total_cache_write_tokens"] += cache_creation
+        _session_totals["total_uncached_tokens"] += input_tokens
+        _session_totals["total_output_tokens"] += output_tokens
+
+        # Read current values for metrics record (while holding lock)
+        current_totals = {
+            "total_requests": _session_totals["total_requests"],
+            "total_cache_read_tokens": _session_totals["total_cache_read_tokens"],
+            "total_cache_write_tokens": _session_totals["total_cache_write_tokens"],
+            "total_uncached_tokens": _session_totals["total_uncached_tokens"],
+            "total_output_tokens": _session_totals["total_output_tokens"],
+        }
 
     if total_input > 0:
         # Calculate cache hit rate
@@ -349,25 +363,25 @@ def _log_cache_metrics(usage_details: dict[str, int], model_name: str) -> None:
                 },
             },
             "session_totals": {
-                "requests": _session_totals["total_requests"],
-                "cumulative_cache_read": _session_totals["total_cache_read_tokens"],
-                "cumulative_cache_write": _session_totals["total_cache_write_tokens"],
-                "cumulative_uncached": _session_totals["total_uncached_tokens"],
-                "cumulative_output": _session_totals["total_output_tokens"],
+                "requests": current_totals["total_requests"],
+                "cumulative_cache_read": current_totals["total_cache_read_tokens"],
+                "cumulative_cache_write": current_totals["total_cache_write_tokens"],
+                "cumulative_uncached": current_totals["total_uncached_tokens"],
+                "cumulative_output": current_totals["total_output_tokens"],
             },
         }
 
         # Calculate cumulative session savings
         session_total_input = (
-            _session_totals["total_cache_read_tokens"]
-            + _session_totals["total_cache_write_tokens"]
-            + _session_totals["total_uncached_tokens"]
+            current_totals["total_cache_read_tokens"]
+            + current_totals["total_cache_write_tokens"]
+            + current_totals["total_uncached_tokens"]
         )
         if session_total_input > 0:
             session_effective = (
-                _session_totals["total_uncached_tokens"]
-                + (_session_totals["total_cache_write_tokens"] * 1.25)
-                + (_session_totals["total_cache_read_tokens"] * 0.1)
+                current_totals["total_uncached_tokens"]
+                + (current_totals["total_cache_write_tokens"] * 1.25)
+                + (current_totals["total_cache_read_tokens"] * 0.1)
             )
             session_savings = (
                 (session_total_input - session_effective) / session_total_input * 100
@@ -390,9 +404,9 @@ def _log_cache_metrics(usage_details: dict[str, int], model_name: str) -> None:
         )
 
         # Log session summary periodically
-        if _session_totals["total_requests"] % 5 == 0:
+        if current_totals["total_requests"] % 5 == 0:
             logger.info(
-                f"📈 Session Summary (requests={_session_totals['total_requests']}): "
+                f"📈 Session Summary (requests={current_totals['total_requests']}): "
                 f"cumulative_savings≈{metrics_record['session_totals'].get('cumulative_savings_percent', 0):.1f}%"
             )
     else:

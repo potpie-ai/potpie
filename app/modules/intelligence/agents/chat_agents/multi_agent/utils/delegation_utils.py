@@ -15,17 +15,27 @@ class AgentType(Enum):
 
     SUPERVISOR = "supervisor"
     THINK_EXECUTE = "think_execute"  # Generic Think and Execute Agent
+    JIRA = "jira"  # Jira Integration Agent
+    GITHUB = "github"  # GitHub Integration Agent
+    CONFLUENCE = "confluence"  # Confluence Integration Agent
+    LINEAR = "linear"  # Linear Integration Agent
 
 
 def is_delegation_tool(tool_name: str) -> bool:
     """Check if a tool call is a delegation to a subagent"""
+    # Support both old format (delegate_to_github) and new format (delegate_to_github_agent)
     return tool_name.startswith("delegate_to_")
 
 
 def extract_agent_type_from_delegation_tool(tool_name: str) -> str:
     """Extract agent type from delegation tool name"""
     if tool_name.startswith("delegate_to_"):
-        return tool_name[12:]  # Remove "delegate_to_" prefix
+        # Remove "delegate_to_" prefix
+        agent_part = tool_name[12:]
+        # Remove "_agent" suffix if present (new format)
+        if agent_part.endswith("_agent"):
+            return agent_part[:-6]  # Remove "_agent" suffix
+        return agent_part
     return tool_name
 
 

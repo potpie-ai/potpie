@@ -722,6 +722,14 @@ def get_delegation_call_message(agent_type: str) -> str:
     match agent_type:
         case "think_execute":
             return "🚀 Starting subagent with full tool access - streaming work in real-time..."
+        case "jira":
+            return "🎫 Starting Jira integration agent - handling Jira operations..."
+        case "github":
+            return "🐙 Starting GitHub integration agent - handling repository operations..."
+        case "confluence":
+            return "📄 Starting Confluence integration agent - handling documentation operations..."
+        case "linear":
+            return "📋 Starting Linear integration agent - handling issue management..."
         case _:
             return f"🚀 Starting {agent_type} subagent - streaming work in real-time..."
 
@@ -731,6 +739,14 @@ def get_delegation_response_message(agent_type: str) -> str:
     match agent_type:
         case "think_execute":
             return "✅ Subagent completed - returning task result to supervisor"
+        case "jira":
+            return "✅ Jira agent completed - returning results to supervisor"
+        case "github":
+            return "✅ GitHub agent completed - returning results to supervisor"
+        case "confluence":
+            return "✅ Confluence agent completed - returning results to supervisor"
+        case "linear":
+            return "✅ Linear agent completed - returning results to supervisor"
         case _:
             return f"✅ {agent_type} subagent completed - returning task result to supervisor"
 
@@ -739,7 +755,23 @@ def get_delegation_info_content(
     agent_type: str, task_description: str, context: str = ""
 ) -> str:
     """Get detailed info about what the subagent will do"""
-    info = f"**Subagent Task:**\n{task_description}"
+    # Get agent-specific prefix
+    agent_prefix = ""
+    match agent_type:
+        case "think_execute":
+            agent_prefix = "🤖 **General Subagent**"
+        case "jira":
+            agent_prefix = "🎫 **Jira Integration Agent**"
+        case "github":
+            agent_prefix = "🐙 **GitHub Integration Agent**"
+        case "confluence":
+            agent_prefix = "📄 **Confluence Integration Agent**"
+        case "linear":
+            agent_prefix = "📋 **Linear Integration Agent**"
+        case _:
+            agent_prefix = f"🤖 **{agent_type.title()} Agent**"
+    
+    info = f"{agent_prefix}\n\n**Task:**\n{task_description}"
     if context:
         # Truncate context preview for display
         context_preview = context[:500] + "..." if len(context) > 500 else context
@@ -764,5 +796,21 @@ def get_delegation_info_with_todo_context(
 
 def get_delegation_result_content(agent_type: str, result: str) -> str:
     """Get formatted result from subagent - returns the task result for supervisor coordination"""
+    # Get agent-specific label
+    agent_label = ""
+    match agent_type:
+        case "think_execute":
+            agent_label = "General Subagent Result"
+        case "jira":
+            agent_label = "Jira Agent Result"
+        case "github":
+            agent_label = "GitHub Agent Result"
+        case "confluence":
+            agent_label = "Confluence Agent Result"
+        case "linear":
+            agent_label = "Linear Agent Result"
+        case _:
+            agent_label = f"{agent_type.title()} Agent Result"
+    
     # Display the full task result without truncation - it can be detailed and include code snippets
-    return f"**Subagent Result:**\n\n{result}"
+    return f"**{agent_label}:**\n\n{result}"

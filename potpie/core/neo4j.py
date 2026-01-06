@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import logging
-from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Dict, Generator, List, Optional
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional
 
-from neo4j import GraphDatabase, Driver, Session as Neo4jSession
+from neo4j import AsyncGraphDatabase, AsyncDriver, AsyncSession
 
 from potpie.exceptions import Neo4jError, NotInitializedError
 
@@ -29,7 +29,7 @@ class Neo4jManager:
             config: Runtime configuration with Neo4j settings
         """
         self._config = config
-        self._driver: Optional[Driver] = None
+        self._driver: Optional[AsyncDriver] = None
         self._initialized = False
 
     @property
@@ -38,11 +38,11 @@ class Neo4jManager:
         return self._initialized
 
     @property
-    def driver(self) -> Driver:
+    def driver(self) -> AsyncDriver:
         """Get the Neo4j driver.
 
         Returns:
-            Neo4j Driver instance
+            Neo4j AsyncDriver instance
 
         Raises:
             NotInitializedError: If manager not initialized
@@ -60,7 +60,7 @@ class Neo4jManager:
             return
 
         try:
-            self._driver = GraphDatabase.driver(
+            self._driver = AsyncGraphDatabase.driver(
                 self._config.neo4j_uri,
                 auth=(self._config.neo4j_username, self._config.neo4j_password),
             )
@@ -73,7 +73,7 @@ class Neo4jManager:
     async def close(self) -> None:
         """Close Neo4j driver connection."""
         if self._driver:
-            self._driver.close()
+            await self._driver.close()
             self._driver = None
 
         self._initialized = False
@@ -92,23 +92,24 @@ class Neo4jManager:
             raise NotInitializedError("Neo4j manager not initialized")
 
         try:
-            with self._driver.session() as session:
-                session.run("RETURN 1")
+            async with self._driver.session() as session:
+                result = await session.run("RETURN 1")
+                await result.consume()
             return True
         except Exception as e:
             raise Neo4jError(f"Neo4j connection verification failed: {e}") from e
 
-    @contextmanager
-    def session(
+    @asynccontextmanager
+    async def session(
         self, database: Optional[str] = None
-    ) -> Generator[Neo4jSession, None, None]:
-        """Get a Neo4j session as context manager.
+    ) -> AsyncGenerator[AsyncSession, None]:
+        """Get a Neo4j session as async context manager.
 
         Args:
             database: Optional database name (uses default if None)
 
         Yields:
-            Neo4j Session that auto-closes on exit
+            Neo4j AsyncSession that auto-closes on exit
 
         Raises:
             NotInitializedError: If manager not initialized
@@ -124,9 +125,9 @@ class Neo4jManager:
         try:
             yield session
         finally:
-            session.close()
+            await session.close()
 
-    def execute_query(
+    async def execute_query(
         self,
         query: str,
         parameters: Optional[Dict[str, Any]] = None,
@@ -150,13 +151,16 @@ class Neo4jManager:
             raise NotInitializedError("Neo4j manager not initialized")
 
         try:
-            with self.session(database=database) as session:
-                result = session.run(query, parameters or {})
-                return [dict(record) for record in result]
+            async with self.session(database=database) as session:
+                result = await session.run(query, parameters or {})
+                records = []
+                async for record in result:
+                    records.append(dict(record))
+                return records
         except Exception as e:
             raise Neo4jError(f"Query execution failed: {e}") from e
 
-    def execute_write(
+    async def execute_write(
         self,
         query: str,
         parameters: Optional[Dict[str, Any]] = None,
@@ -176,12 +180,12 @@ class Neo4jManager:
         if not self._initialized or self._driver is None:
             raise NotInitializedError("Neo4j manager not initialized")
 
-        def _write_tx(tx):
-            tx.run(query, parameters or {})
+        async def _write_tx(tx):
+            await tx.run(query, parameters or {})
 
         try:
-            with self.session(database=database) as session:
-                session.execute_write(_write_tx)
+            async with self.session(database=database) as session:
+                await session.execute_write(_write_tx)
         except Exception as e:
             raise Neo4jError(f"Write query execution failed: {e}") from e
 

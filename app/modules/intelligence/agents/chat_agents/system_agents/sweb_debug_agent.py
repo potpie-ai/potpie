@@ -7,6 +7,9 @@ from app.modules.intelligence.agents.chat_agents.pydantic_multi_agent import (
     PydanticMultiAgent,
     AgentType as MultiAgentType,
 )
+from app.modules.intelligence.agents.chat_agents.multi_agent.agent_factory import (
+    create_integration_agents,
+)
 from app.modules.intelligence.agents.multi_agent_config import MultiAgentConfig
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.provider_service import ProviderService
@@ -86,7 +89,8 @@ class SWEBDebugAgent(ChatAgent):
         if supports_pydantic:
             if should_use_multi:
                 logger.info("✅ Using PydanticMultiAgent (multi-agent system)")
-                # Create specialized delegate agents for codebase Q&A using available agent types
+                # Create specialized delegate agents for SWEB debugging: THINK_EXECUTE + integration agents
+                integration_agents = create_integration_agents()
                 delegate_agents = {
                     MultiAgentType.THINK_EXECUTE: AgentConfig(
                         role="Q&A Synthesis Specialist",
@@ -100,6 +104,7 @@ class SWEBDebugAgent(ChatAgent):
                         ],
                         max_iter=12,
                     ),
+                    **integration_agents,
                 }
                 return PydanticMultiAgent(
                     self.llm_provider, agent_config, tools, None, delegate_agents

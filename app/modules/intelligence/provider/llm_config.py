@@ -117,7 +117,7 @@ MODEL_CONFIG_MAP = {
         "base_url": None,
         "api_version": None,
     },
-    "anthropic/claude-opus-4-5@20251101": {
+    "anthropic/claude-opus-4-5-20251101": {
         "provider": "anthropic",
         "default_params": {"temperature": 0.3, "max_tokens": 8000},
         "capabilities": {

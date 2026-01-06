@@ -154,8 +154,25 @@ class StreamProcessor:
         event: FunctionToolResultEvent,
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         """Yield appropriate response for tool result events"""
+        from .utils.delegation_utils import is_delegation_tool
+
         tool_name = event.result.tool_name or "unknown"
         tool_result = create_tool_result_response(event)
+        is_delegation = is_delegation_tool(tool_name)
+
+        # CRITICAL: Ensure delegation results are ALWAYS marked as complete
+        if is_delegation:
+            if not tool_result.is_complete:
+                logger.warning(
+                    f"[yield_tool_result_event] Delegation tool result was not marked complete, fixing: "
+                    f"tool_name={tool_name}, call_id={event.result.tool_call_id or 'N/A'}"
+                )
+            tool_result.is_complete = True
+            logger.info(
+                f"[yield_tool_result_event] Yielding delegation result: tool_name={tool_name}, "
+                f"call_id={event.result.tool_call_id or 'N/A'}, is_complete={tool_result.is_complete}, "
+                f"event_type={tool_result.event_type}"
+            )
 
         # For show_updated_file and show_diff, append content directly to response
         # instead of going through tool_result_info - these stream directly to user
@@ -255,10 +272,18 @@ class StreamProcessor:
 
             elif is_call_tools:
                 # Handle tool calls and results
+                context_type = "SUPERVISOR" if current_context else "SUBAGENT"
+                logger.info(
+                    f"[{context}] Processing call_tools node ({context_type} context), "
+                    f"node_id={node_id}, current_context={current_context is not None}"
+                )
                 async for response in self.process_tool_call_node(
                     node, run.ctx, current_context=current_context
                 ):
                     yield response
+                logger.info(
+                    f"[{context}] Completed call_tools node ({context_type} context), node_id={node_id}"
+                )
 
             elif Agent.is_end_node(node):
                 # Finalize and save reasoning content
@@ -301,7 +326,10 @@ class StreamProcessor:
                 tool_call_event_count = 0
                 tool_result_event_count = 0
 
-                logger.info(f"[process_tool_call_node] Starting tool call processing")
+                context_type = "SUPERVISOR" if current_context else "SUBAGENT"
+                logger.info(
+                    f"[process_tool_call_node] Starting tool call processing ({context_type} context)"
+                )
 
                 async def consume_delegation_queue(
                     tool_call_id: str,
@@ -309,6 +337,10 @@ class StreamProcessor:
                     output_queue: asyncio.Queue,
                 ):
                     """Continuously consume from delegation queue and forward to output queue"""
+                    logger.info(
+                        f"[consume_delegation_queue] Starting consumer for tool_call_id={tool_call_id[:8]}..."
+                    )
+                    chunks_consumed = 0
                     try:
                         while True:
                             try:
@@ -319,9 +351,26 @@ class StreamProcessor:
                                 if (
                                     chunk is None
                                 ):  # Sentinel value indicating completion
-                                    await output_queue.put(None)
+                                    try:
+                                        output_queue.put_nowait(None)
+                                    except asyncio.QueueFull:
+                                        logger.warning(
+                                            f"[consume_delegation_queue] Output queue full for {tool_call_id}"
+                                        )
                                     break
-                                await output_queue.put(chunk)
+                                # Use put_nowait to avoid blocking - queue should be unbounded
+                                try:
+                                    output_queue.put_nowait(chunk)
+                                    chunks_consumed += 1
+                                    if chunks_consumed % 10 == 0:
+                                        logger.debug(
+                                            f"[consume_delegation_queue] Consumed {chunks_consumed} chunks "
+                                            f"for tool_call_id={tool_call_id[:8]}..."
+                                        )
+                                except asyncio.QueueFull:
+                                    logger.warning(
+                                        f"[consume_delegation_queue] Output queue full, dropping chunk for {tool_call_id}"
+                                    )
                             except asyncio.TimeoutError:
                                 # Check if the streaming task is done
                                 task = streaming_tasks.get(tool_call_id)
@@ -332,17 +381,44 @@ class StreamProcessor:
                                         while True:
                                             chunk = input_queue.get_nowait()
                                             if chunk is None:
-                                                await output_queue.put(None)
+                                                try:
+                                                    output_queue.put_nowait(None)
+                                                except asyncio.QueueFull:
+                                                    pass
                                                 break
-                                            await output_queue.put(chunk)
+                                            try:
+                                                output_queue.put_nowait(chunk)
+                                            except asyncio.QueueFull:
+                                                logger.warning(
+                                                    f"[consume_delegation_queue] Output queue full, dropping chunk for {tool_call_id}"
+                                                )
                                     except asyncio.QueueEmpty:
-                                        await output_queue.put(None)
+                                        try:
+                                            output_queue.put_nowait(None)
+                                        except asyncio.QueueFull:
+                                            pass
                                     break
                                 # Continue waiting
                                 continue
                     except asyncio.CancelledError:
                         # Task was cancelled, signal completion
-                        await output_queue.put(None)
+                        logger.info(
+                            f"[consume_delegation_queue] Consumer cancelled for tool_call_id={tool_call_id[:8]}..., "
+                            f"consumed {chunks_consumed} chunks total"
+                        )
+                        try:
+                            output_queue.put_nowait(None)
+                        except asyncio.QueueFull:
+                            pass
+                    except Exception as e:
+                        logger.error(
+                            f"[consume_delegation_queue] Error in consumer for tool_call_id={tool_call_id[:8]}...: {e}",
+                            exc_info=True,
+                        )
+                        try:
+                            output_queue.put_nowait(None)
+                        except asyncio.QueueFull:
+                            pass
 
                 async for event in handle_stream:
                     # Yield any chunks from active delegation streams immediately
@@ -353,6 +429,7 @@ class StreamProcessor:
                             continue  # Skip streams that have already been fully drained
                         output_queue = output_queues[queue_key]
                         # Consume all available chunks from output queue
+                        chunks_yielded = 0
                         while True:
                             try:
                                 chunk = output_queue.get_nowait()
@@ -398,8 +475,20 @@ class StreamProcessor:
                                                 except asyncio.CancelledError:
                                                     pass
                                     break
+                                chunks_yielded += 1
+                                # Subagent chunks should only contain text (tool calls are filtered out)
+                                # Log text content for debugging
+                                if chunk.response:
+                                    logger.debug(
+                                        f"[process_tool_call_node] Yielding subagent text chunk "
+                                        f"(queue_key={queue_key}, length={len(chunk.response)})"
+                                    )
                                 yield chunk
                             except asyncio.QueueEmpty:
+                                if chunks_yielded > 0:
+                                    logger.debug(
+                                        f"[process_tool_call_node] Yielded {chunks_yielded} chunks from queue {queue_key}"
+                                    )
                                 break
 
                     if isinstance(event, FunctionToolCallEvent):
@@ -407,10 +496,25 @@ class StreamProcessor:
                         tool_call_id = event.part.tool_call_id or ""
                         tool_name = event.part.tool_name
 
+                        # Log context: supervisor or subagent
+                        context_type = "SUPERVISOR" if current_context else "SUBAGENT"
+
+                        # Check if this is a delegation tool
+                        is_delegation = is_delegation_tool(tool_name)
+
                         logger.info(
-                            f"[process_tool_call_node] FunctionToolCallEvent #{tool_call_event_count}: "
-                            f"tool_name={tool_name}, tool_call_id={tool_call_id[:8]}..."
+                            f"[process_tool_call_node] FunctionToolCallEvent #{tool_call_event_count} ({context_type}): "
+                            f"tool_name={tool_name}, tool_call_id={tool_call_id[:8]}..., "
+                            f"is_delegation={is_delegation}"
                         )
+
+                        # CRITICAL: Log when supervisor calls a delegation tool
+                        if current_context and is_delegation:
+                            logger.info(
+                                f"[process_tool_call_node] 🎯 SUPERVISOR DELEGATION TOOL CALL: "
+                                f"tool_name={tool_name}, call_id={tool_call_id[:8]}..., "
+                                f"context_type={context_type}"
+                            )
 
                         # Yield the tool call event
                         yield ChatAgentResponse(
@@ -420,11 +524,12 @@ class StreamProcessor:
                         )
 
                         # If this is a delegation tool, start streaming the subagent response
-                        if (
-                            is_delegation_tool(tool_name)
-                            and tool_call_id
-                            and current_context
-                        ):
+                        logger.info(
+                            f"[process_tool_call_node] Checking delegation: tool_name={tool_name}, "
+                            f"is_delegation_tool={is_delegation}, tool_call_id={tool_call_id[:8] if tool_call_id else 'None'}..., "
+                            f"has_current_context={current_context is not None}"
+                        )
+                        if is_delegation and tool_call_id and current_context:
                             try:
                                 # Extract task info from tool call arguments
                                 args_dict = event.part.args_as_dict()
@@ -432,6 +537,10 @@ class StreamProcessor:
                                 context_str = args_dict.get("context", "")
                                 agent_type_str = (
                                     extract_agent_type_from_delegation_tool(tool_name)
+                                )
+                                logger.info(
+                                    f"[process_tool_call_node] Delegation tool detected: tool_name={tool_name}, "
+                                    f"agent_type={agent_type_str}, tool_call_id={tool_call_id[:8]}..."
                                 )
 
                                 # Create cache key for coordination with delegate_function
@@ -469,6 +578,16 @@ class StreamProcessor:
                                     )
                                 )
                                 streaming_tasks[tool_call_id] = streaming_task
+
+                                # CRITICAL: Register the streaming task with the cache_key so delegate_function
+                                # can check if it's running and detect failures
+                                self.delegation_manager._active_streaming_tasks[
+                                    cache_key
+                                ] = streaming_task
+                                logger.info(
+                                    f"[process_tool_call_node] Registered streaming task for cache_key={cache_key}, "
+                                    f"tool_call_id={tool_call_id[:8]}..."
+                                )
 
                                 # Start Redis stream consumer task for tool call streaming
                                 async def consume_redis_stream_to_queue(
@@ -567,6 +686,10 @@ class StreamProcessor:
                                     )
                                 )
                                 queue_consumer_tasks[tool_call_id] = consumer_task
+                                logger.info(
+                                    f"[process_tool_call_node] Started queue consumer task for "
+                                    f"tool_call_id={tool_call_id[:8]}..."
+                                )
 
                                 # Yield a visual indicator that subagent is starting
                                 yield ChatAgentResponse(
@@ -622,11 +745,24 @@ class StreamProcessor:
                         tool_result_event_count += 1
                         tool_call_id = event.result.tool_call_id or ""
                         tool_name = event.result.tool_name or "unknown"
+                        is_delegation = is_delegation_tool(tool_name)
+
+                        # Log context: supervisor or subagent
+                        context_type = "SUPERVISOR" if current_context else "SUBAGENT"
 
                         logger.info(
-                            f"[process_tool_call_node] FunctionToolResultEvent #{tool_result_event_count}: "
-                            f"tool_name={tool_name}, tool_call_id={tool_call_id[:8]}..."
+                            f"[process_tool_call_node] FunctionToolResultEvent #{tool_result_event_count} ({context_type}): "
+                            f"tool_name={tool_name}, tool_call_id={tool_call_id[:8]}..., "
+                            f"is_delegation={is_delegation}, content_length={len(str(event.result.content)) if event.result.content else 0}"
                         )
+
+                        # CRITICAL: Log when we see a delegation tool result from supervisor
+                        if is_delegation and current_context:
+                            logger.info(
+                                f"[process_tool_call_node] ⚠️ CRITICAL: Supervisor delegation tool result detected! "
+                                f"tool_name={tool_name}, call_id={tool_call_id[:8]}..., "
+                                f"content_preview={str(event.result.content)[:200] if event.result.content else 'None'}..."
+                            )
 
                         # If this was a delegation tool, drain any remaining chunks
                         # Only drain if we haven't already drained this stream
@@ -635,22 +771,57 @@ class StreamProcessor:
                             and tool_call_id
                             and tool_call_id not in drained_streams
                         ):
+                            logger.info(
+                                f"[process_tool_call_node] Draining delegation stream for tool_call_id={tool_call_id[:8]}... "
+                                f"(tool_name={tool_name}, context_type={context_type})"
+                            )
+                            drain_start_time = asyncio.get_event_loop().time()
                             # Drain any remaining chunks from output queue
                             if tool_call_id in output_queues:
                                 output_queue = output_queues[tool_call_id]
+                                total_drained_chunks = 0
                                 # Drain chunks with multiple attempts to catch all
-                                for _ in range(10):  # Try up to 10 times
+                                for attempt in range(10):  # Try up to 10 times
+                                    logger.debug(
+                                        f"[process_tool_call_node] Drain attempt {attempt + 1}/10 for "
+                                        f"tool_call_id={tool_call_id[:8]}..."
+                                    )
                                     chunks, completed = await self.consume_queue_chunks(
                                         output_queue, timeout=0.1, max_chunks=50
                                     )
+                                    total_drained_chunks += len(chunks)
                                     for chunk in chunks:
                                         yield chunk
                                     if completed:
                                         # Mark as drained after completion
                                         drained_streams.add(tool_call_id)
+                                        drain_elapsed = (
+                                            asyncio.get_event_loop().time()
+                                            - drain_start_time
+                                        )
+                                        logger.info(
+                                            f"[process_tool_call_node] Stream drained successfully: "
+                                            f"tool_call_id={tool_call_id[:8]}..., chunks={total_drained_chunks}, "
+                                            f"attempts={attempt + 1}, elapsed={drain_elapsed:.2f}s"
+                                        )
                                         break
                                     # Small delay to allow more chunks to arrive
                                     await asyncio.sleep(0.05)
+                                else:
+                                    drain_elapsed = (
+                                        asyncio.get_event_loop().time()
+                                        - drain_start_time
+                                    )
+                                    logger.warning(
+                                        f"[process_tool_call_node] ⚠️ Stream drain incomplete after 10 attempts: "
+                                        f"tool_call_id={tool_call_id[:8]}..., chunks={total_drained_chunks}, "
+                                        f"elapsed={drain_elapsed:.2f}s. Stream may still be active."
+                                    )
+                            else:
+                                logger.warning(
+                                    f"[process_tool_call_node] No output queue found for tool_call_id={tool_call_id[:8]}... "
+                                    f"when trying to drain"
+                                )
 
                             # Add a visual separator after subagent output
                             yield ChatAgentResponse(
@@ -698,33 +869,81 @@ class StreamProcessor:
                                     except asyncio.CancelledError:
                                         pass
 
+                        # Yield the final tool result - this signals completion to the frontend
+                        # CRITICAL: For delegation tools, this MUST be yielded with is_complete=True
                         async for response in self.yield_tool_result_event(event):
+                            tool_result = (
+                                response.tool_calls[0] if response.tool_calls else None
+                            )
+                            is_complete = (
+                                tool_result.is_complete if tool_result else False
+                            )
+                            logger.info(
+                                f"[process_tool_call_node] Yielding tool result for {tool_name} "
+                                f"(call_id={tool_call_id[:8]}...), is_delegation={is_delegation}, "
+                                f"is_complete={is_complete}, event_type={tool_result.event_type if tool_result else 'N/A'}"
+                            )
+                            if is_delegation and not is_complete:
+                                logger.error(
+                                    f"[process_tool_call_node] CRITICAL: Delegation tool result missing is_complete=True! "
+                                    f"tool_name={tool_name}, call_id={tool_call_id[:8]}..."
+                                )
                             yield response
 
                 # After all events are processed, drain any remaining chunks from output queues
                 # Use output_queues (not active_streams) since that's where chunks are actually stored
                 # Only drain streams that haven't been fully drained yet
+                logger.info(
+                    f"[process_tool_call_node] Starting final drain of {len(output_queues)} output queues "
+                    f"(context_type={context_type}, drained_streams={len(drained_streams)})"
+                )
                 for queue_key in list(output_queues.keys()):
                     if queue_key in drained_streams:
                         # Already fully drained, just clean up
+                        logger.debug(
+                            f"[process_tool_call_node] Skipping already-drained queue: {queue_key}"
+                        )
                         output_queues.pop(queue_key, None)
                         # Only cleanup active_streams and delegation_manager for non-Redis queues
                         if not queue_key.endswith("_redis"):
                             active_streams.pop(queue_key, None)
                             self.delegation_manager.remove_active_stream(queue_key)
                         continue
+
+                    logger.info(
+                        f"[process_tool_call_node] Draining final chunks from queue: {queue_key}"
+                    )
                     output_queue = output_queues[queue_key]
+                    final_drain_start = asyncio.get_event_loop().time()
+                    total_final_chunks = 0
                     # Wait longer for final chunks
-                    for _ in range(20):  # Try up to 20 times
+                    for attempt in range(20):  # Try up to 20 times
                         chunks, completed = await self.consume_queue_chunks(
                             output_queue, timeout=0.1, max_chunks=50
                         )
+                        total_final_chunks += len(chunks)
                         for chunk in chunks:
                             yield chunk
                         if completed:
                             drained_streams.add(queue_key)
+                            final_drain_elapsed = (
+                                asyncio.get_event_loop().time() - final_drain_start
+                            )
+                            logger.info(
+                                f"[process_tool_call_node] Final drain completed for {queue_key}: "
+                                f"chunks={total_final_chunks}, attempts={attempt + 1}, "
+                                f"elapsed={final_drain_elapsed:.2f}s"
+                            )
                             break
                         await asyncio.sleep(0.05)
+                    else:
+                        final_drain_elapsed = (
+                            asyncio.get_event_loop().time() - final_drain_start
+                        )
+                        logger.warning(
+                            f"[process_tool_call_node] ⚠️ Final drain incomplete for {queue_key} after 20 attempts: "
+                            f"chunks={total_final_chunks}, elapsed={final_drain_elapsed:.2f}s"
+                        )
                     output_queues.pop(queue_key, None)
                     # Only cleanup active_streams and delegation_manager for non-Redis queues
                     if not queue_key.endswith("_redis"):
@@ -752,12 +971,110 @@ class StreamProcessor:
                             pass
                     streaming_tasks.pop(tool_call_id, None)
 
+                # CRITICAL: For supervisor context, wait for all delegation cached results to be available
+                # before closing the stream. This ensures tool result events are generated and processed.
+                # We need to wait for the cached results, not just the streaming tasks, because
+                # delegate_function waits for the cache, and the tool result event is generated when delegate_function returns.
+                if current_context:
+                    # Get all cache keys for delegation tool calls in this node
+                    delegation_cache_keys = []
+                    for tool_call_id in list(streaming_tasks.keys()):
+                        cache_key = self.delegation_manager.get_cache_key(tool_call_id)
+                        if cache_key:
+                            delegation_cache_keys.append((tool_call_id, cache_key))
+
+                    if delegation_cache_keys:
+                        logger.info(
+                            f"[process_tool_call_node] Waiting for {len(delegation_cache_keys)} delegation cached results "
+                            f"before closing stream (SUPERVISOR context)"
+                        )
+                        # Wait for all cached results to be available
+                        # This ensures delegate_function can return and tool result events are generated
+                        max_wait = 300  # 5 minutes max
+                        wait_interval = 0.5  # 500ms
+                        waited = 0
+                        pending_keys = set(
+                            cache_key for _, cache_key in delegation_cache_keys
+                        )
+                        wait_start_time = asyncio.get_event_loop().time()
+
+                        while pending_keys and waited < max_wait:
+                            # Check which cache keys have results
+                            for tool_call_id, cache_key in delegation_cache_keys:
+                                if cache_key in pending_keys:
+                                    # Check if result is cached
+                                    result = (
+                                        self.delegation_manager.get_delegation_result(
+                                            cache_key
+                                        )
+                                    )
+                                    if result:
+                                        pending_keys.discard(cache_key)
+                                        logger.info(
+                                            f"[process_tool_call_node] Cache result found for tool_call_id={tool_call_id[:8]}..., "
+                                            f"cache_key={cache_key}, result_length={len(result)} chars"
+                                        )
+
+                            if not pending_keys:
+                                wait_elapsed = (
+                                    asyncio.get_event_loop().time() - wait_start_time
+                                )
+                                logger.info(
+                                    f"[process_tool_call_node] All delegation cached results available, "
+                                    f"stream can close safely (waited {int(waited)}s, elapsed={wait_elapsed:.2f}s)"
+                                )
+                                break
+
+                            await asyncio.sleep(wait_interval)
+                            waited += wait_interval
+
+                            if int(waited) % 5 == 0:
+                                wait_elapsed = (
+                                    asyncio.get_event_loop().time() - wait_start_time
+                                )
+                                # Check task status for pending keys
+                                task_statuses = {}
+                                for tool_call_id, cache_key in delegation_cache_keys:
+                                    if cache_key in pending_keys:
+                                        task = streaming_tasks.get(tool_call_id)
+                                        if task:
+                                            task_statuses[cache_key] = (
+                                                f"done={task.done()}, cancelled={task.cancelled()}"
+                                            )
+                                        else:
+                                            task_statuses[cache_key] = "task_not_found"
+                                logger.warning(
+                                    f"[process_tool_call_node] ⚠️ Still waiting for {len(pending_keys)} cached results "
+                                    f"(waited {int(waited)}s, elapsed={wait_elapsed:.2f}s). "
+                                    f"Task statuses: {task_statuses}"
+                                )
+
+                        if pending_keys:
+                            wait_elapsed = (
+                                asyncio.get_event_loop().time() - wait_start_time
+                            )
+                            logger.error(
+                                f"[process_tool_call_node] ⚠️ TIMEOUT waiting for {len(pending_keys)} cached results "
+                                f"after {int(waited)}s (elapsed={wait_elapsed:.2f}s). "
+                                f"Some tool result events may be lost! Pending keys: {list(pending_keys)}"
+                            )
+
                 # Log summary of tool call processing
+                context_type = "SUPERVISOR" if current_context else "SUBAGENT"
                 logger.info(
-                    f"[process_tool_call_node] Completed: "
+                    f"[process_tool_call_node] Stream exhausted - Completed ({context_type}): "
                     f"tool_calls={tool_call_event_count}, tool_results={tool_result_event_count}, "
-                    f"drained_streams={len(drained_streams)}"
+                    f"drained_streams={len(drained_streams)}, remaining_streaming_tasks={len(streaming_tasks)}"
                 )
+
+                # CRITICAL: If this was a supervisor context and we processed delegation tool calls
+                # but no delegation tool results, log a warning
+                if current_context and tool_call_event_count > 0:
+                    if tool_call_event_count > tool_result_event_count:
+                        logger.warning(
+                            f"[process_tool_call_node] ⚠️ SUPERVISOR processed {tool_call_event_count} tool calls "
+                            f"but only {tool_result_event_count} tool results. Missing {tool_call_event_count - tool_result_event_count} tool result events!"
+                        )
 
         except (
             ModelRetry,

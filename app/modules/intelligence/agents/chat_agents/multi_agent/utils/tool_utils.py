@@ -122,6 +122,7 @@ def create_tool_result_response(event: FunctionToolResultEvent) -> ToolCallRespo
             tool_call_details={
                 "summary": get_delegation_result_content(agent_type, result_content)
             },
+            is_complete=True,  # Explicitly mark delegation results as complete
         )
     else:
         return ToolCallResponse(

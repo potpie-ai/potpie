@@ -260,7 +260,7 @@ class ParsingResource(BaseResource):
             MATCH (n:NODE {repoId: $project_id})
             RETURN count(n) as count
             """
-            results = self._neo4j_manager.execute_query(
+            results = await self._neo4j_manager.execute_query(
                 query,
                 parameters={"project_id": project_id},
             )

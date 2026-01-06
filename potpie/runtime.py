@@ -12,6 +12,8 @@ from potpie.core.redis import RedisManager
 from potpie.exceptions import NotInitializedError, PotpieError
 
 if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
     from potpie.resources.projects import ProjectResource
     from potpie.resources.parsing import ParsingResource
     from potpie.resources.users import UserResource
@@ -72,7 +74,8 @@ class PotpieRuntime:
         self._conversations = None
 
         # Lazy-initialized agent runner (Phase 3)
-        self._agents = None
+        self._agents: Optional[AgentRunner] = None
+        self._agent_session: Optional[Session] = None
 
     @classmethod
     def from_env(
@@ -270,7 +273,7 @@ class PotpieRuntime:
             from app.modules.intelligence.tools.tool_service import ToolService
             from app.modules.intelligence.prompts.prompt_service import PromptService
 
-            session = self._db_manager.get_session()
+            self._agent_session = self._db_manager.get_session()
 
             provider_config = {
                 "provider": self._config.llm_provider,
@@ -281,16 +284,16 @@ class PotpieRuntime:
             }
 
             provider_service = ProviderService.create_from_config(
-                session,
+                self._agent_session,
                 self._config.default_user_id,
                 **provider_config,
             )
 
-            tool_service = ToolService(session, self._config.default_user_id)
-            prompt_service = PromptService(session)
+            tool_service = ToolService(self._agent_session, self._config.default_user_id)
+            prompt_service = PromptService(self._agent_session)
 
             self._agents = AgentRunner(
-                db_session=session,
+                db_session=self._agent_session,
                 user_id=self._config.default_user_id,
                 provider_service=provider_service,
                 tool_service=tool_service,
@@ -339,6 +342,17 @@ class PotpieRuntime:
 
     async def _cleanup(self) -> None:
         """Internal cleanup of all managers."""
+        # Close agent session if it exists
+        if self._agent_session:
+            try:
+                self._agent_session.close()
+            except Exception as e:
+                logger.warning(f"Error closing agent session: {e}")
+            self._agent_session = None
+
+        # Clear agent runner reference
+        self._agents = None
+
         if self._redis_manager:
             try:
                 await self._redis_manager.close()

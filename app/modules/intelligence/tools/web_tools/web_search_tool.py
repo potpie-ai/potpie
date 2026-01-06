@@ -100,7 +100,7 @@ class WebSearchTool:
             # Truncate response if it exceeds character limits
             truncated_result = truncate_dict_response(result)
             if len(str(result)) > 80000:
-                logging.warning(
+                logger.warning(
                     f"web_search_tool output truncated for query: {query[:100]}"
                 )
             return truncated_result

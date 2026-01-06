@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from typing import Any, Dict, List
 
 from pydantic_ai.messages import ToolCallPart, ModelMessage, ModelResponse
@@ -25,6 +24,7 @@ class OpenRouterGeminiModel(OpenAIModel):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._tool_call_signatures: Dict[str, str] = {}
+        self._tool_call_signature_counter: int = 0
 
     def _capture_signatures_from_response(self, response: chat.ChatCompletion) -> None:
         """Extract thought signatures from the raw OpenRouter response if present."""
@@ -60,6 +60,24 @@ class OpenRouterGeminiModel(OpenAIModel):
                     return signature
         return None
 
+    def _get_or_create_tool_call_signature(self, tool_call_id: str) -> str:
+        """Get or create a deterministic signature for a tool call.
+        
+        Args:
+            tool_call_id: The tool call identifier
+            
+        Returns:
+            A deterministic signature string in the format "{tool_call_id}-{counter:08d}"
+        """
+        if tool_call_id in self._tool_call_signatures:
+            return self._tool_call_signatures[tool_call_id]
+        
+        # Generate a deterministic signature using a monotonic counter
+        signature = f"{tool_call_id}-{self._tool_call_signature_counter:08d}"
+        self._tool_call_signatures[tool_call_id] = signature
+        self._tool_call_signature_counter += 1
+        return signature
+
     def _process_response(self, response: chat.ChatCompletion):
         """Capture tool call signatures before letting the base class build the response."""
         self._capture_signatures_from_response(response)
@@ -83,8 +101,7 @@ class OpenRouterGeminiModel(OpenAIModel):
             ) or self._tool_call_signatures.get(t.tool_call_id)
             if not signature:
                 # Generate a deterministic placeholder so the provider always receives a signature.
-                # Use a consistent format based on tool_call_id for reproducibility
-                signature = f"{t.tool_call_id}-{uuid.uuid4().hex[:8]}"
+                signature = self._get_or_create_tool_call_signature(t.tool_call_id)
             self._tool_call_signatures[t.tool_call_id] = signature
             # Always set the signature, even if it was already there (ensures it's present)
             function_payload["thought_signature"] = signature
@@ -111,8 +128,7 @@ class OpenRouterGeminiModel(OpenAIModel):
                             # Try to get from cache, or generate a new one
                             signature = self._tool_call_signatures.get(part.tool_call_id)
                             if not signature:
-                                signature = f"{part.tool_call_id}-{uuid.uuid4().hex[:8]}"
-                                self._tool_call_signatures[part.tool_call_id] = signature
+                                signature = self._get_or_create_tool_call_signature(part.tool_call_id)
                             setattr(part, "thought_signature", signature)
         
         # Now call the parent implementation which will use our _map_tool_call override

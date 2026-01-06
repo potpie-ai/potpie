@@ -1,8 +1,12 @@
 # Frontend Guide: Consuming Streaming Tool Call Responses
 
+> **Note**: For complete subagent streaming documentation including tool calls from subagents, see [Subagent Streaming API Guide](./subagent_streaming_api.md)
+
 ## Overview
 
 Tool call responses can now be streamed in parts when using agent delegation (sub-agents). The backend sends partial updates for tool calls with the same `call_id`, allowing the frontend to display real-time progress.
+
+**Important**: When a subagent makes tool calls (e.g., Confluence API calls), those tool calls and their results are also streamed to the frontend in real-time. See the [Subagent Streaming API Guide](./subagent_streaming_api.md) for complete details.
 
 ## Response Format
 

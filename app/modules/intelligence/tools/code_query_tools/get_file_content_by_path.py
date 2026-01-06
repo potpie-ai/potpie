@@ -167,7 +167,7 @@ class FetchFileTool:
                 original_length = len(content)
                 content = truncate_response(content)
                 if len(content) > 80000:
-                    logging.warning(
+                    logger.warning(
                         f"fetch_file (cached) output truncated from {original_length} to 80000 characters "
                         f"for file {file_path}, project_id={project_id}"
                     )
@@ -204,7 +204,7 @@ class FetchFileTool:
             original_length = len(content)
             content = truncate_response(content)
             if len(content) > 80000:
-                logging.warning(
+                logger.warning(
                     f"fetch_file output truncated from {original_length} to 80000 characters "
                     f"for file {file_path}, project_id={project_id}"
                 )

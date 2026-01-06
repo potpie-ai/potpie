@@ -184,8 +184,8 @@ async def post_message(
     # Extract agent_id from conversation (will be handled in background task)
     agent_id = None
 
-    # Use node_ids from message
-    node_ids_list = message.node_ids or []
+    # Extract node_id strings from NodeContext objects
+    node_ids_list = [nc.node_id for nc in (message.node_ids or [])]
 
     if not stream:
         # Non-streaming: use Celery but wait for complete response
