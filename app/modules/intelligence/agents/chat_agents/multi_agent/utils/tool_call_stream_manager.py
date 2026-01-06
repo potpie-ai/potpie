@@ -33,9 +33,7 @@ class ToolCallStreamManager:
     ):
         """Synchronous Redis publish - called from thread pool"""
         # Publish to stream with max length limit
-        self.redis_client.xadd(
-            key, event_data, maxlen=self.max_len, approximate=True
-        )
+        self.redis_client.xadd(key, event_data, maxlen=self.max_len, approximate=True)
         # Refresh TTL
         self.redis_client.expire(key, self.stream_ttl)
 
@@ -48,10 +46,10 @@ class ToolCallStreamManager:
         tool_call_details: Optional[dict] = None,
     ):
         """Publish a streaming part to Redis stream for a tool call.
-        
+
         Note: This method is synchronous but uses non-blocking approach when possible.
         For async contexts, use publish_stream_part_async instead.
-        
+
         Args:
             call_id: The tool call ID (used as stream key)
             stream_part: The partial content for this stream update
@@ -86,7 +84,9 @@ class ToolCallStreamManager:
             self._sync_publish_stream_part(key, event_data)
             logger.debug(f"Published stream part to tool call stream {key}")
         except Exception as e:
-            logger.error(f"Failed to publish stream part to Redis stream {key}: {str(e)}")
+            logger.error(
+                f"Failed to publish stream part to Redis stream {key}: {str(e)}"
+            )
             raise
 
     async def publish_stream_part_async(
@@ -98,9 +98,9 @@ class ToolCallStreamManager:
         tool_call_details: Optional[dict] = None,
     ):
         """Async version of publish_stream_part - runs Redis operations in thread pool.
-        
+
         This should be used in async contexts to avoid blocking the event loop.
-        
+
         Args:
             call_id: The tool call ID (used as stream key)
             stream_part: The partial content for this stream update
@@ -136,11 +136,13 @@ class ToolCallStreamManager:
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
                 None,  # Use default thread pool
-                partial(self._sync_publish_stream_part, key, event_data)
+                partial(self._sync_publish_stream_part, key, event_data),
             )
             logger.debug(f"Published stream part to tool call stream {key} (async)")
         except Exception as e:
-            logger.error(f"Failed to publish stream part to Redis stream {key}: {str(e)}")
+            logger.error(
+                f"Failed to publish stream part to Redis stream {key}: {str(e)}"
+            )
             # Don't raise - just log the error to prevent blocking the main flow
 
     def _sync_publish_end_event(self, key: str, end_event_data: dict):
@@ -157,7 +159,7 @@ class ToolCallStreamManager:
         tool_call_details: Optional[dict] = None,
     ):
         """Publish the final complete response for a tool call
-        
+
         Args:
             call_id: The tool call ID
             tool_response: The complete tool response
@@ -189,7 +191,7 @@ class ToolCallStreamManager:
         tool_call_details: Optional[dict] = None,
     ):
         """Async version of publish_complete - runs Redis operations in thread pool.
-        
+
         Args:
             call_id: The tool call ID
             tool_response: The complete tool response
@@ -212,8 +214,7 @@ class ToolCallStreamManager:
         try:
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
-                None,
-                partial(self._sync_publish_end_event, key, end_event_data)
+                None, partial(self._sync_publish_end_event, key, end_event_data)
             )
         except Exception as e:
             logger.error(f"Failed to publish end event to Redis stream {key}: {str(e)}")
@@ -222,11 +223,11 @@ class ToolCallStreamManager:
         self, call_id: str, cursor: Optional[str] = None
     ) -> AsyncGenerator[dict, None]:
         """Consume stream events for a tool call asynchronously
-        
+
         Args:
             call_id: The tool call ID to consume streams for
             cursor: Optional cursor position (for reconnection)
-            
+
         Yields:
             Dictionary with stream event data
         """
@@ -234,13 +235,12 @@ class ToolCallStreamManager:
 
         try:
             loop = asyncio.get_event_loop()
-            
+
             # Only replay existing events if cursor is explicitly provided
             events = []
             if cursor:
                 events = await loop.run_in_executor(
-                    None,
-                    partial(self.redis_client.xrange, key, min=cursor, max="+")
+                    None, partial(self.redis_client.xrange, key, min=cursor, max="+")
                 )
                 for event_id, event_data in events:
                     formatted_event = self._format_event(event_id, event_data)
@@ -256,8 +256,7 @@ class ToolCallStreamManager:
                 if key_exists:
                     # For fresh requests, start from the latest event in the stream
                     latest_events = await loop.run_in_executor(
-                        None,
-                        partial(self.redis_client.xrevrange, key, count=1)
+                        None, partial(self.redis_client.xrevrange, key, count=1)
                     )
                     last_id = latest_events[0][0] if latest_events else "0-0"
                 else:
@@ -278,7 +277,7 @@ class ToolCallStreamManager:
                     )
                     if key_exists_now:
                         break
-                        
+
                     if (datetime.now() - wait_start).total_seconds() > wait_timeout:
                         yield {
                             "type": "tool_call_stream_end",
@@ -314,7 +313,9 @@ class ToolCallStreamManager:
                 # block=1000 means 1 second timeout in Redis
                 events = await loop.run_in_executor(
                     None,
-                    partial(self.redis_client.xread, {key: last_id}, block=1000, count=10)
+                    partial(
+                        self.redis_client.xread, {key: last_id}, block=1000, count=10
+                    ),
                 )
                 if not events:
                     continue
@@ -372,4 +373,3 @@ class ToolCallStreamManager:
             logger.debug(f"Cleaned up tool call stream {key}")
         except Exception as e:
             logger.warning(f"Failed to cleanup tool call stream {key}: {str(e)}")
-

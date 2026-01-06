@@ -54,12 +54,15 @@ def execute_agent_background(
                 async with self.async_db() as async_db:
                     # Get user email for service creation
                     from app.modules.users.user_model import User
+
                     user_service = UserService(self.db)
                     user = user_service.get_user_by_uid(user_id)
-                    
+
                     # Debug: Direct query to verify user exists
                     if not user:
-                        direct_user = self.db.query(User).filter(User.uid == user_id).first()
+                        direct_user = (
+                            self.db.query(User).filter(User.uid == user_id).first()
+                        )
                         if direct_user:
                             logger.warning(
                                 f"UserService.get_user_by_uid returned None but direct query found user: {direct_user.uid}, email: {direct_user.email}"
@@ -86,7 +89,9 @@ def execute_agent_background(
                         user_email = ""
                     else:
                         user_email = user.email
-                        logger.debug(f"Retrieved user email: {user_email} for user_id: {user_id}")
+                        logger.debug(
+                            f"Retrieved user email: {user_email} for user_id: {user_id}"
+                        )
 
                     service = ConversationService.create(
                         conversation_store=conversation_store,
@@ -296,7 +301,9 @@ def execute_regenerate_background(
                     user_email = ""
                 else:
                     user_email = user.email
-                    logger.debug(f"Retrieved user email: {user_email} for user_id: {user_id}")
+                    logger.debug(
+                        f"Retrieved user email: {user_email} for user_id: {user_id}"
+                    )
 
                 conversation_store = ConversationStore(self.db, async_db)
                 message_store = MessageStore(self.db, async_db)

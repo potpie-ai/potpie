@@ -13,11 +13,11 @@ logger = setup_logger(__name__)
 def validate_and_build_data_url(image_data: dict, attachment_id: str) -> Optional[str]:
     """
     Validate image data and build a data URL if valid.
-    
+
     Args:
         image_data: Dictionary containing image data with 'base64' and optionally 'mime_type'
         attachment_id: ID of the attachment for logging purposes
-        
+
     Returns:
         Data URL string if valid, None otherwise
     """
@@ -43,9 +43,7 @@ def validate_and_build_data_url(image_data: dict, attachment_id: str) -> Optiona
         try:
             base64.b64decode(base64_data)
         except Exception as e:
-            logger.error(
-                f"Invalid base64 format for image {attachment_id}: {str(e)}"
-            )
+            logger.error(f"Invalid base64 format for image {attachment_id}: {str(e)}")
             return None
 
         # Get mime type with better fallback

@@ -9,7 +9,7 @@ Robust architecture designed to:
 """
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import AsyncGenerator, List, Optional, Any
 from pydantic_ai import Agent
@@ -852,7 +852,7 @@ class DelegationStreamer:
         try:
             await asyncio.wait_for(_collect(), timeout=AGENT_ITER_TIMEOUT)
         except asyncio.TimeoutError:
-            logger.error(f"[SUBAGENT] collect_agent_streaming_response timeout")
+            logger.error("[SUBAGENT] collect_agent_streaming_response timeout")
             full_response += "\n*Response timed out*\n"
 
         return full_response

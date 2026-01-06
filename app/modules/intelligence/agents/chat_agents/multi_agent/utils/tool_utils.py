@@ -6,7 +6,6 @@ from typing import List, Sequence, Any
 
 from pydantic_ai import Tool
 from pydantic_ai.messages import FunctionToolCallEvent, FunctionToolResultEvent
-from langchain_core.tools import StructuredTool
 
 from .delegation_utils import (
     is_delegation_tool,

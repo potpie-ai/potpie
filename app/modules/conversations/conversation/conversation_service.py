@@ -353,11 +353,15 @@ class ConversationService:
             # Get project details (use sync method)
             # Note: project_id is Text in DB, but type hint says int - handle both
             try:
-                project = self.project_service.get_project_from_db_by_id_sync(project_id)  # type: ignore[arg-type]
+                project = self.project_service.get_project_from_db_by_id_sync(
+                    project_id
+                )  # type: ignore[arg-type]
             except (TypeError, ValueError):
                 # Try converting to int if it's a numeric string
                 try:
-                    project = self.project_service.get_project_from_db_by_id_sync(int(project_id))  # type: ignore[arg-type]
+                    project = self.project_service.get_project_from_db_by_id_sync(
+                        int(project_id)
+                    )  # type: ignore[arg-type]
                 except (ValueError, TypeError):
                     logger.warning(
                         f"Cannot ensure repo in repo manager: invalid project_id {project_id}"

@@ -289,7 +289,9 @@ class PotpieRuntime:
                 **provider_config,
             )
 
-            tool_service = ToolService(self._agent_session, self._config.default_user_id)
+            tool_service = ToolService(
+                self._agent_session, self._config.default_user_id
+            )
             prompt_service = PromptService(self._agent_session)
 
             self._agents = AgentRunner(

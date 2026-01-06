@@ -28,7 +28,7 @@ class WebpageExtractorTool:
             }
 
         Returns dictionary containing the webpage content, metadata, and success status.
-        
+
         ⚠️ IMPORTANT: Large webpages may result in truncated responses (max 80,000 characters).
         If the response is truncated, a notice will be included indicating the truncation occurred.
         """

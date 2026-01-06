@@ -471,8 +471,8 @@ class BashCommandTool:
         - Search in files: grep, ag (Silver Searcher), rg (ripgrep)
         - Text utilities: sort, uniq, cut, wc, diff, cmp
         - File information: stat, file, readlink, realpath
-        
-        ⚠️ SECURITY: Only whitelisted commands are allowed. Commands like python, python3, 
+
+        ⚠️ SECURITY: Only whitelisted commands are allowed. Commands like python, python3,
         node, bash, sh, and other interpreters are BLOCKED for security reasons.
 
         ❌ NOT ALLOWED:

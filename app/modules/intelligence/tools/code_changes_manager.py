@@ -48,24 +48,24 @@ def _execute_with_timeout(
 ) -> T:
     """
     Execute an operation with a timeout using threading.
-    
+
     This prevents deadlocks when database queries or other operations hang
     in forked Celery workers.
-    
+
     Args:
         operation: The operation to execute
         timeout: Maximum time in seconds to wait
         operation_name: Name of the operation for logging
-        
+
     Returns:
         The result of the operation
-        
+
     Raises:
         TimeoutError: If the operation exceeds the timeout
         Exception: Any exception raised by the operation
     """
     result_container = {"value": None, "exception": None, "completed": False}
-    
+
     def _run_operation():
         try:
             result_container["value"] = operation()
@@ -73,11 +73,11 @@ def _execute_with_timeout(
         except Exception as e:
             result_container["exception"] = e
             result_container["completed"] = True
-    
+
     thread = threading.Thread(target=_run_operation, daemon=True)
     thread.start()
     thread.join(timeout=timeout)
-    
+
     if not result_container["completed"]:
         logger.error(
             f"Operation '{operation_name}' timed out after {timeout} seconds. "
@@ -86,17 +86,17 @@ def _execute_with_timeout(
         raise TimeoutError(
             f"Operation '{operation_name}' timed out after {timeout} seconds"
         )
-    
+
     if result_container["exception"]:
         raise result_container["exception"]
-    
+
     return result_container["value"]
 
 
 def _check_memory_pressure() -> tuple[bool, Optional[float]]:
     """
     Check if worker is under memory pressure.
-    
+
     Returns:
         Tuple of (is_under_pressure: bool, memory_usage_percent: float or None)
         Returns (False, None) if memory check fails or psutil not available
@@ -104,27 +104,27 @@ def _check_memory_pressure() -> tuple[bool, Optional[float]]:
     try:
         import psutil
         import os as os_module
-        
+
         process = psutil.Process()
         memory_info = process.memory_info()
         rss_mb = memory_info.rss / 1024 / 1024
-        
+
         # Get worker memory limit from environment
         max_memory_kb = int(os_module.getenv("CELERY_WORKER_MAX_MEMORY_KB", "2000000"))
         max_memory_mb = max_memory_kb / 1024
-        
+
         if max_memory_mb <= 0:
             return False, None
-            
+
         memory_usage_percent = rss_mb / max_memory_mb
         is_under_pressure = memory_usage_percent >= MEMORY_PRESSURE_THRESHOLD
-        
+
         if is_under_pressure:
             logger.warning(
                 f"Memory pressure detected: {memory_usage_percent:.1%} ({rss_mb:.1f}MB / {max_memory_mb:.1f}MB). "
                 f"Skipping non-critical operations."
             )
-        
+
         return is_under_pressure, memory_usage_percent
     except ImportError:
         # psutil not available - can't check memory
@@ -134,25 +134,27 @@ def _check_memory_pressure() -> tuple[bool, Optional[float]]:
         return False, None
 
 
-def _get_git_file_size(repo_path: str, file_path: str, ref: Optional[str] = None) -> Optional[int]:
+def _get_git_file_size(
+    repo_path: str, file_path: str, ref: Optional[str] = None
+) -> Optional[int]:
     """
     Get file size from git repository without loading content.
     Uses 'git cat-file -s' which is very efficient.
-    
+
     Args:
         repo_path: Path to git repository
         file_path: Relative path to file
         ref: Branch/commit reference (defaults to HEAD)
-        
+
     Returns:
         File size in bytes, or None if unable to determine
     """
     try:
         from app.modules.code_provider.git_safe import safe_git_repo_operation
-        
+
         def _get_size(repo):
             from git.exc import GitCommandError
-            
+
             actual_ref = ref or repo.active_branch.name
             try:
                 # Use git cat-file -s to get object size without loading content
@@ -164,7 +166,7 @@ def _get_git_file_size(repo_path: str, file_path: str, ref: Optional[str] = None
                 if "does not exist" in str(e) or "path not in" in str(e):
                     return None
                 raise
-        
+
         return safe_git_repo_operation(
             repo_path,
             _get_size,
@@ -281,7 +283,6 @@ class CodeChangesManager:
                 from app.modules.code_provider.code_provider_service import (
                     CodeProviderService,
                 )
-                from app.modules.projects.projects_service import ProjectService
                 from app.modules.projects.projects_model import Project
 
                 # Project.id is Text (string) in the database, so query directly with the string project_id
@@ -300,7 +301,9 @@ class CodeChangesManager:
                         f"CodeChangesManager._get_current_content: [STEP 1.1.1] Executing database query with timeout={DB_QUERY_TIMEOUT}s"
                     )
                     project = _execute_with_timeout(
-                        lambda: db.query(Project).filter(Project.id == project_id).first(),
+                        lambda: db.query(Project)
+                        .filter(Project.id == project_id)
+                        .first(),
                         timeout=DB_QUERY_TIMEOUT,
                         operation_name=f"db_query_project_{project_id}",
                     )
@@ -308,7 +311,7 @@ class CodeChangesManager:
                     logger.info(
                         f"CodeChangesManager._get_current_content: [STEP 1.1.2] Database query completed in {query_elapsed:.3f}s"
                     )
-                    
+
                     if project:
                         project_details = {
                             "project_name": project.repo_name,
@@ -362,20 +365,20 @@ class CodeChangesManager:
 
                             session_create_start = time.time()
                             logger.info(
-                                f"CodeChangesManager._get_current_content: [STEP 1.2.1] Attempting to close old session and create new one"
+                                "CodeChangesManager._get_current_content: [STEP 1.2.1] Attempting to close old session and create new one"
                             )
                             old_db = db  # Keep reference to old session for cleanup
                             try:
                                 old_db.close()  # Close invalid session if possible
                                 logger.debug(
-                                    f"CodeChangesManager._get_current_content: [STEP 1.2.1.1] Old session closed"
+                                    "CodeChangesManager._get_current_content: [STEP 1.2.1.1] Old session closed"
                                 )
                             except Exception as close_err:
                                 logger.debug(
                                     f"CodeChangesManager._get_current_content: [STEP 1.2.1.1] Error closing old session (ignored): {close_err}"
                                 )
                                 pass  # Ignore errors when closing invalid session
-                            
+
                             # Create new session with timeout protection
                             logger.debug(
                                 f"CodeChangesManager._get_current_content: [STEP 1.2.2] Creating new session with timeout={DB_SESSION_CREATE_TIMEOUT}s"
@@ -389,14 +392,16 @@ class CodeChangesManager:
                             logger.info(
                                 f"CodeChangesManager._get_current_content: [STEP 1.2.3] New session created in {session_create_elapsed:.3f}s (session_id={id(db)})"
                             )
-                            
+
                             # Retry the query with new session
                             retry_query_start = time.time()
                             logger.info(
-                                f"CodeChangesManager._get_current_content: [STEP 1.2.4] Retrying database query with new session"
+                                "CodeChangesManager._get_current_content: [STEP 1.2.4] Retrying database query with new session"
                             )
                             project = _execute_with_timeout(
-                                lambda: db.query(Project).filter(Project.id == project_id).first(),
+                                lambda: db.query(Project)
+                                .filter(Project.id == project_id)
+                                .first(),
                                 timeout=DB_QUERY_TIMEOUT,
                                 operation_name=f"db_query_project_retry_{project_id}",
                             )
@@ -404,7 +409,7 @@ class CodeChangesManager:
                             logger.info(
                                 f"CodeChangesManager._get_current_content: [STEP 1.2.5] Retry query completed in {retry_query_elapsed:.3f}s"
                             )
-                            
+
                             if project:
                                 project_details = {
                                     "project_name": project.repo_name,
@@ -431,7 +436,11 @@ class CodeChangesManager:
                             )
                             project_details = None
                             # Ensure new session is closed if created
-                            if 'db' in locals() and 'old_db' in locals() and db != old_db:
+                            if (
+                                "db" in locals()
+                                and "old_db" in locals()
+                                and db != old_db
+                            ):
                                 try:
                                     db.close()
                                 except Exception:
@@ -443,7 +452,11 @@ class CodeChangesManager:
                             )
                             project_details = None
                             # Ensure new session is closed if created
-                            if 'db' in locals() and 'old_db' in locals() and db != old_db:
+                            if (
+                                "db" in locals()
+                                and "old_db" in locals()
+                                and db != old_db
+                            ):
                                 try:
                                     db.close()
                                 except Exception:
@@ -478,7 +491,7 @@ class CodeChangesManager:
                                 file_size = _get_git_file_size(
                                     repo_path,
                                     file_path,
-                                    project_details.get("branch_name")
+                                    project_details.get("branch_name"),
                                 )
                                 if file_size is not None:
                                     if file_size > MAX_FILE_SIZE_BYTES:
@@ -493,7 +506,7 @@ class CodeChangesManager:
                                             f"CodeChangesManager._get_current_content: [STEP 2.SIZE] File '{file_path}' "
                                             f"size check passed: {file_size} bytes"
                                         )
-                            
+
                             service_init_start = time.time()
                             logger.info(
                                 f"CodeChangesManager._get_current_content: [STEP 2] Initializing CodeProviderService "
@@ -509,7 +522,7 @@ class CodeChangesManager:
                             logger.info(
                                 f"CodeChangesManager._get_current_content: [STEP 2.1] CodeProviderService initialized in {service_init_elapsed:.3f}s"
                             )
-                            
+
                             # Skip file fetch if we already determined it's too large or memory pressure
                             if repo_content is not None:
                                 # This means size check failed - skip to filesystem
@@ -529,13 +542,15 @@ class CodeChangesManager:
                                 def _fetch_file_content():
                                     fetch_start = time.time()
                                     logger.debug(
-                                        f"CodeChangesManager._get_current_content: [STEP 3.1] Inside _fetch_file_content, calling cp_service.get_file_content"
+                                        "CodeChangesManager._get_current_content: [STEP 3.1] Inside _fetch_file_content, calling cp_service.get_file_content"
                                     )
                                     try:
                                         result = cp_service.get_file_content(
                                             repo_name=project_details["project_name"],
                                             file_path=file_path,
-                                            branch_name=project_details.get("branch_name"),
+                                            branch_name=project_details.get(
+                                                "branch_name"
+                                            ),
                                             start_line=None,
                                             end_line=None,
                                             project_id=project_id,
@@ -559,7 +574,7 @@ class CodeChangesManager:
                                     # Even with 2 retries at 20s each, cap total time at 40s to prevent worker hangs
                                     # Reduced timeouts to fail faster and prevent worker crashes
                                     logger.debug(
-                                        f"CodeChangesManager._get_current_content: [STEP 3.2] Calling safe_git_operation with timeout=20.0s, max_retries=1"
+                                        "CodeChangesManager._get_current_content: [STEP 3.2] Calling safe_git_operation with timeout=20.0s, max_retries=1"
                                     )
                                     repo_content = safe_git_operation(
                                         _fetch_file_content,
@@ -685,9 +700,9 @@ class CodeChangesManager:
             )
             codebase_content = self._read_file_from_codebase(file_path)
             filesystem_elapsed = time.time() - filesystem_start
-        
+
         if codebase_content is not None:
-            if 'filesystem_elapsed' not in locals():
+            if "filesystem_elapsed" not in locals():
                 filesystem_elapsed = 0
         if codebase_content is not None:
             lines = codebase_content.split("\n")

@@ -224,7 +224,11 @@ class StreamProcessor:
             node_type = (
                 "model_request"
                 if is_model_request
-                else "call_tools" if is_call_tools else "end" if is_end else "other"
+                else "call_tools"
+                if is_call_tools
+                else "end"
+                if is_end
+                else "other"
             )
 
             # Check if we've already processed this node
@@ -597,9 +601,7 @@ class StreamProcessor:
                                 ):
                                     """Consume Redis stream for tool call and put updates in queue"""
                                     try:
-                                        async for (
-                                            stream_event
-                                        ) in self.tool_call_stream_manager.consume_stream(
+                                        async for stream_event in self.tool_call_stream_manager.consume_stream(
                                             call_id
                                         ):
                                             if (

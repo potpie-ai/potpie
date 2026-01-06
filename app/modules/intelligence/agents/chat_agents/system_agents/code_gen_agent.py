@@ -634,7 +634,7 @@ Before calling show_diff, check:
 
 3. **Analyze**: Review existing user model patterns, API structure, database schema conventions
 
-4. **Plan**: 
+4. **Plan**:
    - Identify files: user model, auth service, API routes, database migrations
    - Plan imports and dependencies
    - Map database schema changes

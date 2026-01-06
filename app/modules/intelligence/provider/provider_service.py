@@ -29,7 +29,6 @@ from .llm_config import (
 from .exceptions import UnsupportedProviderError
 
 from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from app.modules.intelligence.provider.openrouter_gemini_model import (
     OpenRouterGeminiModel,

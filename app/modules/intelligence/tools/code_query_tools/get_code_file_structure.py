@@ -31,7 +31,7 @@ class GetCodeFileStructureTool:
             }
 
         Returns string containing the hierarchical file structure.
-        
+
         ⚠️ IMPORTANT: Large repositories may result in truncated responses (max 80,000 characters).
         If the response is truncated, a notice will be included indicating the truncation occurred.
         """
@@ -85,7 +85,7 @@ def get_code_file_structure_tool(db: Session) -> StructuredTool:
                 filename.extension
         ```
         the path for the subdir_name should be dir_name/subdir_name
-        
+
         ⚠️ IMPORTANT: Large repositories may result in truncated responses (max 80,000 characters).
         If the response is truncated, a notice will be included indicating the truncation occurred.""",
         coroutine=GetCodeFileStructureTool(db).arun,

@@ -1,9 +1,8 @@
 """Execution flows for different agent execution modes"""
 
 import traceback
-from typing import AsyncGenerator, Optional, Any
+from typing import AsyncGenerator, Any
 import anyio
-from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.usage import UsageLimits
 

@@ -6,9 +6,7 @@ from pydantic_ai import RunContext
 
 from .delegation_streamer import (
     ERROR_MARKER,
-    SubagentErrorType,
     is_subagent_error,
-    extract_error_type_from_response,
 )
 from .utils.delegation_utils import (
     AgentType,
@@ -482,10 +480,12 @@ class DelegationManager:
                     # Use async version to avoid blocking the event loop
                     if call_id and chunk.response:
                         try:
-                            await self.tool_call_stream_manager.publish_stream_part_async(
-                                call_id=call_id,
-                                stream_part=chunk.response,
-                                is_complete=False,
+                            await (
+                                self.tool_call_stream_manager.publish_stream_part_async(
+                                    call_id=call_id,
+                                    stream_part=chunk.response,
+                                    is_complete=False,
+                                )
                             )
                         except Exception as redis_error:
                             logger.warning(

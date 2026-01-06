@@ -162,7 +162,7 @@ class FetchFileTool:
                     with_line_numbers,
                     starting_line=start_line or 1,
                 )
-                
+
                 # Truncate content if it exceeds character limits
                 original_length = len(content)
                 content = truncate_response(content)
@@ -171,7 +171,7 @@ class FetchFileTool:
                         f"fetch_file (cached) output truncated from {original_length} to 80000 characters "
                         f"for file {file_path}, project_id={project_id}"
                     )
-                
+
                 return {
                     "success": True,
                     "content": content,
@@ -199,7 +199,7 @@ class FetchFileTool:
             content = self.with_line_numbers(
                 content, with_line_numbers, starting_line=start_line or 1
             )
-            
+
             # Truncate content if it exceeds character limits
             original_length = len(content)
             content = truncate_response(content)
@@ -208,7 +208,7 @@ class FetchFileTool:
                     f"fetch_file output truncated from {original_length} to 80000 characters "
                     f"for file {file_path}, project_id={project_id}"
                 )
-            
+
             return {
                 "success": True,
                 "content": content,

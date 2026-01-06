@@ -31,12 +31,11 @@ For more info: https://docs.anthropic.com/en/docs/build-with-claude/prompt-cachi
 from __future__ import annotations
 
 import json
-import os
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, Union, cast
+from typing import Any, Literal
 
 from pydantic_ai.models.anthropic import (
     AnthropicModel,
