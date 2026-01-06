@@ -75,8 +75,26 @@ class ParsingService:
                             neo4j_config["password"],
                             self.db,
                         )
-
-                        code_graph_service.cleanup_graph(project_id)
+                        try:
+                            if incremental_ingest_enabled:
+                                latest_run_id = (
+                                    code_graph_service.get_latest_successful_run_id(
+                                        project_id, user_id
+                                    )
+                                )
+                                if latest_run_id:
+                                    logger.info(
+                                        "ParsingService: Skipping cleanup_graph for incremental sync",
+                                        project_id=project_id,
+                                        user_id=user_id,
+                                        run_id=str(latest_run_id),
+                                    )
+                                else:
+                                    code_graph_service.cleanup_graph(project_id)
+                            else:
+                                code_graph_service.cleanup_graph(project_id)
+                        finally:
+                            code_graph_service.close()
                     except Exception:
                         logger.exception(
                             "Error in cleanup_graph",
@@ -240,8 +258,8 @@ class ParsingService:
             logger.bind(project_id=project_id, user_id=user_id).error(error_msg)
             raise FileNotFoundError(f"Directory not found: {extracted_dir}")
 
-        logger.info(
-            f"ParsingService: Directory exists and is accessible: {extracted_dir}"
+        logger.debug(
+            "ParsingService: Directory exists and is accessible: {}", extracted_dir
         )
         project_details = await self.project_service.get_project_from_db_by_id(
             project_id
@@ -256,8 +274,9 @@ class ParsingService:
             raise HTTPException(status_code=404, detail="Project not found.")
 
         if language != "other":
+            neo4j_config = config_provider.get_neo4j_config()
+            service: CodeGraphService | None = None
             try:
-                neo4j_config = config_provider.get_neo4j_config()
                 service = CodeGraphService(
                     neo4j_config["uri"],
                     neo4j_config["username"],
@@ -277,27 +296,18 @@ class ParsingService:
                 )
                 # Generate docstrings using InferenceService
                 await self.inference_service.run_inference(project_id)
-                logger.info(f"DEBUGNEO4J: After inference project {project_id}")
-                self.inference_service.log_graph_stats(project_id)
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.READY
                 )
-                create_task(
-                    EmailHelper().send_email(user_email, repo_name, branch_name)
-                )
-                logger.info(f"DEBUGNEO4J: After update project status {project_id}")
-                self.inference_service.log_graph_stats(project_id)
+                create_task(EmailHelper().send_email(user_email, repo_name, branch_name))
             finally:
-                service.close()
-                logger.info(f"DEBUGNEO4J: After close service {project_id}")
-                self.inference_service.log_graph_stats(project_id)
+                if service:
+                    service.close()
         else:
             await self.project_service.update_project_status(
                 project_id, ProjectStatusEnum.ERROR
             )
             await ParseWebhookHelper().send_slack_notification(project_id, "Other")
-            logger.info(f"DEBUGNEO4J: After update project status {project_id}")
-            self.inference_service.log_graph_stats(project_id)
             raise ParsingFailedError(
                 "Repository doesn't consist of a language currently supported."
             )
@@ -314,31 +324,91 @@ class ParsingService:
         Incremental KG ingest entrypoint (v0).
 
         For now this is a thin wrapper over the existing full ingest path so the
-        feature flag can be wired end-to-end while the diff/applier is built in
-        subsequent steps.
+        feature flag can be wired end-to-end while the Neo4j delta applier is
+        built in subsequent steps.
         """
-        logger.info(
-            f"ParsingService: Incremental KG ingest (v0) enabled for project {project_id}; "
-            "using existing full ingest path (TODO: apply JSONL deltas)"
-        )
         latest_run_id = service.get_latest_successful_run_id(project_id, user_id)
         if not latest_run_id:
             logger.info(
                 "ParsingService: No latest successful KG ingest run found; "
                 f"performing baseline ingest for project {project_id}"
             )
-        else:
-            logger.info(
-                "ParsingService: Latest successful KG ingest run found; "
-                f"run_id={latest_run_id}, using full ingest fallback until diffing is implemented"
+            service.create_and_store_graph(
+                extracted_dir,
+                project_id,
+                user_id,
+                persist_artifacts=True,
+                commit_id=commit_id,
             )
-        service.create_and_store_graph(
-            extracted_dir,
-            project_id,
-            user_id,
-            persist_artifacts=True,
-            commit_id=commit_id,
+            return
+
+        logger.info(
+            "ParsingService: Latest successful KG ingest run found; "
+            f"run_id={latest_run_id}, computing incremental diff"
         )
+
+        nx_graph = service.build_graph(extracted_dir)
+        new_run_id = service.persist_artifacts_only(
+            nx_graph, project_id, user_id, commit_id
+        )
+
+        diff = service.diff_artifact_runs(latest_run_id, new_run_id)
+        logger.info(
+            "ParsingService: KG artifact diff computed (v0)",
+            old_run_id=str(latest_run_id),
+            new_run_id=str(new_run_id),
+            nodes_added=len(diff.nodes.added_keys),
+            nodes_deleted=len(diff.nodes.deleted_keys),
+            nodes_changed=len(diff.nodes.changed_keys),
+            edges_added=len(diff.edges.added_keys),
+            edges_deleted=len(diff.edges.deleted_keys),
+            edges_changed=len(diff.edges.changed_keys),
+        )
+
+        if (
+            not diff.nodes.added_keys
+            and not diff.nodes.deleted_keys
+            and not diff.nodes.changed_keys
+            and not diff.edges.added_keys
+            and not diff.edges.deleted_keys
+            and not diff.edges.changed_keys
+        ):
+            logger.info(
+                "ParsingService: No KG changes detected; skipping Neo4j incremental apply",
+                project_id=project_id,
+                user_id=user_id,
+                old_run_id=str(latest_run_id),
+                new_run_id=str(new_run_id),
+            )
+            service.set_ingest_run_status(new_run_id, "success")
+            service.mark_latest_successful_run(project_id, user_id, new_run_id)
+            service.db.commit()
+            return
+
+        try:
+            service.apply_incremental_diff(
+                project_id,
+                latest_run_id,
+                new_run_id,
+                diff,
+            )
+            service.set_ingest_run_status(new_run_id, "success")
+            service.mark_latest_successful_run(project_id, user_id, new_run_id)
+            service.db.commit()
+        except Exception:
+            service.db.rollback()
+            try:
+                service.set_ingest_run_status(new_run_id, "failed")
+                service.db.commit()
+            except Exception:
+                service.db.rollback()
+                logger.exception(
+                    "ParsingService: Failed to update KG ingest run status",
+                    project_id=project_id,
+                    user_id=user_id,
+                    run_id=str(new_run_id),
+                )
+            raise
 
     async def duplicate_graph(self, old_repo_id: str, new_repo_id: str):
         await self.search_service.clone_search_indices(old_repo_id, new_repo_id)

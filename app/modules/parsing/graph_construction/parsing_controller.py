@@ -60,7 +60,7 @@ class ParsingController:
                 # Move from repo_name to repo_path
                 repo_details.repo_path = repo_details.repo_name
                 repo_details.repo_name = repo_details.repo_path.split("/")[-1]
-                logger.info(
+                logger.debug(
                     f"Auto-detected filesystem path: repo_path={repo_details.repo_path}, repo_name={repo_details.repo_name}"
                 )
 
@@ -80,12 +80,46 @@ class ParsingController:
         )
         repo_path = repo_details.repo_path
         if repo_path:
-            if os.getenv("isDevelopmentMode") != "enabled":
+            if not config_provider.get_is_development_mode():
                 raise HTTPException(
                     status_code=400,
                     detail="Parsing local repositories is only supported in development mode",
                 )
             else:
+                resolved_repo_path = os.path.abspath(os.path.expanduser(repo_path))
+                repo_details.repo_path = resolved_repo_path
+                if not repo_details.repo_name:
+                    repo_details.repo_name = resolved_repo_path.split("/")[-1]
+
+                normalized_repo_name = normalize_repo_name(repo_details.repo_name)
+                project = await project_manager.get_project_from_db(
+                    normalized_repo_name,
+                    repo_details.branch_name,
+                    user_id,
+                    repo_path=resolved_repo_path,
+                    commit_id=repo_details.commit_id,
+                )
+
+                if project:
+                    project_id = project.id
+                    logger.info(
+                        f"Submitting parsing task for existing local project {project_id}"
+                    )
+                    process_parsing.delay(
+                        repo_details.model_dump(),
+                        user_id,
+                        user_email,
+                        project_id,
+                        True,
+                    )
+                    await project_manager.update_project_status(
+                        project_id, ProjectStatusEnum.SUBMITTED
+                    )
+                    return {
+                        "project_id": project_id,
+                        "status": ProjectStatusEnum.SUBMITTED.value,
+                    }
+
                 new_project_id = str(uuid7())
                 return await ParsingController.handle_new_project(
                     repo_details,
@@ -109,7 +143,7 @@ class ParsingController:
         try:
             # Normalize repository name for consistent database lookups
             normalized_repo_name = normalize_repo_name(repo_name)
-            logger.info(
+            logger.debug(
                 f"Original repo_name: {repo_name}, Normalized: {normalized_repo_name}"
             )
 

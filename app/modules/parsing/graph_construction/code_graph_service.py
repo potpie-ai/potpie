@@ -1,8 +1,10 @@
+from dataclasses import dataclass
 import hashlib
 import json
+import re
 import time
 import uuid
-from typing import Dict, Optional
+from typing import Dict, Iterable, Optional, Sequence, Tuple
 
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
@@ -19,9 +21,50 @@ from app.modules.utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 
+@dataclass(frozen=True)
+class ArtifactKindDiff:
+    added_keys: set[str]
+    deleted_keys: set[str]
+    changed_keys: set[str]
+
+    @property
+    def upsert_keys(self) -> set[str]:
+        return self.added_keys | self.changed_keys
+
+    @property
+    def delete_keys(self) -> set[str]:
+        return self.deleted_keys | self.changed_keys
+
+    def summary(self) -> Dict[str, int]:
+        return {
+            "added": len(self.added_keys),
+            "deleted": len(self.deleted_keys),
+            "changed": len(self.changed_keys),
+        }
+
+
+@dataclass(frozen=True)
+class ArtifactRunDiff:
+    nodes: ArtifactKindDiff
+    edges: ArtifactKindDiff
+
+
 class CodeGraphService:
     _ARTIFACT_KIND_NODE = "node"
     _ARTIFACT_KIND_EDGE = "edge"
+    _REL_TYPE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+    @classmethod
+    def _sanitize_rel_type(cls, rel_type: object) -> str:
+        if not isinstance(rel_type, str):
+            return "REFERENCES"
+        rel_type = rel_type.strip()
+        if not rel_type or not cls._REL_TYPE_RE.match(rel_type):
+            logger.debug(
+                "Invalid relationship type; falling back to REFERENCES: {}", rel_type
+            )
+            return "REFERENCES"
+        return rel_type
 
     def __init__(self, neo4j_uri, neo4j_user, neo4j_password, db: Session):
         self.driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
@@ -40,6 +83,15 @@ class CodeGraphService:
         node_id = hash_object.hexdigest()
 
         return node_id
+
+    def build_graph(self, repo_dir):
+        self.repo_map = RepoMap(
+            root=repo_dir,
+            verbose=True,
+            main_model=SimpleTokenCounter(),
+            io=SimpleIO(),
+        )
+        return self.repo_map.create_graph(repo_dir)
 
     @staticmethod
     def _canonical_json(payload: Dict) -> str:
@@ -178,20 +230,103 @@ class CodeGraphService:
         )
         return latest.run_id if latest else None
 
+    @staticmethod
+    def _diff_key_hash_maps(old: Dict[str, str], new: Dict[str, str]) -> ArtifactKindDiff:
+        old_keys = set(old.keys())
+        new_keys = set(new.keys())
+
+        added_keys = new_keys - old_keys
+        deleted_keys = old_keys - new_keys
+
+        common_keys = old_keys & new_keys
+        changed_keys = {key for key in common_keys if old[key] != new[key]}
+
+        return ArtifactKindDiff(
+            added_keys=added_keys,
+            deleted_keys=deleted_keys,
+            changed_keys=changed_keys,
+        )
+
+    def _load_artifact_key_hash_map(self, run_id, kind: str) -> Dict[str, str]:
+        rows = (
+            self.db.query(KgArtifactRecord.record_key, KgArtifactRecord.record_hash)
+            .filter(KgArtifactRecord.run_id == run_id, KgArtifactRecord.kind == kind)
+            .all()
+        )
+        return {record_key: record_hash for record_key, record_hash in rows}
+
+    def load_artifact_record_json(
+        self, run_id, kind: str, record_keys: Iterable[str], *, chunk_size: int = 1000
+    ) -> Dict[str, Dict]:
+        keys = list(record_keys)
+        if not keys:
+            return {}
+
+        results: Dict[str, Dict] = {}
+        for i in range(0, len(keys), chunk_size):
+            batch = keys[i : i + chunk_size]
+            rows = (
+                self.db.query(KgArtifactRecord.record_key, KgArtifactRecord.record_json)
+                .filter(
+                    KgArtifactRecord.run_id == run_id,
+                    KgArtifactRecord.kind == kind,
+                    KgArtifactRecord.record_key.in_(batch),
+                )
+                .all()
+            )
+            results.update({record_key: record_json for record_key, record_json in rows})
+
+        return results
+
+    def diff_artifact_runs(self, old_run_id, new_run_id) -> ArtifactRunDiff:
+        old_node_map = self._load_artifact_key_hash_map(
+            old_run_id, self._ARTIFACT_KIND_NODE
+        )
+        new_node_map = self._load_artifact_key_hash_map(
+            new_run_id, self._ARTIFACT_KIND_NODE
+        )
+        old_edge_map = self._load_artifact_key_hash_map(
+            old_run_id, self._ARTIFACT_KIND_EDGE
+        )
+        new_edge_map = self._load_artifact_key_hash_map(
+            new_run_id, self._ARTIFACT_KIND_EDGE
+        )
+
+        return ArtifactRunDiff(
+            nodes=self._diff_key_hash_maps(old_node_map, new_node_map),
+            edges=self._diff_key_hash_maps(old_edge_map, new_edge_map),
+        )
+
     def _persist_artifacts(
-        self, nx_graph, project_id: str, user_id: str, commit_id: Optional[str]
-    ) -> None:
+        self,
+        nx_graph,
+        project_id: str,
+        user_id: str,
+        commit_id: Optional[str],
+        *,
+        status: str = "success",
+        update_latest: bool = True,
+    ) -> uuid.UUID:
         run_id = uuid.uuid4()
         run = KgIngestRun(
             run_id=run_id,
             repo_id=project_id,
             user_id=user_id,
             commit_id=commit_id,
-            status="success",
+            status=status,
         )
         self.db.add(run)
         self.db.flush()
 
+        self._write_artifact_records(run_id, nx_graph, project_id, user_id)
+        if update_latest:
+            self._upsert_latest_successful_run(project_id, user_id, run_id)
+        self.db.commit()
+        return run_id
+
+    def _write_artifact_records(
+        self, run_id, nx_graph, project_id: str, user_id: str
+    ) -> None:
         batch = []
         batch_size = 2000
 
@@ -230,8 +365,31 @@ class CodeGraphService:
                 flush_batch()
 
         flush_batch()
-        self._upsert_latest_successful_run(project_id, user_id, run_id)
-        self.db.commit()
+
+    def persist_artifacts_only(
+        self, nx_graph, project_id: str, user_id: str, commit_id: Optional[str]
+    ) -> uuid.UUID:
+        return self._persist_artifacts(
+            nx_graph,
+            project_id,
+            user_id,
+            commit_id,
+            status="pending",
+            update_latest=False,
+        )
+
+    def set_ingest_run_status(self, run_id, status: str) -> None:
+        run = (
+            self.db.query(KgIngestRun)
+            .filter(KgIngestRun.run_id == run_id)
+            .one_or_none()
+        )
+        if not run:
+            raise ValueError(f"KG ingest run not found: {run_id}")
+        run.status = status
+
+    def mark_latest_successful_run(self, repo_id: str, user_id: str, run_id) -> None:
+        self._upsert_latest_successful_run(repo_id, user_id, run_id)
 
     def close(self):
         self.driver.close()
@@ -245,19 +403,12 @@ class CodeGraphService:
         persist_artifacts: bool = False,
         commit_id: Optional[str] = None,
     ):
-        # Create the graph using RepoMap
-        self.repo_map = RepoMap(
-            root=repo_dir,
-            verbose=True,
-            main_model=SimpleTokenCounter(),
-            io=SimpleIO(),
-        )
-
-        nx_graph = self.repo_map.create_graph(repo_dir)
+        nx_graph = self.build_graph(repo_dir)
 
         with self.driver.session() as session:
             start_time = time.time()
-            node_count = nx_graph.number_of_nodes()
+            nodes = list(nx_graph.nodes(data=True))
+            node_count = len(nodes)
             logger.info(f"Creating {node_count} nodes")
 
             # Create specialized index for relationship queries
@@ -271,7 +422,7 @@ class CodeGraphService:
             # Batch insert nodes
             batch_size = 1000
             for i in range(0, node_count, batch_size):
-                batch_nodes = list(nx_graph.nodes(data=True))[i : i + batch_size]
+                batch_nodes = nodes[i : i + batch_size]
                 nodes_to_create = []
 
                 for node_id, node_data in batch_nodes:
@@ -295,24 +446,17 @@ class CodeGraphService:
             relationship_count = nx_graph.number_of_edges()
             logger.info(f"Creating {relationship_count} relationships")
 
-            # Pre-calculate common relationship types to avoid dynamic relationship creation
-            rel_types = set()
+            # Group edges by relationship type to avoid repeated scans.
+            edges_by_type: Dict[str, list[Tuple[str, str]]] = {}
             for source, target, data in nx_graph.edges(data=True):
-                rel_type = data.get("type", "REFERENCES")
-                rel_types.add(rel_type)
+                rel_type = self._sanitize_rel_type(data.get("type", "REFERENCES"))
+                edges_by_type.setdefault(rel_type, []).append((source, target))
 
             # Process relationships with huge batch size and type-specific queries
             batch_size = 1000
 
-            for rel_type in rel_types:
-                # Filter edges by relationship type
-                type_edges = [
-                    (s, t, d)
-                    for s, t, d in nx_graph.edges(data=True)
-                    if d.get("type", "REFERENCES") == rel_type
-                ]
-
-                logger.info(
+            for rel_type, type_edges in edges_by_type.items():
+                logger.debug(
                     f"Creating {len(type_edges)} relationships of type {rel_type}"
                 )
 
@@ -320,7 +464,7 @@ class CodeGraphService:
                     batch_edges = type_edges[i : i + batch_size]
                     edges_to_create = []
 
-                    for source, target, data in batch_edges:
+                    for source, target in batch_edges:
                         edges_to_create.append(
                             {
                                 "source_id": CodeGraphService.generate_node_id(
@@ -358,6 +502,128 @@ class CodeGraphService:
                     user_id=user_id,
                 )
                 raise
+
+    def iter_artifact_records(
+        self, run_id, kind: str, *, chunk_size: int = 1000
+    ) -> Iterable[Sequence[Tuple[str, Dict]]]:
+        query = (
+            self.db.query(KgArtifactRecord.record_key, KgArtifactRecord.record_json)
+            .filter(KgArtifactRecord.run_id == run_id, KgArtifactRecord.kind == kind)
+            .yield_per(chunk_size)
+        )
+        batch: list[Tuple[str, Dict]] = []
+        for record_key, record_json in query:
+            batch.append((record_key, record_json))
+            if len(batch) >= chunk_size:
+                yield batch
+                batch = []
+        if batch:
+            yield batch
+
+    def apply_incremental_diff(
+        self,
+        repo_id: str,
+        old_run_id,
+        new_run_id,
+        diff: ArtifactRunDiff,
+        *,
+        node_batch_size: int = 1000,
+        edge_batch_size: int = 1000,
+    ) -> None:
+        deleted_node_records = self.load_artifact_record_json(
+            old_run_id,
+            self._ARTIFACT_KIND_NODE,
+            diff.nodes.delete_keys,
+            chunk_size=node_batch_size,
+        )
+        node_ids_to_delete = [
+            node["node_id"] for node in deleted_node_records.values() if node.get("node_id")
+        ]
+        self._delete_nodes(repo_id, node_ids_to_delete, node_batch_size)
+
+        upsert_node_records = self.load_artifact_record_json(
+            new_run_id,
+            self._ARTIFACT_KIND_NODE,
+            diff.nodes.upsert_keys,
+            chunk_size=node_batch_size,
+        )
+        nodes_to_upsert = list(upsert_node_records.values())
+        self._upsert_nodes(nodes_to_upsert, node_batch_size)
+
+        self._rebuild_edges(repo_id, new_run_id, edge_batch_size)
+
+    def _delete_nodes(self, repo_id: str, node_ids: list[str], batch_size: int) -> None:
+        if not node_ids:
+            return
+        with self.driver.session() as session:
+            for i in range(0, len(node_ids), batch_size):
+                batch = node_ids[i : i + batch_size]
+                session.run(
+                    """
+                    UNWIND $node_ids AS node_id
+                    MATCH (n:NODE {repoId: $repo_id, node_id: node_id})
+                    DETACH DELETE n
+                    """,
+                    repo_id=repo_id,
+                    node_ids=batch,
+                )
+
+    def _upsert_nodes(self, nodes: list[Dict], batch_size: int) -> None:
+        if not nodes:
+            return
+        with self.driver.session() as session:
+            for i in range(0, len(nodes), batch_size):
+                batch = nodes[i : i + batch_size]
+                session.run(
+                    """
+                    UNWIND $nodes AS node
+                    MERGE (n:NODE {repoId: node.repoId, node_id: node.node_id})
+                    SET n += node
+                    WITH n, node
+                    CALL apoc.create.addLabels(n, node.labels) YIELD node AS _
+                    RETURN count(*) AS upserted
+                    """,
+                    nodes=batch,
+                )
+
+    def _rebuild_edges(self, repo_id: str, run_id, batch_size: int) -> None:
+        with self.driver.session() as session:
+            session.run(
+                """
+                MATCH (:NODE {repoId: $repo_id})-[r]-(:NODE {repoId: $repo_id})
+                DELETE r
+                """,
+                repo_id=repo_id,
+            )
+
+            for batch in self.iter_artifact_records(
+                run_id, self._ARTIFACT_KIND_EDGE, chunk_size=batch_size
+            ):
+                edges_by_type: Dict[str, list[Dict]] = {}
+                for record_key, record_json in batch:
+                    rel_type = self._sanitize_rel_type(
+                        record_json.get("rel_type", "REFERENCES")
+                    )
+                    edge_properties = record_json.get("properties") or {}
+                    edges_by_type.setdefault(rel_type, []).append(
+                        {
+                            "repoId": record_json["repoId"],
+                            "source_id": record_json["source_id"],
+                            "target_id": record_json["target_id"],
+                            "record_key": record_key,
+                            "properties": edge_properties,
+                        }
+                    )
+
+                for rel_type, edges in edges_by_type.items():
+                    query = f"""
+                        UNWIND $edges AS edge
+                        MATCH (source:NODE {{node_id: edge.source_id, repoId: edge.repoId}})
+                        MATCH (target:NODE {{node_id: edge.target_id, repoId: edge.repoId}})
+                        MERGE (source)-[r:{rel_type} {{repoId: edge.repoId, edge_key: edge.record_key}}]->(target)
+                        SET r += edge.properties
+                    """
+                    session.run(query, edges=edges)
 
     def cleanup_graph(self, project_id: str):
         with self.driver.session() as session:
@@ -410,24 +676,27 @@ class SimpleIO:
                 with open(fname, "r", encoding=encoding) as f:
                     content = f.read()
                     if encoding != "utf-8":
-                        logger.info(f"Read {fname} using {encoding} encoding")
+                        logger.debug(
+                            "Read {} using {} encoding", str(fname), str(encoding)
+                        )
                     return content
             except (UnicodeDecodeError, UnicodeError):
                 continue
             except Exception:
-                logger.exception(f"Error reading {fname}")
+                logger.exception("Error reading {}", str(fname))
                 return ""
 
         logger.warning(
-            f"Could not read {fname} with any supported encoding. Skipping this file."
+            "Could not read {} with any supported encoding. Skipping this file.",
+            str(fname),
         )
         return ""
 
     def tool_error(self, message):
-        logger.error(f"Error: {message}")
+        logger.error("Error: {}", str(message))
 
     def tool_output(self, message):
-        logger.info(message)
+        logger.info("{}", str(message))
 
 
 class SimpleTokenCounter:
