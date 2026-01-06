@@ -35,6 +35,7 @@ from app.modules.auth.unified_auth_service import (
 from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
 from app.modules.utils.posthog_helper import PostHogClient
+from app.modules.utils.email_helper import is_personal_email_domain
 
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", None)
 
@@ -280,6 +281,7 @@ class AuthAPI:
         # ============================================================
         # FLOW 2: GITHUB SIGN-IN (no linkToUserId)
         # Check if GitHub UID is already linked to any user
+        # BLOCK NEW GITHUB SIGNUPS
         # ============================================================
         if is_github_flow:
             logger.info(
@@ -295,6 +297,21 @@ class AuthAPI:
                 )
                 .first()
             )
+
+            # VALIDATION: Block new GitHub signups
+            if not existing_provider:
+                logger.warning(
+                    f"Blocked new GitHub signup attempt: GitHub UID {provider_uid} is not linked to any user"
+                )
+                return Response(
+                    content=json.dumps(
+                        {
+                            "error": "GitHub sign-up is no longer supported. Please use 'Continue with Google' with your work email address.",
+                            "details": "New GitHub signups are disabled. Existing GitHub users can still sign in.",
+                        }
+                    ),
+                    status_code=403,  # Forbidden
+                )
 
             if existing_provider:
                 # GitHub is linked - find the user
@@ -474,6 +491,29 @@ class AuthAPI:
             verified_display_name = (
                 verified_user_info.display_name or provider_data.get("name")
             )
+
+            # VALIDATION: Block new users with generic emails (for Google SSO)
+            # Check if user already exists by email (legacy user check)
+            user_service = UserService(db)
+            existing_user = user_service.get_user_by_email(verified_email)
+
+            if is_personal_email_domain(verified_email):
+                if not existing_user:
+                    # New user with generic email - block them
+                    logger.warning(
+                        f"Blocked new signup attempt with generic email: {verified_email} via {sso_request.sso_provider}"
+                    )
+                    return JSONResponse(
+                        content={
+                            "error": "Personal email addresses are not allowed. Please use your work/corporate email to sign in.",
+                            "details": "Generic email providers (Gmail, Yahoo, Outlook, etc.) cannot be used for new signups.",
+                        },
+                        status_code=403,  # Forbidden
+                    )
+                # Existing user with generic email - allow (legacy policy)
+                logger.info(
+                    f"Allowing legacy user with generic email: {verified_email}"
+                )
 
             # Authenticate or create user
             user, response = await unified_auth.authenticate_or_create(

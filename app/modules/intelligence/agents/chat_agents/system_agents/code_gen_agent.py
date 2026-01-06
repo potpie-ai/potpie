@@ -625,7 +625,6 @@ Before calling show_diff, check:
 **Task**: "Add user authentication feature with login and registration"
 
 1. **Analyze**: Multi-file feature implementation - needs new modules, database changes, API endpoints
-
 2. **Navigate**:
    - Use `ask_knowledge_graph_queries` with "authentication", "user", "login"
    - Use `get_code_file_structure` to find relevant directories

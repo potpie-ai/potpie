@@ -645,11 +645,7 @@ class DelegationManager:
                     await self.tool_call_stream_manager.publish_complete_async(
                         call_id=call_id,
                         tool_response=error_message,
-                    )
                 except Exception as redis_error:
-                    logger.warning(
-                        f"Failed to publish error to Redis stream for call_id {call_id}: {redis_error}"
-                    )
 
             # Store collected chunks (including error)
             self._delegation_streamed_content[cache_key] = collected_chunks
