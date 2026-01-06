@@ -18,6 +18,19 @@ except ImportError:
         "Install with: pip install email-inspector"
     )
 
+# Try to import tldextract for proper domain extraction (handles multi-part TLDs)
+try:
+    import tldextract
+
+    TLDEXTRACT_AVAILABLE = True
+except ImportError:
+    TLDEXTRACT_AVAILABLE = False
+    logging.warning(
+        "tldextract library not available. "
+        "Falling back to simple domain extraction. "
+        "Install with: pip install tldextract"
+    )
+
 
 class EmailHelper:
     def __init__(self):
@@ -297,3 +310,66 @@ def extract_organization_from_email(email: str) -> str | None:
         return domain
     except (IndexError, AttributeError):
         return None
+
+
+def extract_registrable_domain(email: str) -> str:
+    """
+    Extracts the registrable domain from an email address using public suffix list.
+    Handles multi-part TLDs correctly (e.g., .co.uk, .com.au).
+
+    Validates and normalizes the email (strip and lower), parses the domain with
+    tldextract to get the registrable domain, and returns that lowercase string
+    or empty string on invalid input.
+
+    Args:
+        email: User's email address
+
+    Returns:
+        The registrable domain in lowercase, or empty string if invalid
+
+    Example:
+        extract_registrable_domain('user@GmAiL.CoM') -> 'gmail.com'
+        extract_registrable_domain('user@eng.company.com') -> 'company.com'
+        extract_registrable_domain('user@gmail.co.uk') -> 'gmail.co.uk' (not 'co.uk')
+    """
+    # Validate and normalize email input
+    if not email or not isinstance(email, str):
+        return ""
+
+    # Strip whitespace and convert to lowercase
+    email = email.strip().lower()
+    if not email:
+        return ""
+
+    # Split email to extract domain part
+    parts = email.split("@")
+    if len(parts) != 2:
+        return ""
+
+    domain = parts[1]
+    if not domain:
+        return ""
+
+    # Use tldextract library to get the registrable domain
+    # This properly handles multi-part TLDs like .co.uk, .com.au, etc.
+    if TLDEXTRACT_AVAILABLE:
+        try:
+            extracted = tldextract.extract(domain)
+            # tldextract returns: ExtractResult(subdomain='www', domain='example', suffix='co.uk')
+            # registered_domain combines domain + suffix (e.g., 'example.co.uk')
+            registrable_domain = extracted.registered_domain
+            # If registered_domain is empty, fall back to the domain itself
+            return registrable_domain if registrable_domain else domain
+        except Exception:
+            # If extraction fails for any reason, fall back
+            pass
+
+    # Fallback to simple logic if tldextract is not available
+    # This is less accurate but won't break if the library isn't installed
+    # Note: This will fail for multi-part TLDs like .co.uk, .com.au
+    domain_parts = domain.split(".")
+    if len(domain_parts) >= 2:
+        # Take the last two parts (e.g., 'company.com')
+        return ".".join(domain_parts[-2:])
+
+    return domain
