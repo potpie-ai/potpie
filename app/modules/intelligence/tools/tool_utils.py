@@ -12,32 +12,34 @@ MAX_RESPONSE_LENGTH = 80000  # 80k characters
 
 def truncate_response(content: str, max_length: int = MAX_RESPONSE_LENGTH) -> str:
     """Truncate response content if it exceeds the maximum length and add truncation notice.
-    
+
     Args:
         content: The content to truncate
         max_length: Maximum length in characters (default: 80,000)
-    
+
     Returns:
         Truncated content with notice if truncation occurred, original content otherwise
     """
     if len(content) <= max_length:
         return content
-    
+
     truncated = content[:max_length]
     notice = f"\n\n⚠️ [TRUNCATED] Response truncated: showing first {max_length:,} characters of {len(content):,} total characters. The response may be incomplete."
     return truncated + notice
 
 
-def truncate_dict_response(response: dict, max_length: int = MAX_RESPONSE_LENGTH) -> dict:
+def truncate_dict_response(
+    response: dict, max_length: int = MAX_RESPONSE_LENGTH
+) -> dict:
     """Truncate string values in a dictionary response if they exceed the maximum length.
-    
+
     This is useful for tools that return dictionaries with potentially large string values.
     The function will truncate string values and add truncation notices.
-    
+
     Args:
         response: Dictionary response that may contain large string values
         max_length: Maximum length in characters for each string value (default: 80,000)
-    
+
     Returns:
         Dictionary with truncated string values and notices if truncation occurred
     """
@@ -68,6 +70,5 @@ def truncate_dict_response(response: dict, max_length: int = MAX_RESPONSE_LENGTH
             truncated_response[key] = truncated_list
         else:
             truncated_response[key] = value
-    
-    return truncated_response
 
+    return truncated_response

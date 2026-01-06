@@ -197,7 +197,7 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
     def get_client(self) -> Optional[Any]:
         """
         Get the underlying provider client by delegating to wrapped provider.
-        
+
         Uses the interface method to respect abstraction.
         """
         return self._provider.get_client()
@@ -206,7 +206,7 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
     def client(self):
         """
         Property for backward compatibility with code that directly accesses provider.client.
-        
+
         Delegates to get_client() method which uses the interface abstraction.
         """
         return self.get_client()
@@ -593,7 +593,7 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                 # Checkout branch (create if doesn't exist)
                 try:
                     repo.git.worktree("add", worktree_dir, ref)
-                except GitCommandError as worktree_error:
+                except GitCommandError:
                     # Branch might not exist locally, try to fetch and create
                     # First check if origin remote exists
                     remotes = [r.name for r in repo.remotes]
@@ -617,7 +617,9 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                                 # Branch doesn't exist, create it from HEAD without checking out
                                 # Use worktree add with -b flag to create branch in worktree
                                 current_head = repo.head.commit.hexsha
-                                repo.git.worktree("add", "-b", ref, worktree_dir, current_head)
+                                repo.git.worktree(
+                                    "add", "-b", ref, worktree_dir, current_head
+                                )
                     else:
                         # No origin remote, work with local branches only
                         logger.info(
@@ -632,7 +634,9 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                             # Branch doesn't exist, create it in the worktree from current HEAD
                             # This creates the branch in the worktree without affecting the main repo
                             current_head = repo.head.commit.hexsha
-                            repo.git.worktree("add", "-b", ref, worktree_dir, current_head)
+                            repo.git.worktree(
+                                "add", "-b", ref, worktree_dir, current_head
+                            )
                             logger.info(
                                 f"Created new branch '{ref}' in worktree from HEAD ({current_head[:8]})"
                             )

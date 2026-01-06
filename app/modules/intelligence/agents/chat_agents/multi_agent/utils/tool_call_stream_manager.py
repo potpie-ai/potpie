@@ -33,7 +33,7 @@ class ToolCallStreamManager:
         tool_call_details: Optional[dict] = None,
     ):
         """Publish a streaming part to Redis stream for a tool call
-        
+
         Args:
             call_id: The tool call ID (used as stream key)
             stream_part: The partial content for this stream update
@@ -75,7 +75,9 @@ class ToolCallStreamManager:
 
             logger.debug(f"Published stream part to tool call stream {key}")
         except Exception as e:
-            logger.error(f"Failed to publish stream part to Redis stream {key}: {str(e)}")
+            logger.error(
+                f"Failed to publish stream part to Redis stream {key}: {str(e)}"
+            )
             raise
 
     def publish_complete(
@@ -85,7 +87,7 @@ class ToolCallStreamManager:
         tool_call_details: Optional[dict] = None,
     ):
         """Publish the final complete response for a tool call
-        
+
         Args:
             call_id: The tool call ID
             tool_response: The complete tool response
@@ -117,11 +119,11 @@ class ToolCallStreamManager:
         self, call_id: str, cursor: Optional[str] = None
     ) -> AsyncGenerator[dict, None]:
         """Consume stream events for a tool call asynchronously
-        
+
         Args:
             call_id: The tool call ID to consume streams for
             cursor: Optional cursor position (for reconnection)
-            
+
         Yields:
             Dictionary with stream event data
         """
@@ -165,6 +167,7 @@ class ToolCallStreamManager:
 
                     # Check every 500ms
                     import asyncio
+
                     await asyncio.sleep(0.5)
 
             # Stream live events
@@ -238,4 +241,3 @@ class ToolCallStreamManager:
             logger.debug(f"Cleaned up tool call stream {key}")
         except Exception as e:
             logger.warning(f"Failed to cleanup tool call stream {key}: {str(e)}")
-

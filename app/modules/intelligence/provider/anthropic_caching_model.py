@@ -31,12 +31,11 @@ For more info: https://docs.anthropic.com/en/docs/build-with-claude/prompt-cachi
 from __future__ import annotations
 
 import json
-import os
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, Union, cast
+from typing import Any, Literal
 
 from pydantic_ai.models.anthropic import (
     AnthropicModel,
@@ -561,8 +560,10 @@ class CachingAnthropicModel(AnthropicModel):
         # Ensure model_request_parameters is a ModelRequestParameters object, not a dict
         # This can happen if pydantic-ai passes it as a dict in some cases
         if isinstance(model_request_parameters, dict):
-            model_request_parameters = ModelRequestParameters(**model_request_parameters)
-        
+            model_request_parameters = ModelRequestParameters(
+                **model_request_parameters
+            )
+
         tools = super()._get_tools(model_settings, model_request_parameters)
 
         if tools and self._enable_tool_caching:
@@ -594,8 +595,10 @@ class CachingAnthropicModel(AnthropicModel):
         # Ensure model_request_parameters is a ModelRequestParameters object, not a dict
         # This can happen if pydantic-ai passes it as a dict in some cases
         if isinstance(model_request_parameters, dict):
-            model_request_parameters = ModelRequestParameters(**model_request_parameters)
-        
+            model_request_parameters = ModelRequestParameters(
+                **model_request_parameters
+            )
+
         tools = self._get_tools(model_settings, model_request_parameters)
         tool_choice: BetaToolChoiceParam | None
 

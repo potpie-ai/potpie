@@ -62,16 +62,16 @@ class OpenRouterGeminiModel(OpenAIModel):
 
     def _get_or_create_tool_call_signature(self, tool_call_id: str) -> str:
         """Get or create a deterministic signature for a tool call.
-        
+
         Args:
             tool_call_id: The tool call identifier
-            
+
         Returns:
             A deterministic signature string in the format "{tool_call_id}-{counter:08d}"
         """
         if tool_call_id in self._tool_call_signatures:
             return self._tool_call_signatures[tool_call_id]
-        
+
         # Generate a deterministic signature using a monotonic counter
         signature = f"{tool_call_id}-{self._tool_call_signature_counter:08d}"
         self._tool_call_signatures[tool_call_id] = signature
@@ -116,20 +116,28 @@ class OpenRouterGeminiModel(OpenAIModel):
         # Ensure model_request_parameters is a ModelRequestParameters object, not a dict
         # This can happen if pydantic-ai passes it as a dict in some cases
         if isinstance(model_request_parameters, dict):
-            model_request_parameters = ModelRequestParameters(**model_request_parameters)
-        
+            model_request_parameters = ModelRequestParameters(
+                **model_request_parameters
+            )
+
         # First, ensure all ToolCallParts in message history have signatures
         for message in messages:
             if isinstance(message, ModelResponse):
                 for part in message.parts:
                     if isinstance(part, ToolCallPart):
                         # Ensure the ToolCallPart has a signature attribute
-                        if not hasattr(part, "thought_signature") or not getattr(part, "thought_signature"):
+                        if not hasattr(part, "thought_signature") or not getattr(
+                            part, "thought_signature"
+                        ):
                             # Try to get from cache, or generate a new one
-                            signature = self._tool_call_signatures.get(part.tool_call_id)
+                            signature = self._tool_call_signatures.get(
+                                part.tool_call_id
+                            )
                             if not signature:
-                                signature = self._get_or_create_tool_call_signature(part.tool_call_id)
+                                signature = self._get_or_create_tool_call_signature(
+                                    part.tool_call_id
+                                )
                             setattr(part, "thought_signature", signature)
-        
+
         # Now call the parent implementation which will use our _map_tool_call override
         return await super()._map_messages(messages, model_request_parameters)

@@ -164,7 +164,7 @@ _todo_manager_ctx: ContextVar[Optional[TodoManager]] = ContextVar(
 
 def _get_todo_manager() -> TodoManager:
     """Get the current todo manager for this execution context, creating a new one if needed.
-    
+
     Uses ContextVar to ensure each async execution context (agent run) has its own isolated instance.
     This allows parallel agent runs to have separate state without interference.
     """
@@ -177,7 +177,7 @@ def _get_todo_manager() -> TodoManager:
 
 def _reset_todo_manager() -> None:
     """Reset the todo manager for a new agent run - creates a completely fresh instance in this execution context.
-    
+
     This ensures each agent run starts with a clean state, isolated from other parallel runs.
     """
     new_manager = TodoManager()

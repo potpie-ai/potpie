@@ -34,7 +34,7 @@ class ReasoningManager:
     def finalize_and_save(self) -> Optional[str]:
         """
         Finalize the reasoning content, generate hash, and save to file.
-        
+
         Returns:
             The reasoning hash if content was saved, None otherwise
         """
@@ -74,7 +74,9 @@ def _get_reasoning_manager() -> ReasoningManager:
     """Get the current reasoning manager for this execution context, creating a new one if needed."""
     manager = _reasoning_manager_ctx.get()
     if manager is None:
-        logger.debug("ReasoningManager: Creating new manager instance for this execution context")
+        logger.debug(
+            "ReasoningManager: Creating new manager instance for this execution context"
+        )
         manager = ReasoningManager()
         _reasoning_manager_ctx.set(manager)
     return manager
@@ -91,4 +93,3 @@ def _reset_reasoning_manager() -> None:
     new_manager = ReasoningManager()
     _reasoning_manager_ctx.set(new_manager)
     logger.debug("ReasoningManager: Reset complete")
-

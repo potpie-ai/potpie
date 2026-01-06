@@ -770,7 +770,7 @@ def get_delegation_info_content(
             agent_prefix = "📋 **Linear Integration Agent**"
         case _:
             agent_prefix = f"🤖 **{agent_type.title()} Agent**"
-    
+
     info = f"{agent_prefix}\n\n**Task:**\n{task_description}"
     if context:
         # Truncate context preview for display
@@ -811,6 +811,6 @@ def get_delegation_result_content(agent_type: str, result: str) -> str:
             agent_label = "Linear Agent Result"
         case _:
             agent_label = f"{agent_type.title()} Agent Result"
-    
+
     # Display the full task result without truncation - it can be detailed and include code snippets
     return f"**{agent_label}:**\n\n{result}"

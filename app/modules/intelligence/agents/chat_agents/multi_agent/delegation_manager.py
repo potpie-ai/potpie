@@ -6,9 +6,7 @@ from pydantic_ai import RunContext
 
 from .delegation_streamer import (
     ERROR_MARKER,
-    SubagentErrorType,
     is_subagent_error,
-    extract_error_type_from_response,
 )
 from .utils.delegation_utils import (
     AgentType,

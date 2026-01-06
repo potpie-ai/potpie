@@ -178,7 +178,7 @@ def get_code_from_node_id_tool(sql_db: Session, user_id: str) -> StructuredTool:
                        Inputs for the run method:
                        - project_id (str): The repository ID to retrieve code and docstring for, this is a UUID.
                        - node_id (str): The node ID to retrieve code and docstring for, this is a UUID.
-                       
+
                        ⚠️ IMPORTANT: Large code content may result in truncated responses (max 80,000 characters).
                        If the response is truncated, a notice will be included indicating the truncation occurred.""",
         args_schema=GetCodeFromNodeIdInput,

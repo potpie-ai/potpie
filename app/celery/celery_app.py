@@ -432,7 +432,6 @@ def cleanup_async_tasks_on_shutdown(sender, **kwargs):
 
         # Re-check litellm configuration one more time
         try:
-            import litellm
             import logging
 
             litellm_logger = logging.getLogger("LiteLLM")

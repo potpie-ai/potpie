@@ -245,7 +245,7 @@ def get_code_from_probable_node_name_tool(
             }
 
         Returns list of matching nodes with their code content and metadata.
-        
+
         ⚠️ IMPORTANT: Large code content may result in truncated responses (max 80,000 characters).
         If the response is truncated, a notice will be included indicating the truncation occurred.
         """,

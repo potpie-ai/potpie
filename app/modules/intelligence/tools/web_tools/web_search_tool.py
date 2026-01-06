@@ -31,12 +31,10 @@ class WebSearchToolOutput(BaseModel):
 
 class WebSearchTool:
     name = """Web Search Tool"""
-    description = (
-        """ Searches the web for any information and then gives you the answer.
-        
+    description = """ Searches the web for any information and then gives you the answer.
+
         ⚠️ IMPORTANT: Large search results may result in truncated responses (max 80,000 characters).
         If the response is truncated, a notice will be included indicating the truncation occurred."""
-    )
 
     def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db
@@ -96,7 +94,7 @@ class WebSearchTool:
                 "content": text_response or "",
                 "citations": [],
             }
-            
+
             # Truncate response if it exceeds character limits
             truncated_result = truncate_dict_response(result)
             if len(str(result)) > 80000:

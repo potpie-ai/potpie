@@ -2,7 +2,6 @@
 
 import re
 import hashlib
-from typing import Optional
 from enum import Enum
 
 from app.modules.utils.logger import setup_logger

@@ -1,5 +1,5 @@
 import json
-from typing import Any, AsyncGenerator, Generator, List, Optional, Union, Literal
+from typing import Any, AsyncGenerator, List, Optional, Union, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse

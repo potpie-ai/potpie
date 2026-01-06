@@ -13,7 +13,10 @@ from app.celery.tasks.parsing_tasks import process_parsing
 from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.parsing.graph_construction.parsing_helper import ParseHelper
-from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest, ParsingStatusRequest
+from app.modules.parsing.graph_construction.parsing_schema import (
+    ParsingRequest,
+    ParsingStatusRequest,
+)
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
 from app.modules.parsing.graph_construction.parsing_validator import (
     validate_parsing_input,

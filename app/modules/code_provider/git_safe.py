@@ -12,10 +12,8 @@ import logging
 import time
 import signal
 import os
-import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from typing import Callable, TypeVar, Optional, Any
-from functools import wraps
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +96,7 @@ def safe_git_operation(
                 raise GitOperationTimeoutError(
                     f"Git operation '{operation_name}' timed out after {timeout} seconds"
                 )
-        except Exception as e:
+        except Exception:
             # If we get any exception, make sure we clean up
             if future:
                 try:
