@@ -75,6 +75,9 @@ thoughts/
 .codex/
 worktrees/
 .repos/
+.repos_local/
+.data/
+.debug/
 
 .ruff_cache/
 .pytest_cache/

@@ -2,7 +2,7 @@ from datetime import datetime
 
 from fastapi import HTTPException
 from sqlalchemy import String, cast
-from sqlalchemy.exc import SQLAlchemyError, IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.modules.projects.projects_model import Project
@@ -23,6 +23,35 @@ class ProjectNotFoundError(ProjectServiceError):
 class ProjectService:
     def __init__(self, db: Session):
         self.db = db
+
+    @classmethod
+    def create(cls, db: Session) -> "ProjectService":
+        """Factory method for creating a ProjectService instance."""
+        return cls(db)
+
+    @classmethod
+    def create_from_config(
+        cls,
+        db: Session,
+        *,
+        raise_library_exceptions: bool = False,
+    ) -> "ProjectService":
+        """Factory method that accepts explicit config for library usage.
+
+        This method creates a ProjectService configured for library usage,
+        optionally raising library-specific exceptions instead of HTTPException.
+
+        Args:
+            db: Database session
+            raise_library_exceptions: If True, raise ProjectServiceError/ProjectNotFoundError
+                                      instead of HTTPException (for library usage)
+
+        Returns:
+            Configured ProjectService instance
+        """
+        instance = cls(db)
+        instance._raise_library_exceptions = raise_library_exceptions
+        return instance
 
     async def get_project_name(self, project_ids: list) -> str:
         try:
@@ -62,8 +91,8 @@ class ProjectService:
         branch_name: str,
         user_id: str,
         project_id: str,
-        commit_id: str = None,
-        repo_path: str = None,
+        commit_id: str | None = None,
+        repo_path: str | None = None,
     ):
         # Check if a project with this ID already exists
         existing_project = (
@@ -77,6 +106,8 @@ class ProjectService:
                     f"stored user {existing_project.user_id}, requesting user {user_id}"
                 )
                 logger.warning(message)
+                if getattr(self, "_raise_library_exceptions", False):
+                    raise ProjectServiceError(message)
                 raise HTTPException(status_code=403, detail=message)
 
             # Update the existing project with new information (e.g., normalized repo_name)
@@ -203,17 +234,18 @@ class ProjectService:
         )
 
         if commit_id:
-            # If commit_id is provided, try to find exact match first
+            # If commit_id is provided, only check by commit_id (no fallback to branch)
+            # This ensures repo+commit_id maps to exactly one project
             project = query.filter(Project.commit_id == commit_id).first()
             if project:
                 logger.info(f"Found project by commit_id: {project.id}")
                 return project
-            # ✅ FIX: Fall through to branch-based lookup instead of returning None
             logger.info(
-                f"No project found with commit_id={commit_id}, falling back to branch lookup"
+                f"No project found with commit_id={commit_id}; not falling back to branch lookup."
             )
+            return None
 
-        # Fall back to branch_name lookup
+        # Fall back to branch_name lookup only if commit_id was not provided
         project = query.filter(Project.branch_name == branch_name).first()
         if project:
             logger.info(f"Found project by branch_name: {project.id}")
@@ -385,6 +417,8 @@ class ProjectService:
             .first()
         )
         if not project:
+            if getattr(self, "_raise_library_exceptions", False):
+                raise ProjectNotFoundError(f"Project not found: {project_id}")
             raise HTTPException(status_code=404, detail="Project not found.")
         self.db.delete(project)
         self.db.commit()

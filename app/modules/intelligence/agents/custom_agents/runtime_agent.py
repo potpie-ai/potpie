@@ -53,10 +53,17 @@ class RuntimeCustomAgent(ChatAgent):
         self.agent_config = CustomAgentConfig(**agent_config)
 
     def _build_agent(self) -> ChatAgent:
+        # Put static how_to_prompt FIRST, then cache breakpoint, then dynamic backstory
+        # This enables caching of the static instructions across different custom agents
+        combined_backstory = (
+            how_to_prompt
+            + "\n\n<!-- CACHE_BREAKPOINT -->\n\n"
+            + self.agent_config.backstory
+        )
         agent_config = AgentConfig(
             role=self.agent_config.role,
             goal=self.agent_config.goal,
-            backstory=self.agent_config.backstory + "\n\n" + how_to_prompt,
+            backstory=combined_backstory,
             tasks=[
                 TaskConfig(
                     description=self.agent_config.tasks[0].description,
