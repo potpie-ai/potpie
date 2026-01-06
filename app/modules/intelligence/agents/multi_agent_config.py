@@ -33,6 +33,8 @@ class MultiAgentConfig:
         "LLD_agent": os.getenv("LLD_MULTI_AGENT", "true").lower() == "true",
         "code_changes_agent": os.getenv("CODE_CHANGES_MULTI_AGENT", "true").lower()
         == "true",
+        "sweb_debug_agent": os.getenv("SWEB_DEBUG_MULTI_AGENT", "true").lower()
+        == "true",
     }
 
     # Custom agent multi-agent setting (default enabled)

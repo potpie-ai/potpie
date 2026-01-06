@@ -96,6 +96,9 @@ dev = [
     "ruff>=0.14.3",
 ]
 
+[tool.setuptools.packages.find]
+include = ["potpie*", "app*"]
+
 [tool.bandit]
 exclude_dirs = ["tests", "app/alembic"]
 skips = ["B101", "B601"]  # Skip assert_used and shell injection warnings

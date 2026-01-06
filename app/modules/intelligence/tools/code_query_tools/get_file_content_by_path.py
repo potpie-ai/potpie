@@ -9,6 +9,7 @@ from langchain_core.tools import StructuredTool
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_service import ProjectService
 from app.core.config_provider import config_provider
+from app.modules.intelligence.tools.tool_utils import truncate_response
 
 
 class FetchFileToolInput(BaseModel):
@@ -35,6 +36,7 @@ class FetchFileTool:
         - If the entire file is requested and it has more than 1200 lines, an error will be returned
         - If start_line and end_line span more than 1200 lines, an error will be returned
         - Always use start_line and end_line to fetch specific sections of large files
+        - Maximum 80,000 characters per response (content will be truncated with a notice if exceeded)
 
         param project_id: string, the repository ID (UUID) to get the file content for.
         param file_path: string, the path to the file in the repository.
@@ -160,6 +162,16 @@ class FetchFileTool:
                     with_line_numbers,
                     starting_line=start_line or 1,
                 )
+
+                # Truncate content if it exceeds character limits
+                original_length = len(content)
+                content = truncate_response(content)
+                if len(content) > 80000:
+                    logger.warning(
+                        f"fetch_file (cached) output truncated from {original_length} to 80000 characters "
+                        f"for file {file_path}, project_id={project_id}"
+                    )
+
                 return {
                     "success": True,
                     "content": content,
@@ -187,6 +199,16 @@ class FetchFileTool:
             content = self.with_line_numbers(
                 content, with_line_numbers, starting_line=start_line or 1
             )
+
+            # Truncate content if it exceeds character limits
+            original_length = len(content)
+            content = truncate_response(content)
+            if len(content) > 80000:
+                logger.warning(
+                    f"fetch_file output truncated from {original_length} to 80000 characters "
+                    f"for file {file_path}, project_id={project_id}"
+                )
+
             return {
                 "success": True,
                 "content": content,

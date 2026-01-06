@@ -1,6 +1,10 @@
 import os
 import subprocess
 
+# Set TOKENIZERS_PARALLELISM before any tokenizer imports to prevent fork warnings
+# This must be set before sentence-transformers or any HuggingFace tokenizers are used
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 import sentry_sdk
 from dotenv import load_dotenv
 from fastapi import FastAPI

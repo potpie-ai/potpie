@@ -816,31 +816,48 @@ class UnifiedAuthService:
         user_agent: Optional[str] = None,
     ) -> str:
         """Create a pending provider link (expires in 15 minutes)"""
-        token = secrets.token_urlsafe(LINKING_TOKEN_LENGTH)
-        expires_at = datetime.now(timezone.utc) + timedelta(
-            minutes=LINKING_TOKEN_EXPIRY_MINUTES
-        )
+        from sqlalchemy.exc import IntegrityError, InternalError
 
-        pending_link = PendingProviderLink(
-            user_id=user_id,
-            provider_type=provider_type,
-            provider_uid=provider_uid,
-            provider_data=provider_data,
-            token=token,
-            expires_at=expires_at,
-            ip_address=ip_address,
-            user_agent=user_agent,
-        )
+        try:
+            token = secrets.token_urlsafe(LINKING_TOKEN_LENGTH)
+            expires_at = datetime.now(timezone.utc) + timedelta(
+                minutes=LINKING_TOKEN_EXPIRY_MINUTES
+            )
 
-        self.db.add(pending_link)
-        self.db.commit()
+            pending_link = PendingProviderLink(
+                user_id=user_id,
+                provider_type=provider_type,
+                provider_uid=provider_uid,
+                provider_data=provider_data,
+                token=token,
+                expires_at=expires_at,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
 
-        logger.info(
-            "Created pending link for user %s, provider %s",
-            user_id,
-            provider_type,
-        )
-        return token
+            self.db.add(pending_link)
+            self.db.commit()
+
+            logger.info(
+                "Created pending link for user %s, provider %s",
+                user_id,
+                provider_type,
+            )
+            return token
+        except (IntegrityError, InternalError) as e:
+            self.db.rollback()
+            logger.error(
+                f"Database error creating pending link for user_id={user_id}, provider_type={provider_type}, provider_uid={provider_uid}: {e}",
+                exc_info=True,
+            )
+            raise
+        except Exception as e:
+            self.db.rollback()
+            logger.error(
+                f"Unexpected error creating pending link for user_id={user_id}, provider_type={provider_type}, provider_uid={provider_uid}: {e}",
+                exc_info=True,
+            )
+            raise
 
     def confirm_provider_link(self, linking_token: str) -> Optional[UserAuthProvider]:
         """
@@ -1136,48 +1153,69 @@ class UnifiedAuthService:
         user_agent: Optional[str],
     ) -> User:
         """Create a new user with their first auth provider"""
-        # Extract organization from email using utility function
+        from sqlalchemy.exc import IntegrityError, InternalError
         from app.modules.utils.email_helper import extract_organization_from_email
 
-        organization = extract_organization_from_email(email)
+        try:
+            organization = extract_organization_from_email(email)
 
-        # Create user
-        new_user = User(
-            uid=provider_uid,  # Use provider UID as user ID initially
-            email=email,
-            display_name=display_name or email.split("@")[0],
-            email_verified=email_verified,
-            organization=organization,
-            created_at=utc_now(),
-            last_login_at=utc_now(),
-        )
+            # Create user
+            new_user = User(
+                uid=provider_uid,  # Use provider UID as user ID initially
+                email=email,
+                display_name=display_name or email.split("@")[0],
+                email_verified=email_verified,
+                organization=organization,
+                created_at=utc_now(),
+                last_login_at=utc_now(),
+            )
 
-        self.db.add(new_user)
-        self.db.flush()  # Get the user ID
+            self.db.add(new_user)
+            self.db.flush()  # Get the user ID
 
-        # Encrypt token before storing
-        encrypted_access_token = encrypt_token(access_token) if access_token else None
+            # Encrypt token before storing
+            encrypted_access_token = (
+                encrypt_token(access_token) if access_token else None
+            )
 
-        # Create provider
-        provider = UserAuthProvider(
-            user_id=new_user.uid,
-            provider_type=provider_type,
-            provider_uid=provider_uid,
-            provider_data=provider_data,
-            access_token=encrypted_access_token,
-            is_primary=True,  # First provider is always primary
-            linked_at=utc_now(),
-            last_used_at=utc_now(),
-            linked_by_ip=ip_address,
-            linked_by_user_agent=user_agent,
-        )
+            # Create provider
+            provider = UserAuthProvider(
+                user_id=new_user.uid,
+                provider_type=provider_type,
+                provider_uid=provider_uid,
+                provider_data=provider_data,
+                access_token=encrypted_access_token,
+                is_primary=True,  # First provider is always primary
+                linked_at=utc_now(),
+                last_used_at=utc_now(),
+                linked_by_ip=ip_address,
+                linked_by_user_agent=user_agent,
+            )
 
-        self.db.add(provider)
-        self.db.commit()
-        self.db.refresh(new_user)
+            self.db.add(provider)
+            self.db.commit()
+            self.db.refresh(new_user)
 
-        logger.info("Created new user %s with provider %s", new_user.uid, provider_type)
-        return new_user
+            logger.info(
+                "Created new user %s with provider %s", new_user.uid, provider_type
+            )
+            return new_user
+        except (IntegrityError, InternalError) as e:
+            # Rollback the transaction on database errors
+            self.db.rollback()
+            logger.error(
+                f"Database error creating user with provider {provider_type}, email={email}, provider_uid={provider_uid}: {e}",
+                exc_info=True,
+            )
+            raise
+        except Exception as e:
+            # Rollback on any other error
+            self.db.rollback()
+            logger.error(
+                f"Unexpected error creating user with provider {provider_type}, email={email}, provider_uid={provider_uid}: {e}",
+                exc_info=True,
+            )
+            raise
 
     def _log_auth_event(
         self,

@@ -117,6 +117,18 @@ MODEL_CONFIG_MAP = {
         "base_url": None,
         "api_version": None,
     },
+    "anthropic/claude-opus-4-5-20251101": {
+        "provider": "anthropic",
+        "default_params": {"temperature": 0.3, "max_tokens": 8000},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": True,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": None,
+        "api_version": None,
+    },
     # DeepSeek Models
     "openrouter/deepseek/deepseek-chat-v3-0324": {
         "provider": "deepseek",
@@ -160,6 +172,19 @@ MODEL_CONFIG_MAP = {
         "api_version": None,
     },
     "openrouter/google/gemini-2.5-pro-preview": {
+        "provider": "gemini",
+        "auth_provider": "openrouter",
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": True,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_version": None,
+    },
+    "openrouter/google/gemini-3-pro-preview": {
         "provider": "gemini",
         "auth_provider": "openrouter",
         "default_params": {"temperature": 0.3},

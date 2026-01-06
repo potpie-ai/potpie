@@ -257,3 +257,18 @@ class ICodeProvider(ABC):
             Dict with: limit, remaining, reset_at
         """
         pass
+
+    def get_client(self) -> Optional[Any]:
+        """
+        Get the underlying provider client (e.g., PyGithub client).
+
+        This is an optional method for backward compatibility with code that needs
+        direct access to provider-specific clients. Not all providers have clients
+        (e.g., LocalProvider returns None).
+
+        Returns:
+            Provider-specific client instance, or None if not available
+        """
+        # Default implementation returns None
+        # Providers that have clients should override this
+        return getattr(self, "client", None)

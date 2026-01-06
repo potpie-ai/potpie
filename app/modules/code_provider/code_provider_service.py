@@ -147,11 +147,43 @@ class ProviderWrapper:
     This wrapper uses CodeProviderFactory.create_provider_with_fallback() for all
     authentication, which handles the complete fallback chain (GitHub App → PAT → Unauthenticated).
     No additional fallback logic should be added here - let exceptions propagate to callers.
+
+    When RepoManager is enabled, wraps providers with RepoManagerCodeProviderWrapper
+    to use local repository copies from .repos when available.
     """
 
     def __init__(self, sql_db=None):
         # Don't create provider here - create it per-request with proper auth
         self.sql_db = sql_db
+
+        # Initialize repo manager if enabled
+        self.repo_manager = None
+        try:
+            repo_manager_enabled = (
+                os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
+            )
+            if repo_manager_enabled:
+                from app.modules.repo_manager import RepoManager
+
+                self.repo_manager = RepoManager()
+                logger.info("ProviderWrapper: RepoManager initialized")
+        except Exception as e:
+            logger.warning(f"ProviderWrapper: Failed to initialize RepoManager: {e}")
+
+    def _wrap_provider_if_needed(self, provider):
+        """
+        Wrap provider with RepoManagerCodeProviderWrapper if repo_manager is available.
+
+        This ensures that when local copies exist in .repos, they are used instead
+        of making API calls to GitHub or other providers.
+        """
+        if self.repo_manager:
+            from app.modules.code_provider.repo_manager_wrapper import (
+                RepoManagerCodeProviderWrapper,
+            )
+
+            return RepoManagerCodeProviderWrapper(provider, self.repo_manager)
+        return provider
 
     def get_repo(self, repo_name):
         """
@@ -161,6 +193,9 @@ class ProviderWrapper:
 
         If a configured token is invalid (401), falls back to unauthenticated access
         for GitHub public repos as a last resort.
+
+        Note: get_repo doesn't use local copies since it needs to fetch repository metadata
+        from the provider API. Local copies are used for file content and structure operations.
         """
         provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
 
@@ -198,7 +233,9 @@ class ProviderWrapper:
             return (provider.client, provider.client.get_repo(repo_name))
 
         # Return the provider client and mock repo
-        return provider.client, MockRepo(repo_info, provider)
+        # Use the interface method to get client (respects abstraction)
+        client = provider.get_client()
+        return client, MockRepo(repo_info, provider)
 
     def get_file_content(
         self,
@@ -213,10 +250,15 @@ class ProviderWrapper:
         """
         Get file content using the provider with fallback authentication.
 
+        When RepoManager is enabled, checks for local copies in .repos first.
+        If a local copy exists, uses it instead of making API calls.
+
         If a configured token is invalid (401), falls back to unauthenticated access
         for GitHub public repos as a last resort.
         """
         provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
+        # Wrap provider to use local copies if available
+        provider = self._wrap_provider_if_needed(provider)
 
         try:
             return provider.get_file_content(
@@ -250,6 +292,8 @@ class ProviderWrapper:
 
                 unauth_provider = GitHubProvider()
                 unauth_provider.set_unauthenticated_client()
+                # Wrap unauthenticated provider too
+                unauth_provider = self._wrap_provider_if_needed(unauth_provider)
                 return unauth_provider.get_file_content(
                     repo_name=repo_name,
                     file_path=file_path,
@@ -290,6 +334,13 @@ class ProviderWrapper:
                 f"Retrieved repository {'path' if repo_path else 'name'} '{repo_name}' for project_id '{project_id}'"
             )
 
+            # Extract branch_name or commit_id from project for ref parameter
+            ref = (
+                project.get("branch_name")
+                if project.get("branch_name")
+                else project.get("commit_id")
+            )
+
             # Auto-detect local paths (absolute paths, starting with ~, or valid directory)
             is_local_path = (
                 os.path.isabs(repo_name)
@@ -300,18 +351,54 @@ class ProviderWrapper:
             # Determine provider type to decide which implementation to use
             provider_type = os.getenv("CODE_PROVIDER", "github").lower()
 
+            # Check if local copy exists in repo_manager first
+            # This takes precedence over all other methods
+            if self.repo_manager:
+                # Try to get local copy path - check without ref first
+                local_path = self.repo_manager.get_repo_path(repo_name)
+                if local_path and os.path.exists(local_path):
+                    logger.info(
+                        f"[REPO_MANAGER] Using local copy for repository structure: "
+                        f"{repo_name}@{ref} (path: {local_path})"
+                    )
+                    # Use provider wrapped with repo_manager to get structure from local copy
+                    # The wrapper will handle finding the correct worktree based on ref
+                    provider = CodeProviderFactory.create_provider_with_fallback(
+                        repo_name
+                    )
+                    provider = self._wrap_provider_if_needed(provider)
+                    structure = provider.get_repository_structure(
+                        repo_name=repo_name, path=path or "", ref=ref, max_depth=4
+                    )
+                    return structure
+
             # For local repos detected by path, always use LocalProvider
             if is_local_path or provider_type == "local":
                 provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
+                # Wrap provider to use local copies if available
+                provider = self._wrap_provider_if_needed(provider)
                 # Use the provider to get repository structure
                 structure = provider.get_repository_structure(
-                    repo_name=repo_name, path=path or "", max_depth=4
+                    repo_name=repo_name, path=path or "", ref=ref, max_depth=4
                 )
                 return structure
 
             # For GitHub repos, use the old GithubService implementation which has better async handling,
             # caching, proper depth tracking, and returns formatted string output
+            # But first check if we should use local copy instead
             if provider_type == "github":
+                # If repo_manager is available, prefer using wrapped provider for local copies
+                if self.repo_manager:
+                    provider = CodeProviderFactory.create_provider_with_fallback(
+                        repo_name
+                    )
+                    provider = self._wrap_provider_if_needed(provider)
+                    structure = provider.get_repository_structure(
+                        repo_name=repo_name, path=path or "", ref=ref, max_depth=4
+                    )
+                    return structure
+
+                # Fallback to GithubService for remote-only access
                 from app.modules.code_provider.github.github_service import (
                     GithubService,
                 )
@@ -324,10 +411,12 @@ class ProviderWrapper:
 
             # For other providers (local, GitBucket, etc.), use the provider-based approach
             provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
+            # Wrap provider to use local copies if available
+            provider = self._wrap_provider_if_needed(provider)
 
             # Use the provider to get repository structure
             structure = provider.get_repository_structure(
-                repo_name=repo_name, path=path or "", max_depth=4
+                repo_name=repo_name, path=path or "", ref=ref, max_depth=4
             )
 
             return structure

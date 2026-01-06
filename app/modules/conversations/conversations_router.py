@@ -1,5 +1,5 @@
 import json
-from typing import Any, AsyncGenerator, Generator, List, Optional, Union, Literal
+from typing import Any, AsyncGenerator, List, Optional, Union, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -42,78 +42,17 @@ router = APIRouter()
 logger = setup_logger(__name__)
 
 
-def _normalize_run_id(
-    conversation_id: str,
-    user_id: str,
-    session_id: str = None,
-    prev_human_message_id: str = None,
-) -> str:
-    """
-    Generate user-scoped deterministic session IDs.
-    Format: conversation:{user_id}:{prev_human_message_id}
-    If no prev_human_message_id provided, defaults to 'new'
-    """
-    if session_id:
-        return session_id
-
-    # Use provided prev_human_message_id or default to 'new'
-    message_id = prev_human_message_id if prev_human_message_id else "new"
-    return f"conversation:{user_id}:{message_id}"
+from app.modules.conversations.utils.conversation_routing import (
+    normalize_run_id,
+    ensure_unique_run_id,
+    redis_stream_generator,
+    start_celery_task_and_stream,
+)
 
 
 async def get_stream(data_stream: AsyncGenerator[Any, None]):
     async for chunk in data_stream:
         yield json.dumps(chunk.dict())
-
-
-def redis_stream_generator(
-    conversation_id: str, run_id: str, cursor: Optional[str] = None
-) -> Generator[str, None, None]:
-    """Stream events from Redis to client"""
-    from app.modules.conversations.utils.redis_streaming import RedisStreamManager
-    from app.modules.conversations.conversation.conversation_schema import (
-        ChatMessageResponse,
-    )
-
-    def json_serializer(obj):
-        """Custom JSON serializer to handle bytes objects"""
-        if isinstance(obj, bytes):
-            return obj.decode("utf-8", errors="replace")
-        return str(obj)
-
-    redis_manager = RedisStreamManager()
-
-    try:
-        for event in redis_manager.consume_stream(conversation_id, run_id, cursor):
-            # Convert to ChatMessageResponse format for compatibility
-            if event.get("type") == "chunk":
-                tool_calls = event.get("tool_calls", [])
-                content = event.get("content", "")
-                response = ChatMessageResponse(
-                    message=content,
-                    citations=event.get("citations", []),
-                    tool_calls=tool_calls,
-                )
-                json_response = json.dumps(response.dict(), default=json_serializer)
-                yield json_response
-
-            elif event.get("type") == "queued":
-                # Send a queued status to the client
-                response = ChatMessageResponse(
-                    message="",
-                    citations=[],
-                    tool_calls=[],
-                )
-                json_response = json.dumps(response.dict(), default=json_serializer)
-                yield json_response
-
-            elif event.get("type") == "end":
-                # End the stream when we receive an end event
-                break
-
-    except Exception as e:
-        logger.error(f"Redis streaming error: {str(e)}")
-        # Don't yield error events to match original behavior
 
 
 class ConversationAPI:
@@ -323,51 +262,19 @@ class ConversationAPI:
                     return chunk
 
             # Streaming with session management
-            run_id = _normalize_run_id(
+            run_id = normalize_run_id(
                 conversation_id, user_id, session_id, prev_human_message_id
             )
 
             # For fresh requests without cursor, ensure we get a unique stream
-            # by checking if the stream already exists and modifying run_id if needed
             if not cursor:
-                from app.modules.conversations.utils.redis_streaming import (
-                    RedisStreamManager,
-                )
-
-                redis_manager = RedisStreamManager()
-                original_run_id = run_id
-                counter = 1
-
-                # Find a unique run_id if the original already has an active stream
-                while redis_manager.redis_client.exists(
-                    redis_manager.stream_key(conversation_id, run_id)
-                ):
-                    run_id = f"{original_run_id}-{counter}"
-                    counter += 1
-
-            # Start background agent execution (non-blocking)
-            from app.celery.tasks.agent_tasks import execute_agent_background
+                run_id = ensure_unique_run_id(conversation_id, run_id)
 
             # Use parsed node_ids
             node_ids_list = parsed_node_ids or []
 
-            # Set initial "queued" status before starting the task
-            redis_manager = RedisStreamManager()
-            redis_manager.set_task_status(conversation_id, run_id, "queued")
-
-            # Publish a queued event so the client knows the task is accepted
-            redis_manager.publish_event(
-                conversation_id,
-                run_id,
-                "queued",
-                {
-                    "status": "queued",
-                    "message": "Task queued for processing",
-                },
-            )
-
-            # Start background task
-            task_result = execute_agent_background.delay(
+            # Start background task and return streaming response
+            return start_celery_task_and_stream(
                 conversation_id=conversation_id,
                 run_id=run_id,
                 user_id=user_id,
@@ -375,30 +282,7 @@ class ConversationAPI:
                 agent_id=None,
                 node_ids=node_ids_list,
                 attachment_ids=attachment_ids or [],
-            )
-
-            # Store the Celery task ID for later revocation
-            redis_manager.set_task_id(conversation_id, run_id, task_result.id)
-            logger.info(
-                f"Started agent task {task_result.id} for {conversation_id}:{run_id}"
-            )
-
-            # Wait for background task to start (with health check)
-            # Increased timeout to 30 seconds to handle queued tasks
-            task_started = redis_manager.wait_for_task_start(
-                conversation_id, run_id, timeout=30
-            )
-
-            if not task_started:
-                logger.warning(
-                    f"Background task failed to start within 30s for {conversation_id}:{run_id} - may still be queued"
-                )
-                # Don't fail - the stream consumer will wait up to 120 seconds
-
-            # Return Redis stream response
-            return StreamingResponse(
-                redis_stream_generator(conversation_id, run_id, cursor),
-                media_type="text/event-stream",
+                cursor=cursor,
             )
 
     @staticmethod
@@ -448,27 +332,13 @@ class ConversationAPI:
         controller = ConversationController(db, async_db, user_id, user_email)
 
         # Generate deterministic run_id
-        run_id = _normalize_run_id(
+        run_id = normalize_run_id(
             conversation_id, user_id, session_id, prev_human_message_id
         )
 
         # For fresh requests without cursor, ensure we get a unique stream
-        # by checking if the stream already exists and modifying run_id if needed
         if not cursor:
-            from app.modules.conversations.utils.redis_streaming import (
-                RedisStreamManager,
-            )
-
-            redis_manager = RedisStreamManager()
-            original_run_id = run_id
-            counter = 1
-
-            # Find a unique run_id if the original already has an active stream
-            while redis_manager.redis_client.exists(
-                redis_manager.stream_key(conversation_id, run_id)
-            ):
-                run_id = f"{original_run_id}-{counter}"
-                counter += 1
+            run_id = ensure_unique_run_id(conversation_id, run_id)
 
         # Extract attachment IDs from last human message
         try:
@@ -477,8 +347,20 @@ class ConversationAPI:
                 conversation_id
             )
             attachment_ids = []
-            if last_human_message and last_human_message.attachments:
-                attachment_ids = [att.id for att in last_human_message.attachments]
+            if last_human_message and last_human_message.has_attachments:
+                # Use media service to get attachments instead of accessing relationship directly
+                # This avoids SQLAlchemy async lazy-loading issues
+                try:
+                    media_service = MediaService(db)
+                    attachments = await media_service.get_message_attachments(
+                        last_human_message.id, include_download_urls=False
+                    )
+                    attachment_ids = [att.id for att in attachments]
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to retrieve attachments for message {last_human_message.id}: {e}"
+                    )
+                    attachment_ids = []
         except Exception as e:
             logger.error(f"Failed to get last human message for regenerate: {str(e)}")
             attachment_ids = []
@@ -528,7 +410,7 @@ class ConversationAPI:
             )
             # Don't fail - the stream consumer will wait up to 120 seconds
 
-        # Return Redis stream response
+        # Return Redis stream response using shared function
         return StreamingResponse(
             redis_stream_generator(conversation_id, run_id, cursor),
             media_type="text/event-stream",

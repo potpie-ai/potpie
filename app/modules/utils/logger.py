@@ -117,9 +117,11 @@ def production_log_sink(message):
     exc = record.get("exception")
     if exc:
         exception = {
-            "type": exc.get("type", {}).get("name", "Exception")
-            if isinstance(exc.get("type"), dict)
-            else str(exc.get("type", "Exception")),
+            "type": (
+                exc.get("type", {}).get("name", "Exception")
+                if isinstance(exc.get("type"), dict)
+                else str(exc.get("type", "Exception"))
+            ),
             "value": filter_sensitive_data(str(exc.get("value", ""))),
             "traceback": filter_sensitive_data(str(exc.get("traceback", ""))),
         }
@@ -191,7 +193,7 @@ def configure_logging(level: Optional[str] = None):
     if level is None:
         level = os.getenv("LOG_LEVEL", "INFO").upper()
 
-    env = os.getenv("ENV").lower().strip()
+    env = (os.getenv("ENV") or "development").lower().strip()
 
     _logger.remove()
 
