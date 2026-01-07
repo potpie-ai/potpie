@@ -771,7 +771,8 @@ class DelegationStreamer:
             try:
                 tool_ctx = node.stream(run.ctx)
                 tool_stream = await asyncio.wait_for(
-                    tool_ctx.__aenter__(), timeout=60.0  # 60s to enter context
+                    tool_ctx.__aenter__(),
+                    timeout=60.0,  # 60s to enter context
                 )
             except asyncio.TimeoutError:
                 logger.error(

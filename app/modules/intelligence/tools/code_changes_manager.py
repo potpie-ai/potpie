@@ -23,7 +23,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any, Union, Callable, TypeVar
 from enum import Enum
 from dataclasses import dataclass, asdict
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from app.modules.utils.logger import setup_logger
 from app.core.config_provider import ConfigProvider
