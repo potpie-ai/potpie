@@ -268,7 +268,8 @@ class ToolCallStreamManager:
             )
             if not cursor and not key_exists_check:
                 # Wait for the stream to be created (with timeout)
-                wait_timeout = 300  # 5 minutes for tool call streams
+                # Generous timeout to allow for complex tool operations
+                wait_timeout = 660  # 11 minutes for tool call streams (aligns with delegation timeout)
                 wait_start = datetime.now()
 
                 while True:

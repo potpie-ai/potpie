@@ -1,7 +1,7 @@
 """Execution flows for different agent execution modes"""
 
 import traceback
-from typing import AsyncGenerator, Any
+from typing import AsyncGenerator, Any, Optional
 import anyio
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.usage import UsageLimits
@@ -17,24 +17,36 @@ from app.modules.utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 
-def reset_managers():
-    """Reset todo manager, code changes manager, and requirement manager"""
+def init_managers(conversation_id: Optional[str] = None):
+    """Initialize managers for agent run.
+
+    This initializes all tool managers for the current agent execution context.
+    For code changes, this loads any existing changes from Redis for the conversation,
+    allowing changes to persist across messages in the same conversation.
+
+    Args:
+        conversation_id: The conversation ID for persisting state (e.g., code changes) across messages.
+    """
     from app.modules.intelligence.tools.todo_management_tool import (
         _reset_todo_manager,
     )
     from app.modules.intelligence.tools.code_changes_manager import (
-        _reset_code_changes_manager,
+        _init_code_changes_manager,
     )
     from app.modules.intelligence.tools.requirement_verification_tool import (
         _reset_requirement_manager,
     )
 
     _reset_todo_manager()
-    _reset_code_changes_manager()
+    _init_code_changes_manager(conversation_id)
     _reset_requirement_manager()
     logger.info(
-        "🔄 Reset todo manager, code changes manager, and requirement manager for new agent run"
+        f"🔄 Initialized managers for agent run (conversation_id={conversation_id})"
     )
+
+
+# Backward compatibility alias
+reset_managers = init_managers
 
 
 class StandardExecutionFlow:
@@ -304,14 +316,38 @@ class StreamingExecutionFlow:
                         self.current_supervisor_run_ref["run"] = None
 
         except Exception as e:
-            logger.error(
-                f"Error in standard multi-agent stream: {str(e)}", exc_info=True
-            )
-            yield ChatAgentResponse(
-                response="\n\n*An error occurred during multi-agent streaming*\n\n",
-                tool_calls=[],
-                citations=[],
-            )
+            error_str = str(e)
+            # Check if this is a tool retry error from pydantic-ai
+            if (
+                "exceeded max retries" in error_str.lower()
+                and "tool" in error_str.lower()
+            ):
+                # Extract tool name if possible
+                tool_name = "unknown"
+                if "'" in error_str:
+                    parts = error_str.split("'")
+                    if len(parts) >= 2:
+                        tool_name = parts[1]
+
+                logger.warning(
+                    f"Tool '{tool_name}' exceeded max retries in multi-agent stream. "
+                    f"This usually indicates the tool is failing repeatedly. Error: {error_str}",
+                    exc_info=True,
+                )
+                yield ChatAgentResponse(
+                    response=f"\n\n*An error occurred while executing tool '{tool_name}'. The tool failed after retries. Please try a different approach.*\n\n",
+                    tool_calls=[],
+                    citations=[],
+                )
+            else:
+                logger.error(
+                    f"Error in standard multi-agent stream: {error_str}", exc_info=True
+                )
+                yield ChatAgentResponse(
+                    response="\n\n*An error occurred during multi-agent streaming*\n\n",
+                    tool_calls=[],
+                    citations=[],
+                )
 
 
 class MultimodalStreamingExecutionFlow:

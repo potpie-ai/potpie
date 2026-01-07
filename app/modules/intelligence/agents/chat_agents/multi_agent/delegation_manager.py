@@ -295,11 +295,15 @@ class DelegationManager:
             chunk_count = 0
             stream_start_time = asyncio.get_event_loop().time()
             last_chunk_time = stream_start_time
-            # Align with AGENT_ITER_TIMEOUT from delegation_streamer (180s)
+            # Align with AGENT_ITER_TIMEOUT from delegation_streamer (600s = 10 min)
             # Add buffer for cleanup and error handling
-            stream_timeout = 200.0  # 3 min 20s total timeout
+            stream_timeout = (
+                660.0  # 11 minutes total timeout (10 min agent + 1 min buffer)
+            )
             chunk_timeout = (
-                45.0  # 45 second timeout between chunks (EVENT_TIMEOUT + buffer)
+                150.0  # 2.5 minute timeout between chunks (EVENT_TIMEOUT + buffer)
+                # Note: With keepalive mechanism, we should receive empty keepalives
+                # even during long operations, so this timeout indicates something is stuck
             )
 
             # Get the async generator
@@ -645,7 +649,12 @@ class DelegationManager:
                     await self.tool_call_stream_manager.publish_complete_async(
                         call_id=call_id,
                         tool_response=error_message,
+                    )
                 except Exception as redis_error:
+                    logger.error(
+                        f"[SUBAGENT STREAM] Failed to publish error response to Redis stream for call_id {call_id}: {redis_error}",
+                        exc_info=True,
+                    )
 
             # Store collected chunks (including error)
             self._delegation_streamed_content[cache_key] = collected_chunks
