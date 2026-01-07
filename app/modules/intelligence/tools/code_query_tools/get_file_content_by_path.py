@@ -213,6 +213,14 @@ class FetchFileTool:
                 "success": True,
                 "content": content,
             }
+        except FileNotFoundError as e:
+            # File not found is an expected scenario - log at warning level without traceback
+            logger.warning(f"File not found: {file_path} - {str(e)}")
+            return {
+                "success": False,
+                "error": f"File '{file_path}' does not exist in the repository. Please verify the file path is correct.",
+                "content": None,
+            }
         except Exception as e:
             logger.exception(f"Failed to fetch file content for {file_path}")
             return {"success": False, "error": str(e), "content": None}

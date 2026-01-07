@@ -444,7 +444,7 @@ AVAILABLE_MODELS = [
     AvailableModelOption(
         id="openrouter/google/gemini-2.5-pro-preview",
         name="Gemini 2.5 Pro",
-        description="Google's Latest pro Gemini model",
+        description="Google's pro Gemini model",
         provider="gemini",
         is_chat_model=True,
         is_inference_model=True,
@@ -452,8 +452,16 @@ AVAILABLE_MODELS = [
     AvailableModelOption(
         id="openrouter/google/gemini-3-pro-preview",
         name="Gemini 3 Pro Preview",
-        description="Latest Gemini 3 Pro capabilities via OpenRouter",
+        description="Latest Gemini 3 Pro capabilities",
         provider="gemini",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
+    AvailableModelOption(
+        id="openrouter/z-ai/glm-4.7",
+        name="Z AI GLM 4.7",
+        description="Latest Z AI model",
+        provider="zai",
         is_chat_model=True,
         is_inference_model=True,
     ),

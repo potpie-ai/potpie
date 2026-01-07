@@ -295,11 +295,15 @@ class DelegationManager:
             chunk_count = 0
             stream_start_time = asyncio.get_event_loop().time()
             last_chunk_time = stream_start_time
-            # Align with AGENT_ITER_TIMEOUT from delegation_streamer (180s)
+            # Align with AGENT_ITER_TIMEOUT from delegation_streamer (600s = 10 min)
             # Add buffer for cleanup and error handling
-            stream_timeout = 200.0  # 3 min 20s total timeout
+            stream_timeout = (
+                660.0  # 11 minutes total timeout (10 min agent + 1 min buffer)
+            )
             chunk_timeout = (
-                45.0  # 45 second timeout between chunks (EVENT_TIMEOUT + buffer)
+                150.0  # 2.5 minute timeout between chunks (EVENT_TIMEOUT + buffer)
+                # Note: With keepalive mechanism, we should receive empty keepalives
+                # even during long operations, so this timeout indicates something is stuck
             )
 
             # Get the async generator
@@ -477,12 +481,15 @@ class DelegationManager:
 
                     # Publish to Redis stream if call_id is provided
                     # Only publish text content, not tool calls
+                    # Use async version to avoid blocking the event loop
                     if call_id and chunk.response:
                         try:
-                            self.tool_call_stream_manager.publish_stream_part(
-                                call_id=call_id,
-                                stream_part=chunk.response,
-                                is_complete=False,
+                            await (
+                                self.tool_call_stream_manager.publish_stream_part_async(
+                                    call_id=call_id,
+                                    stream_part=chunk.response,
+                                    is_complete=False,
+                                )
                             )
                         except Exception as redis_error:
                             logger.warning(
@@ -551,13 +558,14 @@ class DelegationManager:
                 )
 
             # Publish final complete response to Redis stream if call_id is provided
+            # Use async version to avoid blocking the event loop
             if call_id:
                 try:
                     logger.info(
                         f"[SUBAGENT STREAM] Publishing final complete response to Redis: "
                         f"call_id={call_id}, response_length={len(full_response)}"
                     )
-                    self.tool_call_stream_manager.publish_complete(
+                    await self.tool_call_stream_manager.publish_complete_async(
                         call_id=call_id,
                         tool_response=full_response,
                     )
@@ -628,22 +636,24 @@ class DelegationManager:
             logger.error(f"[SUBAGENT STREAM] Error response sent: {error_message}")
 
             # Publish error to Redis stream if call_id is provided
+            # Use async version to avoid blocking the event loop
             if call_id:
                 try:
                     error_message = f"*Error in subagent execution: {str(e)}*"
-                    self.tool_call_stream_manager.publish_stream_part(
+                    await self.tool_call_stream_manager.publish_stream_part_async(
                         call_id=call_id,
                         stream_part=error_message,
                         is_complete=True,
                         tool_response=error_message,
                     )
-                    self.tool_call_stream_manager.publish_complete(
+                    await self.tool_call_stream_manager.publish_complete_async(
                         call_id=call_id,
                         tool_response=error_message,
                     )
                 except Exception as redis_error:
-                    logger.warning(
-                        f"Failed to publish error to Redis stream for call_id {call_id}: {redis_error}"
+                    logger.error(
+                        f"[SUBAGENT STREAM] Failed to publish error response to Redis stream for call_id {call_id}: {redis_error}",
+                        exc_info=True,
                     )
 
             # Store collected chunks (including error)

@@ -98,7 +98,7 @@ def create_tool_call_response(event: FunctionToolCallEvent) -> ToolCallResponse:
             call_id=event.part.tool_call_id or "",
             event_type=ToolCallEventType.CALL,
             tool_name=tool_name,
-            tool_response=get_tool_run_message(tool_name),
+            tool_response=get_tool_run_message(tool_name, args_dict),
             tool_call_details={
                 "summary": get_tool_call_info_content(tool_name, args_dict)
             },

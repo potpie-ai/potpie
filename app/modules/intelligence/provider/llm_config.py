@@ -197,6 +197,20 @@ MODEL_CONFIG_MAP = {
         "base_url": "https://openrouter.ai/api/v1",
         "api_version": None,
     },
+    # Z-AI / GLM Models
+    "openrouter/z-ai/glm-4.7": {
+        "provider": "zai",
+        "auth_provider": "openrouter",
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": True,
+            "supports_tool_parallelism": False,  # Disable parallel tool calls for stability
+        },
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_version": None,
+    },
 }
 
 

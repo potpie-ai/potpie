@@ -7,6 +7,7 @@ from langchain_core.tools import StructuredTool
 from pydantic_ai import Agent
 
 from app.modules.intelligence.provider.provider_service import ProviderService
+from app.modules.intelligence.tools.tool_service import ToolService
 from .agent_config import AgentConfig
 from .history_processor import create_history_processor
 from app.modules.utils.logger import setup_logger
@@ -24,7 +25,7 @@ from .multi_agent.execution_flows import (
     MultimodalExecutionFlow,
     StreamingExecutionFlow,
     MultimodalStreamingExecutionFlow,
-    reset_managers,
+    init_managers,
 )
 from .multi_agent.utils.tool_utils import create_error_response
 
@@ -52,14 +53,25 @@ class PydanticMultiAgent(ChatAgent):
         tools: List[StructuredTool],
         mcp_servers: List[dict] | None = None,
         delegate_agents: Optional[Dict[AgentType, AgentConfig]] = None,
+        tools_provider: Optional[ToolService] = None,
     ):
-        """Initialize the multi-agent system with configuration and tools"""
+        """Initialize the multi-agent system with configuration and tools
+
+        Args:
+            llm_provider: The LLM provider service
+            config: Agent configuration
+            tools: List of tools to use
+            mcp_servers: Optional MCP servers configuration
+            delegate_agents: Optional delegate agent configurations
+            tools_provider: Optional ToolService for integration agents to get their tools directly
+        """
         self.tasks = config.tasks
         self.max_iter = config.max_iter
         self.llm_provider = llm_provider
         self.tools = tools
         self.config = config
         self.mcp_servers = mcp_servers or []
+        self.tools_provider = tools_provider
 
         # Clean tool names (no spaces for pydantic agents)
         for i, tool in enumerate(tools):
@@ -92,6 +104,7 @@ class PydanticMultiAgent(ChatAgent):
             delegate_agents=self.delegate_agents,
             history_processor=self._history_processor,
             create_delegation_function=delegation_manager.create_delegation_function,
+            tools_provider=tools_provider,
         )
 
         # Now update delegation_manager with real create_delegate_agent
@@ -150,8 +163,7 @@ class PydanticMultiAgent(ChatAgent):
         self._delegation_manager = delegation_manager
         self._stream_processor = stream_processor
 
-        # Reset managers on initialization
-        reset_managers()
+        # Note: Managers are initialized in run() and run_stream() with conversation_id
 
     def _create_supervisor_agent(self, ctx: ChatContext) -> Agent:
         """Create supervisor agent using agent factory"""
@@ -176,8 +188,8 @@ class PydanticMultiAgent(ChatAgent):
         # Store context for delegation functions
         self._current_context = ctx
 
-        # Reset managers
-        reset_managers()
+        # Initialize managers with conversation_id for persistence across messages
+        init_managers(conversation_id=ctx.conversation_id)
 
         # Check if we have images and if the model supports vision
         if ctx.has_images() and self.llm_provider.is_vision_model():
@@ -204,8 +216,8 @@ class PydanticMultiAgent(ChatAgent):
         # Store context for delegation functions
         self._current_context = ctx
 
-        # Reset managers
-        reset_managers()
+        # Initialize managers with conversation_id for persistence across messages
+        init_managers(conversation_id=ctx.conversation_id)
 
         # Check if we have images and if the model supports vision
         if ctx.has_images() and self.llm_provider.is_vision_model():
