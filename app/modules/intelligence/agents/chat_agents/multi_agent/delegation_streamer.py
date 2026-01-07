@@ -30,10 +30,16 @@ from app.modules.utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 # Timeout constants for subagent operations
-AGENT_ITER_TIMEOUT = 180.0  # 3 minutes max for entire agent run
-NODE_TIMEOUT = 120.0  # 2 minutes max per node
-EVENT_TIMEOUT = 30.0  # 30 seconds max between events
-TOOL_EXECUTION_TIMEOUT = 120.0  # 2 minutes max for tool execution
+# These are generous timeouts to allow complex tasks to complete
+# Event-driven keepalive mechanisms prevent getting stuck even with long timeouts
+AGENT_ITER_TIMEOUT = 600.0  # 10 minutes max for entire agent run
+NODE_TIMEOUT = 300.0  # 5 minutes max per node (allows for complex tool executions)
+EVENT_TIMEOUT = 120.0  # 2 minutes max between LLM stream events
+TOOL_EXECUTION_TIMEOUT = 300.0  # 5 minutes max for tool execution
+
+# Keepalive/heartbeat intervals for event-driven monitoring
+KEEPALIVE_INTERVAL = 30.0  # Emit keepalive every 30 seconds during long operations
+PROGRESS_LOG_INTERVAL = 15.0  # Log progress every 15 seconds
 
 
 class SubagentErrorType(Enum):
@@ -334,7 +340,7 @@ class DelegationStreamer:
         reasoning_manager: Any,
         execution_state: dict,
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-        """Run agent with overall timeout wrapper."""
+        """Run agent with overall timeout wrapper and event-driven monitoring."""
 
         async def _run_agent():
             async with agent.iter(
@@ -346,7 +352,90 @@ class DelegationStreamer:
                     f"[SUBAGENT] agent.iter() started (agent_type={agent_type})"
                 )
 
-                async for node in run:
+                # Use manual iteration with timeout instead of async for
+                # to prevent hanging when pydantic-ai is slow to yield nodes
+                node_iter = run.__aiter__()
+                # Generous timeout for node iteration - allows complex operations
+                node_iteration_timeout = 180.0  # 3 minutes max to get next node
+                consecutive_node_timeouts = 0
+                max_consecutive_node_timeouts = 2  # Allow 2 consecutive timeouts
+                last_progress_log = asyncio.get_event_loop().time()
+                agent_start_time = last_progress_log
+
+                while True:
+                    current_time = asyncio.get_event_loop().time()
+
+                    # Progress logging
+                    if current_time - last_progress_log >= PROGRESS_LOG_INTERVAL:
+                        total_elapsed = current_time - agent_start_time
+                        logger.info(
+                            f"[SUBAGENT] 📊 Progress: agent_type={agent_type}, "
+                            f"nodes={execution_state['node_count']}, elapsed={total_elapsed:.1f}s"
+                        )
+                        last_progress_log = current_time
+
+                    # Get next node with timeout to prevent hanging
+                    try:
+                        node = await asyncio.wait_for(
+                            node_iter.__anext__(), timeout=node_iteration_timeout
+                        )
+                        consecutive_node_timeouts = 0  # Reset on success
+
+                    except StopAsyncIteration:
+                        logger.info(
+                            f"[SUBAGENT] Node iteration completed normally (agent_type={agent_type})"
+                        )
+                        break
+
+                    except asyncio.TimeoutError:
+                        consecutive_node_timeouts += 1
+                        total_elapsed = (
+                            asyncio.get_event_loop().time() - agent_start_time
+                        )
+
+                        if consecutive_node_timeouts >= max_consecutive_node_timeouts:
+                            logger.error(
+                                f"[SUBAGENT] Node iteration TIMEOUT #{consecutive_node_timeouts} after {node_iteration_timeout}s "
+                                f"(agent_type={agent_type}, total_elapsed={total_elapsed:.1f}s). "
+                                f"Max consecutive timeouts reached. Breaking gracefully."
+                            )
+                            yield ChatAgentResponse(
+                                response=f"\n*Agent timed out waiting for next step after {total_elapsed:.0f}s - using partial results*\n",
+                                tool_calls=[],
+                                citations=[],
+                            )
+                            break
+                        else:
+                            logger.warning(
+                                f"[SUBAGENT] Node iteration timeout #{consecutive_node_timeouts} "
+                                f"(agent_type={agent_type}, elapsed={total_elapsed:.1f}s). Retrying..."
+                            )
+                            # Emit keepalive and continue
+                            yield ChatAgentResponse(
+                                response="",  # Silent keepalive
+                                tool_calls=[],
+                                citations=[],
+                            )
+                            continue
+
+                    except asyncio.CancelledError:
+                        logger.info(
+                            f"[SUBAGENT] Node iteration cancelled (agent_type={agent_type})"
+                        )
+                        raise
+
+                    except Exception as e:
+                        logger.error(
+                            f"[SUBAGENT] Node iteration error (agent_type={agent_type}): {e}",
+                            exc_info=True,
+                        )
+                        yield ChatAgentResponse(
+                            response=f"\n*Error getting next step: {str(e)[:100]}*\n",
+                            tool_calls=[],
+                            citations=[],
+                        )
+                        break
+
                     execution_state["node_count"] += 1
                     node_count = execution_state["node_count"]
                     node_start = asyncio.get_event_loop().time()
@@ -365,16 +454,20 @@ class DelegationStreamer:
 
                     except asyncio.TimeoutError:
                         node_elapsed = asyncio.get_event_loop().time() - node_start
-                        logger.error(
-                            f"[SUBAGENT] Node #{node_count} TIMEOUT after {node_elapsed:.1f}s"
+                        logger.warning(
+                            f"[SUBAGENT] Node #{node_count} timeout after {node_elapsed:.1f}s - continuing to next node"
                         )
                         yield ChatAgentResponse(
-                            response=f"\n*Node timeout after {node_elapsed:.0f}s - continuing...*\n",
+                            response=f"\n*Step #{node_count} timed out after {node_elapsed:.0f}s - continuing*\n",
                             tool_calls=[],
                             citations=[],
                         )
                         # Continue to next node instead of failing completely
                         continue
+
+                    except asyncio.CancelledError:
+                        logger.info(f"[SUBAGENT] Node #{node_count} cancelled")
+                        raise
 
                     except Exception as e:
                         logger.error(
@@ -406,7 +499,23 @@ class DelegationStreamer:
                     raise asyncio.TimeoutError("Agent execution exceeded deadline")
                 yield response
         finally:
-            await gen.aclose()
+            # CRITICAL: Generator cleanup can hang if pydantic-ai's context manager
+            # is stuck waiting for something. Use a timeout to prevent infinite hangs.
+            try:
+                await asyncio.wait_for(gen.aclose(), timeout=10.0)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"[SUBAGENT] Generator cleanup timed out after 10s (agent_type={agent_type}). "
+                    f"This may indicate pydantic-ai's agent.iter() context manager is stuck."
+                )
+            except asyncio.CancelledError:
+                logger.debug(
+                    f"[SUBAGENT] Generator cleanup cancelled (agent_type={agent_type})"
+                )
+            except Exception as cleanup_error:
+                logger.warning(
+                    f"[SUBAGENT] Generator cleanup error (agent_type={agent_type}): {cleanup_error}"
+                )
 
     async def _process_node_with_timeout(
         self,
@@ -472,14 +581,41 @@ class DelegationStreamer:
                 event_count = 0
                 yield_count = 0
                 last_event_time = asyncio.get_event_loop().time()
+                last_keepalive_time = last_event_time
+                stream_start_time = last_event_time
+                consecutive_timeouts = 0
+                max_consecutive_timeouts = (
+                    3  # Allow 3 consecutive timeouts before giving up
+                )
                 stream_iter = request_stream.__aiter__()
 
                 while True:
+                    current_time = asyncio.get_event_loop().time()
+
+                    # Emit keepalive if it's been a while since last yield
+                    # This prevents upstream timeouts during long-running operations
+                    if current_time - last_keepalive_time >= KEEPALIVE_INTERVAL:
+                        elapsed_total = current_time - stream_start_time
+                        time_since_event = current_time - last_event_time
+                        logger.info(
+                            f"[SUBAGENT] Node #{node_count}: 💓 keepalive "
+                            f"(elapsed={elapsed_total:.1f}s, since_event={time_since_event:.1f}s, "
+                            f"events={event_count})"
+                        )
+                        yield ChatAgentResponse(
+                            response="",  # Empty keepalive
+                            tool_calls=[],
+                            citations=[],
+                        )
+                        last_keepalive_time = current_time
+
                     try:
                         event = await asyncio.wait_for(
                             stream_iter.__anext__(), timeout=EVENT_TIMEOUT
                         )
                         last_event_time = asyncio.get_event_loop().time()
+                        last_keepalive_time = last_event_time  # Reset keepalive timer
+                        consecutive_timeouts = 0  # Reset timeout counter on success
 
                     except StopAsyncIteration:
                         logger.info(
@@ -489,12 +625,53 @@ class DelegationStreamer:
                         break
 
                     except asyncio.TimeoutError:
-                        logger.warning(
-                            f"[SUBAGENT] Node #{node_count}: event timeout "
-                            f"(events={event_count}, yields={yield_count})"
+                        consecutive_timeouts += 1
+                        elapsed_total = (
+                            asyncio.get_event_loop().time() - stream_start_time
+                        )
+                        time_since_event = (
+                            asyncio.get_event_loop().time() - last_event_time
+                        )
+
+                        if consecutive_timeouts >= max_consecutive_timeouts:
+                            logger.error(
+                                f"[SUBAGENT] Node #{node_count}: {consecutive_timeouts} consecutive event timeouts "
+                                f"(events={event_count}, yields={yield_count}, elapsed={elapsed_total:.1f}s). "
+                                f"LLM stream appears stuck. Breaking out gracefully."
+                            )
+                            yield ChatAgentResponse(
+                                response=f"\n*Stream timeout after {elapsed_total:.0f}s - using partial results*\n",
+                                tool_calls=[],
+                                citations=[],
+                            )
+                            break
+                        else:
+                            logger.warning(
+                                f"[SUBAGENT] Node #{node_count}: event timeout #{consecutive_timeouts} "
+                                f"(events={event_count}, yields={yield_count}, since_event={time_since_event:.1f}s). "
+                                f"Retrying... (max={max_consecutive_timeouts})"
+                            )
+                            # Yield a keepalive to prevent upstream timeouts
+                            yield ChatAgentResponse(
+                                response="",  # Silent keepalive
+                                tool_calls=[],
+                                citations=[],
+                            )
+                            last_keepalive_time = asyncio.get_event_loop().time()
+                            continue  # Retry getting the next event
+
+                    except asyncio.CancelledError:
+                        logger.info(f"[SUBAGENT] Node #{node_count}: stream cancelled")
+                        raise
+
+                    except Exception as e:
+                        # Handle unexpected errors gracefully
+                        logger.error(
+                            f"[SUBAGENT] Node #{node_count}: unexpected error getting next event: {e}",
+                            exc_info=True,
                         )
                         yield ChatAgentResponse(
-                            response="\n*Stream timeout - continuing...*\n",
+                            response=f"\n*Stream error: {str(e)[:100]}*\n",
                             tool_calls=[],
                             citations=[],
                         )
@@ -538,7 +715,7 @@ class DelegationStreamer:
                                 f"#{event_count} ({part_type})"
                             )
 
-                        # Yield keepalive every 15 non-text events
+                        # Yield keepalive every 15 non-text events to prevent upstream timeouts
                         if event_count - yield_count >= 15:
                             yield ChatAgentResponse(
                                 response="",
@@ -546,11 +723,23 @@ class DelegationStreamer:
                                 citations=[],
                             )
                             yield_count = event_count
+                            last_keepalive_time = asyncio.get_event_loop().time()
 
             finally:
-                # Always properly exit the stream context
+                # Always properly exit the stream context with timeout
+                # to prevent hanging if pydantic-ai's stream context is stuck
                 try:
-                    await stream_ctx.__aexit__(None, None, None)
+                    await asyncio.wait_for(
+                        stream_ctx.__aexit__(None, None, None), timeout=5.0
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"[SUBAGENT] Node #{node_count}: stream context exit timed out after 5s"
+                    )
+                except asyncio.CancelledError:
+                    logger.debug(
+                        f"[SUBAGENT] Node #{node_count}: stream context exit cancelled"
+                    )
                 except Exception as e:
                     logger.debug(f"[SUBAGENT] Stream exit error (ignored): {e}")
 
@@ -572,73 +761,149 @@ class DelegationStreamer:
         node_count: int,
         agent_type: str,
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-        """Execute tool call with timeout protection."""
+        """Execute tool call with timeout protection and keepalive mechanism."""
+
+        tool_ctx = None
+        current_tool_name = "unknown"
 
         try:
-            # Timeout for entering the tool stream context
+            # Timeout for entering the tool stream context (generous for slow tools)
             try:
                 tool_ctx = node.stream(run.ctx)
                 tool_stream = await asyncio.wait_for(
-                    tool_ctx.__aenter__(), timeout=30.0
+                    tool_ctx.__aenter__(),
+                    timeout=60.0,  # 60s to enter context
                 )
             except asyncio.TimeoutError:
-                logger.error(f"[SUBAGENT] Node #{node_count}: tool stream timeout")
+                logger.error(
+                    f"[SUBAGENT] Node #{node_count}: tool stream context timeout (60s)"
+                )
                 yield ChatAgentResponse(
-                    response="\n*Tool execution timeout*\n",
+                    response="\n*Tool initialization timeout - the tool took too long to start*\n",
+                    tool_calls=[],
+                    citations=[],
+                )
+                return
+            except Exception as e:
+                logger.error(
+                    f"[SUBAGENT] Node #{node_count}: tool stream context error: {e}"
+                )
+                yield ChatAgentResponse(
+                    response=f"\n*Tool initialization error: {str(e)[:100]}*\n",
                     tool_calls=[],
                     citations=[],
                 )
                 return
 
+            tool_start = asyncio.get_event_loop().time()  # Initialize before try block
             try:
                 logger.info(f"[SUBAGENT] Node #{node_count}: tool stream entered")
-                tool_start = asyncio.get_event_loop().time()
+                last_keepalive_time = tool_start
+                event_count = 0
 
                 async for event in tool_stream:
-                    # Check for overall tool timeout
-                    if (
-                        asyncio.get_event_loop().time() - tool_start
-                        > TOOL_EXECUTION_TIMEOUT
-                    ):
-                        logger.warning(
-                            f"[SUBAGENT] Node #{node_count}: tool execution timeout"
+                    current_time = asyncio.get_event_loop().time()
+                    elapsed = current_time - tool_start
+                    event_count += 1
+
+                    # Emit keepalive during long-running tool executions
+                    if current_time - last_keepalive_time >= KEEPALIVE_INTERVAL:
+                        logger.info(
+                            f"[SUBAGENT] Node #{node_count}: 💓 tool keepalive "
+                            f"(tool={current_tool_name}, elapsed={elapsed:.1f}s, events={event_count})"
                         )
                         yield ChatAgentResponse(
-                            response="\n*Tool execution took too long*\n",
+                            response="",  # Silent keepalive
+                            tool_calls=[],
+                            citations=[],
+                        )
+                        last_keepalive_time = current_time
+
+                    # Check for overall tool timeout
+                    if elapsed > TOOL_EXECUTION_TIMEOUT:
+                        logger.warning(
+                            f"[SUBAGENT] Node #{node_count}: tool execution timeout after {elapsed:.1f}s "
+                            f"(tool={current_tool_name})"
+                        )
+                        yield ChatAgentResponse(
+                            response=f"\n*Tool '{current_tool_name}' timed out after {elapsed:.0f}s*\n",
                             tool_calls=[],
                             citations=[],
                         )
                         break
 
                     if isinstance(event, FunctionToolCallEvent):
-                        tool_name = event.part.tool_name
-                        logger.info(f"[SUBAGENT] Executing tool: {tool_name}")
+                        current_tool_name = event.part.tool_name
+                        logger.info(f"[SUBAGENT] Executing tool: {current_tool_name}")
                         yield ChatAgentResponse(
-                            response=f"\n*Executing {tool_name}...*\n",
+                            response=f"\n*Executing {current_tool_name}...*\n",
                             tool_calls=[],
                             citations=[],
                         )
+                        last_keepalive_time = current_time  # Reset keepalive timer
 
                     elif isinstance(event, FunctionToolResultEvent):
-                        elapsed = asyncio.get_event_loop().time() - tool_start
+                        tool_elapsed = current_time - tool_start
+                        result_tool_name = event.result.tool_name
                         logger.info(
-                            f"[SUBAGENT] Tool completed: {event.result.tool_name} "
-                            f"in {elapsed:.1f}s"
+                            f"[SUBAGENT] Tool completed: {result_tool_name} "
+                            f"in {tool_elapsed:.1f}s"
                         )
+                        # Log slow tool warnings
+                        if tool_elapsed > 60.0:
+                            logger.warning(
+                                f"[SUBAGENT] Slow tool execution: {result_tool_name} "
+                                f"took {tool_elapsed:.1f}s"
+                            )
+
+            except asyncio.CancelledError:
+                logger.info(f"[SUBAGENT] Node #{node_count}: tool execution cancelled")
+                raise
+
+            except Exception as e:
+                elapsed = asyncio.get_event_loop().time() - tool_start
+                logger.error(
+                    f"[SUBAGENT] Node #{node_count}: error during tool execution "
+                    f"(tool={current_tool_name}, elapsed={elapsed:.1f}s): {e}",
+                    exc_info=True,
+                )
+                yield ChatAgentResponse(
+                    response=f"\n*Tool '{current_tool_name}' error: {str(e)[:100]}*\n",
+                    tool_calls=[],
+                    citations=[],
+                )
 
             finally:
-                try:
-                    await tool_ctx.__aexit__(None, None, None)
-                except Exception as e:
-                    logger.debug(f"[SUBAGENT] Tool stream exit error (ignored): {e}")
+                # Tool context exit with timeout to prevent hanging
+                if tool_ctx is not None:
+                    try:
+                        await asyncio.wait_for(
+                            tool_ctx.__aexit__(None, None, None), timeout=10.0
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            f"[SUBAGENT] Node #{node_count}: tool context exit timed out after 10s"
+                        )
+                    except asyncio.CancelledError:
+                        logger.debug(
+                            f"[SUBAGENT] Node #{node_count}: tool context exit cancelled"
+                        )
+                    except Exception as e:
+                        logger.debug(
+                            f"[SUBAGENT] Tool stream exit error (ignored): {e}"
+                        )
+
+        except asyncio.CancelledError:
+            logger.info(f"[SUBAGENT] Node #{node_count}: tool call cancelled")
+            raise
 
         except Exception as e:
             logger.error(
-                f"[SUBAGENT] Node #{node_count}: tool error: {e}",
+                f"[SUBAGENT] Node #{node_count}: unexpected tool error: {e}",
                 exc_info=True,
             )
             yield ChatAgentResponse(
-                response=f"\n*Tool error: {str(e)[:100]}*\n",
+                response=f"\n*Unexpected tool error: {str(e)[:100]}*\n",
                 tool_calls=[],
                 citations=[],
             )

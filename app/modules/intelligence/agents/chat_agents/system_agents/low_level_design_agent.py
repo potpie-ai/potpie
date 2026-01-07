@@ -94,7 +94,12 @@ class LowLevelDesignAgent(ChatAgent):
                     **integration_agents,
                 }
                 return PydanticMultiAgent(
-                    self.llm_provider, agent_config, tools, None, delegate_agents
+                    self.llm_provider,
+                    agent_config,
+                    tools,
+                    None,
+                    delegate_agents,
+                    tools_provider=self.tools_provider,
                 )
             else:
                 logger.info("❌ Multi-agent disabled by config, using PydanticRagAgent")

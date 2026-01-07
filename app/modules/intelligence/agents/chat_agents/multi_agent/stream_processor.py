@@ -200,11 +200,13 @@ class StreamProcessor:
             context: Context string for logging
             current_context: Current chat context (optional, needed for delegations)
         """
-        # Track processed nodes by their object id to prevent duplicate processing
-        # This can happen when pydantic_ai emits the same node multiple times during parallel tool calls
-        processed_node_ids: set = set()
+        # Track processed nodes to prevent duplicate processing
+        # IMPORTANT: We keep strong references to node objects, not just their IDs.
+        # Using id() alone is unsafe because Python can reuse memory addresses after
+        # garbage collection, causing false duplicate detection and missed delegation starts.
+        processed_nodes: list = []  # Keep references to prevent GC
 
-        # Track node counts for debugging duplicate response issues
+        # Track node counts for debugging
         node_counts = {
             "model_request": 0,
             "call_tools": 0,
@@ -214,9 +216,6 @@ class StreamProcessor:
         }
 
         async for node in run:
-            # Use object id to uniquely identify each node instance
-            node_id = id(node)
-
             # Determine node type for logging
             is_model_request = Agent.is_model_request_node(node)
             is_call_tools = Agent.is_call_tools_node(node)
@@ -231,22 +230,24 @@ class StreamProcessor:
                 else "other"
             )
 
-            # Check if we've already processed this node
-            if node_id in processed_node_ids:
+            # Check if we've already processed this exact node object
+            # Use 'is' for identity comparison (same object in memory)
+            is_duplicate = any(node is processed for processed in processed_nodes)
+            if is_duplicate:
                 node_counts["skipped_duplicates"] += 1
                 logger.warning(
-                    f"[{context}] Skipping duplicate node: type={node_type}, node_id={node_id}, "
+                    f"[{context}] Skipping duplicate node: type={node_type}, node_id={id(node)}, "
                     f"total_skipped={node_counts['skipped_duplicates']}"
                 )
                 continue
 
-            # Mark node as processed
-            processed_node_ids.add(node_id)
+            # Keep reference to prevent GC and mark as processed
+            processed_nodes.append(node)
             node_counts[node_type] = node_counts.get(node_type, 0) + 1
 
             logger.info(
                 f"[{context}] Processing node #{sum(node_counts.values()) - node_counts['skipped_duplicates']}: "
-                f"type={node_type}, node_id={node_id}, "
+                f"type={node_type}, node_id={id(node)}, "
                 f"counts={{model_request: {node_counts['model_request']}, call_tools: {node_counts['call_tools']}, end: {node_counts['end']}}}"
             )
 
@@ -279,14 +280,14 @@ class StreamProcessor:
                 context_type = "SUPERVISOR" if current_context else "SUBAGENT"
                 logger.info(
                     f"[{context}] Processing call_tools node ({context_type} context), "
-                    f"node_id={node_id}, current_context={current_context is not None}"
+                    f"node_id={id(node)}, current_context={current_context is not None}"
                 )
                 async for response in self.process_tool_call_node(
                     node, run.ctx, current_context=current_context
                 ):
                     yield response
                 logger.info(
-                    f"[{context}] Completed call_tools node ({context_type} context), node_id={node_id}"
+                    f"[{context}] Completed call_tools node ({context_type} context), node_id={id(node)}"
                 )
 
             elif Agent.is_end_node(node):

@@ -106,7 +106,11 @@ class RuntimeCustomAgent(ChatAgent):
                     "✅ Using PydanticMultiAgent (multi-agent system) for custom agent"
                 )
                 agent = PydanticMultiAgent(
-                    self.llm_provider, agent_config, tools, mcp_servers
+                    self.llm_provider,
+                    agent_config,
+                    tools,
+                    mcp_servers,
+                    tools_provider=self.tools_provider,
                 )
                 self._pydantic_agent = agent  # Store reference for status access
                 return agent

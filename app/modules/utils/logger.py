@@ -11,6 +11,14 @@ from loguru import logger as _loguru_logger
 _LOGGING_CONFIGURED = False
 _logger = _loguru_logger
 
+# Control whether to include stack traces in error logs
+# Set LOG_STACK_TRACES=false to disable stack traces
+SHOW_STACK_TRACES = os.getenv("LOG_STACK_TRACES", "true").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
 # Sensitive data patterns to redact in logs
 SENSITIVE_PATTERNS = [
     # Credentials in key=value format
@@ -215,6 +223,8 @@ def configure_logging(level: Optional[str] = None):
             format="{message}",
             level=level,
             serialize=True,  # Get structured record, then format in sink
+            backtrace=SHOW_STACK_TRACES,
+            diagnose=SHOW_STACK_TRACES,
         )
     else:
 
@@ -238,6 +248,8 @@ def configure_logging(level: Optional[str] = None):
             level=level,
             colorize=True,
             filter=_filter,
+            backtrace=SHOW_STACK_TRACES,
+            diagnose=SHOW_STACK_TRACES,
         )
 
     intercept_handler = InterceptHandler()
@@ -331,6 +343,18 @@ def setup_logger(name: str):
         configure_logging()
 
     return _logger.bind(name=name)
+
+
+def should_show_stack_trace() -> bool:
+    """Check if stack traces should be shown in logs.
+
+    Controlled by LOG_STACK_TRACES environment variable.
+    Set LOG_STACK_TRACES=false to disable stack traces.
+
+    Usage in logging calls:
+        logger.warning("Error occurred", exc_info=should_show_stack_trace())
+    """
+    return SHOW_STACK_TRACES
 
 
 # Convenience function for dynamic level adjustment

@@ -1,9 +1,11 @@
 """
 Code Changes Manager Tool for Agent State Management
 
-This tool allows agents to manage code changes in memory, reducing token usage
+This tool allows agents to manage code changes in Redis, reducing token usage
 by storing code modifications separately from response text. Changes are tracked
 per-file and can be searched, retrieved, and serialized for persistence.
+
+Changes persist across messages within a conversation (keyed by conversation_id).
 """
 
 import uuid
@@ -15,6 +17,7 @@ import functools
 import difflib
 import time
 import threading
+import redis
 from contextvars import ContextVar
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Union, Callable, TypeVar
@@ -23,8 +26,13 @@ from dataclasses import dataclass, asdict
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from app.modules.utils.logger import setup_logger
+from app.core.config_provider import ConfigProvider
 
 logger = setup_logger(__name__)
+
+# Redis key prefix and expiry for code changes
+CODE_CHANGES_KEY_PREFIX = "code_changes"
+CODE_CHANGES_TTL_SECONDS = 24 * 60 * 60  # 24 hours expiry
 
 T = TypeVar("T")
 
@@ -208,11 +216,130 @@ class FileChange:
 
 
 class CodeChangesManager:
-    """Manages code changes in memory for a session"""
+    """Manages code changes in Redis for a conversation, persisting across messages"""
 
-    def __init__(self):
-        self.changes: Dict[str, FileChange] = {}  # file_path -> FileChange
-        self.session_id = str(uuid.uuid4())[:8]
+    def __init__(self, conversation_id: Optional[str] = None):
+        """
+        Initialize the CodeChangesManager with Redis storage.
+
+        Args:
+            conversation_id: The conversation ID to use as part of the Redis key.
+                           If None, a random session_id is used (backward compatible).
+        """
+        self._conversation_id = conversation_id
+        self.session_id = (
+            conversation_id[:8] if conversation_id else str(uuid.uuid4())[:8]
+        )
+
+        # Initialize Redis client
+        config = ConfigProvider()
+        self._redis_client = redis.from_url(config.get_redis_url())
+
+        # In-memory cache for the current instance
+        self._changes_cache: Optional[Dict[str, FileChange]] = None
+
+        logger.info(
+            f"CodeChangesManager: Initialized with conversation_id={conversation_id}, "
+            f"session_id={self.session_id}, redis_key={self._redis_key}"
+        )
+
+    @property
+    def _redis_key(self) -> str:
+        """Get the Redis key for storing changes"""
+        if self._conversation_id:
+            return f"{CODE_CHANGES_KEY_PREFIX}:{self._conversation_id}"
+        return f"{CODE_CHANGES_KEY_PREFIX}:session:{self.session_id}"
+
+    @property
+    def changes(self) -> Dict[str, FileChange]:
+        """Get the changes dict, loading from Redis if needed"""
+        if self._changes_cache is None:
+            self._load_from_redis()
+        # After _load_from_redis, _changes_cache is always set (even if empty dict)
+        assert self._changes_cache is not None
+        return self._changes_cache
+
+    @changes.setter
+    def changes(self, value: Dict[str, FileChange]) -> None:
+        """Set the changes dict and persist to Redis"""
+        self._changes_cache = value
+        self._save_to_redis()
+
+    def _load_from_redis(self) -> None:
+        """Load changes from Redis into the cache"""
+        try:
+            data = self._redis_client.get(self._redis_key)
+            if data:
+                json_str = data.decode("utf-8") if isinstance(data, bytes) else data
+                parsed = json.loads(json_str)
+                self._changes_cache = {}
+                for change_data in parsed.get("changes", []):
+                    change = FileChange(
+                        file_path=change_data["file_path"],
+                        change_type=ChangeType(change_data["change_type"]),
+                        content=change_data.get("content"),
+                        previous_content=change_data.get("previous_content"),
+                        created_at=change_data.get(
+                            "created_at", datetime.now().isoformat()
+                        ),
+                        updated_at=change_data.get(
+                            "updated_at", datetime.now().isoformat()
+                        ),
+                        description=change_data.get("description"),
+                    )
+                    self._changes_cache[change.file_path] = change
+                logger.debug(
+                    f"CodeChangesManager._load_from_redis: Loaded {len(self._changes_cache)} changes from Redis"
+                )
+            else:
+                self._changes_cache = {}
+                logger.debug(
+                    "CodeChangesManager._load_from_redis: No existing data in Redis, starting fresh"
+                )
+        except Exception as e:
+            logger.warning(
+                f"CodeChangesManager._load_from_redis: Error loading from Redis: {e}, starting fresh"
+            )
+            self._changes_cache = {}
+
+    def _save_to_redis(self) -> None:
+        """Save changes to Redis with expiry"""
+        try:
+            if self._changes_cache is None:
+                return
+
+            data = {
+                "session_id": self.session_id,
+                "conversation_id": self._conversation_id,
+                "changes": [
+                    {
+                        "file_path": change.file_path,
+                        "change_type": change.change_type.value,
+                        "content": change.content,
+                        "previous_content": change.previous_content,
+                        "created_at": change.created_at,
+                        "updated_at": change.updated_at,
+                        "description": change.description,
+                    }
+                    for change in self._changes_cache.values()
+                ],
+            }
+            json_str = json.dumps(data)
+            self._redis_client.setex(
+                self._redis_key, CODE_CHANGES_TTL_SECONDS, json_str
+            )
+            logger.debug(
+                f"CodeChangesManager._save_to_redis: Saved {len(self._changes_cache)} changes to Redis "
+                f"(key={self._redis_key}, ttl={CODE_CHANGES_TTL_SECONDS}s)"
+            )
+        except Exception as e:
+            logger.error(
+                f"CodeChangesManager._save_to_redis: Error saving to Redis: {e}"
+            )
+
+    def _persist_change(self) -> None:
+        """Persist current changes to Redis (call after any modification)"""
+        self._save_to_redis()
 
     def add_file(
         self,
@@ -224,10 +351,9 @@ class CodeChangesManager:
         logger.info(
             f"CodeChangesManager.add_file: Adding file '{file_path}' (content length: {len(content)} chars)"
         )
-        if (
-            file_path in self.changes
-            and self.changes[file_path].change_type != ChangeType.DELETE
-        ):
+        # Access self.changes to ensure we load from Redis
+        changes = self.changes
+        if file_path in changes and changes[file_path].change_type != ChangeType.DELETE:
             logger.warning(
                 f"CodeChangesManager.add_file: File '{file_path}' already exists (not deleted)"
             )
@@ -239,7 +365,8 @@ class CodeChangesManager:
             content=content,
             description=description,
         )
-        self.changes[file_path] = change
+        self._changes_cache[file_path] = change
+        self._persist_change()
         logger.info(
             f"CodeChangesManager.add_file: Successfully added file '{file_path}' (session: {self.session_id})"
         )
@@ -788,6 +915,7 @@ class CodeChangesManager:
                 existing.description = description
             if previous_content:
                 existing.previous_content = previous_content
+            self._persist_change()
         else:
             # New file in changes (not yet committed)
             # Use original_content as previous_content if provided (this is the original file content before any modifications)
@@ -803,7 +931,8 @@ class CodeChangesManager:
                 ),
                 description=description,
             )
-            self.changes[file_path] = change
+            self._changes_cache[file_path] = change
+            self._persist_change()
             logger.debug(
                 f"CodeChangesManager._apply_update: Created new FileChange for '{file_path}' "
                 f"with previous_content={'set' if original_content is not None else 'None'}"
@@ -1393,8 +1522,10 @@ class CodeChangesManager:
             f"CodeChangesManager.delete_file: Marking file '{file_path}' for deletion (preserve_content={preserve_content})"
         )
         previous_content = None
-        if file_path in self.changes:
-            existing = self.changes[file_path]
+        # Access self.changes to ensure we load from Redis
+        changes = self.changes
+        if file_path in changes:
+            existing = changes[file_path]
             if preserve_content and existing.content:
                 previous_content = existing.content
             existing.change_type = ChangeType.DELETE
@@ -1404,6 +1535,7 @@ class CodeChangesManager:
                 existing.description = description
             if previous_content:
                 existing.previous_content = previous_content
+            self._persist_change()
         else:
             # New deletion record
             change = FileChange(
@@ -1413,7 +1545,8 @@ class CodeChangesManager:
                 previous_content=previous_content,
                 description=description,
             )
-            self.changes[file_path] = change
+            self._changes_cache[file_path] = change
+            self._persist_change()
         logger.info(
             f"CodeChangesManager.delete_file: Successfully marked file '{file_path}' for deletion"
         )
@@ -1535,8 +1668,11 @@ class CodeChangesManager:
         logger.info(
             f"CodeChangesManager.clear_file: Clearing changes for file '{file_path}'"
         )
-        if file_path in self.changes:
-            del self.changes[file_path]
+        # Access self.changes to ensure we load from Redis
+        changes = self.changes
+        if file_path in changes:
+            del self._changes_cache[file_path]
+            self._persist_change()
             logger.info(
                 f"CodeChangesManager.clear_file: Successfully cleared changes for file '{file_path}'"
             )
@@ -1548,11 +1684,14 @@ class CodeChangesManager:
 
     def clear_all(self) -> int:
         """Clear all changes and return count of cleared files"""
-        count = len(self.changes)
+        # Access self.changes to ensure we load from Redis
+        changes = self.changes
+        count = len(changes)
         logger.info(
             f"CodeChangesManager.clear_all: Clearing all changes ({count} files) from session {self.session_id}"
         )
-        self.changes.clear()
+        self._changes_cache.clear()
+        self._persist_change()
         logger.info(
             f"CodeChangesManager.clear_all: Successfully cleared all {count} file(s)"
         )
@@ -1612,7 +1751,8 @@ class CodeChangesManager:
         try:
             data = json.loads(json_str)
             self.session_id = data.get("session_id", str(uuid.uuid4())[:8])
-            self.changes.clear()
+            # Initialize empty cache
+            self._changes_cache = {}
 
             for change_data in data.get("changes", []):
                 change = FileChange(
@@ -1628,9 +1768,10 @@ class CodeChangesManager:
                     ),
                     description=change_data.get("description"),
                 )
-                self.changes[change.file_path] = change
+                self._changes_cache[change.file_path] = change
+            self._persist_change()
             logger.info(
-                f"CodeChangesManager.deserialize: Successfully deserialized {len(self.changes)} file changes"
+                f"CodeChangesManager.deserialize: Successfully deserialized {len(self._changes_cache)} file changes"
             )
             return True
         except (json.JSONDecodeError, KeyError, ValueError):
@@ -2040,43 +2181,95 @@ _code_changes_manager_ctx: ContextVar[Optional[CodeChangesManager]] = ContextVar
     "_code_changes_manager_ctx", default=None
 )
 
+# Context variable for conversation_id - used to persist changes across messages
+_conversation_id_ctx: ContextVar[Optional[str]] = ContextVar(
+    "_conversation_id_ctx", default=None
+)
+
+
+def _set_conversation_id(conversation_id: Optional[str]) -> None:
+    """Set the conversation_id for the current execution context.
+
+    This should be called at the start of each agent run to enable
+    changes persistence across messages in the same conversation.
+    """
+    _conversation_id_ctx.set(conversation_id)
+    logger.info(f"CodeChangesManager: Set conversation_id to {conversation_id}")
+
+
+def _get_conversation_id() -> Optional[str]:
+    """Get the conversation_id for the current execution context."""
+    return _conversation_id_ctx.get()
+
 
 def _get_code_changes_manager() -> CodeChangesManager:
     """Get the current code changes manager for this execution context, creating a new one if needed.
 
     Uses ContextVar to ensure each async execution context (agent run) has its own isolated instance.
-    This allows parallel agent runs to have separate state without interference.
+    The manager uses Redis storage keyed by conversation_id for persistence across messages.
     """
     manager = _code_changes_manager_ctx.get()
+    conversation_id = _get_conversation_id()
+
+    # If we have a manager but conversation_id changed, create a new one
+    if manager is not None and manager._conversation_id != conversation_id:
+        logger.info(
+            f"CodeChangesManager: conversation_id changed from {manager._conversation_id} to {conversation_id}, creating new manager"
+        )
+        manager = None
+
     if manager is None:
         logger.info(
-            "CodeChangesManager: Creating new manager instance for this execution context"
+            f"CodeChangesManager: Creating new manager instance for conversation_id={conversation_id}"
         )
-        manager = CodeChangesManager()
+        manager = CodeChangesManager(conversation_id=conversation_id)
         _code_changes_manager_ctx.set(manager)
         logger.info(
-            f"CodeChangesManager: Created new manager with session ID {manager.session_id}"
+            f"CodeChangesManager: Created new manager with session_id={manager.session_id}, "
+            f"redis_key={manager._redis_key}, existing_changes={len(manager.changes)}"
         )
     return manager
 
 
-def _reset_code_changes_manager() -> None:
-    """Reset the code changes manager for a new agent run - creates a completely fresh instance in this execution context.
+def _init_code_changes_manager(conversation_id: Optional[str] = None) -> None:
+    """Initialize the code changes manager for a new agent run.
 
-    This ensures each agent run starts with a clean state, isolated from other parallel runs.
+    This loads existing changes from Redis for the conversation (if any exist)
+    instead of starting fresh. This ensures changes persist across messages.
+
+    Args:
+        conversation_id: The conversation ID to use for Redis key. If None,
+                        uses a random session_id (backward compatible, no persistence).
     """
+    _set_conversation_id(conversation_id)
+
     old_manager = _code_changes_manager_ctx.get()
     old_session = old_manager.session_id if old_manager else None
     old_count = len(old_manager.changes) if old_manager else 0
     logger.info(
-        f"CodeChangesManager: Resetting manager for this execution context (old session: {old_session}, old file count: {old_count})"
+        f"CodeChangesManager: Initializing manager for conversation_id={conversation_id} "
+        f"(previous session: {old_session}, previous file count: {old_count})"
     )
-    # Always create a completely fresh instance - don't reuse any state
-    new_manager = CodeChangesManager()
+
+    # Create manager - it will load existing changes from Redis automatically
+    new_manager = CodeChangesManager(conversation_id=conversation_id)
     _code_changes_manager_ctx.set(new_manager)
+
     logger.info(
-        f"CodeChangesManager: Reset complete, new session ID: {new_manager.session_id}"
+        f"CodeChangesManager: Initialized with session_id={new_manager.session_id}, "
+        f"loaded {len(new_manager.changes)} existing changes from Redis"
     )
+
+
+def _reset_code_changes_manager() -> None:
+    """Reset the code changes manager for a new agent run.
+
+    DEPRECATED: Use _init_code_changes_manager(conversation_id) instead.
+    This function is kept for backward compatibility but now initializes
+    with the current conversation_id context rather than creating a fresh instance.
+    """
+    conversation_id = _get_conversation_id()
+    _init_code_changes_manager(conversation_id)
 
 
 # Pydantic models for tool inputs

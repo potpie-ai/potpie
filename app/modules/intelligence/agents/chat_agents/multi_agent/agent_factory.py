@@ -18,6 +18,10 @@ from app.modules.intelligence.agents.chat_agent import ChatContext
 from ..agent_config import AgentConfig, TaskConfig
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.utils.logger import setup_logger
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.modules.intelligence.tools.tool_service import ToolService
 
 logger = setup_logger(__name__)
 
@@ -33,14 +37,28 @@ class AgentFactory:
         delegate_agents: Dict[AgentType, AgentConfig],
         history_processor: Any,
         create_delegation_function: Callable[[AgentType], Callable],
+        tools_provider: "ToolService | None" = None,
     ):
-        """Initialize the agent factory"""
+        """Initialize the agent factory
+
+        Args:
+            llm_provider: The LLM provider service
+            tools: List of tools passed from the agent config
+            mcp_servers: Optional MCP servers configuration
+            delegate_agents: Delegate agent configurations
+            history_processor: History processor for managing conversation history
+            create_delegation_function: Function to create delegation functions
+            tools_provider: Optional ToolService for integration agents to get their tools directly.
+                           If provided, integration agents (GitHub, Jira, etc.) will get their tools
+                           from this service instead of filtering from the passed tools list.
+        """
         self.llm_provider = llm_provider
         self.tools = tools
         self.mcp_servers = mcp_servers or []
         self.delegate_agents = delegate_agents
         self.history_processor = history_processor
         self.create_delegation_function = create_delegation_function
+        self.tools_provider = tools_provider
 
         # Clean tool names (no spaces for pydantic agents)
         import re
@@ -101,9 +119,18 @@ class AgentFactory:
     def build_integration_agent_tools(self, agent_type: AgentType) -> List[Tool]:
         """Build tool list for integration-specific agents
 
-        Integration agents receive ONLY their domain-specific tools - no code changes tools,
-        no todo tools, no requirement tools. They focus exclusively on their integration domain.
+        Integration agents receive their domain-specific tools. Most integration agents
+        focus exclusively on their integration domain, but GitHub agent also receives
+        code changes tools so it can access and commit changes tracked in the conversation.
+
+        If tools_provider is available, integration agents get their tools directly from it.
+        Otherwise, they try to filter from the passed tools list.
         """
+        # Import code changes tools here to avoid circular imports
+        from app.modules.intelligence.tools.code_changes_manager import (
+            create_code_changes_management_tools,
+        )
+
         # Define integration-specific tool names
         integration_tools_map = {
             AgentType.JIRA: [
@@ -120,15 +147,15 @@ class AgentFactory:
             ],
             AgentType.GITHUB: [
                 "github_tool",
-                "code_provider_tool",  # Also available as github_tool
+                "code_provider_tool",
                 "github_create_branch",
-                "code_provider_create_branch",  # Also available as github_create_branch
+                "code_provider_create_branch",
                 "github_create_pull_request",
-                "code_provider_create_pr",  # Also available as github_create_pull_request
+                "code_provider_create_pr",
                 "github_add_pr_comments",
-                "code_provider_add_pr_comments",  # Also available as github_add_pr_comments
+                "code_provider_add_pr_comments",
                 "github_update_branch",
-                "code_provider_update_file",  # Also available as github_update_branch
+                "code_provider_update_file",
             ],
             AgentType.CONFLUENCE: [
                 "get_confluence_spaces",
@@ -145,12 +172,37 @@ class AgentFactory:
             ],
         }
 
-        # Integration agents get ONLY their domain-specific tools - no common tools, no code changes tools
+        # Get integration-specific tool names
         integration_tool_names = integration_tools_map.get(agent_type, [])
-        integration_tools = self._filter_tools_by_names(integration_tool_names)
 
-        # Return ONLY integration-specific tools (no code changes, no todo, no requirements)
-        return wrap_structured_tools(integration_tools)
+        # Try to get tools from tools_provider first (preferred), fall back to filtering
+        if self.tools_provider:
+            # Get tools directly from ToolService - this ensures integration agents
+            # always have access to their tools even if not in the agent config
+            integration_tools = self.tools_provider.get_tools(integration_tool_names)
+            logger.info(
+                f"Got {len(integration_tools)} tools from tools_provider for {agent_type.value}: "
+                f"{[t.name for t in integration_tools]}"
+            )
+        else:
+            # Fall back to filtering from passed tools
+            integration_tools = self._filter_tools_by_names(integration_tool_names)
+            logger.info(
+                f"Filtered {len(integration_tools)} tools from passed tools for {agent_type.value}: "
+                f"{[t.name for t in integration_tools]}"
+            )
+
+        wrapped_tools = wrap_structured_tools(integration_tools)
+
+        # GitHub agent also gets code changes tools so it can access tracked changes
+        # for committing to branches/PRs. This uses the same conversation_id-keyed
+        # code changes manager as the rest of the conversation.
+        if agent_type == AgentType.GITHUB:
+            code_changes_tools = create_code_changes_management_tools()
+            wrapped_tools = wrapped_tools + wrap_structured_tools(code_changes_tools)
+            wrapped_tools = deduplicate_tools_by_name(wrapped_tools)
+
+        return wrapped_tools
 
     def build_delegate_agent_tools(self) -> List[Tool]:
         """Build the tool list for delegate agents - includes supervisor tools EXCEPT delegation, todo, and requirement tools.
@@ -296,11 +348,12 @@ This agent handles ALL GitHub operations. Use it whenever the task involves:
 - **GitHub, pull requests, PRs, branches, commits, repository operations**
 - **Fetching GitHub issues** (open issues, closed issues, specific issues)
 - **Creating or managing GitHub content** (PRs, branches, comments)
+- **Committing code changes** tracked in the conversation to GitHub
 - **ANY mention of GitHub, repository, issues, PRs, branches, or commits in the user's request**
 
 **WHAT IS THE GITHUB AGENT:**
-- An isolated execution context with **ONLY GitHub-specific tools** (github_tool, github_create_branch, github_create_pull_request, etc.)
-- **Does NOT have code changes tools, todo tools, or any other tools** - only GitHub operations
+- An isolated execution context with **GitHub-specific tools** (github_tool, github_create_branch, github_create_pull_request, etc.)
+- **HAS ACCESS to code changes tools** - can read and use tracked code changes from the conversation
 - Receives ONLY what you provide: task_description + context
 - Does NOT inherit conversation history - starts fresh
 - Streams work to user, returns summary to you
@@ -311,10 +364,11 @@ This agent handles ALL GitHub operations. Use it whenever the task involves:
 - ✅ **Fetching pull requests** (PRs, PR details, PR diffs)
 - ✅ Creating pull requests and branches
 - ✅ Updating files in branches
+- ✅ **Committing tracked code changes** to a branch or PR
 - ✅ Adding PR review comments with code references
 - ✅ Managing repository operations
 - ✅ **ANY task involving GitHub, repository, issues, PRs, branches, or commits**
-- ✅ When user asks to "list issues", "fetch issues", "get issues", "show PRs", "create PR", etc.
+- ✅ When user asks to "list issues", "fetch issues", "get issues", "show PRs", "create PR", "commit changes", etc.
 
 **CRITICAL - GITHUB ISSUE FETCHING:**
 - The GitHub agent uses `github_tool` to fetch issues and PRs
@@ -327,6 +381,7 @@ This agent handles ALL GitHub operations. Use it whenever the task involves:
 - Create branches and pull requests
 - Update files in branches (commit changes)
 - Add PR comments with code snippet references
+- **Access tracked code changes** (list_files_in_changes, get_file_from_changes, export_changes, show_diff, etc.)
 
 **CRITICAL - CONTEXT PARAMETER:**
 Provide comprehensive context:
@@ -335,6 +390,7 @@ Provide comprehensive context:
 - PR numbers or issue numbers if known
 - File paths and content for updates
 - Commit messages and descriptions
+- **For committing changes**: Include project_id and branch name
 
 **NOTE**: The GitHub agent will inform you if it cannot complete a task. If it says it cannot do something, adjust your approach or use a different subagent.
 
@@ -527,7 +583,7 @@ Subagents DON'T get your history. Provide comprehensive context:
             output_retries=3,
             output_type=str,
             defer_model_check=True,
-            end_strategy="early",
+            end_strategy="exhaustive",
             # NOTE: No history_processors for delegate agents - they start fresh with empty
             # history and don't need token management. The history processor's tool pairing
             # logic can also break OpenAI's message format requirements.

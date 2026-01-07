@@ -60,6 +60,7 @@ class ChatContext(BaseModel):
     additional_context: str = ""
     query: str
     user_id: Optional[str] = None
+    conversation_id: Optional[str] = None  # For persisting state across messages
     # Multimodal support - images attached to the current message
     image_attachments: Optional[Dict[str, Dict[str, Union[str, int]]]] = (
         None  # attachment_id -> {base64, mime_type, file_size, etc}

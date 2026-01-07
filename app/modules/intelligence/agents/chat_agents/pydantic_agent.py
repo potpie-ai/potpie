@@ -481,13 +481,15 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             f"Running pydantic-ai agent {'with multimodal support' if ctx.has_images() else ''}"
         )
 
-        # Reset code changes manager for this agent run to ensure isolation
+        # Initialize code changes manager with conversation_id for persistence across messages
         from app.modules.intelligence.tools.code_changes_manager import (
-            _reset_code_changes_manager,
+            _init_code_changes_manager,
         )
 
-        _reset_code_changes_manager()
-        logger.info("🔄 Reset code changes manager for new agent run")
+        _init_code_changes_manager(ctx.conversation_id)
+        logger.info(
+            f"🔄 Initialized code changes manager for conversation_id={ctx.conversation_id}"
+        )
 
         # Check if we have images and if the model supports vision
         if ctx.has_images() and self.llm_provider.is_vision_model():
@@ -656,6 +658,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                         async with node.stream(run.ctx) as handle_stream:
                             async for event in handle_stream:
                                 if isinstance(event, FunctionToolCallEvent):
+                                    tool_args = event.part.args_as_dict()
                                     yield ChatAgentResponse(
                                         response="",
                                         tool_calls=[
@@ -664,12 +667,12 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                                 event_type=ToolCallEventType.CALL,
                                                 tool_name=event.part.tool_name,
                                                 tool_response=get_tool_run_message(
-                                                    event.part.tool_name
+                                                    event.part.tool_name, tool_args
                                                 ),
                                                 tool_call_details={
                                                     "summary": get_tool_call_info_content(
                                                         event.part.tool_name,
-                                                        event.part.args_as_dict(),
+                                                        tool_args,
                                                     )
                                                 },
                                             )
@@ -805,6 +808,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                     async with node.stream(run.ctx) as handle_stream:
                                         async for event in handle_stream:
                                             if isinstance(event, FunctionToolCallEvent):
+                                                tool_args = event.part.args_as_dict()
                                                 yield ChatAgentResponse(
                                                     response="",
                                                     tool_calls=[
@@ -814,12 +818,13 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                                             event_type=ToolCallEventType.CALL,
                                                             tool_name=event.part.tool_name,
                                                             tool_response=get_tool_run_message(
-                                                                event.part.tool_name
+                                                                event.part.tool_name,
+                                                                tool_args,
                                                             ),
                                                             tool_call_details={
                                                                 "summary": get_tool_call_info_content(
                                                                     event.part.tool_name,
-                                                                    event.part.args_as_dict(),
+                                                                    tool_args,
                                                                 )
                                                             },
                                                         )
@@ -971,6 +976,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                     async with node.stream(run.ctx) as handle_stream:
                                         async for event in handle_stream:
                                             if isinstance(event, FunctionToolCallEvent):
+                                                tool_args = event.part.args_as_dict()
                                                 yield ChatAgentResponse(
                                                     response="",
                                                     tool_calls=[
@@ -980,12 +986,13 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                                             event_type=ToolCallEventType.CALL,
                                                             tool_name=event.part.tool_name,
                                                             tool_response=get_tool_run_message(
-                                                                event.part.tool_name
+                                                                event.part.tool_name,
+                                                                tool_args,
                                                             ),
                                                             tool_call_details={
                                                                 "summary": get_tool_call_info_content(
                                                                     event.part.tool_name,
-                                                                    event.part.args_as_dict(),
+                                                                    tool_args,
                                                                 )
                                                             },
                                                         )

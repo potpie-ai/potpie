@@ -16,7 +16,20 @@ except ImportError:
         )
 
 
-def get_tool_run_message(tool_name: str):
+def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
+    """Get user-friendly message when a tool starts running.
+
+    Args:
+        tool_name: Name of the tool being run
+        args: Optional dict of tool arguments to include file paths in messages
+    """
+
+    # Helper to extract file path from args
+    def _get_file_path() -> str:
+        if args:
+            return args.get("file_path", "")
+        return ""
+
     match tool_name:
         case "GetCodeanddocstringFromProbableNodeName":
             return "Retrieving code"
@@ -39,12 +52,23 @@ def get_tool_run_message(tool_name: str):
         case "GitHubContentFetcher":
             return "Fetching content from github"
         case "fetch_file":
-            return "Fetching file content"
+            file_path = _get_file_path()
+            return (
+                f"Fetching file: {file_path}" if file_path else "Fetching file content"
+            )
         case "WebSearchTool":
             return "Searching the web"
         case "analyze_code_structure":
             return "Analyzing code structure"
         case "bash_command":
+            if args:
+                command = args.get("command", "")
+                if command:
+                    # Truncate long commands for display
+                    display_cmd = (
+                        command if len(command) <= 80 else command[:77] + "..."
+                    )
+                    return f"Running: {display_cmd}"
             return "Executing bash command on codebase"
         case "create_todo":
             return "Creating todo item"
@@ -67,27 +91,72 @@ def get_tool_run_message(tool_name: str):
         case "think":
             return "Processing thoughts"
         case "add_file_to_changes":
-            return "Adding file to code changes"
+            file_path = _get_file_path()
+            return (
+                f"Adding file: {file_path}"
+                if file_path
+                else "Adding file to code changes"
+            )
         case "update_file_in_changes":
-            return "Updating file in code changes"
+            file_path = _get_file_path()
+            return (
+                f"Updating file: {file_path}"
+                if file_path
+                else "Updating file in code changes"
+            )
         case "update_file_lines":
-            return "Updating specific lines in file"
+            file_path = _get_file_path()
+            return (
+                f"Updating lines in: {file_path}"
+                if file_path
+                else "Updating specific lines in file"
+            )
         case "replace_in_file":
-            return "Replacing pattern in file"
+            file_path = _get_file_path()
+            return (
+                f"Replacing pattern in: {file_path}"
+                if file_path
+                else "Replacing pattern in file"
+            )
         case "insert_lines":
-            return "Inserting lines in file"
+            file_path = _get_file_path()
+            return (
+                f"Inserting lines in: {file_path}"
+                if file_path
+                else "Inserting lines in file"
+            )
         case "delete_lines":
-            return "Deleting lines from file"
+            file_path = _get_file_path()
+            return (
+                f"Deleting lines from: {file_path}"
+                if file_path
+                else "Deleting lines from file"
+            )
         case "delete_file_in_changes":
-            return "Marking file for deletion"
+            file_path = _get_file_path()
+            return (
+                f"Marking for deletion: {file_path}"
+                if file_path
+                else "Marking file for deletion"
+            )
         case "get_file_from_changes":
-            return "Retrieving file from code changes"
+            file_path = _get_file_path()
+            return (
+                f"Retrieving changes for: {file_path}"
+                if file_path
+                else "Retrieving file from code changes"
+            )
         case "list_files_in_changes":
             return "Listing files in code changes"
         case "search_content_in_changes":
             return "Searching content in code changes"
         case "clear_file_from_changes":
-            return "Clearing file from code changes"
+            file_path = _get_file_path()
+            return (
+                f"Clearing changes for: {file_path}"
+                if file_path
+                else "Clearing file from code changes"
+            )
         case "clear_all_changes":
             return "Clearing all code changes"
         case "get_changes_summary":
@@ -95,6 +164,12 @@ def get_tool_run_message(tool_name: str):
         case "export_changes":
             return "Exporting code changes"
         case "show_updated_file":
+            if args:
+                file_paths = args.get("file_paths")
+                if file_paths:
+                    if isinstance(file_paths, list):
+                        return f"Displaying updated: {', '.join(file_paths)}"
+                    return f"Displaying updated: {file_paths}"
             return "Displaying updated file content"
         case "show_diff":
             return "Displaying code diff"
@@ -140,10 +215,52 @@ def get_tool_run_message(tool_name: str):
             return "Querying data"
 
 
-def get_tool_response_message(tool_name: str):
+def get_tool_response_message(
+    tool_name: str, args: Dict[str, Any] | None = None, result: Any = None
+):
+    """Get user-friendly message when a tool completes.
+
+    Args:
+        tool_name: Name of the tool that completed
+        args: Optional dict of tool arguments to include file paths, commands, etc.
+        result: Optional tool result to include small response data
+    """
+
+    # Helper to check if result is small enough to include
+    def _is_small_result(res: Any) -> bool:
+        if res is None:
+            return False
+        if isinstance(res, str):
+            return len(res) <= 200
+        if isinstance(res, dict):
+            # Check if it's a simple success/failure dict
+            if len(res) <= 3 and all(
+                k in ("success", "output", "error", "exit_code") for k in res.keys()
+            ):
+                return True
+            return False
+        return False
+
+    # Helper to format small result
+    def _format_small_result(res: Any) -> str:
+        if isinstance(res, dict):
+            if res.get("success") is False:
+                error = res.get("error", "")
+                if error and len(error) <= 150:
+                    return f" (Error: {error[:150]})"
+            elif res.get("success") is True:
+                output = res.get("output", "")
+                if output and len(output) <= 150:
+                    return f" (Output: {output[:150]})"
+        elif isinstance(res, str) and len(res) <= 200:
+            return f" ({res[:200]})"
+        return ""
+
     match tool_name:
         case "GetCodeanddocstringFromProbableNodeName":
             return "Code retrieved"
+        case "GetCodeanddocstringFromNodeID":
+            return "Code retrieved for referenced mentions"
         case "Getcodechanges":
             return "Code changes fetched successfully"
         case "GetNodesfromTags":
@@ -153,30 +270,89 @@ def get_tool_response_message(tool_name: str):
         case "GetCodeanddocstringFromMultipleNodeIDs":
             return "Fetched code and docstrings"
         case "get_code_file_structure":
+            path = args.get("path") if args else None
+            if path:
+                return f"Project file structure loaded successfully for {path}"
             return "Project file structure loaded successfully"
         case "GetNodeNeighboursFromNodeID":
             return "Fetched referenced code"
         case "WebpageContentExtractor":
+            url = args.get("url") if args else None
+            if url:
+                return f"Information retrieved from {url}"
             return "Information retrieved from web"
         case "GitHubContentFetcher":
+            repo_name = args.get("repo_name") if args else None
+            issue_number = args.get("issue_number") if args else None
+            is_pr = args.get("is_pull_request", False) if args else False
+            if repo_name and issue_number:
+                content_type = "PR" if is_pr else "Issue"
+                return f"{content_type} #{issue_number} fetched from {repo_name}"
             return "File contents fetched from github"
         case "fetch_file":
-            return "File content fetched successfully"
+            file_path = args.get("file_path") if args else None
+            if file_path:
+                result_suffix = (
+                    _format_small_result(result) if _is_small_result(result) else ""
+                )
+                return f"File content fetched successfully: {file_path}{result_suffix}"
+            result_suffix = (
+                _format_small_result(result) if _is_small_result(result) else ""
+            )
+            return f"File content fetched successfully{result_suffix}"
         case "analyze_code_structure":
+            file_path = args.get("file_path") if args else None
+            if file_path:
+                return f"Code structure analyzed successfully: {file_path}"
             return "Code structure analyzed successfully"
         case "WebSearchTool":
+            query = args.get("query") if args else None
+            if query:
+                return f"Web search successful for: {query}"
             return "Web search successful"
         case "bash_command":
-            return "Bash command executed successfully"
+            if args:
+                command = args.get("command", "")
+                if command:
+                    # Truncate long commands for display
+                    display_cmd = (
+                        command if len(command) <= 60 else command[:57] + "..."
+                    )
+                    result_suffix = (
+                        _format_small_result(result) if _is_small_result(result) else ""
+                    )
+                    return f"Bash command executed successfully: {display_cmd}{result_suffix}"
+            result_suffix = (
+                _format_small_result(result) if _is_small_result(result) else ""
+            )
+            return f"Bash command executed successfully{result_suffix}"
         case "create_todo":
+            title = args.get("title") if args else None
+            if title:
+                return f"Todo item created successfully: {title[:50]}"
             return "Todo item created successfully"
         case "update_todo_status":
+            todo_id = args.get("todo_id") if args else None
+            status = args.get("status") if args else None
+            if todo_id and status:
+                return f"Todo status updated successfully: {todo_id} -> {status}"
+            elif todo_id:
+                return f"Todo status updated successfully: {todo_id}"
             return "Todo status updated successfully"
         case "add_todo_note":
+            todo_id = args.get("todo_id") if args else None
+            if todo_id:
+                return f"Todo note added successfully: {todo_id}"
             return "Todo note added successfully"
         case "get_todo":
+            todo_id = args.get("todo_id") if args else None
+            if todo_id:
+                return f"Todo details retrieved successfully: {todo_id}"
             return "Todo details retrieved successfully"
         case "list_todos":
+            status_filter = args.get("status_filter") if args else None
+            if status_filter:
+                return f"Todos listed successfully (filter: {status_filter})"
             return "Todos listed successfully"
         case "get_todo_summary":
             return "Todo summary generated successfully"
@@ -187,36 +363,97 @@ def get_tool_response_message(tool_name: str):
         case "get_requirements":
             return "Requirements document retrieved successfully"
         case "think":
+            thought = args.get("thought") if args else None
+            if thought and len(thought) <= 100:
+                return f"Thoughts processed successfully: {thought[:100]}"
             return "Thoughts processed successfully"
         case "add_file_to_changes":
+            file_path = args.get("file_path") if args else None
+            if file_path:
+                return f"File added to code changes successfully: {file_path}"
             return "File added to code changes successfully"
         case "update_file_in_changes":
+            file_path = args.get("file_path") if args else None
+            if file_path:
+                return f"File updated in code changes successfully: {file_path}"
             return "File updated in code changes successfully"
         case "update_file_lines":
+            file_path = args.get("file_path") if args else None
+            if file_path:
+                start_line = args.get("start_line") if args else None
+                end_line = args.get("end_line") if args else None
+                if start_line:
+                    line_range = (
+                        f"{start_line}-{end_line}" if end_line else str(start_line)
+                    )
+                    return f"File lines updated successfully: {file_path} (lines {line_range})"
+                return f"File lines updated successfully: {file_path}"
             return "File lines updated successfully"
         case "replace_in_file":
+            file_path = args.get("file_path") if args else None
+            if file_path:
+                pattern = args.get("pattern") if args else None
+                if pattern:
+                    return f"Pattern replacement completed successfully: {file_path} (pattern: {pattern[:50]})"
+                return f"Pattern replacement completed successfully: {file_path}"
             return "Pattern replacement completed successfully"
         case "insert_lines":
+            file_path = args.get("file_path") if args else None
+            if file_path:
+                line_number = args.get("line_number") if args else None
+                if line_number:
+                    return f"Lines inserted successfully: {file_path} (at line {line_number})"
+                return f"Lines inserted successfully: {file_path}"
             return "Lines inserted successfully"
         case "delete_lines":
+            file_path = args.get("file_path") if args else None
+            if file_path:
+                start_line = args.get("start_line") if args else None
+                end_line = args.get("end_line") if args else None
+                if start_line:
+                    line_range = (
+                        f"{start_line}-{end_line}" if end_line else str(start_line)
+                    )
+                    return (
+                        f"Lines deleted successfully: {file_path} (lines {line_range})"
+                    )
+                return f"Lines deleted successfully: {file_path}"
             return "Lines deleted successfully"
         case "delete_file_in_changes":
+            file_path = args.get("file_path") if args else None
+            if file_path:
+                return f"File marked for deletion successfully: {file_path}"
             return "File marked for deletion successfully"
         case "get_file_from_changes":
+            file_path = args.get("file_path") if args else None
+            if file_path:
+                return f"File retrieved from code changes successfully: {file_path}"
             return "File retrieved from code changes successfully"
         case "list_files_in_changes":
             return "Files listed successfully"
         case "search_content_in_changes":
             return "Content search completed successfully"
         case "clear_file_from_changes":
+            file_path = args.get("file_path") if args else None
+            if file_path:
+                return f"File cleared from code changes successfully: {file_path}"
             return "File cleared from code changes successfully"
         case "clear_all_changes":
             return "All code changes cleared successfully"
         case "get_changes_summary":
             return "Code changes summary retrieved successfully"
         case "export_changes":
+            format_type = args.get("format") if args else None
+            if format_type:
+                return f"Code changes exported successfully ({format_type} format)"
             return "Code changes exported successfully"
         case "show_updated_file":
+            if args:
+                file_paths = args.get("file_paths")
+                if file_paths:
+                    if isinstance(file_paths, list):
+                        return f"Updated file content displayed successfully: {', '.join(file_paths)}"
+                    return f"Updated file content displayed successfully: {file_paths}"
             return "Updated file content displayed successfully"
         case "show_diff":
             return "Code diff displayed successfully"
@@ -225,38 +462,103 @@ def get_tool_response_message(tool_name: str):
             agent_type = tool_name[12:]  # Remove "delegate_to_" prefix
             return get_delegation_response_message(agent_type)
         case "GetJiraIssue":
+            issue_key = args.get("issue_key") if args else None
+            if issue_key:
+                return f"Jira issue details retrieved: {issue_key}"
             return "Jira issue details retrieved"
         case "SearchJiraIssues":
+            jql = args.get("jql") if args else None
+            if jql and len(jql) <= 80:
+                return f"Jira issues search completed: {jql}"
             return "Jira issues search completed"
         case "CreateJiraIssue":
+            project_key = args.get("project_key") if args else None
+            summary = args.get("summary") if args else None
+            if project_key and summary:
+                return (
+                    f"Jira issue created successfully: {project_key} - {summary[:50]}"
+                )
+            elif project_key:
+                return f"Jira issue created successfully: {project_key}"
             return "Jira issue created successfully"
         case "UpdateJiraIssue":
+            issue_key = args.get("issue_key") if args else None
+            if issue_key:
+                return f"Jira issue updated successfully: {issue_key}"
             return "Jira issue updated successfully"
         case "AddJiraComment":
+            issue_key = args.get("issue_key") if args else None
+            if issue_key:
+                return f"Comment added to Jira issue: {issue_key}"
             return "Comment added to Jira issue"
         case "TransitionJiraIssue":
+            issue_key = args.get("issue_key") if args else None
+            transition = args.get("transition") if args else None
+            if issue_key and transition:
+                return f"Jira issue status changed: {issue_key} -> {transition}"
+            elif issue_key:
+                return f"Jira issue status changed: {issue_key}"
             return "Jira issue status changed"
         case "LinkJiraIssues":
+            issue_key = args.get("issue_key") if args else None
+            linked_issue_key = args.get("linked_issue_key") if args else None
+            if issue_key and linked_issue_key:
+                return f"Jira issues linked successfully: {issue_key} <-> {linked_issue_key}"
             return "Jira issues linked successfully"
         case "GetJiraProjects":
             return "Jira projects retrieved"
         case "GetJiraProjectDetails":
+            project_key = args.get("project_key") if args else None
+            if project_key:
+                return f"Jira project details retrieved: {project_key}"
             return "Jira project details retrieved"
         case "GetJiraProjectUsers":
+            project_key = args.get("project_key") if args else None
+            query = args.get("query") if args else None
+            if project_key and query:
+                return f"Jira project users retrieved: {project_key} (query: {query})"
+            elif project_key:
+                return f"Jira project users retrieved: {project_key}"
             return "Jira project users retrieved"
         case "GetConfluenceSpaces":
+            space_type = args.get("space_type") if args else None
+            if space_type and space_type != "all":
+                return f"Confluence spaces retrieved ({space_type})"
             return "Confluence spaces retrieved"
         case "GetConfluencePage":
+            page_id = args.get("page_id") if args else None
+            if page_id:
+                return f"Confluence page retrieved: {page_id}"
             return "Confluence page retrieved"
         case "SearchConfluencePages":
+            cql = args.get("cql") if args else None
+            if cql and len(cql) <= 80:
+                return f"Confluence pages search completed: {cql}"
             return "Confluence pages search completed"
         case "GetConfluenceSpacePages":
+            space_id = args.get("space_id") if args else None
+            if space_id:
+                return f"Confluence space pages retrieved: {space_id}"
             return "Confluence space pages retrieved"
         case "CreateConfluencePage":
+            space_id = args.get("space_id") if args else None
+            title = args.get("title") if args else None
+            if space_id and title:
+                return (
+                    f"Confluence page created successfully: {space_id} - {title[:50]}"
+                )
+            elif space_id:
+                return f"Confluence page created successfully: {space_id}"
             return "Confluence page created successfully"
         case "UpdateConfluencePage":
+            page_id = args.get("page_id") if args else None
+            if page_id:
+                return f"Confluence page updated successfully: {page_id}"
             return "Confluence page updated successfully"
         case "AddConfluenceComment":
+            page_id = args.get("page_id") if args else None
+            if page_id:
+                return f"Comment added to Confluence page: {page_id}"
             return "Comment added to Confluence page"
         case _:
             return "Data queried successfully"
