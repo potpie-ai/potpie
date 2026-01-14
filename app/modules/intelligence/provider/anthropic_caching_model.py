@@ -41,15 +41,11 @@ from pydantic_ai.models.anthropic import (
     AnthropicModel,
     AnthropicModelSettings,
     AnthropicModelName,
-    AnthropicStreamedResponse,
 )
 from pydantic_ai.models import (
     ModelRequestParameters,
-    StreamedResponse,
     get_user_agent,
-    _utils,
 )
-from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.profiles import ModelProfileSpec
@@ -501,21 +497,20 @@ class CachingAnthropicModel(AnthropicModel):
         """
         # Call parent's request method
         result = await super().request(messages, model_settings=model_settings)
-        
+
         # For non-streaming responses, cache metrics are already logged in _process_response
         # For streaming responses, we need to wrap the result to log metrics
-        if hasattr(result, '__aiter__'):
+        if hasattr(result, "__aiter__"):
             # This is a streaming response - wrap it to log metrics
             return self._wrap_streaming_response(result)
-        
+
         return result
-    
+
     async def _wrap_streaming_response(self, stream_response):
         """
         Wrap a streaming response to extract and log cache metrics from the first event.
         """
-        from datetime import datetime, timezone
-        
+
         # Yield all items from the original stream
         first_event = True
         async for item in stream_response:
@@ -533,17 +528,17 @@ class CachingAnthropicModel(AnthropicModel):
                             usage_dict = usage_obj.dict()
                         elif isinstance(usage_obj, dict):
                             usage_dict = usage_obj
-                        
+
                         # Extract integer values for cache metrics
                         usage_details = {
                             key: value
                             for key, value in usage_dict.items()
                             if isinstance(value, int)
                         }
-                        
+
                         if usage_details:
                             _log_cache_metrics(usage_details, str(self._model_name))
-            
+
             yield item
 
     def _get_tools(
