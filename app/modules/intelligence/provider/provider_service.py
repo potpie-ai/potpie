@@ -330,35 +330,27 @@ def sanitize_messages_for_tracing(messages: list) -> list:
 # Available models with their metadata
 AVAILABLE_MODELS = [
     AvailableModelOption(
-        id="openai/gpt-4.1",
-        name="GPT-4.1",
+        id="openai/gpt-5.2",
+        name="GPT-5.2",
         description="OpenAI's latest model for complex tasks with large context",
         provider="openai",
         is_chat_model=True,
         is_inference_model=False,
     ),
     AvailableModelOption(
-        id="openai/gpt-4o",
-        name="GPT-4o",
-        description="High-intelligence model for complex tasks",
+        id="openai/gpt-5.1",
+        name="GPT-5.1",
+        description="OpenAI's previous flagship model",
         provider="openai",
         is_chat_model=True,
         is_inference_model=False,
     ),
     AvailableModelOption(
-        id="openai/gpt-4.1-mini",
-        name="GPT-4.1 Mini",
+        id="openai/gpt-5-mini",
+        name="GPT-5 Mini",
         description="Smaller model for fast, lightweight tasks",
         provider="openai",
         is_chat_model=False,
-        is_inference_model=True,
-    ),
-    AvailableModelOption(
-        id="openai/o4-mini",
-        name="O4 mini",
-        description="reasoning model",
-        provider="openai",
-        is_chat_model=True,
         is_inference_model=True,
     ),
     AvailableModelOption(
