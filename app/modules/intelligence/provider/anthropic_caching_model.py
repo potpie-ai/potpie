@@ -489,62 +489,62 @@ class CachingAnthropicModel(AnthropicModel):
 
         return model_response
 
-    async def _process_streamed_response(
-        self, response: AsyncStream[BetaRawMessageStreamEvent]
-    ) -> StreamedResponse:
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        *,
+        model_settings: ModelSettings | None = None,
+    ):
         """
-        Override to log cache metrics from streaming responses.
-
-        The usage data is available in the first event (BetaRawMessageStartEvent).
-        We peek at it, extract usage, log it, then process normally.
+        Override request to intercept and log cache metrics from both
+        non-streaming and streaming responses.
+        """
+        # Call parent's request method
+        result = await super().request(messages, model_settings=model_settings)
+        
+        # For non-streaming responses, cache metrics are already logged in _process_response
+        # For streaming responses, we need to wrap the result to log metrics
+        if hasattr(result, '__aiter__'):
+            # This is a streaming response - wrap it to log metrics
+            return self._wrap_streaming_response(result)
+        
+        return result
+    
+    async def _wrap_streaming_response(self, stream_response):
+        """
+        Wrap a streaming response to extract and log cache metrics from the first event.
         """
         from datetime import datetime, timezone
-
-        # Create peekable stream to access first event (parent also does this)
-        peekable_response = _utils.PeekableAsyncStream(response)
-        first_chunk = await peekable_response.peek()
-
-        # Extract usage data from first event if it's a start event
-        if not isinstance(first_chunk, _utils.Unset) and isinstance(
-            first_chunk, BetaRawMessageStartEvent
-        ):
-            # Extract usage from the start event
-            if hasattr(first_chunk, "message") and hasattr(
-                first_chunk.message, "usage"
-            ):
-                usage_obj = first_chunk.message.usage
-                # Convert usage to dict format for logging
-                usage_dict = {}
-                if hasattr(usage_obj, "model_dump"):
-                    usage_dict = usage_obj.model_dump()
-                elif hasattr(usage_obj, "dict"):
-                    usage_dict = usage_obj.dict()
-                elif isinstance(usage_obj, dict):
-                    usage_dict = usage_obj
-
-                # Extract integer values for cache metrics
-                usage_details = {
-                    key: value
-                    for key, value in usage_dict.items()
-                    if isinstance(value, int)
-                }
-
-                if usage_details:
-                    _log_cache_metrics(usage_details, str(self._model_name))
-
-        # Process the streamed response normally (same as parent)
-        if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior(
-                "Streamed response ended without content or tool calls"
-            )
-
-        # Since Anthropic doesn't provide a timestamp in the message, we'll use the current time
-        timestamp = datetime.now(tz=timezone.utc)
-        return AnthropicStreamedResponse(
-            _model_name=self._model_name,
-            _response=peekable_response,
-            _timestamp=timestamp,
-        )
+        
+        # Yield all items from the original stream
+        first_event = True
+        async for item in stream_response:
+            if first_event:
+                first_event = False
+                # Try to extract usage from the first event if it's a start event
+                if isinstance(item, BetaRawMessageStartEvent):
+                    if hasattr(item, "message") and hasattr(item.message, "usage"):
+                        usage_obj = item.message.usage
+                        # Convert usage to dict format for logging
+                        usage_dict = {}
+                        if hasattr(usage_obj, "model_dump"):
+                            usage_dict = usage_obj.model_dump()
+                        elif hasattr(usage_obj, "dict"):
+                            usage_dict = usage_obj.dict()
+                        elif isinstance(usage_obj, dict):
+                            usage_dict = usage_obj
+                        
+                        # Extract integer values for cache metrics
+                        usage_details = {
+                            key: value
+                            for key, value in usage_dict.items()
+                            if isinstance(value, int)
+                        }
+                        
+                        if usage_details:
+                            _log_cache_metrics(usage_details, str(self._model_name))
+            
+            yield item
 
     def _get_tools(
         self,
@@ -601,7 +601,9 @@ class CachingAnthropicModel(AnthropicModel):
             ) is not None:
                 tool_choice["disable_parallel_tool_use"] = not allow_parallel_tool_calls
 
-        system_prompt, anthropic_messages = await self._map_message(messages)
+        system_prompt, anthropic_messages = await self._map_message(
+            messages, model_request_parameters, model_settings
+        )
 
         # CRITICAL: Sanitize messages before sending to API
         # This is the last line of defense against duplicate tool_results and orphaned tool_use
