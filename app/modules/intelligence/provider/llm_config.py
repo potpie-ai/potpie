@@ -2,15 +2,15 @@ from typing import Dict, Any, Optional
 import os
 
 # Default models
-DEFAULT_CHAT_MODEL = "openai/gpt-4o"
-DEFAULT_INFERENCE_MODEL = "openai/gpt-4.1-mini"
+DEFAULT_CHAT_MODEL = "openai/gpt-5.2"
+DEFAULT_INFERENCE_MODEL = "openai/gpt-5-mini"
 
 # Model configuration mappings - now keyed by full model name
 MODEL_CONFIG_MAP = {
     # OpenAI Models
-    "openai/gpt-4.1-mini": {
+    "openai/gpt-5.2": {
         "provider": "openai",
-        "default_params": {"temperature": 0.3},
+        "default_params": {"temperature": 1},
         "capabilities": {
             "supports_pydantic": True,
             "supports_streaming": True,
@@ -20,9 +20,9 @@ MODEL_CONFIG_MAP = {
         "base_url": None,
         "api_version": None,
     },
-    "openai/gpt-4.1": {
+    "openai/gpt-5.1": {
         "provider": "openai",
-        "default_params": {"temperature": 0.3},
+        "default_params": {"temperature": 1},
         "capabilities": {
             "supports_pydantic": True,
             "supports_streaming": True,
@@ -32,9 +32,9 @@ MODEL_CONFIG_MAP = {
         "base_url": None,
         "api_version": None,
     },
-    "openai/gpt-4o": {
+    "openai/gpt-5-mini": {
         "provider": "openai",
-        "default_params": {"temperature": 0.3},
+        "default_params": {"temperature": 1},
         "capabilities": {
             "supports_pydantic": True,
             "supports_streaming": True,
