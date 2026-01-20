@@ -85,6 +85,7 @@ dependencies = [
     "urllib3>=2.6.3",
     "uuid6>=2025.0.1",
     "uvicorn>=0.38.0",
+    "virtualenv>=20.36.1",
 ]
 
 [dependency-groups]
