@@ -2,7 +2,7 @@ ag-ui-protocol==0.1.10
 agentops==0.4.21
 aiofiles==25.1.0
 aiohappyeyeballs==2.6.1
-aiohttp==3.13.2
+aiohttp==3.13.3
 aioitertools==0.13.0
 aiosignal==1.4.0
 aiosqlite==0.21.0
@@ -188,7 +188,7 @@ tldextract==5.3.0
 py-key-value-aio==0.3.0
 py-key-value-shared==0.3.0
 pyarrow==22.0.0
-pyasn1==0.6.1
+pyasn1>=0.6.2
 pyasn1-modules==0.4.2
 pycparser==2.23
 pydantic==2.12.5
@@ -263,7 +263,7 @@ typing-extensions==4.15.0
 typing-inspection==0.4.2
 tzdata==2025.2
 tzlocal==5.3.1
-urllib3==2.6.1
+urllib3>=2.6.3
 uuid-utils==0.12.0
 uuid6==2025.0.1
 uvicorn==0.38.0
