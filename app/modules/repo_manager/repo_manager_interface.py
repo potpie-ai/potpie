@@ -218,3 +218,79 @@ class IRepoManager(ABC):
             Size in bytes if available, None otherwise
         """
         pass
+
+    @abstractmethod
+    def get_total_volume_bytes(self, user_id: Optional[str] = None) -> int:
+        """
+        Get total volume used by all registered repositories in bytes.
+
+        Args:
+            user_id: Optional user ID to filter by user
+
+        Returns:
+            Total volume in bytes
+        """
+        pass
+
+    @abstractmethod
+    def get_volume_percentage(self, user_id: Optional[str] = None) -> float:
+        """
+        Get the percentage of volume limit currently used.
+
+        Args:
+            user_id: Optional user ID to filter by user
+
+        Returns:
+            Percentage used (0.0 to 100.0)
+        """
+        pass
+
+    @abstractmethod
+    def prepare_for_parsing(
+        self,
+        repo_name: str,
+        ref: str,
+        repo_url: Optional[str] = None,
+        auth_token: Optional[str] = None,
+        is_commit: bool = False,
+        user_id: Optional[str] = None,
+    ) -> str:
+        """
+        Prepare a repository for parsing.
+
+        Orchestrates: eviction → ensure bare repo → create worktree.
+        Worktrees persist until background eviction removes them (no immediate cleanup).
+
+        Args:
+            repo_name: Full repository name (e.g., 'owner/repo')
+            ref: Branch name or commit SHA
+            repo_url: Optional Git repository URL (derived if not provided)
+            auth_token: Optional authentication token
+            is_commit: Whether ref is a commit SHA
+            user_id: Optional user ID for multi-tenant tracking
+
+        Returns:
+            Path to worktree directory ready for parsing
+        """
+        pass
+
+    @abstractmethod
+    def evict_stale_worktrees(
+        self,
+        max_age_days: int = 30,
+        user_id: Optional[str] = None,
+    ) -> List[str]:
+        """
+        Evict old worktrees to free disk space (background eviction).
+
+        Worktrees are evicted before bare repos when volume thresholds are reached.
+        This is called automatically by _evict_if_needed().
+
+        Args:
+            max_age_days: Maximum age in days before eviction
+            user_id: Optional user ID for multi-tenant tracking
+
+        Returns:
+            List of worktrees that were evicted
+        """
+        pass
