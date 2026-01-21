@@ -957,6 +957,7 @@ class ConversationService:
                             node_ids=[node.node_id for node in node_ids],
                             query=query,
                             conversation_id=conversation_id,
+                            user_id=user_id,  # Set user_id for tunnel routing
                         ),
                     )
                 )
@@ -991,6 +992,7 @@ class ConversationService:
                     image_attachments=image_attachments,
                     context_images=context_images,
                     conversation_id=conversation_id,
+                    user_id=user_id,  # Set user_id for tunnel routing
                 )
 
                 res = self.agent_service.execute_stream(chat_context)

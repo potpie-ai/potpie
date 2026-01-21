@@ -189,7 +189,11 @@ class PydanticMultiAgent(ChatAgent):
         self._current_context = ctx
 
         # Initialize managers with conversation_id for persistence across messages
-        init_managers(conversation_id=ctx.conversation_id)
+        init_managers(
+            conversation_id=ctx.conversation_id,
+            agent_id=ctx.curr_agent_id,
+            user_id=ctx.user_id,
+        )
 
         # Check if we have images and if the model supports vision
         if ctx.has_images() and self.llm_provider.is_vision_model():
@@ -217,7 +221,11 @@ class PydanticMultiAgent(ChatAgent):
         self._current_context = ctx
 
         # Initialize managers with conversation_id for persistence across messages
-        init_managers(conversation_id=ctx.conversation_id)
+        init_managers(
+            conversation_id=ctx.conversation_id,
+            agent_id=ctx.curr_agent_id,
+            user_id=ctx.user_id,
+        )
 
         # Check if we have images and if the model supports vision
         if ctx.has_images() and self.llm_provider.is_vision_model():

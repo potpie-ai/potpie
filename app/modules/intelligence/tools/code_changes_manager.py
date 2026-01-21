@@ -2186,6 +2186,16 @@ _conversation_id_ctx: ContextVar[Optional[str]] = ContextVar(
     "_conversation_id_ctx", default=None
 )
 
+# Context variable for agent_id/agent_type - used to determine routing
+_agent_id_ctx: ContextVar[Optional[str]] = ContextVar(
+    "_agent_id_ctx", default=None
+)
+
+# Context variable for user_id - used for tunnel routing
+_user_id_ctx: ContextVar[Optional[str]] = ContextVar(
+    "_user_id_ctx", default=None
+)
+
 
 def _set_conversation_id(conversation_id: Optional[str]) -> None:
     """Set the conversation_id for the current execution context.
@@ -2200,6 +2210,164 @@ def _set_conversation_id(conversation_id: Optional[str]) -> None:
 def _get_conversation_id() -> Optional[str]:
     """Get the conversation_id for the current execution context."""
     return _conversation_id_ctx.get()
+
+
+def _set_agent_id(agent_id: Optional[str]) -> None:
+    """Set the agent_id for the current execution context.
+    
+    This is used to determine if file operations should be routed to LocalServer.
+    """
+    _agent_id_ctx.set(agent_id)
+    logger.info(f"CodeChangesManager: Set agent_id to {agent_id}")
+
+
+def _get_agent_id() -> Optional[str]:
+    """Get the agent_id for the current execution context."""
+    return _agent_id_ctx.get()
+
+
+def _set_user_id(user_id: Optional[str]) -> None:
+    """Set the user_id for the current execution context.
+    
+    This is used for tunnel routing.
+    """
+    _user_id_ctx.set(user_id)
+
+
+def _get_user_id() -> Optional[str]:
+    """Get the user_id for the current execution context."""
+    return _user_id_ctx.get()
+
+
+def _route_to_local_server(
+    operation: str,
+    data: Dict[str, Any],
+) -> Optional[str]:
+    """Route file operation to LocalServer via tunnel (sync version).
+    
+    Returns:
+        Result string if successful, None if should fall back to CodeChangesManager
+    """
+    try:
+        from app.modules.tunnel.tunnel_service import get_tunnel_service
+        import httpx
+        
+        user_id = _get_user_id()
+        conversation_id = _get_conversation_id()
+        
+        if not user_id:
+            logger.debug("No user_id in context, skipping tunnel routing")
+            return None
+        
+        tunnel_service = get_tunnel_service()
+        tunnel_url = tunnel_service.get_tunnel_url(user_id, conversation_id)
+        
+        if not tunnel_url:
+            logger.debug(f"No tunnel available for user {user_id}, using CodeChangesManager")
+            return None
+        
+        # Map operation to LocalServer endpoint
+        endpoint_map = {
+            "add_file": "/api/files/create",
+            "update_file": "/api/files/update",
+            "update_file_lines": "/api/files/update-lines",
+            "insert_lines": "/api/files/insert-lines",
+            "delete_lines": "/api/files/delete-lines",
+            "delete_file": "/api/files/delete",
+        }
+        
+        endpoint = endpoint_map.get(operation)
+        if not endpoint:
+            logger.warning(f"Unknown operation for tunnel routing: {operation}")
+            return None
+        
+        # Prepare request data
+        request_data = {
+            **data,
+            "conversation_id": conversation_id,
+        }
+        
+        # Make request to LocalServer via tunnel (sync)
+        url = f"{tunnel_url}{endpoint}"
+        logger.info(f"[Tunnel Routing] 🚀 Routing {operation} to LocalServer via tunnel: {url}")
+        logger.debug(f"[Tunnel Routing] Request data: {request_data}")
+        
+        with httpx.Client(timeout=30.0) as client:
+            response = client.post(
+                url,
+                json=request_data,
+                headers={"Content-Type": "application/json"},
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                logger.info(f"[Tunnel Routing] ✅ LocalServer {operation} succeeded: {result}")
+                file_path = data.get('file_path', 'file')
+                return f"✅ Applied {operation.replace('_', ' ')} to '{file_path}' locally"
+            else:
+                error_text = response.text
+                logger.warning(f"[Tunnel Routing] ❌ LocalServer {operation} failed ({response.status_code}): {error_text}")
+                return None  # Fall back to CodeChangesManager
+        
+    except Exception as e:
+        logger.exception(f"Error routing to LocalServer for {operation}: {e}")
+        return None  # Fall back to CodeChangesManager
+
+
+def _should_route_to_local_server() -> bool:
+    """Check if file operations should be routed to LocalServer.
+    
+    Returns True if:
+    - Agent ID is "code", "code_generation_agent", or "codebase_qna_agent" (when tunnel is available)
+    - Tunnel is available for the user
+    
+    Note: "code_generation_agent" is used for the "code" agent type in the extension
+    since it has all the file editing tools. We route it to tunnel for local-first execution.
+    """
+    agent_id = _get_agent_id()
+    user_id = _get_user_id()
+    conversation_id = _get_conversation_id()
+    
+    logger.info(
+        f"[Tunnel Routing] Checking routing: agent_id={agent_id}, user_id={user_id}, conversation_id={conversation_id}"
+    )
+    
+    # Route these agents to tunnel when available for local-first code changes
+    if agent_id not in ["code", "code_generation_agent", "codebase_qna_agent"]:
+        logger.debug(f"[Tunnel Routing] Agent {agent_id} not eligible for tunnel routing")
+        return False
+    
+    try:
+        from app.modules.tunnel.tunnel_service import get_tunnel_service
+        
+        if not user_id:
+            logger.debug("[Tunnel Routing] No user_id in context")
+            return False
+        
+        tunnel_service = get_tunnel_service()
+        
+        # Try conversation-specific first
+        tunnel_url = tunnel_service.get_tunnel_url(user_id, conversation_id)
+        
+        # If not found, try user-level tunnel
+        if not tunnel_url:
+            tunnel_url = tunnel_service.get_tunnel_url(user_id, None)
+            if tunnel_url:
+                logger.info(f"[Tunnel Routing] Found user-level tunnel (no conversation-specific): {tunnel_url}")
+        
+        if tunnel_url:
+            logger.info(f"[Tunnel Routing] ✅ Routing to LocalServer via tunnel: {tunnel_url}")
+        else:
+            # Debug: Check what tunnels exist
+            logger.warning(
+                f"[Tunnel Routing] ❌ No tunnel available for user {user_id}, conversation {conversation_id}. "
+                f"Agent: {agent_id}. Check if tunnel was registered."
+            )
+        
+        return tunnel_url is not None
+    except Exception as e:
+        logger.exception(f"[Tunnel Routing] Error checking tunnel: {e}")
+        return False
 
 
 def _get_code_changes_manager() -> CodeChangesManager:
@@ -2231,7 +2399,11 @@ def _get_code_changes_manager() -> CodeChangesManager:
     return manager
 
 
-def _init_code_changes_manager(conversation_id: Optional[str] = None) -> None:
+def _init_code_changes_manager(
+    conversation_id: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> None:
     """Initialize the code changes manager for a new agent run.
 
     This loads existing changes from Redis for the conversation (if any exist)
@@ -2240,8 +2412,12 @@ def _init_code_changes_manager(conversation_id: Optional[str] = None) -> None:
     Args:
         conversation_id: The conversation ID to use for Redis key. If None,
                         uses a random session_id (backward compatible, no persistence).
+        agent_id: The agent ID to determine routing (e.g., "code" for LocalServer routing).
+        user_id: The user ID for tunnel routing.
     """
     _set_conversation_id(conversation_id)
+    _set_agent_id(agent_id)
+    _set_user_id(user_id)
 
     old_manager = _code_changes_manager_ctx.get()
     old_session = old_manager.session_id if old_manager else None
@@ -2459,7 +2635,24 @@ def _wrap_tool(func, input_model):
 # Tool functions
 def add_file_tool(input_data: AddFileInput) -> str:
     """Add a new file to the code changes manager"""
-    logger.info(f"Tool add_file_tool: Adding file '{input_data.file_path}'")
+    logger.info(f"🔧 [Tool Call] add_file_tool: Adding file '{input_data.file_path}'")
+    
+    # Check if we should route to LocalServer
+    if _should_route_to_local_server():
+        logger.info(f"🔧 [Tool Call] Routing add_file_tool to LocalServer")
+        result = _route_to_local_server(
+            "add_file",
+            {
+                "file_path": input_data.file_path,
+                "content": input_data.content,
+                "description": input_data.description,
+            }
+        )
+        if result:
+            return result
+        # If routing failed, fall through to CodeChangesManager
+    
+    # Fall back to CodeChangesManager
     try:
         manager = _get_code_changes_manager()
         success = manager.add_file(
@@ -2482,7 +2675,23 @@ def add_file_tool(input_data: AddFileInput) -> str:
 
 def update_file_tool(input_data: UpdateFileInput) -> str:
     """Update a file in the code changes manager"""
-    logger.info(f"Tool update_file_tool: Updating file '{input_data.file_path}'")
+    logger.info(f"🔧 [Tool Call] update_file_tool: Updating file '{input_data.file_path}'")
+    
+    # Check if we should route to LocalServer
+    if _should_route_to_local_server():
+        logger.info(f"🔧 [Tool Call] Routing update_file_tool to LocalServer")
+        result = _route_to_local_server(
+            "update_file",
+            {
+                "file_path": input_data.file_path,
+                "content": input_data.content,
+                "description": input_data.description,
+            }
+        )
+        if result:
+            return result
+    
+    # Fall back to CodeChangesManager
     try:
         manager = _get_code_changes_manager()
         success = manager.update_file(
@@ -2509,6 +2718,20 @@ def delete_file_tool(input_data: DeleteFileInput) -> str:
     logger.info(
         f"Tool delete_file_tool: Marking file '{input_data.file_path}' for deletion"
     )
+    
+    # Check if we should route to LocalServer
+    if _should_route_to_local_server():
+        result = _route_to_local_server(
+            "delete_file",
+            {
+                "file_path": input_data.file_path,
+                "description": input_data.description,
+            }
+        )
+        if result:
+            return result
+    
+    # Fall back to CodeChangesManager
     try:
         manager = _get_code_changes_manager()
         success = manager.delete_file(
@@ -2756,9 +2979,28 @@ def get_changes_summary_tool() -> str:
 def update_file_lines_tool(input_data: UpdateFileLinesInput) -> str:
     """Update specific lines in a file using line numbers"""
     logger.info(
-        f"Tool update_file_lines_tool: Updating lines {input_data.start_line}-{input_data.end_line or input_data.start_line} "
+        f"🔧 [Tool Call] update_file_lines_tool: Updating lines {input_data.start_line}-{input_data.end_line or input_data.start_line} "
         f"in '{input_data.file_path}' (project_id={input_data.project_id})"
     )
+    
+    # Check if we should route to LocalServer
+    if _should_route_to_local_server():
+        logger.info(f"🔧 [Tool Call] Routing update_file_lines_tool to LocalServer")
+        result = _route_to_local_server(
+            "update_file_lines",
+            {
+                "file_path": input_data.file_path,
+                "start_line": input_data.start_line,
+                "end_line": input_data.end_line,
+                "new_content": input_data.new_content,
+                "description": input_data.description,
+                "project_id": input_data.project_id,
+            }
+        )
+        if result:
+            return result
+    
+    # Fall back to CodeChangesManager
     try:
         manager = _get_code_changes_manager()
         db = None
@@ -2869,9 +3111,28 @@ def insert_lines_tool(input_data: InsertLinesInput) -> str:
     """Insert content at a specific line in a file"""
     position = "after" if input_data.insert_after else "before"
     logger.info(
-        f"Tool insert_lines_tool: Inserting lines {position} line {input_data.line_number} "
+        f"🔧 [Tool Call] insert_lines_tool: Inserting lines {position} line {input_data.line_number} "
         f"in '{input_data.file_path}' (project_id={input_data.project_id})"
     )
+    
+    # Check if we should route to LocalServer
+    if _should_route_to_local_server():
+        logger.info(f"🔧 [Tool Call] Routing insert_lines_tool to LocalServer")
+        result = _route_to_local_server(
+            "insert_lines",
+            {
+                "file_path": input_data.file_path,
+                "line_number": input_data.line_number,
+                "content": input_data.content,
+                "description": input_data.description,
+                "insert_after": input_data.insert_after,
+                "project_id": input_data.project_id,
+            }
+        )
+        if result:
+            return result
+    
+    # Fall back to CodeChangesManager
     try:
         manager = _get_code_changes_manager()
         db = None
@@ -2927,6 +3188,23 @@ def delete_lines_tool(input_data: DeleteLinesInput) -> str:
         f"Tool delete_lines_tool: Deleting lines {input_data.start_line}-{input_data.end_line or input_data.start_line} "
         f"from '{input_data.file_path}' (project_id={input_data.project_id})"
     )
+    
+    # Check if we should route to LocalServer
+    if _should_route_to_local_server():
+        result = _route_to_local_server(
+            "delete_lines",
+            {
+                "file_path": input_data.file_path,
+                "start_line": input_data.start_line,
+                "end_line": input_data.end_line,
+                "description": input_data.description,
+                "project_id": input_data.project_id,
+            }
+        )
+        if result:
+            return result
+    
+    # Fall back to CodeChangesManager
     try:
         manager = _get_code_changes_manager()
         db = None

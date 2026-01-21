@@ -27,6 +27,7 @@ from app.modules.intelligence.tools.tool_router import router as tool_router
 from app.modules.key_management.secret_manager import router as secret_manager_router
 from app.modules.media.media_router import router as media_router
 from app.modules.integrations.integrations_router import router as integrations_router
+from app.modules.tunnel.tunnel_router import router as tunnel_router
 from app.modules.parsing.graph_construction.parsing_router import (
     router as parsing_router,
 )
@@ -151,6 +152,7 @@ class MainApp:
         self.app.include_router(
             conversations_router, prefix="/api/v1", tags=["Conversations"]
         )
+        self.app.include_router(tunnel_router, prefix="/api/v1", tags=["Tunnel"])
         self.app.include_router(prompt_router, prefix="/api/v1", tags=["Prompts"])
         self.app.include_router(projects_router, prefix="/api/v1", tags=["Projects"])
         self.app.include_router(search_router, prefix="/api/v1", tags=["Search"])

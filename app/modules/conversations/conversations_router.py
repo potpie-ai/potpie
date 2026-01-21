@@ -619,3 +619,101 @@ async def remove_access(
         return {"message": "Access removed successfully"}
     except ShareChatServiceError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/conversations/{conversation_id}/code-changes/sync")
+async def sync_code_change_from_local(
+    conversation_id: str,
+    change: dict,
+    user=Depends(AuthService.check_auth),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Receive code changes that were applied locally and sync to CodeChangesManager.
+    
+    This endpoint is called by the LocalServer after successfully applying a file change
+    to the local IDE. The change is then synced to CodeChangesManager in the backend
+    for persistence and agent context.
+    
+    Request body should contain:
+    - file_path: str
+    - change_type: str (add, update, delete)
+    - content: str (new content)
+    - previous_content: Optional[str] (original content before change)
+    - description: Optional[str]
+    """
+    from app.modules.intelligence.tools.code_changes_manager import (
+        _get_code_changes_manager,
+        _set_conversation_id,
+        _get_conversation_id,
+    )
+    
+    user_id = user["user_id"]
+    
+    try:
+        # Set conversation_id in context for CodeChangesManager
+        _set_conversation_id(conversation_id)
+        
+        # Get CodeChangesManager for this conversation
+        manager = _get_code_changes_manager()
+        
+        # Sync the change based on change_type
+        change_type = change.get("change_type")
+        file_path = change.get("file_path")
+        
+        if not file_path:
+            raise HTTPException(status_code=400, detail="file_path is required")
+        
+        if change_type == "add":
+            success = manager.add_file(
+                file_path=file_path,
+                content=change.get("content", ""),
+                description=change.get("description"),
+            )
+        elif change_type == "update":
+            success = manager.update_file(
+                file_path=file_path,
+                content=change.get("content", ""),
+                description=change.get("description"),
+                preserve_previous=True,
+            )
+            # If previous_content is provided, update it manually
+            if "previous_content" in change and success:
+                file_change = manager._changes_cache.get(file_path)
+                if file_change:
+                    file_change.previous_content = change["previous_content"]
+                    manager._persist_change()
+        elif change_type == "delete":
+            success = manager.delete_file(
+                file_path=file_path,
+                description=change.get("description"),
+                preserve_content=False,
+            )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid change_type: {change_type}. Must be 'add', 'update', or 'delete'"
+            )
+        
+        if success:
+            logger.info(
+                f"Synced {change_type} change for '{file_path}' in conversation {conversation_id}"
+            )
+            return {
+                "message": f"Change synced successfully",
+                "conversation_id": conversation_id,
+                "file_path": file_path,
+                "change_type": change_type,
+            }
+        else:
+            raise HTTPException(
+                status_code=500, detail=f"Failed to sync {change_type} change for '{file_path}'"
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            f"Error syncing code change from local: {e}",
+            conversation_id=conversation_id,
+            file_path=change.get("file_path"),
+        )
+        raise HTTPException(status_code=500, detail=f"Error syncing change: {str(e)}")
