@@ -1,4 +1,6 @@
 import os
+import json
+import subprocess
 from asyncio import create_task
 from contextlib import contextmanager
 
@@ -15,7 +17,6 @@ from app.modules.parsing.graph_construction.parsing_helper import (
     ParsingServiceError,
 )
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
-from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
@@ -159,13 +160,6 @@ class ParsingService:
                             status_code=500, detail="Internal server error"
                         )
 
-                # Convert ParsingRequest to RepoDetails
-                repo_details_converted = RepoDetails(
-                    repo_name=repo_details.repo_name or "",
-                    branch_name=repo_details.branch_name or "",
-                    repo_path=repo_details.repo_path,
-                    commit_id=repo_details.commit_id,
-                )
                 if repo_details.repo_path:
                     if not os.path.exists(repo_details.repo_path):
                         raise HTTPException(
@@ -184,41 +178,67 @@ class ParsingService:
                     repo = Repo(worktree)
                     extracted_dir = worktree
 
-                _, github_repo = self.github_service.get_repo(repo_details.repo_name)
-                languages = github_repo.get_languages()
-                language = max(languages, key=languages.get).lower()
-                logger.info(
-                    f"Detected language from GitHub API: {language} "
-                    f"(from {len(languages)} languages)"
+                try:
+                    result = subprocess.run(
+                        ["git", "-C", extracted_dir, "rev-parse", "HEAD"],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                        check=True,
+                    )
+                    latest_commit_sha = result.stdout.strip()
+                    logger.info(
+                        f"Retrieved latest commit SHA for worktree {extracted_dir}: {latest_commit_sha[:8]}"
+                    )
+                except subprocess.TimeoutExpired:
+                    logger.warning(f"Timeout getting commit SHA from {extracted_dir}")
+                    latest_commit_sha = None
+                except subprocess.CalledProcessError as e:
+                    logger.warning(
+                        f"Failed to get commit SHA from {extracted_dir}: {e.stderr}"
+                    )
+                    latest_commit_sha = None
+
+                # Detect language - use GitHub API for accuracy when available
+                if repo_details.repo_name and not repo_details.repo_path:
+                    # GitHub repo - use API for accurate language detection
+                    try:
+                        _, github_repo = self.github_service.get_repo(
+                            repo_details.repo_name
+                        )
+                        languages = github_repo.get_languages()
+                        if languages:
+                            language = max(languages, key=languages.get).lower()
+                            logger.debug(
+                                f"Detected language from GitHub API: {language} "
+                                f"(from {len(languages)} languages)"
+                            )
+                        else:
+                            language = self.parse_helper.detect_repo_language(
+                                extracted_dir
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to get language from GitHub API, falling back to manual detection: {e}"
+                        )
+                        language = self.parse_helper.detect_repo_language(extracted_dir)
+                else:
+                    # Local repo - use manual detection
+                    language = self.parse_helper.detect_repo_language(extracted_dir)
+
+                # Use repo instead of repo_details for metadata extraction
+                # repo is always the MockRepo (remote) or Repo (local) object with required methods
+                # repo_details can be ParsingRequest in dev mode, which lacks these methods
+                repo_metadata = self.parse_helper.extract_repository_metadata(repo)
+                repo_metadata["error_message"] = None
+                project_metadata = json.dumps(repo_metadata).encode("utf-8")
+                self.project_service.update_project(
+                    self.db,
+                    project_id,
+                    properties=project_metadata,
+                    commit_id=latest_commit_sha,
+                    status=ProjectStatusEnum.CLONED.value,
                 )
-
-                # # Detect language - use GitHub API for accuracy when available
-                # if repo_details.repo_name and not repo_details.repo_path:
-                #     # GitHub repo - use API for accurate language detection
-                #     try:
-                #         _, github_repo = self.github_service.get_client_and_repo(
-                #             repo_details.repo_name
-                #         )
-                #         languages = github_repo.get_languages()
-                #         if languages:
-                #             language = max(languages, key=languages.get).lower()
-                #             logger.info(
-                #                 f"Detected language from GitHub API: {language} "
-                #                 f"(from {len(languages)} languages)"
-                #             )
-                #         else:
-                #             language = self.parse_helper.detect_repo_language(
-                #                 extracted_dir
-                #             )
-                #     except Exception as e:
-                #         logger.warning(
-                #             f"Failed to get language from GitHub API, falling back to manual detection: {e}"
-                #         )
-                #         language = self.parse_helper.detect_repo_language(extracted_dir)
-                # else:
-                #     # Local repo - use manual detection
-                #     language = self.parse_helper.detect_repo_language(extracted_dir)
-
                 await self.analyze_directory(
                     extracted_dir, project_id, user_id, self.db, language, user_email
                 )

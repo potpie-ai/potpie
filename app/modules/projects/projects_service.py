@@ -396,7 +396,8 @@ class ProjectService:
             logger.exception(f"Error creating project {project.id}")
             raise
 
-    def update_project(db: Session, project_id: int, **kwargs):
+    @staticmethod
+    def update_project(db, project_id: str, **kwargs):
         project = db.query(Project).filter(Project.id == project_id).first()
 
         if project is None:
