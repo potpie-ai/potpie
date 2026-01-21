@@ -1,6 +1,4 @@
 import os
-import shutil
-import traceback
 from asyncio import create_task
 from contextlib import contextmanager
 
@@ -21,6 +19,7 @@ from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
+from app.modules.repo_manager import RepoManager
 from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.logger import log_context, setup_logger
 from app.modules.utils.parse_webhook_helper import ParseWebhookHelper
@@ -57,6 +56,7 @@ class ParsingService:
         self.github_service = CodeProviderService(db)
         self._neo4j_config = neo4j_config
         self._raise_library_exceptions = raise_library_exceptions
+        self.repo_manager = RepoManager()
 
     @classmethod
     def create_from_config(
@@ -104,7 +104,7 @@ class ParsingService:
         repo_details: ParsingRequest,
         user_id: str,
         user_email: str,
-        project_id: int,
+        project_id: str,
         cleanup_graph: bool = True,
     ):
         # Set up logging context with domain IDs
@@ -166,44 +166,58 @@ class ParsingService:
                     repo_path=repo_details.repo_path,
                     commit_id=repo_details.commit_id,
                 )
-                repo, owner, auth = await self.parse_helper.clone_or_copy_repository(
-                    repo_details_converted, user_id
-                )
-                if config_provider.get_is_development_mode():
-                    (
-                        extracted_dir,
-                        project_id,
-                    ) = await self.parse_helper.setup_project_directory(
-                        repo,
-                        repo_details.branch_name,
-                        auth,
-                        repo_details,
-                        user_id,
-                        project_id,
-                        commit_id=repo_details.commit_id,
+                if repo_details.repo_path:
+                    if not os.path.exists(repo_details.repo_path):
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Local repository does not exist on the given path",
+                        )
+                    repo = Repo(repo_details.repo_path)
+                    logger.info(
+                        f"ParsingHelper: clone_or_copy_repository created local Repo object for path: {repo_details.repo_path}"
                     )
+                    extracted_dir = repo_details.repo_path
                 else:
-                    (
-                        extracted_dir,
-                        project_id,
-                    ) = await self.parse_helper.setup_project_directory(
-                        repo,
-                        repo_details.branch_name,
-                        auth,
-                        repo,
-                        user_id,
-                        project_id,
-                        commit_id=repo_details.commit_id,
+                    worktree = self.repo_manager.prepare_for_parsing(
+                        repo_details.repo_name, ref=repo_details.branch_name
                     )
+                    repo = Repo(worktree)
+                    extracted_dir = worktree
 
-                if isinstance(repo, Repo):
-                    language = self.parse_helper.detect_repo_language(extracted_dir)
-                else:
-                    languages = repo.get_languages()
-                    if languages:
-                        language = max(languages, key=languages.get).lower()
-                    else:
-                        language = self.parse_helper.detect_repo_language(extracted_dir)
+                _, github_repo = self.github_service.get_repo(repo_details.repo_name)
+                languages = github_repo.get_languages()
+                language = max(languages, key=languages.get).lower()
+                logger.info(
+                    f"Detected language from GitHub API: {language} "
+                    f"(from {len(languages)} languages)"
+                )
+
+                # # Detect language - use GitHub API for accuracy when available
+                # if repo_details.repo_name and not repo_details.repo_path:
+                #     # GitHub repo - use API for accurate language detection
+                #     try:
+                #         _, github_repo = self.github_service.get_client_and_repo(
+                #             repo_details.repo_name
+                #         )
+                #         languages = github_repo.get_languages()
+                #         if languages:
+                #             language = max(languages, key=languages.get).lower()
+                #             logger.info(
+                #                 f"Detected language from GitHub API: {language} "
+                #                 f"(from {len(languages)} languages)"
+                #             )
+                #         else:
+                #             language = self.parse_helper.detect_repo_language(
+                #                 extracted_dir
+                #             )
+                #     except Exception as e:
+                #         logger.warning(
+                #             f"Failed to get language from GitHub API, falling back to manual detection: {e}"
+                #         )
+                #         language = self.parse_helper.detect_repo_language(extracted_dir)
+                # else:
+                #     # Local repo - use manual detection
+                #     language = self.parse_helper.detect_repo_language(extracted_dir)
 
                 await self.analyze_directory(
                     extracted_dir, project_id, user_id, self.db, language, user_email
@@ -224,20 +238,11 @@ class ParsingService:
                 raise
 
             except Exception as e:
-                # Log the full traceback server-side for debugging
-                tb_str = "".join(traceback.format_exception(None, e, e.__traceback__))
                 logger.exception(
                     "Error during parsing",
                     project_id=project_id,
                     user_id=user_id,
                 )
-                # Log the formatted traceback string explicitly for detailed debugging
-                logger.error(
-                    f"Full traceback:\n{tb_str}",
-                    project_id=project_id,
-                    user_id=user_id,
-                )
-                # Rollback the database session to clear any pending transactions
                 self.db.rollback()
                 try:
                     await project_manager.update_project_status(
@@ -259,17 +264,6 @@ class ParsingService:
                     status_code=500,
                     detail=f"Internal server error. Please contact support with project ID: {project_id}",
                 )
-
-            finally:
-                project_path = os.getenv("PROJECT_PATH")
-                if (
-                    extracted_dir
-                    and isinstance(extracted_dir, str)
-                    and os.path.exists(extracted_dir)
-                    and project_path
-                    and extracted_dir.startswith(project_path)
-                ):
-                    shutil.rmtree(extracted_dir, ignore_errors=True)
 
     def create_neo4j_indices(self, graph_manager):
         # Create existing indices from blar_graph
@@ -299,7 +293,7 @@ class ParsingService:
     async def analyze_directory(
         self,
         extracted_dir: str,
-        project_id: int,
+        project_id: str,
         user_id: str,
         db,
         language: str,
@@ -323,7 +317,7 @@ class ParsingService:
             raise FileNotFoundError(f"Directory not found: {extracted_dir}")
 
         logger.info(
-            f"ParsingService: Directory exists and is accessible: {extracted_dir}"
+            "ParsingService: Directory exists and is accessible", dir=extracted_dir
         )
         project_details = await self.project_service.get_project_from_db_by_id(
             project_id

@@ -1532,9 +1532,7 @@ class RepoManager(IRepoManager):
 
         self._evict_if_needed(user_id=user_id)
 
-        _ = self.ensure_bare_repo(
-            repo_name, repo_url, auth_token, ref, user_id
-        )
+        _ = self.ensure_bare_repo(repo_name, repo_url, auth_token, ref, user_id)
 
         worktree_path = self.create_worktree(
             repo_name, ref, auth_token, is_commit, user_id
