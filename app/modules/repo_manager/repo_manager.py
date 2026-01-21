@@ -18,7 +18,7 @@ import os
 import random
 import shutil
 import subprocess
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
@@ -218,6 +218,30 @@ class RepoManager(IRepoManager):
         self._validate_repo_name(repo_name)
         safe_ref = ref.replace("/", "_").replace("\\", "_")
         return self._get_worktrees_dir(repo_name) / safe_ref
+
+    def _get_unique_worktree_path(
+        self, repo_name: str, ref: str, user_id: str, unique_id: str
+    ) -> Path:
+        """
+        Get path for a unique worktree with user_id and unique_id prefix.
+
+        Args:
+            repo_name: Repository name
+            ref: Branch name or commit SHA
+            user_id: User ID
+            unique_id: Unique identifier for this worktree
+
+        Returns:
+            Path to unique worktree directory
+        """
+        self._validate_repo_name(repo_name)
+        safe_ref = ref.replace("/", "_").replace("\\", "_")
+        safe_user_id = user_id.replace("/", "_").replace("\\", "_")
+        safe_unique_id = unique_id.replace("/", "_").replace("\\", "_")
+        return (
+            self._get_worktrees_dir(repo_name)
+            / f"{safe_user_id}_{safe_unique_id}_{safe_ref}"
+        )
 
     # ========== METADATA HELPERS ==========
 
@@ -701,6 +725,7 @@ class RepoManager(IRepoManager):
         auth_token: Optional[str] = None,
         is_commit: bool = False,
         user_id: Optional[str] = None,
+        unique_id: Optional[str] = None,
     ) -> Path:
         """
         Create worktree from bare repository for parsing.
@@ -714,6 +739,7 @@ class RepoManager(IRepoManager):
             auth_token: Optional authentication token
             is_commit: Whether ref is a commit SHA
             user_id: Optional user ID for multi-tenant tracking
+            unique_id: Optional unique ID to create detached HEAD worktree with prefix
 
         Returns:
             Path to worktree directory
@@ -722,7 +748,15 @@ class RepoManager(IRepoManager):
         self._validate_ref(ref)
 
         bare_repo_path = self._get_bare_repo_path(repo_name)
-        worktree_path = self._get_worktree_path(repo_name, ref)
+
+        if unique_id:
+            if not user_id:
+                raise ValueError("user_id is required when unique_id is provided")
+            worktree_path = self._get_unique_worktree_path(
+                repo_name, ref, user_id, unique_id
+            )
+        else:
+            worktree_path = self._get_worktree_path(repo_name, ref)
 
         self._get_worktrees_dir(repo_name).mkdir(parents=True, exist_ok=True)
 
@@ -838,7 +872,8 @@ class RepoManager(IRepoManager):
             self._delete_metadata_entry(
                 repo_name, None if is_commit else ref, ref if is_commit else None
             )
-        if is_commit:
+
+        if unique_id or is_commit:
             cmd = [
                 "git",
                 "-C",
@@ -880,13 +915,17 @@ class RepoManager(IRepoManager):
             logger.info(f"Successfully created worktree: {repo_name}@{ref}")
 
             # Register worktree in metadata
+            metadata = {"type": self._TYPE_WORKTREE, "is_commit": is_commit}
+            if unique_id:
+                metadata["unique_id"] = unique_id
+
             self.register_repo(
                 repo_name=repo_name,
                 local_path=str(worktree_path),
                 branch=None if is_commit else ref,
                 commit_id=ref if is_commit else None,
                 user_id=user_id,
-                metadata={"type": self._TYPE_WORKTREE, "is_commit": is_commit},
+                metadata=metadata,
             )
 
             # Update bare repo metadata
@@ -990,6 +1029,104 @@ class RepoManager(IRepoManager):
             return worktree_path
         return None
 
+    def cleanup_unique_worktree(
+        self, repo_name: str, user_id: str, unique_id: str
+    ) -> bool:
+        """
+        Remove a unique worktree for a given user_id and unique_id.
+
+        This removes all worktrees that match the user_id and unique_id prefix
+        for the specified repository.
+
+        Args:
+            repo_name: Repository name
+            user_id: User ID
+            unique_id: Unique identifier for worktrees to cleanup
+
+        Returns:
+            True if at least one worktree was removed, False otherwise
+        """
+        self._validate_repo_name(repo_name)
+        bare_repo_path = self._get_bare_repo_path(repo_name)
+        worktrees_dir = self._get_worktrees_dir(repo_name)
+
+        logger.info(
+            f"Cleaning up unique worktree for {repo_name} user:{user_id} id:{unique_id}"
+        )
+
+        safe_user_id = user_id.replace("/", "_").replace("\\", "_")
+        safe_unique_id = unique_id.replace("/", "_").replace("\\", "_")
+        prefix = f"{safe_user_id}_{safe_unique_id}_"
+
+        removed = False
+
+        if not worktrees_dir.exists():
+            logger.info(f"Worktrees directory does not exist: {worktrees_dir}")
+            return False
+
+        try:
+            for worktree_path in worktrees_dir.iterdir():
+                if not worktree_path.is_dir():
+                    continue
+
+                if worktree_path.name.startswith(prefix):
+                    logger.info(f"Removing unique worktree: {worktree_path.name}")
+
+                    try:
+                        result = subprocess.run(
+                            [
+                                "git",
+                                "-C",
+                                str(bare_repo_path),
+                                "worktree",
+                                "remove",
+                                "--force",
+                                "--",
+                                str(worktree_path),
+                            ],
+                            capture_output=True,
+                            text=True,
+                            timeout=self._WORKTREE_REMOVE_TIMEOUT,
+                        )
+
+                        if result.returncode == 0:
+                            logger.info(
+                                f"Successfully removed unique worktree via git: {worktree_path.name}"
+                            )
+                        else:
+                            logger.warning(
+                                f"Git worktree remove failed, using rmtree: {result.stderr}"
+                            )
+                            shutil.rmtree(worktree_path, ignore_errors=True)
+
+                    except subprocess.TimeoutExpired:
+                        logger.warning(
+                            f"Timeout removing worktree {worktree_path.name}, using rmtree"
+                        )
+                        shutil.rmtree(worktree_path, ignore_errors=True)
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to remove worktree via git: {e}, using rmtree"
+                        )
+                        shutil.rmtree(worktree_path, ignore_errors=True)
+
+                    removed = True
+
+            if removed:
+                logger.info(
+                    f"Successfully cleaned up unique worktrees for user:{user_id} id:{unique_id}"
+                )
+            else:
+                logger.info(
+                    f"No unique worktrees found for user:{user_id} id:{unique_id}"
+                )
+
+            return removed
+
+        except Exception as e:
+            logger.exception(f"Error cleaning up unique worktrees: {e}")
+            return False
+
     # ========== EVICTION LOGIC (v2 tiered eviction) ==========
 
     def _evict_if_needed(self, user_id: Optional[str] = None) -> None:
@@ -1027,11 +1164,10 @@ class RepoManager(IRepoManager):
         Returns:
             List of worktrees that were evicted
         """
-        cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+        cutoff = datetime.utcnow() - timedelta(days=max_age_days)
         evicted = []
 
-        # Get all worktree-type entries
-        for entry in self.list_repos(user_id=user_id):
+        for entry in self.list_available_repos(user_id=user_id):
             metadata = entry.get("metadata", {})
             if metadata.get("type") != self._TYPE_WORKTREE:
                 continue
@@ -1047,6 +1183,16 @@ class RepoManager(IRepoManager):
                 repo_name = entry["repo_name"]
                 branch = entry["branch"]
                 commit_id = entry["commit_id"]
+
+                unique_id = metadata.get("unique_id")
+                if unique_id:
+                    entry_user_id = entry.get("user_id")
+                    if entry_user_id:
+                        self.cleanup_unique_worktree(
+                            repo_name, entry_user_id, unique_id
+                        )
+                        evicted.append(f"{repo_name}@{entry_user_id}_{unique_id}")
+                    continue
 
                 if self.evict_repo(
                     repo_name, branch=branch, commit_id=commit_id, user_id=user_id
