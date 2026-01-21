@@ -81,3 +81,4 @@ worktrees/
 
 .ruff_cache/
 .pytest_cache/
+requirements.txt
