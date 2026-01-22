@@ -579,23 +579,12 @@ class RepoManager(IRepoManager):
         try:
             logger.info(f"Fetching ref '{ref}' for bare repo at {bare_repo_path}")
 
+            fetch_remote = "origin"
             if auth_token and repo_url:
-                authenticated_url = self._build_authenticated_url(repo_url, auth_token)
-                subprocess.run(
-                    [
-                        "git",
-                        "-C",
-                        str(bare_repo_path),
-                        "config",
-                        "remote.origin.url",
-                        authenticated_url,
-                    ],
-                    capture_output=True,
-                    check=False,
-                )
+                fetch_remote = self._build_authenticated_url(repo_url, auth_token)
 
             result = subprocess.run(
-                ["git", "-C", str(bare_repo_path), "fetch", "origin", "--", ref],
+                ["git", "-C", str(bare_repo_path), "fetch", fetch_remote, "--", ref],
                 capture_output=True,
                 text=True,
                 timeout=self._FETCH_TIMEOUT,
