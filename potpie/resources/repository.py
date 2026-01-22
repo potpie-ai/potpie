@@ -212,9 +212,7 @@ class RepositoryResource(BaseResource):
         """
         repo_manager = self._get_repo_manager()
         try:
-            repos_dicts = repo_manager.list_available_repos(
-                user_id=user_id, limit=limit
-            )
+            repos_dicts = repo_manager.list_repos(user_id=user_id, limit=limit)
             return [RepositoryInfo.from_dict(r) for r in repos_dicts]
         except Exception as e:
             raise RepositoryError(f"Failed to list repositories: {e}") from e

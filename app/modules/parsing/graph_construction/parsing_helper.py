@@ -525,9 +525,9 @@ class ParseHelper:
 
                             if entry.suffix == ".py":
                                 language_bytes["Python"] += size
-                            if entry.suffix == ".ts":
+                            elif entry.suffix == ".ts":
                                 language_bytes["TypeScript"] += size
-                            if entry.suffix == ".js":
+                            elif entry.suffix == ".js":
                                 language_bytes["JavaScript"] += size
                             else:
                                 language_bytes["Other"] += size
