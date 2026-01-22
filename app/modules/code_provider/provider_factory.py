@@ -313,9 +313,23 @@ class CodeProviderFactory:
             try:
                 return CodeProviderFactory.create_github_app_provider(repo_name)
             except Exception as e:
-                logger.warning(
-                    f"GitHub App authentication failed for {repo_name}: {e}, falling back to PAT"
+                # Check if this is an expected failure (app not installed on repo)
+                error_msg = str(e)
+                is_expected_failure = (
+                    "GitHub App not installed" in error_msg
+                    or "404" in error_msg
                 )
+                
+                if is_expected_failure:
+                    # This is expected for public repos or repos where app isn't installed
+                    logger.debug(
+                        f"GitHub App not installed on repository {repo_name} (expected for public repos or repos where app isn't installed), falling back to PAT"
+                    )
+                else:
+                    # Unexpected error - log as warning
+                    logger.warning(
+                        f"GitHub App authentication failed for {repo_name}: {e}, falling back to PAT"
+                    )
                 # Continue to PAT fallback below
 
         # For GitHub: Try GH_TOKEN_LIST first (where GitHub PATs are stored)

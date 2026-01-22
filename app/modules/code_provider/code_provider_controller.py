@@ -7,6 +7,7 @@ from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.code_provider.provider_factory import CodeProviderFactory
 from app.core.config_provider import config_provider
 from app.modules.code_provider.github.github_service import GithubService
+from app.modules.code_provider.branch_cache import BranchCache
 
 try:
     from github.GithubException import GithubException, BadCredentialsException
@@ -24,31 +25,101 @@ class CodeProviderController:
     def __init__(self, db: Session):
         self.db = db
         self.code_provider_service = CodeProviderService(db)
+        self.branch_cache = BranchCache()
 
-    async def get_branch_list(self, repo_name: str) -> Dict[str, Any]:
+    async def get_branch_list(
+        self, 
+        repo_name: str, 
+        limit: int = None, 
+        offset: int = 0,
+        search: str = None
+    ) -> Dict[str, Any]:
         """
         Get branch list for a repository using the configured provider.
         Uses fallback authentication (PAT-first, then GitHub App) for private repos.
+        Caches all fetched branches in Redis for future requests.
+        Returns paginated results if limit is specified.
 
         Args:
             repo_name: Repository name (e.g., "owner/repo")
+            limit: Optional limit on number of branches to return
+            offset: Number of branches to skip (default: 0)
+            search: Optional search query to filter branches by name
 
         Returns:
-            Dictionary containing branch information
+            Dictionary containing branch information with pagination metadata
         """
         from app.modules.utils.logger import setup_logger
 
         logger = setup_logger(__name__)
 
+        # Normalize search query
+        search_query = search.strip().lower() if search and search.strip() else None
+
+        # Check cache first for all branches (without search filter)
+        cached_branches = self.branch_cache.get_branches(repo_name, search_query=None)
+        if cached_branches is not None:
+            logger.info(f"Found {len(cached_branches)} cached branches for {repo_name}")
+            
+            # Apply search filter if provided
+            if search_query:
+                filtered_branches = [
+                    branch for branch in cached_branches 
+                    if search_query in branch.lower()
+                ]
+                logger.info(f"Filtered to {len(filtered_branches)} branches matching '{search}'")
+            else:
+                filtered_branches = cached_branches
+            
+            # Apply pagination to filtered branches
+            total_branches = len(filtered_branches)
+            paginated_branches = filtered_branches[offset:]
+            if limit is not None:
+                paginated_branches = paginated_branches[:limit]
+                has_next_page = (offset + limit) < total_branches
+            else:
+                has_next_page = False
+            
+            return {
+                "branches": paginated_branches,
+                "has_next_page": has_next_page,
+                "total_count": total_branches
+            }
+
         try:
             # Use fallback provider that tries PAT first, then GitHub App for private repos
             provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
 
-            # Use the provider's list_branches method
-            branches = provider.list_branches(repo_name)
+            # Use the provider's list_branches method - this fetches ALL branches
+            all_branches = provider.list_branches(repo_name)
 
-            # Format the response to match the expected API format
-            return {"branches": branches}
+            # Cache all branches in Redis
+            self.branch_cache.cache_all_branches(repo_name, all_branches, ttl=3600)
+            logger.info(f"Cached {len(all_branches)} branches for {repo_name}")
+
+            # Apply search filter if provided
+            if search_query:
+                filtered_branches = [
+                    branch for branch in all_branches 
+                    if search_query in branch.lower()
+                ]
+                logger.info(f"Filtered to {len(filtered_branches)} branches matching '{search}'")
+            else:
+                filtered_branches = all_branches
+
+            # Apply pagination if limit is specified
+            if limit is not None:
+                total_branches = len(filtered_branches)
+                paginated_branches = filtered_branches[offset:offset + limit]
+                has_next_page = (offset + limit) < total_branches
+                return {
+                    "branches": paginated_branches,
+                    "has_next_page": has_next_page,
+                    "total_count": total_branches
+                }
+            else:
+                # Return all filtered branches if no limit specified
+                return {"branches": filtered_branches}
 
         except Exception as e:
             # Check if this is a 404 (not found), 401 (bad credentials), or 403 (forbidden)
@@ -92,11 +163,36 @@ class CodeProviderController:
 
                     provider = GitHubProvider()
                     provider.set_unauthenticated_client()
-                    branches = provider.list_branches(repo_name)
+                    all_branches = provider.list_branches(repo_name)
                     logger.info(
                         f"Successfully accessed {repo_name} without authentication"
                     )
-                    return {"branches": branches}
+                    # Cache all branches in Redis
+                    self.branch_cache.cache_all_branches(repo_name, all_branches, ttl=3600)
+                    logger.info(f"Cached {len(all_branches)} branches for {repo_name} (unauthenticated)")
+                    
+                    # Apply search filter if provided
+                    if search_query:
+                        filtered_branches = [
+                            branch for branch in all_branches 
+                            if search_query in branch.lower()
+                        ]
+                        logger.info(f"Filtered to {len(filtered_branches)} branches matching '{search}'")
+                    else:
+                        filtered_branches = all_branches
+                    
+                    # Apply pagination if limit is specified
+                    if limit is not None:
+                        total_branches = len(filtered_branches)
+                        paginated_branches = filtered_branches[offset:offset + limit]
+                        has_next_page = (offset + limit) < total_branches
+                        return {
+                            "branches": paginated_branches,
+                            "has_next_page": has_next_page,
+                            "total_count": total_branches
+                        }
+                    else:
+                        return {"branches": filtered_branches}
                 except Exception as unauth_error:
                     logger.warning(
                         f"Unauthenticated access also failed for {repo_name}: {unauth_error}"
@@ -115,11 +211,36 @@ class CodeProviderController:
                         provider = CodeProviderFactory.create_github_app_provider(
                             repo_name
                         )
-                        branches = provider.list_branches(repo_name)
+                        all_branches = provider.list_branches(repo_name)
                         logger.info(
-                            f"Successfully fetched {len(branches)} branches for {repo_name} using GitHub App auth"
+                            f"Successfully fetched {len(all_branches)} branches for {repo_name} using GitHub App auth"
                         )
-                        return {"branches": branches}
+                        # Cache all branches in Redis
+                        self.branch_cache.cache_all_branches(repo_name, all_branches, ttl=3600)
+                        logger.info(f"Cached {len(all_branches)} branches for {repo_name} (GitHub App)")
+                        
+                        # Apply search filter if provided
+                        if search_query:
+                            filtered_branches = [
+                                branch for branch in all_branches 
+                                if search_query in branch.lower()
+                            ]
+                            logger.info(f"Filtered to {len(filtered_branches)} branches matching '{search}'")
+                        else:
+                            filtered_branches = all_branches
+                        
+                        # Apply pagination if limit is specified
+                        if limit is not None:
+                            total_branches = len(filtered_branches)
+                            paginated_branches = filtered_branches[offset:offset + limit]
+                            has_next_page = (offset + limit) < total_branches
+                            return {
+                                "branches": paginated_branches,
+                                "has_next_page": has_next_page,
+                                "total_count": total_branches
+                            }
+                        else:
+                            return {"branches": filtered_branches}
                     except Exception as app_error:
                         logger.warning(
                             f"GitHub App auth also failed for {repo_name}: {str(app_error)}"
