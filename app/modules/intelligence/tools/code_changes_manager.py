@@ -28,6 +28,26 @@ from sqlalchemy.orm import Session
 from app.modules.utils.logger import setup_logger
 from app.core.config_provider import ConfigProvider
 
+# Import search tools from modularized location
+from app.modules.intelligence.tools.local_search_tools import (
+    SearchSymbolsInput,
+    search_symbols_tool,
+    SearchWorkspaceSymbolsInput,
+    search_workspace_symbols_tool,
+    SearchReferencesInput,
+    search_references_tool,
+    SearchDefinitionsInput,
+    search_definitions_tool,
+    SearchFilesInput,
+    search_files_tool,
+    SearchTextInput,
+    search_text_tool,
+    SearchCodeStructureInput,
+    search_code_structure_tool,
+    SearchBashInput,
+    search_bash_tool,
+)
+
 logger = setup_logger(__name__)
 
 # Redis key prefix and expiry for code changes
@@ -2302,6 +2322,8 @@ def _route_to_local_server(
             if response.status_code == 200:
                 result = response.json()
                 logger.info(f"[Tunnel Routing] ✅ LocalServer {operation} succeeded: {result}")
+                
+                # File operation success
                 file_path = data.get('file_path', 'file')
                 return f"✅ Applied {operation.replace('_', ' ')} to '{file_path}' locally"
             else:
@@ -3859,6 +3881,55 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
             description="Get comprehensive metadata about all code changes in the current session. Shows complete state of all files being managed, including timestamps, descriptions, change types, and line counts. Use this to review your session progress and understand what files have been modified. This is your session state - all your work is tracked here.",
             func=get_comprehensive_metadata_tool,
             args_schema=GetComprehensiveMetadataInput,
+        ),
+        # Search tools - route to LocalServer for fast local search
+        SimpleTool(
+            name="search_symbols",
+            description="Search for symbols (functions, classes, variables, etc.) in a specific file using LocalServer. Returns all symbols found in the file with their types, locations, and details. Use this to understand the structure of a file.",
+            func=search_symbols_tool,
+            args_schema=SearchSymbolsInput,
+        ),
+        SimpleTool(
+            name="search_workspace_symbols",
+            description="Search for symbols across the entire workspace using LocalServer. Finds all symbols matching a query (function names, class names, etc.) across all files. Use this to find where a symbol is defined or used.",
+            func=search_workspace_symbols_tool,
+            args_schema=SearchWorkspaceSymbolsInput,
+        ),
+        SimpleTool(
+            name="search_references",
+            description="Find all references to a symbol at a specific location using LocalServer. Use this to find where a function, class, or variable is used throughout the codebase. Requires file_path, line, and character position.",
+            func=search_references_tool,
+            args_schema=SearchReferencesInput,
+        ),
+        SimpleTool(
+            name="search_definitions",
+            description="Find the definition of a symbol at a specific location using LocalServer. Use this to jump to where a function, class, or variable is defined. Requires file_path, line, and character position.",
+            func=search_definitions_tool,
+            args_schema=SearchDefinitionsInput,
+        ),
+        SimpleTool(
+            name="search_files",
+            description="Search for files in the workspace using glob patterns. Use this to find files matching a pattern (e.g., '**/*.ts', 'src/**/*.py'). Returns file paths that match the pattern.",
+            func=search_files_tool,
+            args_schema=SearchFilesInput,
+        ),
+        SimpleTool(
+            name="search_text",
+            description="Search for text patterns across files using LocalServer (grep-like functionality). Supports regex patterns and case-sensitive search. Use this to find where specific text appears in the codebase.",
+            func=search_text_tool,
+            args_schema=SearchTextInput,
+        ),
+        SimpleTool(
+            name="search_code_structure",
+            description="Search for code structure (classes, functions, methods, etc.) using LocalServer. Can search in a specific file or across the workspace. Can filter by symbol kind (class, function, method, variable, etc.).",
+            func=search_code_structure_tool,
+            args_schema=SearchCodeStructureInput,
+        ),
+        SimpleTool(
+            name="search_bash",
+            description="Execute bash commands locally via LocalServer (grep, find, awk, etc.). This tool allows you to run read-only bash commands directly on the local workspace. Use this for fast text search with grep, file finding with find, or text processing with awk/sed. Commands are executed in the workspace directory with security restrictions. Allowed: grep, find, awk, sed, cat, head, tail, ls, wc, sort, uniq, etc. Blocked: rm, mv, cp, chmod, git, sudo, and any write operations.",
+            func=search_bash_tool,
+            args_schema=SearchBashInput,
         ),
     ]
 
