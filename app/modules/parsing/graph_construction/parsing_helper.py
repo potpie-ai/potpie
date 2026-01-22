@@ -517,7 +517,7 @@ class ParseHelper:
                 entries = current.iterdir()
                 for entry in entries:
                     try:
-                        if entry.is_dir():
+                        if entry.is_dir(follow_symlinks=False):
                             stack.append(entry)
                         elif entry.is_file():
                             size = entry.stat().st_size
