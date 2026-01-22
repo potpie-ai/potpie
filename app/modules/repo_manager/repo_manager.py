@@ -643,7 +643,7 @@ class RepoManager(IRepoManager):
         if bare_repo_path.exists() and (bare_repo_path / "HEAD").exists():
             logger.info(f"Bare repo already exists: {repo_name}")
             if ref:
-                self._fetch_ref(bare_repo_path, ref, auth_token, repo_url)
+                self._fetch_ref(bare_repo_path, ref, github_token, repo_url)
             self._update_bare_repo_metadata(
                 repo_name, repo_url, bool(github_token), user_id
             )
