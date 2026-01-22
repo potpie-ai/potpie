@@ -117,9 +117,11 @@ class TestAuthService:
                 result = auth_service.signup(
                     "test@example.com", "password123", "Test User"
                 )
-                assert result.uid == "test_user_id"
-                assert result.email == "test@example.com"
-                assert result.display_name == "Test User"
+                success_response, error = result
+                assert error is None
+                assert success_response["user"].uid == "test_user_id"
+                assert success_response["user"].email == "test@example.com"
+                assert success_response["user"].display_name == "Test User"
 
         def test_signup_duplicate_email(self, auth_service):
             """Test signup with duplicate email."""
