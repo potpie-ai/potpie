@@ -616,7 +616,9 @@ class RepoMap:
 
         for root, dirs, files in os.walk(repo_dir):
             rel_root = os.path.relpath(root, repo_dir)
-            if any(part.startswith(".") for part in rel_root.split(os.sep)):
+            if rel_root not in (".") and any(
+                part.startswith(".") for part in rel_root.split(os.sep)
+            ):
                 continue
 
             for file in files:

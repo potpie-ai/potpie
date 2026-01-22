@@ -172,8 +172,25 @@ class ParsingService:
                     )
                     extracted_dir = repo_details.repo_path
                 else:
+                    if not repo_details.repo_name:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="repo_name must be provided when repo_path is not specified",
+                        )
+                    ref = (
+                        repo_details.commit_id
+                        if repo_details.commit_id
+                        else repo_details.branch_name
+                    )
+                    if not ref:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Either commit_id or branch_name must be provided",
+                        )
                     worktree = self.repo_manager.prepare_for_parsing(
-                        repo_details.repo_name, ref=repo_details.branch_name
+                        repo_details.repo_name,
+                        ref=ref,
+                        is_commit=bool(repo_details.commit_id),
                     )
                     repo = Repo(worktree)
                     extracted_dir = worktree

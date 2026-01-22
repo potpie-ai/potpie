@@ -557,7 +557,7 @@ class RepoManager(IRepoManager):
         bare_repo_path = self._get_bare_repo_path(repo_name)
         if bare_repo_path.exists():
             volume = self._calculate_volume_bytes(str(bare_repo_path))
-            if volume is not None:
+            if volume is None:
                 volume = data.get("volume_bytes", 0)
             data["volume_bytes"] = volume
 
@@ -1002,9 +1002,19 @@ class RepoManager(IRepoManager):
             shutil.rmtree(worktree_path, ignore_errors=True)
 
         # Remove metadata entry
-        self._delete_metadata_entry(
-            repo_name, None if ref else ref, ref if ref else None
-        )
+        # Detect whether ref was stored as branch or commit by checking existing metadata
+        metadata_as_branch = self._load_metadata_entry(repo_name, ref, None)
+        if metadata_as_branch:
+            self._delete_metadata_entry(repo_name, ref, None)
+        else:
+            metadata_as_commit = self._load_metadata_entry(repo_name, None, ref)
+            if metadata_as_commit:
+                self._delete_metadata_entry(repo_name, None, ref)
+            else:
+                logger.warning(
+                    f"No metadata found for {repo_name}@{ref}, deleting as branch"
+                )
+                self._delete_metadata_entry(repo_name, ref, None)
 
         return True
 

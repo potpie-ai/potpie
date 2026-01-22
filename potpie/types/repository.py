@@ -87,6 +87,17 @@ class RepositoryInfo:
         if isinstance(last_accessed, str):
             last_accessed = datetime.fromisoformat(last_accessed)
 
+        status_input = data.get("status")
+        if isinstance(status_input, RepositoryStatus):
+            status = status_input
+        elif isinstance(status_input, str):
+            try:
+                status = RepositoryStatus(status_input.lower())
+            except ValueError:
+                status = RepositoryStatus.AVAILABLE
+        else:
+            status = RepositoryStatus.AVAILABLE
+
         return cls(
             repo_key=data.get("repo_key", ""),
             repo_name=data.get("repo_name", ""),
@@ -98,7 +109,7 @@ class RepositoryInfo:
             last_accessed=last_accessed,
             volume_bytes=data.get("volume_bytes"),
             metadata=data.get("metadata", {}),
-            status=RepositoryStatus.AVAILABLE,
+            status=status,
         )
 
 
