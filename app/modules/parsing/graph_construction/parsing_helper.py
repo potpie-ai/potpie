@@ -3,6 +3,9 @@ import shutil
 import uuid
 from typing import Any, Tuple
 from urllib.parse import urlparse, urlunparse
+from pathlib import Path
+from collections import defaultdict
+
 
 from fastapi import HTTPException
 from git import GitCommandError, Repo
@@ -47,9 +50,17 @@ class ParseHelper:
     @staticmethod
     def get_directory_size(path):
         total_size = 0
-        for dirpath, dirnames, filenames in os.walk(path):
+        for dirpath, dirnames, filenames in os.walk(path, followlinks=False):
+            # # Skip symlinked directories
+            # dirnames[:] = [
+            #     d for d in dirnames if not os.path.islink(os.path.join(dirpath, d))
+            # ]
+
             for f in filenames:
                 fp = os.path.join(dirpath, f)
+                # Skip all symlinks
+                if os.path.islink(fp):
+                    continue
                 total_size += os.path.getsize(fp)
         return total_size
 
@@ -456,7 +467,7 @@ class ParseHelper:
             metadata = ParseHelper.extract_remote_repo_metadata(repo)
         return metadata
 
-    def extract_local_repo_metadata(repo):
+    def extract_local_repo_metadata(repo: Repo):
         languages = ParseHelper.get_local_repo_languages(repo.working_tree_dir)
         total_bytes = sum(languages.values())
 
@@ -488,25 +499,46 @@ class ParseHelper:
 
         return metadata
 
-    def get_local_repo_languages(path):
+    @staticmethod
+    def get_local_repo_languages(path: str | os.PathLike[str]) -> dict[str, int]:
+        root = Path(path).resolve()
+        if not root.exists():
+            return {}
+
+        language_bytes = defaultdict(int)
         total_bytes = 0
-        python_bytes = 0
 
-        for dirpath, _, filenames in os.walk(path):
-            for filename in filenames:
-                file_extension = os.path.splitext(filename)[1]
-                file_path = os.path.join(dirpath, filename)
-                file_size = os.path.getsize(file_path)
-                total_bytes += file_size
-                if file_extension == ".py":
-                    python_bytes += file_size
+        stack = [root]
 
-        languages = {}
-        if total_bytes > 0:
-            languages["Python"] = python_bytes
-            languages["Other"] = total_bytes - python_bytes
+        while stack:
+            current = stack.pop()
 
-        return languages
+            try:
+                entries = current.iterdir()
+                for entry in entries:
+                    try:
+                        if entry.is_dir():
+                            stack.append(entry)
+                        elif entry.is_file():
+                            size = entry.stat().st_size
+                            total_bytes += size
+
+                            if entry.suffix == ".py":
+                                language_bytes["Python"] += size
+                            if entry.suffix == ".ts":
+                                language_bytes["TypeScript"] += size
+                            if entry.suffix == ".js":
+                                language_bytes["JavaScript"] += size
+                            else:
+                                language_bytes["Other"] += size
+
+                    except OSError:
+                        # Permission issues, broken files, etc.
+                        continue
+            except OSError:
+                continue
+
+        return dict(language_bytes) if total_bytes else {}
 
     def extract_remote_repo_metadata(repo):
         languages = repo.get_languages()
