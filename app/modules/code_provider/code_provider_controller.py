@@ -27,6 +27,51 @@ class CodeProviderController:
         self.code_provider_service = CodeProviderService(db)
         self.branch_cache = BranchCache()
 
+    def _filter_branches(self, branches: list, search_query: str = None) -> list:
+        """
+        Filter branches by search query (case-insensitive).
+        
+        Args:
+            branches: List of branch names
+            search_query: Optional search query to filter branches
+            
+        Returns:
+            Filtered list of branches
+        """
+        if not search_query:
+            return branches
+        return [branch for branch in branches if search_query in branch.lower()]
+
+    def _paginate_branches(
+        self, 
+        branches: list, 
+        limit: int = None, 
+        offset: int = 0
+    ) -> Dict[str, Any]:
+        """
+        Apply pagination to branches and return formatted response.
+        
+        Args:
+            branches: List of branch names
+            limit: Optional limit on number of branches to return
+            offset: Number of branches to skip
+            
+        Returns:
+            Dictionary with branches, has_next_page, and total_count
+        """
+        total_branches = len(branches)
+        
+        if limit is not None:
+            paginated_branches = branches[offset:offset + limit]
+            has_next_page = (offset + limit) < total_branches
+            return {
+                "branches": paginated_branches,
+                "has_next_page": has_next_page,
+                "total_count": total_branches
+            }
+        else:
+            return {"branches": branches}
+
     async def get_branch_list(
         self, 
         repo_name: str, 
@@ -61,30 +106,11 @@ class CodeProviderController:
         if cached_branches is not None:
             logger.info(f"Found {len(cached_branches)} cached branches for {repo_name}")
             
-            # Apply search filter if provided
+            filtered_branches = self._filter_branches(cached_branches, search_query)
             if search_query:
-                filtered_branches = [
-                    branch for branch in cached_branches 
-                    if search_query in branch.lower()
-                ]
                 logger.info(f"Filtered to {len(filtered_branches)} branches matching '{search}'")
-            else:
-                filtered_branches = cached_branches
             
-            # Apply pagination to filtered branches
-            total_branches = len(filtered_branches)
-            paginated_branches = filtered_branches[offset:]
-            if limit is not None:
-                paginated_branches = paginated_branches[:limit]
-                has_next_page = (offset + limit) < total_branches
-            else:
-                has_next_page = False
-            
-            return {
-                "branches": paginated_branches,
-                "has_next_page": has_next_page,
-                "total_count": total_branches
-            }
+            return self._paginate_branches(filtered_branches, limit, offset)
 
         try:
             # Use fallback provider that tries PAT first, then GitHub App for private repos
@@ -97,29 +123,11 @@ class CodeProviderController:
             self.branch_cache.cache_all_branches(repo_name, all_branches, ttl=3600)
             logger.info(f"Cached {len(all_branches)} branches for {repo_name}")
 
-            # Apply search filter if provided
+            filtered_branches = self._filter_branches(all_branches, search_query)
             if search_query:
-                filtered_branches = [
-                    branch for branch in all_branches 
-                    if search_query in branch.lower()
-                ]
                 logger.info(f"Filtered to {len(filtered_branches)} branches matching '{search}'")
-            else:
-                filtered_branches = all_branches
 
-            # Apply pagination if limit is specified
-            if limit is not None:
-                total_branches = len(filtered_branches)
-                paginated_branches = filtered_branches[offset:offset + limit]
-                has_next_page = (offset + limit) < total_branches
-                return {
-                    "branches": paginated_branches,
-                    "has_next_page": has_next_page,
-                    "total_count": total_branches
-                }
-            else:
-                # Return all filtered branches if no limit specified
-                return {"branches": filtered_branches}
+            return self._paginate_branches(filtered_branches, limit, offset)
 
         except Exception as e:
             # Check if this is a 404 (not found), 401 (bad credentials), or 403 (forbidden)
@@ -171,28 +179,11 @@ class CodeProviderController:
                     self.branch_cache.cache_all_branches(repo_name, all_branches, ttl=3600)
                     logger.info(f"Cached {len(all_branches)} branches for {repo_name} (unauthenticated)")
                     
-                    # Apply search filter if provided
+                    filtered_branches = self._filter_branches(all_branches, search_query)
                     if search_query:
-                        filtered_branches = [
-                            branch for branch in all_branches 
-                            if search_query in branch.lower()
-                        ]
                         logger.info(f"Filtered to {len(filtered_branches)} branches matching '{search}'")
-                    else:
-                        filtered_branches = all_branches
                     
-                    # Apply pagination if limit is specified
-                    if limit is not None:
-                        total_branches = len(filtered_branches)
-                        paginated_branches = filtered_branches[offset:offset + limit]
-                        has_next_page = (offset + limit) < total_branches
-                        return {
-                            "branches": paginated_branches,
-                            "has_next_page": has_next_page,
-                            "total_count": total_branches
-                        }
-                    else:
-                        return {"branches": filtered_branches}
+                    return self._paginate_branches(filtered_branches, limit, offset)
                 except Exception as unauth_error:
                     logger.warning(
                         f"Unauthenticated access also failed for {repo_name}: {unauth_error}"
@@ -219,28 +210,11 @@ class CodeProviderController:
                         self.branch_cache.cache_all_branches(repo_name, all_branches, ttl=3600)
                         logger.info(f"Cached {len(all_branches)} branches for {repo_name} (GitHub App)")
                         
-                        # Apply search filter if provided
+                        filtered_branches = self._filter_branches(all_branches, search_query)
                         if search_query:
-                            filtered_branches = [
-                                branch for branch in all_branches 
-                                if search_query in branch.lower()
-                            ]
                             logger.info(f"Filtered to {len(filtered_branches)} branches matching '{search}'")
-                        else:
-                            filtered_branches = all_branches
                         
-                        # Apply pagination if limit is specified
-                        if limit is not None:
-                            total_branches = len(filtered_branches)
-                            paginated_branches = filtered_branches[offset:offset + limit]
-                            has_next_page = (offset + limit) < total_branches
-                            return {
-                                "branches": paginated_branches,
-                                "has_next_page": has_next_page,
-                                "total_count": total_branches
-                            }
-                        else:
-                            return {"branches": filtered_branches}
+                        return self._paginate_branches(filtered_branches, limit, offset)
                     except Exception as app_error:
                         logger.warning(
                             f"GitHub App auth also failed for {repo_name}: {str(app_error)}"
