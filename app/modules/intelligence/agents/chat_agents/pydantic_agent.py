@@ -51,16 +51,27 @@ logger = setup_logger(__name__)
 
 
 def handle_exception(tool_func):
-    @functools.wraps(tool_func)
-    def wrapper(*args, **kwargs):
-        try:
-            return tool_func(*args, **kwargs)
-        except Exception:
-            # Use Loguru's native exception() with context kwargs
-            logger.exception("Exception in tool function", tool_name=tool_func.__name__)
-            return "An internal error occurred. Please try again later."
+    if inspect.iscoroutinefunction(tool_func):
+        @functools.wraps(tool_func)
+        async def async_wrapper(*args, **kwargs):
+            try:
+                return await tool_func(*args, **kwargs)
+            except Exception as e:
+                # Log full stack trace for debugging
+                logger.exception("Exception in async tool function", tool_name=tool_func.__name__)
+                return f"Tool execution error: {e!s}"
+        return async_wrapper
+    else:
+        @functools.wraps(tool_func)
+        def sync_wrapper(*args, **kwargs):
+            try:
+                return tool_func(*args, **kwargs)
+            except Exception as e:
+                # Log full stack trace for debugging
+                logger.exception("Exception in sync tool function", tool_name=tool_func.__name__)
+                return f"Tool execution error: {e!s}"
 
-    return wrapper
+        return sync_wrapper
 
 
 class PydanticRagAgent(ChatAgent):
@@ -168,7 +179,7 @@ Backstory:
 CURRENT CONTEXT AND AGENT TASK OVERVIEW:
 {self._create_task_description(task_config=config.tasks[0],ctx=ctx)}
             """,
-            "output_retries": 3,
+            "output_retries": self.max_iter,
             "output_type": str,
             "defer_model_check": True,
             "end_strategy": "exhaustive",
