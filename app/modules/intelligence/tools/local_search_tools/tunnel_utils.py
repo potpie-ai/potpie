@@ -51,6 +51,7 @@ def route_to_local_server(
             "search_text": "/api/search/text",
             "search_code_structure": "/api/search/code-structure",
             "search_bash": "/api/search/bash",
+            "search_semantic": "/api/search/semantic",
         }
         
         endpoint = endpoint_map.get(operation)
@@ -84,7 +85,54 @@ def route_to_local_server(
                 return format_search_result(operation, result)
             else:
                 error_text = response.text
-                logger.warning(f"[Tunnel Routing] ❌ LocalServer {operation} failed ({response.status_code}): {error_text}")
+                status_code = response.status_code
+                
+                # Detect Cloudflare tunnel errors (stale tunnel)
+                is_tunnel_error = (
+                    status_code in [502, 503, 504, 530] or
+                    "Cloudflare Tunnel error" in error_text or
+                    "cloudflared" in error_text.lower()
+                )
+                
+                if is_tunnel_error:
+                    logger.warning(
+                        f"[Tunnel Routing] ❌ Stale tunnel detected ({status_code}): {tunnel_url}. "
+                        f"Invalidating tunnel URL and falling back to cloud."
+                    )
+                    
+                    # Invalidate the stale tunnel URL
+                    try:
+                        tunnel_service.unregister_tunnel(user_id, conversation_id)
+                        logger.info(f"[Tunnel Routing] ✅ Invalidated stale tunnel for user {user_id}")
+                    except Exception as e:
+                        logger.error(f"[Tunnel Routing] Failed to invalidate tunnel: {e}")
+                    
+                    # Return None to allow fallback to cloud execution
+                    return None
+                
+                logger.warning(f"[Tunnel Routing] ❌ LocalServer {operation} failed ({status_code}): {error_text[:200]}")
+                
+                # For bash commands, provide helpful error message instead of returning None
+                if operation == "search_bash" and response.status_code == 400:
+                    try:
+                        error_data = response.json()
+                        error_msg = error_data.get('error', error_text)
+                        return (
+                            f"❌ Bash command rejected by LocalServer: {error_msg}\n\n"
+                            f"**Command:** `{data.get('command', 'unknown')}`\n\n"
+                            f"**Reason:** The command contains patterns that are blocked for security reasons.\n\n"
+                            f"**Allowed operations:** Read-only commands like `grep`, `find`, `cat`, `head`, `tail`, `wc`, `sort`, `uniq`.\n"
+                            f"**Blocked operations:** Command chaining (`;`, `&&`), file redirection (`>`, `>>`), destructive commands (`rm`, `mv`, `cp`), and git write operations.\n\n"
+                            f"**Note:** Pipes (`|`) are allowed for read-only operations (e.g., `grep pattern | head -n 10`).\n\n"
+                            f"**Recommendation:** Simplify the command or use the cloud `bash_command` tool if you need more complex operations."
+                        )
+                    except:
+                        return (
+                            f"❌ Bash command rejected by LocalServer (400): {error_text}\n\n"
+                            f"**Command:** `{data.get('command', 'unknown')}`\n\n"
+                            f"Please simplify the command or use the cloud `bash_command` tool for complex operations."
+                        )
+                
                 return None
         
     except Exception as e:
@@ -232,6 +280,39 @@ def format_search_result(operation: str, result: dict) -> str:
             return formatted
         else:
             return f"✅ Command executed: `{command}` (no output)"
+    
+    elif operation == "search_semantic":
+        results = result.get("results", [])
+        total_results = result.get("total_results", 0)
+        query = result.get("query", "query")
+        
+        if not results:
+            return f"📋 No semantically similar code found for '{query}'. " \
+                   f"Ensure the project is parsed and knowledge graph is available."
+        
+        formatted = f"📋 **Found {total_results} semantically similar result(s) for '{query}':**\n\n"
+        for i, r in enumerate(results[:10], 1):
+            file_path = r.get("file_path", "unknown")
+            start_line = r.get("start_line", 0)
+            similarity = r.get("similarity", 0.0)
+            docstring = r.get("docstring", "")
+            name = r.get("name", "")
+            node_type = r.get("type", "")
+            
+            formatted += f"{i}. **{file_path}:{start_line}**"
+            if name:
+                formatted += f" - `{name}`"
+            if node_type:
+                formatted += f" ({node_type})"
+            formatted += f" (similarity: {similarity:.3f})\n"
+            
+            if docstring:
+                formatted += f"   {docstring[:200]}{'...' if len(docstring) > 200 else ''}\n"
+            formatted += "\n"
+        
+        if len(results) > 10:
+            formatted += f"... and {len(results) - 10} more results"
+        return formatted
     
     # Fallback for unknown operations
     return f"✅ Search completed: {json.dumps(result, indent=2)}"

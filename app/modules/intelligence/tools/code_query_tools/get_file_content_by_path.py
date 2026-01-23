@@ -2,6 +2,7 @@ from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 from typing import Optional, Type, Dict, Any
+from urllib.parse import quote as url_quote
 from pydantic import BaseModel, Field
 from redis import Redis
 from sqlalchemy.orm import Session
@@ -10,6 +11,7 @@ from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_service import ProjectService
 from app.core.config_provider import config_provider
 from app.modules.intelligence.tools.tool_utils import truncate_response
+import httpx
 
 
 class FetchFileToolInput(BaseModel):
@@ -134,6 +136,105 @@ class FetchFileTool:
 
         return {"success": True}
 
+    def _try_local_server(
+        self,
+        file_path: str,
+        with_line_numbers: bool = False,
+        start_line: Optional[int] = None,
+        end_line: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Try to fetch file from LocalServer via tunnel (local-first approach)"""
+        try:
+            # Import here to avoid circular imports
+            from app.modules.tunnel.tunnel_service import TunnelService
+            from app.modules.intelligence.tools.code_changes_manager import (
+                _current_user_id,
+                _current_conversation_id,
+            )
+            
+            user_id = _current_user_id.get(None)
+            conversation_id = _current_conversation_id.get(None)
+            
+            if not user_id or not conversation_id:
+                logger.debug("[fetch_file] No user/conversation context for local routing")
+                return None
+            
+            tunnel_service = TunnelService()
+            tunnel_url = tunnel_service.get_tunnel_url(user_id, conversation_id)
+            
+            if not tunnel_url:
+                logger.debug(f"[fetch_file] No tunnel available for user {user_id}")
+                return None
+            
+            # Build URL for LocalServer's /api/files/read endpoint
+            url = f"{tunnel_url}/api/files/read"
+            url_with_params = f"{url}?path={url_quote(file_path)}"
+            
+            logger.info(f"[fetch_file] 🚀 Routing to LocalServer: {url_with_params}")
+            
+            with httpx.Client(timeout=30.0) as client:
+                response = client.get(url_with_params)
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    if result.get("success"):
+                        content = result.get("content", "")
+                        
+                        # Apply line filtering if needed
+                        if start_line is not None or end_line is not None:
+                            lines = content.split('\n')
+                            start_idx = (start_line - 1) if start_line else 0
+                            end_idx = end_line if end_line else len(lines)
+                            content = '\n'.join(lines[start_idx:end_idx])
+                        
+                        # Apply line numbers
+                        if with_line_numbers:
+                            starting_line = start_line or 1
+                            content = self.with_line_numbers(content, True, starting_line)
+                        
+                        # Truncate if needed
+                        content = truncate_response(content)
+                        
+                        logger.info(f"[fetch_file] ✅ LocalServer returned file content")
+                        return {
+                            "success": True,
+                            "content": content,
+                            "source": "local",
+                        }
+                    else:
+                        logger.debug(f"[fetch_file] LocalServer returned error: {result.get('error')}")
+                        return None
+                else:
+                    status_code = response.status_code
+                    error_text = response.text
+                    
+                    # Detect Cloudflare tunnel errors (stale tunnel)
+                    is_tunnel_error = (
+                        status_code in [502, 503, 504, 530] or
+                        "Cloudflare Tunnel error" in error_text or
+                        "cloudflared" in error_text.lower()
+                    )
+                    
+                    if is_tunnel_error:
+                        logger.warning(
+                            f"[fetch_file] ❌ Stale tunnel detected ({status_code}): {tunnel_url}. "
+                            f"Invalidating tunnel URL and falling back to GitHub."
+                        )
+                        
+                        # Invalidate the stale tunnel URL
+                        try:
+                            tunnel_service.unregister_tunnel(user_id, conversation_id)
+                            logger.info(f"[fetch_file] ✅ Invalidated stale tunnel for user {user_id}")
+                        except Exception as e:
+                            logger.error(f"[fetch_file] Failed to invalidate tunnel: {e}")
+                    
+                    logger.debug(f"[fetch_file] LocalServer returned {status_code}")
+                    return None
+                    
+        except Exception as e:
+            logger.debug(f"[fetch_file] Local routing failed: {e}")
+            return None
+
     def _run(
         self,
         project_id: str,
@@ -143,6 +244,16 @@ class FetchFileTool:
         end_line: Optional[int] = None,
     ) -> Dict[str, Any]:
         try:
+            # LOCAL-FIRST: Try LocalServer via tunnel first
+            local_result = self._try_local_server(
+                file_path, with_line_numbers, start_line, end_line
+            )
+            if local_result:
+                return local_result
+            
+            # Fall back to GitHub/remote
+            logger.debug(f"[fetch_file] Falling back to remote for {file_path}")
+            
             details = self._get_project_details(project_id)
             # Modify cache key to reflect that we're only caching the specific path
             cache_key = f"file_content:{project_id}:exact_path_{file_path}:start_line_{start_line}:end_line_{end_line}"
@@ -180,15 +291,49 @@ class FetchFileTool:
             # Use repo_path for local repos, project_name for remote repos
             repo_identifier = details.get("repo_path") or details["project_name"]
 
-            content = self.cp_service.get_file_content(
-                repo_name=repo_identifier,
-                file_path=file_path,
-                branch_name=details["branch_name"],
-                start_line=start_line if start_line is not None else None,
-                end_line=end_line if end_line is not None else None,
-                project_id=project_id,
-                commit_id=details["commit_id"],
-            )
+            try:
+                content = self.cp_service.get_file_content(
+                    repo_name=repo_identifier,
+                    file_path=file_path,
+                    branch_name=details["branch_name"],
+                    start_line=start_line if start_line is not None else None,
+                    end_line=end_line if end_line is not None else None,
+                    project_id=project_id,
+                    commit_id=details["commit_id"],
+                )
+            except Exception as github_error:
+                # GitHub failed (likely 404) - try local server as fallback
+                # This handles the common case where file exists locally but isn't pushed yet
+                error_str = str(github_error).lower()
+                is_not_found = "404" in error_str or "not found" in error_str
+                
+                if is_not_found:
+                    logger.info(f"[fetch_file] GitHub 404 for {file_path}, trying LocalServer fallback")
+                    local_result = self._try_local_server(
+                        file_path, with_line_numbers, start_line, end_line
+                    )
+                    if local_result and local_result.get("success"):
+                        logger.info(f"[fetch_file] ✅ LocalServer fallback succeeded for {file_path}")
+                        return local_result
+                    
+                    # Both GitHub and local failed - provide helpful error
+                    return {
+                        "success": False,
+                        "error": (
+                            f"File '{file_path}' not found.\n\n"
+                            f"Checked:\n"
+                            f"1. GitHub repository: File not found (404) - may not be pushed yet\n"
+                            f"2. Local workspace: {'Not available (no tunnel connection)' if not local_result else 'File not found locally'}\n\n"
+                            f"Possible solutions:\n"
+                            f"- If working locally: Ensure the VS Code extension is connected and the file exists in your workspace\n"
+                            f"- If expecting from GitHub: Push your changes or verify the file path is correct\n"
+                            f"- The file might be in a different location - try searching with search_files or search_text tools"
+                        ),
+                        "content": None,
+                    }
+                else:
+                    # Re-raise non-404 errors
+                    raise github_error
 
             # Check line limits for new content
             limit_check = self._check_line_limits(content, start_line, end_line)
@@ -214,11 +359,20 @@ class FetchFileTool:
                 "content": content,
             }
         except FileNotFoundError as e:
-            # File not found is an expected scenario - log at warning level without traceback
-            logger.warning(f"File not found: {file_path} - {str(e)}")
+            # File not found - try local as last resort
+            logger.warning(f"File not found in remote: {file_path} - trying local fallback")
+            local_result = self._try_local_server(
+                file_path, with_line_numbers, start_line, end_line
+            )
+            if local_result and local_result.get("success"):
+                return local_result
+            
             return {
                 "success": False,
-                "error": f"File '{file_path}' does not exist in the repository. Please verify the file path is correct.",
+                "error": (
+                    f"File '{file_path}' not found in repository or locally.\n"
+                    f"Please verify the file path is correct or check if the file has been created yet."
+                ),
                 "content": None,
             }
         except Exception as e:

@@ -148,17 +148,26 @@ def wrap_structured_tools(tools: Sequence[Any]) -> List[Tool]:
 
 
 def deduplicate_tools_by_name(tools: List[Tool]) -> List[Tool]:
-    """Deduplicate tools by name, keeping the first occurrence of each tool name"""
+    """Deduplicate tools by name, keeping the first occurrence of each tool name.
+    
+    Note: Duplicates are expected when the multi-agent system combines tools from
+    multiple sources (agent-provided tools + built-in tools). This is by design.
+    """
     seen_names = set()
     deduplicated = []
+    duplicate_count = 0
     for tool in tools:
         if tool.name not in seen_names:
             seen_names.add(tool.name)
             deduplicated.append(tool)
         else:
-            logger.warning(
-                f"Duplicate tool name '{tool.name}' detected, keeping first occurrence"
-            )
+            duplicate_count += 1
+    
+    # Log summary at debug level instead of individual warnings
+    if duplicate_count > 0:
+        logger.debug(
+            f"Deduplicated {duplicate_count} duplicate tool(s), kept {len(deduplicated)} unique tools"
+        )
     return deduplicated
 
 

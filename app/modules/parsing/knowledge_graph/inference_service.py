@@ -1138,6 +1138,8 @@ class InferenceService:
                         node.file_path AS file_path,
                         node.start_line AS start_line,
                         node.end_line AS end_line,
+                        node.name AS name,
+                        node.type AS type,
                         score AS similarity
                     ORDER BY similarity DESC
                     LIMIT $top_k
@@ -1159,6 +1161,8 @@ class InferenceService:
                         node.file_path AS file_path,
                         node.start_line AS start_line,
                         node.end_line AS end_line,
+                        node.name AS name,
+                        node.type AS type,
                         score AS similarity
                     """,
                     project_id=project_id,

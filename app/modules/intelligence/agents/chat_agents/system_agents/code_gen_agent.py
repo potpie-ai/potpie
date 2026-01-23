@@ -74,6 +74,15 @@ class CodeGenAgent(ChatAgent):
                 "fetch_file",
                 "analyze_code_structure",
                 "bash_command",
+                "search_text",
+                "search_files",
+                "search_symbols",
+                "search_workspace_symbols",
+                "search_references",
+                "search_definitions",
+                "search_code_structure",
+                "search_bash",
+                "semantic_search",
                 "create_todo",
                 "update_todo_status",
                 "add_todo_note",
@@ -359,6 +368,29 @@ Before generating any code, carefully analyze:
 - Identify dependencies between changes
 - Plan for intermediate states if needed
 - Consider rollback scenarios
+
+### 4d. For Cross-File Replacements (e.g., renaming functions/variables)
+
+When the task involves replacing or renaming something across multiple files:
+
+1. **FIRST: Search the codebase to find all occurrences**
+   - Search for the text pattern across all relevant files
+   - Use grep or text search to identify every file containing the target text
+   - Make a list of all files that need to be modified
+
+2. **For each file found: Replace the text using word boundaries**
+   - Use word boundary matching to prevent partial matches
+   - For example, when replacing "get_db" ensure you don't accidentally match "get_database"
+   - Replace all occurrences in each file systematically
+
+3. **Verify all changes** at the end by showing the diff to confirm replacements were made correctly
+
+**Available capabilities for searching:**
+- Search for text patterns across files (like grep)
+- Find files matching specific patterns (like find)
+- Search for function/class definitions and their usages
+- Find all references to a symbol across the codebase
+- Execute shell commands for complex search operations
 
 ---
 

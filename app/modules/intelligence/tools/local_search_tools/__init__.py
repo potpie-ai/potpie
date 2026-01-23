@@ -37,6 +37,10 @@ from .search_bash_tool import (
     SearchBashInput,
     search_bash_tool,
 )
+from .search_semantic_tool import (
+    SearchSemanticInput,
+    search_semantic_tool,
+)
 
 __all__ = [
     "SearchSymbolsInput",
@@ -55,4 +59,6 @@ __all__ = [
     "search_code_structure_tool",
     "SearchBashInput",
     "search_bash_tool",
+    "SearchSemanticInput",
+    "search_semantic_tool",
 ]
