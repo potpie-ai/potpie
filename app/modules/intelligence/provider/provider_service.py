@@ -367,7 +367,7 @@ AVAILABLE_MODELS = [
         description="Faster, even surpasses Claude Sonnet 4 at certain tasks",
         provider="anthropic",
         is_chat_model=True,
-        is_inference_model=True,
+        is_inference_model=False,
     ),
     AvailableModelOption(
         id="anthropic/claude-opus-4-1-20250805",
