@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import traceback
@@ -286,7 +287,12 @@ class ParsingService:
 
                 if use_incremental_ingest:
                     self._create_and_store_graph_incremental_v0(
-                        service, extracted_dir, project_id, user_id, commit_id
+                        service,
+                        extracted_dir,
+                        project_id,
+                        user_id,
+                        commit_id,
+                        repo_name,
                     )
                 else:
                     service.create_and_store_graph(extracted_dir, project_id, user_id)
@@ -319,44 +325,101 @@ class ParsingService:
         project_id: int,
         user_id: str,
         commit_id: str | None,
+        repo_name: str | None,
     ) -> None:
         """
         Incremental KG ingest entrypoint (v0).
 
-        For now this is a thin wrapper over the existing full ingest path so the
-        feature flag can be wired end-to-end while the Neo4j delta applier is
-        built in subsequent steps.
+        Uses commit-only metadata and in-memory diffs to apply Neo4j deltas, with
+        baseline rebuilds when an old snapshot cannot be materialized.
         """
+        new_sha = commit_id
         latest_run_id = service.get_latest_successful_run_id(project_id, user_id)
         if not latest_run_id:
             logger.info(
                 "ParsingService: No latest successful KG ingest run found; "
                 f"performing baseline ingest for project {project_id}"
             )
-            service.create_and_store_graph(
-                extracted_dir,
-                project_id,
-                user_id,
-                persist_artifacts=True,
-                commit_id=commit_id,
-            )
+            service.create_and_store_graph(extracted_dir, project_id, user_id)
+            service.record_successful_ingest_run(project_id, user_id, new_sha)
             return
 
+        old_sha = service.get_latest_successful_commit_id(project_id, user_id)
+        if not old_sha:
+            logger.info(
+                "ParsingService: Latest successful KG ingest run missing commit SHA; "
+                "falling back to baseline ingest",
+                project_id=project_id,
+                user_id=user_id,
+                run_id=str(latest_run_id),
+            )
+            service.cleanup_graph(project_id)
+            service.create_and_store_graph(extracted_dir, project_id, user_id)
+            service.record_successful_ingest_run(project_id, user_id, new_sha)
+            return
         logger.info(
             "ParsingService: Latest successful KG ingest run found; "
-            f"run_id={latest_run_id}, computing incremental diff"
+            f"run_id={latest_run_id}, old_sha={old_sha}, new_sha={new_sha}, computing incremental diff"
         )
 
+        nx_old = None
+        old_repo_dir = None
+        if old_sha and repo_name and self.parse_helper.repo_manager:
+            old_repo_dir = self.parse_helper.repo_manager.get_repo_path(
+                repo_name, commit_id=old_sha, user_id=user_id
+            )
+            if old_repo_dir:
+                self.parse_helper.repo_manager.update_last_accessed(
+                    repo_name, commit_id=old_sha, user_id=user_id
+                )
+                logger.info(
+                    "ParsingService: Loaded cached repo for old_sha",
+                    repo_name=repo_name,
+                    old_sha=old_sha,
+                    old_repo_dir=old_repo_dir,
+                )
+        if not old_repo_dir:
+            logger.warning(
+                "ParsingService: Failed to materialize old SHA; falling back to baseline ingest",
+                project_id=project_id,
+                user_id=user_id,
+                old_sha=old_sha,
+            )
+            service.cleanup_graph(project_id)
+            service.create_and_store_graph(extracted_dir, project_id, user_id)
+            service.record_successful_ingest_run(project_id, user_id, new_sha)
+            return
+
+        try:
+            nx_old = service.build_graph(old_repo_dir)
+        except Exception:
+            logger.exception(
+                "ParsingService: Failed to build old graph; falling back to baseline ingest",
+                project_id=project_id,
+                user_id=user_id,
+                old_sha=old_sha,
+                old_repo_dir=old_repo_dir,
+            )
+            service.cleanup_graph(project_id)
+            service.create_and_store_graph(extracted_dir, project_id, user_id)
+            service.record_successful_ingest_run(project_id, user_id, new_sha)
+            return
         nx_graph = service.build_graph(extracted_dir)
-        new_run_id = service.persist_artifacts_only(
-            nx_graph, project_id, user_id, commit_id
-        )
 
-        diff = service.diff_artifact_runs(latest_run_id, new_run_id)
+        old_node_map, old_edge_map = service.build_artifact_key_hash_maps(
+            nx_old, project_id, user_id
+        )
+        new_node_map, new_edge_map = service.build_artifact_key_hash_maps(
+            nx_graph, project_id, user_id
+        )
+        diff = service.diff_artifact_maps(
+            old_node_map, new_node_map, old_edge_map, new_edge_map
+        )
         logger.info(
             "ParsingService: KG artifact diff computed (v0)",
             old_run_id=str(latest_run_id),
-            new_run_id=str(new_run_id),
+            old_sha=old_sha,
+            new_sha=new_sha,
             nodes_added=len(diff.nodes.added_keys),
             nodes_deleted=len(diff.nodes.deleted_keys),
             nodes_changed=len(diff.nodes.changed_keys),
@@ -378,36 +441,22 @@ class ParsingService:
                 project_id=project_id,
                 user_id=user_id,
                 old_run_id=str(latest_run_id),
-                new_run_id=str(new_run_id),
+                old_sha=old_sha,
+                new_sha=new_sha,
             )
-            service.set_ingest_run_status(new_run_id, "success")
-            service.mark_latest_successful_run(project_id, user_id, new_run_id)
-            service.db.commit()
+            service.record_successful_ingest_run(project_id, user_id, new_sha)
             return
 
         try:
-            service.apply_incremental_diff(
+            service.apply_incremental_diff_in_memory(
                 project_id,
-                latest_run_id,
-                new_run_id,
+                nx_graph,
                 diff,
+                user_id,
             )
-            service.set_ingest_run_status(new_run_id, "success")
-            service.mark_latest_successful_run(project_id, user_id, new_run_id)
-            service.db.commit()
+            service.record_successful_ingest_run(project_id, user_id, new_sha)
         except Exception:
             service.db.rollback()
-            try:
-                service.set_ingest_run_status(new_run_id, "failed")
-                service.db.commit()
-            except Exception:
-                service.db.rollback()
-                logger.exception(
-                    "ParsingService: Failed to update KG ingest run status",
-                    project_id=project_id,
-                    user_id=user_id,
-                    run_id=str(new_run_id),
-                )
             raise
 
     async def duplicate_graph(self, old_repo_id: str, new_repo_id: str):
@@ -465,8 +514,13 @@ class ParsingService:
                 offset = 0
                 while True:
                     relationships_query = """
-                    MATCH (n:NODE {repoId: $old_repo_id})-[r]->(m:NODE)
-                    RETURN n.node_id AS start_node_id, type(r) AS relationship_type, m.node_id AS end_node_id
+                    MATCH (n:NODE {repoId: $old_repo_id})-[r]->(m:NODE {repoId: $old_repo_id})
+                    RETURN
+                        n.node_id AS start_node_id,
+                        type(r) AS relationship_type,
+                        m.node_id AS end_node_id,
+                        properties(r) AS relationship_properties,
+                        r.edge_key AS edge_key
                     SKIP $offset LIMIT $limit
                     """
                     relationships_result = session.run(
@@ -480,15 +534,72 @@ class ParsingService:
                     if not relationships:
                         break
 
+                    edges_to_create = []
+                    missing_edge_key_count = 0
+                    for relationship in relationships:
+                        rel_type = CodeGraphService._sanitize_rel_type(
+                            relationship.get("relationship_type")
+                        )
+                        rel_props = relationship.get("relationship_properties") or {}
+                        old_edge_key = relationship.get("edge_key")
+                        disambiguator = None
+
+                        if old_edge_key:
+                            try:
+                                parts = json.loads(old_edge_key)
+                                if isinstance(parts, list) and len(parts) >= 5:
+                                    disambiguator = parts[4]
+                            except Exception:
+                                disambiguator = None
+
+                        if disambiguator is None:
+                            disambiguator = CodeGraphService._edge_disambiguator(rel_props)
+
+                        key_parts = [
+                            new_repo_id,
+                            rel_type,
+                            relationship["start_node_id"],
+                            relationship["end_node_id"],
+                        ]
+                        if disambiguator is not None:
+                            key_parts.append(disambiguator)
+                        new_edge_key = json.dumps(
+                            key_parts, separators=(",", ":"), ensure_ascii=True
+                        )
+
+                        new_props = dict(rel_props)
+                        new_props["repoId"] = new_repo_id
+                        new_props["edge_key"] = new_edge_key
+
+                        if not old_edge_key:
+                            missing_edge_key_count += 1
+
+                        edges_to_create.append(
+                            {
+                                "start_node_id": relationship["start_node_id"],
+                                "end_node_id": relationship["end_node_id"],
+                                "relationship_type": rel_type,
+                                "properties": new_props,
+                            }
+                        )
+
+                    if missing_edge_key_count:
+                        logger.info(
+                            "ParsingService: duplicate_graph backfilled edge_key for relationships without it",
+                            old_repo_id=old_repo_id,
+                            new_repo_id=new_repo_id,
+                            backfilled_count=missing_edge_key_count,
+                        )
+
                     relationship_query = """
                     UNWIND $batch AS relationship
                     MATCH (a:NODE {repoId: $new_repo_id, node_id: relationship.start_node_id}),
                           (b:NODE {repoId: $new_repo_id, node_id: relationship.end_node_id})
-                    CALL apoc.create.relationship(a, relationship.relationship_type, {}, b) YIELD rel
+                    CALL apoc.create.relationship(a, relationship.relationship_type, relationship.properties, b) YIELD rel
                     RETURN rel
                     """
                     session.run(
-                        relationship_query, new_repo_id=new_repo_id, batch=relationships
+                        relationship_query, new_repo_id=new_repo_id, batch=edges_to_create
                     )
                     offset += relationship_batch_size
 
