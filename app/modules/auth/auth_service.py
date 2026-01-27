@@ -80,9 +80,13 @@ class AuthService:
                     credential.credentials[:20],
                 )
                 decoded_token = auth.verify_id_token(credential.credentials)
+                # Normalize token to always include "user_id" for consistency across environments
+                # Firebase tokens use "uid", but our codebase expects "user_id"
+                if "uid" in decoded_token and "user_id" not in decoded_token:
+                    decoded_token["user_id"] = decoded_token["uid"]
                 logging.info(
                     "DEBUG: Successfully verified token for user: %s",
-                    decoded_token.get("user_id", "unknown"),
+                    decoded_token.get("user_id", decoded_token.get("uid", "unknown")),
                 )
                 logging.info(
                     "DEBUG: Token email: %s",
