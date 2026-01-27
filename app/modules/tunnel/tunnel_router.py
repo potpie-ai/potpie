@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
 from app.modules.tunnel.tunnel_service import get_tunnel_service
+from app.modules.tunnel.cloudflare_tunnel_service import get_cloudflare_tunnel_service
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -39,6 +40,55 @@ class TunnelStatusResponse(BaseModel):
     connected: bool
     tunnel_url: Optional[str] = None
     conversation_id: Optional[str] = None
+
+
+class TunnelProvisionResponse(BaseModel):
+    tunnel_id: str
+    tunnel_name: str
+    tunnel_token: str
+    tunnel_url: str
+
+
+@router.post(
+    "/tunnels/provision",
+    response_model=TunnelProvisionResponse,
+    description="Provision a named Cloudflare tunnel for the user. Returns token for cloudflared.",
+)
+async def provision_tunnel(
+    user=Depends(AuthService.check_auth),
+    _db: Session = Depends(get_db),
+):
+    """
+    Provision a named Cloudflare tunnel for the authenticated user.
+    
+    Named tunnels are more reliable than quick tunnels:
+    - Persistent URL (doesn't change on restart)
+    - Auto-reconnection support
+    - Better uptime (99%+)
+    
+    The returned tunnel_token should be used with:
+    cloudflared tunnel run --token <TOKEN> --url http://localhost:<PORT>
+    """
+    user_id = user["user_id"]
+    cf_service = get_cloudflare_tunnel_service()
+    
+    if not cf_service.is_configured():
+        logger.warning(f"[Tunnel] Named tunnels not configured, user {user_id} should use quick tunnel")
+        raise HTTPException(
+            status_code=503,
+            detail="Named tunnels not configured on server. Please use quick tunnel instead."
+        )
+    
+    result = await cf_service.provision_tunnel_for_user(user_id)
+    if not result:
+        logger.error(f"[Tunnel] Failed to provision named tunnel for user {user_id}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to provision tunnel. Please try again or use quick tunnel."
+        )
+    
+    logger.info(f"[Tunnel] Provisioned named tunnel for user {user_id}: {result['tunnel_name']}")
+    return TunnelProvisionResponse(**result)
 
 
 @router.post(

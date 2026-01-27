@@ -97,18 +97,30 @@ class TunnelService:
             Tunnel URL if found, None otherwise
         """
         try:
+            logger.info(f"[TunnelService] 🔍 Looking up tunnel for user={user_id}, conversation={conversation_id}")
+            
             # Try conversation-specific first, then user-level
             if conversation_id:
                 key = self._get_tunnel_key(user_id, conversation_id)
+                logger.info(f"[TunnelService] Checking conversation-specific key: {key}")
                 tunnel_data = self._get_tunnel_data(key)
                 if tunnel_data:
-                    return tunnel_data.get("tunnel_url")
+                    tunnel_url = tunnel_data.get("tunnel_url")
+                    logger.info(f"[TunnelService] ✅ Found conversation tunnel: {tunnel_url}")
+                    return tunnel_url
+                else:
+                    logger.info(f"[TunnelService] ❌ No conversation tunnel found")
 
             # Fall back to user-level tunnel
             key = self._get_tunnel_key(user_id)
+            logger.info(f"[TunnelService] Checking user-level key: {key}")
             tunnel_data = self._get_tunnel_data(key)
             if tunnel_data:
-                return tunnel_data.get("tunnel_url")
+                tunnel_url = tunnel_data.get("tunnel_url")
+                logger.info(f"[TunnelService] ✅ Found user-level tunnel: {tunnel_url}")
+                return tunnel_url
+            else:
+                logger.info(f"[TunnelService] ❌ No user-level tunnel found either")
 
             return None
         except Exception as e:

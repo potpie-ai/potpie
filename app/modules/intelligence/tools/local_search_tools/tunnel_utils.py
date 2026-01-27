@@ -97,17 +97,43 @@ def route_to_local_server(
                 if is_tunnel_error:
                     logger.warning(
                         f"[Tunnel Routing] ❌ Stale tunnel detected ({status_code}): {tunnel_url}. "
-                        f"Invalidating tunnel URL and falling back to cloud."
+                        f"Invalidating and checking for user-level fallback."
                     )
                     
                     # Invalidate the stale tunnel URL
                     try:
                         tunnel_service.unregister_tunnel(user_id, conversation_id)
-                        logger.info(f"[Tunnel Routing] ✅ Invalidated stale tunnel for user {user_id}")
+                        logger.info(f"[Tunnel Routing] ✅ Invalidated stale conversation tunnel for user {user_id}")
                     except Exception as e:
                         logger.error(f"[Tunnel Routing] Failed to invalidate tunnel: {e}")
                     
+                    # Try user-level tunnel as fallback (if conversation-specific failed)
+                    if conversation_id:
+                        user_level_tunnel = tunnel_service.get_tunnel_url(user_id, None)  # No conversation_id = user-level
+                        if user_level_tunnel and user_level_tunnel != tunnel_url:
+                            logger.info(f"[Tunnel Routing] 🔄 Retrying with user-level tunnel: {user_level_tunnel}")
+                            
+                            # Retry with user-level tunnel
+                            retry_url = f"{user_level_tunnel}{endpoint}"
+                            try:
+                                with httpx.Client(timeout=30.0) as retry_client:
+                                    retry_response = retry_client.post(
+                                        retry_url,
+                                        json=request_data,
+                                        headers={"Content-Type": "application/json"},
+                                    )
+                                    
+                                    if retry_response.status_code == 200:
+                                        result = retry_response.json()
+                                        logger.info(f"[Tunnel Routing] ✅ User-level fallback succeeded for {operation}")
+                                        return format_search_result(operation, result)
+                                    else:
+                                        logger.warning(f"[Tunnel Routing] ❌ User-level fallback also failed: {retry_response.status_code}")
+                            except Exception as retry_e:
+                                logger.warning(f"[Tunnel Routing] ❌ User-level fallback error: {retry_e}")
+                    
                     # Return None to allow fallback to cloud execution
+                    logger.info(f"[Tunnel Routing] ⬇️ Falling back to cloud execution for {operation}")
                     return None
                 
                 logger.warning(f"[Tunnel Routing] ❌ LocalServer {operation} failed ({status_code}): {error_text[:200]}")

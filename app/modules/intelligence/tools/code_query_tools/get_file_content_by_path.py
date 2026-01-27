@@ -155,15 +155,19 @@ class FetchFileTool:
             user_id = _current_user_id.get(None)
             conversation_id = _current_conversation_id.get(None)
             
+            logger.info(f"[fetch_file] 🔍 Local routing check: user_id={user_id}, conversation_id={conversation_id}, file={file_path}")
+            
             if not user_id or not conversation_id:
-                logger.debug("[fetch_file] No user/conversation context for local routing")
+                logger.info("[fetch_file] ❌ No user/conversation context for local routing - falling back to GitHub")
                 return None
             
             tunnel_service = TunnelService()
             tunnel_url = tunnel_service.get_tunnel_url(user_id, conversation_id)
             
+            logger.info(f"[fetch_file] 🔍 Tunnel lookup result: tunnel_url={tunnel_url}")
+            
             if not tunnel_url:
-                logger.debug(f"[fetch_file] No tunnel available for user {user_id}")
+                logger.info(f"[fetch_file] ❌ No tunnel available for user {user_id}, conversation {conversation_id} - falling back to GitHub")
                 return None
             
             # Build URL for LocalServer's /api/files/read endpoint
@@ -218,13 +222,50 @@ class FetchFileTool:
                     if is_tunnel_error:
                         logger.warning(
                             f"[fetch_file] ❌ Stale tunnel detected ({status_code}): {tunnel_url}. "
-                            f"Invalidating tunnel URL and falling back to GitHub."
+                            f"Invalidating and checking for user-level fallback."
                         )
                         
                         # Invalidate the stale tunnel URL
                         try:
                             tunnel_service.unregister_tunnel(user_id, conversation_id)
-                            logger.info(f"[fetch_file] ✅ Invalidated stale tunnel for user {user_id}")
+                            logger.info(f"[fetch_file] ✅ Invalidated stale conversation tunnel for user {user_id}")
+                            
+                            # Try user-level tunnel as fallback
+                            if conversation_id:
+                                user_level_tunnel = tunnel_service.get_tunnel_url(user_id, None)
+                                if user_level_tunnel and user_level_tunnel != tunnel_url:
+                                    logger.info(f"[fetch_file] 🔄 Retrying with user-level tunnel: {user_level_tunnel}")
+                                    
+                                    # Retry with user-level tunnel
+                                    retry_url = f"{user_level_tunnel}/api/files/read?path={url_quote(file_path)}"
+                                    try:
+                                        with httpx.Client(timeout=30.0) as retry_client:
+                                            retry_response = retry_client.get(retry_url)
+                                            
+                                            if retry_response.status_code == 200:
+                                                result = retry_response.json()
+                                                if result.get("success"):
+                                                    content = result.get("content", "")
+                                                    
+                                                    # Apply line filtering if needed
+                                                    if start_line is not None or end_line is not None:
+                                                        lines = content.split('\n')
+                                                        start_idx = (start_line - 1) if start_line else 0
+                                                        end_idx = end_line if end_line else len(lines)
+                                                        content = '\n'.join(lines[start_idx:end_idx])
+                                                    
+                                                    # Apply line numbers
+                                                    if with_line_numbers:
+                                                        starting_line = start_line or 1
+                                                        content = self.with_line_numbers(content, True, starting_line)
+                                                    
+                                                    content = truncate_response(content)
+                                                    logger.info(f"[fetch_file] ✅ User-level fallback succeeded")
+                                                    return {"success": True, "content": content, "source": "local"}
+                                            else:
+                                                logger.warning(f"[fetch_file] ❌ User-level fallback failed: {retry_response.status_code}")
+                                    except Exception as retry_e:
+                                        logger.warning(f"[fetch_file] ❌ User-level fallback error: {retry_e}")
                         except Exception as e:
                             logger.error(f"[fetch_file] Failed to invalidate tunnel: {e}")
                     

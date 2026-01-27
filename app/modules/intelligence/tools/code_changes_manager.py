@@ -2454,19 +2454,69 @@ def _route_to_local_server(
                 if is_tunnel_error:
                     logger.warning(
                         f"[Tunnel Routing] ❌ Stale tunnel detected ({status_code}): {url}. "
-                        f"Invalidating tunnel URL and falling back to cloud."
+                        f"Invalidating all tunnels for this user."
                     )
                     
-                    # Invalidate the stale tunnel URL
+                    # Invalidate all stale tunnel URLs for this user
                     try:
                         from app.modules.tunnel.tunnel_service import get_tunnel_service
                         tunnel_service = get_tunnel_service()
-                        tunnel_service.unregister_tunnel(user_id, conversation_id)
-                        logger.info(f"[Tunnel Routing] ✅ Invalidated stale tunnel for user {user_id}")
+                        
+                        # Get user-level tunnel URL before unregistering
+                        user_level_tunnel = tunnel_service.get_tunnel_url(user_id, None)
+                        
+                        # Unregister conversation-specific tunnel
+                        if conversation_id:
+                            tunnel_service.unregister_tunnel(user_id, conversation_id)
+                            logger.info(f"[Tunnel Routing] ✅ Invalidated stale conversation tunnel for user {user_id}")
+                        
+                        # If user-level tunnel is the same stale URL, invalidate it too
+                        if user_level_tunnel:
+                            # Extract base URL from tunnel_url for comparison
+                            stale_base_url = tunnel_url.split('/api/')[0] if '/api/' in tunnel_url else tunnel_url
+                            if user_level_tunnel == stale_base_url or stale_base_url.startswith(user_level_tunnel):
+                                # User-level tunnel is also stale - invalidate it
+                                tunnel_service.unregister_tunnel(user_id, None)  # Unregister user-level
+                                logger.warning(
+                                    f"[Tunnel Routing] ⚠️ User-level tunnel is also stale ({user_level_tunnel}). "
+                                    f"Invalidated all tunnels. Extension should restart cloudflared."
+                                )
+                            else:
+                                # User-level tunnel is different, try it as fallback
+                                logger.info(f"[Tunnel Routing] 🔄 Retrying {operation} with user-level tunnel: {user_level_tunnel}")
+                                
+                                # Retry with user-level tunnel
+                                retry_endpoint = endpoint_map.get(operation)
+                                if retry_endpoint:
+                                    retry_url = f"{user_level_tunnel}{retry_endpoint}"
+                                    try:
+                                        if operation in ["get_file", "show_updated_file"]:
+                                            # GET request with file path as query parameter
+                                            file_path = data.get('file_path', '')
+                                            retry_url_with_params = f"{retry_url}?path={url_quote(file_path)}"
+                                            retry_response = client.get(retry_url_with_params)
+                                        else:
+                                            retry_response = client.post(retry_url, json=request_data)
+                                        
+                                        if retry_response.status_code == 200:
+                                            result = retry_response.json()
+                                            logger.info(f"[Tunnel Routing] ✅ User-level fallback succeeded for {operation}")
+                                            # Return success message (simplified)
+                                            file_path = data.get('file_path', 'file')
+                                            return f"✅ Applied {operation.replace('_', ' ')} to '{file_path}' locally (via user-level tunnel)"
+                                        elif retry_response.status_code in [502, 503, 504, 530]:
+                                            # User-level tunnel is also stale
+                                            tunnel_service.unregister_tunnel(user_id, None)
+                                            logger.warning(f"[Tunnel Routing] ⚠️ User-level tunnel also stale. Invalidated all tunnels.")
+                                        else:
+                                            logger.warning(f"[Tunnel Routing] ❌ User-level fallback failed: {retry_response.status_code}")
+                                    except Exception as retry_e:
+                                        logger.warning(f"[Tunnel Routing] ❌ User-level fallback error: {retry_e}")
                     except Exception as e:
                         logger.error(f"[Tunnel Routing] Failed to invalidate tunnel: {e}")
                     
                     # Return None to allow fallback to cloud execution
+                    logger.info(f"[Tunnel Routing] ⬇️ Falling back to cloud execution for {operation}")
                     return None
                 
                 logger.warning(f"[Tunnel Routing] ❌ LocalServer {operation} failed ({status_code}): {error_text[:200]}")
@@ -2630,6 +2680,50 @@ def _should_route_to_local_server() -> bool:
     except Exception as e:
         logger.exception(f"[Tunnel Routing] Error checking tunnel: {e}")
         return False
+
+
+def _execute_local_write(operation: str, data: Dict[str, Any], file_path: str) -> str:
+    """Execute a write operation locally with local-first semantics.
+    
+    For write operations (add, update, delete, replace, insert), we REQUIRE local execution
+    when the user has a VS Code extension connected (tunnel available).
+    
+    Returns:
+        - Success message if local execution succeeded
+        - Error message if local execution failed (does NOT fall back to cloud)
+        - None if no tunnel available (caller can decide to use cloud or not)
+    """
+    should_route = _should_route_to_local_server()
+    
+    if not should_route:
+        # No tunnel available - user is not using VS Code extension
+        # Return None to allow cloud fallback (for web UI users)
+        logger.info(f"[Local-First] No tunnel for {operation}, allowing cloud fallback")
+        return None
+    
+    # User has tunnel = using VS Code extension = expects LOCAL changes
+    logger.info(f"[Local-First] 🏠 Executing {operation} locally (local-first mode)")
+    
+    result = _route_to_local_server(operation, data)
+    
+    if result:
+        # Local execution succeeded
+        return result
+    
+    # Local execution FAILED but user expected local
+    # Do NOT fall back to cloud - return an error so agent can retry or inform user
+    logger.warning(f"[Local-First] ❌ Local {operation} failed for '{file_path}'")
+    
+    return (
+        f"❌ **Local execution failed** for '{file_path}'\n\n"
+        f"Your VS Code extension tunnel appears to be disconnected or stale.\n\n"
+        f"**What to do:**\n"
+        f"1. Check if VS Code extension is running\n"
+        f"2. Check the Output panel in VS Code for tunnel status\n"
+        f"3. Reload the VS Code window if needed (Cmd/Ctrl+Shift+P → 'Reload Window')\n"
+        f"4. Retry this operation\n\n"
+        f"**Note:** Changes are made directly in your local IDE, not in the cloud."
+    )
 
 
 def _get_code_changes_manager() -> CodeChangesManager:
@@ -2899,22 +2993,22 @@ def add_file_tool(input_data: AddFileInput) -> str:
     """Add a new file to the code changes manager"""
     logger.info(f"🔧 [Tool Call] add_file_tool: Adding file '{input_data.file_path}'")
     
-    # Check if we should route to LocalServer
-    if _should_route_to_local_server():
-        logger.info(f"🔧 [Tool Call] Routing add_file_tool to LocalServer")
-        result = _route_to_local_server(
-            "add_file",
-            {
-                "file_path": input_data.file_path,
-                "content": input_data.content,
-                "description": input_data.description,
-            }
-        )
-        if result:
-            return result
-        # If routing failed, fall through to CodeChangesManager
+    # LOCAL-FIRST: Try local execution first
+    local_result = _execute_local_write(
+        "add_file",
+        {
+            "file_path": input_data.file_path,
+            "content": input_data.content,
+            "description": input_data.description,
+        },
+        input_data.file_path
+    )
     
-    # Fall back to CodeChangesManager
+    if local_result is not None:
+        # Local execution was attempted - return result (success or error)
+        return local_result
+    
+    # No tunnel available - use cloud CodeChangesManager (for web UI users)
     try:
         manager = _get_code_changes_manager()
         success = manager.add_file(
@@ -2925,7 +3019,7 @@ def add_file_tool(input_data: AddFileInput) -> str:
 
         if success:
             summary = manager.get_summary()
-            return f"✅ Added file '{input_data.file_path}'\n\nTotal files in changes: {summary['total_files']}"
+            return f"✅ Added file '{input_data.file_path}' (cloud)\n\nTotal files in changes: {summary['total_files']}"
         else:
             return f"❌ File '{input_data.file_path}' already exists in changes. Use update_file to modify it."
     except Exception:
@@ -2939,21 +3033,22 @@ def update_file_tool(input_data: UpdateFileInput) -> str:
     """Update a file in the code changes manager"""
     logger.info(f"🔧 [Tool Call] update_file_tool: Updating file '{input_data.file_path}'")
     
-    # Check if we should route to LocalServer
-    if _should_route_to_local_server():
-        logger.info(f"🔧 [Tool Call] Routing update_file_tool to LocalServer")
-        result = _route_to_local_server(
-            "update_file",
-            {
-                "file_path": input_data.file_path,
-                "content": input_data.content,
-                "description": input_data.description,
-            }
-        )
-        if result:
-            return result
+    # LOCAL-FIRST: Try local execution first
+    local_result = _execute_local_write(
+        "update_file",
+        {
+            "file_path": input_data.file_path,
+            "content": input_data.content,
+            "description": input_data.description,
+        },
+        input_data.file_path
+    )
     
-    # Fall back to CodeChangesManager
+    if local_result is not None:
+        # Local execution was attempted - return result (success or error)
+        return local_result
+    
+    # No tunnel available - use cloud CodeChangesManager (for web UI users)
     try:
         manager = _get_code_changes_manager()
         success = manager.update_file(
@@ -2965,7 +3060,7 @@ def update_file_tool(input_data: UpdateFileInput) -> str:
 
         if success:
             summary = manager.get_summary()
-            return f"✅ Updated file '{input_data.file_path}'\n\nTotal files in changes: {summary['total_files']}"
+            return f"✅ Updated file '{input_data.file_path}' (cloud)\n\nTotal files in changes: {summary['total_files']}"
         else:
             return f"❌ Error updating file '{input_data.file_path}'"
     except Exception:
@@ -2976,24 +3071,26 @@ def update_file_tool(input_data: UpdateFileInput) -> str:
 
 
 def delete_file_tool(input_data: DeleteFileInput) -> str:
-    """Mark a file for deletion in the code changes manager"""
+    """Delete a file locally or mark for deletion in cloud"""
     logger.info(
-        f"Tool delete_file_tool: Marking file '{input_data.file_path}' for deletion"
+        f"Tool delete_file_tool: Deleting file '{input_data.file_path}'"
     )
     
-    # Check if we should route to LocalServer
-    if _should_route_to_local_server():
-        result = _route_to_local_server(
-            "delete_file",
-            {
-                "file_path": input_data.file_path,
-                "description": input_data.description,
-            }
-        )
-        if result:
-            return result
+    # LOCAL-FIRST: Try local execution first
+    local_result = _execute_local_write(
+        "delete_file",
+        {
+            "file_path": input_data.file_path,
+            "description": input_data.description,
+        },
+        input_data.file_path
+    )
     
-    # Fall back to CodeChangesManager
+    if local_result is not None:
+        # Local execution was attempted - return result (success or error)
+        return local_result
+    
+    # No tunnel available - use cloud CodeChangesManager (for web UI users)
     try:
         manager = _get_code_changes_manager()
         success = manager.delete_file(
@@ -3004,7 +3101,7 @@ def delete_file_tool(input_data: DeleteFileInput) -> str:
 
         if success:
             summary = manager.get_summary()
-            return f"✅ Marked file '{input_data.file_path}' for deletion\n\nTotal files in changes: {summary['total_files']}"
+            return f"✅ Marked file '{input_data.file_path}' for deletion (cloud)\n\nTotal files in changes: {summary['total_files']}"
         else:
             return f"❌ Error deleting file '{input_data.file_path}'"
     except Exception:
@@ -3259,24 +3356,25 @@ def update_file_lines_tool(input_data: UpdateFileLinesInput) -> str:
         f"in '{input_data.file_path}' (project_id={input_data.project_id})"
     )
     
-    # Check if we should route to LocalServer
-    if _should_route_to_local_server():
-        logger.info(f"🔧 [Tool Call] Routing update_file_lines_tool to LocalServer")
-        result = _route_to_local_server(
-            "update_file_lines",
-            {
-                "file_path": input_data.file_path,
-                "start_line": input_data.start_line,
-                "end_line": input_data.end_line,
-                "new_content": input_data.new_content,
-                "description": input_data.description,
-                "project_id": input_data.project_id,
-            }
-        )
-        if result:
-            return result
+    # LOCAL-FIRST: Try local execution first
+    local_result = _execute_local_write(
+        "update_file_lines",
+        {
+            "file_path": input_data.file_path,
+            "start_line": input_data.start_line,
+            "end_line": input_data.end_line,
+            "new_content": input_data.new_content,
+            "description": input_data.description,
+            "project_id": input_data.project_id,
+        },
+        input_data.file_path
+    )
     
-    # Fall back to CodeChangesManager
+    if local_result is not None:
+        # Local execution was attempted - return result (success or error)
+        return local_result
+    
+    # No tunnel available - use cloud CodeChangesManager (for web UI users)
     try:
         manager = _get_code_changes_manager()
         db = None
@@ -3333,24 +3431,26 @@ def replace_in_file_tool(input_data: ReplaceInFileInput) -> str:
         f"(project_id={input_data.project_id})"
     )
     
-    # Route to LocalServer if available
-    if _should_route_to_local_server():
-        logger.info(f"🔧 [Tool Call] Routing replace_in_file_tool to LocalServer")
-        result = _route_to_local_server(
-            "replace_in_file",
-            {
-                "file_path": input_data.file_path,
-                "pattern": input_data.pattern,
-                "replacement": input_data.replacement,
-                "count": input_data.count,
-                "case_sensitive": input_data.case_sensitive,
-                "word_boundary": input_data.word_boundary,
-                "description": input_data.description,
-            },
-        )
-        if result:
-            return result
-        # Fall through to CodeChangesManager if routing failed
+    # LOCAL-FIRST: Try local execution first
+    local_result = _execute_local_write(
+        "replace_in_file",
+        {
+            "file_path": input_data.file_path,
+            "pattern": input_data.pattern,
+            "replacement": input_data.replacement,
+            "count": input_data.count,
+            "case_sensitive": input_data.case_sensitive,
+            "word_boundary": input_data.word_boundary,
+            "description": input_data.description,
+        },
+        input_data.file_path
+    )
+    
+    if local_result is not None:
+        # Local execution was attempted - return result (success or error)
+        return local_result
+    
+    # No tunnel available - use cloud CodeChangesManager (for web UI users)
     
     try:
         manager = _get_code_changes_manager()
@@ -3411,24 +3511,25 @@ def insert_lines_tool(input_data: InsertLinesInput) -> str:
         f"in '{input_data.file_path}' (project_id={input_data.project_id})"
     )
     
-    # Check if we should route to LocalServer
-    if _should_route_to_local_server():
-        logger.info(f"🔧 [Tool Call] Routing insert_lines_tool to LocalServer")
-        result = _route_to_local_server(
-            "insert_lines",
-            {
-                "file_path": input_data.file_path,
-                "line_number": input_data.line_number,
-                "content": input_data.content,
-                "description": input_data.description,
-                "insert_after": input_data.insert_after,
-                "project_id": input_data.project_id,
-            }
-        )
-        if result:
-            return result
+    # LOCAL-FIRST: Try local execution first
+    local_result = _execute_local_write(
+        "insert_lines",
+        {
+            "file_path": input_data.file_path,
+            "line_number": input_data.line_number,
+            "content": input_data.content,
+            "description": input_data.description,
+            "insert_after": input_data.insert_after,
+            "project_id": input_data.project_id,
+        },
+        input_data.file_path
+    )
     
-    # Fall back to CodeChangesManager
+    if local_result is not None:
+        # Local execution was attempted - return result (success or error)
+        return local_result
+    
+    # No tunnel available - use cloud CodeChangesManager (for web UI users)
     try:
         manager = _get_code_changes_manager()
         db = None
@@ -3485,22 +3586,24 @@ def delete_lines_tool(input_data: DeleteLinesInput) -> str:
         f"from '{input_data.file_path}' (project_id={input_data.project_id})"
     )
     
-    # Check if we should route to LocalServer
-    if _should_route_to_local_server():
-        result = _route_to_local_server(
-            "delete_lines",
-            {
-                "file_path": input_data.file_path,
-                "start_line": input_data.start_line,
-                "end_line": input_data.end_line,
-                "description": input_data.description,
-                "project_id": input_data.project_id,
-            }
-        )
-        if result:
-            return result
+    # LOCAL-FIRST: Try local execution first
+    local_result = _execute_local_write(
+        "delete_lines",
+        {
+            "file_path": input_data.file_path,
+            "start_line": input_data.start_line,
+            "end_line": input_data.end_line,
+            "description": input_data.description,
+            "project_id": input_data.project_id,
+        },
+        input_data.file_path
+    )
     
-    # Fall back to CodeChangesManager
+    if local_result is not None:
+        # Local execution was attempted - return result (success or error)
+        return local_result
+    
+    # No tunnel available - use cloud CodeChangesManager (for web UI users)
     try:
         manager = _get_code_changes_manager()
         db = None
