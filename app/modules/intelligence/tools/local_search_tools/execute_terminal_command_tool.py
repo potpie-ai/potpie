@@ -18,43 +18,55 @@ logger = setup_logger(__name__)
 
 
 class ExecuteTerminalCommandInput(BaseModel):
-    command: str = Field(description="The shell command to execute (e.g., 'npm test', 'git status', 'python script.py')")
-    working_directory: Optional[str] = Field(default=None, description="Working directory relative to workspace root (optional)")
-    timeout: Optional[int] = Field(default=30000, description="Timeout in milliseconds (default: 30000)")
-    mode: Optional[str] = Field(default="sync", description="Execution mode: 'sync' (default) for immediate results, 'async' for long-running commands")
+    command: str = Field(
+        description="The shell command to execute (e.g., 'npm test', 'git status', 'python script.py')"
+    )
+    working_directory: Optional[str] = Field(
+        default=None,
+        description="Working directory relative to workspace root (optional)",
+    )
+    timeout: Optional[int] = Field(
+        default=30000, description="Timeout in milliseconds (default: 30000)"
+    )
+    mode: Optional[str] = Field(
+        default="sync",
+        description="Execution mode: 'sync' (default) for immediate results, 'async' for long-running commands",
+    )
 
 
 def execute_terminal_command_tool(input_data: ExecuteTerminalCommandInput) -> str:
     """Execute a shell command on the user's local machine via LocalServer tunnel.
-    
+
     This tool executes commands directly on the user's local machine through the VS Code extension.
     Commands run within the workspace directory with security restrictions.
-    
+
     **Sync Mode (default):**
     - Returns immediate results
     - Best for short commands (tests, builds, git status, etc.)
     - Timeout applies to the entire command execution
-    
+
     **Async Mode:**
     - Returns a session_id for long-running commands
     - Use terminal_session_output tool to poll for output
     - Use terminal_session_signal tool to stop the process
-    
+
     **Security:**
     - Commands are validated - dangerous commands (rm, sudo, etc.) are blocked by default
     - Commands run within the VS Code workspace scope
     - Write operations may be restricted
-    
+
     **Examples:**
     - `npm test` - Run tests
     - `git status` - Check git status
     - `python script.py` - Run a Python script
     - `npm run dev` (async mode) - Start a dev server
     """
-    logger.info(f"🔧 [Tool Call] execute_terminal_command: Executing '{input_data.command}' (mode: {input_data.mode})")
-    
+    logger.info(
+        f"🔧 [Tool Call] execute_terminal_command: Executing '{input_data.command}' (mode: {input_data.mode})"
+    )
+
     user_id, conversation_id = get_context_vars()
-    
+
     # Route to LocalServer via tunnel
     result, error_type = route_terminal_command(
         command=input_data.command,
@@ -64,10 +76,10 @@ def execute_terminal_command_tool(input_data: ExecuteTerminalCommandInput) -> st
         user_id=user_id,
         conversation_id=conversation_id,
     )
-    
+
     if result:
         logger.info("✅ [execute_terminal_command] Executed via LocalServer tunnel")
-        
+
         # For async mode, return session info
         if input_data.mode == "async" and result.get("session_id"):
             session_id = result.get("session_id")
@@ -77,16 +89,19 @@ def execute_terminal_command_tool(input_data: ExecuteTerminalCommandInput) -> st
                 f"Use `terminal_session_output` tool with session_id `{session_id}` to get output.\n"
                 f"Use `terminal_session_signal` tool to stop the process if needed."
             )
-        
+
         # Format and return result
         return format_terminal_result(result)
-    
+
     # Handle different error types with specific messages
     from app.modules.tunnel.tunnel_service import get_tunnel_service
+
     tunnel_service = get_tunnel_service()
     tunnel_url = tunnel_service.get_tunnel_url(user_id, conversation_id)
-    
-    if error_type == "tunnel_unreachable" or (tunnel_url and error_type in ["timeout", "connection_error"]):
+
+    if error_type == "tunnel_unreachable" or (
+        tunnel_url and error_type in ["timeout", "connection_error"]
+    ):
         # Tunnel URL exists but request failed
         logger.warning(
             f"⚠️ [execute_terminal_command] Tunnel URL registered ({tunnel_url}) but not reachable (error: {error_type})"
@@ -121,7 +136,9 @@ def execute_terminal_command_tool(input_data: ExecuteTerminalCommandInput) -> st
         )
     elif error_type == "no_tunnel" or error_type == "no_user_id":
         # No tunnel registered at all
-        logger.warning(f"⚠️ [execute_terminal_command] LocalServer not available (error: {error_type})")
+        logger.warning(
+            f"⚠️ [execute_terminal_command] LocalServer not available (error: {error_type})"
+        )
         return (
             "❌ Terminal command requires LocalServer connection (tunnel) for local execution.\n\n"
             "**Local execution (required):**\n"
