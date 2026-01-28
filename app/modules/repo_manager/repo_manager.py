@@ -715,6 +715,7 @@ class RepoManager(IRepoManager):
         is_commit: bool = False,
         user_id: Optional[str] = None,
         unique_id: Optional[str] = None,
+        exists_ok: bool = False,
     ) -> Path:
         """
         Create worktree from bare repository for parsing.
@@ -753,6 +754,14 @@ class RepoManager(IRepoManager):
             logger.info(
                 f"Worktree already exists for {repo_name}@{ref}, checking if update needed"
             )
+            if unique_id:
+                if exists_ok:
+                    logger.info(f"Worktree already exists for {repo_name}@{ref}")
+                    return worktree_path
+                else:
+                    raise FileExistsError(
+                        f"Worktree already exists for {repo_name}@{ref}"
+                    )
 
             try:
                 result = subprocess.run(
