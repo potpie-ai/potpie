@@ -49,12 +49,17 @@ from potpie.exceptions import (
     MediaNotFoundError,
     ConversationError,
     ConversationNotFoundError,
+    RepositoryError,
+    RepositoryNotFoundError,
 )
 from potpie.types import (
     ProjectInfo,
     ProjectStatus,
     ParsingResult,
     UserInfo,
+    RepositoryInfo,
+    RepositoryStatus,
+    VolumeInfo,
 )
 from potpie.agents import (
     AgentRunner,
@@ -78,6 +83,9 @@ __all__ = [
     "ProjectStatus",
     "ParsingResult",
     "UserInfo",
+    "RepositoryInfo",
+    "RepositoryStatus",
+    "VolumeInfo",
     # Agent types
     "AgentRunner",
     "AgentHandle",
@@ -107,4 +115,6 @@ __all__ = [
     "MediaNotFoundError",
     "ConversationError",
     "ConversationNotFoundError",
+    "RepositoryError",
+    "RepositoryNotFoundError",
 ]

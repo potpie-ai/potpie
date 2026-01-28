@@ -10,13 +10,13 @@ from potpie.core.database import DatabaseManager
 from potpie.core.neo4j import Neo4jManager
 from potpie.core.redis import RedisManager
 from potpie.exceptions import NotInitializedError, PotpieError
+from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
-
     from potpie.resources.projects import ProjectResource
     from potpie.resources.parsing import ParsingResource
     from potpie.resources.users import UserResource
+    from potpie.resources.repository import RepositoryResource
     from potpie.agents.runner import AgentRunner
 
 logger = logging.getLogger(__name__)
@@ -71,6 +71,7 @@ class PotpieRuntime:
         self._projects: Optional[ProjectResource] = None
         self._parsing: Optional[ParsingResource] = None
         self._users: Optional[UserResource] = None
+        self._repositories: Optional[RepositoryResource] = None
         self._conversations = None
 
         # Lazy-initialized agent runner (Phase 3)
@@ -244,6 +245,37 @@ class PotpieRuntime:
                 neo4j_manager=self._neo4j_manager,
             )
         return self._users
+
+    @property
+    def repositories(self) -> RepositoryResource:
+        """Access repository resources.
+
+        Returns:
+            RepositoryResource for managing Git repositories
+
+        Raises:
+            NotInitializedError: If runtime not initialized
+
+        Example:
+            is_available = await runtime.repositories.is_available(
+                repo_name="owner/repo",
+                user_id="user-123"
+            )
+        """
+        if not self._initialized:
+            raise NotInitializedError(
+                "Runtime not initialized - call initialize() first"
+            )
+
+        if self._repositories is None:
+            from potpie.resources.repository import RepositoryResource
+
+            self._repositories = RepositoryResource(
+                config=self._config,
+                db_manager=self._db_manager,
+                neo4j_manager=self._neo4j_manager,
+            )
+        return self._repositories
 
     @property
     def agents(self) -> AgentRunner:

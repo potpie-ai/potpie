@@ -9,6 +9,11 @@ from potpie.types.agent import (
     ToolCallResponse,
     ToolCallEventType,
 )
+from potpie.types.repository import (
+    RepositoryInfo,
+    RepositoryStatus,
+    VolumeInfo,
+)
 
 __all__ = [
     "ProjectInfo",
@@ -19,4 +24,7 @@ __all__ = [
     "ChatAgentResponse",
     "ToolCallResponse",
     "ToolCallEventType",
+    "RepositoryInfo",
+    "RepositoryStatus",
+    "VolumeInfo",
 ]

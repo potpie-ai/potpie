@@ -107,3 +107,15 @@ class ConversationNotFoundError(ConversationError):
     """Conversation does not exist."""
 
     pass
+
+
+class RepositoryError(PotpieError):
+    """Repository operation failed."""
+
+    pass
+
+
+class RepositoryNotFoundError(RepositoryError):
+    """Repository does not exist."""
+
+    pass
