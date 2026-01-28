@@ -47,6 +47,10 @@ class TunnelProvisionResponse(BaseModel):
     tunnel_name: str
     tunnel_token: str
     tunnel_url: str
+    ingress_configured: bool = Field(
+        default=False,
+        description="Whether ingress is configured. If False, extension should use quick tunnel."
+    )
 
 
 @router.post(
@@ -108,7 +112,10 @@ async def register_tunnel(
         raise HTTPException(status_code=400, detail="tunnel_url must start with https://")
 
     ok = tunnel_service.register_tunnel(
-        user_id=user_id, tunnel_url=req.tunnel_url, conversation_id=req.conversation_id
+        user_id=user_id, 
+        tunnel_url=req.tunnel_url, 
+        conversation_id=req.conversation_id,
+        local_port=req.local_port
     )
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to register tunnel")

@@ -2289,7 +2289,7 @@ def _route_to_local_server(
             logger.debug(f"No tunnel available for user {user_id}, using CodeChangesManager")
             return None
         
-        # Map operation to LocalServer endpoint
+        # Map operation to LocalServer endpoint (must be defined before smart routing)
         endpoint_map = {
             "add_file": "/api/files/create",
             "update_file": "/api/files/update",
@@ -2306,6 +2306,79 @@ def _route_to_local_server(
         if not endpoint:
             logger.warning(f"Unknown operation for tunnel routing: {operation}")
             return None
+        
+        # Smart routing: If backend is running locally, use direct connection to avoid hairpin
+        # Hairpin problem: Local backend → Internet → Tunnel → Back to same machine = timeout
+        try:
+            import os
+            from urllib.parse import urlparse
+            
+            # Check if we're running in a local environment
+            # Common indicators: localhost in BASE_URL, or ENVIRONMENT=local/dev
+            # Allow forcing tunnel usage via FORCE_TUNNEL env var (for testing)
+            force_tunnel = os.getenv("FORCE_TUNNEL", "").lower() in ["true", "1", "yes"]
+            
+            base_url = os.getenv("BASE_URL", "").lower()
+            environment = os.getenv("ENVIRONMENT", "").lower()
+            is_local_backend = (
+                not force_tunnel and (  # Don't bypass if forcing tunnel
+                    "localhost" in base_url or
+                    "127.0.0.1" in base_url or
+                    environment in ["local", "dev", "development"] or
+                    not base_url  # If BASE_URL not set, assume local
+                )
+            )
+            
+            if is_local_backend and not force_tunnel:
+                # Backend is local - try to get local port from tunnel registration
+                # Tunnel registration stores local_port in the tunnel data
+                tunnel_data = tunnel_service._get_tunnel_data(
+                    tunnel_service._get_tunnel_key(user_id, conversation_id)
+                )
+                local_port = None
+                if tunnel_data:
+                    # Check if we stored local_port during registration
+                    stored_port = tunnel_data.get("local_port")
+                    if stored_port:
+                        local_port = int(stored_port)
+                
+                # Default to 3001 if not found (LocalServer default)
+                if not local_port:
+                    local_port = 3001
+                
+                direct_url = f"http://localhost:{local_port}"
+                
+                # Quick connectivity check - try to reach localhost before using it
+                try:
+                    test_client = httpx.Client(timeout=2.0)
+                    health_check = test_client.get(f"{direct_url}/health")
+                    test_client.close()
+                    if health_check.status_code == 200:
+                        logger.info(
+                            f"[Tunnel Routing] 🏠 Local backend + LocalServer detected, using direct connection: {direct_url} "
+                            f"(bypassing tunnel {tunnel_url} to avoid hairpin problem)"
+                        )
+                        url = f"{direct_url}{endpoint}"
+                    else:
+                        logger.warning(
+                            f"[Tunnel Routing] ⚠️ LocalServer not responding on {direct_url}, falling back to tunnel"
+                        )
+                        url = f"{tunnel_url}{endpoint}"
+                except Exception as e:
+                    logger.warning(
+                        f"[Tunnel Routing] ⚠️ Cannot reach LocalServer on {direct_url}: {e}, using tunnel instead"
+                    )
+                    url = f"{tunnel_url}{endpoint}"
+            else:
+                # Remote backend or force_tunnel enabled - use tunnel URL
+                if force_tunnel:
+                    logger.info(f"[Tunnel Routing] 🔧 FORCE_TUNNEL enabled, using tunnel URL: {tunnel_url}{endpoint}")
+                else:
+                    logger.info(f"[Tunnel Routing] 🌐 Remote backend, using tunnel URL: {tunnel_url}{endpoint}")
+                url = f"{tunnel_url}{endpoint}"
+        except Exception as e:
+            logger.warning(f"[Tunnel Routing] Error in smart routing, falling back to tunnel URL: {e}")
+            url = f"{tunnel_url}{endpoint}"
         
         # Prepare request data
         request_data = {

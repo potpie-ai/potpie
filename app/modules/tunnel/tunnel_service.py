@@ -45,6 +45,7 @@ class TunnelService:
         user_id: str,
         tunnel_url: str,
         conversation_id: Optional[str] = None,
+        local_port: Optional[int] = None,
     ) -> bool:
         """
         Register a tunnel connection for a user/conversation.
@@ -53,6 +54,7 @@ class TunnelService:
             user_id: User ID
             tunnel_url: URL of the tunnel (e.g., https://xyz.trycloudflare.com)
             conversation_id: Optional conversation ID for conversation-specific tunnels
+            local_port: Optional local port (for direct connection when backend is local)
 
         Returns:
             True if registration succeeded
@@ -65,6 +67,8 @@ class TunnelService:
                 "conversation_id": conversation_id or "",
                 "registered_at": str(int(time.time())),
             }
+            if local_port:
+                tunnel_data["local_port"] = local_port
 
             if self.redis_client:
                 self.redis_client.setex(
