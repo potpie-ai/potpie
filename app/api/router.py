@@ -3,7 +3,7 @@ import logging
 import os
 from typing import List, Optional
 
-from fastapi import Depends, Header, HTTPException, Query
+from fastapi import Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -151,6 +151,7 @@ async def get_parsing_status_by_repo(
 async def post_message(
     conversation_id: str,
     message: MessageRequest,
+    request: Request,
     stream: bool = Query(True, description="Whether to stream the response"),
     session_id: Optional[str] = Query(None, description="Session ID for reconnection"),
     prev_human_message_id: Optional[str] = Query(
@@ -187,6 +188,10 @@ async def post_message(
     # Extract node_id strings from NodeContext objects
     node_ids_list = [nc.node_id for nc in (message.node_ids or [])]
 
+    # Check User-Agent header for local mode
+    user_agent = request.headers.get("user-agent", "")
+    local_mode = user_agent == "Potpie-VSCode-Extension/1.0.1"
+
     if not stream:
         # Non-streaming: use Celery but wait for complete response
         from app.modules.conversations.utils.conversation_routing import (
@@ -201,6 +206,7 @@ async def post_message(
             agent_id=agent_id,
             node_ids=node_ids_list,
             attachment_ids=message.attachment_ids or [],
+            local_mode=local_mode,
         )
 
     # Streaming: use Celery with streaming response
@@ -214,6 +220,7 @@ async def post_message(
         node_ids=node_ids_list,
         attachment_ids=message.attachment_ids or [],
         cursor=cursor,
+        local_mode=local_mode,
     )
 
 
@@ -221,6 +228,7 @@ async def post_message(
 async def create_conversation_and_message(
     project_id: str,
     message: DirectMessageRequest,
+    request: Request,
     hidden: bool = Query(
         True, description="Whether to hide this conversation from the web UI"
     ),

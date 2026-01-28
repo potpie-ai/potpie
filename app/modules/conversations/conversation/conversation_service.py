@@ -548,6 +548,7 @@ class ConversationService:
         message_type: MessageType,
         user_id: str,
         stream: bool = True,
+        local_mode: bool = False,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         try:
             logger.info(
@@ -620,6 +621,7 @@ class ConversationService:
                         user_id,
                         message.node_ids,
                         message.attachment_ids,
+                        local_mode=local_mode,
                     ):
                         yield chunk
                 else:
@@ -631,6 +633,7 @@ class ConversationService:
                         user_id,
                         message.node_ids,
                         message.attachment_ids,
+                        local_mode=local_mode,
                     ):
                         full_message += chunk.message
                         all_citations = all_citations + chunk.citations
@@ -691,6 +694,7 @@ class ConversationService:
         user_id: str,
         node_ids: List[NodeContext] = [],
         stream: bool = True,
+        local_mode: bool = False,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         try:
             access_level = await self.check_conversation_access(
@@ -747,6 +751,7 @@ class ConversationService:
                     user_id,
                     node_ids,
                     attachment_ids,
+                    local_mode=local_mode,
                 ):
                     yield chunk
             else:
@@ -759,6 +764,7 @@ class ConversationService:
                     user_id,
                     node_ids,
                     attachment_ids,
+                    local_mode=local_mode,
                 ):
                     full_message += chunk.message
                     all_citations = all_citations + chunk.citations
@@ -787,6 +793,7 @@ class ConversationService:
         conversation_id: str,
         node_ids: Optional[List[str]] = None,
         attachment_ids: List[str] = [],
+        local_mode: bool = False,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         """Background version of regenerate_last_message for Celery task execution"""
         try:
@@ -828,6 +835,7 @@ class ConversationService:
                 self.user_id,
                 node_contexts,
                 attachment_ids,
+                local_mode=local_mode,
             ):
                 yield chunk
 
@@ -895,6 +903,7 @@ class ConversationService:
         user_id: str,
         node_ids: List[NodeContext],
         attachment_ids: Optional[List[str]] = None,
+        local_mode: bool = False,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         conversation = await self.conversation_store.get_by_id(conversation_id)
         if not conversation:
@@ -958,6 +967,7 @@ class ConversationService:
                             query=query,
                             conversation_id=conversation_id,
                             user_id=user_id,  # Set user_id for tunnel routing
+                            local_mode=local_mode,
                         ),
                     )
                 )
@@ -993,6 +1003,7 @@ class ConversationService:
                     context_images=context_images,
                     conversation_id=conversation_id,
                     user_id=user_id,  # Set user_id for tunnel routing
+                    local_mode=local_mode,
                 )
 
                 res = self.agent_service.execute_stream(chat_context)

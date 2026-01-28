@@ -61,6 +61,7 @@ class ChatContext(BaseModel):
     query: str
     user_id: Optional[str] = None
     conversation_id: Optional[str] = None  # For persisting state across messages
+    local_mode: bool = False  # Flag to indicate if running in local mode (VSCode Extension)
     # Multimodal support - images attached to the current message
     image_attachments: Optional[Dict[str, Dict[str, Union[str, int]]]] = (
         None  # attachment_id -> {base64, mime_type, file_size, etc}

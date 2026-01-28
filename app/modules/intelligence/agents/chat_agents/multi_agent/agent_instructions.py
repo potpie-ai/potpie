@@ -208,10 +208,32 @@ def get_supervisor_instructions(
     task_description: str,
     multimodal_instructions: str,
     supervisor_task_description: str,
+    local_mode: bool = False,
 ) -> str:
-    """Generate supervisor agent instructions with dynamic content"""
+    """Generate supervisor agent instructions with dynamic content
+
+    Args:
+        config_role: Agent role
+        config_goal: Agent goal
+        task_description: Task description
+        multimodal_instructions: Multimodal-specific instructions
+        supervisor_task_description: Supervisor task description
+        local_mode: If True, adds local mode specific instructions
+    """
+    local_mode_section = ""
+    if local_mode:
+        local_mode_section = """
+            **🔒 LOCAL MODE (VSCode Extension):**
+            - You are running in local mode via the VSCode Extension
+            - Some tools may be restricted for security reasons
+            - Focus on local codebase operations and analysis
+            - Be aware that certain external integrations may not be available
+            """
+
     return f"""
             You are a SUPERVISOR AGENT who orchestrates SUBAGENTS to efficiently solve complex tasks.
+
+            {local_mode_section}
 
             **YOUR CORE RESPONSIBILITY:**
             You coordinate work by delegating focused tasks to subagents. Your context stays clean with planning and coordination, while subagents handle the heavy tool usage.

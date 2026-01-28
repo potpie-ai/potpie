@@ -41,6 +41,16 @@ from .search_semantic_tool import (
     SearchSemanticInput,
     search_semantic_tool,
 )
+from .execute_terminal_command_tool import (
+    ExecuteTerminalCommandInput,
+    execute_terminal_command_tool,
+)
+from .terminal_session_tools import (
+    TerminalSessionOutputInput,
+    terminal_session_output_tool,
+    TerminalSessionSignalInput,
+    terminal_session_signal_tool,
+)
 
 __all__ = [
     "SearchSymbolsInput",
@@ -61,4 +71,10 @@ __all__ = [
     "search_bash_tool",
     "SearchSemanticInput",
     "search_semantic_tool",
+    "ExecuteTerminalCommandInput",
+    "execute_terminal_command_tool",
+    "TerminalSessionOutputInput",
+    "terminal_session_output_tool",
+    "TerminalSessionSignalInput",
+    "terminal_session_signal_tool",
 ]

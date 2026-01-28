@@ -68,8 +68,9 @@ class AgentFactory:
 
         # Cache for agent instances - keyed by (agent_type, conversation_id) to avoid stale context
         self._agent_instances: Dict[tuple[AgentType, str], Agent] = {}
-        # Cache for supervisor agents - keyed by conversation_id to avoid stale context
-        self._supervisor_agents: Dict[str, Agent] = {}
+        # Cache for supervisor agents - keyed by (conversation_id, local_mode) to avoid stale context
+        # local_mode affects which tools are available, so we need separate caches
+        self._supervisor_agents: Dict[tuple[str, bool], Agent] = {}
 
     def create_mcp_servers(self) -> List[MCPServerStreamableHTTP]:
         """Create MCP server instances from configuration"""
@@ -116,7 +117,9 @@ class AgentFactory:
                     break  # Don't check other patterns for this tool
         return filtered
 
-    def build_integration_agent_tools(self, agent_type: AgentType) -> List[Tool]:
+    def build_integration_agent_tools(
+        self, agent_type: AgentType, local_mode: bool = False
+    ) -> List[Tool]:
         """Build tool list for integration-specific agents
 
         Integration agents receive their domain-specific tools. Most integration agents
@@ -179,7 +182,9 @@ class AgentFactory:
         if self.tools_provider:
             # Get tools directly from ToolService - this ensures integration agents
             # always have access to their tools even if not in the agent config
-            integration_tools = self.tools_provider.get_tools(integration_tool_names)
+            integration_tools = self.tools_provider.get_tools(
+                integration_tool_names, local_mode=local_mode
+            )
             logger.info(
                 f"Got {len(integration_tools)} tools from tools_provider for {agent_type.value}: "
                 f"{[t.name for t in integration_tools]}"
@@ -197,14 +202,15 @@ class AgentFactory:
         # GitHub agent also gets code changes tools so it can access tracked changes
         # for committing to branches/PRs. This uses the same conversation_id-keyed
         # code changes manager as the rest of the conversation.
-        if agent_type == AgentType.GITHUB:
+        # Skip code changes tools in local mode
+        if agent_type == AgentType.GITHUB and not local_mode:
             code_changes_tools = create_code_changes_management_tools()
             wrapped_tools = wrapped_tools + wrap_structured_tools(code_changes_tools)
             wrapped_tools = deduplicate_tools_by_name(wrapped_tools)
 
         return wrapped_tools
 
-    def build_delegate_agent_tools(self) -> List[Tool]:
+    def build_delegate_agent_tools(self, local_mode: bool = False) -> List[Tool]:
         """Build the tool list for delegate agents - includes supervisor tools EXCEPT delegation, todo, and requirement tools.
 
         Subagents get code execution tools and code changes tools, but NOT:
@@ -213,13 +219,20 @@ class AgentFactory:
         - Requirement verification tools (supervisor-only for verification)
 
         This ensures subagents focus on execution while the supervisor handles coordination and verification.
+
+        Note: In local_mode, code changes tools are filtered out from both:
+        1. Initial tools list (self.tools) - if agents explicitly requested them
+        2. Newly created code changes tools - not created if local_mode=True
         """
         # Import tools here to avoid circular imports
         from app.modules.intelligence.tools.code_changes_manager import (
             create_code_changes_management_tools,
         )
 
-        code_changes_tools = create_code_changes_management_tools()
+        # Skip code changes tools in local mode
+        code_changes_tools = (
+            [] if local_mode else create_code_changes_management_tools()
+        )
 
         # Filter out todo and requirement tools from self.tools (supervisor-only)
         # These tool names should not be available to subagents
@@ -242,10 +255,74 @@ class AgentFactory:
             tool for tool in self.tools if tool.name not in supervisor_only_tool_names
         ]
 
-        # Subagents get execution tools and code changes, but NOT todo/requirement tools
-        all_tools = wrap_structured_tools(filtered_tools) + wrap_structured_tools(
-            code_changes_tools
-        )
+        # Also filter based on local_mode (exclude bash_command and code changes tools)
+        if local_mode:
+            if self.tools_provider:
+                filtered_tools = [
+                    tool
+                    for tool in filtered_tools
+                    if not self.tools_provider._should_exclude_in_local_mode(tool.name)
+                ]
+            else:
+                # Fallback: manually filter code changes tools if tools_provider is not available
+                code_changes_tool_names = {
+                    "add_file_to_changes",
+                    "update_file_in_changes",
+                    "update_file_lines",
+                    "replace_in_file",
+                    "insert_lines",
+                    "delete_lines",
+                    "delete_file_in_changes",
+                    "get_file_from_changes",
+                    "list_files_in_changes",
+                    "search_content_in_changes",
+                    "clear_file_from_changes",
+                    "clear_all_changes",
+                    "get_changes_summary",
+                    "export_changes",
+                    "show_updated_file",
+                    "show_diff",
+                    "get_file_diff",
+                    "get_session_metadata",
+                }
+                filtered_tools = [
+                    tool
+                    for tool in filtered_tools
+                    if tool.name not in code_changes_tool_names
+                ]
+
+        # Subagents get execution tools and code changes (if not in local mode), but NOT todo/requirement tools
+        all_tools = wrap_structured_tools(filtered_tools)
+        # Only add code changes tools if not in local_mode
+        if code_changes_tools and not local_mode:
+            all_tools = all_tools + wrap_structured_tools(code_changes_tools)
+
+        # Final safety check: remove any code changes tools that might have slipped through in local_mode
+        if local_mode:
+            code_changes_tool_names = {
+                "add_file_to_changes",
+                "update_file_in_changes",
+                "update_file_lines",
+                "replace_in_file",
+                "insert_lines",
+                "delete_lines",
+                "delete_file_in_changes",
+                "get_file_from_changes",
+                "list_files_in_changes",
+                "search_content_in_changes",
+                "clear_file_from_changes",
+                "clear_all_changes",
+                "get_changes_summary",
+                "export_changes",
+                "show_updated_file",
+                "show_diff",
+                "get_file_diff",
+                "get_session_metadata",
+            }
+            all_tools = [
+                tool for tool in all_tools if tool.name not in code_changes_tool_names
+            ]
+
         return deduplicate_tools_by_name(all_tools)
 
     def _get_delegation_tool_description(self, agent_type: AgentType) -> str:
@@ -520,8 +597,16 @@ Subagents DON'T get your history. Provide comprehensive context:
             )
         return delegation_tools
 
-    def build_supervisor_agent_tools(self) -> List[Tool]:
-        """Build the tool list for supervisor agent including delegation, todo, code changes, and requirement verification tools"""
+    def build_supervisor_agent_tools(self, local_mode: bool = False) -> List[Tool]:
+        """Build the tool list for supervisor agent including delegation, todo, code changes, and requirement verification tools
+
+        Note: Code changes tools are automatically added here for all agents.
+        In local_mode, they are filtered out from both:
+        1. Initial tools list (self.tools) - if agents explicitly requested them
+        2. Newly created code changes tools - not created if local_mode=True
+
+        This ensures code changes tools are never available in local mode.
+        """
         # Import tools here to avoid circular imports
         from app.modules.intelligence.tools.todo_management_tool import (
             create_todo_management_tools,
@@ -533,22 +618,155 @@ Subagents DON'T get your history. Provide comprehensive context:
             create_requirement_verification_tools,
         )
 
+        logger.debug(
+            f"build_supervisor_agent_tools: local_mode={local_mode}, initial_tools_count={len(self.tools)}"
+        )
+
         todo_tools = create_todo_management_tools()
-        code_changes_tools = create_code_changes_management_tools()
+        # Skip code changes tools in local mode - they should never be available in local mode
+        code_changes_tools = (
+            [] if local_mode else create_code_changes_management_tools()
+        )
         requirement_tools = create_requirement_verification_tools()
 
         # Create delegation tools - these are subagent tools that can execute tasks
         delegation_tools = self.build_delegation_tools()
 
+        # Filter initial tools based on local_mode (exclude bash_command and code changes tools)
+        # This handles cases where agents explicitly requested code changes tools in their tool list
+        filtered_initial_tools = self.tools
+        if local_mode:
+            # Filter out tools that should be excluded in local mode
+            if self.tools_provider:
+                filtered_initial_tools = [
+                    tool
+                    for tool in self.tools
+                    if not self.tools_provider._should_exclude_in_local_mode(tool.name)
+                ]
+                excluded_tools = [
+                    tool.name
+                    for tool in self.tools
+                    if self.tools_provider._should_exclude_in_local_mode(tool.name)
+                ]
+                if excluded_tools:
+                    logger.info(
+                        f"Filtered out {len(excluded_tools)} tools in local_mode: {excluded_tools[:5]}..."
+                    )
+            else:
+                # Fallback: manually filter code changes tools if tools_provider is not available
+                code_changes_tool_names = {
+                    "add_file_to_changes",
+                    "update_file_in_changes",
+                    "update_file_lines",
+                    "replace_in_file",
+                    "insert_lines",
+                    "delete_lines",
+                    "delete_file_in_changes",
+                    "get_file_from_changes",
+                    "list_files_in_changes",
+                    "search_content_in_changes",
+                    "clear_file_from_changes",
+                    "clear_all_changes",
+                    "get_changes_summary",
+                    "export_changes",
+                    "show_updated_file",
+                    "show_diff",
+                    "get_file_diff",
+                    "get_session_metadata",
+                }
+                filtered_initial_tools = [
+                    tool
+                    for tool in self.tools
+                    if tool.name not in code_changes_tool_names
+                ]
+                excluded_tools = [
+                    tool.name
+                    for tool in self.tools
+                    if tool.name in code_changes_tool_names
+                ]
+                if excluded_tools:
+                    logger.info(
+                        f"Filtered out {len(excluded_tools)} code changes tools in local_mode (fallback): {excluded_tools[:5]}..."
+                    )
+
         all_tools = (
-            wrap_structured_tools(self.tools)
+            wrap_structured_tools(filtered_initial_tools)
             + delegation_tools
             + wrap_structured_tools(todo_tools)
-            + wrap_structured_tools(code_changes_tools)
-            + wrap_structured_tools(requirement_tools)
         )
+        # Only add code changes tools if not in local_mode (they're already filtered from initial tools above)
+        # Double-check: ensure no code changes tools are added in local_mode
+        if code_changes_tools and not local_mode:
+            all_tools = all_tools + wrap_structured_tools(code_changes_tools)
+        all_tools = all_tools + wrap_structured_tools(requirement_tools)
+
+        # Final safety check: remove any code changes tools that might have slipped through
+        if local_mode:
+            code_changes_tool_names = {
+                "add_file_to_changes",
+                "update_file_in_changes",
+                "update_file_lines",
+                "replace_in_file",
+                "insert_lines",
+                "delete_lines",
+                "delete_file_in_changes",
+                "get_file_from_changes",
+                "list_files_in_changes",
+                "search_content_in_changes",
+                "clear_file_from_changes",
+                "clear_all_changes",
+                "get_changes_summary",
+                "export_changes",
+                "show_updated_file",
+                "show_diff",
+                "get_file_diff",
+                "get_session_metadata",
+            }
+            before_count = len(all_tools)
+            all_tools = [
+                tool for tool in all_tools if tool.name not in code_changes_tool_names
+            ]
+            after_count = len(all_tools)
+            if before_count != after_count:
+                logger.warning(
+                    f"Final safety check removed {before_count - after_count} code changes tools that slipped through in local_mode"
+                )
+
         # Deduplicate tools by name before returning
-        return deduplicate_tools_by_name(all_tools)
+        final_tools = deduplicate_tools_by_name(all_tools)
+        code_changes_tool_names_final = {
+            "add_file_to_changes",
+            "update_file_in_changes",
+            "update_file_lines",
+            "replace_in_file",
+            "insert_lines",
+            "delete_lines",
+            "delete_file_in_changes",
+            "get_file_from_changes",
+            "list_files_in_changes",
+            "search_content_in_changes",
+            "clear_file_from_changes",
+            "clear_all_changes",
+            "get_changes_summary",
+            "export_changes",
+            "show_updated_file",
+            "show_diff",
+            "get_file_diff",
+            "get_session_metadata",
+        }
+        code_changes_tools_in_final = [
+            t.name for t in final_tools if t.name in code_changes_tool_names_final
+        ]
+        if local_mode and code_changes_tools_in_final:
+            logger.error(
+                f"ERROR: Code changes tools found in local_mode final tools: {code_changes_tools_in_final}"
+            )
+        else:
+            logger.debug(
+                f"build_supervisor_agent_tools: local_mode={local_mode}, final_tools_count={len(final_tools)}, "
+                f"code_changes_tools_present={len(code_changes_tools_in_final) > 0}"
+            )
+        return final_tools
 
     def create_delegate_agent(self, agent_type: AgentType, ctx: ChatContext) -> Agent:
         """Create a delegate agent - either generic (THINK_EXECUTE) or integration-specific"""
@@ -565,13 +783,17 @@ Subagents DON'T get your history. Provide comprehensive context:
             AgentType.LINEAR,
         }
 
+        local_mode = ctx.local_mode if hasattr(ctx, "local_mode") else False
+
         if agent_type in integration_agents:
             # Use integration-specific tools and instructions
-            tools = self.build_integration_agent_tools(agent_type)
+            tools = self.build_integration_agent_tools(
+                agent_type, local_mode=local_mode
+            )
             instructions = get_integration_agent_instructions(agent_type.value)
         else:
             # Use generic tools and instructions (THINK_EXECUTE)
-            tools = self.build_delegate_agent_tools()
+            tools = self.build_delegate_agent_tools(local_mode=local_mode)
             instructions = DELEGATE_AGENT_INSTRUCTIONS
 
         agent = Agent(
@@ -594,10 +816,16 @@ Subagents DON'T get your history. Provide comprehensive context:
 
     def create_supervisor_agent(self, ctx: ChatContext, config: AgentConfig) -> Agent:
         """Create the supervisor agent that coordinates other agents"""
-        # Cache key includes conversation_id to ensure context-specific instructions are not reused
+        # Cache key includes conversation_id and local_mode to ensure context-specific instructions
+        # and tools are not reused (local_mode affects which tools are available)
         conversation_id = ctx.curr_agent_id
-        if conversation_id in self._supervisor_agents:
-            return self._supervisor_agents[conversation_id]
+        local_mode = ctx.local_mode if hasattr(ctx, "local_mode") else False
+        cache_key = (conversation_id, local_mode)
+        if cache_key in self._supervisor_agents:
+            logger.debug(
+                f"Returning cached supervisor agent for conversation_id={conversation_id}, local_mode={local_mode}"
+            )
+            return self._supervisor_agents[cache_key]
 
         # Prepare multimodal instructions if images are present
         multimodal_instructions = prepare_multimodal_instructions(ctx)
@@ -612,11 +840,19 @@ Subagents DON'T get your history. Provide comprehensive context:
             task_description=config.tasks[0].description if config.tasks else "",
             multimodal_instructions=multimodal_instructions,
             supervisor_task_description=supervisor_task_description,
+            local_mode=local_mode,
+        )
+
+        # Build tools with local_mode filtering
+        tools = self.build_supervisor_agent_tools(local_mode=local_mode)
+        logger.info(
+            f"Creating supervisor agent: conversation_id={conversation_id}, local_mode={local_mode}, "
+            f"tools_count={len(tools)}, tool_names={[t.name for t in tools[:10]]}..."
         )
 
         supervisor_agent = Agent(
             model=self.llm_provider.get_pydantic_model(),
-            tools=self.build_supervisor_agent_tools(),
+            tools=tools,
             mcp_servers=self.create_mcp_servers(),
             instrument=True,
             instructions=instructions,
@@ -626,7 +862,7 @@ Subagents DON'T get your history. Provide comprehensive context:
             end_strategy="exhaustive",
             history_processors=[self.history_processor],
         )
-        self._supervisor_agents[conversation_id] = supervisor_agent
+        self._supervisor_agents[cache_key] = supervisor_agent
         return supervisor_agent
 
 

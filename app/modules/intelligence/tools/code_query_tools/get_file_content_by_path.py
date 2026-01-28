@@ -146,22 +146,20 @@ class FetchFileTool:
         """Try to fetch file from LocalServer via tunnel (local-first approach)"""
         try:
             # Import here to avoid circular imports
-            from app.modules.tunnel.tunnel_service import TunnelService
-            from app.modules.intelligence.tools.code_changes_manager import (
-                _current_user_id,
-                _current_conversation_id,
+            from app.modules.tunnel.tunnel_service import get_tunnel_service
+            from app.modules.intelligence.tools.local_search_tools.tunnel_utils import (
+                get_context_vars,
             )
-            
-            user_id = _current_user_id.get(None)
-            conversation_id = _current_conversation_id.get(None)
-            
-            logger.info(f"[fetch_file] 🔍 Local routing check: user_id={user_id}, conversation_id={conversation_id}, file={file_path}")
-            
+
+            user_id, conversation_id = get_context_vars()
+
             if not user_id or not conversation_id:
-                logger.info("[fetch_file] ❌ No user/conversation context for local routing - falling back to GitHub")
+                logger.debug(
+                    "[fetch_file] No user/conversation context for local routing"
+                )
                 return None
-            
-            tunnel_service = TunnelService()
+
+            tunnel_service = get_tunnel_service()
             tunnel_url = tunnel_service.get_tunnel_url(user_id, conversation_id)
             
             logger.info(f"[fetch_file] 🔍 Tunnel lookup result: tunnel_url={tunnel_url}")

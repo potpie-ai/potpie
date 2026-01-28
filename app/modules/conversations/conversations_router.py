@@ -1,7 +1,7 @@
 import json
 from typing import Any, AsyncGenerator, List, Optional, Union, Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -290,6 +290,7 @@ class ConversationAPI:
     async def regenerate_last_message(
         conversation_id: str,
         request: RegenerateRequest,
+        http_request: Request,
         stream: bool = Query(True, description="Whether to stream the response"),
         session_id: Optional[str] = Query(
             None, description="Session ID for reconnection"
@@ -305,6 +306,10 @@ class ConversationAPI:
         async_db: AsyncSession = Depends(get_async_db),
         user=Depends(AuthService.check_auth),
     ):
+        # Check User-Agent header for local mode (same as post_message)
+        user_agent = http_request.headers.get("user-agent", "")
+        local_mode = user_agent == "Potpie-VSCode-Extension/1.0.1"
+
         user_id = user["user_id"]
         checked = await UsageService.check_usage_limit(user_id)
         if not checked:
@@ -318,7 +323,7 @@ class ConversationAPI:
             # Fallback to existing direct execution for non-streaming or explicit direct mode
             controller = ConversationController(db, async_db, user_id, user_email)
             message_stream = controller.regenerate_last_message(
-                conversation_id, request.node_ids, stream
+                conversation_id, request.node_ids, stream, local_mode=local_mode
             )
             if stream:
                 return StreamingResponse(
@@ -390,6 +395,7 @@ class ConversationAPI:
             user_id=user_id,
             node_ids=request.node_ids or [],
             attachment_ids=attachment_ids,
+            local_mode=local_mode,
         )
 
         # Store the Celery task ID for later revocation

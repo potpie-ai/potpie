@@ -123,13 +123,61 @@ class ToolService:
         self.provider_service = ProviderService.create(db, user_id)
         self.tools = self._initialize_tools()
 
-    def get_tools(self, tool_names: List[str]) -> List[StructuredTool]:
-        """get tools if exists"""
+    def get_tools(
+        self, tool_names: List[str], local_mode: bool = False
+    ) -> List[StructuredTool]:
+        """get tools if exists
+
+        Args:
+            tool_names: List of tool names to retrieve
+            local_mode: If True, filters out tools that should not be available in local mode
+        """
         tools = []
         for tool_name in tool_names:
             if self.tools.get(tool_name) is not None:
-                tools.append(self.tools[tool_name])
+                tool = self.tools[tool_name]
+                # Filter tools based on local_mode
+                if local_mode and self._should_exclude_in_local_mode(tool_name):
+                    continue
+                tools.append(tool)
         return tools
+
+    def _should_exclude_in_local_mode(self, tool_name: str) -> bool:
+        """Check if a tool should be excluded in local mode
+
+        In local mode (VSCode Extension), certain tools may be excluded
+        for security or functionality reasons. Override this method to
+        customize which tools are excluded.
+
+        Args:
+            tool_name: Name of the tool to check
+
+        Returns:
+            True if tool should be excluded in local mode, False otherwise
+        """
+        # Tools that should be excluded in local mode
+        excluded_tools = [
+            # Code changes management tools - excluded in local mode
+            "add_file_to_changes",
+            "update_file_in_changes",
+            "update_file_lines",
+            "replace_in_file",
+            "insert_lines",
+            "delete_lines",
+            "delete_file_in_changes",
+            "get_file_from_changes",
+            "list_files_in_changes",
+            "search_content_in_changes",
+            "clear_file_from_changes",
+            "clear_all_changes",
+            "get_changes_summary",
+            "export_changes",
+            "show_updated_file",
+            "show_diff",
+            "get_file_diff",
+            "get_session_metadata",
+        ]
+        return tool_name in excluded_tools
 
     def _initialize_tools(self) -> Dict[str, Any]:
         tools: Dict[str, Any] = {

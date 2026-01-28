@@ -22,6 +22,7 @@ def execute_agent_background(
     agent_id: str,
     node_ids: Optional[List[str]] = None,
     attachment_ids: List[str] = [],
+    local_mode: bool = False,
 ) -> None:
     """Execute an agent in the background and publish results to Redis streams"""
     redis_manager = RedisStreamManager()
@@ -127,6 +128,7 @@ def execute_agent_background(
                         MessageType.HUMAN,
                         user_id,
                         stream=True,
+                        local_mode=local_mode,
                     ):
                         # Check for cancellation
                         if redis_manager.check_cancellation(conversation_id, run_id):
@@ -258,6 +260,7 @@ def execute_regenerate_background(
     user_id: str,
     node_ids: Optional[List[str]] = None,
     attachment_ids: List[str] = [],
+    local_mode: bool = False,
 ) -> None:
     """Execute regeneration in the background and publish results to Redis streams"""
     redis_manager = RedisStreamManager()
@@ -331,7 +334,7 @@ def execute_regenerate_background(
                 has_chunks = False
 
                 async for chunk in service.regenerate_last_message_background(
-                    conversation_id, node_ids, attachment_ids
+                    conversation_id, node_ids, attachment_ids, local_mode=local_mode
                 ):
                     has_chunks = True
 

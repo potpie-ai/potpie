@@ -58,6 +58,57 @@ def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
             )
         case "WebSearchTool":
             return "Searching the web"
+        case "search_text":
+            query = args.get("query") if args else None
+            if query:
+                return f"Searching for text pattern: {query[:60]}"
+            return "Searching for text pattern"
+        case "search_files":
+            pattern = args.get("pattern") if args else None
+            if pattern:
+                return f"Searching for files: {pattern}"
+            return "Searching for files"
+        case "search_symbols":
+            file_path = args.get("file_path") if args else None
+            if file_path:
+                return f"Searching symbols in: {file_path}"
+            return "Searching symbols in file"
+        case "search_workspace_symbols":
+            query = args.get("query") if args else None
+            if query:
+                return f"Searching workspace for symbol: {query}"
+            return "Searching workspace symbols"
+        case "search_references":
+            file_path = args.get("file_path") if args else None
+            line = args.get("line") if args else None
+            if file_path and line:
+                return f"Finding references at {file_path}:{line}"
+            return "Finding symbol references"
+        case "search_definitions":
+            file_path = args.get("file_path") if args else None
+            line = args.get("line") if args else None
+            if file_path and line:
+                return f"Finding definition at {file_path}:{line}"
+            return "Finding symbol definition"
+        case "search_code_structure":
+            file_path = args.get("file_path") if args else None
+            query = args.get("query") if args else None
+            if file_path:
+                return f"Searching code structure in: {file_path}"
+            elif query:
+                return f"Searching code structure for: {query}"
+            return "Searching code structure"
+        case "search_bash":
+            command = args.get("command") if args else None
+            if command:
+                display_cmd = command if len(command) <= 60 else command[:57] + "..."
+                return f"Executing search command: {display_cmd}"
+            return "Executing bash search command"
+        case "semantic_search":
+            query = args.get("query") if args else None
+            if query:
+                return f"Semantically searching codebase: {query[:60]}"
+            return "Semantically searching codebase"
         case "analyze_code_structure":
             return "Analyzing code structure"
         case "bash_command":
@@ -70,6 +121,18 @@ def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
                     )
                     return f"Running: {display_cmd}"
             return "Executing bash command on codebase"
+        case "execute_terminal_command":
+            if args:
+                command = args.get("command", "")
+                mode = args.get("mode", "sync")
+                if command:
+                    # Truncate long commands for display
+                    display_cmd = (
+                        command if len(command) <= 80 else command[:77] + "..."
+                    )
+                    mode_text = f" ({mode} mode)" if mode == "async" else ""
+                    return f"Executing terminal command: {display_cmd}{mode_text}"
+            return "Executing terminal command"
         case "create_todo":
             return "Creating todo item"
         case "update_todo_status":
@@ -310,6 +373,67 @@ def get_tool_response_message(
             if query:
                 return f"Web search successful for: {query}"
             return "Web search successful"
+        case "search_text":
+            query = args.get("query") if args else None
+            file_pattern = args.get("file_pattern") if args else None
+            if query:
+                pattern_info = f" (pattern: {file_pattern})" if file_pattern else ""
+                return f"Text search completed: {query[:50]}{pattern_info}"
+            return "Text search completed"
+        case "search_files":
+            pattern = args.get("pattern") if args else None
+            if pattern:
+                return f"File search completed: {pattern}"
+            return "File search completed"
+        case "search_symbols":
+            file_path = args.get("file_path") if args else None
+            if file_path:
+                return f"Symbols found in: {file_path}"
+            return "Symbols search completed"
+        case "search_workspace_symbols":
+            query = args.get("query") if args else None
+            if query:
+                return f"Workspace symbol search completed: {query}"
+            return "Workspace symbol search completed"
+        case "search_references":
+            file_path = args.get("file_path") if args else None
+            line = args.get("line") if args else None
+            if file_path and line:
+                return f"References found for symbol at {file_path}:{line}"
+            return "Reference search completed"
+        case "search_definitions":
+            file_path = args.get("file_path") if args else None
+            line = args.get("line") if args else None
+            if file_path and line:
+                return f"Definition found for symbol at {file_path}:{line}"
+            return "Definition search completed"
+        case "search_code_structure":
+            file_path = args.get("file_path") if args else None
+            query = args.get("query") if args else None
+            if file_path:
+                return f"Code structure search completed: {file_path}"
+            elif query:
+                return f"Code structure search completed: {query}"
+            return "Code structure search completed"
+        case "search_bash":
+            command = args.get("command") if args else None
+            if command:
+                display_cmd = command if len(command) <= 50 else command[:47] + "..."
+                result_suffix = (
+                    _format_small_result(result) if _is_small_result(result) else ""
+                )
+                return f"Bash search command executed: {display_cmd}{result_suffix}"
+            result_suffix = (
+                _format_small_result(result) if _is_small_result(result) else ""
+            )
+            return f"Bash search command executed{result_suffix}"
+        case "semantic_search":
+            query = args.get("query") if args else None
+            top_k = args.get("top_k") if args else None
+            if query:
+                k_info = f" (top {top_k})" if top_k else ""
+                return f"Semantic search completed: {query[:50]}{k_info}"
+            return "Semantic search completed"
         case "bash_command":
             if args:
                 command = args.get("command", "")
@@ -326,6 +450,24 @@ def get_tool_response_message(
                 _format_small_result(result) if _is_small_result(result) else ""
             )
             return f"Bash command executed successfully{result_suffix}"
+        case "execute_terminal_command":
+            if args:
+                command = args.get("command", "")
+                mode = args.get("mode", "sync")
+                if command:
+                    # Truncate long commands for display
+                    display_cmd = (
+                        command if len(command) <= 60 else command[:57] + "..."
+                    )
+                    mode_text = f" ({mode} mode)" if mode == "async" else ""
+                    result_suffix = (
+                        _format_small_result(result) if _is_small_result(result) else ""
+                    )
+                    return f"Terminal command executed successfully: {display_cmd}{mode_text}{result_suffix}"
+            result_suffix = (
+                _format_small_result(result) if _is_small_result(result) else ""
+            )
+            return f"Terminal command executed successfully{result_suffix}"
         case "create_todo":
             title = args.get("title") if args else None
             if title:
@@ -604,6 +746,78 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             return f"Analyzing file - {args.get('file_path')}\n"
         case "WebSearchTool":
             return f"-> searching the web for {args.get('query')}\n"
+        case "search_text":
+            query = args.get("query", "")
+            file_pattern = args.get("file_pattern")
+            case_sensitive = args.get("case_sensitive", False)
+            use_regex = args.get("use_regex", False)
+            use_bash = args.get("use_bash", False)
+            pattern_info = (
+                f" in files matching '{file_pattern}'" if file_pattern else ""
+            )
+            flags = []
+            if case_sensitive:
+                flags.append("case-sensitive")
+            if use_regex:
+                flags.append("regex")
+            if use_bash:
+                flags.append("bash/grep")
+            flag_text = f" ({', '.join(flags)})" if flags else ""
+            return f"-> searching for text pattern '{query}'{pattern_info}{flag_text}\n"
+        case "search_files":
+            pattern = args.get("pattern", "")
+            exclude = args.get("exclude")
+            max_results = args.get("max_results")
+            exclude_info = f" (excluding: {exclude})" if exclude else ""
+            max_info = f" (max: {max_results})" if max_results else ""
+            return f"-> searching for files matching pattern '{pattern}'{exclude_info}{max_info}\n"
+        case "search_symbols":
+            file_path = args.get("file_path", "")
+            return f"-> searching for symbols (functions, classes, variables) in file: {file_path}\n"
+        case "search_workspace_symbols":
+            query = args.get("query", "")
+            max_results = args.get("max_results")
+            max_info = f" (max: {max_results})" if max_results else ""
+            return f"-> searching workspace for symbol '{query}'{max_info}\n"
+        case "search_references":
+            file_path = args.get("file_path", "")
+            line = args.get("line", "")
+            character = args.get("character", "")
+            return f"-> finding all references to symbol at {file_path}:{line}:{character}\n"
+        case "search_definitions":
+            file_path = args.get("file_path", "")
+            line = args.get("line", "")
+            character = args.get("character", "")
+            return (
+                f"-> finding definition of symbol at {file_path}:{line}:{character}\n"
+            )
+        case "search_code_structure":
+            file_path = args.get("file_path")
+            query = args.get("query")
+            kind = args.get("kind")
+            if file_path:
+                kind_info = f" (kind: {kind})" if kind else ""
+                return f"-> searching code structure in file: {file_path}{kind_info}\n"
+            elif query:
+                kind_info = f" (kind: {kind})" if kind else ""
+                return f"-> searching code structure for '{query}'{kind_info}\n"
+            else:
+                kind_info = f" (kind: {kind})" if kind else ""
+                return f"-> searching code structure{kind_info}\n"
+        case "search_bash":
+            command = args.get("command", "")
+            working_dir = args.get("working_directory")
+            if command:
+                dir_info = f" in directory '{working_dir}'" if working_dir else ""
+                return f"-> executing bash search command: {command}{dir_info}\n"
+            return "-> executing bash search command\n"
+        case "semantic_search":
+            query = args.get("query", "")
+            project_id = args.get("project_id", "")
+            top_k = args.get("top_k", 10)
+            node_ids = args.get("node_ids")
+            context_info = f" (within {len(node_ids)} nodes)" if node_ids else ""
+            return f"-> semantically searching codebase for '{query}' (top {top_k} results){context_info}\n"
         case "bash_command":
             command = args.get("command")
             working_dir = args.get("working_directory")
@@ -611,6 +825,17 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
                 dir_info = f" in directory '{working_dir}'" if working_dir else ""
                 return f"-> executing command: {command}{dir_info}\n"
             return "-> executing bash command\n"
+        case "execute_terminal_command":
+            command = args.get("command")
+            working_dir = args.get("working_directory")
+            mode = args.get("mode", "sync")
+            timeout = args.get("timeout")
+            if command:
+                dir_info = f" in directory '{working_dir}'" if working_dir else ""
+                mode_info = f" (mode: {mode})" if mode == "async" else ""
+                timeout_info = f" (timeout: {timeout}ms)" if timeout else ""
+                return f"-> executing terminal command: {command}{dir_info}{mode_info}{timeout_info}\n"
+            return "-> executing terminal command\n"
         case "create_todo":
             title = args.get("title", "")
             priority = args.get("priority", "medium")
@@ -931,6 +1156,96 @@ description:
                 if isinstance(res, str):
                     return res[: min(len(res), 600)] + " ..."
             return ""
+        case "search_text":
+            if isinstance(content, str):
+                # Format search results with line numbers and file paths
+                lines = content.split("\n")
+                if len(lines) > 50:
+                    preview = "\n".join(lines[:50])
+                    return f"{preview}\n... ({len(lines) - 50} more matches)"
+                return content
+            return ""
+        case "search_files":
+            if isinstance(content, str):
+                # Format file list
+                files = content.split("\n")
+                if len(files) > 30:
+                    preview = "\n".join(files[:30])
+                    return f"{preview}\n... ({len(files) - 30} more files)"
+                return content
+            elif isinstance(content, list):
+                file_list = "\n".join(content[:30])
+                if len(content) > 30:
+                    return f"{file_list}\n... ({len(content) - 30} more files)"
+                return file_list
+            return ""
+        case "search_symbols":
+            if isinstance(content, str):
+                # Format symbol list with locations
+                return content[: min(len(content), 800)] + (
+                    " ..." if len(content) > 800 else ""
+                )
+            return ""
+        case "search_workspace_symbols":
+            if isinstance(content, str):
+                # Format workspace symbol results
+                return content[: min(len(content), 800)] + (
+                    " ..." if len(content) > 800 else ""
+                )
+            return ""
+        case "search_references":
+            if isinstance(content, str):
+                # Format reference locations
+                return content[: min(len(content), 800)] + (
+                    " ..." if len(content) > 800 else ""
+                )
+            return ""
+        case "search_definitions":
+            if isinstance(content, str):
+                # Format definition location and code
+                return content[: min(len(content), 800)] + (
+                    " ..." if len(content) > 800 else ""
+                )
+            return ""
+        case "search_code_structure":
+            if isinstance(content, str):
+                # Format code structure results
+                return content[: min(len(content), 800)] + (
+                    " ..." if len(content) > 800 else ""
+                )
+            return ""
+        case "search_bash":
+            if isinstance(content, str):
+                # Format bash command output
+                lines = content.split("\n")
+                if len(lines) > 100:
+                    preview = "\n".join(lines[:100])
+                    return f"{preview}\n... ({len(lines) - 100} more lines)"
+                return content
+            return ""
+        case "semantic_search":
+            if isinstance(content, str):
+                # Format semantic search results with similarity scores
+                return content[: min(len(content), 1000)] + (
+                    " ..." if len(content) > 1000 else ""
+                )
+            elif isinstance(content, list):
+                # Format list of semantic results
+                formatted = f"Found {len(content)} semantically similar result(s):\n\n"
+                for i, r in enumerate(content[:10], 1):
+                    if isinstance(r, dict):
+                        file_path = r.get("file_path", "unknown")
+                        start_line = r.get("start_line", 0) or 0
+                        similarity = r.get("similarity", 0.0)
+                        name = r.get("name", "")
+                        formatted += f"{i}. {file_path}:{start_line}"
+                        if name:
+                            formatted += f" - `{name}`"
+                        formatted += f" (similarity: {similarity:.3f})\n"
+                if len(content) > 10:
+                    formatted += f"\n... ({len(content) - 10} more results)"
+                return formatted
+            return ""
         case "bash_command":
             if isinstance(content, Dict):
                 success = content.get("success", False)
@@ -970,6 +1285,39 @@ description:
                             result_msg += " ..."
                         result_msg += "\n```"
                     return result_msg
+            return ""
+        case "execute_terminal_command":
+            # Terminal command results are already formatted strings from the tool
+            # They may include session info for async mode or formatted terminal output
+            if isinstance(content, str):
+                # For async mode, content includes session info
+                if "Session ID:" in content or "async mode" in content:
+                    return content
+                # For sync mode, content is already formatted terminal result
+                # Truncate if too long
+                if len(content) > 2000:
+                    return f"{content[:2000]}\n... (output truncated)"
+                return content
+            # If content is a dict (shouldn't happen but handle gracefully)
+            if isinstance(content, Dict):
+                session_id = content.get("session_id")
+                if session_id:
+                    return f"🔄 Command started in async mode\n\n**Session ID:** `{session_id}`\n\nUse `terminal_session_output` tool to get output."
+                output = content.get("output", "")
+                error = content.get("error", "")
+                exit_code = content.get("exit_code", 0)
+                result_msg = f"Command executed (exit code: {exit_code})"
+                if output:
+                    result_msg += f"\n\nOutput:\n```\n{output[:min(len(output), 1000)]}"
+                    if len(output) > 1000:
+                        result_msg += "\n... (output truncated)"
+                    result_msg += "\n```"
+                if error:
+                    result_msg += f"\n\nError:\n```\n{error[:min(len(error), 500)]}"
+                    if len(error) > 500:
+                        result_msg += " ..."
+                    result_msg += "\n```"
+                return result_msg
             return ""
         case (
             "create_todo"

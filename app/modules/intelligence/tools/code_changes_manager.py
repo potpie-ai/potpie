@@ -24,7 +24,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any, Union, Callable, TypeVar
 from enum import Enum
 from dataclasses import dataclass, asdict
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from app.modules.utils.logger import setup_logger
 from app.core.config_provider import ConfigProvider
@@ -49,6 +49,16 @@ from app.modules.intelligence.tools.local_search_tools import (
     search_bash_tool,
     SearchSemanticInput,
     search_semantic_tool,
+)
+from app.modules.intelligence.tools.local_search_tools.execute_terminal_command_tool import (
+    ExecuteTerminalCommandInput,
+    execute_terminal_command_tool,
+)
+from app.modules.intelligence.tools.local_search_tools.terminal_session_tools import (
+    TerminalSessionOutputInput,
+    terminal_session_output_tool,
+    TerminalSessionSignalInput,
+    terminal_session_signal_tool,
 )
 
 logger = setup_logger(__name__)
@@ -2210,14 +2220,10 @@ _conversation_id_ctx: ContextVar[Optional[str]] = ContextVar(
 )
 
 # Context variable for agent_id/agent_type - used to determine routing
-_agent_id_ctx: ContextVar[Optional[str]] = ContextVar(
-    "_agent_id_ctx", default=None
-)
+_agent_id_ctx: ContextVar[Optional[str]] = ContextVar("_agent_id_ctx", default=None)
 
 # Context variable for user_id - used for tunnel routing
-_user_id_ctx: ContextVar[Optional[str]] = ContextVar(
-    "_user_id_ctx", default=None
-)
+_user_id_ctx: ContextVar[Optional[str]] = ContextVar("_user_id_ctx", default=None)
 
 
 def _set_conversation_id(conversation_id: Optional[str]) -> None:
@@ -2237,7 +2243,7 @@ def _get_conversation_id() -> Optional[str]:
 
 def _set_agent_id(agent_id: Optional[str]) -> None:
     """Set the agent_id for the current execution context.
-    
+
     This is used to determine if file operations should be routed to LocalServer.
     """
     _agent_id_ctx.set(agent_id)
@@ -2251,7 +2257,7 @@ def _get_agent_id() -> Optional[str]:
 
 def _set_user_id(user_id: Optional[str]) -> None:
     """Set the user_id for the current execution context.
-    
+
     This is used for tunnel routing.
     """
     _user_id_ctx.set(user_id)
@@ -2262,33 +2268,105 @@ def _get_user_id() -> Optional[str]:
     return _user_id_ctx.get()
 
 
+def _extract_error_message(error_text: str, status_code: int) -> str:
+    """Extract a meaningful error message from response text.
+
+    Handles HTML error pages (like Cloudflare errors) and JSON error responses.
+
+    Args:
+        error_text: The raw response text
+        status_code: HTTP status code
+
+    Returns:
+        A concise error message
+    """
+    if not error_text:
+        return f"HTTP {status_code} error (no response body)"
+
+    # Check if it's HTML (like Cloudflare error pages)
+    if error_text.strip().startswith(
+        "<!DOCTYPE html>"
+    ) or error_text.strip().startswith("<html"):
+        # Try to extract meaningful information from HTML error pages
+        import re
+
+        # Look for Cloudflare tunnel errors
+        if "Cloudflare Tunnel error" in error_text:
+            if status_code == 530:
+                return "Cloudflare Tunnel error (530): Tunnel is unavailable or cannot be resolved. Please check that cloudflared is running."
+            return f"Cloudflare Tunnel error ({status_code}): Tunnel connection failed"
+
+        # Look for error titles or messages in HTML
+        title_match = re.search(
+            r"<title>(.*?)</title>", error_text, re.IGNORECASE | re.DOTALL
+        )
+        if title_match:
+            title = title_match.group(1).strip()
+            # Clean up the title
+            title = re.sub(r"\s+", " ", title)
+            return f"HTTP {status_code}: {title[:200]}"  # Limit length
+
+        # Look for error messages in common HTML error page patterns
+        error_match = re.search(
+            r"<h[12][^>]*>(.*?)</h[12]>", error_text, re.IGNORECASE | re.DOTALL
+        )
+        if error_match:
+            error_msg = error_match.group(1).strip()
+            error_msg = re.sub(r"<[^>]+>", "", error_msg)  # Remove HTML tags
+            error_msg = re.sub(r"\s+", " ", error_msg)
+            return f"HTTP {status_code}: {error_msg[:200]}"
+
+        return f"HTTP {status_code} error (HTML response received)"
+
+    # Try to parse as JSON
+    try:
+        import json
+
+        error_json = json.loads(error_text)
+        if isinstance(error_json, dict):
+            # Look for common error message fields
+            for key in ["error", "message", "detail", "msg"]:
+                if key in error_json:
+                    return f"HTTP {status_code}: {str(error_json[key])[:200]}"
+            return f"HTTP {status_code}: {str(error_json)[:200]}"
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # If it's plain text, return it (but limit length)
+    if len(error_text) > 500:
+        return f"HTTP {status_code}: {error_text[:200]}... (truncated)"
+    return f"HTTP {status_code}: {error_text}"
+
+
 def _route_to_local_server(
     operation: str,
     data: Dict[str, Any],
 ) -> Optional[str]:
     """Route file operation to LocalServer via tunnel (sync version).
-    
+
     Returns:
         Result string if successful, None if should fall back to CodeChangesManager
     """
     try:
         from app.modules.tunnel.tunnel_service import get_tunnel_service
         import httpx
-        
+
         user_id = _get_user_id()
         conversation_id = _get_conversation_id()
-        
+
         if not user_id:
             logger.debug("No user_id in context, skipping tunnel routing")
             return None
-        
+
         tunnel_service = get_tunnel_service()
         tunnel_url = tunnel_service.get_tunnel_url(user_id, conversation_id)
-        
+
         if not tunnel_url:
-            logger.debug(f"No tunnel available for user {user_id}, using CodeChangesManager")
+            logger.debug(
+                f"No tunnel available for user {user_id}, using CodeChangesManager"
+            )
             return None
-        
+
         # Map operation to LocalServer endpoint (must be defined before smart routing)
         endpoint_map = {
             "add_file": "/api/files/create",
@@ -2301,34 +2379,32 @@ def _route_to_local_server(
             "get_file": "/api/files/read",
             "show_updated_file": "/api/files/read",
         }
-        
+
         endpoint = endpoint_map.get(operation)
         if not endpoint:
             logger.warning(f"Unknown operation for tunnel routing: {operation}")
             return None
-        
+
         # Smart routing: If backend is running locally, use direct connection to avoid hairpin
         # Hairpin problem: Local backend → Internet → Tunnel → Back to same machine = timeout
         try:
             import os
             from urllib.parse import urlparse
-            
+
             # Check if we're running in a local environment
             # Common indicators: localhost in BASE_URL, or ENVIRONMENT=local/dev
             # Allow forcing tunnel usage via FORCE_TUNNEL env var (for testing)
             force_tunnel = os.getenv("FORCE_TUNNEL", "").lower() in ["true", "1", "yes"]
-            
+
             base_url = os.getenv("BASE_URL", "").lower()
             environment = os.getenv("ENVIRONMENT", "").lower()
-            is_local_backend = (
-                not force_tunnel and (  # Don't bypass if forcing tunnel
-                    "localhost" in base_url or
-                    "127.0.0.1" in base_url or
-                    environment in ["local", "dev", "development"] or
-                    not base_url  # If BASE_URL not set, assume local
-                )
+            is_local_backend = not force_tunnel and (  # Don't bypass if forcing tunnel
+                "localhost" in base_url
+                or "127.0.0.1" in base_url
+                or environment in ["local", "dev", "development"]
+                or not base_url  # If BASE_URL not set, assume local
             )
-            
+
             if is_local_backend and not force_tunnel:
                 # Backend is local - try to get local port from tunnel registration
                 # Tunnel registration stores local_port in the tunnel data
@@ -2341,13 +2417,13 @@ def _route_to_local_server(
                     stored_port = tunnel_data.get("local_port")
                     if stored_port:
                         local_port = int(stored_port)
-                
+
                 # Default to 3001 if not found (LocalServer default)
                 if not local_port:
                     local_port = 3001
-                
+
                 direct_url = f"http://localhost:{local_port}"
-                
+
                 # Quick connectivity check - try to reach localhost before using it
                 try:
                     test_client = httpx.Client(timeout=2.0)
@@ -2372,32 +2448,39 @@ def _route_to_local_server(
             else:
                 # Remote backend or force_tunnel enabled - use tunnel URL
                 if force_tunnel:
-                    logger.info(f"[Tunnel Routing] 🔧 FORCE_TUNNEL enabled, using tunnel URL: {tunnel_url}{endpoint}")
+                    logger.info(
+                        f"[Tunnel Routing] 🔧 FORCE_TUNNEL enabled, using tunnel URL: {tunnel_url}{endpoint}"
+                    )
                 else:
-                    logger.info(f"[Tunnel Routing] 🌐 Remote backend, using tunnel URL: {tunnel_url}{endpoint}")
+                    logger.info(
+                        f"[Tunnel Routing] 🌐 Remote backend, using tunnel URL: {tunnel_url}{endpoint}"
+                    )
                 url = f"{tunnel_url}{endpoint}"
         except Exception as e:
-            logger.warning(f"[Tunnel Routing] Error in smart routing, falling back to tunnel URL: {e}")
+            logger.warning(
+                f"[Tunnel Routing] Error in smart routing, falling back to tunnel URL: {e}"
+            )
             url = f"{tunnel_url}{endpoint}"
-        
+
         # Prepare request data
         request_data = {
             **data,
             "conversation_id": conversation_id,
         }
-        
-        # Make request to LocalServer via tunnel (sync)
-        url = f"{tunnel_url}{endpoint}"
-        logger.info(f"[Tunnel Routing] 🚀 Routing {operation} to LocalServer via tunnel: {url}")
+
+        # Make request to LocalServer (url already set by smart routing above)
+        logger.info(f"[Tunnel Routing] 🚀 Routing {operation} to LocalServer: {url}")
         logger.debug(f"[Tunnel Routing] Request data: {request_data}")
-        
+
         with httpx.Client(timeout=30.0) as client:
             # Read operations use GET, write operations use POST
             if operation in ["get_file", "show_updated_file"]:
                 # GET request with file path as query parameter
-                file_path = data.get('file_path', '')
+                file_path = data.get("file_path", "")
                 if not file_path:
-                    logger.warning(f"[Tunnel Routing] No file_path provided for {operation}")
+                    logger.warning(
+                        f"[Tunnel Routing] No file_path provided for {operation}"
+                    )
                     return None
                 url_with_params = f"{url}?path={url_quote(file_path)}"
                 response = client.get(url_with_params)
@@ -2408,76 +2491,88 @@ def _route_to_local_server(
                     json=request_data,
                     headers={"Content-Type": "application/json"},
                 )
-            
+
             if response.status_code == 200:
                 result = response.json()
-                logger.info(f"[Tunnel Routing] ✅ LocalServer {operation} succeeded: {result}")
-                
+                logger.info(
+                    f"[Tunnel Routing] ✅ LocalServer {operation} succeeded: {result}"
+                )
+
                 # Format response based on operation type
-                file_path = data.get('file_path', 'file')
-                
+                file_path = data.get("file_path", "file")
+
                 if operation == "replace_in_file":
-                    replacements_made = result.get('replacements_made', 0)
-                    total_matches = result.get('total_matches', replacements_made)
-                    pattern = data.get('pattern', 'pattern')
-                    
+                    replacements_made = result.get("replacements_made", 0)
+                    total_matches = result.get("total_matches", replacements_made)
+                    pattern = data.get("pattern", "pattern")
+
                     response_msg = (
                         f"✅ Replaced pattern '{pattern}' in '{file_path}'\n\n"
                         + f"Made {replacements_made} replacement(s) out of {total_matches} match(es)"
                     )
-                    
-                    if result.get('auto_fixed'):
+
+                    if result.get("auto_fixed"):
                         response_msg += "\n\n✅ Auto-fixed formatting issues"
-                    if result.get('errors'):
-                        response_msg += f"\n⚠️ Validation errors: {len(result['errors'])}"
-                    
+                    if result.get("errors"):
+                        response_msg += (
+                            f"\n⚠️ Validation errors: {len(result['errors'])}"
+                        )
+
                     return response_msg
                 elif operation == "update_file_lines":
                     # Format update_file_lines success response
-                    start_line = data.get('start_line', 0)
-                    end_line = data.get('end_line', start_line)
+                    start_line = data.get("start_line", 0)
+                    end_line = data.get("end_line", start_line)
                     response_msg = (
                         f"✅ Updated lines {start_line}-{end_line} in '{file_path}' locally\n\n"
                         + "Changes applied successfully in your IDE."
                     )
-                    if result.get('auto_fixed'):
+                    if result.get("auto_fixed"):
                         response_msg += "\n\n✅ Auto-fixed formatting issues"
-                    if result.get('errors'):
-                        response_msg += f"\n⚠️ Validation errors: {len(result['errors'])}"
+                    if result.get("errors"):
+                        response_msg += (
+                            f"\n⚠️ Validation errors: {len(result['errors'])}"
+                        )
                     return response_msg
                 elif operation == "add_file":
                     # Format add_file success response
                     response_msg = f"✅ Created file '{file_path}' locally\n\nChanges applied successfully in your IDE."
-                    if result.get('auto_fixed'):
+                    if result.get("auto_fixed"):
                         response_msg += "\n\n✅ Auto-fixed formatting issues"
-                    if result.get('errors'):
-                        response_msg += f"\n⚠️ Validation errors: {len(result['errors'])}"
+                    if result.get("errors"):
+                        response_msg += (
+                            f"\n⚠️ Validation errors: {len(result['errors'])}"
+                        )
                     return response_msg
                 elif operation == "update_file":
                     # Format update_file success response
                     response_msg = f"✅ Updated file '{file_path}' locally\n\nChanges applied successfully in your IDE."
-                    if result.get('auto_fixed'):
+                    if result.get("auto_fixed"):
                         response_msg += "\n\n✅ Auto-fixed formatting issues"
-                    if result.get('errors'):
-                        response_msg += f"\n⚠️ Validation errors: {len(result['errors'])}"
+                    if result.get("errors"):
+                        response_msg += (
+                            f"\n⚠️ Validation errors: {len(result['errors'])}"
+                        )
                     return response_msg
                 elif operation == "insert_lines":
                     # Format insert_lines success response
-                    line_number = data.get('line_number', 0)
-                    position = "after" if data.get('insert_after', True) else "before"
+                    line_number = data.get("line_number", 0)
+                    position = "after" if data.get("insert_after", True) else "before"
                     response_msg = (
                         f"✅ Inserted lines {position} line {line_number} in '{file_path}' locally\n\n"
                         + "Changes applied successfully in your IDE."
                     )
-                    if result.get('auto_fixed'):
+                    if result.get("auto_fixed"):
                         response_msg += "\n\n✅ Auto-fixed formatting issues"
-                    if result.get('errors'):
-                        response_msg += f"\n⚠️ Validation errors: {len(result['errors'])}"
+                    if result.get("errors"):
+                        response_msg += (
+                            f"\n⚠️ Validation errors: {len(result['errors'])}"
+                        )
                     return response_msg
                 elif operation == "delete_lines":
                     # Format delete_lines success response
-                    start_line = data.get('start_line', 0)
-                    end_line = data.get('end_line', start_line)
+                    start_line = data.get("start_line", 0)
+                    end_line = data.get("end_line", start_line)
                     return (
                         f"✅ Deleted lines {start_line}-{end_line} from '{file_path}' locally\n\n"
                         + "Changes applied successfully in your IDE."
@@ -2490,10 +2585,10 @@ def _route_to_local_server(
                     )
                 elif operation in ["get_file", "show_updated_file"]:
                     # Format read operation response
-                    content = result.get('content', '')
-                    line_count = result.get('line_count', 0)
+                    content = result.get("content", "")
+                    line_count = result.get("line_count", 0)
                     change_emoji = {"add": "➕", "update": "✏️", "delete": "🗑️"}
-                    
+
                     if operation == "get_file":
                         # Format similar to get_file_tool
                         result_msg = f"📄 **{file_path}**\n\n"
@@ -2502,11 +2597,15 @@ def _route_to_local_server(
                         content_preview = content[:500]
                         result_msg += f"\n**Content preview (first 500 chars):**\n```\n{content_preview}\n```\n"
                         if len(content) > 500:
-                            result_msg += f"\n... ({len(content) - 500} more characters)\n"
+                            result_msg += (
+                                f"\n... ({len(content) - 500} more characters)\n"
+                            )
                         return result_msg
                     else:  # show_updated_file
                         # Format similar to show_updated_file_tool
-                        result_msg = f"\n\n---\n\n## 📝 **Updated File: {file_path}**\n\n"
+                        result_msg = (
+                            f"\n\n---\n\n## 📝 **Updated File: {file_path}**\n\n"
+                        )
                         result_msg += f"```\n{content}\n```\n\n"
                         result_msg += "---\n\n"
                         return result_msg
@@ -2514,90 +2613,133 @@ def _route_to_local_server(
                     # Generic success message for other operations
                     return f"✅ Applied {operation.replace('_', ' ')} to '{file_path}' locally"
             else:
+                # Extract meaningful error message from response
                 error_text = response.text
                 status_code = response.status_code
-                
+
                 # Detect Cloudflare tunnel errors (stale tunnel)
                 is_tunnel_error = (
-                    status_code in [502, 503, 504, 530] or
-                    "Cloudflare Tunnel error" in error_text or
-                    "cloudflared" in error_text.lower()
+                    status_code in [502, 503, 504, 530]
+                    or "Cloudflare Tunnel error" in error_text
+                    or "cloudflared" in error_text.lower()
                 )
-                
+
                 if is_tunnel_error:
                     logger.warning(
                         f"[Tunnel Routing] ❌ Stale tunnel detected ({status_code}): {url}. "
                         f"Invalidating all tunnels for this user."
                     )
-                    
+
                     # Invalidate all stale tunnel URLs for this user
                     try:
                         from app.modules.tunnel.tunnel_service import get_tunnel_service
+
                         tunnel_service = get_tunnel_service()
-                        
+
                         # Get user-level tunnel URL before unregistering
                         user_level_tunnel = tunnel_service.get_tunnel_url(user_id, None)
-                        
+
                         # Unregister conversation-specific tunnel
                         if conversation_id:
                             tunnel_service.unregister_tunnel(user_id, conversation_id)
-                            logger.info(f"[Tunnel Routing] ✅ Invalidated stale conversation tunnel for user {user_id}")
-                        
+                            logger.info(
+                                f"[Tunnel Routing] ✅ Invalidated stale conversation tunnel for user {user_id}"
+                            )
+
                         # If user-level tunnel is the same stale URL, invalidate it too
                         if user_level_tunnel:
                             # Extract base URL from tunnel_url for comparison
-                            stale_base_url = tunnel_url.split('/api/')[0] if '/api/' in tunnel_url else tunnel_url
-                            if user_level_tunnel == stale_base_url or stale_base_url.startswith(user_level_tunnel):
+                            stale_base_url = (
+                                tunnel_url.split("/api/")[0]
+                                if "/api/" in tunnel_url
+                                else tunnel_url
+                            )
+                            if (
+                                user_level_tunnel == stale_base_url
+                                or stale_base_url.startswith(user_level_tunnel)
+                            ):
                                 # User-level tunnel is also stale - invalidate it
-                                tunnel_service.unregister_tunnel(user_id, None)  # Unregister user-level
+                                tunnel_service.unregister_tunnel(
+                                    user_id, None
+                                )  # Unregister user-level
                                 logger.warning(
                                     f"[Tunnel Routing] ⚠️ User-level tunnel is also stale ({user_level_tunnel}). "
                                     f"Invalidated all tunnels. Extension should restart cloudflared."
                                 )
                             else:
                                 # User-level tunnel is different, try it as fallback
-                                logger.info(f"[Tunnel Routing] 🔄 Retrying {operation} with user-level tunnel: {user_level_tunnel}")
-                                
+                                logger.info(
+                                    f"[Tunnel Routing] 🔄 Retrying {operation} with user-level tunnel: {user_level_tunnel}"
+                                )
+
                                 # Retry with user-level tunnel
                                 retry_endpoint = endpoint_map.get(operation)
                                 if retry_endpoint:
                                     retry_url = f"{user_level_tunnel}{retry_endpoint}"
                                     try:
-                                        if operation in ["get_file", "show_updated_file"]:
+                                        if operation in [
+                                            "get_file",
+                                            "show_updated_file",
+                                        ]:
                                             # GET request with file path as query parameter
-                                            file_path = data.get('file_path', '')
+                                            file_path = data.get("file_path", "")
                                             retry_url_with_params = f"{retry_url}?path={url_quote(file_path)}"
-                                            retry_response = client.get(retry_url_with_params)
+                                            retry_response = client.get(
+                                                retry_url_with_params
+                                            )
                                         else:
-                                            retry_response = client.post(retry_url, json=request_data)
-                                        
+                                            retry_response = client.post(
+                                                retry_url, json=request_data
+                                            )
+
                                         if retry_response.status_code == 200:
                                             result = retry_response.json()
-                                            logger.info(f"[Tunnel Routing] ✅ User-level fallback succeeded for {operation}")
+                                            logger.info(
+                                                f"[Tunnel Routing] ✅ User-level fallback succeeded for {operation}"
+                                            )
                                             # Return success message (simplified)
-                                            file_path = data.get('file_path', 'file')
+                                            file_path = data.get("file_path", "file")
                                             return f"✅ Applied {operation.replace('_', ' ')} to '{file_path}' locally (via user-level tunnel)"
-                                        elif retry_response.status_code in [502, 503, 504, 530]:
+                                        elif retry_response.status_code in [
+                                            502,
+                                            503,
+                                            504,
+                                            530,
+                                        ]:
                                             # User-level tunnel is also stale
-                                            tunnel_service.unregister_tunnel(user_id, None)
-                                            logger.warning(f"[Tunnel Routing] ⚠️ User-level tunnel also stale. Invalidated all tunnels.")
+                                            tunnel_service.unregister_tunnel(
+                                                user_id, None
+                                            )
+                                            logger.warning(
+                                                f"[Tunnel Routing] ⚠️ User-level tunnel also stale. Invalidated all tunnels."
+                                            )
                                         else:
-                                            logger.warning(f"[Tunnel Routing] ❌ User-level fallback failed: {retry_response.status_code}")
+                                            logger.warning(
+                                                f"[Tunnel Routing] ❌ User-level fallback failed: {retry_response.status_code}"
+                                            )
                                     except Exception as retry_e:
-                                        logger.warning(f"[Tunnel Routing] ❌ User-level fallback error: {retry_e}")
+                                        logger.warning(
+                                            f"[Tunnel Routing] ❌ User-level fallback error: {retry_e}"
+                                        )
                     except Exception as e:
-                        logger.error(f"[Tunnel Routing] Failed to invalidate tunnel: {e}")
-                    
+                        logger.error(
+                            f"[Tunnel Routing] Failed to invalidate tunnel: {e}"
+                        )
+
                     # Return None to allow fallback to cloud execution
-                    logger.info(f"[Tunnel Routing] ⬇️ Falling back to cloud execution for {operation}")
+                    logger.info(
+                        f"[Tunnel Routing] ⬇️ Falling back to cloud execution for {operation}"
+                    )
                     return None
-                
-                logger.warning(f"[Tunnel Routing] ❌ LocalServer {operation} failed ({status_code}): {error_text[:200]}")
-                
+
+                logger.warning(
+                    f"[Tunnel Routing] ❌ LocalServer {operation} failed ({status_code}): {error_text[:200]}"
+                )
+
                 # Handle specific error codes
                 if response.status_code == 409:
                     # File already exists - provide helpful guidance
-                    file_path = data.get('file_path', 'file')
+                    file_path = data.get("file_path", "file")
                     if operation == "add_file":
                         return (
                             f"❌ Cannot create file '{file_path}': File already exists locally.\n\n"
@@ -2606,24 +2748,33 @@ def _route_to_local_server(
                         )
                     else:
                         return f"❌ Operation failed: File '{file_path}' already exists (409). Please use update operation instead."
-                
+
                 # If pre-validation failed, return a helpful error message to the agent
                 if response.status_code == 400:
                     try:
                         error_data = response.json()
-                        if error_data.get('error') == 'pre_validation_failed':
-                            errors = error_data.get('errors', [])
+                        if error_data.get("error") == "pre_validation_failed":
+                            errors = error_data.get("errors", [])
                             error_count = len(errors)
-                            file_path = data.get('file_path', 'file')
-                            
+                            file_path = data.get("file_path", "file")
+
                             # Analyze error types for more specific guidance
-                            bracket_errors = [e for e in errors if e.get('rule') == 'bracket-matching']
-                            quote_errors = [e for e in errors if e.get('rule') == 'quote-matching']
-                            
+                            bracket_errors = [
+                                e for e in errors if e.get("rule") == "bracket-matching"
+                            ]
+                            quote_errors = [
+                                e for e in errors if e.get("rule") == "quote-matching"
+                            ]
+
                             # Create a helpful error message for the agent based on operation type
-                            if operation in ["update_file_lines", "insert_lines", "add_file", "update_file"]:
-                                operation_name = operation.replace('_', ' ')
-                                
+                            if operation in [
+                                "update_file_lines",
+                                "insert_lines",
+                                "add_file",
+                                "update_file",
+                            ]:
+                                operation_name = operation.replace("_", " ")
+
                                 # Operation-specific context
                                 if operation == "add_file":
                                     context_msg = "creating a new file"
@@ -2637,15 +2788,13 @@ def _route_to_local_server(
                                 else:  # update_file_lines
                                     context_msg = "updating specific lines"
                                     action_tool = "`update_file_lines`"
-                                
-                                error_msg = (
-                                    f"❌ Pre-validation failed for '{file_path}': {error_count} syntax error(s) detected in the generated code.\n\n"
-                                )
+
+                                error_msg = f"❌ Pre-validation failed for '{file_path}': {error_count} syntax error(s) detected in the generated code.\n\n"
                                 if bracket_errors:
                                     error_msg += f"- {len(bracket_errors)} unmatched bracket(s): Ensure all parentheses, braces, and brackets are properly closed.\n"
                                 if quote_errors:
                                     error_msg += f"- {len(quote_errors)} unclosed quote(s): Ensure all string quotes (single, double, template literals) are properly closed.\n"
-                                
+
                                 error_msg += (
                                     f"\n**Root Cause**: The code you generated has syntax errors while {context_msg}. This usually happens when:\n"
                                     f"- Code snippets are incomplete or truncated\n"
@@ -2653,7 +2802,7 @@ def _route_to_local_server(
                                     f"- The generated code doesn't match the file's syntax structure\n"
                                     f"- Missing closing brackets, quotes, or parentheses\n\n"
                                 )
-                                
+
                                 if operation in ["update_file_lines", "insert_lines"]:
                                     error_msg += (
                                         f"**Recommendation**:\n"
@@ -2691,64 +2840,93 @@ def _route_to_local_server(
                             return error_msg
                     except:
                         pass  # If JSON parsing fails, fall through to None
-                
+
                 return None  # Fall back to CodeChangesManager
-        
+
     except Exception as e:
-        logger.exception(f"Error routing to LocalServer for {operation}: {e}")
+        # Handle specific httpx exceptions if available
+        error_type = type(e).__name__
+        if "Timeout" in error_type or "timeout" in str(e).lower():
+            logger.warning(
+                f"[Tunnel Routing] ⏱️ Timeout routing {operation} to LocalServer: {e}"
+            )
+        elif "Connect" in error_type or "connection" in str(e).lower():
+            logger.warning(
+                f"[Tunnel Routing] 🔌 Connection error routing {operation} to LocalServer: {e}"
+            )
+        else:
+            # For HTTP errors, try to extract meaningful message
+            if hasattr(e, "response") and e.response:
+                error_message = _extract_error_message(
+                    e.response.text if hasattr(e.response, "text") else str(e),
+                    e.response.status_code if hasattr(e.response, "status_code") else 0,
+                )
+                logger.warning(
+                    f"[Tunnel Routing] ❌ HTTP error routing {operation} to LocalServer: {error_message}"
+                )
+            else:
+                logger.warning(
+                    f"[Tunnel Routing] ❌ Error routing {operation} to LocalServer: {e}"
+                )
         return None  # Fall back to CodeChangesManager
 
 
 def _should_route_to_local_server() -> bool:
     """Check if file operations should be routed to LocalServer.
-    
+
     Returns True if:
     - Agent ID is "code", "code_generation_agent", or "codebase_qna_agent" (when tunnel is available)
     - Tunnel is available for the user
-    
+
     Note: "code_generation_agent" is used for the "code" agent type in the extension
     since it has all the file editing tools. We route it to tunnel for local-first execution.
     """
     agent_id = _get_agent_id()
     user_id = _get_user_id()
     conversation_id = _get_conversation_id()
-    
+
     logger.info(
         f"[Tunnel Routing] Checking routing: agent_id={agent_id}, user_id={user_id}, conversation_id={conversation_id}"
     )
-    
+
     # Route these agents to tunnel when available for local-first code changes
     if agent_id not in ["code", "code_generation_agent", "codebase_qna_agent"]:
-        logger.debug(f"[Tunnel Routing] Agent {agent_id} not eligible for tunnel routing")
+        logger.debug(
+            f"[Tunnel Routing] Agent {agent_id} not eligible for tunnel routing"
+        )
         return False
-    
+
     try:
         from app.modules.tunnel.tunnel_service import get_tunnel_service
-        
+
         if not user_id:
             logger.debug("[Tunnel Routing] No user_id in context")
             return False
-        
+
         tunnel_service = get_tunnel_service()
-        
+
         # Try conversation-specific first
         tunnel_url = tunnel_service.get_tunnel_url(user_id, conversation_id)
-        
+
         # If not found, try user-level tunnel
         if not tunnel_url:
             tunnel_url = tunnel_service.get_tunnel_url(user_id, None)
             if tunnel_url:
-                logger.info(f"[Tunnel Routing] Found user-level tunnel (no conversation-specific): {tunnel_url}")
-        
+                logger.info(
+                    f"[Tunnel Routing] Found user-level tunnel (no conversation-specific): {tunnel_url}"
+                )
+
         if tunnel_url:
-            logger.info(f"[Tunnel Routing] ✅ Routing to LocalServer via tunnel: {tunnel_url}")
+            logger.info(
+                f"[Tunnel Routing] ✅ Routing to LocalServer via tunnel: {tunnel_url}"
+            )
         else:
             # Debug: Check what tunnels exist
             logger.warning(
                 f"[Tunnel Routing] ❌ No tunnel available for user {user_id}, conversation {conversation_id}. "
                 f"Agent: {agent_id}. Check if tunnel was registered."
             )
-        
+
         return tunnel_url is not None
     except Exception as e:
         logger.exception(f"[Tunnel Routing] Error checking tunnel: {e}")
@@ -2757,36 +2935,36 @@ def _should_route_to_local_server() -> bool:
 
 def _execute_local_write(operation: str, data: Dict[str, Any], file_path: str) -> str:
     """Execute a write operation locally with local-first semantics.
-    
+
     For write operations (add, update, delete, replace, insert), we REQUIRE local execution
     when the user has a VS Code extension connected (tunnel available).
-    
+
     Returns:
         - Success message if local execution succeeded
         - Error message if local execution failed (does NOT fall back to cloud)
         - None if no tunnel available (caller can decide to use cloud or not)
     """
     should_route = _should_route_to_local_server()
-    
+
     if not should_route:
         # No tunnel available - user is not using VS Code extension
         # Return None to allow cloud fallback (for web UI users)
         logger.info(f"[Local-First] No tunnel for {operation}, allowing cloud fallback")
         return None
-    
+
     # User has tunnel = using VS Code extension = expects LOCAL changes
     logger.info(f"[Local-First] 🏠 Executing {operation} locally (local-first mode)")
-    
+
     result = _route_to_local_server(operation, data)
-    
+
     if result:
         # Local execution succeeded
         return result
-    
+
     # Local execution FAILED but user expected local
     # Do NOT fall back to cloud - return an error so agent can retry or inform user
     logger.warning(f"[Local-First] ❌ Local {operation} failed for '{file_path}'")
-    
+
     return (
         f"❌ **Local execution failed** for '{file_path}'\n\n"
         f"Your VS Code extension tunnel appears to be disconnected or stale.\n\n"
@@ -3065,7 +3243,7 @@ def _wrap_tool(func, input_model):
 def add_file_tool(input_data: AddFileInput) -> str:
     """Add a new file to the code changes manager"""
     logger.info(f"🔧 [Tool Call] add_file_tool: Adding file '{input_data.file_path}'")
-    
+
     # LOCAL-FIRST: Try local execution first
     local_result = _execute_local_write(
         "add_file",
@@ -3074,13 +3252,13 @@ def add_file_tool(input_data: AddFileInput) -> str:
             "content": input_data.content,
             "description": input_data.description,
         },
-        input_data.file_path
+        input_data.file_path,
     )
-    
+
     if local_result is not None:
         # Local execution was attempted - return result (success or error)
         return local_result
-    
+
     # No tunnel available - use cloud CodeChangesManager (for web UI users)
     try:
         manager = _get_code_changes_manager()
@@ -3104,8 +3282,10 @@ def add_file_tool(input_data: AddFileInput) -> str:
 
 def update_file_tool(input_data: UpdateFileInput) -> str:
     """Update a file in the code changes manager"""
-    logger.info(f"🔧 [Tool Call] update_file_tool: Updating file '{input_data.file_path}'")
-    
+    logger.info(
+        f"🔧 [Tool Call] update_file_tool: Updating file '{input_data.file_path}'"
+    )
+
     # LOCAL-FIRST: Try local execution first
     local_result = _execute_local_write(
         "update_file",
@@ -3114,13 +3294,13 @@ def update_file_tool(input_data: UpdateFileInput) -> str:
             "content": input_data.content,
             "description": input_data.description,
         },
-        input_data.file_path
+        input_data.file_path,
     )
-    
+
     if local_result is not None:
         # Local execution was attempted - return result (success or error)
         return local_result
-    
+
     # No tunnel available - use cloud CodeChangesManager (for web UI users)
     try:
         manager = _get_code_changes_manager()
@@ -3145,10 +3325,8 @@ def update_file_tool(input_data: UpdateFileInput) -> str:
 
 def delete_file_tool(input_data: DeleteFileInput) -> str:
     """Delete a file locally or mark for deletion in cloud"""
-    logger.info(
-        f"Tool delete_file_tool: Deleting file '{input_data.file_path}'"
-    )
-    
+    logger.info(f"Tool delete_file_tool: Deleting file '{input_data.file_path}'")
+
     # LOCAL-FIRST: Try local execution first
     local_result = _execute_local_write(
         "delete_file",
@@ -3156,13 +3334,13 @@ def delete_file_tool(input_data: DeleteFileInput) -> str:
             "file_path": input_data.file_path,
             "description": input_data.description,
         },
-        input_data.file_path
+        input_data.file_path,
     )
-    
+
     if local_result is not None:
         # Local execution was attempted - return result (success or error)
         return local_result
-    
+
     # No tunnel available - use cloud CodeChangesManager (for web UI users)
     try:
         manager = _get_code_changes_manager()
@@ -3187,7 +3365,7 @@ def delete_file_tool(input_data: DeleteFileInput) -> str:
 def get_file_tool(input_data: GetFileInput) -> str:
     """Get comprehensive change information and metadata for a specific file"""
     logger.info(f"Tool get_file_tool: Retrieving file '{input_data.file_path}'")
-    
+
     # Check if we should route to LocalServer
     if _should_route_to_local_server():
         logger.info(f"🔧 [Tool Call] Routing get_file_tool to LocalServer")
@@ -3195,11 +3373,11 @@ def get_file_tool(input_data: GetFileInput) -> str:
             "get_file",
             {
                 "file_path": input_data.file_path,
-            }
+            },
         )
         if result:
             return result
-    
+
     # Fall back to CodeChangesManager
     try:
         manager = _get_code_changes_manager()
@@ -3428,7 +3606,7 @@ def update_file_lines_tool(input_data: UpdateFileLinesInput) -> str:
         f"🔧 [Tool Call] update_file_lines_tool: Updating lines {input_data.start_line}-{input_data.end_line or input_data.start_line} "
         f"in '{input_data.file_path}' (project_id={input_data.project_id})"
     )
-    
+
     # LOCAL-FIRST: Try local execution first
     local_result = _execute_local_write(
         "update_file_lines",
@@ -3440,13 +3618,13 @@ def update_file_lines_tool(input_data: UpdateFileLinesInput) -> str:
             "description": input_data.description,
             "project_id": input_data.project_id,
         },
-        input_data.file_path
+        input_data.file_path,
     )
-    
+
     if local_result is not None:
         # Local execution was attempted - return result (success or error)
         return local_result
-    
+
     # No tunnel available - use cloud CodeChangesManager (for web UI users)
     try:
         manager = _get_code_changes_manager()
@@ -3503,7 +3681,7 @@ def replace_in_file_tool(input_data: ReplaceInFileInput) -> str:
         f"Tool replace_in_file_tool: Replacing pattern '{input_data.pattern}' in '{input_data.file_path}' "
         f"(project_id={input_data.project_id})"
     )
-    
+
     # LOCAL-FIRST: Try local execution first
     local_result = _execute_local_write(
         "replace_in_file",
@@ -3516,15 +3694,15 @@ def replace_in_file_tool(input_data: ReplaceInFileInput) -> str:
             "word_boundary": input_data.word_boundary,
             "description": input_data.description,
         },
-        input_data.file_path
+        input_data.file_path,
     )
-    
+
     if local_result is not None:
         # Local execution was attempted - return result (success or error)
         return local_result
-    
+
     # No tunnel available - use cloud CodeChangesManager (for web UI users)
-    
+
     try:
         manager = _get_code_changes_manager()
         db = None
@@ -3583,7 +3761,7 @@ def insert_lines_tool(input_data: InsertLinesInput) -> str:
         f"🔧 [Tool Call] insert_lines_tool: Inserting lines {position} line {input_data.line_number} "
         f"in '{input_data.file_path}' (project_id={input_data.project_id})"
     )
-    
+
     # LOCAL-FIRST: Try local execution first
     local_result = _execute_local_write(
         "insert_lines",
@@ -3595,13 +3773,13 @@ def insert_lines_tool(input_data: InsertLinesInput) -> str:
             "insert_after": input_data.insert_after,
             "project_id": input_data.project_id,
         },
-        input_data.file_path
+        input_data.file_path,
     )
-    
+
     if local_result is not None:
         # Local execution was attempted - return result (success or error)
         return local_result
-    
+
     # No tunnel available - use cloud CodeChangesManager (for web UI users)
     try:
         manager = _get_code_changes_manager()
@@ -3658,7 +3836,7 @@ def delete_lines_tool(input_data: DeleteLinesInput) -> str:
         f"Tool delete_lines_tool: Deleting lines {input_data.start_line}-{input_data.end_line or input_data.start_line} "
         f"from '{input_data.file_path}' (project_id={input_data.project_id})"
     )
-    
+
     # LOCAL-FIRST: Try local execution first
     local_result = _execute_local_write(
         "delete_lines",
@@ -3669,13 +3847,13 @@ def delete_lines_tool(input_data: DeleteLinesInput) -> str:
             "description": input_data.description,
             "project_id": input_data.project_id,
         },
-        input_data.file_path
+        input_data.file_path,
     )
-    
+
     if local_result is not None:
         # Local execution was attempted - return result (success or error)
         return local_result
-    
+
     # No tunnel available - use cloud CodeChangesManager (for web UI users)
     try:
         manager = _get_code_changes_manager()
@@ -3717,8 +3895,41 @@ def delete_lines_tool(input_data: DeleteLinesInput) -> str:
 class ShowUpdatedFileInput(BaseModel):
     file_paths: Optional[List[str]] = Field(
         default=None,
-        description="Optional list of file paths to show. If not provided, shows all updated files.",
+        description=(
+            "List of file paths to display. Must be an array/list of strings, not a JSON string. "
+            "Examples: ['src/main.py'] or ['file1.py', 'file2.py']. "
+            "If not provided (null/empty), shows ALL changed files. "
+            "If a single file path string is provided, it will be automatically converted to a list."
+        ),
     )
+
+    @field_validator("file_paths", mode="before")
+    @classmethod
+    def coerce_file_paths_to_list(cls, v):
+        """Coerce JSON string to list if a string is accidentally passed.
+
+        This handles cases where the LLM passes a JSON string like '["file.py"]'
+        instead of an actual list. The validator parses the JSON string into a list.
+        """
+        if v is None:
+            return None
+        if isinstance(v, str):
+            # Try to parse as JSON if it looks like a JSON array
+            v_stripped = v.strip()
+            if v_stripped.startswith("[") and v_stripped.endswith("]"):
+                try:
+                    parsed = json.loads(v)
+                    if isinstance(parsed, list):
+                        return parsed
+                except (json.JSONDecodeError, ValueError):
+                    # If JSON parsing fails, treat as single file path
+                    pass
+            # If not a JSON array, treat as single file path
+            return [v]
+        if isinstance(v, list):
+            return v
+        # For any other type, try to convert to list
+        return [str(v)]
 
 
 class ShowDiffInput(BaseModel):
@@ -3741,12 +3952,17 @@ def show_updated_file_tool(input_data: ShowUpdatedFileInput) -> str:
     Display the complete updated content of one or more files. This tool streams the full file content
     directly into the agent response without going through the LLM, allowing users to see
     the complete edited files. Use this when the user asks to see the updated file content.
-    If no file_paths are provided, shows all changed files.
+
+    Args:
+        input_data: ShowUpdatedFileInput with optional file_paths list
+            - file_paths: List of file paths (e.g., ['src/main.py', 'src/utils.py'])
+            - If file_paths is None or empty, shows ALL changed files
+            - If a single file path string is provided, it will be converted to a list
     """
     logger.info(
         f"Tool show_updated_file_tool: Showing updated content for '{input_data.file_paths or 'all files'}'"
     )
-    
+
     # Check if we should route to LocalServer (for single file)
     if input_data.file_paths and len(input_data.file_paths) == 1:
         if _should_route_to_local_server():
@@ -3755,11 +3971,11 @@ def show_updated_file_tool(input_data: ShowUpdatedFileInput) -> str:
                 "show_updated_file",
                 {
                     "file_path": input_data.file_paths[0],
-                }
+                },
             )
             if result:
                 return result
-    
+
     # Fall back to CodeChangesManager
     try:
         manager = _get_code_changes_manager()
@@ -4325,7 +4541,18 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
         ),
         SimpleTool(
             name="show_updated_file",
-            description="Display the complete updated content of one or more files. This tool streams the full file content directly into the agent response without going through the LLM, allowing users to see the complete edited files. If no file_paths provided, shows ALL changed files. Use when the user asks to see updated files OR to showcase the final result of files you just edited. The content is automatically shown to the user without consuming LLM context.",
+            description=(
+                "Display the complete updated content of one or more files. This tool streams the full file content "
+                "directly into the agent response without going through the LLM, allowing users to see the complete edited files. "
+                "\n\n"
+                "**Parameters:**\n"
+                "- file_paths (optional): Array/list of file paths to show. Examples: ['src/main.py'] or ['file1.py', 'file2.py']. "
+                "MUST be a list/array, not a JSON string. If omitted or empty, shows ALL changed files.\n\n"
+                "**When to use:**\n"
+                "- When the user asks to see updated files\n"
+                "- To showcase the final result of files you just edited\n"
+                "- The content is automatically shown to the user without consuming LLM context"
+            ),
             func=show_updated_file_tool,
             args_schema=ShowUpdatedFileInput,
         ),
@@ -4401,6 +4628,25 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
             description="Search codebase using semantic understanding via knowledge graph embeddings. This tool uses natural language queries to find code that semantically matches your intent, even if it doesn't contain exact keywords. Perfect for finding code by meaning rather than exact text. Examples: 'authentication code' finds login, auth, token validation; 'error handling' finds try-catch, error handlers; 'database queries' finds SQL, ORM calls. Results are ranked by semantic similarity. Requires the project to be parsed and knowledge graph to be available. Works via LocalServer when tunnel is active, falls back to direct backend call.",
             func=search_semantic_tool,
             args_schema=SearchSemanticInput,
+        ),
+        # Terminal command tools - execute commands on local machine via tunnel
+        SimpleTool(
+            name="execute_terminal_command",
+            description="Execute a shell command on the user's local machine via LocalServer tunnel. Use for running tests, builds, scripts, git commands, npm/pip commands, etc. Commands run directly on the local machine within the workspace directory with security restrictions. Supports both sync (immediate results) and async (long-running) modes. Commands are validated - dangerous commands are blocked by default. Examples: 'npm test', 'git status', 'python script.py', 'npm run dev' (async mode).",
+            func=execute_terminal_command_tool,
+            args_schema=ExecuteTerminalCommandInput,
+        ),
+        SimpleTool(
+            name="terminal_session_output",
+            description="Get output from an async terminal session. Use this to poll for output from a long-running command that was started with execute_terminal_command in async mode. Returns incremental output from the specified offset, allowing you to stream output from long-running processes. Use the returned offset for subsequent calls to get new output.",
+            func=terminal_session_output_tool,
+            args_schema=TerminalSessionOutputInput,
+        ),
+        SimpleTool(
+            name="terminal_session_signal",
+            description="Send a signal to a terminal session (e.g., SIGINT to stop a process). Use this to control long-running processes started in async mode. Common signals: SIGINT (Ctrl+C, default), SIGTERM (graceful shutdown), SIGKILL (force kill). Example: Stop a dev server by sending SIGINT to its session.",
+            func=terminal_session_signal_tool,
+            args_schema=TerminalSessionSignalInput,
         ),
     ]
 

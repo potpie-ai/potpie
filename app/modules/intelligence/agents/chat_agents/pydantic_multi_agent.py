@@ -181,8 +181,10 @@ class PydanticMultiAgent(ChatAgent):
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
         """Main execution flow with multi-agent coordination"""
+        local_mode = ctx.local_mode if hasattr(ctx, "local_mode") else False
         logger.info(
-            f"Running pydantic multi-agent system {'with multimodal support' if ctx.has_images() else ''}"
+            f"Running pydantic multi-agent system [local_mode={local_mode}]"
+            + (" with multimodal support" if ctx.has_images() else "")
         )
 
         # Store context for delegation functions
@@ -213,8 +215,10 @@ class PydanticMultiAgent(ChatAgent):
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         """Stream multi-agent response with delegation support"""
+        local_mode = ctx.local_mode if hasattr(ctx, "local_mode") else False
         logger.info(
-            f"Running pydantic multi-agent stream {'with multimodal support' if ctx.has_images() else ''}"
+            f"Running pydantic multi-agent stream [local_mode={local_mode}]"
+            + (" with multimodal support" if ctx.has_images() else "")
         )
 
         # Store context for delegation functions

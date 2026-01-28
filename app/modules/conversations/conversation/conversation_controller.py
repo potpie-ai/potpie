@@ -123,10 +123,11 @@ class ConversationController:
         conversation_id: str,
         node_ids: List[NodeContext] = [],
         stream: bool = True,
+        local_mode: bool = False,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         try:
             async for chunk in self.service.regenerate_last_message(
-                conversation_id, self.user_id, node_ids, stream
+                conversation_id, self.user_id, node_ids, stream, local_mode=local_mode
             ):
                 yield chunk
         except ConversationNotFoundError as e:

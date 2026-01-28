@@ -615,36 +615,69 @@ class RepoMap:
         seen_relationships = set()
 
         for root, dirs, files in os.walk(repo_dir):
-            if any(part.startswith(".") for part in root.split(os.sep)):
+            # Get relative path from repo_dir to avoid skipping paths that contain .repos_local etc.
+            try:
+                from pathlib import Path
+                rel_path = Path(root).relative_to(repo_dir)
+                # Handle root directory (rel_path == '.') and convert to tuple
+                rel_parts = rel_path.parts if rel_path != Path(".") else ()
+            except ValueError:
+                # If relative_to fails, skip this path (shouldn't happen in normal os.walk)
+                continue
+            
+            # Skip .git directory (worktrees have .git as a file, not a directory)
+            skip_this_dir = False
+            if ".git" in rel_parts:
+                # Find where .git appears in the relative path
+                for i, part in enumerate(rel_parts):
+                    if part == ".git":
+                        # Check if this .git is a directory
+                        git_path = Path(repo_dir) / Path(*rel_parts[: i + 1])
+                        if git_path.is_dir():
+                            # Skip this .git directory
+                            skip_this_dir = True
+                            break
+                        # If it's a file, it's a worktree - continue processing
+                        break
+            
+            if skip_this_dir:
+                continue
+            
+            # Skip hidden directories except .github, .vscode, etc. that might contain code
+            # Only check relative path parts, not the base path
+            if any(
+                part.startswith(".") and part not in [".github", ".vscode"]
+                for part in rel_parts
+            ):
                 continue
 
             for file in files:
                 file_path = os.path.join(root, file)
-                rel_path = os.path.relpath(file_path, repo_dir)
+                file_rel_path = os.path.relpath(file_path, repo_dir)
 
                 if not self.parse_helper.is_text_file(file_path):
                     continue
 
-                logger.info(f"\nProcessing file: {rel_path}")
+                logger.info(f"\nProcessing file: {file_rel_path}")
 
                 # Add file node
-                file_node_name = rel_path
+                file_node_name = file_rel_path
                 if not G.has_node(file_node_name):
                     G.add_node(
                         file_node_name,
-                        file=rel_path,
+                        file=file_rel_path,
                         type="FILE",
                         text=self.io.read_text(file_path) or "",
                         line=0,
                         end_line=0,
-                        name=rel_path.split("/")[-1],
+                        name=file_rel_path.split("/")[-1],
                     )
 
                 current_class = None
                 current_method = None
 
                 # Process all tags in file
-                for tag in self.get_tags(file_path, rel_path):
+                for tag in self.get_tags(file_path, file_rel_path):
                     if tag.kind == "def":
                         if tag.type == "class":
                             node_type = "CLASS"
@@ -662,15 +695,15 @@ class RepoMap:
 
                         # Create fully qualified node name
                         if current_class:
-                            node_name = f"{rel_path}:{current_class}.{tag.name}"
+                            node_name = f"{file_rel_path}:{current_class}.{tag.name}"
                         else:
-                            node_name = f"{rel_path}:{tag.name}"
+                            node_name = f"{file_rel_path}:{tag.name}"
 
                         # Add node
                         if not G.has_node(node_name):
                             G.add_node(
                                 node_name,
-                                file=rel_path,
+                                file=file_rel_path,
                                 line=tag.line,
                                 end_line=tag.end_line,
                                 type=node_type,
@@ -695,11 +728,11 @@ class RepoMap:
                     elif tag.kind == "ref":
                         # Handle references
                         if current_class and current_method:
-                            source = f"{rel_path}:{current_class}.{current_method}"
+                            source = f"{file_rel_path}:{current_class}.{current_method}"
                         elif current_method:
-                            source = f"{rel_path}:{current_method}"
+                            source = f"{file_rel_path}:{current_method}"
                         else:
-                            source = rel_path
+                            source = file_rel_path
 
                         references[tag.name].add(
                             (
