@@ -423,7 +423,7 @@ class RepositoryResource(BaseResource):
                 unique_id=unique_id,
                 auth_token=auth_token,
                 is_commit=is_commit,
-                exists_ok=True,
+                exists_ok=exists_ok,
             )
         except Exception as e:
             raise RepositoryError(f"Failed to create worktree: {e}") from e

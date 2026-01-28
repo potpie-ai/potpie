@@ -467,6 +467,7 @@ class ParseHelper:
             metadata = ParseHelper.extract_remote_repo_metadata(repo)
         return metadata
 
+    @staticmethod
     def extract_local_repo_metadata(repo: Repo):
         languages = ParseHelper.get_local_repo_languages(repo.working_tree_dir)
         total_bytes = sum(languages.values())
@@ -517,9 +518,9 @@ class ParseHelper:
                 entries = current.iterdir()
                 for entry in entries:
                     try:
-                        if entry.is_dir(follow_symlinks=False):
+                        if not entry.is_symlink() and entry.is_dir():
                             stack.append(entry)
-                        elif entry.is_file():
+                        elif not entry.is_symlink() and entry.is_file():
                             size = entry.stat().st_size
                             total_bytes += size
 

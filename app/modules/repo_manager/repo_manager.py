@@ -410,6 +410,41 @@ class RepoManager(IRepoManager):
                 break
             current = current.parent
 
+    def _delete_metadata_by_repo(
+        self,
+        repo_name: str,
+    ) -> int:
+        self._validate_repo_name(repo_name)
+        repo_metadata_dir = self._metadata_dir(repo_name)
+
+        if not repo_metadata_dir.exists():
+            logger.info(f"Metadata directory for repo {repo_name} does not exist")
+            return 0
+
+        deleted_count = 0
+
+        for meta_file in repo_metadata_dir.glob(f"*{self._METADATA_EXTENSION}"):
+            try:
+                if meta_file.is_file():
+                    meta_file.unlink()
+                    deleted_count += 1
+                    logger.debug(f"Deleted metadata file: {meta_file.name}")
+            except OSError as exc:
+                logger.warning(f"Failed to delete metadata file {meta_file}: {exc}")
+                continue
+
+        try:
+            if repo_metadata_dir.exists() and not any(repo_metadata_dir.iterdir()):
+                repo_metadata_dir.rmdir()
+                logger.info(f"Removed empty metadata directory for repo: {repo_name}")
+        except OSError as exc:
+            logger.warning(
+                f"Failed to remove metadata directory for repo {repo_name}: {exc}"
+            )
+
+        logger.info(f"Deleted {deleted_count} metadata entries for repo: {repo_name}")
+        return deleted_count
+
     def _iter_metadata_entries(
         self,
         user_id: Optional[str] = None,
@@ -806,7 +841,8 @@ class RepoManager(IRepoManager):
                             result.stdout.strip() if result.returncode == 0 else None
                         )
 
-                        self._fetch_ref(bare_repo_path, ref, auth_token, repo_url)
+                        github_token = auth_token or self._get_github_token()
+                        self._fetch_ref(bare_repo_path, ref, github_token, repo_url)
 
                         branch_ref = f"refs/heads/{ref}"
                         result = subprocess.run(
@@ -1520,13 +1556,15 @@ class RepoManager(IRepoManager):
         logger.info(f"Evicting entire repo: {repo_name}")
 
         try:
+            # First, delete all metadata entries for this repo
+            deleted_count = self._delete_metadata_by_repo(repo_name)
+            logger.info(
+                f"Deleted {deleted_count} metadata entries for repo: {repo_name}"
+            )
+
+            # Then, delete the repo directory
             shutil.rmtree(repo_dir)
             logger.info(f"Successfully evicted repo: {repo_name}")
-
-            # Remove all metadata entries for this repo
-            # This is complex with centralized metadata
-            # For now, we'll delete the repo directory and let metadata be orphaned
-            # A full implementation would need to scan and delete all entries
 
             return True
         except OSError as e:
