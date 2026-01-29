@@ -216,14 +216,36 @@ class GithubService:
                     decrypted_token = decrypt_token(github_provider.access_token)
                     return decrypted_token
                 except Exception as e:
-                    logger.warning(
-                        "Failed to decrypt GitHub token for user %s: %s. "
-                        "Assuming plaintext token (backward compatibility).",
-                        uid,
-                        str(e),
+                    # Check if token looks like a valid GitHub token (starts with gh* and ~40 chars)
+                    # If so, it might be plaintext from before encryption was added
+                    raw_token = github_provider.access_token
+                    is_likely_plaintext = (
+                        raw_token and 
+                        len(raw_token) < 100 and  # Real tokens are short
+                        (raw_token.startswith("gh") or raw_token.startswith("gho_") or raw_token.startswith("ghs_"))
                     )
-                    # Token might be plaintext (from before encryption was added)
-                    return github_provider.access_token
+                    
+                    if is_likely_plaintext:
+                        logger.warning(
+                            "Failed to decrypt GitHub token for user %s: %s. "
+                            "Token looks like plaintext (backward compatibility), using as-is.",
+                            uid,
+                            str(e),
+                        )
+                        return raw_token
+                    else:
+                        # Token is likely encrypted but can't be decrypted
+                        # Don't use it - let code fall back to system tokens
+                        logger.error(
+                            "Failed to decrypt GitHub token for user %s: %s. "
+                            "Token appears to be encrypted (length=%d). "
+                            "Will fall back to system tokens.",
+                            uid,
+                            str(e),
+                            len(raw_token) if raw_token else 0,
+                        )
+                        # Don't return the encrypted token - it will cause 414 errors
+                        # Fall through to legacy system or system tokens
         except Exception as e:
             logger.debug("Error checking UserAuthProvider: %s", str(e))
 
@@ -503,6 +525,12 @@ class GithubService:
                     github = Github(auth=app_auth)  # do not remove this line
                     auth_headers = {"Authorization": f"Bearer {app_auth.token}"}
 
+                    # Log the original repos_url to debug 414 errors
+                    logger.info(
+                        f"[get_repos_for_user] Processing installation {installation['id']}, "
+                        f"repos_url length: {len(repos_url)}, repos_url: {repos_url[:200]}..."
+                    )
+
                     # Construct URL with proper query parameter handling
                     # repos_url might already have query params, so use URL parsing
                     # This prevents 414 URI Too Long errors when repos_url has existing query params
@@ -522,6 +550,10 @@ class GithubService:
                         ))
                         
                         # Log URL length for debugging 414 errors
+                        logger.info(
+                            f"[get_repos_for_user] Constructed first_page_url for installation {installation['id']}: "
+                            f"length={len(first_page_url)}, url={first_page_url[:200]}..."
+                        )
                         if len(first_page_url) > 2000:  # GitHub's typical limit is 8KB, but warn at 2KB
                             logger.warning(
                                 f"Long URL detected for installation {installation['id']}: "
@@ -534,6 +566,10 @@ class GithubService:
                         )
                         # Fallback to simple concatenation if parsing fails
                         first_page_url = f"{repos_url}?per_page=100" if "?" not in repos_url else f"{repos_url}&per_page=100"
+                        logger.warning(
+                            f"[get_repos_for_user] Using fallback URL construction for installation {installation['id']}: "
+                            f"length={len(first_page_url)}, url={first_page_url[:200]}..."
+                        )
 
                     async with session.get(
                         first_page_url, headers=auth_headers
