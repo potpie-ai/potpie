@@ -52,9 +52,8 @@ Potpie is an open-source platform that creates AI agents specialized in your cod
 <img width="1506" alt="Screenshot 2025-03-28 at 2 51 34 PM" src="https://github.com/user-attachments/assets/efa6b8ba-447b-474c-a62e-2c65940085ee" />
 
 
-
-
 ## 📚 Table of Contents
+
 - [🥧 Why Potpie?](#why-potpie)
 - [🤖 Our Prebuilt Agents](#prebuilt-agents)
 - [🛠️ Tooling](#potpies-tooling-system)
@@ -67,13 +66,12 @@ Potpie is an open-source platform that creates AI agents specialized in your cod
 - [📜 License](#license)
 - [💪 Contributors](#-thanks-to-all-contributors)
 
-
 ## 🥧 Why Potpie?
+
 - 🧠 **Deep Code Understanding**: Built-in knowledge graph captures relationships between code components
 - 🤖 **Pre-built & Custom Agents**: Ready-to-use agents for common tasks + build your own
 - 🔄 **Seamless Integration**: Works with your existing development workflow
 - 📈 **Flexible**: Handles codebases of any size or language
-
 
 ## 🔌 VSCode Extension
 
@@ -121,62 +119,72 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
 ## 🚀 Getting Started
 
 ### Prerequisites
+
 - Docker installed and running
 - Git installed (for repository access)
-- Python 3.10.x
+- Python 3.11+ (required for uv and dependencies)
+- [uv](https://docs.astral.sh/uv/) - Fast Python package installer (install via `curl -LsSf https://astral.sh/uv/install.sh | sh`)
 
 ### Potpie UI
-  An easy to use interface to interact with your Agents
-  ## Initialize the UI Submodule
-  To initialize the submodule:
 
-  ```bash
-  git submodule update --init
-  ```
+An easy to use interface to interact with your Agents
 
-  ### 1. Navigate to the `potpie-ui` Directory
+## Initialize the UI Submodule
+To initialize the submodule:
 
-  ```bash
-  cd potpie-ui
-  ```
+```bash
+git submodule update --init
+```
 
-  ### 2. Update the Main Branch and Checkout
+### 1. Navigate to the `potpie-ui` Directory
 
-  ```bash
-  git checkout main
-  git pull origin main
-  ```
+```bash
+cd potpie-ui
+```
 
-  ### 3. Set Up the Environment
+### 2. Update the Main Branch and Checkout
 
-  Create a `.env` file in the `potpie-ui` directory and copy the required configuration from `.env.template`.
+```bash
+git checkout main
+git pull origin main
+```
 
-  ```bash
-  cp .env.template .env
-  ```
+### 3. Set Up the Environment
 
-  ### 4. Build the Frontend
+Create a `.env` file in the `potpie-ui` directory and copy the required configuration from `.env.template`.
 
-  ```bash
-  pnpm build
-  ```
+```bash
+cp .env.template .env
+```
 
-  ### 5. Start the Application
+### 4. Build the Frontend
 
-  ```bash
-  pnpm start
-  ```
+```bash
+pnpm build
+```
 
+### 5. Start the Application
+
+```bash
+pnpm start
+```
 
 ### Setup Steps
 
-**Install Python 3.10**
-   - Download and install Python 3.10 from the official Python website:
-     https://www.python.org/downloads/release/python-3100/
+**Install uv**
+
+- Install uv package manager:
+
+  ```bash
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  ```
+
+- Ensure `~/.local/bin` is in your PATH
 
 1. **Prepare Your Environment**
    - Create a `.env` file based on the `.env.template`
    - Add the following required configurations:
+
       ```bash
       isDevelopmentMode=enabled
       ENV=development
@@ -194,8 +202,16 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
       INFERENCE_MODEL=ollama_chat/qwen2.5-coder:7b #provider model name
       CHAT_MODEL=ollama_chat/qwen2.5-coder:7b #provider model name
       ```
+
       **`INFERENCE_MODEL`** and **`CHAT_MODEL`** correspond to the models that will be used for generating knowledge graph and for agent reasoning respectively. These model names should be in the format of `provider/model_name` format or as expected by Litellm. For more information, refer to the [Litellm documentation](https://docs.litellm.ai/docs/providers).
       <br>
+    - Install dependencies using uv:
+
+      ```bash
+      uv sync
+      ```
+
+      This will create a `.venv` directory and install all dependencies from `pyproject.toml`
 
 #### GitHub Authentication Setup
 
@@ -232,23 +248,17 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
 
 **Important**: `GH_TOKEN_LIST` tokens are always used for GitHub.com, regardless of `CODE_PROVIDER_BASE_URL`.
 
-   -  Create a Virtual Environment using Python 3.10:
-      ```
-      python3.10 -m venv venv
-      source venv/bin/activate
-
-    - Install dependencies in your venv:
-      ```bash
-      pip install -r requirements.txt
-
 2. **Start Potpie**
 
    To start all Potpie services:
+
    ```bash
    chmod +x start.sh
    ./start.sh
    ```
+
    **Windows**
+
     ```powershell
     ./start.ps1
     ```
@@ -271,19 +281,24 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
 3. **Stop Potpie**
 
    To stop all Potpie services:
+
    ```bash
    ./stop.sh
    ```
+
    **Windows**
+
    ```powershell
    ./stop.ps1
    ```
+
    This will gracefully stop:
    - The FastAPI application
    - The Celery worker
    - All Docker Compose services
 
 4. **Authentication Setup** (Skip this step in development mode)
+
    ```bash
    curl -X POST 'http://localhost:8001/api/v1/login' \
      -H 'Content-Type: application/json' \
@@ -294,6 +309,7 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
    # Save the bearer token from the response for subsequent requests
 
 5. **Initialize Repository Parsing**
+
    ```bash
    # For development mode:
    curl -X POST 'http://localhost:8001/api/v1/parse' \
@@ -313,17 +329,20 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
    # Save the project_id from the response
 
 6. **Monitor Parsing Status**
+
    ```bash
    curl -X GET 'http://localhost:8001/api/v1/parsing-status/your-project-id'
    # Wait until parsing is complete
 
 7. **View Available Agents**
+
    ```bash
    curl -X GET 'http://localhost:8001/api/v1/list-available-agents/?list_system_agents=true'
    # Note down the agent_id you want to use
    ```
 
 8. **Create a Conversation**
+
    ```bash
    curl -X POST 'http://localhost:8001/api/v1/conversations/' \
      -H 'Content-Type: application/json' \
@@ -337,6 +356,7 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
    # Save the conversation_id from the response
 
 9. **Start Interacting with Your Agent**
+
    ```bash
    curl -X POST 'http://localhost:8001/api/v1/conversations/your-conversation-id/message/' \
      -H 'Content-Type: application/json' \
@@ -347,6 +367,7 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
    ```
 
 10. **View Conversation History** (Optional)
+
    ```bash
    curl -X GET 'http://localhost:8001/api/v1/conversations/your-conversation-id/messages/?start=0&limit=10'
    ```
@@ -354,6 +375,7 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
 ## 💡 Use Cases
 
 - **Onboarding**: For developers new to a codebase, the codebase QnA agent helps them understand the codebase and get up to speed quickly. Ask it how to setup a new project, how to run the tests etc
+
 >We tried to onboard ourselves with Potpie to the [**AgentOps**](https://github.com/AgentOps-AI/AgentOps) codebase and it worked like a charm : Video [here](https://youtu.be/_mPixNDn2r8).
 
 - **Codebase Understanding**: Answer questions about any library you're integrating, explain functions, features, and architecture.
@@ -404,12 +426,14 @@ Design custom agents tailored to your specific tasks using a single prompt. Util
   Read more about other custom agent APIs to edit and delete your custom agents in our [documentation](https://docs.potpie.ai/open-source/agents/create-agent-from-prompt).
 
 ### Tool Integration
+
 Edit or add tools in the `app/modules/intelligence/tools` directory for your custom agents.
 Initialise the tools in the  `app/modules/intelligence/tools/tool_service.py` file and include them in your agent.
 
 ## 🤝 Contributing
 
 We welcome contributions! To contribute:
+
 1. Fork the repository
 2. Create a new branch (`git checkout -b feature-branch`)
 3. Make your changes

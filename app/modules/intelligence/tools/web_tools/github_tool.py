@@ -1,5 +1,4 @@
-import asyncio
-import logging
+in qna import asyncio
 import os
 from typing import Any, Dict, Optional
 
@@ -14,8 +13,9 @@ from app.modules.code_provider.provider_factory import CodeProviderFactory
 from app.modules.parsing.utils.repo_name_normalizer import (
     get_actual_repo_name_for_lookup,
 )
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class RepositoryAccessError(Exception):
@@ -85,17 +85,23 @@ class GithubTool:
                 }
             return content
         except RepositoryAccessError as e:
-            logger.error("Repository access error: %s", str(e))
+            logger.exception(
+                "Repository access error", repo_name=repo_name, user_id=self.user_id
+            )
             return {
                 "success": False,
                 "error": str(e),
                 "content": None,
             }
-        except Exception as e:
-            logger.exception("An unexpected error occurred: %s", str(e))
+        except Exception:
+            logger.exception(
+                "An unexpected error occurred",
+                repo_name=repo_name,
+                user_id=self.user_id,
+            )
             return {
                 "success": False,
-                "error": f"An unexpected error occurred: {str(e)}",
+                "error": "An unexpected error occurred",
                 "content": None,
             }
 
@@ -244,8 +250,13 @@ class GithubTool:
 
         except RepositoryAccessError:
             raise
-        except Exception as e:
-            logger.error("Error fetching GitHub content: %s", str(e))
+        except Exception:
+            logger.exception(
+                "Error fetching GitHub content",
+                repo_name=repo_name,
+                issue_number=issue_number,
+                is_pull_request=is_pull_request,
+            )
             return None
 
     @staticmethod

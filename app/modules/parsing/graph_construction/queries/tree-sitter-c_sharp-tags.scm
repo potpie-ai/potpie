@@ -3,18 +3,42 @@
  ) @definition.class
 
 (class_declaration
-   bases: (base_list (_) @name.reference.class)
+  (base_list (_) @name.reference.class)
  ) @reference.class
+
+(struct_declaration
+ name: (identifier) @name.definition.class
+ ) @definition.class
+
+(struct_declaration
+  (base_list (_) @name.reference.class)
+ ) @reference.class
+
+(record_declaration
+ name: (identifier) @name.definition.class
+ ) @definition.class
+
+(record_declaration
+  (base_list (_) @name.reference.class)
+ ) @reference.class
+
+(enum_declaration
+ name: (identifier) @name.definition.class
+ ) @definition.class
 
 (interface_declaration
  name: (identifier) @name.definition.interface
  ) @definition.interface
 
 (interface_declaration
- bases: (base_list (_) @name.reference.interface)
+  (base_list (_) @name.reference.interface)
  ) @reference.interface
 
 (method_declaration
+ name: (identifier) @name.definition.method
+ ) @definition.method
+
+(constructor_declaration
  name: (identifier) @name.definition.method
  ) @definition.method
 
@@ -22,11 +46,7 @@
  type: (identifier) @name.reference.class
  ) @reference.class
 
-(type_parameter_constraints_clause
- target: (identifier) @name.reference.class
- ) @reference.class
-
-(type_constraint
+(type_parameter_constraint
  type: (identifier) @name.reference.class
  ) @reference.class
 
@@ -42,5 +62,9 @@
 ) @reference.send
 
 (namespace_declaration
+ name: (identifier) @name.definition.module
+) @definition.module
+
+(file_scoped_namespace_declaration
  name: (identifier) @name.definition.module
 ) @definition.module

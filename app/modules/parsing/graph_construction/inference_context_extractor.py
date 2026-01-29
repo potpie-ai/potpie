@@ -93,7 +93,7 @@ class InferenceContextExtractor:
                 return self._parser_cache[language]
 
             try:
-                from tree_sitter_languages import get_parser
+                from tree_sitter_language_pack import get_parser
                 parser = get_parser(language)
                 self._parser_cache[language] = parser
                 self._extraction_stats['parser_cache_misses'] += 1

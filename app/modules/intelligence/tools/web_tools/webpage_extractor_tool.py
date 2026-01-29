@@ -1,5 +1,4 @@
 import asyncio
-import logging
 import os
 from typing import Any, Dict, Optional
 
@@ -7,6 +6,11 @@ from firecrawl import FirecrawlApp
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+
+from app.modules.intelligence.tools.tool_utils import truncate_dict_response
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class WebpageExtractorInput(BaseModel):
@@ -24,6 +28,9 @@ class WebpageExtractorTool:
             }
 
         Returns dictionary containing the webpage content, metadata, and success status.
+
+        ⚠️ IMPORTANT: Large webpages may result in truncated responses (max 80,000 characters).
+        If the response is truncated, a notice will be included indicating the truncation occurred.
         """
 
     def __init__(self, sql_db: Session, user_id: str):
@@ -48,7 +55,7 @@ class WebpageExtractorTool:
                 }
             return content
         except Exception as e:
-            logging.exception(f"An unexpected error occurred: {str(e)}")
+            logger.exception("An unexpected error occurred")
             return {
                 "success": False,
                 "error": f"An unexpected error occurred: {str(e)}",
@@ -74,7 +81,7 @@ class WebpageExtractorTool:
         data = response.get("markdown", {})
         metadata = response.get("metadata", {})
 
-        return {
+        result = {
             "success": True,
             "content": data,
             "metadata": {
@@ -85,10 +92,16 @@ class WebpageExtractorTool:
             },
         }
 
+        # Truncate response if it exceeds character limits
+        truncated_result = truncate_dict_response(result)
+        if len(str(result)) > 80000:
+            logger.warning(f"webpage_extractor_tool output truncated for URL: {url}")
+        return truncated_result
+
 
 def webpage_extractor_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
     if not os.getenv("FIRECRAWL_API_KEY"):
-        logging.warning(
+        logger.warning(
             "FIRECRAWL_API_KEY not set, webpage extractor tool will not be initialized"
         )
         return None

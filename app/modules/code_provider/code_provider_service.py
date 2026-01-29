@@ -1,18 +1,147 @@
 import os
-import logging
 from typing import Optional
 
+from fastapi import HTTPException
+from github.GithubException import BadCredentialsException
+
+from app.modules.code_provider.github.github_provider import GitHubProvider
 from app.modules.code_provider.provider_factory import CodeProviderFactory
+from app.modules.utils.logger import setup_logger
 
 DEFAULT_STRUCTURE_DEPTH = 4
 MAX_STRUCTURE_DEPTH = 6
 MIN_STRUCTURE_DEPTH = 1
-try:
-    from github.GithubException import BadCredentialsException
-except ImportError:
-    BadCredentialsException = None
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
+
+
+class MockRepo:
+    def __init__(self, repo_info, provider):
+        self.full_name = repo_info["full_name"]
+        self.owner = type("Owner", (), {"login": repo_info["owner"]})()
+        self.default_branch = repo_info["default_branch"]
+        self.private = repo_info["private"]
+        self.description = repo_info["description"]
+        self.language = repo_info["language"]
+        self.html_url = repo_info["url"]
+        self.size = repo_info.get("size", 0)
+        self.stargazers_count = repo_info.get("stars", 0)
+        self.forks_count = repo_info.get("forks", 0)
+        self.watchers_count = repo_info.get("watchers", 0)
+        self.open_issues_count = repo_info.get("open_issues", 0)
+        self.created_at = repo_info.get("created_at")
+        self.updated_at = repo_info.get("updated_at")
+
+        # Handle None values for datetime fields
+        if self.created_at is None:
+            from datetime import datetime
+
+            self.created_at = datetime.now()
+        if self.updated_at is None:
+            from datetime import datetime
+
+            self.updated_at = datetime.now()
+        self._provider = provider
+
+    def get_languages(self):
+        # Return a mock languages dict
+        return {}
+
+    def get_commits(self):
+        # Return a mock commits object
+        class MockCommits:
+            totalCount = 0
+
+        return MockCommits()
+
+    def get_contributors(self):
+        # Return a mock contributors object
+        class MockContributors:
+            totalCount = 0
+
+        return MockContributors()
+
+    def get_topics(self):
+        # Return empty topics list
+        return []
+
+    def get_archive_link(self, format_type, ref):
+        logger.info(
+            f"ProviderWrapper: Getting archive link for repo '{self.full_name}', format: '{format_type}', ref: '{ref}'"
+        )
+
+        try:
+            # Use the provider's get_archive_link method if available
+            if hasattr(self._provider, "get_archive_link"):
+                archive_url = self._provider.get_archive_link(
+                    self.full_name, format_type, ref
+                )
+                logger.info(
+                    f"ProviderWrapper: Retrieved archive URL from provider: {archive_url}"
+                )
+                return archive_url
+            else:
+                # Fallback to manual URL construction
+                base_url = self._provider.get_api_base_url()
+
+                # Check if this is GitBucket (different URL format)
+                if (
+                    hasattr(self._provider, "get_provider_name")
+                    and self._provider.get_provider_name() == "gitbucket"
+                ):
+                    # GitBucket uses a different URL format: http://hostname/owner/repo/archive/ref.format
+                    # Remove /api/v3 from base URL if present
+                    if base_url.endswith("/api/v3"):
+                        base_url = base_url[:-7]  # Remove '/api/v3'
+
+                    # Convert normalized repo name back to GitBucket format (root/repo) for URL
+                    from app.modules.parsing.utils.repo_name_normalizer import (
+                        get_actual_repo_name_for_lookup,
+                    )
+
+                    actual_repo_name = get_actual_repo_name_for_lookup(
+                        self.full_name, "gitbucket"
+                    )
+
+                    if format_type == "tarball":
+                        archive_url = (
+                            f"{base_url}/{actual_repo_name}/archive/{ref}.tar.gz"
+                        )
+                    else:
+                        archive_url = f"{base_url}/{actual_repo_name}/archive/{ref}.zip"
+                else:
+                    # Standard GitHub API format
+                    if format_type == "tarball":
+                        archive_url = f"{base_url}/repos/{self.full_name}/tarball/{ref}"
+                    else:
+                        archive_url = f"{base_url}/repos/{self.full_name}/zipball/{ref}"
+
+                logger.info(
+                    f"ProviderWrapper: Generated archive URL (fallback): {archive_url}"
+                )
+                return archive_url
+        except Exception as e:
+            logger.error(
+                f"ProviderWrapper: Error getting archive link for '{self.full_name}': {e}"
+            )
+            raise
+
+    @property
+    def provider(self):
+        # Add provider property to MockRepo for compatibility
+        return self._provider if hasattr(self, "_provider") else None
+
+    def get_branch(self, branch_name):
+        # Get branch info using provider
+        branch_info = self._provider.get_branch(self.full_name, branch_name)
+
+        class MockBranch:
+            def __init__(self, branch_info):
+                self.name = branch_info["name"]
+                self.commit = type("Commit", (), {"sha": branch_info["commit_sha"]})()
+                self.protected = branch_info["protected"]
+
+        return MockBranch(branch_info)
 
 
 class ProviderWrapper:
@@ -22,11 +151,43 @@ class ProviderWrapper:
     This wrapper uses CodeProviderFactory.create_provider_with_fallback() for all
     authentication, which handles the complete fallback chain (GitHub App → PAT → Unauthenticated).
     No additional fallback logic should be added here - let exceptions propagate to callers.
+
+    When RepoManager is enabled, wraps providers with RepoManagerCodeProviderWrapper
+    to use local repository copies from .repos when available.
     """
 
     def __init__(self, sql_db=None):
         # Don't create provider here - create it per-request with proper auth
         self.sql_db = sql_db
+
+        # Initialize repo manager if enabled
+        self.repo_manager = None
+        try:
+            repo_manager_enabled = (
+                os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
+            )
+            if repo_manager_enabled:
+                from app.modules.repo_manager import RepoManager
+
+                self.repo_manager = RepoManager()
+                logger.info("ProviderWrapper: RepoManager initialized")
+        except Exception as e:
+            logger.warning(f"ProviderWrapper: Failed to initialize RepoManager: {e}")
+
+    def _wrap_provider_if_needed(self, provider):
+        """
+        Wrap provider with RepoManagerCodeProviderWrapper if repo_manager is available.
+
+        This ensures that when local copies exist in .repos, they are used instead
+        of making API calls to GitHub or other providers.
+        """
+        if self.repo_manager:
+            from app.modules.code_provider.repo_manager_wrapper import (
+                RepoManagerCodeProviderWrapper,
+            )
+
+            return RepoManagerCodeProviderWrapper(provider, self.repo_manager)
+        return provider
 
     def get_repo(self, repo_name):
         """
@@ -36,6 +197,9 @@ class ProviderWrapper:
 
         If a configured token is invalid (401), falls back to unauthenticated access
         for GitHub public repos as a last resort.
+
+        Note: get_repo doesn't use local copies since it needs to fetch repository metadata
+        from the provider API. Local copies are used for file content and structure operations.
         """
         provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
 
@@ -55,14 +219,10 @@ class ProviderWrapper:
 
             if provider_type == "github" and is_401_error:
                 logger.warning(
-                    f"Configured authentication failed (401) for {repo_name}, "
-                    f"falling back to unauthenticated access for public repo"
+                    "Configured authentication failed (401). Falling back to unauthenticated access for public repo",
+                    repo_name=repo_name,
                 )
                 # Try unauthenticated as final fallback for public repos
-                from app.modules.code_provider.github.github_provider import (
-                    GitHubProvider,
-                )
-
                 unauth_provider = GitHubProvider()
                 unauth_provider.set_unauthenticated_client()
                 repo_info = unauth_provider.get_repository(repo_name)
@@ -72,150 +232,14 @@ class ProviderWrapper:
                 # Not a 401 error, or not GitHub - propagate the error
                 raise
 
-        # Create a mock repository object that matches the expected interface
-        class MockRepo:
-            def __init__(self, repo_info, provider):
-                self.full_name = repo_info["full_name"]
-                self.owner = type("Owner", (), {"login": repo_info["owner"]})()
-                self.default_branch = repo_info["default_branch"]
-                self.private = repo_info["private"]
-                self.description = repo_info["description"]
-                self.language = repo_info["language"]
-                self.html_url = repo_info["url"]
-                self.size = repo_info.get("size", 0)
-                self.stargazers_count = repo_info.get("stars", 0)
-                self.forks_count = repo_info.get("forks", 0)
-                self.watchers_count = repo_info.get("watchers", 0)
-                self.open_issues_count = repo_info.get("open_issues", 0)
-                self.created_at = repo_info.get("created_at")
-                self.updated_at = repo_info.get("updated_at")
-
-                # Handle None values for datetime fields
-                if self.created_at is None:
-                    from datetime import datetime
-
-                    self.created_at = datetime.now()
-                if self.updated_at is None:
-                    from datetime import datetime
-
-                    self.updated_at = datetime.now()
-                self._provider = provider
-
-            def get_languages(self):
-                # Return a mock languages dict
-                return {}
-
-            def get_commits(self):
-                # Return a mock commits object
-                class MockCommits:
-                    totalCount = 0
-
-                return MockCommits()
-
-            def get_contributors(self):
-                # Return a mock contributors object
-                class MockContributors:
-                    totalCount = 0
-
-                return MockContributors()
-
-            def get_topics(self):
-                # Return empty topics list
-                return []
-
-            def get_archive_link(self, format_type, ref):
-                # Return archive link using provider
-                import logging
-
-                logger = logging.getLogger(__name__)
-
-                logger.info(
-                    f"ProviderWrapper: Getting archive link for repo '{self.full_name}', format: '{format_type}', ref: '{ref}'"
-                )
-
-                try:
-                    # Use the provider's get_archive_link method if available
-                    if hasattr(self._provider, "get_archive_link"):
-                        archive_url = self._provider.get_archive_link(
-                            self.full_name, format_type, ref
-                        )
-                        logger.info(
-                            f"ProviderWrapper: Retrieved archive URL from provider: {archive_url}"
-                        )
-                        return archive_url
-                    else:
-                        # Fallback to manual URL construction
-                        base_url = self._provider.get_api_base_url()
-
-                        # Check if this is GitBucket (different URL format)
-                        if (
-                            hasattr(self._provider, "get_provider_name")
-                            and self._provider.get_provider_name() == "gitbucket"
-                        ):
-                            # GitBucket uses a different URL format: http://hostname/owner/repo/archive/ref.format
-                            # Remove /api/v3 from base URL if present
-                            if base_url.endswith("/api/v3"):
-                                base_url = base_url[:-7]  # Remove '/api/v3'
-
-                            # Convert normalized repo name back to GitBucket format (root/repo) for URL
-                            from app.modules.parsing.utils.repo_name_normalizer import (
-                                get_actual_repo_name_for_lookup,
-                            )
-
-                            actual_repo_name = get_actual_repo_name_for_lookup(
-                                self.full_name, "gitbucket"
-                            )
-
-                            if format_type == "tarball":
-                                archive_url = (
-                                    f"{base_url}/{actual_repo_name}/archive/{ref}.tar.gz"
-                                )
-                            else:
-                                archive_url = (
-                                    f"{base_url}/{actual_repo_name}/archive/{ref}.zip"
-                                )
-                        else:
-                            # Standard GitHub API format
-                            if format_type == "tarball":
-                                archive_url = (
-                                    f"{base_url}/repos/{self.full_name}/tarball/{ref}"
-                                )
-                            else:
-                                archive_url = (
-                                    f"{base_url}/repos/{self.full_name}/zipball/{ref}"
-                                )
-
-                        logger.info(
-                            f"ProviderWrapper: Generated archive URL (fallback): {archive_url}"
-                        )
-                        return archive_url
-                except Exception as e:
-                    logger.error(
-                        f"ProviderWrapper: Error getting archive link for '{self.full_name}': {e}"
-                    )
-                    raise
-
-            @property
-            def provider(self):
-                # Add provider property to MockRepo for compatibility
-                return self._provider if hasattr(self, "_provider") else None
-
-            def get_branch(self, branch_name):
-                # Get branch info using provider
-                branch_info = self._provider.get_branch(self.full_name, branch_name)
-
-                class MockBranch:
-                    def __init__(self, branch_info):
-                        self.name = branch_info["name"]
-                        self.commit = type(
-                            "Commit", (), {"sha": branch_info["commit_sha"]}
-                        )()
-                        self.protected = branch_info["protected"]
-
-                return MockBranch(branch_info)
+        if isinstance(provider, GitHubProvider):
+            provider._ensure_authenticated()
+            return (provider.client, provider.client.get_repo(repo_name))
 
         # Return the provider client and mock repo
-        return provider.client, MockRepo(repo_info, provider)
+        # Use the interface method to get client (respects abstraction)
+        client = provider.get_client()
+        return client, MockRepo(repo_info, provider)
 
     def get_file_content(
         self,
@@ -230,10 +254,15 @@ class ProviderWrapper:
         """
         Get file content using the provider with fallback authentication.
 
+        When RepoManager is enabled, checks for local copies in .repos first.
+        If a local copy exists, uses it instead of making API calls.
+
         If a configured token is invalid (401), falls back to unauthenticated access
         for GitHub public repos as a last resort.
         """
         provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
+        # Wrap provider to use local copies if available
+        provider = self._wrap_provider_if_needed(provider)
 
         try:
             return provider.get_file_content(
@@ -267,6 +296,8 @@ class ProviderWrapper:
 
                 unauth_provider = GitHubProvider()
                 unauth_provider.set_unauthenticated_client()
+                # Wrap unauthenticated provider too
+                unauth_provider = self._wrap_provider_if_needed(unauth_provider)
                 return unauth_provider.get_file_content(
                     repo_name=repo_name,
                     file_path=file_path,
@@ -288,8 +319,8 @@ class ProviderWrapper:
         effective_depth = self._sanitize_depth(max_depth)
         try:
             # Get the project details from the database using project_id
+
             from app.modules.projects.projects_service import ProjectService
-            from fastapi import HTTPException
 
             project_manager = ProjectService(self.sql_db)
 
@@ -313,6 +344,13 @@ class ProviderWrapper:
                 f"Retrieved repository {'path' if repo_path else 'name'} '{repo_name}' for project_id '{project_id}'"
             )
 
+            # Extract branch_name or commit_id from project for ref parameter
+            ref = (
+                project.get("branch_name")
+                if project.get("branch_name")
+                else project.get("commit_id")
+            )
+
             # Auto-detect local paths (absolute paths, starting with ~, or valid directory)
             is_local_path = (
                 os.path.isabs(repo_name)
@@ -323,9 +361,32 @@ class ProviderWrapper:
             # Determine provider type to decide which implementation to use
             provider_type = os.getenv("CODE_PROVIDER", "github").lower()
 
+            # Check if local copy exists in repo_manager first
+            # This takes precedence over all other methods
+            if self.repo_manager:
+                # Try to get local copy path - check without ref first
+                local_path = self.repo_manager.get_repo_path(repo_name)
+                if local_path and os.path.exists(local_path):
+                    logger.info(
+                        f"[REPO_MANAGER] Using local copy for repository structure: "
+                        f"{repo_name}@{ref} (path: {local_path})"
+                    )
+                    # Use provider wrapped with repo_manager to get structure from local copy
+                    # The wrapper will handle finding the correct worktree based on ref
+                    provider = CodeProviderFactory.create_provider_with_fallback(
+                        repo_name
+                    )
+                    provider = self._wrap_provider_if_needed(provider)
+                    structure = provider.get_repository_structure(
+                        repo_name=repo_name, path=path or "", ref=ref, max_depth=4
+                    )
+                    return structure
+
             # For local repos detected by path, always use LocalProvider
             if is_local_path or provider_type == "local":
                 provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
+                # Wrap provider to use local copies if available
+                provider = self._wrap_provider_if_needed(provider)
                 # Use the provider to get repository structure
                 structure = provider.get_repository_structure(
                     repo_name=repo_name, path=path or "", max_depth=effective_depth
@@ -334,7 +395,20 @@ class ProviderWrapper:
 
             # For GitHub repos, use the old GithubService implementation which has better async handling,
             # caching, proper depth tracking, and returns formatted string output
+            # But first check if we should use local copy instead
             if provider_type == "github":
+                # If repo_manager is available, prefer using wrapped provider for local copies
+                if self.repo_manager:
+                    provider = CodeProviderFactory.create_provider_with_fallback(
+                        repo_name
+                    )
+                    provider = self._wrap_provider_if_needed(provider)
+                    structure = provider.get_repository_structure(
+                        repo_name=repo_name, path=path or "", ref=ref, max_depth=4
+                    )
+                    return structure
+
+                # Fallback to GithubService for remote-only access
                 from app.modules.code_provider.github.github_service import (
                     GithubService,
                 )
@@ -347,6 +421,8 @@ class ProviderWrapper:
 
             # For other providers (local, GitBucket, etc.), use the provider-based approach
             provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
+            # Wrap provider to use local copies if available
+            provider = self._wrap_provider_if_needed(provider)
 
             # Use the provider to get repository structure
             structure = provider.get_repository_structure(

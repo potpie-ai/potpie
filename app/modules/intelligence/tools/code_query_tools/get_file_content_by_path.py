@@ -1,4 +1,6 @@
-import logging
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 from typing import Optional, Type, Dict, Any
 from pydantic import BaseModel, Field
 from redis import Redis
@@ -7,6 +9,7 @@ from langchain_core.tools import StructuredTool
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_service import ProjectService
 from app.core.config_provider import config_provider
+from app.modules.intelligence.tools.tool_utils import truncate_response
 
 
 class FetchFileToolInput(BaseModel):
@@ -22,8 +25,7 @@ class FetchFileToolInput(BaseModel):
 
 class FetchFileTool:
     name: str = "fetch_file"
-    description: str = (
-        """Fetch file content from a repository using the project_id and file path.
+    description: str = """Fetch file content from a repository using the project_id and file path.
         Returns the content between optional start_line and end_line.
         Make sure the file exists before querying for it, confirm it by checking the file structure.
         File content is hashed for caching purposes. Cache won't be used if start_line or end_line are different.
@@ -34,6 +36,7 @@ class FetchFileTool:
         - If the entire file is requested and it has more than 1200 lines, an error will be returned
         - If start_line and end_line span more than 1200 lines, an error will be returned
         - Always use start_line and end_line to fetch specific sections of large files
+        - Maximum 80,000 characters per response (content will be truncated with a notice if exceeded)
 
         param project_id: string, the repository ID (UUID) to get the file content for.
         param file_path: string, the path to the file in the repository.
@@ -67,7 +70,6 @@ class FetchFileTool:
         4:hello_world()
 
         """
-    )
     args_schema: Type[BaseModel] = FetchFileToolInput
 
     def __init__(self, sql_db: Session, user_id: str, internal_call: bool = False):
@@ -160,6 +162,16 @@ class FetchFileTool:
                     with_line_numbers,
                     starting_line=start_line or 1,
                 )
+
+                # Truncate content if it exceeds character limits
+                original_length = len(content)
+                content = truncate_response(content)
+                if len(content) > 80000:
+                    logger.warning(
+                        f"fetch_file (cached) output truncated from {original_length} to 80000 characters "
+                        f"for file {file_path}, project_id={project_id}"
+                    )
+
                 return {
                     "success": True,
                     "content": content,
@@ -187,12 +199,30 @@ class FetchFileTool:
             content = self.with_line_numbers(
                 content, with_line_numbers, starting_line=start_line or 1
             )
+
+            # Truncate content if it exceeds character limits
+            original_length = len(content)
+            content = truncate_response(content)
+            if len(content) > 80000:
+                logger.warning(
+                    f"fetch_file output truncated from {original_length} to 80000 characters "
+                    f"for file {file_path}, project_id={project_id}"
+                )
+
             return {
                 "success": True,
                 "content": content,
             }
+        except FileNotFoundError as e:
+            # File not found is an expected scenario - log at warning level without traceback
+            logger.warning(f"File not found: {file_path} - {str(e)}")
+            return {
+                "success": False,
+                "error": f"File '{file_path}' does not exist in the repository. Please verify the file path is correct.",
+                "content": None,
+            }
         except Exception as e:
-            logging.exception(f"Failed to fetch file content for {file_path}: {str(e)}")
+            logger.exception(f"Failed to fetch file content for {file_path}")
             return {"success": False, "error": str(e), "content": None}
 
     async def _arun(

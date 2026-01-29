@@ -7,15 +7,18 @@ from app.modules.intelligence.agents.chat_agents.pydantic_multi_agent import (
     PydanticMultiAgent,
     AgentType as MultiAgentType,
 )
+from app.modules.intelligence.agents.chat_agents.multi_agent.agent_factory import (
+    create_integration_agents,
+)
 from app.modules.intelligence.agents.multi_agent_config import MultiAgentConfig
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator
-import logging
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class QnAAgent(ChatAgent):
@@ -31,8 +34,8 @@ class QnAAgent(ChatAgent):
 
     def _build_agent(self) -> ChatAgent:
         agent_config = AgentConfig(
-            role="QNA Agent",
-            goal="Answer queries of the repo in a detailed fashion",
+            role="Codebase Q&A Specialist",
+            goal="Provide comprehensive, well-structured answers to questions about the codebase by systematically exploring code, understanding context, and delivering thorough explanations grounded in actual code.",
             backstory="""
 <agent_identity>
 You are a precise, evidence-based code investigation agent. You query knowledge graphs and analyze codebases to provide grounded, verifiable answers.
@@ -79,7 +82,7 @@ These rules are NON-NEGOTIABLE. Violations will produce incorrect responses:
             tasks=[
                 TaskConfig(
                     description=qna_task_prompt,
-                    expected_output="Markdown formatted chat response to user's query grounded in provided code context and tool results",
+                    expected_output="Markdown formatted chat response to user's query grounded in provided code context and tool results, with clear structure, citations, and comprehensive explanations",
                 )
             ],
         )
@@ -93,10 +96,17 @@ These rules are NON-NEGOTIABLE. Violations will produce incorrect responses:
                 "get_code_file_structure",
                 "webpage_extractor",
                 "web_search_tool",
-                "github_tool",
                 "fetch_file",
                 "analyze_code_structure",
                 "bash_command",
+                "create_todo",
+                "update_todo_status",
+                "get_todo",
+                "list_todos",
+                "add_todo_note",
+                "get_todo_summary",
+                "add_requirements",
+                "get_requirements",
             ]
         )
 
@@ -112,7 +122,8 @@ These rules are NON-NEGOTIABLE. Violations will produce incorrect responses:
         if supports_pydantic:
             if should_use_multi:
                 logger.info("✅ Using PydanticMultiAgent (multi-agent system)")
-                # Create specialized delegate agents for codebase Q&A using available agent types
+                # Create specialized delegate agents for codebase Q&A: THINK_EXECUTE + integration agents
+                integration_agents = create_integration_agents()
                 delegate_agents = {
                     MultiAgentType.THINK_EXECUTE: AgentConfig(
                         role="Q&A Investigation Specialist",
@@ -175,9 +186,15 @@ Include these sections:
                         ],
                         max_iter=15,
                     ),
+                    **integration_agents,
                 }
                 return PydanticMultiAgent(
-                    self.llm_provider, agent_config, tools, None, delegate_agents
+                    self.llm_provider,
+                    agent_config,
+                    tools,
+                    None,
+                    delegate_agents,
+                    tools_provider=self.tools_provider,
                 )
             else:
                 logger.info("❌ Multi-agent disabled by config, using PydanticRagAgent")

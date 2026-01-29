@@ -5,13 +5,11 @@ import traceback
 from asyncio import create_task
 from contextlib import contextmanager
 
-# Apply encoding patch BEFORE importing blar_graph
+# Apply encoding patch to handle different file encodings
 from app.modules.parsing.utils.encoding_patch import apply_encoding_patch
 
 apply_encoding_patch()
 
-from blar_graph.db_managers import Neo4jManager
-from blar_graph.graph_construction.core.graph_builder import GraphConstructor
 from fastapi import HTTPException
 from git import Repo
 from sqlalchemy.orm import Session
@@ -231,30 +229,38 @@ class ParsingService:
                 logger.info(f"ParsingService: No directory cleanup needed. extracted_dir={extracted_dir}")
             logger.info(f"ParsingService: parse_directory completed for project {project_id}")
 
-    def create_neo4j_indices(self, graph_manager):
-        # Create existing indices from blar_graph
-        graph_manager.create_entityId_index()
-        graph_manager.create_node_id_index()
-        graph_manager.create_function_name_index()
+    def create_neo4j_indices(self, driver):
+        """Create Neo4j indices for efficient graph queries."""
+        with driver.session() as session:
+            # Index on entityId for user-based queries
+            session.run(
+                "CREATE INDEX entity_id_NODE IF NOT EXISTS FOR (n:NODE) ON (n.entityId)"
+            )
 
-        with graph_manager.driver.session() as session:
-            # Existing composite index for repo_id and node_id
-            node_query = """
-                CREATE INDEX repo_id_node_id_NODE IF NOT EXISTS FOR (n:NODE) ON (n.repoId, n.node_id)
-                """
-            session.run(node_query)
+            # Index on node_id for node lookups
+            session.run(
+                "CREATE INDEX node_id_NODE IF NOT EXISTS FOR (n:NODE) ON (n.node_id)"
+            )
 
-            # New composite index for name and repo_id to speed up node name lookups
-            name_repo_query = """
-                CREATE INDEX node_name_repo_id_NODE IF NOT EXISTS FOR (n:NODE) ON (n.name, n.repoId)
-                """
-            session.run(name_repo_query)
+            # Index on function name for function lookups
+            session.run(
+                "CREATE INDEX function_name_NODE IF NOT EXISTS FOR (n:FUNCTION) ON (n.name)"
+            )
 
-            # New index for relationship types - using correct Neo4j syntax
-            rel_type_query = """
-                CREATE LOOKUP INDEX relationship_type_lookup IF NOT EXISTS FOR ()-[r]->() ON EACH type(r)
-                """
-            session.run(rel_type_query)
+            # Composite index for repo_id and node_id
+            session.run(
+                "CREATE INDEX repo_id_node_id_NODE IF NOT EXISTS FOR (n:NODE) ON (n.repoId, n.node_id)"
+            )
+
+            # Composite index for name and repo_id to speed up node name lookups
+            session.run(
+                "CREATE INDEX node_name_repo_id_NODE IF NOT EXISTS FOR (n:NODE) ON (n.name, n.repoId)"
+            )
+
+            # Index for relationship types
+            session.run(
+                "CREATE LOOKUP INDEX relationship_type_lookup IF NOT EXISTS FOR ()-[r]->() ON EACH type(r)"
+            )
 
     async def analyze_directory(
         self,
@@ -320,50 +326,49 @@ class ParsingService:
             raise HTTPException(status_code=404, detail="Project not found.")
 
         logger.info(f"ParsingService: Detected language={language}, determining parsing path")
-        if language in ["python", "javascript", "typescript"]:
-            logger.info(f"ParsingService: Processing python/javascript/typescript project with language={language}")
-            logger.info(f"ParsingService: Initializing Neo4jManager for project_id={project_id}, user_id={user_id}")
+        if language != "other":
+            logger.info(f"ParsingService: Processing project with language: {language}")
             try:
-                graph_manager = Neo4jManager(project_id, user_id)
-                logger.info(f"ParsingService: Neo4jManager initialized successfully")
-            except Exception as e:
-                logger.error(f"ParsingService: Failed to initialize Neo4jManager: {e}")
-                logger.exception("ParsingService: Exception details:")
-                raise
-            
-            logger.info(f"ParsingService: Creating Neo4j indices")
-            try:
-                self.create_neo4j_indices(
-                    graph_manager
-                )  # commented since indices are created already
-                logger.info(f"ParsingService: Neo4j indices created successfully")
-            except Exception as e:
-                logger.error(f"ParsingService: Failed to create Neo4j indices: {e}")
-                logger.exception("ParsingService: Exception details:")
-                raise
+                logger.info(f"ParsingService: Retrieving Neo4j config")
+                neo4j_config = config_provider.get_neo4j_config()
+                logger.debug(f"ParsingService: Neo4j config retrieved: uri={neo4j_config.get('uri', 'N/A')}")
 
-            try:
-                logger.info(f"ParsingService: Initializing GraphConstructor with extracted_dir={extracted_dir}")
-                graph_constructor = GraphConstructor(user_id, extracted_dir)
-                logger.info(f"ParsingService: GraphConstructor initialized, building graph")
-                
-                n, r = graph_constructor.build_graph()
-                logger.info(f"ParsingService: Graph built successfully with {len(n) if n else 0} nodes and {len(r) if r else 0} relationships")
-                
-                logger.info(f"ParsingService: Creating nodes in Neo4j")
-                graph_manager.create_nodes(n)
-                logger.info(f"ParsingService: Nodes created successfully")
-                
-                logger.info(f"ParsingService: Creating edges in Neo4j")
-                graph_manager.create_edges(r)
-                logger.info(f"ParsingService: Edges created successfully")
-                
+                logger.info(f"ParsingService: Initializing CodeGraphService")
+                service = CodeGraphService(
+                    neo4j_config["uri"],
+                    neo4j_config["username"],
+                    neo4j_config["password"],
+                    db,
+                )
+                logger.info(f"ParsingService: CodeGraphService initialized successfully")
+
+                # Create Neo4j indices for efficient queries
+                logger.info(f"ParsingService: Creating Neo4j indices")
+                try:
+                    self.create_neo4j_indices(service.driver)
+                    logger.info(f"ParsingService: Neo4j indices created successfully")
+                except Exception as e:
+                    logger.error(f"ParsingService: Failed to create Neo4j indices: {e}")
+                    logger.exception("ParsingService: Exception details:")
+                    raise
+
+                logger.info(f"ParsingService: Calling create_and_store_graph for project {project_id}")
+                logger.info(f"ParsingService: Arguments - extracted_dir={extracted_dir}, project_id={project_id}, user_id={user_id}")
+
+                try:
+                    service.create_and_store_graph(extracted_dir, project_id, user_id)
+                    logger.info(f"ParsingService: create_and_store_graph completed successfully for project {project_id}")
+                except Exception as graph_error:
+                    logger.error(f"ParsingService: create_and_store_graph failed for project {project_id}: {graph_error}")
+                    logger.exception("ParsingService: create_and_store_graph exception details:")
+                    raise
+
                 logger.info(f"ParsingService: Updating project status to PARSED")
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.PARSED
                 )
                 logger.info(f"ParsingService: Project status updated to PARSED")
-                
+
                 PostHogClient().send_event(
                     user_id,
                     "project_status_event",
@@ -388,7 +393,7 @@ class ParsingService:
                     project_id, ProjectStatusEnum.READY
                 )
                 logger.info(f"ParsingService: Project status updated to READY")
-                
+
                 create_task(
                     EmailHelper().send_email(user_email, repo_name, branch_name)
                 )
@@ -397,92 +402,15 @@ class ParsingService:
                     "project_status_event",
                     {"project_id": project_id, "status": "Ready"},
                 )
-                logger.info(f"ParsingService: Python/JS/TS parsing flow completed successfully for project {project_id}")
+                logger.info(f"ParsingService: Parsing flow completed successfully for project {project_id}")
             except Exception as e:
-                logger.error(f"ParsingService: Error during python/js/ts parsing for project {project_id}: {e}")
-                logger.error(traceback.format_exc())
-                logger.info(f"ParsingService: Updating project status to ERROR due to exception")
-                await self.project_service.update_project_status(
-                    project_id, ProjectStatusEnum.ERROR
-                )
-                await ParseWebhookHelper().send_slack_notification(project_id, str(e))
-                PostHogClient().send_event(
-                    user_id,
-                    "project_status_event",
-                    {"project_id": project_id, "status": "Error"},
-                )
-            finally:
-                logger.info(f"ParsingService: Closing graph_manager connection")
-                graph_manager.close()
-                logger.info(f"ParsingService: graph_manager closed successfully")
-        elif language != "other":
-            logger.info(f"ParsingService: Processing non-python/js/ts project with language: {language}")
-            try:
-                logger.info(f"ParsingService: Retrieving Neo4j config")
-                neo4j_config = config_provider.get_neo4j_config()
-                logger.debug(f"ParsingService: Neo4j config retrieved: uri={neo4j_config.get('uri', 'N/A')}")
-                
-                logger.info(f"ParsingService: Initializing CodeGraphService")
-                service = CodeGraphService(
-                    neo4j_config["uri"],
-                    neo4j_config["username"],
-                    neo4j_config["password"],
-                    db,
-                )
-                logger.info(f"ParsingService: CodeGraphService initialized successfully")
-
-                logger.info(f"ParsingService: Calling create_and_store_graph for project {project_id}")
-                logger.info(f"ParsingService: Arguments - extracted_dir={extracted_dir}, project_id={project_id}, user_id={user_id}")
-                
-                try:
-                    service.create_and_store_graph(extracted_dir, project_id, user_id)
-                    logger.info(f"ParsingService: create_and_store_graph completed successfully for project {project_id}")
-                except Exception as graph_error:
-                    logger.error(f"ParsingService: create_and_store_graph failed for project {project_id}: {graph_error}")
-                    logger.exception("ParsingService: create_and_store_graph exception details:")
-                    raise
-
-                logger.info(f"ParsingService: Updating project status to PARSED")
-                await self.project_service.update_project_status(
-                    project_id, ProjectStatusEnum.PARSED
-                )
-                logger.info(f"ParsingService: Project status updated to PARSED")
-
-                # Check if inference is enabled via environment variable
-                enable_inference = os.getenv("ENABLE_INFERENCE", "false").lower() == "true"
-
-                if enable_inference:
-                    # Generate docstrings using InferenceService
-                    logger.info(f"ParsingService: Starting inference for project {project_id}")
-                    await self.inference_service.run_inference(project_id)
-                    logger.info(f"ParsingService: Inference completed for project {project_id}")
-                    logger.info(f"DEBUGNEO4J: After inference project {project_id}")
-                    self.inference_service.log_graph_stats(project_id)
-                else:
-                    logger.info(f"ParsingService: Skipping inference for project {project_id} (ENABLE_INFERENCE=false)")
-
-                logger.info(f"ParsingService: Updating project status to READY")
-                await self.project_service.update_project_status(
-                    project_id, ProjectStatusEnum.READY
-                )
-                logger.info(f"ParsingService: Project status updated to READY")
-                
-                create_task(
-                    EmailHelper().send_email(user_email, repo_name, branch_name)
-                )
-                logger.info(f"DEBUGNEO4J: After update project status {project_id}")
-                self.inference_service.log_graph_stats(project_id)
-                logger.info(f"ParsingService: Non-python/js/ts parsing flow completed successfully for project {project_id}")
-            except Exception as e:
-                logger.error(f"ParsingService: Error during non-python/js/ts parsing for project {project_id}: {e}")
+                logger.error(f"ParsingService: Error during parsing for project {project_id}: {e}")
                 logger.exception("ParsingService: Exception details:")
                 raise
             finally:
                 logger.info(f"ParsingService: Closing CodeGraphService connection")
                 service.close()
                 logger.info(f"ParsingService: CodeGraphService closed successfully")
-                logger.info(f"DEBUGNEO4J: After close service {project_id}")
-                self.inference_service.log_graph_stats(project_id)
         else:
             logger.warning(f"ParsingService: Language 'other' detected for project {project_id}, marking as ERROR")
             await self.project_service.update_project_status(

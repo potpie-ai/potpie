@@ -1,13 +1,13 @@
 """
-Monkey patch for blar_graph library to support multiple file encodings.
+Monkey patch to support multiple file encodings during parsing.
 
-This module patches the file reading operations in blar_graph to use
+This module patches the file reading operations to use
 multi-encoding detection instead of hardcoded UTF-8.
 """
 
-import logging
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 # Store original builtin open
 _original_open = open
@@ -74,7 +74,7 @@ def apply_encoding_patch():
     """
     Apply the encoding patch to builtins.
 
-    This should be called before importing blar_graph modules.
+    This should be called early in the application startup.
     """
     import builtins
 

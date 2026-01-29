@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from typing import Optional
 
 from langchain_core.tools import StructuredTool
@@ -6,6 +7,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
+from app.modules.intelligence.tools.tool_utils import truncate_response
+
+logger = logging.getLogger(__name__)
+
+# Character limit for tool responses to prevent sending insanely large content to LLM
+MAX_RESPONSE_LENGTH = 80000  # 80k characters
 
 DEFAULT_STRUCTURE_DEPTH = 4
 MAX_STRUCTURE_DEPTH = 6
@@ -35,6 +42,9 @@ class GetCodeFileStructureTool:
             }
 
         Returns string containing the hierarchical file structure.
+
+        ⚠️ IMPORTANT: Large repositories may result in truncated responses (max 80,000 characters).
+        If the response is truncated, a notice will be included indicating the truncation occurred.
         """
 
     def __init__(self, db: Session):
@@ -52,14 +62,30 @@ class GetCodeFileStructureTool:
         self, project_id: str, path: Optional[str] = None, max_depth: Optional[int] = None
     ) -> str:
         try:
-            return await self.fetch_repo_structure(project_id, path, max_depth)
-        except:
+            result = await self.fetch_repo_structure(project_id, path, max_depth)
+            truncated_result = truncate_response(result)
+            if len(result) > 80000:
+                logger.warning(
+                    f"get_code_file_structure output truncated from {len(result)} to 80000 characters "
+                    f"for project {project_id}, path={path}"
+                )
+            return truncated_result
+        except Exception as e:
+            logger.error(f"Error fetching file structure: {e}")
             return "error fetching data"
 
     def run(self, project_id: str, path: Optional[str] = None, max_depth: Optional[int] = None) -> str:
         try:
-            return asyncio.run(self.fetch_repo_structure(project_id, path, max_depth))
-        except:
+            result = asyncio.run(self.fetch_repo_structure(project_id, path, max_depth))
+            truncated_result = truncate_response(result)
+            if len(result) > 80000:
+                logger.warning(
+                    f"get_code_file_structure output truncated from {len(result)} to 80000 characters "
+                    f"for project {project_id}, path={path}"
+                )
+            return truncated_result
+        except Exception as e:
+            logger.error(f"Error fetching file structure: {e}")
             return "error fetching data"
 
     def _sanitize_depth(self, max_depth: Optional[int]) -> int:
@@ -82,7 +108,10 @@ def get_code_file_structure_tool(db: Session) -> StructuredTool:
                     ...
                 filename.extension
         ```
-        the path for the subdir_name should be dir_name/subdir_name. Optionally pass max_depth to limit traversal (default is 4, capped at 6).""",
+        the path for the subdir_name should be dir_name/subdir_name. Optionally pass max_depth to limit traversal (default is 4, capped at 6).
+
+        ⚠️ IMPORTANT: Large repositories may result in truncated responses (max 80,000 characters).
+        If the response is truncated, a notice will be included indicating the truncation occurred.""",
         coroutine=GetCodeFileStructureTool(db).arun,
         func=GetCodeFileStructureTool(db).run,
         args_schema=RepoStructureRequest,

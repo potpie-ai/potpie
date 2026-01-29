@@ -91,5 +91,4 @@ class PromptAPI:
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
-
         return await PromptController.enhance_prompt(request_body, db, user)

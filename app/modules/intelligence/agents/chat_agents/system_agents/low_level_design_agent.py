@@ -7,15 +7,18 @@ from app.modules.intelligence.agents.chat_agents.pydantic_multi_agent import (
     PydanticMultiAgent,
     AgentType as MultiAgentType,
 )
+from app.modules.intelligence.agents.chat_agents.multi_agent.agent_factory import (
+    create_integration_agents,
+)
 from app.modules.intelligence.agents.multi_agent_config import MultiAgentConfig
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator
-import logging
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class LowLevelDesignAgent(ChatAgent):
@@ -54,26 +57,7 @@ class LowLevelDesignAgent(ChatAgent):
                 "get_nodes_from_tags",
                 "webpage_extractor",
                 "web_search_tool",
-                "github_tool",
                 "think",
-                "get_linear_issue",
-                "get_jira_issue",
-                "search_jira_issues",
-                "create_jira_issue",
-                "update_jira_issue",
-                "add_jira_comment",
-                "transition_jira_issue",
-                "get_jira_projects",
-                "get_jira_project_details",
-                "link_jira_issues",
-                "get_jira_project_users",
-                "get_confluence_spaces",
-                "get_confluence_page",
-                "search_confluence_pages",
-                "get_confluence_space_pages",
-                "create_confluence_page",
-                "update_confluence_page",
-                "add_confluence_comment",
                 "fetch_file",
                 "analyze_code_structure",
                 "bash_command",
@@ -92,7 +76,8 @@ class LowLevelDesignAgent(ChatAgent):
         if supports_pydantic:
             if should_use_multi:
                 logger.info("✅ Using PydanticMultiAgent (multi-agent system)")
-                # Create specialized delegate agents for low-level design
+                # Create specialized delegate agents for low-level design: THINK_EXECUTE + integration agents
+                integration_agents = create_integration_agents()
                 delegate_agents = {
                     MultiAgentType.THINK_EXECUTE: AgentConfig(
                         role="Design Planning Specialist",
@@ -106,9 +91,15 @@ class LowLevelDesignAgent(ChatAgent):
                         ],
                         max_iter=20,
                     ),
+                    **integration_agents,
                 }
                 return PydanticMultiAgent(
-                    self.llm_provider, agent_config, tools, None, delegate_agents
+                    self.llm_provider,
+                    agent_config,
+                    tools,
+                    None,
+                    delegate_agents,
+                    tools_provider=self.tools_provider,
                 )
             else:
                 logger.info("❌ Multi-agent disabled by config, using PydanticRagAgent")

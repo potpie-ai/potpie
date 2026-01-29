@@ -12,7 +12,8 @@ from pygments.lexers import guess_lexer_for_filename
 from pygments.token import Token
 from pygments.util import ClassNotFound
 from tqdm import tqdm
-from tree_sitter_languages import get_language, get_parser
+from tree_sitter import Query, QueryCursor
+from tree_sitter_language_pack import get_language, get_parser
 
 from app.core.database import get_db
 from app.modules.parsing.graph_construction.parsing_helper import (  # noqa: E402
@@ -54,6 +55,13 @@ class RepoMap:
 
         self.repo_content_prefix = repo_content_prefix
         self.parse_helper = ParseHelper(next(get_db()))
+
+        # Cache compiled queries per language to avoid re-compiling for every file.
+        # Also track languages whose query schema failed to compile so we can
+        # skip them immediately and report once instead of logging per-file.
+        self._query_cache = {}       # lang -> compiled query object
+        self._query_errors = {}      # lang -> error message string
+        self._query_error_files = defaultdict(int)  # lang -> count of files affected
 
     def get_repo_map(
         self, chat_files, other_files, mentioned_fnames=None, mentioned_idents=None
@@ -143,32 +151,59 @@ class RepoMap:
 
     def get_tags_raw(self, fname, rel_fname):
         logger.debug(f"RepoMap: get_tags_raw called for {rel_fname}")
-        
+
         try:
             lang = filename_to_lang(fname)
             if not lang:
                 logger.debug(f"RepoMap: No language detected for {rel_fname}, skipping")
                 return
-            
+
             logger.debug(f"RepoMap: Detected language '{lang}' for {rel_fname}")
+
+            # If this language's query previously failed to compile, skip immediately
+            if lang in self._query_errors:
+                self._query_error_files[lang] += 1
+                logger.debug(
+                    f"RepoMap: Skipping {rel_fname} — query schema for '{lang}' "
+                    f"previously failed to compile"
+                )
+                return
 
             language = get_language(lang)
             parser = get_parser(lang)
             logger.debug(f"RepoMap: Got parser for language '{lang}'")
 
-            query_scm = get_scm_fname(lang)
-            if not query_scm.exists():
-                logger.debug(f"RepoMap: No query file found for language '{lang}', skipping {rel_fname}")
-                return
-            query_scm = query_scm.read_text()
-            logger.debug(f"RepoMap: Loaded query schema for language '{lang}'")
+            # Use cached compiled query, or compile and cache it
+            if lang in self._query_cache:
+                query = self._query_cache[lang]
+            else:
+                query_scm_path = get_scm_fname(lang)
+                if not query_scm_path.exists():
+                    logger.debug(f"RepoMap: No query file found for language '{lang}', skipping {rel_fname}")
+                    return
+                query_scm = query_scm_path.read_text()
+                logger.debug(f"RepoMap: Loaded query schema for language '{lang}'")
+
+                try:
+                    query = Query(language, query_scm)
+                    self._query_cache[lang] = query
+                    logger.debug(f"RepoMap: Compiled and cached query for language '{lang}'")
+                except Exception as query_compile_error:
+                    error_msg = str(query_compile_error)
+                    self._query_errors[lang] = error_msg
+                    self._query_error_files[lang] = 1
+                    logger.error(
+                        f"RepoMap: Query schema compilation failed for language '{lang}': "
+                        f"{error_msg}. All '{lang}' files will be skipped."
+                    )
+                    return
 
             logger.debug(f"RepoMap: Reading code from {rel_fname}")
             code = self.io.read_text(fname)
             if not code:
                 logger.debug(f"RepoMap: Empty or unreadable file {rel_fname}, skipping")
                 return
-            
+
             logger.debug(f"RepoMap: Read {len(code)} characters from {rel_fname}, parsing with tree-sitter")
             try:
                 tree = parser.parse(bytes(code, "utf-8"))
@@ -178,18 +213,22 @@ class RepoMap:
                 logger.exception(f"RepoMap: Parse exception details for {rel_fname}:")
                 return
 
-            # Run the tags queries
+            # Run the tags queries (query is already compiled and cached)
             logger.debug(f"RepoMap: Running tag queries on {rel_fname}")
             try:
-                query = language.query(query_scm)
-                captures = query.captures(tree.root_node)
-                captures = list(captures)
+                cursor = QueryCursor(query)
+                raw_captures = cursor.captures(tree.root_node)
+                # Convert dict {tag: [nodes]} to flat (node, tag) pairs
+                captures = []
+                for tag, nodes in raw_captures.items():
+                    for node in nodes:
+                        captures.append((node, tag))
                 logger.debug(f"RepoMap: Found {len(captures)} captures in {rel_fname}")
             except Exception as query_error:
                 logger.error(f"RepoMap: Query execution failed for {rel_fname}: {query_error}")
                 logger.exception(f"RepoMap: Query exception details for {rel_fname}:")
                 return
-                
+
             saw = set()
 
             for node, tag in captures:
@@ -276,10 +315,14 @@ class RepoMap:
         tree = parser.parse(bytes(code, "utf-8"))
 
         # Run the tags queries
-        query = language.query(query_scm)
-        captures = query.captures(tree.root_node)
-
-        captures = list(captures)
+        query = Query(language, query_scm)
+        cursor = QueryCursor(query)
+        raw_captures = cursor.captures(tree.root_node)
+        # Convert dict {tag: [nodes]} to flat (node, tag) pairs
+        captures = []
+        for tag, nodes in raw_captures.items():
+            for node in nodes:
+                captures.append((node, tag))
 
         saw = set()
         for node, tag in captures:
@@ -800,13 +843,22 @@ class RepoMap:
             f"Processed {total_files_processed} files, skipped {total_files_skipped} files, "
             f"found {total_tags_found} total tags, {len(error_files)} errors"
         )
-        
+
         if error_files:
             logger.warning(f"RepoMap: Files with errors:")
             for error_file, error_msg in error_files[:10]:  # Log first 10 errors
                 logger.warning(f"  - {error_file}: {error_msg}")
             if len(error_files) > 10:
                 logger.warning(f"  ... and {len(error_files) - 10} more errors")
+
+        # Log language-level query compilation failures (once per language, not per file)
+        if self._query_errors:
+            for lang, error_msg in self._query_errors.items():
+                affected = self._query_error_files.get(lang, 0)
+                logger.warning(
+                    f"RepoMap: Query schema invalid for language '{lang}' — "
+                    f"{affected} file(s) produced 0 tags. Error: {error_msg}"
+                )
         
         logger.info(f"RepoMap: Graph has {G.number_of_nodes()} nodes and {G.number_of_edges()} edges before references")
         logger.info(f"RepoMap: Processing references to create REFERENCES edges")
@@ -843,13 +895,35 @@ class RepoMap:
                         if not G.has_node(target):
                             logger.debug(f"RepoMap: Target node not found for reference: {target}")
 
+        # Count definition nodes (non-FILE nodes)
+        definition_nodes = sum(
+            1 for _, data in G.nodes(data=True) if data.get("type") != "FILE"
+        )
+        file_nodes = sum(
+            1 for _, data in G.nodes(data=True) if data.get("type") == "FILE"
+        )
+
         logger.info(
             f"RepoMap: Graph construction complete - "
-            f"Final graph has {G.number_of_nodes()} nodes and {G.number_of_edges()} edges "
+            f"Final graph has {G.number_of_nodes()} nodes "
+            f"({file_nodes} FILE, {definition_nodes} definitions) "
+            f"and {G.number_of_edges()} edges "
             f"({references_created} REFERENCES edges created)"
         )
-        
-        return G
+
+        stats = {
+            "total_files": total_files_processed,
+            "total_nodes": G.number_of_nodes(),
+            "total_edges": G.number_of_edges(),
+            "total_tags": total_tags_found,
+            "file_nodes": file_nodes,
+            "definition_nodes": definition_nodes,
+            "query_errors": dict(self._query_errors),
+            "files_with_query_errors": dict(self._query_error_files),
+            "files_with_no_tags": len(error_files),
+        }
+
+        return G, stats
 
     @staticmethod
     def get_language_for_file(file_path):
@@ -946,9 +1020,14 @@ class RepoMap:
 
 def get_scm_fname(lang):
     # Load the tags queries
+    # Map language names that differ between grep_ast and query filenames
+    lang_to_scm = {
+        "csharp": "c_sharp",
+    }
+    scm_lang = lang_to_scm.get(lang, lang)
     try:
         return Path(os.path.dirname(__file__)).joinpath(
-            "queries", f"tree-sitter-{lang}-tags.scm"
+            "queries", f"tree-sitter-{scm_lang}-tags.scm"
         )
     except KeyError:
         return

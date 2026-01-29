@@ -637,7 +637,13 @@ class GithubService:
 
             # For backward compatibility, return the PyGithub client and repo
             github_client = provider.client
-            repo = github_client.get_repo(repo_name)
+
+            # Use provider's _get_repo if available (e.g., GitBucketProvider
+            # normalizes repo names), otherwise call PyGithub directly
+            if hasattr(provider, "_get_repo"):
+                repo = provider._get_repo(repo_name)
+            else:
+                repo = github_client.get_repo(repo_name)
 
             return github_client, repo
         except HTTPException as he:
@@ -648,7 +654,9 @@ class GithubService:
             is_not_found = "404" in error_str or "Not Found" in error_str
 
             # If it's a 404 and we might have tried App auth first, try PAT as final fallback
-            if is_not_found:
+            # Only applicable for GitHub provider (not GitBucket or other providers)
+            provider_type = os.getenv("CODE_PROVIDER", "github").lower()
+            if is_not_found and provider_type == "github":
                 app_id = os.getenv("GITHUB_APP_ID")
                 private_key = config_provider.get_github_key()
 
@@ -675,7 +683,7 @@ class GithubService:
             logger.error(f"Failed to access repository {repo_name}: {error_str}")
             raise HTTPException(
                 status_code=404,
-                detail=f"Repository {repo_name} not found or inaccessible on GitHub",
+                detail=f"Repository {repo_name} not found or inaccessible",
             )
 
     # Maximum depth for full structure cache (used for warm_file_structure_cache)
@@ -768,7 +776,7 @@ class GithubService:
             # Determine concurrency based on provider type
             # GitHub can handle higher concurrency than self-hosted GitBucket
             provider_type = os.getenv("CODE_PROVIDER", "github").lower()
-            max_concurrent = 50 if provider_type == "github" else 20
+            max_concurrent = 50 if provider_type == "github" else 5
 
             # Use parallel fetching for better performance on large repos
             logger.info(f"Using parallel fetch for project {project_id} at depth {self.MAX_STRUCTURE_DEPTH}, concurrency={max_concurrent}")

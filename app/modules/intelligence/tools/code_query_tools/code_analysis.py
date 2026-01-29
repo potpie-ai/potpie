@@ -1,5 +1,7 @@
-import logging
 import os
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 import warnings
 from collections import namedtuple
 from pathlib import Path
@@ -12,7 +14,7 @@ from grep_ast import filename_to_lang
 from pygments.lexers import guess_lexer_for_filename
 from pygments.token import Token
 from pygments.util import ClassNotFound
-from tree_sitter_languages import get_language, get_parser
+from tree_sitter_language_pack import get_language, get_parser
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_service import ProjectService
@@ -94,7 +96,7 @@ class UniversalCodeAnalyzer:
             language = get_language(lang)
             parser = get_parser(lang)
         except Exception as e:
-            logging.warning(f"Could not get language/parser for {lang}: {e}")
+            logger.warning(f"Could not get language/parser for {lang}: {e}")
             return
 
         query_scm = self.get_scm_fname(lang)
@@ -108,7 +110,7 @@ class UniversalCodeAnalyzer:
                 with open(fname, "r", encoding="utf-8") as f:
                     code = f.read()
             except Exception as e:
-                logging.warning(f"Could not read file {fname}: {e}")
+                logger.warning(f"Could not read file {fname}: {e}")
                 return
 
         if not code:
@@ -117,7 +119,7 @@ class UniversalCodeAnalyzer:
         try:
             tree = parser.parse(bytes(code, "utf-8"))
         except Exception as e:
-            logging.warning(f"Could not parse code for {fname}: {e}")
+            logger.warning(f"Could not parse code for {fname}: {e}")
             return
 
         # Run the tags queries
@@ -126,7 +128,7 @@ class UniversalCodeAnalyzer:
             captures = query.captures(tree.root_node)
             captures = list(captures)
         except Exception as e:
-            logging.warning(f"Could not run query for {fname}: {e}")
+            logger.warning(f"Could not run query for {fname}: {e}")
             return
 
         saw = set()
@@ -203,16 +205,16 @@ class UniversalCodeAnalyzer:
         if not os.path.isfile(fname):
             if fname not in self.warned_files:
                 if os.path.exists(fname):
-                    logging.warning(f"Can't include {fname}, it is not a normal file")
+                    logger.warning(f"Can't include {fname}, it is not a normal file")
                 else:
-                    logging.warning(f"Can't include {fname}, it no longer exists")
+                    logger.warning(f"Can't include {fname}, it no longer exists")
                 self.warned_files.add(fname)
             return []
 
         try:
             return list(self.get_tags_raw(fname, rel_fname, code))
         except Exception as e:
-            logging.warning(f"Error getting tags for {fname}: {e}")
+            logger.warning(f"Error getting tags for {fname}: {e}")
             return []
 
     def _extract_docstring_comment(
@@ -414,12 +416,14 @@ class UniversalCodeAnalyzer:
 
 class UniversalAnalyzeCodeTool:
     name: str = "analyze_code_structure_universal"
-    description: str = (
-        """Universal code structure analyzer that works with multiple programming languages using Tree-sitter.
+    description: str = """Universal code structure analyzer that works with multiple programming languages using Tree-sitter.
         Supports Python, JavaScript, TypeScript, Java, C++, C, Rust, Go, PHP, Ruby, and more.
 
         Extracts detailed information about:
         - All classes, structs, interfaces, enums with their docstrings and line ranges
+
+        ⚠️ IMPORTANT: Large files with many elements may result in truncated responses (max 80,000 characters).
+        If the response is truncated, a notice will be included indicating the truncation occurred.
         - All functions and methods with signatures and docstrings
         - Exact start and end line numbers for each code element
         - Language-specific elements (traits in Rust, namespaces in C++, modules in Ruby, etc.)
@@ -434,7 +438,6 @@ class UniversalAnalyzeCodeTool:
 
         Returns a structured analysis of the code with all extractable elements.
         """
-    )
     args_schema: Type[BaseModel] = UniversalAnalyzeCodeToolInput
 
     def __init__(self, sql_db: Session, user_id: str):
@@ -504,7 +507,7 @@ class UniversalAnalyzeCodeTool:
                     content, language, file_path, include_methods, include_private
                 )
             except Exception as e:
-                logging.exception(f"Failed to analyze {language} file: {str(e)}")
+                logger.exception(f"Failed to analyze {language} file: {str(e)}")
                 return {
                     "success": False,
                     "error": f"Failed to parse {language} file: {str(e)}",
@@ -546,10 +549,18 @@ class UniversalAnalyzeCodeTool:
 
             self.redis.setex(cache_key, 1800, json.dumps(result))
 
-            return result
+            # Truncate response if it exceeds character limits
+            from app.modules.intelligence.tools.tool_utils import truncate_dict_response
+
+            truncated_result = truncate_dict_response(result)
+            if len(json.dumps(result)) > 80000:
+                logging.warning(
+                    f"analyze_code_structure output truncated for file {file_path}, project_id={project_id}"
+                )
+            return truncated_result
 
         except Exception as e:
-            logging.exception(
+            logger.exception(
                 f"Failed to analyze code structure for {file_path}: {str(e)}"
             )
             return {"success": False, "error": str(e), "elements": []}

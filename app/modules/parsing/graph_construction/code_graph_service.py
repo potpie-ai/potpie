@@ -87,8 +87,12 @@ class CodeGraphService:
 
         logger.info(f"CodeGraphService: Calling repo_map.create_graph()")
         try:
-            nx_graph = self.repo_map.create_graph(repo_dir)
-            logger.info(f"CodeGraphService: Graph created with {nx_graph.number_of_nodes()} nodes and {nx_graph.number_of_edges()} edges")
+            nx_graph, graph_stats = self.repo_map.create_graph(repo_dir)
+            logger.info(
+                f"CodeGraphService: Graph created with {nx_graph.number_of_nodes()} nodes "
+                f"and {nx_graph.number_of_edges()} edges "
+                f"(stats: {graph_stats})"
+            )
         except Exception as e:
             logger.error(f"CodeGraphService: Failed to create graph: {e}")
             logger.exception("CodeGraphService: Exception details:")

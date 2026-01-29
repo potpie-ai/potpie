@@ -30,9 +30,24 @@ class CreateUser(BaseModel):
     created_at: datetime
     last_login_at: datetime
     provider_info: dict
-    provider_username: str
+    provider_username: Optional[str] = None
 
 
 class UserProfileResponse(BaseModel):
     user_id: str
     profile_pic_url: Optional[str] = None
+
+
+class OnboardingDataRequest(BaseModel):
+    uid: str
+    email: str
+    name: str
+    source: str
+    industry: str
+    jobTitle: str
+    companyName: str
+
+
+class OnboardingDataResponse(BaseModel):
+    success: bool
+    message: str
