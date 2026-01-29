@@ -127,6 +127,8 @@ def configure_celery(queue_prefix: str):
             "app.modules.event_bus.tasks.event_tasks.process_custom_event": {
                 "queue": "external-event"
             },
+            # Attachment cleanup tasks
+            "attachment_cleanup.*": {"queue": "default"},
         },
         # Optimize task distribution
         worker_prefetch_multiplier=1,
@@ -487,3 +489,4 @@ from celery.contrib.abortable import AbortableTask  # noqa
 import app.celery.tasks.parsing_tasks  # noqa # Ensure the task module is imported
 import app.celery.tasks.agent_tasks  # noqa # Ensure the agent task module is imported
 import app.modules.event_bus.tasks.event_tasks  # noqa # Ensure event bus tasks are registered
+import app.celery.tasks.attachment_cleanup_tasks  # noqa # Ensure attachment cleanup tasks are registered
