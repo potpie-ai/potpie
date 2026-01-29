@@ -9,6 +9,7 @@ import json
 import time
 import redis
 import httpx
+import os
 from typing import Optional, Dict
 from app.modules.utils.logger import setup_logger
 from app.core.config_provider import ConfigProvider
@@ -245,6 +246,29 @@ class TunnelService:
             return None
         except Exception as e:
             logger.error(f"Error getting tunnel URL: {e}")
+            return None
+
+    def get_tunnel_info(
+        self, user_id: str, conversation_id: Optional[str] = None
+    ) -> Optional[Dict]:
+        """
+        Get tunnel metadata for a user/conversation (URL + optional local_port).
+
+        Returns:
+            Dict with at least {"tunnel_url": str, ...} or None if not found.
+        """
+        try:
+            # Try conversation-specific first, then user-level
+            if conversation_id:
+                key = self._get_tunnel_key(user_id, conversation_id)
+                tunnel_data = self._get_tunnel_data(key)
+                if tunnel_data:
+                    return tunnel_data
+            key = self._get_tunnel_key(user_id)
+            tunnel_data = self._get_tunnel_data(key)
+            return tunnel_data
+        except Exception as e:
+            logger.error(f"Error getting tunnel info: {e}")
             return None
 
     def _get_tunnel_data(self, key: str) -> Optional[Dict]:

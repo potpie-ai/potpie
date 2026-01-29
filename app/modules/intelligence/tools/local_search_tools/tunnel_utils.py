@@ -3,6 +3,7 @@ Tunnel utilities for routing search operations to LocalServer.
 """
 
 import json
+import os
 from typing import Dict, Any, Optional
 import httpx
 from app.modules.utils.logger import setup_logger
@@ -172,19 +173,59 @@ def route_to_local_server(
             "conversation_id": conversation_id,
         }
 
-        # Make request to LocalServer via tunnel (sync)
-        url = f"{tunnel_url}{endpoint}"
-        logger.info(
-            f"[Tunnel Routing] 🚀 Routing {operation} to LocalServer via tunnel: {url}"
+        # Prefer direct localhost when backend is local (avoid hairpin + cfargotunnel DNS issues)
+        force_tunnel = os.getenv("FORCE_TUNNEL", "").lower() in ["true", "1", "yes"]
+        base_url = os.getenv("BASE_URL", "").lower()
+        environment = os.getenv("ENVIRONMENT", "").lower()
+        is_backend_local = (
+            "localhost" in base_url
+            or "127.0.0.1" in base_url
+            or environment in ["local", "dev", "development"]
+            or not base_url  # If BASE_URL not set, assume local
         )
-        logger.debug(f"[Tunnel Routing] Request data: {request_data}")
 
-        with httpx.Client(timeout=30.0) as client:
-            response = client.post(
-                url,
-                json=request_data,
-                headers={"Content-Type": "application/json"},
+        if is_backend_local and not force_tunnel:
+            direct_port = int(local_port) if local_port else 3001
+            direct_base = f"http://localhost:{direct_port}"
+            direct_url = f"{direct_base}{endpoint}"
+            try:
+                # Quick health check to ensure LocalServer is reachable directly
+                with httpx.Client(timeout=2.0) as health_client:
+                    health = health_client.get(f"{direct_base}/health")
+                    if health.status_code == 200:
+                        logger.info(
+                            f"[Tunnel Routing] 🏠 Backend local -> routing {operation} directly: {direct_url}"
+                        )
+                        with httpx.Client(timeout=30.0) as client:
+                            response = client.post(
+                                direct_url,
+                                json=request_data,
+                                headers={"Content-Type": "application/json"},
+                            )
+                    else:
+                        response = None
+            except Exception as e:
+                logger.info(
+                    f"[Tunnel Routing] 🏠 Direct LocalServer not reachable, falling back to tunnel. reason={e}"
+                )
+                response = None
+        else:
+            response = None
+
+        # Fall back to tunnel
+        if response is None:
+            url = f"{tunnel_url}{endpoint}"
+            logger.info(
+                f"[Tunnel Routing] 🚀 Routing {operation} to LocalServer via tunnel: {url}"
             )
+            logger.debug(f"[Tunnel Routing] Request data: {request_data}")
+
+            with httpx.Client(timeout=30.0) as client:
+                response = client.post(
+                    url,
+                    json=request_data,
+                    headers={"Content-Type": "application/json"},
+                )
 
             if response.status_code == 200:
                 result = response.json()
