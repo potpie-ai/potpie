@@ -191,10 +191,15 @@ class PydanticMultiAgent(ChatAgent):
         self._current_context = ctx
 
         # Initialize managers with conversation_id for persistence across messages
+        logger.info(
+            f"🔄 [PydanticMultiAgent] ctx.tunnel_url={ctx.tunnel_url}, ctx.user_id={ctx.user_id}, "
+            f"ctx.conversation_id={ctx.conversation_id}"
+        )
         init_managers(
             conversation_id=ctx.conversation_id,
             agent_id=ctx.curr_agent_id,
             user_id=ctx.user_id,
+            tunnel_url=ctx.tunnel_url,
         )
 
         # Check if we have images and if the model supports vision
@@ -225,10 +230,15 @@ class PydanticMultiAgent(ChatAgent):
         self._current_context = ctx
 
         # Initialize managers with conversation_id for persistence across messages
+        logger.info(
+            f"🔄 [PydanticMultiAgent] ctx.tunnel_url={ctx.tunnel_url}, ctx.user_id={ctx.user_id}, "
+            f"ctx.conversation_id={ctx.conversation_id}"
+        )
         init_managers(
             conversation_id=ctx.conversation_id,
             agent_id=ctx.curr_agent_id,
             user_id=ctx.user_id,
+            tunnel_url=ctx.tunnel_url,
         )
 
         # Check if we have images and if the model supports vision

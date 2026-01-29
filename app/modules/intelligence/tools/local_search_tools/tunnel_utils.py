@@ -15,6 +15,98 @@ def _is_cloudflare_tunnel_error(response_status: int, response_text: str) -> boo
     return response_status == 530 and "Cloudflare Tunnel error" in response_text
 
 
+def _is_tunnel_connection_error(response_status: int, response_text: str) -> bool:
+    """Check if the response indicates any tunnel connection error."""
+    return (
+        response_status in [502, 503, 504, 530]
+        or "Cloudflare Tunnel error" in response_text
+        or "cloudflared" in response_text.lower()
+        or "tunnel" in response_text.lower()
+        and "error" in response_text.lower()
+    )
+
+
+def handle_tunnel_error(error: Exception, operation: str = "tool call") -> str:
+    """
+    Format a tunnel error into a user-friendly message for the agent.
+
+    Args:
+        error: The exception that occurred
+        operation: Description of the operation that failed
+
+    Returns:
+        Formatted error message string
+    """
+    from app.modules.tunnel.tunnel_service import TunnelConnectionError
+
+    if isinstance(error, TunnelConnectionError):
+        return (
+            f"❌ **Tunnel Disconnected**\n\n"
+            f"The connection to the local VS Code extension was lost while attempting: {operation}\n\n"
+            f"**Error:** {error.message}\n\n"
+            f"**Suggestion:** Please check that:\n"
+            f"1. VS Code is running with the Potpie extension active\n"
+            f"2. The extension shows 'Connected' status\n"
+            f"3. Try reloading VS Code (Cmd/Ctrl+Shift+P → 'Reload Window')\n\n"
+            f"Once reconnected, please retry your request."
+        )
+
+    # Generic connection error
+    error_str = str(error)
+    if "timeout" in error_str.lower():
+        return (
+            f"❌ **Request Timeout**\n\n"
+            f"The {operation} timed out. The local VS Code extension may be:\n"
+            f"- Processing a long operation\n"
+            f"- Experiencing network issues\n"
+            f"- Disconnected\n\n"
+            f"Please check VS Code and retry."
+        )
+
+    if "connect" in error_str.lower() or "refused" in error_str.lower():
+        return (
+            f"❌ **Connection Failed**\n\n"
+            f"Could not connect to the local VS Code extension for: {operation}\n\n"
+            f"Please ensure the Potpie extension is running and try again."
+        )
+
+    return (
+        f"❌ **{operation.title()} Failed**\n\n"
+        f"Error: {error_str}\n\n"
+        f"Please check the VS Code extension status and retry."
+    )
+
+
+def format_tunnel_error_for_agent(
+    success: bool = False,
+    error_code: str = "TUNNEL_DISCONNECTED",
+    message: str = "",
+    suggestion: str = "",
+) -> dict:
+    """
+    Create a standardized error response dict for tunnel errors.
+
+    Args:
+        success: Always False for errors
+        error_code: Error code string
+        message: Error message
+        suggestion: Suggestion for the user
+
+    Returns:
+        Dict with error information
+    """
+    return {
+        "success": success,
+        "error": error_code,
+        "message": message,
+        "suggestion": suggestion
+        or (
+            "The local VS Code extension tunnel appears to be disconnected. "
+            "Please check VS Code and ensure the Potpie extension is running."
+        ),
+    }
+
+
 def route_to_local_server(
     operation: str,
     data: Dict[str, Any],
@@ -39,8 +131,18 @@ def route_to_local_server(
             logger.debug("No user_id in context, skipping tunnel routing")
             return None
 
+        # Get tunnel_url from context if available (takes priority)
+        from app.modules.intelligence.tools.code_changes_manager import _get_tunnel_url
+
+        context_tunnel_url = _get_tunnel_url()
+        if context_tunnel_url:
+            logger.info(
+                f"[Tunnel Routing] ✅ Using fresh tunnel_url from context: {context_tunnel_url}"
+            )
         tunnel_service = get_tunnel_service()
-        tunnel_url = tunnel_service.get_tunnel_url(user_id, conversation_id)
+        tunnel_url = tunnel_service.get_tunnel_url(
+            user_id, conversation_id, tunnel_url=context_tunnel_url
+        )
 
         if not tunnel_url:
             logger.debug(f"No tunnel available for user {user_id}, using fallback")
@@ -104,7 +206,7 @@ def route_to_local_server(
                 if is_tunnel_error:
                     logger.warning(
                         f"[Tunnel Routing] ❌ Stale tunnel detected ({status_code}): {tunnel_url}. "
-                        f"Invalidating and checking for user-level fallback."
+                        f"Invalidating and retrying with fresh URL from context."
                     )
 
                     # Invalidate the stale tunnel URL
@@ -118,11 +220,46 @@ def route_to_local_server(
                             f"[Tunnel Routing] Failed to invalidate tunnel: {e}"
                         )
 
-                    # Try user-level tunnel as fallback (if conversation-specific failed)
+                    # PRIORITY 1: Retry with fresh tunnel_url from context (if available and different)
+                    fresh_tunnel_url = _get_tunnel_url()
+                    if fresh_tunnel_url and fresh_tunnel_url != tunnel_url:
+                        logger.info(
+                            f"[Tunnel Routing] 🔄 Retrying with fresh tunnel URL from context: {fresh_tunnel_url}"
+                        )
+                        retry_url = f"{fresh_tunnel_url}{endpoint}"
+                        try:
+                            with httpx.Client(timeout=30.0) as retry_client:
+                                retry_response = retry_client.post(
+                                    retry_url,
+                                    json=request_data,
+                                    headers={"Content-Type": "application/json"},
+                                )
+                                if retry_response.status_code == 200:
+                                    result = retry_response.json()
+                                    logger.info(
+                                        f"[Tunnel Routing] ✅ {operation} succeeded with fresh tunnel URL"
+                                    )
+                                    # Update cache with fresh URL
+                                    tunnel_service.register_tunnel(
+                                        user_id=user_id,
+                                        tunnel_url=fresh_tunnel_url,
+                                        conversation_id=conversation_id,
+                                    )
+                                    return format_search_result(operation, result)
+                                else:
+                                    logger.warning(
+                                        f"[Tunnel Routing] ❌ Fresh tunnel URL also failed: {retry_response.status_code}"
+                                    )
+                        except Exception as retry_e:
+                            logger.warning(
+                                f"[Tunnel Routing] ❌ Retry with fresh URL failed: {retry_e}"
+                            )
+
+                    # PRIORITY 2: Try user-level tunnel as fallback (if conversation-specific failed)
                     if conversation_id:
                         user_level_tunnel = tunnel_service.get_tunnel_url(
-                            user_id, None
-                        )  # No conversation_id = user-level
+                            user_id, None, tunnel_url=fresh_tunnel_url
+                        )
                         if user_level_tunnel and user_level_tunnel != tunnel_url:
                             logger.info(
                                 f"[Tunnel Routing] 🔄 Retrying with user-level tunnel: {user_level_tunnel}"
@@ -425,8 +562,18 @@ def route_terminal_command(
             logger.debug("No user_id in context, skipping tunnel routing")
             return None, "no_user_id"
 
+        # Get tunnel_url from context if available (takes priority)
+        from app.modules.intelligence.tools.code_changes_manager import _get_tunnel_url
+
+        context_tunnel_url = _get_tunnel_url()
+        if context_tunnel_url:
+            logger.info(
+                f"[Tunnel Routing] ✅ Using fresh tunnel_url from context: {context_tunnel_url}"
+            )
         tunnel_service = get_tunnel_service()
-        tunnel_url = tunnel_service.get_tunnel_url(user_id, conversation_id)
+        tunnel_url = tunnel_service.get_tunnel_url(
+            user_id, conversation_id, tunnel_url=context_tunnel_url
+        )
 
         if not tunnel_url:
             logger.debug(f"No tunnel available for user {user_id}, using fallback")
@@ -467,14 +614,90 @@ def route_terminal_command(
                 # Detect Cloudflare tunnel errors (530 status with HTML error page)
                 is_cloudflare_error = _is_cloudflare_tunnel_error(
                     response.status_code, error_text
-                )
+                ) or _is_tunnel_connection_error(response.status_code, error_text)
 
                 if is_cloudflare_error:
                     logger.warning(
-                        f"[Tunnel Routing] ❌ Cloudflare tunnel is not reachable (tunnel URL registered but cloudflared not running)"
+                        f"[Tunnel Routing] ❌ Stale tunnel detected ({response.status_code}): {tunnel_url}. "
+                        f"Invalidating and retrying with fresh URL from context."
                     )
-                    # Don't unregister immediately - might be transient
-                    # The extension should handle tunnel recreation
+
+                    # Invalidate the stale tunnel
+                    try:
+                        tunnel_service.unregister_tunnel(user_id, conversation_id)
+                        logger.info(
+                            f"[Tunnel Routing] ✅ Invalidated stale conversation tunnel"
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"[Tunnel Routing] Failed to invalidate tunnel: {e}"
+                        )
+
+                    # Retry with fresh tunnel_url from context (if available)
+                    fresh_tunnel_url = _get_tunnel_url()
+                    if fresh_tunnel_url and fresh_tunnel_url != tunnel_url:
+                        logger.info(
+                            f"[Tunnel Routing] 🔄 Retrying with fresh tunnel URL from context: {fresh_tunnel_url}"
+                        )
+                        retry_url = f"{fresh_tunnel_url}/api/terminal/execute"
+                        try:
+                            with httpx.Client(
+                                timeout=float(timeout) / 1000 + 5
+                            ) as retry_client:
+                                retry_response = retry_client.post(
+                                    retry_url,
+                                    json=request_data,
+                                    headers={"Content-Type": "application/json"},
+                                )
+                                if retry_response.status_code == 200:
+                                    result = retry_response.json()
+                                    logger.info(
+                                        f"[Tunnel Routing] ✅ Terminal command succeeded with fresh tunnel URL"
+                                    )
+                                    # Update cache with fresh URL
+                                    tunnel_service.register_tunnel(
+                                        user_id=user_id,
+                                        tunnel_url=fresh_tunnel_url,
+                                        conversation_id=conversation_id,
+                                    )
+                                    return result, None
+                                else:
+                                    logger.warning(
+                                        f"[Tunnel Routing] ❌ Fresh tunnel URL also failed: {retry_response.status_code}"
+                                    )
+                        except Exception as retry_e:
+                            logger.warning(
+                                f"[Tunnel Routing] ❌ Retry with fresh URL failed: {retry_e}"
+                            )
+
+                    # If no fresh URL or retry failed, try user-level fallback
+                    if conversation_id:
+                        user_level_tunnel = tunnel_service.get_tunnel_url(user_id, None)
+                        if user_level_tunnel and user_level_tunnel != tunnel_url:
+                            logger.info(
+                                f"[Tunnel Routing] 🔄 Retrying with user-level tunnel: {user_level_tunnel}"
+                            )
+                            retry_url = f"{user_level_tunnel}/api/terminal/execute"
+                            try:
+                                with httpx.Client(
+                                    timeout=float(timeout) / 1000 + 5
+                                ) as retry_client:
+                                    retry_response = retry_client.post(
+                                        retry_url,
+                                        json=request_data,
+                                        headers={"Content-Type": "application/json"},
+                                    )
+                                    if retry_response.status_code == 200:
+                                        result = retry_response.json()
+                                        logger.info(
+                                            f"[Tunnel Routing] ✅ Terminal command succeeded with user-level tunnel"
+                                        )
+                                        return result, None
+                            except Exception as retry_e:
+                                logger.warning(
+                                    f"[Tunnel Routing] ❌ User-level tunnel retry failed: {retry_e}"
+                                )
+
                     return None, "tunnel_unreachable"
                 else:
                     logger.warning(
@@ -567,8 +790,14 @@ def get_terminal_session_output(
             logger.debug("No user_id in context, skipping tunnel routing")
             return None
 
+        # Get tunnel_url from context if available (takes priority)
+        from app.modules.intelligence.tools.code_changes_manager import _get_tunnel_url
+
+        context_tunnel_url = _get_tunnel_url()
         tunnel_service = get_tunnel_service()
-        tunnel_url = tunnel_service.get_tunnel_url(user_id, conversation_id)
+        tunnel_url = tunnel_service.get_tunnel_url(
+            user_id, conversation_id, tunnel_url=context_tunnel_url
+        )
 
         if not tunnel_url:
             logger.debug(f"No tunnel available for user {user_id}")
@@ -637,8 +866,14 @@ def send_terminal_session_signal(
             logger.debug("No user_id in context, skipping tunnel routing")
             return None
 
+        # Get tunnel_url from context if available (takes priority)
+        from app.modules.intelligence.tools.code_changes_manager import _get_tunnel_url
+
+        context_tunnel_url = _get_tunnel_url()
         tunnel_service = get_tunnel_service()
-        tunnel_url = tunnel_service.get_tunnel_url(user_id, conversation_id)
+        tunnel_url = tunnel_service.get_tunnel_url(
+            user_id, conversation_id, tunnel_url=context_tunnel_url
+        )
 
         if not tunnel_url:
             logger.debug(f"No tunnel available for user {user_id}")
@@ -733,7 +968,11 @@ def format_terminal_result(result: Dict[str, Any]) -> str:
 
 
 def get_context_vars():
-    """Get user_id and conversation_id from context variables."""
+    """Get user_id and conversation_id from context variables.
+
+    Note: tunnel_url should be fetched separately using _get_tunnel_url()
+    from code_changes_manager for tunnel routing.
+    """
     try:
         # Import here to avoid circular dependency
         from app.modules.intelligence.tools.code_changes_manager import (

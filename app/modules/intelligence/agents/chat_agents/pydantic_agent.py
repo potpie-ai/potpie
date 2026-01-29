@@ -486,13 +486,18 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             _init_code_changes_manager,
         )
 
+        logger.info(
+            f"🔄 [PydanticRagAgent] ctx.tunnel_url={ctx.tunnel_url}, ctx.user_id={ctx.user_id}, "
+            f"ctx.conversation_id={ctx.conversation_id}"
+        )
         _init_code_changes_manager(
             conversation_id=ctx.conversation_id,
             agent_id=ctx.curr_agent_id,
             user_id=ctx.user_id,
+            tunnel_url=ctx.tunnel_url,
         )
         logger.info(
-            f"🔄 Initialized code changes manager for conversation_id={ctx.conversation_id}, agent_id={ctx.curr_agent_id}, user_id={ctx.user_id}"
+            f"🔄 Initialized code changes manager for conversation_id={ctx.conversation_id}, agent_id={ctx.curr_agent_id}, user_id={ctx.user_id}, tunnel_url={ctx.tunnel_url}"
         )
 
         # Check if we have images and if the model supports vision

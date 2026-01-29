@@ -2225,6 +2225,9 @@ _agent_id_ctx: ContextVar[Optional[str]] = ContextVar("_agent_id_ctx", default=N
 # Context variable for user_id - used for tunnel routing
 _user_id_ctx: ContextVar[Optional[str]] = ContextVar("_user_id_ctx", default=None)
 
+# Context variable for tunnel_url - used for tunnel routing (takes priority over stored state)
+_tunnel_url_ctx: ContextVar[Optional[str]] = ContextVar("_tunnel_url_ctx", default=None)
+
 
 def _set_conversation_id(conversation_id: Optional[str]) -> None:
     """Set the conversation_id for the current execution context.
@@ -2266,6 +2269,23 @@ def _set_user_id(user_id: Optional[str]) -> None:
 def _get_user_id() -> Optional[str]:
     """Get the user_id for the current execution context."""
     return _user_id_ctx.get()
+
+
+def _set_tunnel_url(tunnel_url: Optional[str]) -> None:
+    """Set the tunnel_url for the current execution context.
+
+    This is used for tunnel routing to LocalServer (takes priority over stored state).
+    """
+    _tunnel_url_ctx.set(tunnel_url)
+    # Always log this at INFO level for debugging
+    logger.info(
+        f"CodeChangesManager: _set_tunnel_url called with tunnel_url={tunnel_url}"
+    )
+
+
+def _get_tunnel_url() -> Optional[str]:
+    """Get the tunnel_url for the current execution context."""
+    return _tunnel_url_ctx.get()
 
 
 def _extract_error_message(error_text: str, status_code: int) -> str:
@@ -3010,6 +3030,7 @@ def _init_code_changes_manager(
     conversation_id: Optional[str] = None,
     agent_id: Optional[str] = None,
     user_id: Optional[str] = None,
+    tunnel_url: Optional[str] = None,
 ) -> None:
     """Initialize the code changes manager for a new agent run.
 
@@ -3021,10 +3042,17 @@ def _init_code_changes_manager(
                         uses a random session_id (backward compatible, no persistence).
         agent_id: The agent ID to determine routing (e.g., "code" for LocalServer routing).
         user_id: The user ID for tunnel routing.
+        tunnel_url: Optional tunnel URL from request (takes priority over stored state).
     """
+    logger.info(
+        f"CodeChangesManager: _init_code_changes_manager called with "
+        f"conversation_id={conversation_id}, agent_id={agent_id}, "
+        f"user_id={user_id}, tunnel_url={tunnel_url}"
+    )
     _set_conversation_id(conversation_id)
     _set_agent_id(agent_id)
     _set_user_id(user_id)
+    _set_tunnel_url(tunnel_url)
 
     old_manager = _code_changes_manager_ctx.get()
     old_session = old_manager.session_id if old_manager else None

@@ -23,13 +23,17 @@ def execute_agent_background(
     node_ids: Optional[List[str]] = None,
     attachment_ids: List[str] = [],
     local_mode: bool = False,
+    tunnel_url: Optional[str] = None,
 ) -> None:
     """Execute an agent in the background and publish results to Redis streams"""
     redis_manager = RedisStreamManager()
 
     # Set up logging context with domain IDs
     with log_context(conversation_id=conversation_id, user_id=user_id, run_id=run_id):
-        logger.info("Starting background agent execution")
+        logger.info(
+            f"Starting background agent execution with tunnel_url={tunnel_url}, "
+            f"local_mode={local_mode}, conversation_id={conversation_id}"
+        )
 
         # Set task status to indicate task has started
         redis_manager.set_task_status(conversation_id, run_id, "running")
@@ -107,6 +111,7 @@ def execute_agent_background(
                         content=query,
                         node_ids=node_ids,
                         attachment_ids=attachment_ids if attachment_ids else None,
+                        tunnel_url=tunnel_url,
                     )
 
                     # Publish start event when actual processing begins

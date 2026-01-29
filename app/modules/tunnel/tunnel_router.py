@@ -15,10 +15,16 @@ router = APIRouter()
 
 
 class TunnelRegisterRequest(BaseModel):
-    tunnel_url: str = Field(..., description="Public tunnel URL (e.g., https://xyz.trycloudflare.com)")
+    tunnel_url: str = Field(
+        ..., description="Public tunnel URL (e.g., https://xyz.trycloudflare.com)"
+    )
     conversation_id: Optional[str] = Field(
         default=None,
         description="Optional conversation id to scope tunnel to a conversation",
+    )
+    user_id: Optional[str] = Field(
+        default=None,
+        description="Optional user id (falls back to auth token user_id if not provided)",
     )
     workspace_id: Optional[str] = Field(
         default=None,
@@ -49,7 +55,7 @@ class TunnelProvisionResponse(BaseModel):
     tunnel_url: str
     ingress_configured: bool = Field(
         default=False,
-        description="Whether ingress is configured. If False, extension should use quick tunnel."
+        description="Whether ingress is configured. If False, extension should use quick tunnel.",
     )
 
 
@@ -64,34 +70,38 @@ async def provision_tunnel(
 ):
     """
     Provision a named Cloudflare tunnel for the authenticated user.
-    
+
     Named tunnels are more reliable than quick tunnels:
     - Persistent URL (doesn't change on restart)
     - Auto-reconnection support
     - Better uptime (99%+)
-    
+
     The returned tunnel_token should be used with:
     cloudflared tunnel run --token <TOKEN> --url http://localhost:<PORT>
     """
     user_id = user["user_id"]
     cf_service = get_cloudflare_tunnel_service()
-    
+
     if not cf_service.is_configured():
-        logger.warning(f"[Tunnel] Named tunnels not configured, user {user_id} should use quick tunnel")
+        logger.warning(
+            f"[Tunnel] Named tunnels not configured, user {user_id} should use quick tunnel"
+        )
         raise HTTPException(
             status_code=503,
-            detail="Named tunnels not configured on server. Please use quick tunnel instead."
+            detail="Named tunnels not configured on server. Please use quick tunnel instead.",
         )
-    
+
     result = await cf_service.provision_tunnel_for_user(user_id)
     if not result:
         logger.error(f"[Tunnel] Failed to provision named tunnel for user {user_id}")
         raise HTTPException(
             status_code=500,
-            detail="Failed to provision tunnel. Please try again or use quick tunnel."
+            detail="Failed to provision tunnel. Please try again or use quick tunnel.",
         )
-    
-    logger.info(f"[Tunnel] Provisioned named tunnel for user {user_id}: {result['tunnel_name']}")
+
+    logger.info(
+        f"[Tunnel] Provisioned named tunnel for user {user_id}: {result['tunnel_name']}"
+    )
     return TunnelProvisionResponse(**result)
 
 
@@ -105,23 +115,51 @@ async def register_tunnel(
     user=Depends(AuthService.check_auth),
     _db: Session = Depends(get_db),
 ):
-    user_id = user["user_id"]
+    # Use user_id from request body if provided, otherwise fall back to auth token
+    user_id = req.user_id or user["user_id"]
     tunnel_service = get_tunnel_service()
 
+    logger.info(
+        f"[TunnelRouter] 📝 Registration request: user_id={user_id}, "
+        f"conversation_id={req.conversation_id}, tunnel_url={req.tunnel_url}, "
+        f"local_port={req.local_port}, request_user_id={req.user_id}, "
+        f"auth_user_id={user['user_id']}"
+    )
+
     if not req.tunnel_url.startswith("https://"):
-        raise HTTPException(status_code=400, detail="tunnel_url must start with https://")
+        logger.error(f"[TunnelRouter] ❌ Invalid tunnel_url format: {req.tunnel_url}")
+        raise HTTPException(
+            status_code=400, detail="tunnel_url must start with https://"
+        )
 
     ok = tunnel_service.register_tunnel(
-        user_id=user_id, 
-        tunnel_url=req.tunnel_url, 
+        user_id=user_id,
+        tunnel_url=req.tunnel_url,
         conversation_id=req.conversation_id,
-        local_port=req.local_port
+        local_port=req.local_port,
     )
     if not ok:
+        logger.error(
+            f"[TunnelRouter] ❌ Failed to register tunnel: user_id={user_id}, "
+            f"conversation_id={req.conversation_id}, tunnel_url={req.tunnel_url}"
+        )
         raise HTTPException(status_code=500, detail="Failed to register tunnel")
 
+    # Verify registration was successful
+    verify_url = tunnel_service.get_tunnel_url(user_id, req.conversation_id)
+    if verify_url != req.tunnel_url:
+        logger.warning(
+            f"[TunnelRouter] ⚠️ Registration verification failed: "
+            f"expected={req.tunnel_url}, got={verify_url}"
+        )
+    else:
+        logger.info(
+            f"[TunnelRouter] ✅ Registration verified: user_id={user_id}, "
+            f"conversation_id={req.conversation_id}, tunnel_url={req.tunnel_url}"
+        )
+
     logger.info(
-        f"Registered tunnel for user_id={user_id} conversation_id={req.conversation_id}: {req.tunnel_url}"
+        f"[TunnelRouter] Registered tunnel for user_id={user_id} conversation_id={req.conversation_id}: {req.tunnel_url}"
     )
     return TunnelRegisterResponse(
         message="Tunnel registered",
@@ -141,7 +179,9 @@ async def unregister_tunnel(
 ):
     user_id = user["user_id"]
     tunnel_service = get_tunnel_service()
-    ok = tunnel_service.unregister_tunnel(user_id=user_id, conversation_id=conversation_id)
+    ok = tunnel_service.unregister_tunnel(
+        user_id=user_id, conversation_id=conversation_id
+    )
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to unregister tunnel")
     return {"message": "Tunnel unregistered", "conversation_id": conversation_id}
@@ -159,10 +199,17 @@ async def tunnel_status(
 ):
     user_id = user["user_id"]
     tunnel_service = get_tunnel_service()
-    tunnel_url = tunnel_service.get_tunnel_url(user_id=user_id, conversation_id=conversation_id)
+    tunnel_url = tunnel_service.get_tunnel_url(
+        user_id=user_id, conversation_id=conversation_id
+    )
+
+    logger.info(
+        f"[TunnelRouter] Status check: user_id={user_id}, conversation_id={conversation_id}, "
+        f"tunnel_url={tunnel_url}, connected={bool(tunnel_url)}"
+    )
+
     return TunnelStatusResponse(
         connected=bool(tunnel_url),
         tunnel_url=tunnel_url,
         conversation_id=conversation_id,
     )
-

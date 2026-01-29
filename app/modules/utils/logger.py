@@ -206,6 +206,11 @@ def configure_logging(level: Optional[str] = None):
     _logger.remove()
 
     def patcher(record):
+        # Ensure "extra" dict exists
+        if "extra" not in record:
+            record["extra"] = {}
+
+        # Ensure "name" is always in extra for format string compatibility
         if "name" not in record["extra"]:
             record["extra"]["name"] = record.get(
                 "name", record.get("module", "unknown")
@@ -230,6 +235,16 @@ def configure_logging(level: Optional[str] = None):
 
         def _filter(record):
             """Filter sensitive data in development logs"""
+            # Ensure "extra" dict exists
+            if "extra" not in record:
+                record["extra"] = {}
+
+            # Ensure "name" is always in extra for format string compatibility
+            if "name" not in record["extra"]:
+                record["extra"]["name"] = record.get(
+                    "name", record.get("module", "unknown")
+                )
+
             record["message"] = filter_sensitive_data(str(record["message"]))
             # Filter extra fields
             extra_value = ""

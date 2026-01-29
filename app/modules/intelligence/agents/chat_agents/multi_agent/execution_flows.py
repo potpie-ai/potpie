@@ -21,6 +21,7 @@ def init_managers(
     conversation_id: Optional[str] = None,
     agent_id: Optional[str] = None,
     user_id: Optional[str] = None,
+    tunnel_url: Optional[str] = None,
 ):
     """Initialize managers for agent run.
 
@@ -32,6 +33,7 @@ def init_managers(
         conversation_id: The conversation ID for persisting state (e.g., code changes) across messages.
         agent_id: The agent ID to determine routing (e.g., "code" for LocalServer routing).
         user_id: The user ID for tunnel routing.
+        tunnel_url: Optional tunnel URL from request (takes priority over stored state).
     """
     from app.modules.intelligence.tools.todo_management_tool import (
         _reset_todo_manager,
@@ -44,14 +46,18 @@ def init_managers(
     )
 
     _reset_todo_manager()
+    logger.info(
+        f"🔄 [init_managers] Calling _init_code_changes_manager with tunnel_url={tunnel_url}"
+    )
     _init_code_changes_manager(
         conversation_id=conversation_id,
         agent_id=agent_id,
         user_id=user_id,
+        tunnel_url=tunnel_url,
     )
     _reset_requirement_manager()
     logger.info(
-        f"🔄 Initialized managers for agent run (conversation_id={conversation_id}, agent_id={agent_id}, user_id={user_id})"
+        f"🔄 Initialized managers for agent run (conversation_id={conversation_id}, agent_id={agent_id}, user_id={user_id}, tunnel_url={tunnel_url})"
     )
 
 

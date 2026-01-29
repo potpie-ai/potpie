@@ -614,6 +614,10 @@ class ConversationService:
                 if project_id_str:
                     await self._ensure_repo_in_repo_manager(project_id_str, user_id)
 
+                logger.info(
+                    f"[store_message] message.tunnel_url={message.tunnel_url}, "
+                    f"conversation_id={conversation_id}, user_id={user_id}"
+                )
                 if stream:
                     async for chunk in self._generate_and_stream_ai_response(
                         message.content,
@@ -622,6 +626,7 @@ class ConversationService:
                         message.node_ids,
                         message.attachment_ids,
                         local_mode=local_mode,
+                        tunnel_url=message.tunnel_url,
                     ):
                         yield chunk
                 else:
@@ -634,6 +639,7 @@ class ConversationService:
                         message.node_ids,
                         message.attachment_ids,
                         local_mode=local_mode,
+                        tunnel_url=message.tunnel_url,
                     ):
                         full_message += chunk.message
                         all_citations = all_citations + chunk.citations
@@ -752,6 +758,7 @@ class ConversationService:
                     node_ids,
                     attachment_ids,
                     local_mode=local_mode,
+                    tunnel_url=None,
                 ):
                     yield chunk
             else:
@@ -765,6 +772,7 @@ class ConversationService:
                     node_ids,
                     attachment_ids,
                     local_mode=local_mode,
+                    tunnel_url=None,
                 ):
                     full_message += chunk.message
                     all_citations = all_citations + chunk.citations
@@ -835,6 +843,7 @@ class ConversationService:
                 self.user_id,
                 node_contexts,
                 attachment_ids,
+                tunnel_url=None,
                 local_mode=local_mode,
             ):
                 yield chunk
@@ -904,7 +913,12 @@ class ConversationService:
         node_ids: List[NodeContext],
         attachment_ids: Optional[List[str]] = None,
         local_mode: bool = False,
+        tunnel_url: Optional[str] = None,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
+        logger.info(
+            f"[_generate_and_stream_ai_response] tunnel_url={tunnel_url}, "
+            f"conversation_id={conversation_id}, user_id={user_id}, local_mode={local_mode}"
+        )
         conversation = await self.conversation_store.get_by_id(conversation_id)
         if not conversation:
             raise ConversationNotFoundError(
@@ -1003,6 +1017,7 @@ class ConversationService:
                     context_images=context_images,
                     conversation_id=conversation_id,
                     user_id=user_id,  # Set user_id for tunnel routing
+                    tunnel_url=tunnel_url,  # Tunnel URL from request (takes priority)
                     local_mode=local_mode,
                 )
 
@@ -1052,7 +1067,7 @@ class ConversationService:
         """Background version for Celery tasks - reuses existing streaming logic"""
 
         async for chunk in self._generate_and_stream_ai_response(
-            query, conversation_id, user_id, node_ids, attachment_ids
+            query, conversation_id, user_id, node_ids, attachment_ids, tunnel_url=None
         ):
             yield chunk
 

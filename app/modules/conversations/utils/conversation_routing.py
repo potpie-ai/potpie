@@ -114,6 +114,7 @@ def start_celery_task_and_stream(
     attachment_ids: list,
     cursor: Optional[str] = None,
     local_mode: bool = False,
+    tunnel_url: Optional[str] = None,
 ) -> StreamingResponse:
     """
     Start a Celery background task and return a streaming response.
@@ -147,6 +148,7 @@ def start_celery_task_and_stream(
         node_ids=node_ids,
         attachment_ids=attachment_ids or [],
         local_mode=local_mode,
+        tunnel_url=tunnel_url,
     )
 
     # Store the Celery task ID for later revocation
@@ -181,6 +183,7 @@ async def start_celery_task_and_wait(
     node_ids: list,
     attachment_ids: list,
     local_mode: bool = False,
+    tunnel_url: Optional[str] = None,
 ) -> ChatMessageResponse:
     """
     Start a Celery background task and wait for the complete response.
@@ -215,6 +218,7 @@ async def start_celery_task_and_wait(
         node_ids=node_ids,
         attachment_ids=attachment_ids or [],
         local_mode=local_mode,
+        tunnel_url=tunnel_url,
     )
 
     # Store the Celery task ID for later revocation

@@ -17,7 +17,19 @@ logger = setup_logger(__name__)
 
 # Redis key prefix for tunnel connections
 TUNNEL_KEY_PREFIX = "tunnel_connection"
-TUNNEL_TTL_SECONDS = 24 * 60 * 60  # 24 hours expiry
+TUNNEL_TTL_SECONDS = 60 * 60  # 1 hour expiry (refreshed on each registration)
+
+# Health check settings
+TUNNEL_HEALTH_TIMEOUT = 5.0  # seconds
+
+
+class TunnelConnectionError(Exception):
+    """Raised when tunnel connection fails after retries"""
+
+    def __init__(self, message: str, last_error: Optional[str] = None):
+        self.message = message
+        self.last_error = last_error
+        super().__init__(self.message)
 
 
 class TunnelService:
@@ -28,17 +40,43 @@ class TunnelService:
         config = ConfigProvider()
         redis_url = config.get_redis_url()
         if redis_url:
-            self.redis_client = redis.from_url(redis_url, decode_responses=True)
+            try:
+                self.redis_client = redis.from_url(redis_url, decode_responses=True)
+                # Test Redis connection
+                self.redis_client.ping()
+                logger.info(f"[TunnelService] ✅ Connected to Redis at {redis_url}")
+            except Exception as e:
+                logger.error(
+                    f"[TunnelService] ❌ Failed to connect to Redis: {e}", exc_info=True
+                )
+                logger.warning("[TunnelService] Falling back to in-memory storage")
+                self.redis_client = None
+                self._in_memory_tunnels: Dict[str, str] = {}
         else:
-            logger.warning("Redis URL not configured, tunnel service will use in-memory storage")
+            logger.warning(
+                "[TunnelService] Redis URL not configured, tunnel service will use in-memory storage"
+            )
             self.redis_client = None
             self._in_memory_tunnels: Dict[str, str] = {}
 
-    def _get_tunnel_key(self, user_id: str, conversation_id: Optional[str] = None) -> str:
-        """Generate Redis key for tunnel connection"""
-        if conversation_id:
-            return f"{TUNNEL_KEY_PREFIX}:user:{user_id}:conversation:{conversation_id}"
+    def _get_conversation_key(self, conversation_id: str) -> str:
+        """Generate Redis key for conversation-level tunnel"""
+        return f"{TUNNEL_KEY_PREFIX}:conversation:{conversation_id}"
+
+    def _get_user_key(self, user_id: str) -> str:
+        """Generate Redis key for user-level tunnel"""
         return f"{TUNNEL_KEY_PREFIX}:user:{user_id}"
+
+    def _get_tunnel_key(
+        self, user_id: str, conversation_id: Optional[str] = None
+    ) -> str:
+        """
+        Generate Redis key for tunnel connection (legacy method for backward compatibility).
+        Prefers conversation-level key if conversation_id is provided.
+        """
+        if conversation_id:
+            return self._get_conversation_key(conversation_id)
+        return self._get_user_key(user_id)
 
     def register_tunnel(
         self,
@@ -50,6 +88,11 @@ class TunnelService:
         """
         Register a tunnel connection for a user/conversation.
 
+        Stores tunnel at two levels:
+        1. User-level: Always stored at tunnel_connection:user:{user_id}
+        2. Conversation-level: If conversation_id provided, also stored at
+           tunnel_connection:conversation:{conversation_id}
+
         Args:
             user_id: User ID
             tunnel_url: URL of the tunnel (e.g., https://xyz.trycloudflare.com)
@@ -60,65 +103,138 @@ class TunnelService:
             True if registration succeeded
         """
         try:
-            key = self._get_tunnel_key(user_id, conversation_id)
+            current_time = str(int(time.time()))
+            # Build tunnel data with last_seen for tracking activity
             tunnel_data = {
                 "tunnel_url": tunnel_url,
                 "user_id": user_id,
                 "conversation_id": conversation_id or "",
-                "registered_at": str(int(time.time())),
+                "registered_at": current_time,
+                "last_seen": current_time,
             }
             if local_port:
                 tunnel_data["local_port"] = local_port
 
+            tunnel_data_json = json.dumps(tunnel_data)
+
+            logger.info(
+                f"[TunnelService] 📝 Registering tunnel: user_id={user_id}, "
+                f"conversation_id={conversation_id}, tunnel_url={tunnel_url}, "
+                f"local_port={local_port}, redis_available={self.redis_client is not None}"
+            )
+
+            # Always register at user-level
+            user_key = self._get_user_key(user_id)
+            if not self._store_tunnel_data(user_key, tunnel_data_json):
+                return False
+            logger.info(f"[TunnelService] ✅ Registered user-level tunnel: {user_key}")
+
+            # Also register at conversation-level if conversation_id is provided
+            if conversation_id:
+                conversation_key = self._get_conversation_key(conversation_id)
+                if not self._store_tunnel_data(conversation_key, tunnel_data_json):
+                    logger.warning(
+                        f"[TunnelService] ⚠️ Failed to register conversation-level tunnel, "
+                        f"but user-level succeeded"
+                    )
+                    # Don't fail the whole registration if conversation-level fails
+                else:
+                    logger.info(
+                        f"[TunnelService] ✅ Registered conversation-level tunnel: {conversation_key}"
+                    )
+
+            logger.info(
+                f"[TunnelService] Registered tunnel for user {user_id}, conversation {conversation_id}: {tunnel_url}"
+            )
+            return True
+        except Exception as e:
+            logger.error(
+                f"[TunnelService] Error registering tunnel: {e}", exc_info=True
+            )
+            return False
+
+    def _store_tunnel_data(self, key: str, tunnel_data_json: str) -> bool:
+        """Store tunnel data in Redis or in-memory storage"""
+        try:
             if self.redis_client:
                 self.redis_client.setex(
                     key,
                     TUNNEL_TTL_SECONDS,
-                    json.dumps(tunnel_data),
+                    tunnel_data_json,
                 )
+                # Verify the registration was successful
+                verify_data = self.redis_client.get(key)
+                if not verify_data:
+                    logger.error(
+                        f"[TunnelService] ❌ Failed to verify tunnel registration in Redis: {key}"
+                    )
+                    return False
             else:
-                self._in_memory_tunnels[key] = json.dumps(tunnel_data)
-
-            logger.info(
-                f"Registered tunnel for user {user_id}, conversation {conversation_id}: {tunnel_url}"
-            )
+                self._in_memory_tunnels[key] = tunnel_data_json
             return True
         except Exception as e:
-            logger.error(f"Error registering tunnel: {e}")
+            logger.error(
+                f"[TunnelService] Error storing tunnel data for key {key}: {e}",
+                exc_info=True,
+            )
             return False
 
     def get_tunnel_url(
-        self, user_id: str, conversation_id: Optional[str] = None
+        self,
+        user_id: str,
+        conversation_id: Optional[str] = None,
+        tunnel_url: Optional[str] = None,
     ) -> Optional[str]:
         """
         Get tunnel URL for a user/conversation.
 
+        Lookup priority:
+        1. tunnel_url parameter (if provided, takes highest priority)
+        2. Conversation-level: tunnel_connection:conversation:{conversation_id}
+        3. User-level: tunnel_connection:user:{user_id}
+
         Args:
             user_id: User ID
             conversation_id: Optional conversation ID
+            tunnel_url: Optional tunnel URL from request (takes priority over stored state)
 
         Returns:
             Tunnel URL if found, None otherwise
         """
         try:
-            logger.info(f"[TunnelService] 🔍 Looking up tunnel for user={user_id}, conversation={conversation_id}")
-            
-            # Try conversation-specific first, then user-level
+            # If tunnel_url is provided directly, use it (highest priority)
+            if tunnel_url:
+                logger.info(
+                    f"[TunnelService] ✅ Using tunnel_url from request: {tunnel_url}"
+                )
+                return tunnel_url
+
+            logger.info(
+                f"[TunnelService] 🔍 Looking up tunnel for user={user_id}, conversation={conversation_id}"
+            )
+
+            # Try conversation-level first (if conversation_id provided)
             if conversation_id:
-                key = self._get_tunnel_key(user_id, conversation_id)
-                logger.info(f"[TunnelService] Checking conversation-specific key: {key}")
-                tunnel_data = self._get_tunnel_data(key)
+                conversation_key = self._get_conversation_key(conversation_id)
+                logger.info(
+                    f"[TunnelService] Checking conversation-level key: {conversation_key}"
+                )
+                tunnel_data = self._get_tunnel_data(conversation_key)
                 if tunnel_data:
                     tunnel_url = tunnel_data.get("tunnel_url")
-                    logger.info(f"[TunnelService] ✅ Found conversation tunnel: {tunnel_url}")
+                    logger.info(
+                        f"[TunnelService] ✅ Found conversation-level tunnel: {tunnel_url}"
+                    )
                     return tunnel_url
                 else:
-                    logger.info(f"[TunnelService] ❌ No conversation tunnel found")
+                    logger.info(
+                        f"[TunnelService] ❌ No conversation-level tunnel found"
+                    )
 
             # Fall back to user-level tunnel
-            key = self._get_tunnel_key(user_id)
-            logger.info(f"[TunnelService] Checking user-level key: {key}")
-            tunnel_data = self._get_tunnel_data(key)
+            user_key = self._get_user_key(user_id)
+            logger.info(f"[TunnelService] Checking user-level key: {user_key}")
+            tunnel_data = self._get_tunnel_data(user_key)
             if tunnel_data:
                 tunnel_url = tunnel_data.get("tunnel_url")
                 logger.info(f"[TunnelService] ✅ Found user-level tunnel: {tunnel_url}")
@@ -137,14 +253,31 @@ class TunnelService:
             if self.redis_client:
                 data = self.redis_client.get(key)
                 if data:
+                    logger.debug(
+                        f"[TunnelService] ✅ Found tunnel data in Redis for key: {key}"
+                    )
                     return json.loads(data)
+                else:
+                    logger.debug(
+                        f"[TunnelService] ❌ No tunnel data in Redis for key: {key}"
+                    )
             else:
                 data = self._in_memory_tunnels.get(key)
                 if data:
+                    logger.debug(
+                        f"[TunnelService] ✅ Found tunnel data in memory for key: {key}"
+                    )
                     return json.loads(data)
+                else:
+                    logger.debug(
+                        f"[TunnelService] ❌ No tunnel data in memory for key: {key}"
+                    )
             return None
         except Exception as e:
-            logger.error(f"Error getting tunnel data: {e}")
+            logger.error(
+                f"[TunnelService] Error getting tunnel data for key {key}: {e}",
+                exc_info=True,
+            )
             return None
 
     def unregister_tunnel(
@@ -152,6 +285,9 @@ class TunnelService:
     ) -> bool:
         """
         Unregister a tunnel connection.
+
+        If conversation_id is provided, only removes the conversation-level mapping.
+        If conversation_id is not provided, removes the user-level mapping.
 
         Args:
             user_id: User ID
@@ -161,11 +297,20 @@ class TunnelService:
             True if unregistration succeeded
         """
         try:
-            key = self._get_tunnel_key(user_id, conversation_id)
-            if self.redis_client:
-                self.redis_client.delete(key)
+            if conversation_id:
+                # Unregister conversation-level
+                conversation_key = self._get_conversation_key(conversation_id)
+                self._delete_tunnel_key(conversation_key)
+                logger.info(
+                    f"[TunnelService] Unregistered conversation-level tunnel: {conversation_key}"
+                )
             else:
-                self._in_memory_tunnels.pop(key, None)
+                # Unregister user-level
+                user_key = self._get_user_key(user_id)
+                self._delete_tunnel_key(user_key)
+                logger.info(
+                    f"[TunnelService] Unregistered user-level tunnel: {user_key}"
+                )
 
             logger.info(
                 f"Unregistered tunnel for user {user_id}, conversation {conversation_id}"
@@ -174,6 +319,13 @@ class TunnelService:
         except Exception as e:
             logger.error(f"Error unregistering tunnel: {e}")
             return False
+
+    def _delete_tunnel_key(self, key: str) -> None:
+        """Delete a tunnel key from Redis or in-memory storage"""
+        if self.redis_client:
+            self.redis_client.delete(key)
+        else:
+            self._in_memory_tunnels.pop(key, None)
 
     def is_tunnel_available(
         self, user_id: str, conversation_id: Optional[str] = None
@@ -190,6 +342,303 @@ class TunnelService:
         """
         tunnel_url = self.get_tunnel_url(user_id, conversation_id)
         return tunnel_url is not None
+
+    def list_user_tunnels(self, user_id: str) -> Dict[str, Dict]:
+        """
+        List all tunnels for a user (for debugging).
+
+        Searches both user-level and conversation-level tunnels
+        that belong to the user.
+
+        Args:
+            user_id: User ID
+
+        Returns:
+            Dictionary mapping tunnel keys to tunnel data
+        """
+        tunnels = {}
+        try:
+            if self.redis_client:
+                # Search for user-level tunnel
+                user_key = self._get_user_key(user_id)
+                user_data = self.redis_client.get(user_key)
+                if user_data:
+                    tunnels[user_key] = json.loads(user_data)
+
+                # Search for conversation-level tunnels belonging to this user
+                # We need to scan all conversation keys and filter by user_id
+                conversation_pattern = f"{TUNNEL_KEY_PREFIX}:conversation:*"
+                conversation_keys = self.redis_client.keys(conversation_pattern)
+                for key in conversation_keys:
+                    data = self.redis_client.get(key)
+                    if data:
+                        tunnel_data = json.loads(data)
+                        if tunnel_data.get("user_id") == user_id:
+                            tunnels[key] = tunnel_data
+
+                logger.info(
+                    f"[TunnelService] Found {len(tunnels)} tunnel(s) for user {user_id}"
+                )
+            else:
+                # Check in-memory storage - user-level
+                user_key = self._get_user_key(user_id)
+                if user_key in self._in_memory_tunnels:
+                    tunnels[user_key] = json.loads(self._in_memory_tunnels[user_key])
+
+                # Check conversation-level tunnels
+                conversation_prefix = f"{TUNNEL_KEY_PREFIX}:conversation:"
+                for key, value in self._in_memory_tunnels.items():
+                    if key.startswith(conversation_prefix):
+                        tunnel_data = json.loads(value)
+                        if tunnel_data.get("user_id") == user_id:
+                            tunnels[key] = tunnel_data
+        except Exception as e:
+            logger.error(
+                f"[TunnelService] Error listing tunnels for user {user_id}: {e}",
+                exc_info=True,
+            )
+        return tunnels
+
+    def verify_tunnel_health(
+        self, tunnel_url: str, timeout: float = TUNNEL_HEALTH_TIMEOUT
+    ) -> bool:
+        """
+        Verify tunnel is reachable by calling health endpoint.
+
+        Args:
+            tunnel_url: The tunnel URL to check
+            timeout: Timeout in seconds (default: 5.0)
+
+        Returns:
+            True if tunnel is healthy, False otherwise
+        """
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                response = client.get(f"{tunnel_url}/health")
+                if response.status_code == 200:
+                    try:
+                        data = response.json()
+                        # Check tunnel status from response if available
+                        tunnel_info = data.get("tunnel", {})
+                        if tunnel_info.get("healthy") is False:
+                            logger.warning(
+                                f"[TunnelService] Tunnel reports unhealthy: {tunnel_info}"
+                            )
+                            return False
+                        logger.debug(
+                            f"[TunnelService] ✅ Tunnel health check passed: {tunnel_url}"
+                        )
+                        return True
+                    except json.JSONDecodeError:
+                        # Response is not JSON but status is 200, consider healthy
+                        return True
+                else:
+                    logger.warning(
+                        f"[TunnelService] ❌ Health check failed ({response.status_code}): {tunnel_url}"
+                    )
+                    return False
+        except httpx.TimeoutException:
+            logger.warning(f"[TunnelService] ❌ Health check timeout: {tunnel_url}")
+            return False
+        except httpx.ConnectError as e:
+            logger.warning(f"[TunnelService] ❌ Health check connection error: {e}")
+            return False
+        except Exception as e:
+            logger.warning(f"[TunnelService] ❌ Health check failed: {e}")
+            return False
+
+    def execute_tool_call(
+        self,
+        tunnel_url: str,
+        endpoint: str,
+        payload: Dict,
+        method: str = "POST",
+        max_retries: int = 2,
+        timeout: float = 30.0,
+        verify_health_on_retry: bool = True,
+    ) -> Dict:
+        """
+        Execute a tool call through the tunnel with retry logic.
+
+        Args:
+            tunnel_url: The tunnel URL
+            endpoint: API endpoint (e.g., "/api/files/write")
+            payload: Request payload (JSON body)
+            method: HTTP method (default: POST)
+            max_retries: Maximum number of retries (default: 2)
+            timeout: Request timeout in seconds (default: 30.0)
+            verify_health_on_retry: Whether to verify health before retrying (default: True)
+
+        Returns:
+            Response JSON dict
+
+        Raises:
+            TunnelConnectionError: If all retries fail
+        """
+        last_error = None
+        url = f"{tunnel_url}{endpoint}"
+
+        for attempt in range(max_retries + 1):
+            try:
+                # Verify tunnel is healthy before retrying (skip on first attempt for speed)
+                if attempt > 0 and verify_health_on_retry:
+                    is_healthy = self.verify_tunnel_health(tunnel_url)
+                    if not is_healthy:
+                        logger.warning(
+                            f"[TunnelService] Tunnel unhealthy on attempt {attempt + 1}, "
+                            f"waiting before retry..."
+                        )
+                        time.sleep(2**attempt)  # Exponential backoff
+                        continue
+
+                with httpx.Client(timeout=timeout) as client:
+                    if method.upper() == "GET":
+                        response = client.get(url, params=payload)
+                    else:
+                        response = client.post(
+                            url,
+                            json=payload,
+                            headers={"Content-Type": "application/json"},
+                        )
+                    response.raise_for_status()
+                    return response.json()
+
+            except httpx.TimeoutException as e:
+                last_error = f"Timeout calling {endpoint}: {e}"
+                logger.warning(
+                    f"[TunnelService] Tool call timeout (attempt {attempt + 1}/{max_retries + 1}): {e}"
+                )
+
+            except httpx.HTTPStatusError as e:
+                last_error = f"HTTP error {e.response.status_code}: {e}"
+                logger.warning(
+                    f"[TunnelService] Tool call HTTP error (attempt {attempt + 1}/{max_retries + 1}): {e}"
+                )
+                # Don't retry client errors (4xx)
+                if e.response.status_code < 500:
+                    raise TunnelConnectionError(
+                        f"Tool call failed with client error: {last_error}",
+                        last_error=last_error,
+                    )
+
+            except httpx.ConnectError as e:
+                last_error = f"Connection failed: {e}"
+                logger.warning(
+                    f"[TunnelService] Tool call connection failed (attempt {attempt + 1}/{max_retries + 1}): {e}"
+                )
+
+            except Exception as e:
+                last_error = f"Unexpected error: {e}"
+                logger.warning(
+                    f"[TunnelService] Tool call unexpected error (attempt {attempt + 1}/{max_retries + 1}): {e}"
+                )
+
+            # Wait before retry with exponential backoff
+            if attempt < max_retries:
+                wait_time = 2**attempt
+                logger.info(f"[TunnelService] Waiting {wait_time}s before retry...")
+                time.sleep(wait_time)
+
+        # All retries exhausted
+        raise TunnelConnectionError(
+            f"Failed to execute tool call after {max_retries + 1} attempts. "
+            f"The VS Code extension tunnel may be disconnected. "
+            f"Last error: {last_error}",
+            last_error=last_error,
+        )
+
+    def execute_tool_call_with_fallback(
+        self,
+        user_id: str,
+        conversation_id: Optional[str],
+        endpoint: str,
+        payload: Dict,
+        tunnel_url: Optional[str] = None,
+        method: str = "POST",
+        max_retries: int = 2,
+        timeout: float = 30.0,
+    ) -> Dict:
+        """
+        Execute a tool call with automatic tunnel URL resolution and fallback.
+
+        Args:
+            user_id: User ID for tunnel lookup
+            conversation_id: Conversation ID for tunnel lookup
+            endpoint: API endpoint (e.g., "/api/files/write")
+            payload: Request payload (JSON body)
+            tunnel_url: Optional tunnel URL from request (takes priority)
+            method: HTTP method (default: POST)
+            max_retries: Maximum number of retries (default: 2)
+            timeout: Request timeout in seconds (default: 30.0)
+
+        Returns:
+            Response JSON dict
+
+        Raises:
+            TunnelConnectionError: If no tunnel available or all retries fail
+        """
+        # Get tunnel URL with priority resolution
+        resolved_url = self.get_tunnel_url(user_id, conversation_id, tunnel_url)
+
+        if not resolved_url:
+            raise TunnelConnectionError(
+                f"No tunnel available for user {user_id}, conversation {conversation_id}. "
+                f"Please ensure the VS Code extension is running and connected.",
+                last_error="No tunnel URL found",
+            )
+
+        try:
+            return self.execute_tool_call(
+                tunnel_url=resolved_url,
+                endpoint=endpoint,
+                payload=payload,
+                method=method,
+                max_retries=max_retries,
+                timeout=timeout,
+            )
+        except TunnelConnectionError:
+            # If conversation-level failed and we have a user-level fallback, try it
+            if conversation_id and tunnel_url != resolved_url:
+                user_level_url = self.get_tunnel_url(user_id, None)
+                if user_level_url and user_level_url != resolved_url:
+                    logger.info(
+                        f"[TunnelService] Retrying with user-level tunnel: {user_level_url}"
+                    )
+                    # Invalidate the failed conversation-level tunnel
+                    self.unregister_tunnel(user_id, conversation_id)
+                    return self.execute_tool_call(
+                        tunnel_url=user_level_url,
+                        endpoint=endpoint,
+                        payload=payload,
+                        method=method,
+                        max_retries=max_retries,
+                        timeout=timeout,
+                    )
+            raise
+
+    @staticmethod
+    def format_tunnel_error_response(error: "TunnelConnectionError") -> Dict:
+        """
+        Format a TunnelConnectionError into a response dict for the agent.
+
+        Args:
+            error: The TunnelConnectionError
+
+        Returns:
+            Dict with error information for the agent
+        """
+        return {
+            "success": False,
+            "error": "TUNNEL_DISCONNECTED",
+            "message": str(error),
+            "last_error": error.last_error,
+            "suggestion": (
+                "The local VS Code extension tunnel appears to be disconnected. "
+                "Please check VS Code and ensure the Potpie extension is running. "
+                "You can reload the VS Code window (Cmd/Ctrl+Shift+P → 'Reload Window') "
+                "and try again."
+            ),
+        }
 
 
 # Global instance

@@ -207,6 +207,7 @@ async def post_message(
             node_ids=node_ids_list,
             attachment_ids=message.attachment_ids or [],
             local_mode=local_mode,
+            tunnel_url=message.tunnel_url,
         )
 
     # Streaming: use Celery with streaming response
@@ -221,6 +222,7 @@ async def post_message(
         attachment_ids=message.attachment_ids or [],
         cursor=cursor,
         local_mode=local_mode,
+        tunnel_url=message.tunnel_url,
     )
 
 
