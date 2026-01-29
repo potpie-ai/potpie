@@ -4,6 +4,7 @@ import random
 import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
 
 import aiohttp
 from aiohttp import ClientTimeout, ClientConnectorError
@@ -502,8 +503,40 @@ class GithubService:
                     github = Github(auth=app_auth)  # do not remove this line
                     auth_headers = {"Authorization": f"Bearer {app_auth.token}"}
 
+                    # Construct URL with proper query parameter handling
+                    # repos_url might already have query params, so use URL parsing
+                    # This prevents 414 URI Too Long errors when repos_url has existing query params
+                    try:
+                        parsed_url = urlparse(repos_url)
+                        query_params = parse_qs(parsed_url.query)
+                        query_params["per_page"] = ["100"]  # Set per_page to 100
+                        # Reconstruct URL with updated query params
+                        new_query = urlencode(query_params, doseq=True)
+                        first_page_url = urlunparse((
+                            parsed_url.scheme,
+                            parsed_url.netloc,
+                            parsed_url.path,
+                            parsed_url.params,
+                            new_query,
+                            parsed_url.fragment
+                        ))
+                        
+                        # Log URL length for debugging 414 errors
+                        if len(first_page_url) > 2000:  # GitHub's typical limit is 8KB, but warn at 2KB
+                            logger.warning(
+                                f"Long URL detected for installation {installation['id']}: "
+                                f"{len(first_page_url)} chars. URL: {first_page_url[:200]}..."
+                            )
+                    except Exception as url_error:
+                        logger.error(
+                            f"Error parsing repos_url for installation {installation['id']}: {url_error}. "
+                            f"repos_url: {repos_url}"
+                        )
+                        # Fallback to simple concatenation if parsing fails
+                        first_page_url = f"{repos_url}?per_page=100" if "?" not in repos_url else f"{repos_url}&per_page=100"
+
                     async with session.get(
-                        f"{repos_url}?per_page=100", headers=auth_headers
+                        first_page_url, headers=auth_headers
                     ) as response:
                         if response.status != 200:
                             logger.error(
@@ -526,10 +559,22 @@ class GithubService:
 
                         if last_page > 1:
                             # Generate remaining page URLs (skip page 1)
-                            page_urls = [
-                                f"{repos_url}?page={page}&per_page=100"
-                                for page in range(2, last_page + 1)
-                            ]
+                            # Use the same URL parsing approach to ensure proper query params
+                            page_urls = []
+                            for page in range(2, last_page + 1):
+                                page_query_params = parse_qs(parsed_url.query)
+                                page_query_params["per_page"] = ["100"]
+                                page_query_params["page"] = [str(page)]
+                                page_query = urlencode(page_query_params, doseq=True)
+                                page_url = urlunparse((
+                                    parsed_url.scheme,
+                                    parsed_url.netloc,
+                                    parsed_url.path,
+                                    parsed_url.params,
+                                    page_query,
+                                    parsed_url.fragment
+                                ))
+                                page_urls.append(page_url)
 
                             # Process URLs in batches of 10
                             for i in range(0, len(page_urls), 10):
