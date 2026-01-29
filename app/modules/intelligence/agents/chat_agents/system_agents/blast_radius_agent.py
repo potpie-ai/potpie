@@ -8,7 +8,7 @@ from app.modules.intelligence.provider.exceptions import UnsupportedProviderErro
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 
 
 class BlastRadiusAgent(ChatAgent):
@@ -22,7 +22,7 @@ class BlastRadiusAgent(ChatAgent):
         self.llm_provider = llm_provider
         self.prompt_provider = prompt_provider
 
-    def _build_agent(self):
+    def _build_agent(self, ctx: Optional[ChatContext] = None):
         agent_config = AgentConfig(
             role="Blast Radius Analyzer",
             goal="Analyze the impact of code changes",
@@ -34,6 +34,10 @@ class BlastRadiusAgent(ChatAgent):
                 )
             ],
         )
+
+        # Exclude embedding-dependent tools during INFERRING status
+        exclude_embedding_tools = ctx.is_inferring() if ctx else False
+
         tools = self.tools_provider.get_tools(
             [
                 "get_nodes_from_tags",
@@ -45,7 +49,8 @@ class BlastRadiusAgent(ChatAgent):
                 "fetch_file",
                 "analyze_code_structure",
                 "bash_command",
-            ]
+            ],
+            exclude_embedding_tools=exclude_embedding_tools,
         )
         if not self.llm_provider.supports_pydantic("chat"):
             raise UnsupportedProviderError(
@@ -54,12 +59,12 @@ class BlastRadiusAgent(ChatAgent):
         return PydanticRagAgent(self.llm_provider, agent_config, tools)
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
-        return await self._build_agent().run(ctx)
+        return await self._build_agent(ctx).run(ctx)
 
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-        async for chunk in self._build_agent().run_stream(ctx):
+        async for chunk in self._build_agent(ctx).run_stream(ctx):
             yield chunk
 
 

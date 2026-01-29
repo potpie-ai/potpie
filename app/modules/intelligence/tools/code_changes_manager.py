@@ -2953,6 +2953,121 @@ def _should_route_to_local_server() -> bool:
         return False
 
 
+def _get_local_server_base_url_for_files() -> Optional[str]:
+    """Return the base URL for LocalServer file API (direct or tunnel).
+    Used when recording local changes in Redis after a successful local write.
+    """
+    try:
+        from app.modules.tunnel.tunnel_service import get_tunnel_service
+        import httpx
+        import os
+
+        user_id = _get_user_id()
+        conversation_id = _get_conversation_id()
+        if not user_id:
+            return None
+        tunnel_service = get_tunnel_service()
+        tunnel_url = tunnel_service.get_tunnel_url(user_id, conversation_id)
+        if not tunnel_url:
+            tunnel_url = tunnel_service.get_tunnel_url(user_id, None)
+        if not tunnel_url:
+            return None
+
+        force_tunnel = os.getenv("FORCE_TUNNEL", "").lower() in ["true", "1", "yes"]
+        base_url = os.getenv("BASE_URL", "").lower()
+        environment = os.getenv("ENVIRONMENT", "").lower()
+        is_local_backend = not force_tunnel and (
+            "localhost" in base_url
+            or "127.0.0.1" in base_url
+            or environment in ["local", "dev", "development"]
+            or not base_url
+        )
+        if is_local_backend and not force_tunnel:
+            tunnel_data = tunnel_service._get_tunnel_data(
+                tunnel_service._get_tunnel_key(user_id, conversation_id)
+            )
+            local_port = 3001
+            if tunnel_data and tunnel_data.get("local_port"):
+                local_port = int(tunnel_data["local_port"])
+            direct_url = f"http://localhost:{local_port}"
+            try:
+                test_client = httpx.Client(timeout=2.0)
+                health_check = test_client.get(f"{direct_url}/health")
+                test_client.close()
+                if health_check.status_code == 200:
+                    return direct_url
+            except Exception:
+                pass
+        return tunnel_url
+    except Exception as e:
+        logger.debug(f"Failed to get LocalServer base URL for files: {e}")
+        return None
+
+
+def _fetch_file_content_from_local_server(file_path: str) -> Optional[str]:
+    """Fetch current file content from LocalServer via tunnel. Used to sync Redis after line-based local writes."""
+    base = _get_local_server_base_url_for_files()
+    if not base:
+        return None
+    try:
+        import httpx
+
+        url = f"{base}/api/files/read?path={url_quote(file_path)}"
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(url)
+            if response.status_code == 200:
+                return response.json().get("content", "")
+    except Exception as e:
+        logger.debug(f"Failed to fetch file content via LocalServer: {e}")
+    return None
+
+
+def _record_local_change_in_redis(operation: str, data: Dict[str, Any]) -> None:
+    """After a successful local write via tunnel, record the change in Redis so get_summary/get_file show it."""
+    try:
+        manager = _get_code_changes_manager()
+        file_path = data.get("file_path") or ""
+        if not file_path:
+            return
+        if operation == "add_file":
+            manager.add_file(
+                file_path=file_path,
+                content=data.get("content", ""),
+                description=data.get("description"),
+            )
+        elif operation == "update_file":
+            manager.update_file(
+                file_path=file_path,
+                content=data.get("content", ""),
+                description=data.get("description"),
+            )
+        elif operation == "delete_file":
+            manager.delete_file(
+                file_path=file_path,
+                description=data.get("description"),
+            )
+        elif operation in (
+            "update_file_lines",
+            "insert_lines",
+            "delete_lines",
+            "replace_in_file",
+        ):
+            content = _fetch_file_content_from_local_server(file_path)
+            if content is not None:
+                manager.update_file(
+                    file_path=file_path,
+                    content=content,
+                    description=data.get("description"),
+                )
+        logger.info(
+            f"CodeChangesManager: Recorded local change in Redis for {operation} '{file_path}'"
+        )
+    except Exception as e:
+        logger.warning(
+            f"CodeChangesManager: Failed to record local change in Redis: {e}"
+        )
+
+
 def _execute_local_write(operation: str, data: Dict[str, Any], file_path: str) -> str:
     """Execute a write operation locally with local-first semantics.
 
@@ -2978,7 +3093,8 @@ def _execute_local_write(operation: str, data: Dict[str, Any], file_path: str) -
     result = _route_to_local_server(operation, data)
 
     if result:
-        # Local execution succeeded
+        # Local execution succeeded - also store change in Redis so get_summary/get_file show it
+        _record_local_change_in_redis(operation, data)
         return result
 
     # Local execution FAILED but user expected local

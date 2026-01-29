@@ -97,6 +97,13 @@ from .requirement_verification_tool import create_requirement_verification_tools
 
 
 class ToolService:
+    # Tools that depend on embeddings/docstrings and should be disabled during INFERRING status
+    # These tools require AI-inferenced content (embeddings, tags) that doesn't exist during inference
+    EMBEDDING_DEPENDENT_TOOLS = {
+        "ask_knowledge_graph_queries",  # Uses vector search which requires embeddings
+        "get_nodes_from_tags",  # Uses AI-generated tags which may not exist yet
+    }
+
     def __init__(self, db: Session, user_id: str):
         self.db = db
         self.user_id = user_id
@@ -123,11 +130,15 @@ class ToolService:
         self.provider_service = ProviderService.create(db, user_id)
         self.tools = self._initialize_tools()
 
-    def get_tools(self, tool_names: List[str]) -> List[StructuredTool]:
+    def get_tools(
+        self, tool_names: List[str], exclude_embedding_tools: bool = False
+    ) -> List[StructuredTool]:
         """Get tools by name if they exist.
 
         Args:
             tool_names: List of tool names to retrieve
+            exclude_embedding_tools: If True, excludes tools that depend on embeddings/AI-generated content.
+                                    Use this when project is in INFERRING status.
 
         Returns:
             List of StructuredTool instances for the requested tool names
@@ -137,6 +148,9 @@ class ToolService:
         """
         tools = []
         for tool_name in tool_names:
+            # Skip embedding-dependent tools if requested (during INFERRING status)
+            if exclude_embedding_tools and tool_name in self.EMBEDDING_DEPENDENT_TOOLS:
+                continue
             if self.tools.get(tool_name) is not None:
                 tools.append(self.tools[tool_name])
         return tools

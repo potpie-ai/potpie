@@ -59,6 +59,8 @@ class ChatContext(BaseModel):
     node_ids: Optional[List[str]] = None
     additional_context: str = ""
     query: str
+    # Project parsing status - used to conditionally enable/disable tools
+    project_status: Optional[str] = None
     user_id: Optional[str] = None
     conversation_id: Optional[str] = None  # For persisting state across messages
     tunnel_url: Optional[str] = (
@@ -73,6 +75,10 @@ class ChatContext(BaseModel):
     )
     # Context images from recent conversation history
     context_images: Optional[Dict[str, Dict[str, Union[str, int]]]] = None
+
+    def is_inferring(self) -> bool:
+        """Check if the project is still in INFERRING state (AI enrichment in progress)"""
+        return self.project_status == "inferring"
 
     def has_images(self) -> bool:
         """Check if this context contains any images"""

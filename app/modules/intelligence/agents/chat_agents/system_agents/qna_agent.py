@@ -15,7 +15,7 @@ from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -32,7 +32,7 @@ class QnAAgent(ChatAgent):
         self.tools_provider = tools_provider
         self.prompt_provider = prompt_provider
 
-    def _build_agent(self) -> ChatAgent:
+    def _build_agent(self, ctx: Optional[ChatContext] = None) -> ChatAgent:
         agent_config = AgentConfig(
             role="Codebase Q&A Specialist",
             goal="Provide comprehensive, well-structured answers to questions about the codebase by systematically exploring code, understanding context, and delivering thorough explanations grounded in actual code.",
@@ -53,6 +53,14 @@ class QnAAgent(ChatAgent):
                 )
             ],
         )
+
+        # Exclude embedding-dependent tools during INFERRING status
+        exclude_embedding_tools = ctx.is_inferring() if ctx else False
+        if exclude_embedding_tools:
+            logger.info(
+                "Project is in INFERRING status - excluding embedding-dependent tools (ask_knowledge_graph_queries, get_nodes_from_tags)"
+            )
+
         tools = self.tools_provider.get_tools(
             [
                 "get_code_from_multiple_node_ids",
@@ -74,7 +82,8 @@ class QnAAgent(ChatAgent):
                 "get_todo_summary",
                 "add_requirements",
                 "get_requirements",
-            ]
+            ],
+            exclude_embedding_tools=exclude_embedding_tools,
         )
 
         supports_pydantic = self.llm_provider.supports_pydantic("chat")
@@ -142,13 +151,14 @@ class QnAAgent(ChatAgent):
         return ctx
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
-        return await self._build_agent().run(await self._enriched_context(ctx))
+        enriched_ctx = await self._enriched_context(ctx)
+        return await self._build_agent(enriched_ctx).run(enriched_ctx)
 
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         ctx = await self._enriched_context(ctx)
-        async for chunk in self._build_agent().run_stream(ctx):
+        async for chunk in self._build_agent(ctx).run_stream(ctx):
             yield chunk
 
 

@@ -17,7 +17,7 @@ from app.modules.intelligence.agents.chat_agents.agent_config import (
 )
 from app.modules.intelligence.tools.tool_service import ToolService
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -741,7 +741,9 @@ class CodeGenAgent(ChatAgent):
         self.tools_provider = tools_provider
         self.prompt_provider = prompt_provider
 
-    def _build_agent(self, local_mode: bool = False) -> ChatAgent:
+    def _build_agent(
+        self, ctx: Optional[ChatContext] = None, local_mode: bool = False
+    ) -> ChatAgent:
         agent_config = AgentConfig(
             role="Code Generation Agent",
             goal="Generate precise, copy-paste ready code modifications that maintain project consistency and handle all dependencies",
@@ -841,7 +843,17 @@ class CodeGenAgent(ChatAgent):
             # show_diff - only available in non-local mode (displays diffs to user)
             base_tools.append("show_diff")
 
-        tools = self.tools_provider.get_tools(base_tools)
+        # Exclude embedding-dependent tools during INFERRING status
+        exclude_embedding_tools = ctx.is_inferring() if ctx else False
+        if exclude_embedding_tools:
+            logger.info(
+                "Project is in INFERRING status - excluding embedding-dependent tools"
+            )
+
+        tools = self.tools_provider.get_tools(
+            base_tools,
+            exclude_embedding_tools=exclude_embedding_tools,
+        )
 
         # Verify show_diff is not present in local_mode
         if local_mode:
@@ -924,9 +936,12 @@ class CodeGenAgent(ChatAgent):
         return ctx
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
-        local_mode = ctx.local_mode if hasattr(ctx, "local_mode") else False
-        return await self._build_agent(local_mode=local_mode).run(
-            await self._enriched_context(ctx)
+        enriched_ctx = await self._enriched_context(ctx)
+        local_mode = (
+            enriched_ctx.local_mode if hasattr(enriched_ctx, "local_mode") else False
+        )
+        return await self._build_agent(enriched_ctx, local_mode=local_mode).run(
+            enriched_ctx
         )
 
     async def run_stream(
@@ -934,7 +949,9 @@ class CodeGenAgent(ChatAgent):
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         ctx = await self._enriched_context(ctx)
         local_mode = ctx.local_mode if hasattr(ctx, "local_mode") else False
-        async for chunk in self._build_agent(local_mode=local_mode).run_stream(ctx):
+        async for chunk in self._build_agent(ctx, local_mode=local_mode).run_stream(
+            ctx
+        ):
             yield chunk
 
 
