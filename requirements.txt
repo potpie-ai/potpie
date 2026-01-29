@@ -254,7 +254,13 @@ tree-sitter==0.25.2
 tree-sitter-c-sharp==0.23.1
 tree-sitter-embedded-template==0.25.0
 tree-sitter-language-pack==0.13.0
+tree-sitter-languages==1.10.2
 tree-sitter-yaml==0.7.2
+langchain-community==0.3.16
+langchain-postgres==0.0.12
+PyGithub==2.5.0
+python-docx==1.1.2
+openpyxl==3.1.5
 ty==0.0.1a33
 typer==0.20.0
 types-protobuf==6.32.1.20251210

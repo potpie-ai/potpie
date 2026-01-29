@@ -9,7 +9,7 @@ class ProviderInfo(BaseModel):
 
 
 class AvailableModelOption(BaseModel):
-    id: str  # Full model identifier (e.g., "anthropic/claude-3-5-haiku-20241022")
+    id: str  # Full model identifier (e.g., "anthropic/claude-sonnet-4-20250514")
     name: str  # Display name
     description: str
     provider: str  # Provider identifier (e.g., "anthropic")

@@ -259,6 +259,16 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             - Correlate visual evidence with the user's query
             """
 
+        has_attached_docs = (
+            ctx.additional_context
+            and "=== ATTACHED FILE:" in ctx.additional_context
+        )
+        attached_docs_instruction = ""
+        if has_attached_docs:
+            attached_docs_instruction = """
+                USER-ATTACHED DOCUMENTS: The "Additional Context" below contains document(s) the user attached to this message (e.g. PDFs). You MUST prioritize and reference this content when answering. Cite specific sections or text from these attached documents when relevant to the query. Do not ignore or summarize away this content in favor of only codebase/repo sources.
+                """
+
         return f"""
                 CONTEXT:
                 Project ID: {ctx.project_id}
@@ -266,6 +276,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                 Project Name (this is name from github. i.e. owner/repo): {ctx.project_name}
 
                 {image_context}
+                {attached_docs_instruction}
 
                 Additional Context:
                 {ctx.additional_context if ctx.additional_context != "" else "no additional context"}

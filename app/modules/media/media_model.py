@@ -11,14 +11,17 @@ class AttachmentType(str, enum.Enum):
     IMAGE = "image"
     VIDEO = "video"  # Future extension
     AUDIO = "audio"  # Future extension
-    DOCUMENT = "document"  # Future extension
+    DOCUMENT = "document"
+    PDF = "pdf"
+    SPREADSHEET = "spreadsheet"
+    CODE = "code"
 
 
 class StorageProvider(str, enum.Enum):
-    LOCAL = "local"
-    GCS = "gcs"
-    S3 = "s3"  # Future extension
-    AZURE = "azure"  # Future extension
+    LOCAL = "LOCAL"
+    GCS = "GCS"
+    S3 = "S3"  # Future extension
+    AZURE = "AZURE"  # Future extension
 
 
 class MessageAttachment(Base):
@@ -31,7 +34,10 @@ class MessageAttachment(Base):
         nullable=True,
         index=True,
     )
-    attachment_type = Column(SQLAEnum(AttachmentType), nullable=False)
+    attachment_type = Column(
+        SQLAEnum(AttachmentType, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+    )
     file_name = Column(String(255), nullable=False)
     file_size = Column(Integer, nullable=False)
     mime_type = Column(String(100), nullable=False)

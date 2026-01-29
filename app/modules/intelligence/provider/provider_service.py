@@ -377,30 +377,7 @@ AVAILABLE_MODELS = [
         is_chat_model=True,
         is_inference_model=False,
     ),
-    AvailableModelOption(
-        id="anthropic/claude-sonnet-4-20250514",
-        name="Claude Sonnet 4",
-        description="Faster, more efficient Claude model for code generation",
-        provider="anthropic",
-        is_chat_model=True,
-        is_inference_model=False,
-    ),
-    AvailableModelOption(
-        id="anthropic/claude-3-7-sonnet-20250219",
-        name="Claude Sonnet 3.7",
-        description="Highest level of intelligence and capability with toggleable extended thinking",
-        provider="anthropic",
-        is_chat_model=True,
-        is_inference_model=False,
-    ),
-    AvailableModelOption(
-        id="anthropic/claude-3-5-haiku-20241022",
-        name="Claude Haiku 3.5",
-        description="Faster, more efficient Claude model",
-        provider="anthropic",
-        is_chat_model=False,
-        is_inference_model=True,
-    ),
+
     AvailableModelOption(
         id="anthropic/claude-opus-4-5-20251101",
         name="Claude 4.5 Opus",
