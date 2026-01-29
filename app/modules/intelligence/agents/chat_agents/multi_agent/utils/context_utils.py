@@ -43,6 +43,18 @@ Image Analysis Notes:
     if image_context:
         context_parts.append(image_context.strip())
 
+    # User-attached documents instruction (e.g. PDFs)
+    if (
+        ctx.additional_context
+        and "=== ATTACHED FILE:" in ctx.additional_context
+    ):
+        context_parts.append(
+            "USER-ATTACHED DOCUMENTS: The Additional Context below contains "
+            "document(s) the user attached to this message. You MUST prioritize "
+            "and reference this content when answering; cite specific sections "
+            "from these attached documents when relevant."
+        )
+
     # Additional context
     if ctx.additional_context:
         context_parts.append(f"Additional Context: {ctx.additional_context}")

@@ -936,7 +936,13 @@ class ConversationService:
                 conversation_id
             )
 
-            # Prepare text attachments
+            # Prepare text attachments (e.g. uploaded PDFs/documents)
+            if attachment_ids:
+                logger.info(
+                    "Message has %s attachment_id(s) for agent context: %s",
+                    len(attachment_ids),
+                    attachment_ids,
+                )
             text_attachments = await self._prepare_text_attachments(
                 attachment_ids or []
             )
@@ -950,8 +956,11 @@ class ConversationService:
                         f"=== ATTACHED FILE: {att_data['file_name']} ===\n\n{att_data['text']}\n\n"
                     )
                 additional_context = "\n".join(text_parts)
+                file_names = [d["file_name"] for d in text_attachments.values()]
                 logger.info(
-                    f"Added {len(text_attachments)} text attachments to context"
+                    "Added %d text attachment(s) to agent context: %s",
+                    len(text_attachments),
+                    file_names,
                 )
 
             logger.info(
