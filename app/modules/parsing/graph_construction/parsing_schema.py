@@ -26,3 +26,13 @@ class RepoDetails(BaseModel):
     branch_name: str
     repo_path: Optional[str] = None
     commit_id: Optional[str] = None
+
+
+class ParsingStatusRequest(BaseModel):
+    repo_name: str = Field(..., description="Repository name to check status for")
+    commit_id: Optional[str] = Field(
+        default=None, description="Commit ID to check status for"
+    )
+    branch_name: Optional[str] = Field(
+        default=None, description="Branch name (used if commit_id is not provided)"
+    )

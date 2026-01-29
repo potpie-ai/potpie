@@ -1,8 +1,35 @@
+import logging
 import os
 
 import resend
 
 import re
+
+# Try to import email-inspector library for robust email domain detection
+try:
+    from email_inspector import inspect as email_inspect
+
+    EMAIL_INSPECTOR_AVAILABLE = True
+except ImportError:
+    EMAIL_INSPECTOR_AVAILABLE = False
+    logging.warning(
+        "email-inspector library not available. "
+        "Falling back to built-in personal email domain list. "
+        "Install with: pip install email-inspector"
+    )
+
+# Try to import tldextract for proper domain extraction (handles multi-part TLDs)
+try:
+    import tldextract
+
+    TLDEXTRACT_AVAILABLE = True
+except ImportError:
+    TLDEXTRACT_AVAILABLE = False
+    logging.warning(
+        "tldextract library not available. "
+        "Falling back to simple domain extraction. "
+        "Install with: pip install tldextract"
+    )
 
 
 class EmailHelper:
@@ -55,3 +82,294 @@ def is_valid_email(email: str) -> bool:
     """Simple regex-based email validation."""
     pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
     return re.match(pattern, email) is not None
+
+
+# Comprehensive list of personal/free email domains
+# This list can be extended or replaced with a library/API in the future
+PERSONAL_EMAIL_DOMAINS = {
+    # Major free email providers
+    "gmail.com",
+    "yahoo.com",
+    "hotmail.com",
+    "outlook.com",
+    "icloud.com",
+    "protonmail.com",
+    "mail.com",
+    "aol.com",
+    "zoho.com",
+    "yandex.com",
+    "gmx.com",
+    "live.com",
+    "msn.com",
+    "inbox.com",
+    "fastmail.com",
+    "tutanota.com",
+    "mail.ru",
+    "qq.com",
+    "163.com",
+    "126.com",
+    "sina.com",
+    "rediffmail.com",
+    "mailinator.com",
+    "guerrillamail.com",
+    "10minutemail.com",
+    "tempmail.com",
+    "throwaway.email",
+    # Additional common providers
+    "proton.me",
+    "pm.me",
+    "me.com",
+    "mac.com",
+    "yahoo.co.uk",
+    "yahoo.fr",
+    "yahoo.de",
+    "yahoo.it",
+    "yahoo.es",
+    "yahoo.com.au",
+    "yahoo.com.br",
+    "yahoo.co.jp",
+    "hotmail.co.uk",
+    "hotmail.fr",
+    "hotmail.de",
+    "hotmail.it",
+    "hotmail.es",
+    "outlook.co.uk",
+    "outlook.fr",
+    "outlook.de",
+    "outlook.it",
+    "outlook.es",
+    "gmail.co.uk",
+    "googlemail.com",
+    # Disposable email services (common ones)
+    "tempmail.org",
+    "getnada.com",
+    "maildrop.cc",
+    "mohmal.com",
+    "trashmail.com",
+    "sharklasers.com",
+    "guerrillamailblock.com",
+    "pokemail.net",
+    "spamgourmet.com",
+    "temp-mail.org",
+    "emailondeck.com",
+    "fakeinbox.com",
+    "mintemail.com",
+    "meltmail.com",
+    "melt.li",
+    "33mail.com",
+    "spambox.us",
+    "spamfree24.org",
+    "spamfree24.de",
+    "spamfree24.eu",
+    "spamfree24.net",
+    "spamfree24.com",
+    "spamhole.com",
+    "spam.la",
+    "spamobox.com",
+    "spamspot.com",
+    "tempail.com",
+    "tempalias.com",
+    "tempe-mail.com",
+    "tempemail.biz",
+    "tempemail.com",
+    "tempinbox.co.uk",
+    "tempinbox.com",
+    "tempmail2.com",
+    "tempmailer.com",
+    "tempthe.net",
+    "thankyou2010.com",
+    "thisisnotmyrealemail.com",
+    "throwam.com",
+    "tilien.com",
+    "tmail.ws",
+    "tmailinator.com",
+    "toiea.com",
+    "tradermail.info",
+    "trash-amil.com",
+    "trash2009.com",
+    "trashymail.com",
+    "trialmail.de",
+    "trillianpro.com",
+    "turual.com",
+    "twinmail.de",
+    "tyldd.com",
+    "uggsrock.com",
+    "umail.net",
+    "upliftnow.com",
+    "uplipht.com",
+    "uroid.com",
+    "us.af",
+    "venompen.com",
+    "veryrealemail.com",
+    "viditag.com",
+    "viewcastmedia.com",
+    "viewcastmedia.net",
+    "viewcastmedia.org",
+    "webemail.me",
+    "webm4il.info",
+    "wh4f.org",
+    "whyspam.me",
+    "willselfdestruct.com",
+    "winemaven.info",
+    "wronghead.com",
+    "wuzup.net",
+    "wuzupmail.net",
+    "xagloo.com",
+    "xemaps.com",
+    "xents.com",
+    "xmaily.com",
+    "xoxy.net",
+    "yapped.net",
+    "yeah.net",
+    "yep.it",
+    "yogamaven.com",
+    "yopmail.com",
+    "yopmail.fr",
+    "yopmail.net",
+    "youmailr.com",
+    "ypmail.webnetic.net",
+    "zippymail.info",
+    "zoemail.org",
+    "zomg.info",
+}
+
+
+def is_personal_email_domain(email: str) -> bool:
+    """
+    Check if an email address belongs to a personal/free email provider.
+
+    This function uses the email-inspector library (if available) which maintains
+    a database of over 16,000 free email providers. Falls back to a built-in
+    comprehensive list if the library is not available.
+
+    Args:
+        email: The email address to check (e.g., "user@example.com")
+
+    Returns:
+        True if the email domain is a personal/free email provider, False otherwise.
+        Returns False if the email format is invalid or domain cannot be extracted.
+
+    Examples:
+        >>> is_personal_email_domain("user@gmail.com")
+        True
+        >>> is_personal_email_domain("user@company.com")
+        False
+        >>> is_personal_email_domain("invalid-email")
+        False
+    """
+    if not email or "@" not in email:
+        return False
+
+    # Try using email-inspector library first (more robust, 16,000+ domains)
+    if EMAIL_INSPECTOR_AVAILABLE:
+        try:
+            result = email_inspect(email)
+            # email-inspector returns a dict with 'free' key indicating if it's a free email
+            if isinstance(result, dict) and "free" in result:
+                return result["free"]
+            # Fallback if result format is unexpected
+        except Exception as e:
+            logging.warning(
+                f"Error using email-inspector for {email}: {e}. Falling back to built-in list."
+            )
+
+    # Fallback to built-in comprehensive list
+    try:
+        domain = email.split("@")[1].lower().strip()
+        return domain in PERSONAL_EMAIL_DOMAINS
+    except (IndexError, AttributeError):
+        return False
+
+
+def extract_organization_from_email(email: str) -> str | None:
+    """
+    Extract organization domain from an email address.
+
+    If the email belongs to a personal/free email provider, returns None.
+    Otherwise, returns the domain as the organization.
+
+    Args:
+        email: The email address to extract organization from
+
+    Returns:
+        The organization domain (e.g., "company.com") or None if personal email
+
+    Examples:
+        >>> extract_organization_from_email("user@company.com")
+        'company.com'
+        >>> extract_organization_from_email("user@gmail.com")
+        None
+    """
+    if not email or "@" not in email:
+        return None
+
+    try:
+        domain = email.split("@")[1].lower().strip()
+        if is_personal_email_domain(email):
+            return None
+        return domain
+    except (IndexError, AttributeError):
+        return None
+
+
+def extract_registrable_domain(email: str) -> str:
+    """
+    Extracts the registrable domain from an email address using public suffix list.
+    Handles multi-part TLDs correctly (e.g., .co.uk, .com.au).
+
+    Validates and normalizes the email (strip and lower), parses the domain with
+    tldextract to get the registrable domain, and returns that lowercase string
+    or empty string on invalid input.
+
+    Args:
+        email: User's email address
+
+    Returns:
+        The registrable domain in lowercase, or empty string if invalid
+
+    Example:
+        extract_registrable_domain('user@GmAiL.CoM') -> 'gmail.com'
+        extract_registrable_domain('user@eng.company.com') -> 'company.com'
+        extract_registrable_domain('user@gmail.co.uk') -> 'gmail.co.uk' (not 'co.uk')
+    """
+    # Validate and normalize email input
+    if not email or not isinstance(email, str):
+        return ""
+
+    # Strip whitespace and convert to lowercase
+    email = email.strip().lower()
+    if not email:
+        return ""
+
+    # Split email to extract domain part
+    parts = email.split("@")
+    if len(parts) != 2:
+        return ""
+
+    domain = parts[1]
+    if not domain:
+        return ""
+
+    # Use tldextract library to get the registrable domain
+    # This properly handles multi-part TLDs like .co.uk, .com.au, etc.
+    if TLDEXTRACT_AVAILABLE:
+        try:
+            extracted = tldextract.extract(domain)
+            # tldextract returns: ExtractResult(subdomain='www', domain='example', suffix='co.uk')
+            # registered_domain combines domain + suffix (e.g., 'example.co.uk')
+            registrable_domain = extracted.registered_domain
+            # If registered_domain is empty, fall back to the domain itself
+            return registrable_domain if registrable_domain else domain
+        except Exception:
+            # If extraction fails for any reason, fall back
+            pass
+
+    # Fallback to simple logic if tldextract is not available
+    # This is less accurate but won't break if the library isn't installed
+    # Note: This will fail for multi-part TLDs like .co.uk, .com.au
+    domain_parts = domain.split(".")
+    if len(domain_parts) >= 2:
+        # Take the last two parts (e.g., 'company.com')
+        return ".".join(domain_parts[-2:])
+
+    return domain

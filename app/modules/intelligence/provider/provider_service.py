@@ -1,4 +1,3 @@
-import logging
 import os
 from typing import List, Dict, Any, Union, AsyncGenerator, Optional
 from pydantic import BaseModel
@@ -10,8 +9,7 @@ from app.core.config_provider import config_provider
 from app.modules.key_management.secret_manager import SecretManager
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.posthog_helper import PostHogClient
-
-logger = logging.getLogger(__name__)
+from app.modules.utils.logger import setup_logger
 
 from .provider_schema import (
     ProviderInfo,
@@ -25,21 +23,36 @@ from .llm_config import (
     LLMProviderConfig,
     build_llm_provider_config,
     get_config_for_model,
+    DEFAULT_CHAT_MODEL,
+    DEFAULT_INFERENCE_MODEL,
 )
 from .exceptions import UnsupportedProviderError
 
 from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.openai import OpenAIProvider
+from app.modules.intelligence.provider.openrouter_gemini_model import (
+    OpenRouterGeminiModel,
+)
 from pydantic_ai.providers.anthropic import AnthropicProvider
-import litellm
+from app.modules.intelligence.provider.anthropic_caching_model import (
+    CachingAnthropicModel,
+)
 
 import random
 import time
 import asyncio
 from functools import wraps
 
+logger = setup_logger(__name__)
+
 litellm.num_retries = 5  # Number of retries for rate limited requests
+
+# Enable debug logging if LITELLM_DEBUG environment variable is set
+_litellm_debug = os.getenv("LITELLM_DEBUG", "false").lower() in ("true", "1", "yes")
+if _litellm_debug:
+    litellm.set_verbose = True  # type: ignore
+    litellm._turn_on_debug()  # type: ignore
+    logger.info("LiteLLM debug logging ENABLED (LITELLM_DEBUG=true)")
 
 OVERLOAD_ERROR_PATTERNS = {
     "anthropic": ["overloaded", "overloaded_error", "capacity", "rate limit exceeded"],
@@ -170,7 +183,7 @@ def custom_litellm_retry_handler(retry_count: int, exception: Exception) -> bool
     This gets registered with litellm.custom_retry_fn
     """
     # Default settings for litellm's built-in retry
-    settings = RetrySettings(max_retries=litellm.num_retries)
+    settings = RetrySettings(max_retries=litellm.num_retries or 5)
 
     if not is_recoverable_error(exception, settings):
         # If it's not a recoverable error, don't retry
@@ -179,7 +192,7 @@ def custom_litellm_retry_handler(retry_count: int, exception: Exception) -> bool
     delay = calculate_backoff_time(retry_count, settings)
 
     provider = identify_provider_from_error(exception)
-    logging.warning(
+    logger.warning(
         f"{provider.capitalize()} API error: {str(exception)}. "
         f"Retry {retry_count}/{settings.max_retries}, "
         f"waiting {delay:.2f}s before next attempt..."
@@ -216,15 +229,17 @@ def robust_llm_call(settings: Optional[RetrySettings] = None):
                     provider = identify_provider_from_error(e)
 
                     if retries >= settings.max_retries:
-                        logging.error(
-                            f"Max retries ({settings.max_retries}) exceeded for {provider} API call. "
-                            f"Last error: {str(e)}"
+                        logger.exception(
+                            "Max retries exceeded for API call",
+                            provider=provider,
+                            retries=retries,
+                            max_retries=settings.max_retries,
                         )
                         raise
 
                     delay = calculate_backoff_time(retries, settings)
 
-                    logging.warning(
+                    logger.warning(
                         f"{provider.capitalize()} API error: {str(e)}. "
                         f"Retry {retries+1}/{settings.max_retries}, "
                         f"waiting {delay:.2f}s before next attempt..."
@@ -235,45 +250,107 @@ def robust_llm_call(settings: Optional[RetrySettings] = None):
 
             # This should never be reached due to the raise in the loop,
             # but included for clarity
-            raise last_exception
+            if last_exception is not None:
+                raise last_exception
+            raise RuntimeError("Unexpected error: retries exhausted without exception")
 
         return wrapper
 
     return decorator
 
 
+def sanitize_messages_for_tracing(messages: list) -> list:
+    """
+    Sanitize messages to prevent OpenTelemetry encoding errors.
+    Converts None content values to empty strings to avoid:
+    'Invalid type <class 'NoneType'> of value None' errors.
+
+    Args:
+        messages: List of message dictionaries with 'role' and 'content' keys
+
+    Returns:
+        List of sanitized messages with None content converted to empty strings
+    """
+    sanitized = []
+    for idx, msg in enumerate(messages):
+        try:
+            if isinstance(msg, dict):
+                sanitized_msg = msg.copy()
+                # Convert None content to empty string for OpenTelemetry compatibility
+                if "content" in sanitized_msg and sanitized_msg["content"] is None:
+                    sanitized_msg["content"] = ""
+                    logger.debug(
+                        f"Sanitized message {idx}: converted None content to empty string"
+                    )
+                # Handle nested content structures (e.g., multimodal messages)
+                elif "content" in sanitized_msg and isinstance(
+                    sanitized_msg["content"], list
+                ):
+                    sanitized_content = []
+                    for item_idx, item in enumerate(sanitized_msg["content"]):
+                        if item is None:
+                            # Skip None items in content list
+                            logger.debug(
+                                f"Sanitized message {idx}: skipping None item at index {item_idx} in content list"
+                            )
+                            continue
+                        elif isinstance(item, dict):
+                            sanitized_item = item.copy()
+                            # Handle None values in nested dicts
+                            for key, value in sanitized_item.items():
+                                if value is None:
+                                    sanitized_item[key] = ""
+                                    logger.debug(
+                                        f"Sanitized message {idx}: converted None value for key '{key}' to empty string"
+                                    )
+                            sanitized_content.append(sanitized_item)
+                        else:
+                            sanitized_content.append(item)
+                    sanitized_msg["content"] = sanitized_content
+                # Also sanitize other fields that might be None
+                for key, value in sanitized_msg.items():
+                    if value is None and key != "content":
+                        sanitized_msg[key] = ""
+                        logger.debug(
+                            f"Sanitized message {idx}: converted None value for key '{key}' to empty string"
+                        )
+                sanitized.append(sanitized_msg)
+            else:
+                sanitized.append(msg)
+        except Exception as e:
+            # Log error but continue processing - don't break on one bad message
+            logger.warning(
+                f"Error sanitizing message {idx}: {e}. Message will be included as-is.",
+                exc_info=True,
+            )
+            sanitized.append(msg)
+    return sanitized
+
+
 # Available models with their metadata
 AVAILABLE_MODELS = [
     AvailableModelOption(
-        id="openai/gpt-4.1",
-        name="GPT-4.1",
+        id="openai/gpt-5.2",
+        name="GPT-5.2",
         description="OpenAI's latest model for complex tasks with large context",
         provider="openai",
         is_chat_model=True,
         is_inference_model=False,
     ),
     AvailableModelOption(
-        id="openai/gpt-4o",
-        name="GPT-4o",
-        description="High-intelligence model for complex tasks",
+        id="openai/gpt-5.1",
+        name="GPT-5.1",
+        description="OpenAI's previous flagship model",
         provider="openai",
         is_chat_model=True,
         is_inference_model=False,
     ),
     AvailableModelOption(
-        id="openai/gpt-4.1-mini",
-        name="GPT-4.1 Mini",
+        id="openai/gpt-5-mini",
+        name="GPT-5 Mini",
         description="Smaller model for fast, lightweight tasks",
         provider="openai",
         is_chat_model=False,
-        is_inference_model=True,
-    ),
-    AvailableModelOption(
-        id="openai/o4-mini",
-        name="O4 mini",
-        description="reasoning model",
-        provider="openai",
-        is_chat_model=True,
         is_inference_model=True,
     ),
     AvailableModelOption(
@@ -325,6 +402,14 @@ AVAILABLE_MODELS = [
         is_inference_model=True,
     ),
     AvailableModelOption(
+        id="anthropic/claude-opus-4-5-20251101",
+        name="Claude 4.5 Opus",
+        description="Latest Claude Opus tier for maximum reasoning depth",
+        provider="anthropic",
+        is_chat_model=True,
+        is_inference_model=False,
+    ),
+    AvailableModelOption(
         id="openrouter/deepseek/deepseek-chat-v3-0324",
         name="DeepSeek V3",
         description="DeepSeek's latest chat model",
@@ -351,8 +436,24 @@ AVAILABLE_MODELS = [
     AvailableModelOption(
         id="openrouter/google/gemini-2.5-pro-preview",
         name="Gemini 2.5 Pro",
-        description="Google's Latest pro Gemini model",
+        description="Google's pro Gemini model",
         provider="gemini",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
+    AvailableModelOption(
+        id="openrouter/google/gemini-3-pro-preview",
+        name="Gemini 3 Pro Preview",
+        description="Latest Gemini 3 Pro capabilities",
+        provider="gemini",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
+    AvailableModelOption(
+        id="openrouter/z-ai/glm-4.7",
+        name="Z AI GLM 4.7",
+        description="Latest Z AI model",
+        provider="zai",
         is_chat_model=True,
         is_inference_model=True,
     ),
@@ -374,6 +475,10 @@ class ProviderService:
         self.db = db
         self.user_id = user_id
 
+        # Cache for API keys to avoid repeated secret manager checks
+        # Key: provider name, Value: API key (or None if not found)
+        self._api_key_cache: Dict[str, Optional[str]] = {}
+
         # Load user preferences
         user_pref = db.query(UserPreferences).filter_by(user_id=user_id).first()
         user_config = (
@@ -393,6 +498,85 @@ class ProviderService:
     @classmethod
     def create(cls, db, user_id: str):
         return cls(db, user_id)
+
+    @classmethod
+    def create_from_config(
+        cls,
+        db,
+        user_id: str,
+        *,
+        provider: str = "openai",
+        api_key: Optional[str] = None,
+        chat_model: Optional[str] = None,
+        inference_model: Optional[str] = None,
+        base_url: Optional[str] = None,
+    ) -> "ProviderService":
+        """Factory method that accepts explicit config for library usage.
+
+        This bypasses environment variables and user preferences,
+        using only the explicitly provided configuration.
+
+        Args:
+            db: Database session
+            user_id: User identifier
+            provider: LLM provider name (openai, anthropic, ollama, etc.)
+            api_key: API key for the provider
+            chat_model: Model to use for chat (e.g., "openai/gpt-4o")
+            inference_model: Model to use for inference (e.g., "openai/gpt-4.1-mini")
+            base_url: Optional base URL for self-hosted models
+
+        Returns:
+            Configured ProviderService instance
+        """
+        instance = object.__new__(cls)
+        litellm.modify_params = True
+        instance.db = db
+        instance.user_id = user_id
+
+        resolved_chat_model = (
+            chat_model or f"{provider}/gpt-4o"
+            if provider == "openai"
+            else chat_model or DEFAULT_CHAT_MODEL
+        )
+        resolved_inference_model = (
+            inference_model or f"{provider}/gpt-4.1-mini"
+            if provider == "openai"
+            else inference_model or DEFAULT_INFERENCE_MODEL
+        )
+
+        chat_config_data = get_config_for_model(resolved_chat_model)
+        inference_config_data = get_config_for_model(resolved_inference_model)
+
+        instance.chat_config = LLMProviderConfig(
+            provider=chat_config_data.get("provider", provider),
+            model=resolved_chat_model,
+            default_params=dict(
+                chat_config_data.get("default_params", {"temperature": 0.3})
+            ),
+            capabilities=chat_config_data.get("capabilities", {}),
+            base_url=base_url or chat_config_data.get("base_url"),
+            api_version=chat_config_data.get("api_version"),
+            auth_provider=chat_config_data.get("auth_provider", provider),
+        )
+
+        instance.inference_config = LLMProviderConfig(
+            provider=inference_config_data.get("provider", provider),
+            model=resolved_inference_model,
+            default_params=dict(
+                inference_config_data.get("default_params", {"temperature": 0.3})
+            ),
+            capabilities=inference_config_data.get("capabilities", {}),
+            base_url=base_url or inference_config_data.get("base_url"),
+            api_version=inference_config_data.get("api_version"),
+            auth_provider=inference_config_data.get("auth_provider", provider),
+        )
+
+        instance._explicit_api_key = api_key
+        instance.retry_settings = RetrySettings(
+            max_retries=8, base_delay=2.0, max_delay=120.0
+        )
+
+        return instance
 
     async def list_available_llms(self) -> List[ProviderInfo]:
         # Get unique providers from available models
@@ -459,19 +643,39 @@ class ProviderService:
         return {"message": "AI provider configuration updated successfully"}
 
     def _get_api_key(self, provider: str) -> str:
-        """Get API key for the specified provider."""
+        """Get API key for the specified provider. Caches the result per provider for the session."""
+        # Check explicit API key first (for library usage via create_from_config)
+        if hasattr(self, "_explicit_api_key") and self._explicit_api_key:
+            return self._explicit_api_key
+
+        # Check cache first
+        if provider in self._api_key_cache:
+            cached_key = self._api_key_cache[provider]
+            if cached_key is not None:
+                return cached_key
+            # If cached as None, we already checked and it's not available
+            return None
+
+        # Check environment variable first (fastest)
         env_key = os.getenv("LLM_API_KEY", None)
         if env_key:
+            self._api_key_cache[provider] = env_key
             return env_key
 
+        # Try to get from secret manager (only once per provider per session)
         try:
             secret = SecretManager.get_secret(provider, self.user_id, self.db)
+            self._api_key_cache[provider] = secret
             return secret
         except Exception as e:
             if "404" in str(e):
+                # Try provider-specific env var as fallback
                 env_key = os.getenv(f"{provider.upper()}_API_KEY")
                 if env_key:
+                    self._api_key_cache[provider] = env_key
                     return env_key
+                # Cache None to indicate we've checked and it's not available
+                self._api_key_cache[provider] = None
                 return None
             raise e
 
@@ -580,7 +784,7 @@ class ProviderService:
                 ),
             )
         except Exception as e:
-            logging.error(f"Error getting global AI provider: {e}")
+            logger.exception("Error getting global AI provider")
             raise e
 
     def supports_pydantic(self, config_type: str = "chat") -> bool:
@@ -598,6 +802,9 @@ class ProviderService:
         **kwargs,
     ) -> Union[str, AsyncGenerator[str, None], Any]:
         """Call LLM with a specific model identifier (e.g., 'openrouter/perplexity/sonar')."""
+        # Sanitize messages to prevent OpenTelemetry encoding errors
+        messages = sanitize_messages_for_tracing(messages)
+
         # Build configuration for the specific model
         config = self._build_config_for_model_identifier(model_identifier)
 
@@ -677,8 +884,10 @@ class ProviderService:
                     response = await acompletion(messages=messages, **params)
                     return response.choices[0].message.content
         except Exception as e:
-            logging.error(
-                f"Error calling LLM with model {model_identifier}: {e}, provider: {routing_provider}"
+            logger.exception(
+                "Error calling LLM",
+                model_identifier=model_identifier,
+                provider=routing_provider,
             )
             raise e
 
@@ -687,6 +896,9 @@ class ProviderService:
         self, messages: list, stream: bool = False, config_type: str = "chat"
     ) -> Union[str, AsyncGenerator[str, None]]:
         """Call LLM with the specified messages with robust error handling."""
+        # Sanitize messages to prevent OpenTelemetry encoding errors
+        messages = sanitize_messages_for_tracing(messages)
+
         # Select the appropriate config based on config_type
         config = self.chat_config if config_type == "chat" else self.inference_config
 
@@ -710,7 +922,7 @@ class ProviderService:
                 response = await acompletion(messages=messages, **params)
                 return response.choices[0].message.content
         except Exception as e:
-            logging.error(f"Error calling LLM: {e}, provider: {routing_provider}")
+            logger.exception("Error calling LLM", provider=routing_provider)
             raise e
 
     @robust_llm_call()
@@ -718,6 +930,9 @@ class ProviderService:
         self, messages: list, output_schema: BaseModel, config_type: str = "chat"
     ) -> Any:
         """Call LLM and parse the response into a structured output using a Pydantic model."""
+        # Sanitize messages to prevent OpenTelemetry encoding errors
+        messages = sanitize_messages_for_tracing(messages)
+
         # Select the appropriate config
         config = self.chat_config if config_type == "chat" else self.inference_config
 
@@ -774,7 +989,7 @@ class ProviderService:
                 )
             return response
         except Exception as e:
-            logging.error(f"LLM call with structured output failed: {e}")
+            logger.exception("LLM call with structured output failed")
             raise e
 
     @robust_llm_call()
@@ -786,6 +1001,8 @@ class ProviderService:
         config_type: str = "chat",
     ) -> Union[str, AsyncGenerator[str, None]]:
         """Call LLM with multimodal support (text + images)"""
+        # Sanitize messages to prevent OpenTelemetry encoding errors
+        messages = sanitize_messages_for_tracing(messages)
 
         # Check if multimodal is enabled
         if not config_provider.get_is_multimodal_enabled():
@@ -836,9 +1053,7 @@ class ProviderService:
                 response = await acompletion(messages=messages, **params)
                 return response.choices[0].message.content
         except Exception as e:
-            logging.error(
-                f"Error calling multimodal LLM: {e}, provider: {routing_provider}"
-            )
+            logger.exception("Error calling multimodal LLM", provider=routing_provider)
             raise e
 
     def _format_multimodal_messages(
@@ -1002,8 +1217,8 @@ class ProviderService:
                     f"Image {img_id} passed validation ({len(base64_data)} chars, {mime_type})"
                 )
 
-            except Exception as e:
-                logger.error(f"Error validating image {img_id}: {str(e)}")
+            except Exception:
+                logger.exception("Error validating image", img_id=img_id)
                 continue
 
         logger.info(
@@ -1053,6 +1268,8 @@ class ProviderService:
             "gemini-2.0-flash",
             "gemini-2.5",
             "gemini-2.5-pro",
+            "gemini-3",
+            "gemini-3-pro",
             "gemini-ultra",
             # Other models that might support vision
             "deepseek-chat",
@@ -1117,7 +1334,12 @@ class ProviderService:
                     or "http://localhost:11434"
                 )
                 provider_kwargs["base_url"] = base_url_root.rstrip("/") + "/v1"
-            return OpenAIModel(
+            model_class = (
+                OpenRouterGeminiModel
+                if config.auth_provider == "openrouter" and config.provider == "gemini"
+                else OpenAIModel
+            )
+            return model_class(
                 model_name=model_name,
                 provider=OpenAIProvider(
                     api_key=api_key,
@@ -1131,12 +1353,17 @@ class ProviderService:
                 for key, value in provider_kwargs.items()
                 if key != "api_version"
             }
-            return AnthropicModel(
+            # Use CachingAnthropicModel for improved cache hit rates
+            # This adds cache_control to tools and system prompts
+            return CachingAnthropicModel(
                 model_name=model_name,
                 provider=AnthropicProvider(
                     api_key=api_key,
                     **anthropic_kwargs,
                 ),
+                enable_tool_caching=True,
+                enable_system_caching=True,
+                cache_ttl="5m",  # 5 minute cache TTL (refreshes on hit)
             )
 
         raise UnsupportedProviderError(

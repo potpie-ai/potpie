@@ -1,6 +1,6 @@
 import asyncio
 import json
-import logging
+import os
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, List, Optional, Dict, Union
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
+from app.modules.utils.logger import setup_logger
 from app.modules.conversations.conversation.conversation_model import (
     Conversation,
     ConversationStatus,
@@ -46,7 +47,7 @@ from app.celery.celery_app import celery_app
 from .conversation_store import ConversationStore, StoreError
 from ..message.message_store import MessageStore
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class ConversationServiceError(Exception):
@@ -105,6 +106,22 @@ class ConversationService:
         self.session_service = session_service or SessionService()
         self.redis_manager = redis_manager or RedisStreamManager()
         self.celery_app = celery_app
+
+        # Initialize repo manager if enabled
+        self.repo_manager = None
+        try:
+            repo_manager_enabled = (
+                os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
+            )
+            if repo_manager_enabled:
+                from app.modules.repo_manager import RepoManager
+
+                self.repo_manager = RepoManager()
+                logger.info("ConversationService: RepoManager initialized")
+        except Exception as e:
+            logger.warning(
+                f"ConversationService: Failed to initialize RepoManager: {e}"
+            )
 
     @classmethod
     def create(
@@ -224,22 +241,42 @@ class ConversationService:
                 conversation, title, user_id, hidden
             )
 
-            asyncio.create_task(
-                CodeProviderService(self.db).get_project_structure_async(
-                    conversation.project_ids[0]
-                )
-            )
+            # Fetch project structure in background with timeout and error handling
+            # This is fire-and-forget to avoid blocking conversation creation
+            async def _fetch_structure_with_timeout():
+                try:
+                    # Add timeout to prevent hanging on large repositories
+                    # Note: This may not interrupt synchronous blocking calls, but will
+                    # prevent the task from running indefinitely
+                    await asyncio.wait_for(
+                        CodeProviderService(self.db).get_project_structure_async(
+                            conversation.project_ids[0]
+                        ),
+                        timeout=30.0,  # 30 second timeout
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"Timeout fetching project structure for project {conversation.project_ids[0]}"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Error fetching project structure for project {conversation.project_ids[0]}: {e}",
+                        exc_info=True,
+                    )
+
+            # Create background task - fire and forget
+            asyncio.create_task(_fetch_structure_with_timeout())
 
             await self._add_system_message(conversation_id, project_name, user_id)
 
             return conversation_id, "Conversation created successfully."
         except IntegrityError as e:
-            logger.error(f"IntegrityError in create_conversation: {e}", exc_info=True)
+            logger.exception("IntegrityError in create_conversation", user_id=user_id)
             raise ConversationServiceError(
                 "Failed to create conversation due to a database integrity error."
             ) from e
         except Exception as e:
-            logger.error(f"Unexpected error in create_conversation: {e}", exc_info=True)
+            logger.exception("Unexpected error in create_conversation", user_id=user_id)
             raise ConversationServiceError(
                 "An unexpected error occurred while creating the conversation."
             ) from e
@@ -269,6 +306,217 @@ class ConversationService:
         )
         return conversation_id
 
+    async def _ensure_repo_in_repo_manager(self, project_id: str, user_id: str) -> None:
+        """
+        Ensure that the repository for a project is registered in the repo manager.
+        If the repo doesn't exist, attempts to register it if the project has been parsed.
+
+        This runs in a thread pool to avoid blocking the async event loop with filesystem operations.
+
+        Args:
+            project_id: The project ID
+            user_id: The user ID
+        """
+        if not self.repo_manager:
+            return  # Repo manager not enabled
+
+        # Run filesystem operations in a thread pool to avoid blocking
+        # Add timeout to prevent hanging
+        try:
+            await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(
+                    None, self._ensure_repo_in_repo_manager_sync, project_id, user_id
+                ),
+                timeout=5.0,  # 5 second timeout to prevent hanging
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Timeout ensuring repo in repo manager for project {project_id} (took >5s)"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Error ensuring repo in repo manager for project {project_id}: {e}",
+                exc_info=True,
+            )
+            # Don't fail the message if repo registration fails
+
+    def _ensure_repo_in_repo_manager_sync(self, project_id: str, user_id: str) -> None:
+        """
+        Synchronous version of _ensure_repo_in_repo_manager.
+        Runs in a thread pool to avoid blocking the async event loop.
+        """
+        # Double-check repo_manager is available (defensive check)
+        if not self.repo_manager:
+            return
+
+        try:
+            # Get project details (use sync method)
+            # Note: project_id is Text in DB, but type hint says int - handle both
+            try:
+                project = self.project_service.get_project_from_db_by_id_sync(
+                    project_id
+                )  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                # Try converting to int if it's a numeric string
+                try:
+                    project = self.project_service.get_project_from_db_by_id_sync(
+                        int(project_id)
+                    )  # type: ignore[arg-type]
+                except (ValueError, TypeError):
+                    logger.warning(
+                        f"Cannot ensure repo in repo manager: invalid project_id {project_id}"
+                    )
+                    return
+
+            if not project:
+                logger.warning(
+                    f"Cannot ensure repo in repo manager: project {project_id} not found"
+                )
+                return
+
+            repo_name = project.get("project_name")
+            branch = project.get("branch_name")
+            commit_id = project.get("commit_id")
+            repo_path = project.get("repo_path")  # For local repos
+
+            if not repo_name:
+                logger.warning(
+                    f"Cannot ensure repo in repo manager: project {project_id} has no repo_name"
+                )
+                return
+
+            # Check if repo is already available
+            if self.repo_manager.is_repo_available(
+                repo_name, branch=branch, commit_id=commit_id, user_id=user_id
+            ):
+                logger.debug(
+                    f"Repo {repo_name}@{commit_id or branch} already available in repo manager"
+                )
+                # Update last accessed time
+                self.repo_manager.update_last_accessed(
+                    repo_name, branch=branch, commit_id=commit_id, user_id=user_id
+                )
+                return
+
+            # Check if repo exists in repo manager's expected location but not registered
+            # Use repo manager's method to get expected path (respects REPOS_BASE_PATH)
+            # This ensures we're checking the correct location based on REPOS_BASE_PATH env var
+            try:
+                expected_base_path = self.repo_manager._get_repo_local_path(repo_name)
+            except Exception as e:
+                logger.warning(f"Failed to get repo local path for {repo_name}: {e}")
+                return
+
+            # Check for worktree path (where repos are actually stored)
+            ref = commit_id if commit_id else branch
+            if ref:
+                # Worktrees are stored in <base_path>/worktrees/<ref>
+                worktree_name = ref.replace("/", "_").replace("\\", "_")
+                expected_worktree_path = (
+                    expected_base_path / "worktrees" / worktree_name
+                )
+
+                # Check if worktree exists but not registered
+                if expected_worktree_path.exists() and expected_worktree_path.is_dir():
+                    # Check if it's a valid git repository
+                    git_dir = expected_worktree_path / ".git"
+                    if git_dir.exists():
+                        try:
+                            self.repo_manager.register_repo(
+                                repo_name=repo_name,
+                                local_path=str(expected_worktree_path),
+                                branch=branch,
+                                commit_id=commit_id,
+                                user_id=user_id,
+                                metadata={"registered_from": "conversation_message"},
+                            )
+                            logger.info(
+                                f"Registered existing worktree {repo_name}@{ref} in repo manager from conversation"
+                            )
+                            return
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to register existing worktree {repo_name} in repo manager: {e}"
+                            )
+
+            # Check base repo path (for repos without worktrees)
+            if expected_base_path.exists() and expected_base_path.is_dir():
+                git_dir = expected_base_path / ".git"
+                if git_dir.exists():
+                    try:
+                        self.repo_manager.register_repo(
+                            repo_name=repo_name,
+                            local_path=str(expected_base_path),
+                            branch=branch,
+                            commit_id=commit_id,
+                            user_id=user_id,
+                            metadata={"registered_from": "conversation_message"},
+                        )
+                        logger.info(
+                            f"Registered existing base repo {repo_name} in repo manager from conversation"
+                        )
+                        return
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to register existing base repo {repo_name} in repo manager: {e}"
+                        )
+
+            # For local repos (repo_path), check if it's a different location
+            if repo_path and os.path.exists(repo_path):
+                # Only register if it's not already in repo manager's base path
+                # (to avoid registering external paths)
+                if not str(repo_path).startswith(
+                    str(self.repo_manager.repos_base_path)
+                ):
+                    logger.debug(
+                        f"Repo {repo_name} has external path {repo_path}, not registering in repo manager. "
+                        f"Repo manager base path: {self.repo_manager.repos_base_path}"
+                    )
+                else:
+                    try:
+                        self.repo_manager.register_repo(
+                            repo_name=repo_name,
+                            local_path=repo_path,
+                            branch=branch,
+                            commit_id=commit_id,
+                            user_id=user_id,
+                            metadata={"registered_from": "conversation_message"},
+                        )
+                        logger.info(
+                            f"Registered local repo {repo_name}@{commit_id or branch} in repo manager from conversation"
+                        )
+                        return
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to register local repo {repo_name} in repo manager: {e}"
+                        )
+
+            # If we get here, repo doesn't exist in repo manager's directory structure
+            ref = commit_id if commit_id else branch
+            expected_worktree_info = "N/A"
+            if ref:
+                worktree_name = ref.replace("/", "_").replace("\\", "_")
+                expected_worktree_path = (
+                    expected_base_path / "worktrees" / worktree_name
+                )
+                expected_worktree_info = f"{expected_worktree_path} (exists: {expected_worktree_path.exists()})"
+
+            logger.info(
+                f"Repo {repo_name}@{commit_id or branch} not found in repo manager. "
+                f"Project status: {project.get('status')}. "
+                f"Repo manager base path: {self.repo_manager.repos_base_path}. "
+                f"Expected base path: {expected_base_path} (exists: {expected_base_path.exists()}). "
+                f"Expected worktree path: {expected_worktree_info}. "
+                f"Project may need to be parsed first or repo manager may not be enabled during parsing."
+            )
+
+        except Exception as e:
+            logger.warning(
+                f"Error in _ensure_repo_in_repo_manager_sync for project {project_id}: {e}",
+                exc_info=True,
+            )
+            # Don't fail the message if repo registration fails
+
     async def _add_system_message(
         self, conversation_id: str, project_name: str, user_id: str
     ):
@@ -284,9 +532,10 @@ class ConversationService:
                 f"Added system message to conversation {conversation_id} for user {user_id}"
             )
         except Exception as e:
-            logger.error(
-                f"Failed to add system message to conversation {conversation_id}: {e}",
-                exc_info=True,
+            logger.exception(
+                f"Failed to add system message to conversation {conversation_id}",
+                conversation_id=conversation_id,
+                user_id=user_id,
             )
             raise ConversationServiceError(
                 "Failed to add system message to the conversation."
@@ -326,9 +575,11 @@ class ConversationService:
                     logger.info(
                         f"Linked {len(message.attachment_ids)} attachments to message {message_id}"
                     )
-                except Exception as e:
-                    logger.error(
-                        f"Failed to link attachments to message {message_id}: {str(e)}"
+                except Exception:
+                    logger.exception(
+                        f"Failed to link attachments to message {message_id}",
+                        message_id=message_id,
+                        conversation_id=conversation_id,
                     )
                     # Continue processing even if attachment linking fails
 
@@ -355,6 +606,12 @@ class ConversationService:
                     raise ConversationServiceError(
                         "No project associated with this conversation"
                     )
+
+                # Ensure repo is registered in repo manager
+                # Convert project_id to string if needed (it might be a Column object)
+                project_id_str = str(project_id) if project_id else None
+                if project_id_str:
+                    await self._ensure_repo_in_repo_manager(project_id_str, user_id)
 
                 if stream:
                     async for chunk in self._generate_and_stream_ai_response(
@@ -385,9 +642,10 @@ class ConversationService:
         except AccessTypeReadError:
             raise
         except Exception as e:
-            logger.error(
-                f"Error in store_message for conversation {conversation_id}: {e}",
-                exc_info=True,
+            logger.exception(
+                f"Error in store_message for conversation {conversation_id}",
+                conversation_id=conversation_id,
+                user_id=user_id,
             )
             raise ConversationServiceError(
                 "Failed to store message or generate AI response."
@@ -517,9 +775,10 @@ class ConversationService:
             )
             raise
         except Exception as e:
-            logger.error(
-                f"Error in regenerate_last_message for conversation {conversation_id}: {e}",
-                exc_info=True,
+            logger.exception(
+                f"Error in regenerate_last_message for conversation {conversation_id}",
+                conversation_id=conversation_id,
+                user_id=user_id,
             )
             raise ConversationServiceError("Failed to regenerate last message.") from e
 
@@ -572,15 +831,18 @@ class ConversationService:
             ):
                 yield chunk
 
-        except (AccessTypeReadError, MessageNotFoundError) as e:
-            logger.error(
-                f"Background regeneration error for {conversation_id}: {str(e)}"
+        except (AccessTypeReadError, MessageNotFoundError):
+            logger.exception(
+                f"Background regeneration error for {conversation_id}",
+                conversation_id=conversation_id,
+                user_id=self.user_id,
             )
             raise
         except Exception as e:
-            logger.error(
-                f"Background regeneration failed for {conversation_id}: {str(e)}",
-                exc_info=True,
+            logger.exception(
+                f"Background regeneration failed for {conversation_id}",
+                conversation_id=conversation_id,
+                user_id=self.user_id,
             )
             raise ConversationServiceError(f"Failed to regenerate message: {str(e)}")
 
@@ -601,9 +863,10 @@ class ConversationService:
                 f"Archived subsequent messages in conversation {conversation_id}"
             )
         except Exception as e:
-            logger.error(
-                f"Failed to archive messages in conversation {conversation_id}: {e}",
-                exc_info=True,
+            logger.exception(
+                f"Failed to archive messages in conversation {conversation_id}",
+                conversation_id=conversation_id,
+                user_id=self.user_id,
             )
             raise ConversationServiceError(
                 "Failed to archive subsequent messages."
@@ -613,7 +876,7 @@ class ConversationService:
         try:
             data = json.loads(chunk)
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse chunk as JSON: {e}")
+            logger.exception("Failed to parse chunk as JSON")
             raise ConversationServiceError("Failed to parse AI response") from e
 
         # Extract the 'message' and 'citations'
@@ -630,7 +893,7 @@ class ConversationService:
         query: str,
         conversation_id: str,
         user_id: str,
-        node_ids: List[NodeContext],
+        node_ids: Optional[List[NodeContext]] = None,
         attachment_ids: Optional[List[str]] = None,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         conversation = await self.conversation_store.get_by_id(conversation_id)
@@ -715,6 +978,7 @@ class ConversationService:
                             image_attachments=image_attachments,
                             context_images=context_images,
                             additional_context=additional_context,
+                            conversation_id=conversation_id,
                         ),
                     )
                 )
@@ -790,6 +1054,7 @@ class ConversationService:
                     image_attachments=image_attachments,
                     context_images=context_images,
                     additional_context=additional_context,
+                    conversation_id=conversation_id,
                 )
 
                 res = self.agent_service.execute_stream(chat_context)
@@ -817,9 +1082,10 @@ class ConversationService:
                 f"Generated and streamed AI response for conversation {conversation.id} for user {user_id} using agent {agent_id}"
             )
         except Exception as e:
-            logger.error(
-                f"Failed to generate and stream AI response for conversation {conversation.id}: {e}",
-                exc_info=True,
+            logger.exception(
+                f"Failed to generate and stream AI response for conversation {conversation.id}",
+                conversation_id=conversation.id,
+                user_id=user_id,
             )
             raise ConversationServiceError(
                 "Failed to generate and stream AI response."
@@ -830,7 +1096,7 @@ class ConversationService:
         query: str,
         conversation_id: str,
         user_id: str,
-        node_ids: List[NodeContext],
+        node_ids: Optional[List[NodeContext]] = None,
         attachment_ids: Optional[List[str]] = None,
         run_id: str = None,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
@@ -877,9 +1143,10 @@ class ConversationService:
                         logger.info(
                             f"DEBUG: Skipping attachment {attachment_id} - not an image or attachment not found"
                         )
-                except Exception as e:
-                    logger.error(
-                        f"Failed to prepare attachment {attachment_id} as image: {str(e)}"
+                except Exception:
+                    logger.exception(
+                        f"Failed to prepare attachment {attachment_id} as image",
+                        attachment_id=attachment_id,
                     )
                     continue
 
@@ -888,8 +1155,8 @@ class ConversationService:
             )
             return images if images else None
 
-        except Exception as e:
-            logger.error(f"Error preparing attachments as images: {str(e)}")
+        except Exception:
+            logger.exception("Error preparing attachments as images")
             return None
 
     async def _prepare_current_message_images(
@@ -913,8 +1180,11 @@ class ConversationService:
             )
             return images if images else None
 
-        except Exception as e:
-            logger.error(f"Error preparing current message images: {str(e)}")
+        except Exception:
+            logger.exception(
+                f"Error preparing current message images for conversation {conversation_id}",
+                conversation_id=conversation_id,
+            )
             return None
 
     async def _prepare_conversation_context_images(
@@ -928,8 +1198,11 @@ class ConversationService:
             )
             return context_images if context_images else None
 
-        except Exception as e:
-            logger.error(f"Error preparing conversation context images: {str(e)}")
+        except Exception:
+            logger.exception(
+                f"Error preparing conversation context images for conversation {conversation_id}",
+                conversation_id=conversation_id,
+            )
             return None
 
     async def _prepare_text_attachments(
@@ -1032,12 +1305,20 @@ class ConversationService:
         except AccessTypeReadError:
             raise
         except SQLAlchemyError as e:
-            logger.error(f"Database error in delete_conversation: {e}", exc_info=True)
+            logger.exception(
+                f"Database error in delete_conversation for {conversation_id}",
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
             raise ConversationServiceError(
                 f"Failed to delete conversation {conversation_id} due to a database error"
             ) from e
         except Exception as e:
-            logger.error(f"Unexpected error in delete_conversation: {e}", exc_info=True)
+            logger.exception(
+                f"Unexpected error in delete_conversation for {conversation_id}",
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
             raise ConversationServiceError(
                 f"Failed to delete conversation {conversation_id} due to an unexpected error"
             ) from e
@@ -1046,9 +1327,7 @@ class ConversationService:
         self, conversation_id: str, user_id: str
     ) -> ConversationInfoResponse:
         try:
-            print(
-                "[conversation_service] Getting info for conversation:", conversation_id
-            )
+            logger.info("Getting info for conversation: {}", conversation_id)
             conversation = await self.conversation_store.get_by_id(conversation_id)
 
             if not conversation:
@@ -1064,7 +1343,7 @@ class ConversationService:
             )
 
             if access_type == ConversationAccessType.NOT_FOUND:
-                logger.error(
+                logger.bind(conversation_id=conversation_id, user_id=user_id).error(
                     f"Access denied - access type is NOT_FOUND for user {user_id} on conversation {conversation_id}"
                 )
                 raise AccessTypeNotFoundError("Access type not found")
@@ -1108,11 +1387,19 @@ class ConversationService:
         except ConversationNotFoundError as e:
             logger.warning(f"ConversationNotFoundError: {str(e)}")
             raise
-        except AccessTypeNotFoundError as e:
-            logger.error(f"AccessTypeNotFoundError: {str(e)}")
+        except AccessTypeNotFoundError:
+            logger.exception(
+                f"AccessTypeNotFoundError in get_conversation_info for {conversation_id}",
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
             raise
         except Exception as e:
-            logger.error(f"Error in get_conversation_info: {e}", exc_info=True)
+            logger.exception(
+                f"Error in get_conversation_info for {conversation_id}",
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
             raise ConversationServiceError(
                 f"Failed to get conversation info for {conversation_id}"
             ) from e
@@ -1126,7 +1413,7 @@ class ConversationService:
             )
 
             if access_level == ConversationAccessType.NOT_FOUND:
-                logger.error(
+                logger.bind(conversation_id=conversation_id, user_id=user_id).error(
                     f"Access denied - access level is NOT_FOUND for user {user_id} on conversation {conversation_id}"
                 )
                 raise AccessTypeNotFoundError("Access denied.")
@@ -1151,9 +1438,11 @@ class ConversationService:
                         attachments = await self.media_service.get_message_attachments(
                             message.id
                         )
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to get attachments for message {message.id}: {str(e)}"
+                    except Exception:
+                        logger.exception(
+                            f"Failed to get attachments for message {message.id}",
+                            message_id=message.id,
+                            conversation_id=conversation_id,
                         )
                         attachments = []
 
@@ -1177,12 +1466,18 @@ class ConversationService:
         except ConversationNotFoundError as e:
             logger.warning(f"ConversationNotFoundError: {str(e)}")
             raise
-        except AccessTypeNotFoundError as e:
-            logger.error(f"AccessTypeNotFoundError: {str(e)}")
+        except AccessTypeNotFoundError:
+            logger.exception(
+                f"AccessTypeNotFoundError in get_conversation_messages for {conversation_id}",
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
             raise
         except Exception as e:
-            logger.error(
-                f"DEBUG: Error in get_conversation_messages: {e}", exc_info=True
+            logger.exception(
+                f"Error in get_conversation_messages for {conversation_id}",
+                conversation_id=conversation_id,
+                user_id=user_id,
             )
             raise ConversationServiceError(
                 f"Failed to get messages for conversation {conversation_id}"
@@ -1290,14 +1585,22 @@ class ConversationService:
             }
 
         except SQLAlchemyError as e:
-            logger.error(f"Database error in rename_conversation: {e}", exc_info=True)
+            logger.exception(
+                f"Database error in rename_conversation for {conversation_id}",
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
             raise ConversationServiceError(
                 "Failed to rename conversation due to a database error"
             ) from e
         except AccessTypeReadError:
             raise
         except Exception as e:
-            logger.error(f"Unexpected error in rename_conversation: {e}", exc_info=True)
+            logger.exception(
+                f"Unexpected error in rename_conversation for {conversation_id}",
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
             raise ConversationServiceError(
                 "Failed to rename conversation due to an unexpected error"
             ) from e
@@ -1326,16 +1629,17 @@ class ConversationService:
         except StoreError as e:
             # Catch the specific error from the store and wrap it in a
             # service-level exception, which is a good practice.
-            logger.error(
-                f"Store layer failed to get conversations for user {user_id}: {e}"
+            logger.exception(
+                f"Store layer failed to get conversations for user {user_id}",
+                user_id=user_id,
             )
             raise ConversationServiceError(
                 f"Failed to retrieve conversations for user {user_id}"
             ) from e
         except Exception as e:
-            logger.error(
-                f"Unexpected error while getting conversations for user {user_id}: {e}",
-                exc_info=True,
+            logger.exception(
+                f"Unexpected error while getting conversations for user {user_id}",
+                user_id=user_id,
             )
             raise ConversationServiceError(
                 f"An unexpected error occurred while retrieving conversations for user {user_id}"

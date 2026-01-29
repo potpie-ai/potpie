@@ -16,15 +16,15 @@ Usage:
 
 import os
 import subprocess
-import logging
 import platform
 from pathlib import Path
 from typing import List, Optional, Dict
 from dataclasses import dataclass
 
 from app.modules.utils.install_gvisor import get_runsc_path
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 @dataclass
@@ -332,8 +332,8 @@ def run_command_isolated(
             stderr=f"Command timed out after {timeout} seconds",
             success=False,
         )
-    except Exception as e:
-        logger.error(f"Error running isolated command: {e}", exc_info=True)
+    except Exception:
+        logger.exception("Error running isolated command")
         # Fallback to regular execution
         logger.info("Falling back to regular subprocess execution")
         return _run_command_regular(
@@ -669,12 +669,12 @@ def _run_command_regular(
             stderr=f"Command not found: {command[0] if command else 'unknown'}",
             success=False,
         )
-    except Exception as e:
-        logger.error(f"Error running command: {e}", exc_info=True)
+    except Exception:
+        logger.exception("Error running command")
         return CommandResult(
             returncode=1,
             stdout="",
-            stderr=str(e),
+            stderr="Error running command",
             success=False,
         )
 

@@ -117,9 +117,11 @@ class TestAuthService:
                 result = auth_service.signup(
                     "test@example.com", "password123", "Test User"
                 )
-                assert result.uid == "test_user_id"
-                assert result.email == "test@example.com"
-                assert result.display_name == "Test User"
+                success_response, error = result
+                assert error is None
+                assert success_response["user"].uid == "test_user_id"
+                assert success_response["user"].email == "test@example.com"
+                assert success_response["user"].display_name == "Test User"
 
         def test_signup_duplicate_email(self, auth_service):
             """Test signup with duplicate email."""
@@ -190,8 +192,12 @@ class TestAuthService:
                 result = await auth_service.check_auth(
                     mock_request, mock_response, mock_credential
                 )
-                assert result == mock_decoded_token
-                assert mock_request.state.user == mock_decoded_token
+                # Verify that user_id is normalized from uid for consistency
+                assert result["uid"] == "test_user_id"
+                assert result["user_id"] == "test_user_id"
+                assert result["email"] == "test@example.com"
+                assert mock_request.state.user["uid"] == "test_user_id"
+                assert mock_request.state.user["user_id"] == "test_user_id"
 
         @pytest.mark.asyncio
         async def test_check_auth_invalid_token(
