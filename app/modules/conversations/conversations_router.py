@@ -163,6 +163,7 @@ class ConversationAPI:
         conversation_id: str,
         content: str = Form(...),
         node_ids: Optional[str] = Form(None),
+        tunnel_url: Optional[str] = Form(None, description="Tunnel URL from VS Code extension for local server routing"),
         images: Optional[List[UploadFile]] = File(None),
         stream: bool = Query(True, description="Whether to stream the response"),
         session_id: Optional[str] = Query(
@@ -249,6 +250,11 @@ class ConversationAPI:
                 content=content,
                 node_ids=parsed_node_ids,
                 attachment_ids=attachment_ids if attachment_ids else None,
+                tunnel_url=tunnel_url,
+            )
+            
+            logger.info(
+                f"[post_message] tunnel_url={tunnel_url}, conversation_id={conversation_id}, user_id={user_id}"
             )
 
             controller = ConversationController(db, async_db, user_id, user_email)
@@ -283,6 +289,7 @@ class ConversationAPI:
                 node_ids=node_ids_list,
                 attachment_ids=attachment_ids or [],
                 cursor=cursor,
+                tunnel_url=tunnel_url,
             )
 
     @staticmethod

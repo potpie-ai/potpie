@@ -185,7 +185,9 @@ def route_to_local_server(
         )
 
         if is_backend_local and not force_tunnel:
-            direct_port = int(local_port) if local_port else 3001
+            # Try to get local_port from environment or tunnel data, default to 3001
+            local_port_env = os.getenv("LOCAL_SERVER_PORT")
+            direct_port = int(local_port_env) if local_port_env else 3001
             direct_base = f"http://localhost:{direct_port}"
             direct_url = f"{direct_base}{endpoint}"
             try:
@@ -220,7 +222,13 @@ def route_to_local_server(
             )
             logger.debug(f"[Tunnel Routing] Request data: {request_data}")
 
-            with httpx.Client(timeout=30.0) as client:
+            # Use longer timeout for tunnel requests (production) - can be slower due to network latency
+            # 2 minutes for tunnel requests, 30s for direct localhost
+            request_timeout = 120.0  # 2 minutes for tunnel requests
+            
+            logger.debug(f"[Tunnel Routing] Using timeout: {request_timeout}s for tunnel request")
+
+            with httpx.Client(timeout=request_timeout) as client:
                 response = client.post(
                     url,
                     json=request_data,
@@ -269,7 +277,8 @@ def route_to_local_server(
                         )
                         retry_url = f"{fresh_tunnel_url}{endpoint}"
                         try:
-                            with httpx.Client(timeout=30.0) as retry_client:
+                            # Use same longer timeout for retry
+                            with httpx.Client(timeout=120.0) as retry_client:
                                 retry_response = retry_client.post(
                                     retry_url,
                                     json=request_data,
@@ -309,7 +318,8 @@ def route_to_local_server(
                             # Retry with user-level tunnel
                             retry_url = f"{user_level_tunnel}{endpoint}"
                             try:
-                                with httpx.Client(timeout=30.0) as retry_client:
+                                # Use same longer timeout for retry
+                                with httpx.Client(timeout=120.0) as retry_client:
                                     retry_response = retry_client.post(
                                         retry_url,
                                         json=request_data,

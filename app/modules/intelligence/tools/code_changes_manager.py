@@ -2492,53 +2492,62 @@ def _route_to_local_server(
         logger.info(f"[Tunnel Routing] 🚀 Routing {operation} to LocalServer: {url}")
         logger.debug(f"[Tunnel Routing] Request data: {request_data}")
 
-        with httpx.Client(timeout=30.0) as client:
-            # Read operations use GET, write operations use POST
-            if operation in ["get_file", "show_updated_file"]:
-                # GET request with file path as query parameter
-                file_path = data.get("file_path", "")
-                if not file_path:
-                    logger.warning(
-                        f"[Tunnel Routing] No file_path provided for {operation}"
-                    )
-                    return None
-                url_with_params = f"{url}?path={url_quote(file_path)}"
-                response = client.get(url_with_params)
-            else:
-                # POST request for write operations
-                response = client.post(
-                    url,
-                    json=request_data,
-                    headers={"Content-Type": "application/json"},
-                )
+        # Use longer timeout for tunnel requests (production) vs direct localhost
+        # Tunnel requests can be slower due to network latency
+        # Define timeout outside try block so it's accessible in exception handler
+        is_tunnel_request = url.startswith("https://") or (url.startswith("http://") and "localhost" not in url)
+        request_timeout = 120.0 if is_tunnel_request else 30.0  # 2 minutes for tunnel, 30s for localhost
+        
+        logger.debug(f"[Tunnel Routing] Using timeout: {request_timeout}s (tunnel={is_tunnel_request})")
 
-            if response.status_code == 200:
-                result = response.json()
-                logger.info(
-                    f"[Tunnel Routing] ✅ LocalServer {operation} succeeded: {result}"
-                )
-
-                # Format response based on operation type
-                file_path = data.get("file_path", "file")
-
-                if operation == "replace_in_file":
-                    replacements_made = result.get("replacements_made", 0)
-                    total_matches = result.get("total_matches", replacements_made)
-                    pattern = data.get("pattern", "pattern")
-
-                    response_msg = (
-                        f"✅ Replaced pattern '{pattern}' in '{file_path}'\n\n"
-                        + f"Made {replacements_made} replacement(s) out of {total_matches} match(es)"
+        with httpx.Client(timeout=request_timeout) as client:
+            try:
+                # Read operations use GET, write operations use POST
+                if operation in ["get_file", "show_updated_file"]:
+                    # GET request with file path as query parameter
+                    file_path = data.get("file_path", "")
+                    if not file_path:
+                        logger.warning(
+                            f"[Tunnel Routing] No file_path provided for {operation}"
+                        )
+                        return None
+                    url_with_params = f"{url}?path={url_quote(file_path)}"
+                    response = client.get(url_with_params)
+                else:
+                    # POST request for write operations
+                    response = client.post(
+                        url,
+                        json=request_data,
+                        headers={"Content-Type": "application/json"},
                     )
 
-                    if result.get("auto_fixed"):
-                        response_msg += "\n\n✅ Auto-fixed formatting issues"
-                    if result.get("errors"):
-                        response_msg += (
-                            f"\n⚠️ Validation errors: {len(result['errors'])}"
+                if response.status_code == 200:
+                    result = response.json()
+                    logger.info(
+                        f"[Tunnel Routing] ✅ LocalServer {operation} succeeded: {result}"
+                    )
+
+                    # Format response based on operation type
+                    file_path = data.get("file_path", "file")
+
+                    if operation == "replace_in_file":
+                        replacements_made = result.get("replacements_made", 0)
+                        total_matches = result.get("total_matches", replacements_made)
+                        pattern = data.get("pattern", "pattern")
+
+                        response_msg = (
+                            f"✅ Replaced pattern '{pattern}' in '{file_path}'\n\n"
+                            + f"Made {replacements_made} replacement(s) out of {total_matches} match(es)"
                         )
 
-                    return response_msg
+                        if result.get("auto_fixed"):
+                            response_msg += "\n\n✅ Auto-fixed formatting issues"
+                        if result.get("errors"):
+                            response_msg += (
+                                f"\n⚠️ Validation errors: {len(result['errors'])}"
+                            )
+
+                        return response_msg
                 elif operation == "update_file_lines":
                     # Format update_file_lines success response
                     start_line = data.get("start_line", 0)
@@ -2629,20 +2638,19 @@ def _route_to_local_server(
                         result_msg += f"```\n{content}\n```\n\n"
                         result_msg += "---\n\n"
                         return result_msg
+                
+                # Error handling for non-200 response codes
                 else:
-                    # Generic success message for other operations
-                    return f"✅ Applied {operation.replace('_', ' ')} to '{file_path}' locally"
-            else:
-                # Extract meaningful error message from response
-                error_text = response.text
-                status_code = response.status_code
+                    # Extract meaningful error message from response (non-200 status)
+                    error_text = response.text
+                    status_code = response.status_code
 
-                # Detect Cloudflare tunnel errors (stale tunnel)
-                is_tunnel_error = (
-                    status_code in [502, 503, 504, 530]
-                    or "Cloudflare Tunnel error" in error_text
-                    or "cloudflared" in error_text.lower()
-                )
+                    # Detect Cloudflare tunnel errors (stale tunnel)
+                    is_tunnel_error = (
+                        status_code in [502, 503, 504, 530]
+                        or "Cloudflare Tunnel error" in error_text
+                        or "cloudflared" in error_text.lower()
+                    )
 
                 if is_tunnel_error:
                     logger.warning(
@@ -2861,34 +2869,40 @@ def _route_to_local_server(
                     except:
                         pass  # If JSON parsing fails, fall through to None
 
-                return None  # Fall back to CodeChangesManager
+                    return None  # Fall back to CodeChangesManager
 
+            except Exception as e:
+                # Handle specific httpx exceptions if available
+                error_type = type(e).__name__
+                if "Timeout" in error_type or "timeout" in str(e).lower():
+                    logger.error(
+                        f"[Tunnel Routing] ⏱️ Timeout routing {operation} to LocalServer after {request_timeout}s: {e}. "
+                        f"URL: {url}. This may indicate the tunnel is not connected or LocalServer is not responding."
+                    )
+                elif "Connect" in error_type or "connection" in str(e).lower():
+                    logger.warning(
+                        f"[Tunnel Routing] 🔌 Connection error routing {operation} to LocalServer: {e}"
+                    )
+                else:
+                    # For HTTP errors, try to extract meaningful message
+                    if hasattr(e, "response") and e.response:
+                        error_message = _extract_error_message(
+                            e.response.text if hasattr(e.response, "text") else str(e),
+                            e.response.status_code if hasattr(e.response, "status_code") else 0,
+                        )
+                        logger.warning(
+                            f"[Tunnel Routing] ❌ HTTP error routing {operation} to LocalServer: {error_message}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[Tunnel Routing] ❌ Error routing {operation} to LocalServer: {e}"
+                        )
+                return None  # Fall back to CodeChangesManager
+    
     except Exception as e:
-        # Handle specific httpx exceptions if available
-        error_type = type(e).__name__
-        if "Timeout" in error_type or "timeout" in str(e).lower():
-            logger.warning(
-                f"[Tunnel Routing] ⏱️ Timeout routing {operation} to LocalServer: {e}"
-            )
-        elif "Connect" in error_type or "connection" in str(e).lower():
-            logger.warning(
-                f"[Tunnel Routing] 🔌 Connection error routing {operation} to LocalServer: {e}"
-            )
-        else:
-            # For HTTP errors, try to extract meaningful message
-            if hasattr(e, "response") and e.response:
-                error_message = _extract_error_message(
-                    e.response.text if hasattr(e.response, "text") else str(e),
-                    e.response.status_code if hasattr(e.response, "status_code") else 0,
-                )
-                logger.warning(
-                    f"[Tunnel Routing] ❌ HTTP error routing {operation} to LocalServer: {error_message}"
-                )
-            else:
-                logger.warning(
-                    f"[Tunnel Routing] ❌ Error routing {operation} to LocalServer: {e}"
-                )
-        return None  # Fall back to CodeChangesManager
+        # Outer exception handler for non-httpx errors
+        logger.warning(f"[Tunnel Routing] Unexpected error in _route_to_local_server: {e}")
+        return None
 
 
 def _should_route_to_local_server() -> bool:
