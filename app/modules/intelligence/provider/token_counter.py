@@ -16,32 +16,33 @@ class TokenCounter:
 
     def _get_encoder(self, model: str) -> tiktoken.Encoding:
         """Get or create tiktoken encoder for model."""
-        # Map model strings to tiktoken encoding names
+        # Map model strings to tiktoken encoding names.
+        # More specific prefixes must come before less specific ones
+        # (e.g. "gpt-4o" before "gpt-4") to avoid false matches.
         encoding_map = {
-            # OpenAI models
-            "gpt-4": "cl100k_base",
+            # OpenAI models (specific before general)
             "gpt-4o": "o200k_base",
             "gpt-4.1": "o200k_base",
             "o4": "o200k_base",
+            "gpt-4": "cl100k_base",
             # Anthropic (use cl100k_base as approximation)
             "claude": "cl100k_base",
             # Default fallback
             "default": "cl100k_base",
         }
 
-        # Determine encoding name
-        encoding_name = "default"
+        # Determine encoding name by matching model string to known prefixes
         model_lower = model.lower()
+        encoding_name = encoding_map["default"]
         for key, enc_name in encoding_map.items():
-            if key in model_lower:
+            if key != "default" and key in model_lower:
                 encoding_name = enc_name
                 break
 
         # Cache encoder
         if encoding_name not in self._encoders:
             try:
-                actual_encoding = encoding_map.get(encoding_name, "cl100k_base")
-                self._encoders[encoding_name] = tiktoken.get_encoding(actual_encoding)
+                self._encoders[encoding_name] = tiktoken.get_encoding(encoding_name)
             except Exception as e:
                 logger.warning(
                     f"Failed to get encoding {encoding_name}: {e}, using cl100k_base"

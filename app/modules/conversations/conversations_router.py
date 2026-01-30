@@ -201,6 +201,13 @@ class ConversationAPI:
             if attachment_ids:
                 try:
                     parsed_attachment_ids = json.loads(attachment_ids)
+                    if not isinstance(parsed_attachment_ids, list) or not all(
+                        isinstance(aid, str) for aid in parsed_attachment_ids
+                    ):
+                        raise HTTPException(
+                            status_code=400,
+                            detail="attachment_ids must be a JSON array of strings",
+                        )
                 except json.JSONDecodeError:
                     raise HTTPException(
                         status_code=400, detail="Invalid attachment_ids format"
@@ -576,118 +583,141 @@ class ConversationAPI:
             media_type="text/event-stream",
         )
 
+    @staticmethod
+    @router.get("/conversations/{conversation_id}/context-usage")
+    async def get_context_usage(
+        conversation_id: str,
+        db: Session = Depends(get_db),
+        async_db: AsyncSession = Depends(get_async_db),
+        user=Depends(AuthService.check_auth),
+    ):
+        """Get current context window usage for a conversation."""
+        try:
+            user_id = user["user_id"]
+            user_email = user["email"]
 
-@router.get("/conversations/{conversation_id}/context-usage")
-async def get_context_usage(
-    conversation_id: str,
-    db: Session = Depends(get_db),
-    async_db: AsyncSession = Depends(get_async_db),
-    user=Depends(AuthService.check_auth),
-):
-    """Get current context window usage for a conversation."""
-    try:
-        user_id = user.get("user_id")
-        user_email = user.get("email")
+            controller = ConversationController(db, async_db, user_id, user_email)
 
-        controller = ConversationController(db, async_db, user_id, user_email)
-
-        # Get conversation info
-        conversation_info = await controller.get_conversation_info(conversation_id)
-
-        # Get agent model
-        agent_id = (
-            conversation_info.agent_ids[0] if conversation_info.agent_ids else None
-        )
-        if not agent_id:
-            raise HTTPException(status_code=400, detail="No agent configured")
-
-        # Get model configuration
-        from app.modules.intelligence.agents.agents_service import AgentsService
-        from app.modules.intelligence.provider.provider_service import ProviderService
-        from app.modules.intelligence.prompts.prompt_service import PromptService
-        from app.modules.intelligence.tools.tool_service import ToolService
-
-        provider_service = ProviderService(db, user_id)
-        tool_service = ToolService(db, user_id)
-        prompt_service = PromptService(db)
-        agent_service = AgentsService(
-            db, provider_service, prompt_service, tool_service
-        )
-
-        # Get model identifier
-        agent_type = await agent_service.validate_agent_id(user_id, agent_id)
-        if agent_type == "CUSTOM_AGENT":
-            custom_agent = await agent_service.custom_agent_service.get_agent_model(
-                agent_id
+            # Get conversation info
+            conversation_info = await controller.get_conversation_info(
+                conversation_id
             )
-            model = (
-                provider_service.chat_config.model if custom_agent else "openai/gpt-4o"
+
+            # Get agent model
+            agent_id = (
+                conversation_info.agent_ids[0]
+                if conversation_info.agent_ids
+                else None
             )
-        else:
-            model = provider_service.chat_config.model
+            if not agent_id:
+                raise HTTPException(
+                    status_code=400, detail="No agent configured"
+                )
 
-        # Get conversation messages (last 20 for context estimation)
-        messages = await controller.get_conversation_messages(
-            conversation_id, start=0, limit=20
-        )
+            # Get model configuration
+            from app.modules.intelligence.agents.agents_service import (
+                AgentsService,
+            )
+            from app.modules.intelligence.provider.provider_service import (
+                ProviderService,
+            )
+            from app.modules.intelligence.prompts.prompt_service import (
+                PromptService,
+            )
+            from app.modules.intelligence.tools.tool_service import ToolService
 
-        # Count tokens
-        token_counter = get_token_counter()
+            provider_service = ProviderService(db, user_id)
+            tool_service = ToolService(db, user_id)
+            prompt_service = PromptService(db)
+            agent_service = AgentsService(
+                db, provider_service, prompt_service, tool_service
+            )
 
-        # Extract message content
-        history_content = []
-        attachment_tokens = 0
+            # Get model identifier
+            agent_type = await agent_service.validate_agent_id(user_id, agent_id)
+            if agent_type == "CUSTOM_AGENT":
+                custom_agent = (
+                    await agent_service.custom_agent_service.get_agent_model(
+                        agent_id
+                    )
+                )
+                model = (
+                    provider_service.chat_config.model
+                    if custom_agent
+                    else "openai/gpt-4o"
+                )
+            else:
+                model = provider_service.chat_config.model
 
-        for msg in messages:
-            if msg.content:
-                history_content.append(f"{msg.type}: {msg.content}")
+            # Get conversation messages (last 20 for context estimation)
+            messages = await controller.get_conversation_messages(
+                conversation_id, start=0, limit=20
+            )
 
-            # Count attachment tokens
-            if msg.has_attachments and msg.attachments:
-                for attachment in msg.attachments:
-                    if attachment.file_metadata:
-                        token_count = attachment.file_metadata.get("token_count", 0)
-                        if token_count:
-                            attachment_tokens += token_count
+            # Count tokens
+            token_counter = get_token_counter()
 
-        # Calculate usage
-        history_tokens = token_counter.count_messages_tokens(history_content, model)
-        total_tokens = history_tokens + attachment_tokens
-        context_limit = token_counter.get_context_limit(model)
-        remaining = context_limit - total_tokens
-        usage_percentage = (
-            (total_tokens / context_limit * 100) if context_limit > 0 else 0
-        )
+            # Extract message content
+            history_content = []
+            attachment_tokens = 0
 
-        # Determine warning level
-        if usage_percentage >= 95:
-            warning_level = "critical"
-        elif usage_percentage >= 80:
-            warning_level = "approaching"
-        else:
-            warning_level = "none"
+            for msg in messages:
+                if msg.content:
+                    history_content.append(f"{msg.type}: {msg.content}")
 
-        return {
-            "conversation_id": conversation_id,
-            "model": model,
-            "context_limit": context_limit,
-            "current_usage": {
-                "conversation_history": history_tokens,
-                "text_attachments": attachment_tokens,
-                "image_attachments": 0,  # Images don't count toward context
-                "code_context": 0,  # Future: count node context
-                "total": total_tokens,
-            },
-            "remaining": remaining,
-            "usage_percentage": round(usage_percentage, 2),
-            "warning_level": warning_level,
-        }
+                # Count attachment tokens
+                if msg.has_attachments and msg.attachments:
+                    for attachment in msg.attachments:
+                        if attachment.file_metadata:
+                            token_count = attachment.file_metadata.get(
+                                "token_count", 0
+                            )
+                            if token_count:
+                                attachment_tokens += token_count
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting context usage: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+            # Calculate usage
+            history_tokens = token_counter.count_messages_tokens(
+                history_content, model
+            )
+            total_tokens = history_tokens + attachment_tokens
+            context_limit = token_counter.get_context_limit(model)
+            remaining = context_limit - total_tokens
+            usage_percentage = (
+                (total_tokens / context_limit * 100) if context_limit > 0 else 0
+            )
+
+            # Determine warning level
+            if usage_percentage >= 95:
+                warning_level = "critical"
+            elif usage_percentage >= 80:
+                warning_level = "approaching"
+            else:
+                warning_level = "none"
+
+            return {
+                "conversation_id": conversation_id,
+                "model": model,
+                "context_limit": context_limit,
+                "current_usage": {
+                    "conversation_history": history_tokens,
+                    "text_attachments": attachment_tokens,
+                    "image_attachments": 0,  # Images don't count toward context
+                    "code_context": 0,  # Future: count node context
+                    "total": total_tokens,
+                },
+                "remaining": remaining,
+                "usage_percentage": round(usage_percentage, 2),
+                "warning_level": warning_level,
+            }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error getting context usage: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to calculate context usage",
+            )
 
 
 @router.post("/conversations/share", response_model=ShareChatResponse, status_code=201)

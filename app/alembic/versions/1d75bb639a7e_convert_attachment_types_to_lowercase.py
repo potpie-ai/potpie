@@ -19,10 +19,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Note: Lowercase enum values (image, video, audio, document) must be added
-    # manually before running this migration using:
-    # ALTER TYPE attachmenttype ADD VALUE IF NOT EXISTS '<value>';
-    # This is because PostgreSQL requires enum additions to be committed before use.
+    # Add lowercase enum values if they don't already exist.
+    # PostgreSQL requires each ADD VALUE to be in its own transaction,
+    # so we use autocommit mode via op.execute() with separate statements.
+    for value in ("image", "video", "audio", "document"):
+        op.execute(
+            f"ALTER TYPE attachmenttype ADD VALUE IF NOT EXISTS '{value}'"
+        )
 
     # Convert existing uppercase values to lowercase in message_attachments table
     op.execute(

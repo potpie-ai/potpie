@@ -116,36 +116,6 @@ class MediaController:
                 500, MediaError.PROCESSING_ERROR, "An unexpected error occurred", None
             )
 
-    async def upload_document(
-        self, file: UploadFile, message_id: Optional[str] = None
-    ) -> AttachmentUploadResponse:
-        """Upload document with feature flag check"""
-        self._check_multimodal_enabled()
-        try:
-            # Validate file
-            if not file.filename:
-                raise HTTPException(status_code=400, detail="No file provided")
-
-            # Upload using media service
-            result = await self.media_service.upload_document(
-                file=file,
-                file_name=file.filename,
-                mime_type=file.content_type or "application/octet-stream",
-                message_id=message_id,
-            )
-
-            logger.info(f"User {self.user_id} uploaded document: {result.id}")
-            return result
-
-        except MediaServiceError as e:
-            logger.error(f"Media service error: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e))
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error uploading document: {str(e)}")
-            raise HTTPException(status_code=500, detail="Failed to upload document")
-
     async def get_attachment_access_url(
         self, attachment_id: str, expiration_minutes: int = 60
     ) -> AttachmentAccessResponse:
@@ -432,7 +402,9 @@ class MediaController:
             raise
         except Exception as e:
             logger.error(f"Error validating document upload: {str(e)}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(
+                status_code=500, detail="Failed to validate document upload"
+            )
 
     async def _check_attachment_access(
         self, message_id: str, require_write: bool = False

@@ -85,7 +85,7 @@ class MediaService:
         "application/vnd.ms-excel",
     ]
 
-    CODE_FILE_EXTENSIONS = [
+    CODE_FILE_EXTENSIONS = {
         ".py",
         ".js",
         ".ts",
@@ -118,7 +118,7 @@ class MediaService:
         ".ini",
         ".conf",
         ".cfg",
-    ]
+    }
 
     MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
     MAX_DIMENSION = 2048  # Reduce from 4096 to preserve more detail in base64
@@ -141,8 +141,8 @@ class MediaService:
             descriptor = config_provider.get_object_storage_descriptor()
             provider = descriptor["provider"]
             try:
-                # Convert to uppercase to match enum values (GCS, S3, LOCAL, AZURE)
-                self.storage_provider = StorageProvider(provider.upper())
+                # Convert to lowercase to match enum values (gcs, s3, local, azure)
+                self.storage_provider = StorageProvider(provider.lower())
             except ValueError as exc:  # fall back to safe default
                 logger.error(f"Unsupported storage provider '{provider}': {exc}")
                 raise MediaServiceError(
@@ -172,7 +172,7 @@ class MediaService:
             )
         except Exception as e:
             logger.error(f"Failed to initialize object storage client: {e}")
-            raise MediaServiceError(f"Failed to initialize object storage: {e}")
+            raise MediaServiceError(f"Failed to initialize object storage: {e}") from e
 
     def _check_multimodal_enabled(self):
         """Raise appropriate error if multimodal functionality is disabled"""
@@ -267,7 +267,7 @@ class MediaService:
             logger.error(f"Error uploading image: {str(e)}")
             if isinstance(e, (MediaServiceError, HTTPException)):
                 raise
-            raise MediaServiceError(f"Failed to upload image: {str(e)}")
+            raise MediaServiceError(f"Failed to upload image: {str(e)}") from e
 
     async def upload_document(
         self,
@@ -407,7 +407,7 @@ class MediaService:
             logger.error(f"Error uploading document: {str(e)}", exc_info=True)
             if isinstance(e, MediaServiceError):
                 raise
-            raise MediaServiceError(f"Failed to upload document: {str(e)}")
+            raise MediaServiceError(f"Failed to upload document: {str(e)}") from e
 
     def _determine_attachment_type(
         self, mime_type: str, file_name: str
@@ -433,41 +433,8 @@ class MediaService:
 
     def _is_code_file(self, file_name: str) -> bool:
         """Check if filename suggests code file."""
-        code_extensions = {
-            ".py",
-            ".js",
-            ".ts",
-            ".tsx",
-            ".jsx",
-            ".java",
-            ".cpp",
-            ".c",
-            ".h",
-            ".cs",
-            ".rb",
-            ".go",
-            ".rs",
-            ".php",
-            ".swift",
-            ".kt",
-            ".scala",
-            ".sh",
-            ".bash",
-            ".sql",
-            ".r",
-            ".m",
-            ".mm",
-            ".json",
-            ".xml",
-            ".yaml",
-            ".yml",
-            ".toml",
-            ".ini",
-            ".conf",
-            ".cfg",
-        }
         extension = "." + file_name.split(".")[-1].lower() if "." in file_name else ""
-        return extension in code_extensions
+        return extension in self.CODE_FILE_EXTENSIONS
 
     async def get_extracted_text(self, attachment_id: str) -> str:
         """Retrieve extracted text from attachment (JSONB or S3)."""
@@ -499,7 +466,7 @@ class MediaService:
                     logger.error(f"Failed to fetch extracted text from S3: {e}")
                     raise MediaServiceError(
                         f"Failed to retrieve extracted text: {str(e)}"
-                    )
+                    ) from e
 
             else:
                 # No extracted text available
@@ -509,7 +476,7 @@ class MediaService:
             raise
         except Exception as e:
             logger.error(f"Error getting extracted text for {attachment_id}: {str(e)}")
-            raise MediaServiceError(f"Failed to get extracted text: {str(e)}")
+            raise MediaServiceError(f"Failed to get extracted text: {str(e)}") from e
 
     def _validate_image(self, file_data: bytes, mime_type: str) -> None:
         """Validate image file"""
@@ -613,7 +580,7 @@ class MediaService:
 
         except Exception as e:
             logger.error(f"Error processing image: {str(e)}")
-            raise MediaServiceError(f"Failed to process image: {str(e)}")
+            raise MediaServiceError(f"Failed to process image: {str(e)}") from e
 
     def _generate_storage_path(self, attachment_id: str, file_name: str) -> str:
         """Generate a unique storage path for the file"""
@@ -655,7 +622,7 @@ class MediaService:
             logger.info(f"Uploaded object to {self.bucket_name}:{storage_path}")
         except Exception as e:
             logger.error(f"Failed to upload to object storage: {e}")
-            raise MediaServiceError(f"Failed to upload to object storage: {e}")
+            raise MediaServiceError(f"Failed to upload to object storage: {e}") from e
 
     async def get_attachment(self, attachment_id: str) -> Optional[MessageAttachment]:
         """Get attachment record by ID"""
@@ -668,7 +635,7 @@ class MediaService:
             return attachment
         except Exception as e:
             logger.error(f"Error retrieving attachment {attachment_id}: {str(e)}")
-            raise MediaServiceError(f"Failed to retrieve attachment: {str(e)}")
+            raise MediaServiceError(f"Failed to retrieve attachment: {str(e)}") from e
 
     async def get_attachment_data(self, attachment_id: str) -> bytes:
         """Download attachment data from storage"""
@@ -700,7 +667,7 @@ class MediaService:
             raise
         except Exception as e:
             logger.error(f"Error downloading attachment {attachment_id}: {str(e)}")
-            raise MediaServiceError(f"Failed to download attachment: {str(e)}")
+            raise MediaServiceError(f"Failed to download attachment: {str(e)}") from e
 
     async def generate_signed_url(
         self, attachment_id: str, expiration_minutes: int = 60
@@ -731,7 +698,7 @@ class MediaService:
             logger.error(
                 f"Error generating signed URL for attachment {attachment_id}: {str(e)}"
             )
-            raise MediaServiceError(f"Failed to generate access URL: {str(e)}")
+            raise MediaServiceError(f"Failed to generate access URL: {str(e)}") from e
 
     async def delete_attachment(self, attachment_id: str) -> bool:
         """Delete attachment from storage and database"""
@@ -765,7 +732,7 @@ class MediaService:
                 logger.error(f"Failed to delete from cloud storage: {str(e)}")
                 raise MediaServiceError(
                     f"Failed to delete from cloud storage: {str(e)}"
-                )
+                ) from e
 
             # Delete from database
             self.db.delete(attachment)
@@ -777,7 +744,7 @@ class MediaService:
         except Exception as e:
             self.db.rollback()
             logger.error(f"Error deleting attachment {attachment_id}: {str(e)}")
-            raise MediaServiceError(f"Failed to delete attachment: {str(e)}")
+            raise MediaServiceError(f"Failed to delete attachment: {str(e)}") from e
 
     async def update_message_attachments(
         self, message_id: str, attachment_ids: List[str]
@@ -816,7 +783,7 @@ class MediaService:
         except Exception as e:
             self.db.rollback()
             logger.error(f"Error updating message attachments: {str(e)}")
-            raise MediaServiceError(f"Failed to update message attachments: {str(e)}")
+            raise MediaServiceError(f"Failed to update message attachments: {str(e)}") from e
 
     async def get_message_attachments(
         self, message_id: str, include_download_urls: bool = True
@@ -869,7 +836,7 @@ class MediaService:
             logger.error(
                 f"Error getting message attachments for message {message_id}: {str(e)}"
             )
-            raise MediaServiceError(f"Failed to get message attachments: {str(e)}")
+            raise MediaServiceError(f"Failed to get message attachments: {str(e)}") from e
 
     async def get_image_as_base64(self, attachment_id: str) -> str:
         """Get image as base64 string for LLM processing"""
@@ -895,7 +862,7 @@ class MediaService:
 
         except Exception as e:
             logger.error(f"Error converting image {attachment_id} to base64: {str(e)}")
-            raise MediaServiceError(f"Failed to convert image to base64: {str(e)}")
+            raise MediaServiceError(f"Failed to convert image to base64: {str(e)}") from e
 
     async def get_message_images_as_base64(
         self, message_id: str
@@ -940,7 +907,7 @@ class MediaService:
             logger.error(
                 f"Error getting message images as base64 for message {message_id}: {str(e)}"
             )
-            raise MediaServiceError(f"Failed to get message images as base64: {str(e)}")
+            raise MediaServiceError(f"Failed to get message images as base64: {str(e)}") from e
 
     async def get_conversation_recent_images(
         self, conversation_id: str, limit: int = 10
@@ -986,7 +953,7 @@ class MediaService:
             )
             raise MediaServiceError(
                 f"Failed to get recent conversation images: {str(e)}"
-            )
+            ) from e
 
     async def test_multimodal_functionality(self, attachment_id: str) -> Dict[str, Any]:
         """Test method to verify multimodal functionality"""
@@ -1039,7 +1006,7 @@ class MediaService:
             },
             "code_files": {
                 "mime_types": ["text/plain", "application/json"],
-                "extensions": self.CODE_FILE_EXTENSIONS,
+                "extensions": sorted(self.CODE_FILE_EXTENSIONS),
                 "max_size_bytes": self.MAX_IMAGE_SIZE,
                 "description": "Source code and configuration files",
             },

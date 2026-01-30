@@ -951,7 +951,7 @@ class ConversationService:
             additional_context = ""
             if text_attachments:
                 text_parts = []
-                for att_id, att_data in text_attachments.items():
+                for _att_id, att_data in text_attachments.items():
                     text_parts.append(
                         f"=== ATTACHED FILE: {att_data['file_name']} ===\n\n{att_data['text']}\n\n"
                     )

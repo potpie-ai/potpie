@@ -86,10 +86,10 @@ class TextExtractionService:
                 or "vnd.openxmlformats-officedocument.spreadsheetml" in mime_type
             ):
                 return self._extract_xlsx(file_data)
-            elif mime_type == "text/plain" or mime_type.startswith("text/"):
-                return self._extract_text_file(file_data, mime_type)
             elif self._is_code_file(file_name, mime_type):
                 return self._extract_code_file(file_data)
+            elif mime_type == "text/plain" or mime_type.startswith("text/"):
+                return self._extract_text_file(file_data, mime_type)
             else:
                 raise TextExtractionError(f"Unsupported file type: {mime_type}")
 

@@ -273,8 +273,15 @@ class MediaAPI:
 
         This is an admin endpoint for testing/monitoring.
         In production, cleanup runs automatically via Celery beat.
+        Requires admin privileges.
         """
-        # TODO: Add admin role check
+        # Verify admin privileges
+        if not user.get("is_admin", False):
+            raise HTTPException(
+                status_code=403,
+                detail="Admin privileges required for this operation",
+            )
+
         from app.modules.media.attachment_cleanup_service import (
             AttachmentCleanupService,
         )
