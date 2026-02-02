@@ -4,6 +4,7 @@ import re
 from typing import List, AsyncGenerator, Sequence
 
 import anyio
+import logfire
 
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 
@@ -597,8 +598,9 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                     "Images provided but current model doesn't support vision, proceeding with text-only streaming"
                 )
             # Use standard PydanticAI streaming for text-only
-            async for chunk in self._run_standard_stream(ctx):
-                yield chunk
+            with logfire.span("standard_agent_stream", user_id=ctx.user_id, project_id=ctx.project_id, conversation_id=ctx.conversation_id):
+                async for chunk in self._run_standard_stream(ctx):
+                    yield chunk
 
     async def _run_multimodal_stream(
         self, ctx: ChatContext

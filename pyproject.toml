@@ -86,6 +86,7 @@ dependencies = [
     "uuid6>=2025.0.1",
     "uvicorn>=0.38.0",
     "virtualenv>=20.36.1",
+    "logfire>=4.16.0",
 ]
 
 [dependency-groups]

@@ -9,7 +9,7 @@ import sentry_sdk
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
+import logfire
 from app.api.router import router as potpie_api_router
 from app.core.base_model import Base
 from app.core.database import SessionLocal, engine
@@ -43,6 +43,8 @@ configure_logging()
 logger = setup_logger(__name__)
 
 
+
+
 class MainApp:
     def __init__(self):
         load_dotenv(override=True)
@@ -55,7 +57,7 @@ class MainApp:
             )
             exit(1)
         self.setup_sentry()
-        self.setup_phoenix_tracing()
+        self.setup_logfire_tracing()
         self.app = FastAPI()
         self.setup_cors()
         self.setup_logging_middleware()
@@ -86,17 +88,10 @@ class MainApp:
                     "Sentry initialization failed (non-fatal but should be investigated)"
                 )
 
-    def setup_phoenix_tracing(self):
-        try:
-            from app.modules.intelligence.tracing.phoenix_tracer import (
-                initialize_phoenix_tracing,
-            )
-
-            initialize_phoenix_tracing()
-        except Exception:
-            logger.exception(
-                "Phoenix tracing initialization failed (non-fatal but should be investigated)"
-            )
+    def setup_logfire_tracing(self):
+        logfire.configure()
+        logfire.instrument_pydantic()    
+        logger.info("Logfire tracing configured successfully")
 
     def setup_cors(self):
         # Get allowed origins from environment variable, default to localhost:3000 for development

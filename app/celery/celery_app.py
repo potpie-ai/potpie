@@ -1,5 +1,6 @@
 import os
 import asyncio
+import logfire
 
 # Set TOKENIZERS_PARALLELISM before any tokenizer imports to prevent fork warnings
 # This must be set before sentence-transformers or any HuggingFace tokenizers are used
@@ -143,8 +144,12 @@ def setup_phoenix_tracing():
             error=str(e),
         )
 
+def setup_logfire_tracing():
+    logfire.configure()
+    logfire.instrument_pydantic()    
+    logger.info("Logfire tracing configured successfully")
 
-setup_phoenix_tracing()
+setup_logfire_tracing()
 
 
 def configure_litellm_for_celery():
