@@ -393,6 +393,21 @@ def log_worker_memory_config(sender, **kwargs):
             )
         except Exception:
             pass
+
+        # Preload embedding model so semantic search fallback does not spike memory mid-task
+        try:
+            from app.modules.parsing.knowledge_graph.inference_service import (
+                preload_embedding_model,
+            )
+
+            if preload_embedding_model():
+                logger.info(
+                    "Preloaded embedding model for semantic search (cached for worker)"
+                )
+            else:
+                logger.debug("Embedding model preload skipped or failed")
+        except Exception as e:
+            logger.debug("Could not preload embedding model: %s", e)
     except ImportError:
         # psutil not available, skip detailed logging
         logger.info(

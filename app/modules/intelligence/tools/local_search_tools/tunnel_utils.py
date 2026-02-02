@@ -4,7 +4,7 @@ Tunnel utilities for routing search operations to LocalServer.
 
 import json
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 import httpx
 from app.modules.utils.logger import setup_logger
 
@@ -108,6 +108,103 @@ def format_tunnel_error_for_agent(
     }
 
 
+def read_files_batch_from_local_server(
+    paths: List[str],
+    user_id: Optional[str] = None,
+    conversation_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Call LocalServer POST /api/files/read-batch with body { \"paths\": paths }.
+
+    Response format: { "files": [ { "path", "content"?, "line_count"?, "error"? }, ... ] }
+    Missing files have an "error" field (e.g. "File not found") instead of content/line_count.
+
+    Returns:
+        Response dict with "files" key, or None if tunnel unavailable or request failed.
+    """
+    if not paths:
+        return {"files": []}
+
+    try:
+        from app.modules.tunnel.tunnel_service import get_tunnel_service
+
+        if user_id is None or conversation_id is None:
+            u, c = get_context_vars()
+            user_id = user_id or u
+            conversation_id = conversation_id or c
+
+        if not user_id:
+            logger.debug("[read_files_batch] No user_id in context")
+            return None
+
+        from app.modules.intelligence.tools.code_changes_manager import _get_tunnel_url
+
+        context_tunnel_url = _get_tunnel_url()
+        tunnel_service = get_tunnel_service()
+        tunnel_url = tunnel_service.get_tunnel_url(
+            user_id, conversation_id, tunnel_url=context_tunnel_url
+        )
+
+        force_tunnel = os.getenv("FORCE_TUNNEL", "").lower() in ["true", "1", "yes"]
+        base_url = os.getenv("BASE_URL", "").lower()
+        environment = os.getenv("ENVIRONMENT", "").lower()
+        is_backend_local = (
+            "localhost" in base_url
+            or "127.0.0.1" in base_url
+            or environment in ["local", "dev", "development"]
+            or not base_url
+        )
+
+        base = None
+        if is_backend_local and not force_tunnel:
+            from app.modules.tunnel.tunnel_service import _get_local_tunnel_server_url
+
+            direct_base = _get_local_tunnel_server_url()
+            if not direct_base:
+                local_port_env = os.getenv("LOCAL_SERVER_PORT")
+                direct_port = int(local_port_env) if local_port_env else 3001
+                direct_base = f"http://localhost:{direct_port}"
+            try:
+                with httpx.Client(timeout=2.0) as health_client:
+                    health = health_client.get(f"{direct_base}/health")
+                    if health.status_code == 200:
+                        base = direct_base
+                        logger.info(
+                            f"[read_files_batch] Using direct LocalServer: {base}"
+                        )
+            except Exception:
+                pass
+
+        if base is None and tunnel_url:
+            base = tunnel_url
+            logger.info(f"[read_files_batch] Using tunnel: {base}")
+
+        if not base:
+            logger.debug("[read_files_batch] No LocalServer base (tunnel or direct)")
+            return None
+
+        url = f"{base.rstrip('/')}/api/files/read-batch"
+        payload = {"paths": paths}
+        with httpx.Client(timeout=30.0) as client:
+            response = client.post(
+                url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
+        if response.status_code != 200:
+            logger.debug(
+                f"[read_files_batch] HTTP {response.status_code}: {response.text[:200]}"
+            )
+            return None
+        data = response.json()
+        if "files" not in data:
+            logger.debug("[read_files_batch] Response missing 'files' key")
+            return None
+        return data
+    except Exception as e:
+        logger.debug(f"[read_files_batch] Failed: {e}")
+        return None
+
+
 def route_to_local_server(
     operation: str,
     data: Dict[str, Any],
@@ -146,7 +243,11 @@ def route_to_local_server(
         )
 
         if not tunnel_url:
-            logger.debug(f"No tunnel available for user {user_id}, using fallback")
+            logger.error(
+                "[Tunnel Routing] No tunnel available for user %s (conversation %s) - LocalServer/tunnel not connected or inactive. Tool will return fallback message.",
+                user_id,
+                conversation_id or "(none)",
+            )
             return None
 
         # Map operation to LocalServer endpoint
@@ -184,31 +285,53 @@ def route_to_local_server(
             or not base_url  # If BASE_URL not set, assume local
         )
 
+        response = None
         if is_backend_local and not force_tunnel:
-            # Try to get local_port from environment or tunnel data, default to 3001
-            local_port_env = os.getenv("LOCAL_SERVER_PORT")
-            direct_port = int(local_port_env) if local_port_env else 3001
-            direct_base = f"http://localhost:{direct_port}"
+            # Prefer VSCODE_LOCAL_TUNNEL_SERVER when set (e.g. http://localhost:3001)
+            from app.modules.tunnel.tunnel_service import _get_local_tunnel_server_url
+
+            direct_base = _get_local_tunnel_server_url()
+            if not direct_base:
+                local_port_env = os.getenv("LOCAL_SERVER_PORT")
+                direct_port = int(local_port_env) if local_port_env else 3001
+                direct_base = f"http://localhost:{direct_port}"
             direct_url = f"{direct_base}{endpoint}"
             try:
                 # Quick health check to ensure LocalServer is reachable directly
                 with httpx.Client(timeout=2.0) as health_client:
                     health = health_client.get(f"{direct_base}/health")
-                    if health.status_code == 200:
+                    if health.status_code != 200:
+                        logger.error(
+                            "[Tunnel Routing] LocalServer health check failed: %s returned %s (tunnel/LocalServer may be inactive)",
+                            f"{direct_base}/health",
+                            health.status_code,
+                        )
+                        response = None
+                    else:
                         logger.info(
                             f"[Tunnel Routing] 🏠 Backend local -> routing {operation} directly: {direct_url}"
                         )
                         with httpx.Client(timeout=30.0) as client:
-                            response = client.post(
+                            direct_response = client.post(
                                 direct_url,
                                 json=request_data,
                                 headers={"Content-Type": "application/json"},
                             )
-                    else:
+                        if direct_response.status_code == 200:
+                            result = direct_response.json()
+                            return format_search_result(operation, result)
+                        logger.error(
+                            "[Tunnel Routing] LocalServer %s failed: HTTP %s - %s",
+                            operation,
+                            direct_response.status_code,
+                            direct_response.text[:300],
+                        )
                         response = None
             except Exception as e:
-                logger.info(
-                    f"[Tunnel Routing] 🏠 Direct LocalServer not reachable, falling back to tunnel. reason={e}"
+                logger.error(
+                    "[Tunnel Routing] LocalServer not reachable at %s (tunnel/LocalServer inactive or not running): %s",
+                    direct_base,
+                    e,
                 )
                 response = None
         else:
@@ -225,8 +348,10 @@ def route_to_local_server(
             # Use longer timeout for tunnel requests (production) - can be slower due to network latency
             # 2 minutes for tunnel requests, 30s for direct localhost
             request_timeout = 120.0  # 2 minutes for tunnel requests
-            
-            logger.debug(f"[Tunnel Routing] Using timeout: {request_timeout}s for tunnel request")
+
+            logger.debug(
+                f"[Tunnel Routing] Using timeout: {request_timeout}s for tunnel request"
+            )
 
             with httpx.Client(timeout=request_timeout) as client:
                 response = client.post(
@@ -253,9 +378,11 @@ def route_to_local_server(
                 )
 
                 if is_tunnel_error:
-                    logger.warning(
-                        f"[Tunnel Routing] ❌ Stale tunnel detected ({status_code}): {tunnel_url}. "
-                        f"Invalidating and retrying with fresh URL from context."
+                    logger.error(
+                        "[Tunnel Routing] Tunnel unreachable (HTTP %s) for %s - %s. Invalidating and retrying with fresh URL from context.",
+                        status_code,
+                        operation,
+                        error_text[:200],
                     )
 
                     # Invalidate the stale tunnel URL
@@ -342,13 +469,17 @@ def route_to_local_server(
                                 )
 
                     # Return None to allow fallback to cloud execution
-                    logger.info(
-                        f"[Tunnel Routing] ⬇️ Falling back to cloud execution for {operation}"
+                    logger.error(
+                        "[Tunnel Routing] Tunnel/LocalServer inactive for %s - falling back to cloud execution. Ensure VS Code extension is connected.",
+                        operation,
                     )
                     return None
 
-                logger.warning(
-                    f"[Tunnel Routing] ❌ LocalServer {operation} failed ({status_code}): {error_text[:200]}"
+                logger.error(
+                    "[Tunnel Routing] LocalServer %s failed (HTTP %s): %s",
+                    operation,
+                    status_code,
+                    error_text[:200],
                 )
 
                 # For bash commands, provide helpful error message instead of returning None

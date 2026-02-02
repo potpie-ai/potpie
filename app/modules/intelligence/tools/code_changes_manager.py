@@ -21,7 +21,7 @@ import redis
 from urllib.parse import quote as url_quote
 from contextvars import ContextVar
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Union, Callable, TypeVar
+from typing import Dict, List, Literal, Optional, Any, Union, Callable, TypeVar
 from enum import Enum
 from dataclasses import dataclass, asdict
 from pydantic import BaseModel, Field, field_validator
@@ -896,6 +896,7 @@ class CodeChangesManager:
         preserve_previous: bool = True,
         preserve_change_type: bool = True,
         original_content: Optional[str] = None,
+        override_previous_content: Optional[str] = None,
     ) -> bool:
         """Internal method to apply a content update
 
@@ -906,11 +907,12 @@ class CodeChangesManager:
             preserve_previous: Whether to preserve previous_content when updating existing changes
             preserve_change_type: Whether to preserve ADD change type for new files
             original_content: Original content before any modifications (used when creating new FileChange)
+            override_previous_content: When provided (e.g. local mode fetch-before-edit), use as previous_content
         """
         logger.debug(
-            f"CodeChangesManager._apply_update: Applying update to '{file_path}' (preserve_previous={preserve_previous}, preserve_change_type={preserve_change_type}, original_content={'provided' if original_content is not None else 'None'})"
+            f"CodeChangesManager._apply_update: Applying update to '{file_path}' (preserve_previous={preserve_previous}, preserve_change_type={preserve_change_type}, original_content={'provided' if original_content is not None else 'None'}, override_previous={'provided' if override_previous_content is not None else 'None'})"
         )
-        previous_content = None
+        previous_content = override_previous_content
         if file_path in self.changes:
             existing = self.changes[file_path]
 
@@ -922,9 +924,13 @@ class CodeChangesManager:
                 )
                 return False
 
-            if preserve_previous and existing.previous_content:
+            if (
+                previous_content is None
+                and preserve_previous
+                and existing.previous_content
+            ):
                 previous_content = existing.previous_content
-            elif preserve_previous:
+            elif previous_content is None and preserve_previous:
                 previous_content = existing.content
 
             # Preserve original change type if it was ADD (for new files)
@@ -951,16 +957,20 @@ class CodeChangesManager:
             self._persist_change()
         else:
             # New file in changes (not yet committed)
-            # Use original_content as previous_content if provided (this is the original file content before any modifications)
+            # Use override_previous_content or original_content as previous_content if provided
             # Default to UPDATE, but caller should use add_file() for new files
             change = FileChange(
                 file_path=file_path,
                 change_type=ChangeType.UPDATE,
                 content=new_content,
                 previous_content=(
-                    original_content
-                    if original_content is not None
-                    else previous_content
+                    override_previous_content
+                    if override_previous_content is not None
+                    else (
+                        original_content
+                        if original_content is not None
+                        else previous_content
+                    )
                 ),
                 description=description,
             )
@@ -978,12 +988,23 @@ class CodeChangesManager:
         content: str,
         description: Optional[str] = None,
         preserve_previous: bool = True,
+        previous_content: Optional[str] = None,
     ) -> bool:
-        """Update an existing file with full content"""
+        """Update an existing file with full content.
+
+        When previous_content is provided (e.g. from local mode fetch-before-edit),
+        it is used as the baseline for diff tracking instead of existing change content.
+        """
         logger.info(
             f"CodeChangesManager.update_file: Updating file '{file_path}' with full content (content length: {len(content)} chars)"
         )
-        result = self._apply_update(file_path, content, description, preserve_previous)
+        result = self._apply_update(
+            file_path,
+            content,
+            description,
+            preserve_previous,
+            override_previous_content=previous_content,
+        )
         if not result:
             logger.warning(
                 f"CodeChangesManager.update_file: Failed to update file '{file_path}' - file may be marked for deletion"
@@ -2367,6 +2388,44 @@ def _route_to_local_server(
     Returns:
         Result string if successful, None if should fall back to CodeChangesManager
     """
+
+    def _append_line_stats(msg: str, res: Dict[str, Any]) -> str:
+        """Append line-change stats from LocalServer so the agent can verify edits."""
+        lines_changed = res.get("lines_changed")
+        lines_added = res.get("lines_added")
+        lines_deleted = res.get("lines_deleted")
+        if (
+            lines_changed is not None
+            or lines_added is not None
+            or lines_deleted is not None
+        ):
+            parts = []
+            if lines_changed is not None:
+                parts.append(f"lines_changed={lines_changed}")
+            if lines_added is not None:
+                parts.append(f"lines_added={lines_added}")
+            if lines_deleted is not None:
+                parts.append(f"lines_deleted={lines_deleted}")
+            msg += "\n\n**Line stats:** " + ", ".join(parts)
+            msg += (
+                "\n\nIf these numbers don't match what you intended (e.g. you expected to delete lines but lines_deleted=0), "
+                "use get_file_from_changes to verify the file and fix with revert_file or a corrected edit."
+            )
+        return msg
+
+    def _append_diff(msg: str, res: Dict[str, Any]) -> str:
+        """Append tunnel line stats and diff to response so agent can review/fix changes."""
+        msg = _append_line_stats(msg, res)
+        raw_diff = res.get("diff")
+        diff = (
+            raw_diff.strip()
+            if isinstance(raw_diff, str)
+            else (str(raw_diff).strip() if raw_diff is not None else "")
+        )
+        if diff:
+            msg += "\n\n**Diff (uncommitted changes):**\n```diff\n" + diff + "\n```"
+        return msg
+
     try:
         from app.modules.tunnel.tunnel_service import get_tunnel_service
         import httpx
@@ -2398,6 +2457,7 @@ def _route_to_local_server(
             "replace_in_file": "/api/files/replace",
             "get_file": "/api/files/read",
             "show_updated_file": "/api/files/read",
+            "revert_file": "/api/files/revert",
         }
 
         endpoint = endpoint_map.get(operation)
@@ -2426,23 +2486,25 @@ def _route_to_local_server(
             )
 
             if is_local_backend and not force_tunnel:
-                # Backend is local - try to get local port from tunnel registration
-                # Tunnel registration stores local_port in the tunnel data
-                tunnel_data = tunnel_service._get_tunnel_data(
-                    tunnel_service._get_tunnel_key(user_id, conversation_id)
+                # Prefer VSCODE_LOCAL_TUNNEL_SERVER when set (e.g. http://localhost:3001)
+                from app.modules.tunnel.tunnel_service import (
+                    _get_local_tunnel_server_url,
                 )
-                local_port = None
-                if tunnel_data:
-                    # Check if we stored local_port during registration
-                    stored_port = tunnel_data.get("local_port")
-                    if stored_port:
-                        local_port = int(stored_port)
 
-                # Default to 3001 if not found (LocalServer default)
-                if not local_port:
-                    local_port = 3001
-
-                direct_url = f"http://localhost:{local_port}"
+                direct_url = _get_local_tunnel_server_url()
+                if not direct_url:
+                    # Backend is local - try to get local port from tunnel registration
+                    tunnel_data = tunnel_service._get_tunnel_data(
+                        tunnel_service._get_tunnel_key(user_id, conversation_id)
+                    )
+                    local_port = None
+                    if tunnel_data:
+                        stored_port = tunnel_data.get("local_port")
+                        if stored_port:
+                            local_port = int(stored_port)
+                    if not local_port:
+                        local_port = 3001
+                    direct_url = f"http://localhost:{local_port}"
 
                 # Quick connectivity check - try to reach localhost before using it
                 try:
@@ -2495,17 +2557,24 @@ def _route_to_local_server(
         # Use longer timeout for tunnel requests (production) vs direct localhost
         # Tunnel requests can be slower due to network latency
         # Define timeout outside try block so it's accessible in exception handler
-        is_tunnel_request = url.startswith("https://") or (url.startswith("http://") and "localhost" not in url)
-        request_timeout = 120.0 if is_tunnel_request else 30.0  # 2 minutes for tunnel, 30s for localhost
-        
-        logger.debug(f"[Tunnel Routing] Using timeout: {request_timeout}s (tunnel={is_tunnel_request})")
+        is_tunnel_request = url.startswith("https://") or (
+            url.startswith("http://") and "localhost" not in url
+        )
+        request_timeout = (
+            120.0 if is_tunnel_request else 30.0
+        )  # 2 minutes for tunnel, 30s for localhost
+
+        logger.debug(
+            f"[Tunnel Routing] Using timeout: {request_timeout}s (tunnel={is_tunnel_request})"
+        )
 
         with httpx.Client(timeout=request_timeout) as client:
             try:
+                result: Dict[str, Any] = {}
                 # Read operations use GET, write operations use POST
                 if operation in ["get_file", "show_updated_file"]:
                     # GET request with file path as query parameter
-                    file_path = data.get("file_path", "")
+                    file_path = data.get("file_path") or data.get("path", "")
                     if not file_path:
                         logger.warning(
                             f"[Tunnel Routing] No file_path provided for {operation}"
@@ -2528,7 +2597,7 @@ def _route_to_local_server(
                     )
 
                     # Format response based on operation type
-                    file_path = data.get("file_path", "file")
+                    file_path = data.get("file_path") or data.get("path", "file")
 
                     if operation == "replace_in_file":
                         replacements_made = result.get("replacements_made", 0)
@@ -2539,30 +2608,35 @@ def _route_to_local_server(
                             f"✅ Replaced pattern '{pattern}' in '{file_path}'\n\n"
                             + f"Made {replacements_made} replacement(s) out of {total_matches} match(es)"
                         )
-
                         if result.get("auto_fixed"):
                             response_msg += "\n\n✅ Auto-fixed formatting issues"
                         if result.get("errors"):
                             response_msg += (
                                 f"\n⚠️ Validation errors: {len(result['errors'])}"
                             )
-
-                        return response_msg
+                        return _append_diff(response_msg, result)
                 elif operation == "update_file_lines":
                     # Format update_file_lines success response
                     start_line = data.get("start_line", 0)
                     end_line = data.get("end_line", start_line)
-                    response_msg = (
-                        f"✅ Updated lines {start_line}-{end_line} in '{file_path}' locally\n\n"
-                        + "Changes applied successfully in your IDE."
-                    )
+                    has_errors = result.get("errors") or result.get("auto_fix_failed")
+                    if has_errors:
+                        response_msg = (
+                            f"⚠️ Updated lines {start_line}-{end_line} in '{file_path}' locally, "
+                            f"but linter reported issues (change may be partial or reverted).\n\n"
+                        )
+                    else:
+                        response_msg = (
+                            f"✅ Updated lines {start_line}-{end_line} in '{file_path}' locally\n\n"
+                            + "Changes applied successfully in your IDE."
+                        )
                     if result.get("auto_fixed"):
                         response_msg += "\n\n✅ Auto-fixed formatting issues"
                     if result.get("errors"):
                         response_msg += (
                             f"\n⚠️ Validation errors: {len(result['errors'])}"
                         )
-                    return response_msg
+                    return _append_diff(response_msg, result)
                 elif operation == "add_file":
                     # Format add_file success response
                     response_msg = f"✅ Created file '{file_path}' locally\n\nChanges applied successfully in your IDE."
@@ -2572,7 +2646,7 @@ def _route_to_local_server(
                         response_msg += (
                             f"\n⚠️ Validation errors: {len(result['errors'])}"
                         )
-                    return response_msg
+                    return _append_diff(response_msg, result)
                 elif operation == "update_file":
                     # Format update_file success response
                     response_msg = f"✅ Updated file '{file_path}' locally\n\nChanges applied successfully in your IDE."
@@ -2582,14 +2656,54 @@ def _route_to_local_server(
                         response_msg += (
                             f"\n⚠️ Validation errors: {len(result['errors'])}"
                         )
-                    return response_msg
+                    return _append_diff(response_msg, result)
                 elif operation == "insert_lines":
                     # Format insert_lines success response
                     line_number = data.get("line_number", 0)
                     position = "after" if data.get("insert_after", True) else "before"
+                    has_errors = result.get("errors") or result.get("auto_fix_failed")
+                    if has_errors:
+                        response_msg = (
+                            f"⚠️ Inserted lines {position} line {line_number} in '{file_path}' locally, "
+                            f"but linter reported issues (change may be partial or reverted).\n\n"
+                        )
+                    else:
+                        response_msg = (
+                            f"✅ Inserted lines {position} line {line_number} in '{file_path}' locally\n\n"
+                            + "Changes applied successfully in your IDE."
+                        )
+                    if result.get("auto_fixed"):
+                        response_msg += "\n\n✅ Auto-fixed formatting issues"
+                    if result.get("errors"):
+                        response_msg += (
+                            f"\n⚠️ Validation errors: {len(result['errors'])}"
+                        )
+                    return _append_diff(response_msg, result)
+                elif operation == "delete_lines":
+                    # Format delete_lines success response
+                    start_line = data.get("start_line", 0)
+                    end_line = data.get("end_line", start_line)
                     response_msg = (
-                        f"✅ Inserted lines {position} line {line_number} in '{file_path}' locally\n\n"
+                        f"✅ Deleted lines {start_line}-{end_line} from '{file_path}' locally\n\n"
                         + "Changes applied successfully in your IDE."
+                    )
+                    return _append_diff(response_msg, result)
+                elif operation == "delete_file":
+                    # Format delete_file success response
+                    response_msg = (
+                        f"✅ Deleted file '{file_path}' locally\n\n"
+                        + "File removed successfully from your IDE."
+                    )
+                    return _append_diff(response_msg, result)
+                elif operation == "revert_file":
+                    # Format revert_file success response (LocalServer POST /api/files/revert)
+                    target = data.get("target", "saved")
+                    target_label = (
+                        "last saved version" if target == "saved" else "git HEAD"
+                    )
+                    response_msg = (
+                        f"✅ Reverted file '{file_path}' to {target_label}\n\n"
+                        + "Content applied in your IDE."
                     )
                     if result.get("auto_fixed"):
                         response_msg += "\n\n✅ Auto-fixed formatting issues"
@@ -2597,21 +2711,7 @@ def _route_to_local_server(
                         response_msg += (
                             f"\n⚠️ Validation errors: {len(result['errors'])}"
                         )
-                    return response_msg
-                elif operation == "delete_lines":
-                    # Format delete_lines success response
-                    start_line = data.get("start_line", 0)
-                    end_line = data.get("end_line", start_line)
-                    return (
-                        f"✅ Deleted lines {start_line}-{end_line} from '{file_path}' locally\n\n"
-                        + "Changes applied successfully in your IDE."
-                    )
-                elif operation == "delete_file":
-                    # Format delete_file success response
-                    return (
-                        f"✅ Deleted file '{file_path}' locally\n\n"
-                        + "File removed successfully from your IDE."
-                    )
+                    return _append_diff(response_msg, result)
                 elif operation in ["get_file", "show_updated_file"]:
                     # Format read operation response
                     content = result.get("content", "")
@@ -2638,238 +2738,291 @@ def _route_to_local_server(
                         result_msg += f"```\n{content}\n```\n\n"
                         result_msg += "---\n\n"
                         return result_msg
-                
-                # Error handling for non-200 response codes
+
                 else:
-                    # Extract meaningful error message from response (non-200 status)
-                    error_text = response.text
-                    status_code = response.status_code
+                    # Handle unknown operations (in 200 case) or non-200 responses
+                    if response.status_code == 200:
+                        # Generic success message for other operations
+                        response_msg = f"✅ Applied {operation.replace('_', ' ')} to '{file_path}' locally"
+                        return _append_diff(response_msg, result)
+                    else:
+                        # Extract meaningful error message from response (non-200 status)
+                        error_text = response.text
+                        status_code = response.status_code
 
-                    # Detect Cloudflare tunnel errors (stale tunnel)
-                    is_tunnel_error = (
-                        status_code in [502, 503, 504, 530]
-                        or "Cloudflare Tunnel error" in error_text
-                        or "cloudflared" in error_text.lower()
-                    )
+                        # Detect Cloudflare tunnel errors (stale tunnel)
+                        is_tunnel_error = (
+                            status_code in [502, 503, 504, 530]
+                            or "Cloudflare Tunnel error" in error_text
+                            or "cloudflared" in error_text.lower()
+                        )
 
-                if is_tunnel_error:
-                    logger.warning(
-                        f"[Tunnel Routing] ❌ Stale tunnel detected ({status_code}): {url}. "
-                        f"Invalidating all tunnels for this user."
-                    )
-
-                    # Invalidate all stale tunnel URLs for this user
-                    try:
-                        from app.modules.tunnel.tunnel_service import get_tunnel_service
-
-                        tunnel_service = get_tunnel_service()
-
-                        # Get user-level tunnel URL before unregistering
-                        user_level_tunnel = tunnel_service.get_tunnel_url(user_id, None)
-
-                        # Unregister conversation-specific tunnel
-                        if conversation_id:
-                            tunnel_service.unregister_tunnel(user_id, conversation_id)
-                            logger.info(
-                                f"[Tunnel Routing] ✅ Invalidated stale conversation tunnel for user {user_id}"
+                        if is_tunnel_error:
+                            logger.warning(
+                                f"[Tunnel Routing] ❌ Stale tunnel detected ({status_code}): {url}. "
+                                f"Invalidating all tunnels for this user."
                             )
 
-                        # If user-level tunnel is the same stale URL, invalidate it too
-                        if user_level_tunnel:
-                            # Extract base URL from tunnel_url for comparison
-                            stale_base_url = (
-                                tunnel_url.split("/api/")[0]
-                                if "/api/" in tunnel_url
-                                else tunnel_url
-                            )
-                            if (
-                                user_level_tunnel == stale_base_url
-                                or stale_base_url.startswith(user_level_tunnel)
-                            ):
-                                # User-level tunnel is also stale - invalidate it
-                                tunnel_service.unregister_tunnel(
+                            # Invalidate all stale tunnel URLs for this user
+                            try:
+                                from app.modules.tunnel.tunnel_service import (
+                                    get_tunnel_service,
+                                )
+
+                                tunnel_service = get_tunnel_service()
+
+                                # Get user-level tunnel URL before unregistering
+                                user_level_tunnel = tunnel_service.get_tunnel_url(
                                     user_id, None
-                                )  # Unregister user-level
-                                logger.warning(
-                                    f"[Tunnel Routing] ⚠️ User-level tunnel is also stale ({user_level_tunnel}). "
-                                    f"Invalidated all tunnels. Extension should restart cloudflared."
+                                )
+
+                                # Unregister conversation-specific tunnel
+                                if conversation_id:
+                                    tunnel_service.unregister_tunnel(
+                                        user_id, conversation_id
+                                    )
+                                    logger.info(
+                                        f"[Tunnel Routing] ✅ Invalidated stale conversation tunnel for user {user_id}"
+                                    )
+
+                                # If user-level tunnel is the same stale URL, invalidate it too
+                                if user_level_tunnel:
+                                    # Extract base URL from tunnel_url for comparison
+                                    stale_base_url = (
+                                        tunnel_url.split("/api/")[0]
+                                        if "/api/" in tunnel_url
+                                        else tunnel_url
+                                    )
+                                    if (
+                                        user_level_tunnel == stale_base_url
+                                        or stale_base_url.startswith(user_level_tunnel)
+                                    ):
+                                        # User-level tunnel is also stale - invalidate it
+                                        tunnel_service.unregister_tunnel(
+                                            user_id, None
+                                        )  # Unregister user-level
+                                        logger.warning(
+                                            f"[Tunnel Routing] ⚠️ User-level tunnel is also stale ({user_level_tunnel}). "
+                                            f"Invalidated all tunnels. Extension should restart cloudflared."
+                                        )
+                                    else:
+                                        # User-level tunnel is different, try it as fallback
+                                        logger.info(
+                                            f"[Tunnel Routing] 🔄 Retrying {operation} with user-level tunnel: {user_level_tunnel}"
+                                        )
+
+                                        # Retry with user-level tunnel
+                                        retry_endpoint = endpoint_map.get(operation)
+                                        if retry_endpoint:
+                                            retry_url = (
+                                                f"{user_level_tunnel}{retry_endpoint}"
+                                            )
+                                            try:
+                                                if operation in [
+                                                    "get_file",
+                                                    "show_updated_file",
+                                                ]:
+                                                    # GET request with file path as query parameter
+                                                    file_path = data.get(
+                                                        "file_path", ""
+                                                    )
+                                                    retry_url_with_params = f"{retry_url}?path={url_quote(file_path)}"
+                                                    retry_response = client.get(
+                                                        retry_url_with_params
+                                                    )
+                                                else:
+                                                    retry_response = client.post(
+                                                        retry_url, json=request_data
+                                                    )
+
+                                                if retry_response.status_code == 200:
+                                                    result = retry_response.json()
+                                                    logger.info(
+                                                        f"[Tunnel Routing] ✅ User-level fallback succeeded for {operation}"
+                                                    )
+                                                    # Return success message (simplified), including diff when present
+                                                    file_path = data.get(
+                                                        "file_path", "file"
+                                                    )
+                                                    response_msg = f"✅ Applied {operation.replace('_', ' ')} to '{file_path}' locally (via user-level tunnel)"
+                                                    return _append_diff(
+                                                        response_msg, result
+                                                    )
+                                                elif retry_response.status_code in [
+                                                    502,
+                                                    503,
+                                                    504,
+                                                    530,
+                                                ]:
+                                                    # User-level tunnel is also stale
+                                                    tunnel_service.unregister_tunnel(
+                                                        user_id, None
+                                                    )
+                                                    logger.warning(
+                                                        f"[Tunnel Routing] ⚠️ User-level tunnel also stale. Invalidated all tunnels."
+                                                    )
+                                                else:
+                                                    logger.warning(
+                                                        f"[Tunnel Routing] ❌ User-level fallback failed: {retry_response.status_code}"
+                                                    )
+                                            except Exception as retry_e:
+                                                logger.warning(
+                                                    f"[Tunnel Routing] ❌ User-level fallback error: {retry_e}"
+                                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"[Tunnel Routing] Failed to invalidate tunnel: {e}"
+                                )
+
+                            # Return None to allow fallback to cloud execution
+                            logger.info(
+                                f"[Tunnel Routing] ⬇️ Falling back to cloud execution for {operation}"
+                            )
+                            return None
+
+                        logger.warning(
+                            f"[Tunnel Routing] ❌ LocalServer {operation} failed ({status_code}): {error_text[:200]}"
+                        )
+
+                        # Handle specific error codes
+                        if response.status_code == 409:
+                            # File already exists - provide helpful guidance
+                            file_path = data.get("file_path", "file")
+                            if operation == "add_file":
+                                return (
+                                    f"❌ Cannot create file '{file_path}': File already exists locally.\n\n"
+                                    f"**Recommendation**: Use `update_file_in_changes` or `update_file_lines` to modify the existing file instead of `add_file_to_changes`.\n\n"
+                                    f"**Action**: If you intended to replace the file, use `update_file_in_changes` with the new content."
                                 )
                             else:
-                                # User-level tunnel is different, try it as fallback
-                                logger.info(
-                                    f"[Tunnel Routing] 🔄 Retrying {operation} with user-level tunnel: {user_level_tunnel}"
-                                )
+                                return f"❌ Operation failed: File '{file_path}' already exists (409). Please use update operation instead."
 
-                                # Retry with user-level tunnel
-                                retry_endpoint = endpoint_map.get(operation)
-                                if retry_endpoint:
-                                    retry_url = f"{user_level_tunnel}{retry_endpoint}"
-                                    try:
-                                        if operation in [
-                                            "get_file",
-                                            "show_updated_file",
-                                        ]:
-                                            # GET request with file path as query parameter
-                                            file_path = data.get("file_path", "")
-                                            retry_url_with_params = f"{retry_url}?path={url_quote(file_path)}"
-                                            retry_response = client.get(
-                                                retry_url_with_params
-                                            )
-                                        else:
-                                            retry_response = client.post(
-                                                retry_url, json=request_data
-                                            )
+                        # If pre-validation failed, return a helpful error message to the agent
+                        if response.status_code == 400:
+                            try:
+                                error_data = response.json()
+                                if error_data.get("error") == "pre_validation_failed":
+                                    errors = error_data.get("errors", [])
+                                    error_count = len(errors)
+                                    file_path = data.get("file_path", "file")
 
-                                        if retry_response.status_code == 200:
-                                            result = retry_response.json()
-                                            logger.info(
-                                                f"[Tunnel Routing] ✅ User-level fallback succeeded for {operation}"
-                                            )
-                                            # Return success message (simplified)
-                                            file_path = data.get("file_path", "file")
-                                            return f"✅ Applied {operation.replace('_', ' ')} to '{file_path}' locally (via user-level tunnel)"
-                                        elif retry_response.status_code in [
-                                            502,
-                                            503,
-                                            504,
-                                            530,
-                                        ]:
-                                            # User-level tunnel is also stale
-                                            tunnel_service.unregister_tunnel(
-                                                user_id, None
-                                            )
-                                            logger.warning(
-                                                f"[Tunnel Routing] ⚠️ User-level tunnel also stale. Invalidated all tunnels."
-                                            )
-                                        else:
-                                            logger.warning(
-                                                f"[Tunnel Routing] ❌ User-level fallback failed: {retry_response.status_code}"
-                                            )
-                                    except Exception as retry_e:
-                                        logger.warning(
-                                            f"[Tunnel Routing] ❌ User-level fallback error: {retry_e}"
+                                    # Analyze error types for more specific guidance
+                                    bracket_errors = [
+                                        e
+                                        for e in errors
+                                        if e.get("rule") == "bracket-matching"
+                                    ]
+                                    quote_errors = [
+                                        e
+                                        for e in errors
+                                        if e.get("rule") == "quote-matching"
+                                    ]
+
+                                    # Create a helpful error message for the agent based on operation type
+                                    if operation in [
+                                        "update_file_lines",
+                                        "insert_lines",
+                                        "add_file",
+                                        "update_file",
+                                    ]:
+                                        operation_name = operation.replace("_", " ")
+
+                                        # Operation-specific context
+                                        if operation == "add_file":
+                                            context_msg = "creating a new file"
+                                            action_tool = "`add_file_to_changes`"
+                                        elif operation == "update_file":
+                                            context_msg = "replacing the entire file"
+                                            action_tool = "`update_file_in_changes`"
+                                        elif operation == "insert_lines":
+                                            context_msg = "inserting new lines"
+                                            action_tool = "`insert_lines`"
+                                        else:  # update_file_lines
+                                            context_msg = "updating specific lines"
+                                            action_tool = "`update_file_lines`"
+
+                                        error_msg = f"❌ Pre-validation failed for '{file_path}': {error_count} syntax error(s) detected in the generated code.\n\n"
+                                        if bracket_errors:
+                                            error_msg += f"- {len(bracket_errors)} unmatched bracket(s): Ensure all parentheses, braces, and brackets are properly closed.\n"
+                                        if quote_errors:
+                                            error_msg += f"- {len(quote_errors)} unclosed quote(s): Ensure all string quotes (single, double, template literals) are properly closed.\n"
+
+                                        error_msg += (
+                                            f"\n**Root Cause**: The code you generated has syntax errors while {context_msg}. This usually happens when:\n"
+                                            f"- Code snippets are incomplete or truncated\n"
+                                            f"- Quotes or brackets are not properly matched\n"
+                                            f"- The generated code doesn't match the file's syntax structure\n"
+                                            f"- Missing closing brackets, quotes, or parentheses\n\n"
                                         )
-                    except Exception as e:
-                        logger.error(
-                            f"[Tunnel Routing] Failed to invalidate tunnel: {e}"
-                        )
 
-                    # Return None to allow fallback to cloud execution
-                    logger.info(
-                        f"[Tunnel Routing] ⬇️ Falling back to cloud execution for {operation}"
-                    )
-                    return None
-
-                logger.warning(
-                    f"[Tunnel Routing] ❌ LocalServer {operation} failed ({status_code}): {error_text[:200]}"
-                )
-
-                # Handle specific error codes
-                if response.status_code == 409:
-                    # File already exists - provide helpful guidance
-                    file_path = data.get("file_path", "file")
-                    if operation == "add_file":
-                        return (
-                            f"❌ Cannot create file '{file_path}': File already exists locally.\n\n"
-                            f"**Recommendation**: Use `update_file_in_changes` or `update_file_lines` to modify the existing file instead of `add_file_to_changes`.\n\n"
-                            f"**Action**: If you intended to replace the file, use `update_file_in_changes` with the new content."
-                        )
-                    else:
-                        return f"❌ Operation failed: File '{file_path}' already exists (409). Please use update operation instead."
-
-                # If pre-validation failed, return a helpful error message to the agent
-                if response.status_code == 400:
-                    try:
-                        error_data = response.json()
-                        if error_data.get("error") == "pre_validation_failed":
-                            errors = error_data.get("errors", [])
-                            error_count = len(errors)
-                            file_path = data.get("file_path", "file")
-
-                            # Analyze error types for more specific guidance
-                            bracket_errors = [
-                                e for e in errors if e.get("rule") == "bracket-matching"
-                            ]
-                            quote_errors = [
-                                e for e in errors if e.get("rule") == "quote-matching"
-                            ]
-
-                            # Create a helpful error message for the agent based on operation type
-                            if operation in [
-                                "update_file_lines",
-                                "insert_lines",
-                                "add_file",
-                                "update_file",
-                            ]:
-                                operation_name = operation.replace("_", " ")
-
-                                # Operation-specific context
-                                if operation == "add_file":
-                                    context_msg = "creating a new file"
-                                    action_tool = "`add_file_to_changes`"
-                                elif operation == "update_file":
-                                    context_msg = "replacing the entire file"
-                                    action_tool = "`update_file_in_changes`"
-                                elif operation == "insert_lines":
-                                    context_msg = "inserting new lines"
-                                    action_tool = "`insert_lines`"
-                                else:  # update_file_lines
-                                    context_msg = "updating specific lines"
-                                    action_tool = "`update_file_lines`"
-
-                                error_msg = f"❌ Pre-validation failed for '{file_path}': {error_count} syntax error(s) detected in the generated code.\n\n"
-                                if bracket_errors:
-                                    error_msg += f"- {len(bracket_errors)} unmatched bracket(s): Ensure all parentheses, braces, and brackets are properly closed.\n"
-                                if quote_errors:
-                                    error_msg += f"- {len(quote_errors)} unclosed quote(s): Ensure all string quotes (single, double, template literals) are properly closed.\n"
-
-                                error_msg += (
-                                    f"\n**Root Cause**: The code you generated has syntax errors while {context_msg}. This usually happens when:\n"
-                                    f"- Code snippets are incomplete or truncated\n"
-                                    f"- Quotes or brackets are not properly matched\n"
-                                    f"- The generated code doesn't match the file's syntax structure\n"
-                                    f"- Missing closing brackets, quotes, or parentheses\n\n"
-                                )
-
-                                if operation in ["update_file_lines", "insert_lines"]:
-                                    error_msg += (
-                                        f"**Recommendation**:\n"
-                                        f"1. Use `get_file_from_changes` (with_line_numbers=true) to see the exact context around the lines you're {context_msg}\n"
-                                        f"2. Review the existing code structure, indentation, and syntax patterns\n"
-                                        f"3. Generate complete, syntactically correct code that matches the surrounding context\n"
-                                        f"4. Ensure all brackets, quotes, and parentheses are properly closed\n"
-                                        f"5. If {context_msg} a partial section, make sure the code integrates correctly with surrounding lines\n\n"
-                                        f"**Action**: Fix the syntax errors in your generated code and retry with {action_tool}."
+                                        if operation in [
+                                            "update_file_lines",
+                                            "insert_lines",
+                                        ]:
+                                            error_msg += (
+                                                f"**Recommendation**:\n"
+                                                f"1. Use `get_file_from_changes` (with_line_numbers=true) to see the exact context around the lines you're {context_msg}\n"
+                                                f"2. Review the existing code structure, indentation, and syntax patterns\n"
+                                                f"3. Generate complete, syntactically correct code that matches the surrounding context\n"
+                                                f"4. Ensure all brackets, quotes, and parentheses are properly closed\n"
+                                                f"5. If {context_msg} a partial section, make sure the code integrates correctly with surrounding lines\n\n"
+                                                f"**Action**: Fix the syntax errors in your generated code and retry with {action_tool}."
+                                            )
+                                        else:  # add_file or update_file
+                                            error_msg += (
+                                                f"**Recommendation**:\n"
+                                                f"1. Review the file structure and ensure it's a complete, valid file\n"
+                                                f"2. Check that all imports, classes, functions, and code blocks are properly closed\n"
+                                                f"3. Ensure all brackets, quotes, and parentheses are properly matched\n"
+                                                f"4. Verify the file follows the correct syntax for its language\n"
+                                                f"5. If creating a new file, ensure it has all required components (imports, main code, etc.)\n\n"
+                                                f"**Action**: Fix the syntax errors in your generated code and retry with {action_tool}."
+                                            )
+                                    else:  # replace_in_file
+                                        error_msg = (
+                                            f"❌ Pre-validation failed for '{file_path}': {error_count} syntax error(s) detected.\n\n"
+                                            f"The replacement would break code syntax (e.g., unclosed quotes, broken string literals).\n\n"
+                                            f"**Recommendation**: Instead of using `replace_in_file` with a simple pattern, use `update_file_lines` "
+                                            f"to make targeted changes that respect code structure, or use `get_file_from_changes` first to see the "
+                                            f"exact context and make more precise replacements.\n\n"
+                                            f"Common issues:\n"
+                                            f"- Replacing text inside string literals breaks quotes\n"
+                                            f"- Replacing text in template literals breaks syntax\n"
+                                            f"- Pattern matches unintended locations\n\n"
+                                            f"**Action**: Fetch the file with `get_file_from_changes` (with_line_numbers=true), review the context, "
+                                            f"and use `update_file_lines` or a more specific `replace_in_file` pattern that avoids string literals."
+                                        )
+                                    return error_msg
+                                # 400 with auto_fix_failed or success=False: LocalServer didn't apply edit (e.g. linter errors)
+                                # Return a helpful message with diff/errors so agent can fix; do NOT return None
+                                if (
+                                    error_data.get("auto_fix_failed")
+                                    or error_data.get("success") is False
+                                ):
+                                    file_path = data.get("file_path", "file")
+                                    errors = error_data.get("errors", [])
+                                    op_label = operation.replace("_", " ")
+                                    msg = (
+                                        f"⚠️ LocalServer reported issues for '{file_path}' ({op_label}). "
+                                        f"The change may not have been applied.\n\n"
                                     )
-                                else:  # add_file or update_file
-                                    error_msg += (
-                                        f"**Recommendation**:\n"
-                                        f"1. Review the file structure and ensure it's a complete, valid file\n"
-                                        f"2. Check that all imports, classes, functions, and code blocks are properly closed\n"
-                                        f"3. Ensure all brackets, quotes, and parentheses are properly matched\n"
-                                        f"4. Verify the file follows the correct syntax for its language\n"
-                                        f"5. If creating a new file, ensure it has all required components (imports, main code, etc.)\n\n"
-                                        f"**Action**: Fix the syntax errors in your generated code and retry with {action_tool}."
-                                    )
-                            else:  # replace_in_file
-                                error_msg = (
-                                    f"❌ Pre-validation failed for '{file_path}': {error_count} syntax error(s) detected.\n\n"
-                                    f"The replacement would break code syntax (e.g., unclosed quotes, broken string literals).\n\n"
-                                    f"**Recommendation**: Instead of using `replace_in_file` with a simple pattern, use `update_file_lines` "
-                                    f"to make targeted changes that respect code structure, or use `get_file_from_changes` first to see the "
-                                    f"exact context and make more precise replacements.\n\n"
-                                    f"Common issues:\n"
-                                    f"- Replacing text inside string literals breaks quotes\n"
-                                    f"- Replacing text in template literals breaks syntax\n"
-                                    f"- Pattern matches unintended locations\n\n"
-                                    f"**Action**: Fetch the file with `get_file_from_changes` (with_line_numbers=true), review the context, "
-                                    f"and use `update_file_lines` or a more specific `replace_in_file` pattern that avoids string literals."
-                                )
-                            return error_msg
-                    except:
-                        pass  # If JSON parsing fails, fall through to None
+                                    if errors:
+                                        msg += (
+                                            f"**Validation errors ({len(errors)}):**\n"
+                                        )
+                                        for err in errors[:10]:
+                                            line = err.get("line", "")
+                                            col = err.get("column", "")
+                                            m = err.get("message", str(err))
+                                            msg += f"- Line {line}:{col}: {m}\n"
+                                        if len(errors) > 10:
+                                            msg += f"... and {len(errors) - 10} more\n"
+                                    msg = _append_diff(msg, error_data)
+                                    return msg
+                            except Exception:
+                                pass  # If JSON parsing fails, fall through to None
 
-                    return None  # Fall back to CodeChangesManager
+                        return None  # Fall back to CodeChangesManager
 
             except Exception as e:
                 # Handle specific httpx exceptions if available
@@ -2888,7 +3041,11 @@ def _route_to_local_server(
                     if hasattr(e, "response") and e.response:
                         error_message = _extract_error_message(
                             e.response.text if hasattr(e.response, "text") else str(e),
-                            e.response.status_code if hasattr(e.response, "status_code") else 0,
+                            (
+                                e.response.status_code
+                                if hasattr(e.response, "status_code")
+                                else 0
+                            ),
                         )
                         logger.warning(
                             f"[Tunnel Routing] ❌ HTTP error routing {operation} to LocalServer: {error_message}"
@@ -2898,10 +3055,12 @@ def _route_to_local_server(
                             f"[Tunnel Routing] ❌ Error routing {operation} to LocalServer: {e}"
                         )
                 return None  # Fall back to CodeChangesManager
-    
+
     except Exception as e:
         # Outer exception handler for non-httpx errors
-        logger.warning(f"[Tunnel Routing] Unexpected error in _route_to_local_server: {e}")
+        logger.warning(
+            f"[Tunnel Routing] Unexpected error in _route_to_local_server: {e}"
+        )
         return None
 
 
@@ -3036,7 +3195,47 @@ def _fetch_file_content_from_local_server(file_path: str) -> Optional[str]:
     return None
 
 
-def _record_local_change_in_redis(operation: str, data: Dict[str, Any]) -> None:
+def _sync_file_from_local_server_to_redis(file_path: str) -> bool:
+    """When in local mode, sync a single file's content from LocalServer to Redis so manager state matches local.
+
+    Call this before reading from the manager (get_file, get_file_diff) so diffs and content are accurate.
+    Only updates Redis if the file is already tracked in the manager (so we don't add untracked files).
+    Returns True if content was synced, False otherwise.
+    """
+    if not _should_route_to_local_server():
+        return False
+    content = _fetch_file_content_from_local_server(file_path)
+    if content is None:
+        return False
+    try:
+        manager = _get_code_changes_manager()
+        if file_path not in manager.changes:
+            return False
+        change = manager.changes[file_path]
+        if change.change_type == ChangeType.DELETE:
+            return False
+        manager.update_file(
+            file_path=file_path,
+            content=content,
+            description=change.description or "Synced from local",
+            preserve_previous=True,
+        )
+        logger.debug(
+            f"CodeChangesManager: Synced file from LocalServer to Redis: {file_path}"
+        )
+        return True
+    except Exception as e:
+        logger.debug(
+            f"CodeChangesManager: Failed to sync file from LocalServer to Redis: {e}"
+        )
+        return False
+
+
+def _record_local_change_in_redis(
+    operation: str,
+    data: Dict[str, Any],
+    previous_content_for_update: Optional[str] = None,
+) -> None:
     """After a successful local write via tunnel, record the change in Redis so get_summary/get_file show it."""
     try:
         manager = _get_code_changes_manager()
@@ -3054,6 +3253,7 @@ def _record_local_change_in_redis(operation: str, data: Dict[str, Any]) -> None:
                 file_path=file_path,
                 content=data.get("content", ""),
                 description=data.get("description"),
+                previous_content=previous_content_for_update,
             )
         elif operation == "delete_file":
             manager.delete_file(
@@ -3066,6 +3266,15 @@ def _record_local_change_in_redis(operation: str, data: Dict[str, Any]) -> None:
             "delete_lines",
             "replace_in_file",
         ):
+            content = _fetch_file_content_from_local_server(file_path)
+            if content is not None:
+                manager.update_file(
+                    file_path=file_path,
+                    content=content,
+                    description=data.get("description"),
+                )
+        elif operation == "revert_file":
+            # Revert applied in IDE; sync Redis with reverted content
             content = _fetch_file_content_from_local_server(file_path)
             if content is not None:
                 manager.update_file(
@@ -3104,11 +3313,22 @@ def _execute_local_write(operation: str, data: Dict[str, Any], file_path: str) -
     # User has tunnel = using VS Code extension = expects LOCAL changes
     logger.info(f"[Local-First] 🏠 Executing {operation} locally (local-first mode)")
 
+    # Fetch-before-edit for update_file: get current content from local so we can track diffs accurately
+    previous_content_for_update: Optional[str] = None
+    if operation == "update_file":
+        previous_content_for_update = _fetch_file_content_from_local_server(file_path)
+        if previous_content_for_update is not None:
+            logger.debug(
+                f"[Local-First] Fetched current content from local before update_file ({len(previous_content_for_update)} chars) for accurate diff"
+            )
+
     result = _route_to_local_server(operation, data)
 
     if result:
         # Local execution succeeded - also store change in Redis so get_summary/get_file show it
-        _record_local_change_in_redis(operation, data)
+        _record_local_change_in_redis(
+            operation, data, previous_content_for_update=previous_content_for_update
+        )
         return result
 
     # Local execution FAILED but user expected local
@@ -3242,6 +3462,23 @@ class DeleteFileInput(BaseModel):
     preserve_content: bool = Field(
         default=True,
         description="Whether to preserve file content before deletion",
+    )
+
+
+class RevertFileInput(BaseModel):
+    file_path: str = Field(
+        description="Path to the file to revert (workspace-relative, e.g. 'src/main.py')"
+    )
+    target: Optional[Literal["saved", "HEAD"]] = Field(
+        default="saved",
+        description=(
+            "Revert target: 'saved' = restore from disk (last saved, discard unsaved); "
+            "'HEAD' = restore from git HEAD (committed version), then save."
+        ),
+    )
+    description: Optional[str] = Field(
+        default=None,
+        description="Optional description of the revert (e.g. reason)",
     )
 
 
@@ -3481,6 +3718,35 @@ def update_file_tool(input_data: UpdateFileInput) -> str:
         return "❌ Error updating file"
 
 
+def revert_file_tool(input_data: RevertFileInput) -> str:
+    """Revert a file to last saved or git HEAD (local mode only).
+
+    Only available when connected via the VS Code extension (LocalServer).
+    Restore from disk (saved) or from git HEAD; content is applied in the IDE.
+    """
+    logger.info(
+        f"🔧 [Tool Call] revert_file_tool: Reverting '{input_data.file_path}' to {input_data.target or 'saved'}"
+    )
+
+    # Local-only: revert is implemented by LocalServer (POST /api/files/revert)
+    data = {
+        "path": input_data.file_path,
+        "file_path": input_data.file_path,
+        "target": input_data.target or "saved",
+        "description": input_data.description,
+    }
+    local_result = _execute_local_write("revert_file", data, input_data.file_path)
+
+    if local_result is not None:
+        return local_result
+
+    return (
+        "❌ **Revert is only available in local mode.**\n\n"
+        "Connect via the VS Code extension (Potpie) so the agent can revert files "
+        "to the last saved version or to git HEAD directly in your IDE."
+    )
+
+
 def delete_file_tool(input_data: DeleteFileInput) -> str:
     """Delete a file locally or mark for deletion in cloud"""
     logger.info(f"Tool delete_file_tool: Deleting file '{input_data.file_path}'")
@@ -3535,8 +3801,10 @@ def get_file_tool(input_data: GetFileInput) -> str:
         )
         if result:
             return result
+        # LocalServer returned nothing (e.g. file not in workspace) - sync from local so fallback has fresh state
+        _sync_file_from_local_server_to_redis(input_data.file_path)
 
-    # Fall back to CodeChangesManager
+    # Fall back to CodeChangesManager (or use manager after syncing from local)
     try:
         manager = _get_code_changes_manager()
         file_data = manager.get_file(input_data.file_path)
@@ -4416,6 +4684,9 @@ def get_file_diff_tool(input_data: GetFileDiffInput) -> str:
         f"Tool get_file_diff_tool: Getting diff for '{input_data.file_path}' (context_lines: {input_data.context_lines}, project_id: {input_data.project_id})"
     )
     try:
+        # In local mode, sync file from LocalServer to Redis so diff reflects current local content
+        if _should_route_to_local_server():
+            _sync_file_from_local_server_to_redis(input_data.file_path)
         manager = _get_code_changes_manager()
         file_data = manager.get_file(input_data.file_path)
 
@@ -4615,45 +4886,58 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
     tools = [
         SimpleTool(
             name="add_file_to_changes",
-            description="Add a new file to the code changes manager. Use this to track new files you're creating instead of including full code in your response. This reduces token usage in conversation history.",
+            description="Add a new file to the code changes manager. Use this to track new files you're creating instead of including full code in your response. This reduces token usage in conversation history. When using the VS Code extension, the response includes lines_changed, lines_added, lines_deleted; if these don't match what you intended, use get_file_from_changes to verify and fix.",
             func=add_file_tool,
             args_schema=AddFileInput,
         ),
         SimpleTool(
             name="update_file_in_changes",
-            description="Update an existing file in the code changes manager with full content. Use this only when you need to replace the entire file. For targeted changes, prefer update_file_lines, replace_in_file, insert_lines, or delete_lines.",
+            description="Update an existing file in the code changes manager with full content. Use this only when you need to replace the entire file. For targeted changes, prefer update_file_lines, replace_in_file, insert_lines, or delete_lines. When using the VS Code extension, the response includes lines_changed, lines_added, lines_deleted; if they don't match your intended change (e.g. lines_changed=0 when you replaced content), use get_file_from_changes to verify and fix or use revert_file then re-apply.",
             func=update_file_tool,
             args_schema=UpdateFileInput,
         ),
         SimpleTool(
             name="update_file_lines",
-            description="Update specific lines in a file using line numbers. Use this for targeted line-by-line replacements. Lines are 1-indexed. Specify start_line and optionally end_line to replace a range. CRITICAL: You MUST preserve proper indentation - match the indentation of surrounding lines exactly. BEST PRACTICES: (1) Always fetch the file with line numbers first (get_file_from_changes with_line_numbers=true) to see exact indentation and current line numbers. (2) After updating, verify changes by fetching the updated lines to ensure indentation and content are correct. (3) For sequential operations: If you've performed insert_lines or delete_lines on this file, the line numbers have shifted - always fetch the current file state before using update_file_lines to get correct line numbers. (4) You MUST provide project_id from the conversation context to access existing file content from the repository.",
+            description="Update specific lines in a file using line numbers. Use this for targeted line-by-line replacements. Lines are 1-indexed. Specify start_line and optionally end_line to replace a range. CRITICAL: You MUST preserve proper indentation - match the indentation of surrounding lines exactly. BEST PRACTICES: (1) Always fetch the file with line numbers first (get_file_from_changes with_line_numbers=true) to see exact indentation and current line numbers. (2) After updating, verify changes by fetching the updated lines to ensure indentation and content are correct. (3) For sequential operations: If you've performed insert_lines or delete_lines on this file, the line numbers have shifted - always fetch the current file state before using update_file_lines to get correct line numbers. (4) You MUST provide project_id from the conversation context to access existing file content from the repository. When using the VS Code extension, the response includes lines_changed, lines_added, lines_deleted; if they don't match what you intended (e.g. you replaced 3 lines but lines_deleted=0), use get_file_from_changes to verify and fix or revert_file then re-apply.",
             func=update_file_lines_tool,
             args_schema=UpdateFileLinesInput,
         ),
         SimpleTool(
             name="replace_in_file",
-            description="Replace pattern matches in a file using regex. Use this to replace text patterns throughout a file. Supports regex capturing groups (\\1, \\2, etc.) in replacement. Set count=0 to replace all occurrences. Use word_boundary=True to match whole words only (prevents matching partial strings within words). BEST PRACTICES: (1) After replacing, verify changes by fetching the file (get_file_from_changes) to confirm replacements were applied correctly. (2) For sequential operations: Always provide project_id from conversation context for proper content retrieval, especially when performing multiple operations on the same file. (3) Use word_boundary=True when you want to match whole words/phrases and avoid partial matches within variable or function names.",
+            description="Replace pattern matches in a file using regex. Use this to replace text patterns throughout a file. Supports regex capturing groups (\\1, \\2, etc.) in replacement. Set count=0 to replace all occurrences. Use word_boundary=True to match whole words only (prevents matching partial strings within words). BEST PRACTICES: (1) After replacing, verify changes by fetching the file (get_file_from_changes) to confirm replacements were applied correctly. (2) For sequential operations: Always provide project_id from conversation context for proper content retrieval, especially when performing multiple operations on the same file. (3) Use word_boundary=True when you want to match whole words/phrases and avoid partial matches within variable or function names. When using the VS Code extension, the response includes lines_changed, lines_added, lines_deleted; if they don't match your intended change, use get_file_from_changes to verify and fix.",
             func=replace_in_file_tool,
             args_schema=ReplaceInFileInput,
         ),
         SimpleTool(
             name="insert_lines",
-            description="Insert content at a specific line number in a file. Use this to add new code at a specific location. Lines are 1-indexed. Set insert_after=False to insert before the specified line. CRITICAL: You MUST preserve proper indentation - match the indentation level of the line you're inserting after/before, or maintain consistent indentation for the code block you're adding. BEST PRACTICES: (1) Always fetch the file with line numbers first (get_file_from_changes with_line_numbers=true) to see exact indentation and current line numbers. (2) After inserting, verify changes by fetching the inserted lines in context to ensure indentation and placement are correct. (3) For sequential operations: If you've performed insert_lines or delete_lines on this file, line numbers have shifted - always fetch the current file state before subsequent operations. (4) You MUST provide project_id from the conversation context to access existing file content from the repository.",
+            description="Insert content at a specific line number in a file. Use this to add new code at a specific location. Lines are 1-indexed. Set insert_after=False to insert before the specified line. CRITICAL: You MUST preserve proper indentation - match the indentation level of the line you're inserting after/before, or maintain consistent indentation for the code block you're adding. BEST PRACTICES: (1) Always fetch the file with line numbers first (get_file_from_changes with_line_numbers=true) to see exact indentation and current line numbers. (2) After inserting, verify changes by fetching the inserted lines in context to ensure indentation and placement are correct. (3) For sequential operations: If you've performed insert_lines or delete_lines on this file, line numbers have shifted - always fetch the current file state before subsequent operations. (4) You MUST provide project_id from the conversation context to access existing file content from the repository. When using the VS Code extension, the response includes lines_changed, lines_added, lines_deleted; if lines_added doesn't match the lines you inserted, use get_file_from_changes to verify and fix.",
             func=insert_lines_tool,
             args_schema=InsertLinesInput,
         ),
         SimpleTool(
             name="delete_lines",
-            description="Delete specific lines from a file using line numbers. Use this to remove unwanted code. Lines are 1-indexed. Specify start_line and optionally end_line to delete a range. BEST PRACTICES: (1) Always fetch the file with line numbers first (get_file_from_changes with_line_numbers=true) to get correct line numbers, especially after previous insert/delete operations. (2) After deleting, verify changes by fetching the file to confirm lines were removed correctly. (3) For sequential operations: Line numbers shift after deletions - always fetch current file state before subsequent line-based operations. (4) Provide project_id from conversation context for proper content retrieval, especially when performing sequential operations on the same file.",
+            description="Delete specific lines from a file using line numbers. Use this to remove unwanted code. Lines are 1-indexed. Specify start_line and optionally end_line to delete a range. BEST PRACTICES: (1) Always fetch the file with line numbers first (get_file_from_changes with_line_numbers=true) to get correct line numbers, especially after previous insert/delete operations. (2) After deleting, verify changes by fetching the file to confirm lines were removed correctly. (3) For sequential operations: Line numbers shift after deletions - always fetch current file state before subsequent line-based operations. (4) Provide project_id from conversation context for proper content retrieval, especially when performing sequential operations on the same file. When using the VS Code extension, the response includes lines_changed, lines_added, lines_deleted; if lines_deleted doesn't match the range you deleted (e.g. you deleted 5 lines but lines_deleted=0), use get_file_from_changes to verify and fix or revert_file then re-apply the correct delete.",
             func=delete_lines_tool,
             args_schema=DeleteLinesInput,
         ),
         SimpleTool(
             name="delete_file_in_changes",
-            description="Mark a file for deletion in the code changes manager. File content is preserved by default so you can reference it later.",
+            description="Mark a file for deletion in the code changes manager. File content is preserved by default so you can reference it later. When using the VS Code extension, the response includes lines_changed, lines_added, lines_deleted (lines_deleted = file line count before delete); if the file wasn't removed as expected, use get_file_from_changes to verify.",
             func=delete_file_tool,
             args_schema=DeleteFileInput,
+        ),
+        SimpleTool(
+            name="revert_file",
+            description=(
+                "Revert a file to last saved or git HEAD (local mode only). "
+                "Use when connected via the VS Code extension. "
+                "target='saved' (default): restore from disk (discard unsaved changes). "
+                "target='HEAD': restore from git HEAD (committed version), then save. "
+                "Content is applied directly in the IDE. "
+                "When using the extension, the response includes lines_changed, lines_added, lines_deleted; use these to confirm the revert applied correctly."
+            ),
+            func=revert_file_tool,
+            args_schema=RevertFileInput,
         ),
         SimpleTool(
             name="get_file_from_changes",

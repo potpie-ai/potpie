@@ -55,6 +55,7 @@ class SWEBDebugAgent(ChatAgent):
                 "get_nodes_from_tags",
                 "get_code_file_structure",
                 "fetch_file",
+                "fetch_files_batch",
                 "analyze_code_structure",
                 "bash_command",
                 "analyze_code_structure",

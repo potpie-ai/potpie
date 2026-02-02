@@ -457,6 +457,14 @@ AVAILABLE_MODELS = [
         is_chat_model=True,
         is_inference_model=True,
     ),
+    AvailableModelOption(
+        id="openrouter/moonshotai/kimi-k2.5",
+        name="Kimi K2.5 (Moonshot)",
+        description="Moonshot AI Kimi K2.5",
+        provider="moonshot",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
 ]
 
 # Extract unique platform providers from the available models

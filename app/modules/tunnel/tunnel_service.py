@@ -10,7 +10,7 @@ import time
 import redis
 import httpx
 import os
-from typing import Optional, Dict
+from typing import Optional, Dict, List, cast
 from app.modules.utils.logger import setup_logger
 from app.core.config_provider import ConfigProvider
 
@@ -22,6 +22,17 @@ TUNNEL_TTL_SECONDS = 60 * 60  # 1 hour expiry (refreshed on each registration)
 
 # Health check settings
 TUNNEL_HEALTH_TIMEOUT = 5.0  # seconds
+
+# When ENV=development or VSCODE_LOCAL_TUNNEL_SERVER is set, skip cloudflared and talk to LocalServer directly
+LOCAL_DEV_TUNNEL_URL = "http://localhost:3001"
+
+
+def _get_local_tunnel_server_url() -> Optional[str]:
+    """Return LocalServer URL for local use when set via env (e.g. VSCODE_LOCAL_TUNNEL_SERVER=http://localhost:3001)."""
+    url = (os.getenv("VSCODE_LOCAL_TUNNEL_SERVER") or "").strip()
+    if url and (url.startswith("http://") or url.startswith("https://")):
+        return url.rstrip("/")
+    return None
 
 
 class TunnelConnectionError(Exception):
@@ -180,6 +191,10 @@ class TunnelService:
             )
             return False
 
+    def _is_development_env(self) -> bool:
+        """True when ENV=development; local tunnel requests go to localhost instead of cloudflared."""
+        return (os.getenv("ENV") or "").strip().lower() == "development"
+
     def get_tunnel_url(
         self,
         user_id: str,
@@ -189,7 +204,9 @@ class TunnelService:
         """
         Get tunnel URL for a user/conversation.
 
-        Lookup priority:
+        When ENV=development, always returns http://localhost:3001 (no cloudflared).
+
+        Lookup priority (non-development):
         1. tunnel_url parameter (if provided, takes highest priority)
         2. Conversation-level: tunnel_connection:conversation:{conversation_id}
         3. User-level: tunnel_connection:user:{user_id}
@@ -203,6 +220,21 @@ class TunnelService:
             Tunnel URL if found, None otherwise
         """
         try:
+            # When VSCODE_LOCAL_TUNNEL_SERVER is set, use it for all local tool requests (no cloudflared)
+            env_local_url = _get_local_tunnel_server_url()
+            if env_local_url:
+                logger.debug(
+                    f"[TunnelService] VSCODE_LOCAL_TUNNEL_SERVER set: using {env_local_url}"
+                )
+                return env_local_url
+
+            # In development, skip cloudflared and use LocalServer on localhost directly
+            if self._is_development_env():
+                logger.debug(
+                    f"[TunnelService] ENV=development: using direct URL {LOCAL_DEV_TUNNEL_URL}"
+                )
+                return LOCAL_DEV_TUNNEL_URL
+
             # If tunnel_url is provided directly, use it (highest priority)
             if tunnel_url:
                 logger.info(
@@ -392,7 +424,10 @@ class TunnelService:
                 # Search for conversation-level tunnels belonging to this user
                 # We need to scan all conversation keys and filter by user_id
                 conversation_pattern = f"{TUNNEL_KEY_PREFIX}:conversation:*"
-                conversation_keys = self.redis_client.keys(conversation_pattern)
+                # Sync redis client: .keys() returns a list; cast for type checker (avoids Awaitable confusion)
+                conversation_keys: List[str] = cast(
+                    List[str], self.redis_client.keys(conversation_pattern)
+                )
                 for key in conversation_keys:
                     data = self.redis_client.get(key)
                     if data:

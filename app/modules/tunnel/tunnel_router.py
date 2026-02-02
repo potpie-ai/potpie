@@ -1,3 +1,4 @@
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -126,10 +127,22 @@ async def register_tunnel(
         f"auth_user_id={user['user_id']}"
     )
 
-    if not req.tunnel_url.startswith("https://"):
+    # In development, allow http://localhost or http://127.0.0.1 (no cloudflared)
+    is_development = (os.getenv("ENV") or "").strip().lower() == "development"
+    if is_development:
+        allowed = (
+            req.tunnel_url.startswith("https://")
+            or req.tunnel_url.startswith("http://localhost")
+            or req.tunnel_url.startswith("http://127.0.0.1")
+        )
+    else:
+        allowed = req.tunnel_url.startswith("https://")
+
+    if not allowed:
         logger.error(f"[TunnelRouter] ❌ Invalid tunnel_url format: {req.tunnel_url}")
         raise HTTPException(
-            status_code=400, detail="tunnel_url must start with https://"
+            status_code=400,
+            detail="tunnel_url must start with https:// (or http://localhost / http://127.0.0.1 when ENV=development)",
         )
 
     ok = tunnel_service.register_tunnel(

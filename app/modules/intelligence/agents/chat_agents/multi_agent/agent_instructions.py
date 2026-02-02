@@ -41,7 +41,7 @@ Your text output is essential for the supervisor to understand what happened. Be
 5. Complete the task, then STOP
 
 **TOOL USAGE:**
-- Use fetch_file with with_line_numbers=true for precise editing
+- Use fetch_file with with_line_numbers=true for precise editing; use fetch_files_batch when you need 2+ files at once (e.g. several source files)
 - Use code changes tools for modifications
 - Use show_updated_file and show_diff to display changes
 
@@ -394,7 +394,7 @@ def get_supervisor_instructions(
             - Changes in code changes manager are not applied to the actual repo and won't be visible via other tools that read from the repository. This manager only stores your pending changes so you can organize and review them before publishing diffs. So always check code changes manager when updating files sequentially.
                 Do not expect changes to be applied to the actual repo or see changes in other tools
             - **ALWAYS use code changes tools** (not response text): `add_file_to_changes`, `update_file_lines`, `replace_in_file`, `insert_lines`, `delete_lines`
-            - **For precise editing, ALWAYS fetch files with line numbers:** Use `fetch_file` with `with_line_numbers=true` to see exact line numbers and indentation before editing. This ensures you know the exact line numbers and indentation to use with `insert_lines`, `delete_lines`, and `update_file_lines`
+            - **For precise editing, ALWAYS fetch files with line numbers:** Use `fetch_file` with `with_line_numbers=true` to see exact line numbers and indentation before editing. When you need multiple files at once (e.g. 2–20 paths), use `fetch_files_batch` instead of multiple `fetch_file` calls; it returns one entry per path with `content` and `line_count`, or `error` for missing files. Use `insert_lines`, `delete_lines`, and `update_file_lines` with the line numbers you see
             - **CRITICAL: Preserve proper indentation:** When using `insert_lines` or `update_file_lines`, match the indentation of surrounding lines exactly. Fetch the file first to see the exact indentation pattern, then preserve it in your updates
             - **ALWAYS verify your edits:** After using `insert_lines` or `update_file_lines`, fetch the updated lines in context (with surrounding lines) to verify:
               * Indentation is correct and matches surrounding code

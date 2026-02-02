@@ -67,6 +67,7 @@ class LowLevelDesignAgent(ChatAgent):
                 "web_search_tool",
                 "think",
                 "fetch_file",
+                "fetch_files_batch",
                 "analyze_code_structure",
                 "bash_command",
             ],

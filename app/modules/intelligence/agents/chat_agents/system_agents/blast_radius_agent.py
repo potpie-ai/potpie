@@ -47,6 +47,7 @@ class BlastRadiusAgent(ChatAgent):
                 "webpage_extractor",
                 "web_search_tool",
                 "fetch_file",
+                "fetch_files_batch",
                 "analyze_code_structure",
                 "bash_command",
             ],

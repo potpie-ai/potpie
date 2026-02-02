@@ -837,6 +837,7 @@ class CodeGenAgent(ChatAgent):
             base_tools.extend(
                 [
                     "fetch_file",
+                    "fetch_files_batch",
                     "analyze_code_structure",
                 ]
             )

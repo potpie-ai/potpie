@@ -56,6 +56,11 @@ def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
             return (
                 f"Fetching file: {file_path}" if file_path else "Fetching file content"
             )
+        case "fetch_files_batch":
+            paths = args.get("paths") if args else []
+            if paths:
+                return f"Fetching {len(paths)} file(s): {', '.join(paths[:3])}{'...' if len(paths) > 3 else ''}"
+            return "Fetching files"
         case "WebSearchTool":
             return "Searching the web"
         case "search_text":
@@ -363,6 +368,13 @@ def get_tool_response_message(
                 _format_small_result(result) if _is_small_result(result) else ""
             )
             return f"File content fetched successfully{result_suffix}"
+        case "fetch_files_batch":
+            files = result.get("files", []) if isinstance(result, dict) else []
+            ok = sum(1 for f in files if "error" not in f)
+            err = sum(1 for f in files if "error" in f)
+            if err:
+                return f"Fetched {ok} file(s), {err} not found"
+            return f"Fetched {len(files)} file(s) successfully"
         case "analyze_code_structure":
             file_path = args.get("file_path") if args else None
             if file_path:
@@ -742,6 +754,9 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             return ""
         case "fetch_file":
             return f"fetching contents for file {args.get('file_path')}"
+        case "fetch_files_batch":
+            paths = args.get("paths") or []
+            return f"fetching {len(paths)} file(s)"
         case "analyze_code_structure":
             return f"Analyzing file - {args.get('file_path')}\n"
         case "WebSearchTool":
@@ -1138,6 +1153,25 @@ description:
                     return f"""
 ```{content.get("content")}```
                 """
+            return ""
+        case "fetch_files_batch":
+            if isinstance(content, Dict) and content.get("success"):
+                files = content.get("files") or []
+                parts = []
+                for f in files[:5]:
+                    path = f.get("path", "?")
+                    if "error" in f:
+                        parts.append(f"**{path}**: {f.get('error')}")
+                    else:
+                        snippet = (f.get("content") or "")[:400]
+                        if len(f.get("content") or "") > 400:
+                            snippet += "\n..."
+                        parts.append(
+                            f"**{path}** (line_count: {f.get('line_count', '?')}):\n```\n{snippet}\n```"
+                        )
+                if len(files) > 5:
+                    parts.append(f"... and {len(files) - 5} more file(s)")
+                return "\n\n".join(parts) if parts else "No files returned"
             return ""
         case "analyze_code_structure":
             if isinstance(content, Dict):

@@ -35,13 +35,28 @@ _embedding_model = None
 
 
 def get_embedding_model():
-    """Get the singleton SentenceTransformer model, loading it only once"""
+    """Get the singleton SentenceTransformer model, loading it only once per process."""
     global _embedding_model
     if _embedding_model is None:
         logger.info("Loading SentenceTransformer model (first time only)")
         _embedding_model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
         logger.info("SentenceTransformer model loaded successfully")
     return _embedding_model
+
+
+def preload_embedding_model() -> bool:
+    """
+    Load and cache the embedding model in the current process.
+    Call this at worker/process startup to avoid mid-task memory spikes
+    (e.g. when semantic search runs without LocalServer).
+    Returns True if the model was loaded or already cached, False on error.
+    """
+    try:
+        get_embedding_model()
+        return True
+    except Exception as e:
+        logger.warning("Failed to preload embedding model: %s", e)
+        return False
 
 
 class InferenceService:

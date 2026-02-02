@@ -40,6 +40,7 @@ from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool impo
 )
 from app.modules.intelligence.tools.code_query_tools.get_file_content_by_path import (
     fetch_file_tool,
+    fetch_files_batch_tool,
 )
 from app.modules.intelligence.tools.code_query_tools.bash_command_tool import (
     bash_command_tool,
@@ -211,6 +212,7 @@ class ToolService:
                 self.db, self.provider_service, self.user_id
             ),
             "fetch_file": fetch_file_tool(self.db, self.user_id),
+            "fetch_files_batch": fetch_files_batch_tool(self.db, self.user_id),
             "analyze_code_structure": universal_analyze_code_tool(
                 self.db, self.user_id
             ),

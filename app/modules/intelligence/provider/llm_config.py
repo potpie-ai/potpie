@@ -211,6 +211,20 @@ MODEL_CONFIG_MAP = {
         "base_url": "https://openrouter.ai/api/v1",
         "api_version": None,
     },
+    # Moonshot AI / Kimi (via OpenRouter)
+    "openrouter/moonshotai/kimi-k2.5": {
+        "provider": "moonshot",
+        "auth_provider": "openrouter",
+        "default_params": {"temperature": 0.3, "max_tokens": 8000},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": True,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_version": None,
+    },
 }
 
 
