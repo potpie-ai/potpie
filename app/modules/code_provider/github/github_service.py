@@ -549,16 +549,19 @@ class GithubService:
                             parsed_url.fragment
                         ))
                         
-                        # Log URL length for debugging 414 errors
-                        logger.info(
-                            f"[get_repos_for_user] Constructed first_page_url for installation {installation['id']}: "
-                            f"length={len(first_page_url)}, url={first_page_url[:200]}..."
+                    # Log URL length for debugging 414 errors
+                    logger.info(
+                        f"[get_repos_for_user] Constructed first_page_url for installation {installation['id']}: "
+                        f"length={len(first_page_url)}, url={first_page_url[:200]}..."
+                    )
+                    # GitHub's URI limit is typically 8KB, but some proxies/servers have lower limits
+                    # Skip installations with URLs that are too long to prevent 414 errors
+                    if len(first_page_url) > 2000:
+                        logger.warning(
+                            f"Skipping installation {installation['id']} due to URL too long: "
+                            f"{len(first_page_url)} chars (limit: 2000). URL: {first_page_url[:200]}..."
                         )
-                        if len(first_page_url) > 2000:  # GitHub's typical limit is 8KB, but warn at 2KB
-                            logger.warning(
-                                f"Long URL detected for installation {installation['id']}: "
-                                f"{len(first_page_url)} chars. URL: {first_page_url[:200]}..."
-                            )
+                        continue
                     except Exception as url_error:
                         logger.error(
                             f"Error parsing repos_url for installation {installation['id']}: {url_error}. "
@@ -570,13 +573,28 @@ class GithubService:
                             f"[get_repos_for_user] Using fallback URL construction for installation {installation['id']}: "
                             f"length={len(first_page_url)}, url={first_page_url[:200]}..."
                         )
+                        # Check if fallback URL is also too long
+                        if len(first_page_url) > 2000:
+                            logger.warning(
+                                f"Skipping installation {installation['id']} due to fallback URL too long: "
+                                f"{len(first_page_url)} chars (limit: 2000). URL: {first_page_url[:200]}..."
+                            )
+                            continue
 
                     async with session.get(
                         first_page_url, headers=auth_headers
                     ) as response:
-                        if response.status != 200:
+                        if response.status == 414:
+                            logger.warning(
+                                f"414 URI Too Long for installation {installation['id']}. "
+                                f"URL length: {len(first_page_url)}. Skipping this installation."
+                            )
+                            continue
+                        elif response.status != 200:
+                            error_text = await response.text()
                             logger.error(
-                                f"Failed to fetch repositories for installation ID {installation['id']}. Response: {await response.text()}"
+                                f"Failed to fetch repositories for installation ID {installation['id']}. "
+                                f"Status: {response.status}. Response: {error_text[:500]}"
                             )
                             continue
 
