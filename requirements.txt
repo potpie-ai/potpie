@@ -179,7 +179,7 @@ prometheus-client==0.23.1
 prompt-toolkit==3.0.52
 propcache==0.4.1
 proto-plus==1.26.1
-protobuf==6.33.4
+protobuf>=6.33.5
 psutil==7.0.0
 psycopg-binary==3.3.2
 psycopg2-binary==2.9.11
@@ -202,7 +202,7 @@ pygithub==2.8.1
 pygments==2.19.2
 pyjwt==2.10.1
 pylint==4.0.2
-pypdf>=6.6.0
+pypdf>=6.6.2
 pynacl>=1.6.2
 pyperclip==1.11.0
 pystache==0.6.8
