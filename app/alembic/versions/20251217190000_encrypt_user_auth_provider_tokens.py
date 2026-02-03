@@ -1,7 +1,7 @@
 """encrypt_user_auth_provider_tokens
 
 Revision ID: 20251217190000
-Revises: 20251202164905_07bea433f543
+Revises: 20251209_add_inferring_status
 Create Date: 2025-12-17 19:00:00.000000
 
 Encrypts existing plaintext tokens in user_auth_providers table.
@@ -15,7 +15,7 @@ from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
 revision: str = '20251217190000'
-down_revision: Union[str, None] = '20251202164905_07bea433f543'
+down_revision: Union[str, None] = '20251209_add_inferring_status'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
