@@ -1,16 +1,20 @@
-import hashlib
-from typing import Optional, Dict, Any, List, Union
-from io import BytesIO
 import base64
+from io import BytesIO
+from typing import Any, Dict, List, Optional, Union
 
 from PIL import Image
-import boto3
-from botocore.exceptions import ClientError
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, UploadFile
 from uuid6 import uuid7
 
 from app.core.config_provider import config_provider
+from app.core.storage_clients import (
+    AzureBlobStorageClient,
+    BlobNotFoundError,
+    S3StorageClient,
+    StorageClient,
+    StorageClientError,
+)
 from app.modules.media.media_model import (
     MessageAttachment,
     AttachmentType,
@@ -133,7 +137,7 @@ class MediaService:
         self.storage_provider = StorageProvider.LOCAL
         self.bucket_name = None
         self.object_storage_descriptor: dict[str, Any] | None = None
-        self.s3_client = None
+        self.storage_client: StorageClient | None = None
         self.text_extraction_service = TextExtractionService()
         self.token_counter = get_token_counter()
 
@@ -164,11 +168,20 @@ class MediaService:
             raise MediaServiceError("Object storage descriptor not configured")
 
         try:
-            client_kwargs = dict(self.object_storage_descriptor["client_kwargs"])
-            self.s3_client = boto3.client("s3", **client_kwargs)
-            self.s3_client.head_bucket(Bucket=self.bucket_name)
+            client_type = self.object_storage_descriptor.get("client_type", "s3")
+
+            if client_type == "azure":
+                self.storage_client = AzureBlobStorageClient(
+                    account_name=self.object_storage_descriptor["azure_account_name"],
+                    account_key=self.object_storage_descriptor["azure_account_key"],
+                )
+            else:
+                client_kwargs = dict(self.object_storage_descriptor["client_kwargs"])
+                self.storage_client = S3StorageClient(client_kwargs)
+
+            self.storage_client.check_bucket(self.bucket_name)
             logger.info(
-                f"Initialized boto3 client for provider {self.storage_provider.value} (bucket={self.bucket_name})"
+                f"Initialized storage client for provider {self.storage_provider.value} (bucket={self.bucket_name})"
             )
         except Exception as e:
             logger.error(f"Failed to initialize object storage client: {e}")
@@ -482,21 +495,21 @@ class MediaService:
             if metadata.get("text_storage") == "inline":
                 return metadata.get("extracted_text", "")
 
-            # Fetch from S3
+            # Fetch from object storage
             elif metadata.get("text_storage") == "s3":
                 extracted_text_path = metadata.get("extracted_text_path")
                 if not extracted_text_path:
                     raise MediaServiceError("Extracted text path not found in metadata")
 
                 try:
-                    response = self.s3_client.get_object(
-                        Bucket=self.bucket_name,
-                        Key=extracted_text_path,
+                    text_bytes = self.storage_client.download(
+                        self.bucket_name, extracted_text_path
                     )
-                    text_bytes = response["Body"].read()
                     return text_bytes.decode("utf-8")
-                except Exception as e:
-                    logger.error(f"Failed to fetch extracted text from S3: {e}")
+                except StorageClientError as e:
+                    logger.error(
+                        f"Failed to fetch extracted text from storage: {e}"
+                    )
                     raise MediaServiceError(
                         f"Failed to retrieve extracted text: {str(e)}"
                     )
@@ -636,24 +649,19 @@ class MediaService:
     async def _upload_to_cloud(
         self, storage_path: str, file_data: bytes, mime_type: str
     ) -> None:
-        """Upload file to the configured object storage bucket via boto3."""
-        if not self.s3_client or not self.bucket_name:
+        """Upload file to the configured object storage bucket."""
+        if not self.storage_client or not self.bucket_name:
             raise MediaServiceError("Object storage client not initialized for upload")
 
         try:
             logger.info(
                 f"Uploading object -> provider={self.storage_provider.value} bucket={self.bucket_name} key={storage_path} content_type={mime_type}"
             )
-            md5_b64 = base64.b64encode(hashlib.md5(file_data).digest()).decode("utf-8")
-            self.s3_client.put_object(
-                Bucket=self.bucket_name,
-                Key=storage_path,
-                Body=file_data,
-                ContentType=mime_type,
-                ContentMD5=md5_b64,
+            self.storage_client.upload(
+                self.bucket_name, storage_path, file_data, mime_type
             )
             logger.info(f"Uploaded object to {self.bucket_name}:{storage_path}")
-        except Exception as e:
+        except StorageClientError as e:
             logger.error(f"Failed to upload to object storage: {e}")
             raise MediaServiceError(f"Failed to upload to object storage: {e}")
 
@@ -677,23 +685,20 @@ class MediaService:
             if not attachment:
                 raise HTTPException(status_code=404, detail="Attachment not found")
 
-            if not self.s3_client or not self.bucket_name:
+            if not self.storage_client or not self.bucket_name:
                 raise MediaServiceError(
                     "Object storage client not initialized for download"
                 )
 
             try:
-                response = self.s3_client.get_object(
-                    Bucket=self.bucket_name,
-                    Key=attachment.storage_path,
+                return self.storage_client.download(
+                    self.bucket_name, attachment.storage_path
                 )
-                return response["Body"].read()
-            except ClientError as e:
-                error_code = e.response.get("Error", {}).get("Code")
-                if error_code == "NoSuchKey":
-                    raise HTTPException(
-                        status_code=404, detail="Attachment not found in storage"
-                    )
+            except BlobNotFoundError:
+                raise HTTPException(
+                    status_code=404, detail="Attachment not found in storage"
+                )
+            except StorageClientError:
                 raise
 
         except HTTPException:
@@ -711,18 +716,15 @@ class MediaService:
             if not attachment:
                 raise HTTPException(status_code=404, detail="Attachment not found")
 
-            if not self.s3_client or not self.bucket_name:
+            if not self.storage_client or not self.bucket_name:
                 raise MediaServiceError(
                     "Object storage client not initialized for signed URL"
                 )
 
-            return self.s3_client.generate_presigned_url(
-                "get_object",
-                Params={
-                    "Bucket": self.bucket_name,
-                    "Key": attachment.storage_path,
-                },
-                ExpiresIn=expiration_minutes * 60,
+            return self.storage_client.generate_signed_url(
+                self.bucket_name,
+                attachment.storage_path,
+                expiration_minutes * 60,
             )
 
         except HTTPException:
@@ -740,28 +742,19 @@ class MediaService:
             if not attachment:
                 return False
 
-            try:
-                if not self.s3_client or not self.bucket_name:
-                    raise MediaServiceError(
-                        "Object storage client not initialized for delete"
-                    )
+            if not self.storage_client or not self.bucket_name:
+                raise MediaServiceError(
+                    "Object storage client not initialized for delete"
+                )
 
-                try:
-                    self.s3_client.delete_object(
-                        Bucket=self.bucket_name,
-                        Key=attachment.storage_path,
-                    )
-                    logger.info(
-                        f"Deleted object from {self.bucket_name}:{attachment.storage_path}"
-                    )
-                except ClientError as e:
-                    if e.response.get("Error", {}).get("Code") == "NoSuchKey":
-                        logger.warning(
-                            f"File not found in bucket={self.bucket_name} key={attachment.storage_path}; continuing with DB delete"
-                        )
-                    else:
-                        raise
-            except Exception as e:
+            try:
+                self.storage_client.delete(
+                    self.bucket_name, attachment.storage_path
+                )
+                logger.info(
+                    f"Deleted object from {self.bucket_name}:{attachment.storage_path}"
+                )
+            except StorageClientError as e:
                 logger.error(f"Failed to delete from cloud storage: {str(e)}")
                 raise MediaServiceError(
                     f"Failed to delete from cloud storage: {str(e)}"

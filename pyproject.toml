@@ -10,6 +10,7 @@ dependencies = [
     "aiohttp>=3.13.3",
     "alembic>=1.17.1",
     "anthropic>=0.72.0",
+    "azure-storage-blob>=12.24.0",
     "arize-phoenix>=12.18.0",
     "arize-phoenix-client>=1.26.0",
     "arize-phoenix-evals>=2.6.1",

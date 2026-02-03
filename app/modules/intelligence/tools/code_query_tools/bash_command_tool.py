@@ -15,6 +15,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from langchain_core.tools import StructuredTool
 
+from app.modules.code_provider.code_provider_service import CodeProviderService
+from app.modules.parsing.graph_construction.parsing_helper import ParseHelper
 from app.modules.projects.projects_service import ProjectService
 from app.modules.repo_manager import RepoManager
 from app.modules.utils.gvisor_runner import run_command_isolated, CommandResult
@@ -950,6 +952,15 @@ class BashCommandTool:
                 "output": "",
                 "exit_code": -1,
             }
+
+    def _run(
+        self,
+        project_id: str,
+        command: str,
+        working_directory: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Sync stub — this tool is async-only; use _arun via coroutine."""
+        raise NotImplementedError("BashCommandTool is async-only. Use _arun.")
 
     async def _arun(
         self,

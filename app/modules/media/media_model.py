@@ -20,8 +20,8 @@ class AttachmentType(str, enum.Enum):
 class StorageProvider(str, enum.Enum):
     LOCAL = "LOCAL"
     GCS = "GCS"
-    S3 = "S3"  # Future extension
-    AZURE = "AZURE"  # Future extension
+    S3 = "S3"
+    AZURE = "AZURE"
 
 
 class MessageAttachment(Base):

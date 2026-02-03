@@ -93,11 +93,11 @@ class AttachmentCleanupService:
     def _delete_attachment_sync(self, attachment: MessageAttachment) -> None:
         """Synchronously delete an attachment from storage and database."""
         # Delete from cloud storage
-        if self.media_service.s3_client and self.media_service.bucket_name:
+        if self.media_service.storage_client and self.media_service.bucket_name:
             try:
-                self.media_service.s3_client.delete_object(
-                    Bucket=self.media_service.bucket_name,
-                    Key=attachment.storage_path,
+                self.media_service.storage_client.delete(
+                    self.media_service.bucket_name,
+                    attachment.storage_path,
                 )
 
                 # Also delete extracted text file if stored separately
@@ -107,9 +107,9 @@ class AttachmentCleanupService:
                     )
                     if extracted_text_path:
                         try:
-                            self.media_service.s3_client.delete_object(
-                                Bucket=self.media_service.bucket_name,
-                                Key=extracted_text_path,
+                            self.media_service.storage_client.delete(
+                                self.media_service.bucket_name,
+                                extracted_text_path,
                             )
                         except Exception:
                             pass  # Best effort for extracted text cleanup

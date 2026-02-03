@@ -21,6 +21,7 @@ asyncpg==0.31.0
 attrs==25.4.0
 auth0-python==4.13.0
 authlib>=1.6.6
+azure-storage-blob==12.24.0
 backoff==2.2.1
 beartype==0.22.8
 billiard==4.2.4

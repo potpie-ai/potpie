@@ -25,6 +25,7 @@ class S3StorageStrategy(StorageBackendStrategy):
     def get_descriptor(self, config_provider) -> Dict[str, Any]:
         return {
             "provider": "s3",
+            "client_type": "s3",
             "bucket_name": config_provider.s3_bucket_name,
             "client_kwargs": {
                 "aws_access_key_id": config_provider.aws_access_key,
@@ -58,6 +59,7 @@ class GCSStorageStrategy(StorageBackendStrategy):
 
         return {
             "provider": "gcs",
+            "client_type": "s3",
             "bucket_name": config_provider.gcp_bucket_name,
             "client_kwargs": {
                 "aws_access_key_id": gcs_access_key,
@@ -82,7 +84,7 @@ class GCSStorageStrategy(StorageBackendStrategy):
 
 
 class AzureStorageStrategy(StorageBackendStrategy):
-    """Azure Blob Storage strategy (future implementation)"""
+    """Azure Blob Storage strategy"""
 
     def get_descriptor(self, config_provider) -> Dict[str, Any]:
         azure_account_name = os.getenv("AZURE_ACCOUNT_NAME")
@@ -96,12 +98,10 @@ class AzureStorageStrategy(StorageBackendStrategy):
 
         return {
             "provider": "azure",
+            "client_type": "azure",
             "bucket_name": azure_container_name,
-            "client_kwargs": {
-                "aws_access_key_id": azure_account_name,
-                "aws_secret_access_key": azure_account_key,
-                "endpoint_url": f"https://{azure_account_name}.blob.core.windows.net",
-            },
+            "azure_account_name": azure_account_name,
+            "azure_account_key": azure_account_key,
         }
 
     def is_ready(self, config_provider) -> bool:
