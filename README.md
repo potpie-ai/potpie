@@ -275,13 +275,18 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
    - Start the FastAPI application
    - Start the Celery worker
 
-**Optional: Phoenix Tracing Setup (Local Only)**
+**Optional: Logfire Tracing Setup**
 
-   To monitor LLM traces and agent operations with Phoenix in local development:
-   ```bash
-   phoenix serve
-   ```
-   Run this in a new terminal to start the Phoenix server. Traces will be available at `http://localhost:6006` (default). Phoenix tracing is automatically initialized when Potpie starts, but you need to run `phoenix serve` separately to view the traces. **Note:** This setup is for local development only.
+   To monitor LLM traces and agent operations with Pydantic Logfire:
+
+   1. Get a Logfire token from https://logfire.pydantic.dev
+   2. Add it to your `.env` file:
+      ```bash
+      LOGFIRE_TOKEN=your_token_here
+      ```
+   3. Tracing is automatically initialized when Potpie starts. View traces at https://logfire.pydantic.dev
+
+   **Note:** Set `LOGFIRE_ENABLED=false` in your `.env` to disable tracing.
 
 3. **Stop Potpie**
 

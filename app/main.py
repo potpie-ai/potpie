@@ -55,7 +55,7 @@ class MainApp:
             )
             exit(1)
         self.setup_sentry()
-        self.setup_phoenix_tracing()
+        self.setup_logfire_tracing()
         self.app = FastAPI()
         self.setup_cors()
         self.setup_logging_middleware()
@@ -86,16 +86,16 @@ class MainApp:
                     "Sentry initialization failed (non-fatal but should be investigated)"
                 )
 
-    def setup_phoenix_tracing(self):
+    def setup_logfire_tracing(self):
         try:
-            from app.modules.intelligence.tracing.phoenix_tracer import (
-                initialize_phoenix_tracing,
+            from app.modules.intelligence.tracing.logfire_tracer import (
+                initialize_logfire_tracing,
             )
 
-            initialize_phoenix_tracing()
+            initialize_logfire_tracing()
         except Exception:
             logger.exception(
-                "Phoenix tracing initialization failed (non-fatal but should be investigated)"
+                "Logfire tracing initialization failed (non-fatal but should be investigated)"
             )
 
     def setup_cors(self):
