@@ -31,6 +31,38 @@ from app.modules.utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 
+def _repair_truncated_tool_args_json(raw: str) -> dict | None:
+    """Attempt to repair truncated JSON from streamed tool call args. Returns parsed dict or None."""
+    if not raw or not isinstance(raw, str):
+        return None
+    s = raw.strip()
+    if not s or s == "{}":
+        return {} if s == "{}" else None
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        pass
+    # EOF while parsing usually means the string was cut off mid-object or mid-string
+    open_braces = s.count("{") - s.count("}")
+    open_brackets = s.count("[") - s.count("]")
+    last = s.rstrip()[-1] if s.rstrip() else ""
+    # If we're inside an unclosed string (last char is not ", }, ], ,, :), close it first
+    suffix = ""
+    if last and last not in ('"', "}", "]", ",", ":"):
+        suffix = '"'
+    repaired = s.rstrip() + suffix + "]" * open_brackets + "}" * open_braces
+    try:
+        return json.loads(repaired)
+    except json.JSONDecodeError:
+        pass
+    # Try without closing string (e.g. ended right after "...)
+    repaired2 = s.rstrip() + "}" * open_braces + "]" * open_brackets
+    try:
+        return json.loads(repaired2)
+    except json.JSONDecodeError:
+        return None
+
+
 def handle_exception(tool_func):
     @functools.wraps(tool_func)
     def wrapper(*args, **kwargs):
@@ -47,35 +79,49 @@ def create_tool_call_response(event: FunctionToolCallEvent) -> ToolCallResponse:
     """Create appropriate tool call response for regular or delegation tools"""
     tool_name = event.part.tool_name
 
-    # Safely parse tool arguments with error handling for malformed JSON
+    # Safely parse tool arguments with error handling for malformed/truncated JSON
     try:
         args_dict = event.part.args_as_dict()
     except (ValueError, json.JSONDecodeError) as json_error:
-        # Handle incomplete/malformed JSON in tool arguments
-        # This can happen when the model generates truncated JSON, often due to:
-        # - Token limits during streaming
-        # - Model stopping mid-generation
-        # - Network issues interrupting the response
         raw_args = getattr(event.part, "args", "N/A")
-        logger.error(
-            f"JSON parsing error in tool call '{tool_name}': {json_error}. "
-            f"Tool args (raw, first 300 chars): {str(raw_args)[:300]}. "
-            f"This may cause issues when pydantic_ai tries to serialize the message history."
-        )
-        # Return empty args dict to allow processing to continue
-        # Note: This won't prevent errors when pydantic_ai tries to serialize
-        # the message history later, but it allows the current tool call to proceed
-        args_dict = {}
-        # Attempt to sanitize the underlying message part so future serialization succeeds
-        try:
-            safe_args = json.dumps(args_dict)
-            setattr(event.part, "args", safe_args)
-        except Exception as sanitize_error:
-            logger.warning(
-                "Unable to sanitize malformed tool call arguments for '%s': %s",
+        raw_str = str(raw_args) if raw_args != "N/A" else ""
+
+        # Try to repair truncated JSON (common when tool args are streamed and cut off)
+        repaired = _repair_truncated_tool_args_json(raw_str)
+        if repaired is not None:
+            args_dict = repaired
+            try:
+                setattr(event.part, "args", json.dumps(repaired))
+            except Exception as sanitize_error:
+                logger.warning(
+                    "Unable to sanitize repaired tool call arguments for '%s': %s",
+                    tool_name,
+                    sanitize_error,
+                )
+            logger.info(
+                "Repaired truncated JSON for tool call '%s' (recovered %d keys)",
                 tool_name,
-                sanitize_error,
+                len(args_dict),
             )
+        else:
+            # Repair failed; use empty dict and log
+            logger.error(
+                "JSON parsing error in tool call '%s': %s. "
+                "Tool args (raw, first 300 chars): %s. "
+                "This may cause issues when pydantic_ai tries to serialize the message history.",
+                tool_name,
+                json_error,
+                raw_str[:300],
+            )
+            args_dict = {}
+            try:
+                setattr(event.part, "args", "{}")
+            except Exception as sanitize_error:
+                logger.warning(
+                    "Unable to sanitize malformed tool call arguments for '%s': %s",
+                    tool_name,
+                    sanitize_error,
+                )
 
     if is_delegation_tool(tool_name):
         agent_type = extract_agent_type_from_delegation_tool(tool_name)
@@ -149,7 +195,7 @@ def wrap_structured_tools(tools: Sequence[Any]) -> List[Tool]:
 
 def deduplicate_tools_by_name(tools: List[Tool]) -> List[Tool]:
     """Deduplicate tools by name, keeping the first occurrence of each tool name.
-    
+
     Note: Duplicates are expected when the multi-agent system combines tools from
     multiple sources (agent-provided tools + built-in tools). This is by design.
     """
@@ -162,7 +208,7 @@ def deduplicate_tools_by_name(tools: List[Tool]) -> List[Tool]:
             deduplicated.append(tool)
         else:
             duplicate_count += 1
-    
+
     # Log summary at debug level instead of individual warnings
     if duplicate_count > 0:
         logger.debug(

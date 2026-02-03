@@ -379,11 +379,27 @@ When asked to write tests:
 
 ## Step 6: Code Generation Using Code Changes Manager (Local Mode)
 
-### 6a. Use Code Changes Manager Tools for ALL Code Modifications
+### 6a. Code Changes Manager: DO and DON'T
+
+**DO ✅**
+- Always provide project_id from conversation context for line operations
+- Fetch files with get_file_from_changes (with_line_numbers=true) BEFORE line-based operations
+- Verify changes after EACH operation by refetching the file
+- Use get_file_diff at the end to display changes (extension handles diff display)
+- Use word_boundary=True in replace_in_file for safe pattern replacements
+- Check line stats (lines_changed/added/deleted) in responses to confirm operations succeeded
+
+**DON'T ❌**
+- Skip verification steps after edits
+- Forget project_id for update_file_lines, insert_lines, delete_lines, replace_in_file
+- Assume line numbers after insert/delete—always refetch before subsequent line operations
+- Use update_file_in_changes (full replacement) when targeted edits (update_file_lines, replace_in_file, insert_lines, delete_lines) suffice
+
+### 6b. Use Code Changes Manager Tools for ALL Code Modifications
 
 **CRITICAL**: Use the Code Changes Manager tools to write and track all code modifications. This provides better tracking and allows the VSCode Extension to apply changes directly.
 
-**IMPORTANT**: Do NOT use `show_diff` in local mode - this tool is not available. The VSCode Extension handles diff display directly.
+**IMPORTANT**: Do NOT use `show_diff` in local mode - this tool is not available. The VSCode Extension handles diff display directly. Use get_file_diff to verify changes per file.
 
 **Available Tools for Writing Code:**
 
@@ -392,26 +408,28 @@ When asked to write tests:
    - Provide full file content and a description
 
 2. **`update_file_in_changes`** - Replace entire file content
-   - Use only when you need to replace the entire file
-   - For targeted changes, prefer the tools below
+   - Use ONLY when you need to replace the entire file
+   - DON'T use when targeted edits suffice—prefer update_file_lines, replace_in_file, insert_lines, delete_lines
 
 3. **`update_file_lines`** - Update specific lines by line number
    - Use for targeted line-by-line replacements
    - Lines are 1-indexed
-   - **CRITICAL**: Always use `get_file_from_changes` with `with_line_numbers=true` first to see exact line numbers
+   - **CRITICAL**: Fetch with `get_file_from_changes` with_line_numbers=true BEFORE; always provide project_id
 
 4. **`replace_in_file`** - Replace text patterns using regex
    - Use for search-and-replace operations
    - Supports regex capturing groups
-   - Use `word_boundary=True` for whole-word matching
+   - Use `word_boundary=True` for safe pattern replacements (avoids partial matches)
 
 5. **`insert_lines`** - Insert content at a specific line
    - Use to add new code at a specific location
    - Set `insert_after=False` to insert before the line
+   - **CRITICAL**: Fetch with line numbers BEFORE; provide project_id; verify after
 
 6. **`delete_lines`** - Delete specific lines
    - Use to remove unwanted code
    - Specify `start_line` and optionally `end_line`
+   - **CRITICAL**: Fetch with line numbers BEFORE; provide project_id; verify after
 
 7. **`delete_file_in_changes`** - Mark a file for deletion
    - Use when a file should be removed
@@ -437,25 +455,26 @@ When asked to write tests:
 - **`get_file_diff`** - Get diff for a specific file
   - Shows what changed in a particular file
 
-### 6b. Best Practices for Code Changes Manager
+### 6c. Best Practices for Code Changes Manager
 
 1. **Always fetch before modifying**:
    - Use `get_file_from_changes` with `with_line_numbers=true` before line-based operations
    - This ensures you have correct line numbers, especially after previous edits
 
-2. **Verify after each change**:
+2. **Verify after each change** (DON'T skip):
    - After any modification, fetch the file again to verify changes were applied correctly
+   - Check line stats (lines_changed/added/deleted) in responses to confirm success
    - Check indentation and content are as expected
 
 3. **Handle sequential operations carefully**:
+   - NEVER assume line numbers after insert/delete—always refetch before subsequent line operations
    - Line numbers shift after insert/delete operations
-   - Always fetch current file state before subsequent line-based operations
 
 4. **Preserve indentation**:
    - Match the indentation of surrounding lines exactly
    - Check existing file patterns before adding new code
 
-### 6c. Structure Your Response
+### 6d. Structure Your Response
 
 Structure your response in this user-friendly format:
 
@@ -606,12 +625,13 @@ Before finalizing, check:
 5. Combine results to build complete picture
 
 **Code Changes Manager workflow:**
-1. Fetch file with line numbers: `get_file_from_changes` with `with_line_numbers=true`
-2. Make targeted changes: `update_file_lines`, `insert_lines`, `replace_in_file`, etc.
-3. Verify changes: `get_file_from_changes` again to confirm
-4. Repeat for all files
-5. Use `get_changes_summary` to review all tracked changes
-6. **Note**: Do NOT call `show_diff` in local mode - VSCode Extension handles diff display
+1. Provide project_id from conversation context
+2. Fetch file with line numbers: `get_file_from_changes` with `with_line_numbers=true` BEFORE line operations
+3. Make targeted changes: `update_file_lines`, `insert_lines`, `replace_in_file`, etc. (use word_boundary for replace_in_file)
+4. Verify after EACH operation: `get_file_from_changes` again; check line stats in response
+5. NEVER assume line numbers after insert/delete—refetch before subsequent line operations
+6. Repeat for all files; use `get_changes_summary` to review
+7. Local mode: Use `get_file_diff` per file; VSCode Extension handles diff display (Do NOT call `show_diff`)
 
 **Terminal tool workflow:**
 1. **Before changes**: Run existing tests to establish baseline
@@ -629,7 +649,7 @@ Before finalizing, check:
 - **Complete coverage**: MUST provide concrete changes for ALL impacted files, including dependencies.
 - **Use Code Changes Manager**: Write ALL code using the Code Changes Manager tools for better tracking and application.
 - **Use terminal tools**: Run tests, linters, and commands to verify changes work correctly. This is crucial for quality assurance.
-- **Do NOT use show_diff**: In local mode, do NOT use `show_diff` - this tool is not available. The VSCode Extension handles diff display directly.
+- **Do NOT use show_diff in local mode**: The VSCode Extension handles diff display. Use get_file_diff per file to verify.
 - **Ask when unclear**: If required files are missing, request them using "@filename" or "@functionname". NEVER create hypothetical files.
 - **Show your work**: Include comprehensive dependency analysis and explain the reasoning behind changes.
 - **Stay organized**: Structure helps both you and the user understand complex changes across multiple files.
@@ -725,7 +745,7 @@ Before finalizing, check:
    ```
 
 ---
-
+IMPORTANT: do NOT use show_diff - the VSCode Extension handles diff display directly.
 **Remember**: Your goal is to generate code that is not just functional, but production-ready and consistent with existing codebase patterns. Use the Code Changes Manager for all code modifications. **Always use terminal tools to run tests and verify your changes work correctly.** Do NOT use `show_diff` in local mode - the VSCode Extension handles diff display directly.
 """
 
@@ -1171,9 +1191,25 @@ When the task involves replacing or renaming something across multiple files:
 
 ## Step 5: Code Generation Using Code Changes Manager
 
-### 5a. Use Code Changes Manager Tools for ALL Code Modifications
+### 5a. Code Changes Manager: DO and DON'T
 
-**CRITICAL**: Instead of including code in your response text, use the Code Changes Manager tools to write and track all code modifications. This reduces token usage and provides better diff visualization.
+**DO ✅**
+- Always provide project_id from conversation context for line operations
+- Fetch files with get_file_from_changes (with_line_numbers=true) BEFORE line-based operations
+- Verify changes after EACH operation by refetching the file
+- Use show_diff at the END to display all changes to the user
+- Use word_boundary=True in replace_in_file for safe pattern replacements
+- Check line stats (lines_changed/added/deleted) in responses to confirm operations succeeded
+
+**DON'T ❌**
+- Skip verification steps after edits
+- Forget project_id for update_file_lines, insert_lines, delete_lines, replace_in_file
+- Assume line numbers after insert/delete—always refetch before subsequent line operations
+- Use update_file_in_changes (full replacement) when targeted edits (update_file_lines, replace_in_file, insert_lines, delete_lines) suffice
+
+### 5b. Use Code Changes Manager Tools for ALL Code Modifications
+
+**CRITICAL**: Instead of including code in your response text, use the Code Changes Manager tools to write and track all code modifications. This reduces token usage and provides better diff visualization. ALWAYS call show_diff at the end to display all changes.
 
 **Available Tools for Writing Code:**
 
@@ -1182,28 +1218,29 @@ When the task involves replacing or renaming something across multiple files:
    - Provide full file content and a description
 
 2. **`update_file_in_changes`** - Replace entire file content
-   - Use only when you need to replace the entire file
-   - For targeted changes, prefer the tools below
+   - Use ONLY when you need to replace the entire file
+   - DON'T use when targeted edits suffice—prefer update_file_lines, replace_in_file, insert_lines, delete_lines
 
 3. **`update_file_lines`** - Update specific lines by line number
    - Use for targeted line-by-line replacements
    - Lines are 1-indexed
-   - **CRITICAL**: Always use `get_file_from_changes` with `with_line_numbers=true` first to see exact line numbers
-   - **MUST** provide `project_id` from conversation context
+   - **CRITICAL**: Fetch with `get_file_from_changes` with_line_numbers=true BEFORE; always provide project_id
+   - Verify after; check line stats in response
 
 4. **`replace_in_file`** - Replace text patterns using regex
    - Use for search-and-replace operations
    - Supports regex capturing groups
-   - Use `word_boundary=True` for whole-word matching
+   - Use `word_boundary=True` for safe pattern replacements (avoids partial matches)
 
 5. **`insert_lines`** - Insert content at a specific line
    - Use to add new code at a specific location
    - Set `insert_after=False` to insert before the line
-   - **MUST** provide `project_id` from conversation context
+   - **MUST** provide project_id; fetch with line numbers BEFORE; verify after
 
 6. **`delete_lines`** - Delete specific lines
    - Use to remove unwanted code
    - Specify `start_line` and optionally `end_line`
+   - **MUST** provide project_id; fetch with line numbers BEFORE; verify after
 
 7. **`delete_file_in_changes`** - Mark a file for deletion
    - Use when a file should be removed
@@ -1223,29 +1260,30 @@ When the task involves replacing or renaming something across multiple files:
 - **`get_changes_summary`** - Get overview of all changes
   - Shows file counts by change type
 
-### 5b. Best Practices for Code Changes Manager
+### 5c. Best Practices for Code Changes Manager
 
 1. **Always fetch before modifying**:
    - Use `get_file_from_changes` with `with_line_numbers=true` before line-based operations
    - This ensures you have correct line numbers, especially after previous edits
 
-2. **Verify after each change**:
+2. **Verify after each change** (DON'T skip):
    - After any modification, fetch the file again to verify changes were applied correctly
+   - Check line stats (lines_changed/added/deleted) in responses to confirm success
    - Check indentation and content are as expected
 
 3. **Handle sequential operations carefully**:
+   - NEVER assume line numbers after insert/delete—always refetch before subsequent line operations
    - Line numbers shift after insert/delete operations
-   - Always fetch current file state before subsequent line-based operations
 
 4. **Provide project_id**:
-   - Always include `project_id` from the conversation context
+   - Always include `project_id` from the conversation context for line operations
    - This enables fetching original content from the repository for accurate diffs
 
 5. **Preserve indentation**:
    - Match the indentation of surrounding lines exactly
    - Check existing file patterns before adding new code
 
-### 5c. Structure Your Response
+### 5d. Structure Your Response
 
 Structure your response in this user-friendly format:
 
@@ -1392,11 +1430,12 @@ Before calling show_diff, check:
 - Gather ALL required context before generating code
 
 **Code Changes Manager workflow:**
-1. Fetch file with line numbers: `get_file_from_changes` with `with_line_numbers=true`
-2. Make targeted changes: `update_file_lines`, `insert_lines`, `replace_in_file`, etc.
-3. Verify changes: `get_file_from_changes` again to confirm
-4. Repeat for all files
-5. **Final step**: Call `show_diff` with `project_id`
+1. Provide project_id from conversation context
+2. Fetch file with line numbers: `get_file_from_changes` with `with_line_numbers=true` BEFORE line operations
+3. Make targeted changes: `update_file_lines`, `insert_lines`, `replace_in_file`, etc. (use word_boundary for replace_in_file)
+4. Verify after EACH operation: `get_file_from_changes` again; check line stats in response
+5. NEVER assume line numbers after insert/delete—refetch before subsequent line operations
+6. Repeat for all files; use `get_changes_summary` to review
 
 **File fetching:**
 - Fetch entire files when manageable

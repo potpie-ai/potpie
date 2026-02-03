@@ -3245,6 +3245,49 @@ def _sync_file_from_local_server_to_redis(file_path: str) -> bool:
         return False
 
 
+def _fetch_repo_file_content_for_diff(
+    project_id: str, file_path: str, db: Session
+) -> Optional[str]:
+    """Fetch file content from the project repository for diff base. Returns None on failure."""
+    try:
+        from app.modules.code_provider.code_provider_service import CodeProviderService
+        from app.modules.code_provider.git_safe import (
+            safe_git_operation,
+            GitOperationError,
+        )
+        from app.modules.projects.projects_model import Project
+
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            return None
+        cp_service = CodeProviderService(db)
+
+        def _fetch():
+            return cp_service.get_file_content(
+                repo_name=project.repo_name,
+                file_path=file_path,
+                branch_name=project.branch_name,
+                start_line=None,
+                end_line=None,
+                project_id=project_id,
+                commit_id=project.commit_id,
+            )
+
+        try:
+            return safe_git_operation(
+                _fetch,
+                max_retries=1,
+                timeout=20.0,
+                max_total_timeout=25.0,
+                operation_name=f"get_file_diff_repo_content({file_path})",
+            )
+        except GitOperationError:
+            return None
+    except Exception as e:
+        logger.debug(f"CodeChangesManager: Failed to fetch repo content for diff: {e}")
+        return None
+
+
 def _record_local_change_in_redis(
     operation: str,
     data: Dict[str, Any],
@@ -4704,6 +4747,51 @@ def get_file_diff_tool(input_data: GetFileDiffInput) -> str:
         manager = _get_code_changes_manager()
         file_data = manager.get_file(input_data.file_path)
 
+        # Local mode: if file is not in the manager, fetch from LocalServer and build diff directly
+        if not file_data and _should_route_to_local_server():
+            local_content = _fetch_file_content_from_local_server(input_data.file_path)
+            if local_content is None:
+                return (
+                    f"❌ Could not read '{input_data.file_path}' from local workspace. "
+                    "The file may not exist or the VS Code extension tunnel may be disconnected."
+                )
+            db = None
+            if input_data.project_id:
+                from app.core.database import get_db
+
+                db = next(get_db())
+            old_content = ""
+            if input_data.project_id and db:
+                repo_content = _fetch_repo_file_content_for_diff(
+                    input_data.project_id, input_data.file_path, db
+                )
+                if repo_content is not None:
+                    old_content = repo_content
+            if old_content:
+                diff_content = manager._create_unified_diff(
+                    old_content,
+                    local_content,
+                    input_data.file_path,
+                    input_data.file_path,
+                    input_data.context_lines,
+                )
+            else:
+                diff_content = manager._create_unified_diff(
+                    "",
+                    local_content,
+                    "/dev/null",
+                    input_data.file_path,
+                    input_data.context_lines,
+                )
+            result = (
+                f"📝 **Diff for {input_data.file_path}** (✏️ local file vs repo)\n\n"
+                f"**Source:** Local workspace (file not in session changes)\n\n"
+                "```diff\n"
+            )
+            result += diff_content
+            result += "\n```\n"
+            return result
+
         if not file_data:
             return f"❌ File '{input_data.file_path}' not found in changes"
 
@@ -4906,31 +4994,31 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
         ),
         SimpleTool(
             name="update_file_in_changes",
-            description="Update an existing file in the code changes manager with full content. Use this only when you need to replace the entire file. For targeted changes, prefer update_file_lines, replace_in_file, insert_lines, or delete_lines. When using the VS Code extension, the response includes lines_changed, lines_added, lines_deleted; if they don't match your intended change (e.g. lines_changed=0 when you replaced content), use get_file_from_changes to verify and fix or use revert_file then re-apply.",
+            description="Update an existing file with full content. Use ONLY when you need to replace the entire file. DON'T use when targeted edits suffice—prefer update_file_lines, replace_in_file, insert_lines, or delete_lines. When using the VS Code extension, check lines_changed/added/deleted in the response; if they don't match your intent, use get_file_from_changes to verify and fix or revert_file then re-apply.",
             func=update_file_tool,
             args_schema=UpdateFileInput,
         ),
         SimpleTool(
             name="update_file_lines",
-            description="Update specific lines in a file using line numbers. Use this for targeted line-by-line replacements. Lines are 1-indexed. Specify start_line and optionally end_line to replace a range. CRITICAL: You MUST preserve proper indentation - match the indentation of surrounding lines exactly. BEST PRACTICES: (1) Always fetch the file with line numbers first (get_file_from_changes with_line_numbers=true) to see exact indentation and current line numbers. (2) After updating, verify changes by fetching the updated lines to ensure indentation and content are correct. (3) For sequential operations: If you've performed insert_lines or delete_lines on this file, the line numbers have shifted - always fetch the current file state before using update_file_lines to get correct line numbers. (4) You MUST provide project_id from the conversation context to access existing file content from the repository. When using the VS Code extension, the response includes lines_changed, lines_added, lines_deleted; if they don't match what you intended (e.g. you replaced 3 lines but lines_deleted=0), use get_file_from_changes to verify and fix or revert_file then re-apply.",
+            description="Update specific lines using line numbers (1-indexed). DO: (1) Always provide project_id from conversation context. (2) Fetch file with get_file_from_changes with_line_numbers=true BEFORE this operation. (3) Verify changes after by refetching; check lines_changed/added/deleted in response to confirm success. (4) After insert/delete on same file, NEVER assume line numbers—refetch first. Match indentation of surrounding lines exactly. Check line stats in response to confirm the operation succeeded.",
             func=update_file_lines_tool,
             args_schema=UpdateFileLinesInput,
         ),
         SimpleTool(
             name="replace_in_file",
-            description="Replace pattern matches in a file using regex. Use this to replace text patterns throughout a file. Supports regex capturing groups (\\1, \\2, etc.) in replacement. Set count=0 to replace all occurrences. Use word_boundary=True to match whole words only (prevents matching partial strings within words). BEST PRACTICES: (1) After replacing, verify changes by fetching the file (get_file_from_changes) to confirm replacements were applied correctly. (2) For sequential operations: Always provide project_id from conversation context for proper content retrieval, especially when performing multiple operations on the same file. (3) Use word_boundary=True when you want to match whole words/phrases and avoid partial matches within variable or function names. When using the VS Code extension, the response includes lines_changed, lines_added, lines_deleted; if they don't match your intended change, use get_file_from_changes to verify and fix.",
+            description="Replace pattern matches using regex. Use word_boundary=True for safe replacements (prevents partial matches—e.g. replacing 'get_db' won't match 'get_database'). Supports capturing groups (\\1, \\2). Set count=0 for all occurrences. DO: (1) Provide project_id from conversation context. (2) Verify after with get_file_from_changes; check line stats in response. DON'T skip verification. When using the VS Code extension, if lines_changed/added/deleted don't match intent, use get_file_from_changes to verify and fix.",
             func=replace_in_file_tool,
             args_schema=ReplaceInFileInput,
         ),
         SimpleTool(
             name="insert_lines",
-            description="Insert content at a specific line number in a file. Use this to add new code at a specific location. Lines are 1-indexed. Set insert_after=False to insert before the specified line. CRITICAL: You MUST preserve proper indentation - match the indentation level of the line you're inserting after/before, or maintain consistent indentation for the code block you're adding. BEST PRACTICES: (1) Always fetch the file with line numbers first (get_file_from_changes with_line_numbers=true) to see exact indentation and current line numbers. (2) After inserting, verify changes by fetching the inserted lines in context to ensure indentation and placement are correct. (3) For sequential operations: If you've performed insert_lines or delete_lines on this file, line numbers have shifted - always fetch the current file state before subsequent operations. (4) You MUST provide project_id from the conversation context to access existing file content from the repository. When using the VS Code extension, the response includes lines_changed, lines_added, lines_deleted; if lines_added doesn't match the lines you inserted, use get_file_from_changes to verify and fix.",
+            description="Insert content at a specific line (1-indexed). Set insert_after=False to insert before. DO: (1) Always provide project_id from conversation context. (2) Fetch file with get_file_from_changes with_line_numbers=true BEFORE this operation. (3) Verify after by refetching; check lines_added in response to confirm success. (4) After insert/delete on same file, NEVER assume line numbers—refetch first. Match indentation of surrounding lines exactly.",
             func=insert_lines_tool,
             args_schema=InsertLinesInput,
         ),
         SimpleTool(
             name="delete_lines",
-            description="Delete specific lines from a file using line numbers. Use this to remove unwanted code. Lines are 1-indexed. Specify start_line and optionally end_line to delete a range. BEST PRACTICES: (1) Always fetch the file with line numbers first (get_file_from_changes with_line_numbers=true) to get correct line numbers, especially after previous insert/delete operations. (2) After deleting, verify changes by fetching the file to confirm lines were removed correctly. (3) For sequential operations: Line numbers shift after deletions - always fetch current file state before subsequent line-based operations. (4) Provide project_id from conversation context for proper content retrieval, especially when performing sequential operations on the same file. When using the VS Code extension, the response includes lines_changed, lines_added, lines_deleted; if lines_deleted doesn't match the range you deleted (e.g. you deleted 5 lines but lines_deleted=0), use get_file_from_changes to verify and fix or revert_file then re-apply the correct delete.",
+            description="Delete specific lines (1-indexed). Specify start_line and optionally end_line. DO: (1) Always provide project_id from conversation context. (2) Fetch file with get_file_from_changes with_line_numbers=true BEFORE this operation. (3) Verify after by refetching; check lines_deleted in response to confirm success. (4) After insert/delete on same file, NEVER assume line numbers—refetch first. DON'T skip verification. If lines_deleted doesn't match your range, use get_file_from_changes to verify and fix.",
             func=delete_lines_tool,
             args_schema=DeleteLinesInput,
         ),
@@ -4955,7 +5043,7 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
         ),
         SimpleTool(
             name="get_file_from_changes",
-            description="Get change information and content for a specific file from the code changes manager. BEST PRACTICES: (1) Use with_line_numbers=true before line-based operations (update_file_lines, insert_lines, delete_lines) to see exact line numbers and indentation. (2) Use after editing operations to verify changes were applied correctly. (3) Essential for sequential operations - fetch current state between operations to get correct line numbers after insertions/deletions.",
+            description="Get file content from the code changes manager. REQUIRED before any line-based operation (update_file_lines, insert_lines, delete_lines)—use with_line_numbers=true to see exact line numbers. Use after EACH edit to verify changes. Check line stats (lines_changed/added/deleted) in tool responses to confirm operations succeeded. After insert/delete, refetch before subsequent line operations—never assume line numbers. DON'T skip verification steps.",
             func=get_file_tool,
             args_schema=GetFileInput,
         ),
@@ -5014,13 +5102,13 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
         ),
         SimpleTool(
             name="show_diff",
-            description="Display unified diffs showing changes between managed code and the actual codebase. This tool streams the formatted diffs directly into the agent response without going through the LLM, allowing users to see exactly what was changed. Use this at the end of your response to show all the code changes you've made. The content is automatically shown to the user without consuming LLM context. BEST PRACTICES: (1) Use project_id to fetch original content from repository for accurate diffs against the branch. (2) When changes are spread across many lines, increase context_lines parameter (default 3) to show more surrounding context in the diff.",
+            description="Display unified diffs of all changes. Use at the END of your response to show all code changes. Always provide project_id from conversation context for accurate diffs against the branch. Increase context_lines (default 3) when changes are spread across many lines. Streams directly to user without consuming LLM context. REQUIRED: Call this after completing all modifications to display the full diff.",
             func=show_diff_tool,
             args_schema=ShowDiffInput,
         ),
         SimpleTool(
             name="get_file_diff",
-            description="Get the diff for a specific file against the repository branch. Shows what has changed in this file compared to the original repository version. BEST PRACTICES: (1) Use project_id from conversation context to get accurate diffs against the branch. (2) When changes are spread across many lines, increase context_lines parameter (default 3) to show more surrounding context in the diff.",
+            description="Get diff for a specific file against the repository branch. Always provide project_id from conversation context. Increase context_lines (default 3) when changes span many lines. Use to verify what changed in a single file.",
             func=get_file_diff_tool,
             args_schema=GetFileDiffInput,
         ),
