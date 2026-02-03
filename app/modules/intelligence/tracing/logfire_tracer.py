@@ -32,7 +32,8 @@ What gets traced:
 """
 
 import os
-from typing import Optional
+from typing import Any, Dict, Optional
+
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -84,7 +85,7 @@ def initialize_logfire_tracing(
         import logfire
 
         # Build configuration
-        config_kwargs: dict = {
+        config_kwargs: Dict[str, Any] = {
             "send_to_logfire": send_to_logfire,
         }
 
