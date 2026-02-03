@@ -1,6 +1,7 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:latest
+    
     container_name: potpie_postgres
     environment:
       POSTGRES_USER: postgres
