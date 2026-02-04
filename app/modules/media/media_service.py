@@ -416,11 +416,14 @@ class MediaService:
         except HTTPException:
             raise
         except Exception as e:
-            self.db.rollback()
             logger.error(f"Error uploading document: {str(e)}", exc_info=True)
+            try:
+                self.db.rollback()
+            except Exception as rollback_err:
+                logger.error(f"Rollback also failed: {rollback_err}", exc_info=True)
             if isinstance(e, MediaServiceError):
                 raise
-            raise MediaServiceError(f"Failed to upload document: {str(e)}")
+            raise MediaServiceError(f"Failed to upload document: {str(e)}") from e
 
     def _determine_attachment_type(
         self, mime_type: str, file_name: str
