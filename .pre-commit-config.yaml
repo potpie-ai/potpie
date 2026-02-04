@@ -15,7 +15,8 @@ repos:
     rev: v0.8.2
     hooks:
       - id: ruff
-        args: ["--fix"]
+        # Removed ["--fix"] to prevent auto-fixing in CI.
+        # Run `ruff check --fix .`
         exclude: ^app/alembic/
       - id: ruff-format
         exclude: ^app/alembic/
@@ -27,3 +28,10 @@ repos:
         args: ["-c", "pyproject.toml"]
         additional_dependencies: ["bandit[toml]"]
         exclude: ^(tests|app/alembic)/
+
+# Pre-commit.ci configuration
+ci:
+  autofix_prs: false  # Disable auto-fixing on PRs
+  autoupdate_schedule: weekly
+  skip: []
+  submodules: false

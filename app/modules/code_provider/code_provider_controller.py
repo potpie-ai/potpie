@@ -30,11 +30,11 @@ class CodeProviderController:
     def _filter_branches(self, branches: list, search_query: str = None) -> list:
         """
         Filter branches by search query (case-insensitive).
-        
+
         Args:
             branches: List of branch names
             search_query: Optional search query to filter branches
-            
+
         Returns:
             Filtered list of branches
         """
@@ -43,41 +43,34 @@ class CodeProviderController:
         return [branch for branch in branches if search_query in branch.lower()]
 
     def _paginate_branches(
-        self, 
-        branches: list, 
-        limit: int = None, 
-        offset: int = 0
+        self, branches: list, limit: int = None, offset: int = 0
     ) -> Dict[str, Any]:
         """
         Apply pagination to branches and return formatted response.
-        
+
         Args:
             branches: List of branch names
             limit: Optional limit on number of branches to return
             offset: Number of branches to skip
-            
+
         Returns:
             Dictionary with branches, has_next_page, and total_count
         """
         total_branches = len(branches)
-        
+
         if limit is not None:
-            paginated_branches = branches[offset:offset + limit]
+            paginated_branches = branches[offset : offset + limit]
             has_next_page = (offset + limit) < total_branches
             return {
                 "branches": paginated_branches,
                 "has_next_page": has_next_page,
-                "total_count": total_branches
+                "total_count": total_branches,
             }
         else:
             return {"branches": branches}
 
     async def get_branch_list(
-        self, 
-        repo_name: str, 
-        limit: int = None, 
-        offset: int = 0,
-        search: str = None
+        self, repo_name: str, limit: int = None, offset: int = 0, search: str = None
     ) -> Dict[str, Any]:
         """
         Get branch list for a repository using the configured provider.
@@ -105,11 +98,13 @@ class CodeProviderController:
         cached_branches = self.branch_cache.get_branches(repo_name, search_query=None)
         if cached_branches is not None:
             logger.info(f"Found {len(cached_branches)} cached branches for {repo_name}")
-            
+
             filtered_branches = self._filter_branches(cached_branches, search_query)
             if search_query:
-                logger.info(f"Filtered to {len(filtered_branches)} branches matching '{search}'")
-            
+                logger.info(
+                    f"Filtered to {len(filtered_branches)} branches matching '{search}'"
+                )
+
             return self._paginate_branches(filtered_branches, limit, offset)
 
         try:
@@ -125,7 +120,9 @@ class CodeProviderController:
 
             filtered_branches = self._filter_branches(all_branches, search_query)
             if search_query:
-                logger.info(f"Filtered to {len(filtered_branches)} branches matching '{search}'")
+                logger.info(
+                    f"Filtered to {len(filtered_branches)} branches matching '{search}'"
+                )
 
             return self._paginate_branches(filtered_branches, limit, offset)
 
@@ -176,13 +173,21 @@ class CodeProviderController:
                         f"Successfully accessed {repo_name} without authentication"
                     )
                     # Cache all branches in Redis
-                    self.branch_cache.cache_all_branches(repo_name, all_branches, ttl=3600)
-                    logger.info(f"Cached {len(all_branches)} branches for {repo_name} (unauthenticated)")
-                    
-                    filtered_branches = self._filter_branches(all_branches, search_query)
+                    self.branch_cache.cache_all_branches(
+                        repo_name, all_branches, ttl=3600
+                    )
+                    logger.info(
+                        f"Cached {len(all_branches)} branches for {repo_name} (unauthenticated)"
+                    )
+
+                    filtered_branches = self._filter_branches(
+                        all_branches, search_query
+                    )
                     if search_query:
-                        logger.info(f"Filtered to {len(filtered_branches)} branches matching '{search}'")
-                    
+                        logger.info(
+                            f"Filtered to {len(filtered_branches)} branches matching '{search}'"
+                        )
+
                     return self._paginate_branches(filtered_branches, limit, offset)
                 except Exception as unauth_error:
                     logger.warning(
@@ -207,13 +212,21 @@ class CodeProviderController:
                             f"Successfully fetched {len(all_branches)} branches for {repo_name} using GitHub App auth"
                         )
                         # Cache all branches in Redis
-                        self.branch_cache.cache_all_branches(repo_name, all_branches, ttl=3600)
-                        logger.info(f"Cached {len(all_branches)} branches for {repo_name} (GitHub App)")
-                        
-                        filtered_branches = self._filter_branches(all_branches, search_query)
+                        self.branch_cache.cache_all_branches(
+                            repo_name, all_branches, ttl=3600
+                        )
+                        logger.info(
+                            f"Cached {len(all_branches)} branches for {repo_name} (GitHub App)"
+                        )
+
+                        filtered_branches = self._filter_branches(
+                            all_branches, search_query
+                        )
                         if search_query:
-                            logger.info(f"Filtered to {len(filtered_branches)} branches matching '{search}'")
-                        
+                            logger.info(
+                                f"Filtered to {len(filtered_branches)} branches matching '{search}'"
+                            )
+
                         return self._paginate_branches(filtered_branches, limit, offset)
                     except Exception as app_error:
                         logger.warning(

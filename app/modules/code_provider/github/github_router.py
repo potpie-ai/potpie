@@ -43,10 +43,7 @@ async def get_branch_list(
     db: Session = Depends(get_db),
 ):
     return await CodeProviderController(db).get_branch_list(
-        repo_name=repo_name, 
-        limit=limit, 
-        offset=offset,
-        search=search
+        repo_name=repo_name, limit=limit, offset=offset, search=search
     )
 
 

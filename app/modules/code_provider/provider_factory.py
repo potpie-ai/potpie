@@ -316,10 +316,9 @@ class CodeProviderFactory:
                 # Check if this is an expected failure (app not installed on repo)
                 error_msg = str(e)
                 is_expected_failure = (
-                    "GitHub App not installed" in error_msg
-                    or "404" in error_msg
+                    "GitHub App not installed" in error_msg or "404" in error_msg
                 )
-                
+
                 if is_expected_failure:
                     # This is expected for public repos or repos where app isn't installed
                     logger.debug(

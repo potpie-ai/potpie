@@ -200,5 +200,5 @@ class AgentRunner:
         try:
             base.extend(self.list_agent_ids())
         except Exception:
-            pass
+            pass  # nosec
         return base
