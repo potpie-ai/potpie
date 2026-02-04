@@ -20,6 +20,7 @@ class ParseWebhookHelper:
                     self.url,
                     data=json.dumps(message),
                     headers={"Content-Type": "application/json"},
+                    timeout=10,
                 )
 
                 if response.status_code != 200:

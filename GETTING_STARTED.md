@@ -60,6 +60,58 @@ Ensure `~/.local/bin` is in your PATH.
 
 5. Start using Potpie with your local codebases!
 
+
+## Development Workflow & Code Quality
+
+We use `pre-commit` to maintain code quality. Hooks are run automatically on commit, but you can also run them manually.
+
+### Local Pre-commit Setup
+
+1.  **Install pre-commit**:
+    If you haven't already, install the pre-commit package.
+    ```bash
+    pip install pre-commit
+    # OR using uv
+    uv tool install pre-commit
+    ```
+
+2.  **Install Hooks**:
+    Run this command in the repository root to install the git hooks:
+    ```bash
+    pre-commit install
+    ```
+
+### Running Pre-commit Locally
+
+* **Run checks on all files** (Recommended before pushing):
+    ```bash
+    pre-commit run --all-files
+    ```
+
+* **Run a specific hook**:
+    ```bash
+    pre-commit run ruff --all-files
+    ```
+
+### Resolving Failures
+
+If a hook fails (e.g., `ruff` or `ruff-format`), you may need to apply fixes manually or run the tool's fix command.
+
+* **Linting errors**:
+    To automatically fix linting issues locally:
+    ```bash
+    uv run ruff check --fix .
+    ```
+
+* **Formatting errors**:
+    To apply standard formatting:
+    ```bash
+    uv run ruff format .
+    ```
+
+
+
+
 # Production setup
 
 For a production deployment with Firebase authentication, Github access, Secret Management etc
