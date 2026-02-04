@@ -262,12 +262,6 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
    ./scripts/start.sh
    ```
 
-   **Windows**
-
-    ```powershell
-   ./scripts/start.ps1
-    ```
-
    This will:
    - Start required Docker services
    - Wait for PostgreSQL to be ready
