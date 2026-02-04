@@ -14,27 +14,22 @@ aiohttp==3.13.3
     #   instructor
     #   litellm
     #   potpie
-aioitertools==0.13.0
-    # via arize-phoenix
+    #   xai-sdk
 aiosignal==1.4.0
     # via aiohttp
-aiosqlite==0.22.0
-    # via arize-phoenix
-alembic==1.17.2
-    # via
-    #   arize-phoenix
-    #   potpie
+alembic==1.18.3
+    # via potpie
 amqp==5.3.1
     # via kombu
 annotated-doc==0.0.4
     # via fastapi
 annotated-types==0.7.0
     # via pydantic
-anthropic==0.75.0
+anthropic==0.77.1
     # via
     #   potpie
     #   pydantic-ai-slim
-anyio==4.12.0
+anyio==4.12.1
     # via
     #   anthropic
     #   google-genai
@@ -47,21 +42,7 @@ anyio==4.12.0
     #   starlette
 argcomplete==3.6.3
     # via pydantic-ai-slim
-arize-phoenix==12.25.1
-    # via potpie
-arize-phoenix-client==1.27.1
-    # via
-    #   arize-phoenix
-    #   potpie
-arize-phoenix-evals==2.7.1
-    # via
-    #   arize-phoenix
-    #   potpie
-arize-phoenix-otel==0.14.0
-    # via
-    #   arize-phoenix
-    #   potpie
-astroid==4.0.2
+astroid==4.0.3
     # via pylint
 async-timeout==5.0.1 ; python_full_version < '3.11.3'
     # via
@@ -76,11 +57,10 @@ attrs==25.4.0
     #   cyclopts
     #   jsonschema
     #   referencing
-auth0-python==4.13.0
+auth0-python==5.0.0
     # via potpie
 authlib==1.6.6
     # via
-    #   arize-phoenix
     #   fastmcp
     #   potpie
 backoff==2.2.1
@@ -89,34 +69,31 @@ backports-asyncio-runner==1.2.0 ; python_full_version < '3.11'
     # via pytest-asyncio
 backports-tarfile==1.2.0 ; python_full_version < '3.12'
     # via jaraco-context
-bandit==1.9.2
+bandit==1.9.3
 beartype==0.22.9
     # via
     #   py-key-value-aio
     #   py-key-value-shared
 billiard==4.2.4
     # via celery
-black==25.12.0
-boto3==1.42.11
+black==26.1.0
+boto3==1.42.42
     # via
     #   potpie
     #   pydantic-ai-slim
-botocore==1.42.11
+botocore==1.42.42
     # via
     #   boto3
     #   s3transfer
 cachecontrol==0.14.4
     # via firebase-admin
-cachetools==6.2.4
-    # via
-    #   arize-phoenix
-    #   google-auth
-    #   py-key-value-aio
-celery==5.6.0
+cachetools==7.0.0
+    # via py-key-value-aio
+celery==5.6.2
     # via
     #   flower
     #   potpie
-certifi==2025.11.12
+certifi==2026.1.4
     # via
     #   httpcore
     #   httpx
@@ -151,7 +128,7 @@ click-repl==0.3.0
     # via celery
 cloudpickle==3.1.2
     # via pydocket
-cohere==5.20.0 ; sys_platform != 'emscripten'
+cohere==5.20.2 ; sys_platform != 'emscripten'
     # via pydantic-ai-slim
 colorama==0.4.6
     # via
@@ -162,16 +139,23 @@ colorama==0.4.6
     #   pylint
     #   pytest
     #   tqdm
-cryptography==46.0.3
+croniter==6.0.0
+    # via pydocket
+cryptography==46.0.4
     # via
     #   auth0-python
     #   authlib
+    #   google-auth
     #   potpie
     #   pyjwt
     #   secretstorage
-cyclopts==4.4.0
+cuda-bindings==12.9.4 ; platform_machine == 'x86_64' and sys_platform == 'linux'
+    # via torch
+cuda-pathfinder==1.3.3 ; platform_machine == 'x86_64' and sys_platform == 'linux'
+    # via cuda-bindings
+cyclopts==4.5.1
     # via fastmcp
-dill==0.4.0
+dill==0.4.1
     # via pylint
 diskcache==5.6.3
     # via
@@ -193,14 +177,12 @@ docstring-parser==0.17.0
     #   anthropic
     #   cyclopts
     #   instructor
-docutils==0.22.3
+docutils==0.22.4
     # via rich-rst
 email-inspector==0.1.4
     # via potpie
 email-validator==2.3.0
-    # via
-    #   arize-phoenix
-    #   pydantic
+    # via pydantic
 eval-type-backport==0.3.1
     # via mistralai
 exceptiongroup==1.3.1
@@ -211,18 +193,18 @@ exceptiongroup==1.3.1
     #   pydantic-ai-slim
     #   pydocket
     #   pytest
+    #   taskgroup
 executing==2.2.1
     # via logfire
 fakeredis==2.33.0
     # via pydocket
-fastapi==0.124.4
+fastapi==0.128.1
     # via
-    #   arize-phoenix
     #   potpie
     #   sentry-sdk
 fastavro==1.12.1 ; sys_platform != 'emscripten'
     # via cohere
-fastmcp==2.14.1
+fastmcp==2.14.5
     # via pydantic-ai-slim
 fastuuid==0.14.0
     # via litellm
@@ -235,7 +217,7 @@ filelock==3.20.3
     #   virtualenv
 firebase-admin==7.1.0
     # via potpie
-firecrawl-py==4.11.1
+firecrawl-py==4.14.0
     # via potpie
 flower==2.0.1
     # via potpie
@@ -243,24 +225,24 @@ frozenlist==1.8.0
     # via
     #   aiohttp
     #   aiosignal
-fsspec==2025.12.0
+fsspec==2026.1.0
     # via
     #   huggingface-hub
     #   torch
-genai-prices==0.0.49
+genai-prices==0.0.52
     # via pydantic-ai-slim
 gitdb==4.0.12
     # via gitpython
-gitpython==3.1.45
+gitpython==3.1.46
     # via potpie
-google-api-core==2.28.1
+google-api-core==2.29.0
     # via
     #   firebase-admin
     #   google-cloud-core
     #   google-cloud-firestore
     #   google-cloud-secret-manager
     #   google-cloud-storage
-google-auth==2.45.0
+google-auth==2.48.0
     # via
     #   google-api-core
     #   google-cloud-core
@@ -273,11 +255,11 @@ google-cloud-core==2.5.0
     # via
     #   google-cloud-firestore
     #   google-cloud-storage
-google-cloud-firestore==2.22.0 ; platform_python_implementation != 'PyPy'
+google-cloud-firestore==2.23.0 ; platform_python_implementation != 'PyPy'
     # via firebase-admin
-google-cloud-secret-manager==2.25.0
+google-cloud-secret-manager==2.26.0
     # via potpie
-google-cloud-storage==3.7.0
+google-cloud-storage==3.9.0
     # via
     #   firebase-admin
     #   potpie
@@ -285,7 +267,7 @@ google-crc32c==1.8.0
     # via
     #   google-cloud-storage
     #   google-resumable-media
-google-genai==1.56.0
+google-genai==1.62.0
     # via pydantic-ai-slim
 google-resumable-media==2.8.0
     # via google-cloud-storage
@@ -294,49 +276,31 @@ googleapis-common-protos==1.72.0
     #   google-api-core
     #   grpc-google-iam-v1
     #   grpcio-status
-    #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-exporter-otlp-proto-http
-graphql-core==3.2.7 ; python_full_version < '4'
-    # via strawberry-graphql
-greenlet==3.3.0
-    # via sqlalchemy
+    #   xai-sdk
+greenlet==3.3.1
+    # via
+    #   potpie
+    #   sqlalchemy
 grep-ast==0.9.0
     # via potpie
 griffe==1.15.0
     # via pydantic-ai-slim
-groq==0.37.1
+groq==1.0.0
     # via pydantic-ai-slim
 grpc-google-iam-v1==0.14.3
     # via google-cloud-secret-manager
-grpc-interceptor==0.15.4
-    # via arize-phoenix
-grpcio==1.67.1 ; python_full_version >= '3.11' and python_full_version < '3.14'
+grpcio==1.76.0
     # via
-    #   arize-phoenix
     #   google-api-core
     #   google-cloud-secret-manager
     #   googleapis-common-protos
     #   grpc-google-iam-v1
-    #   grpc-interceptor
     #   grpcio-status
-    #   litellm
-    #   opentelemetry-exporter-otlp-proto-grpc
-grpcio==1.76.0 ; python_full_version < '3.11' or python_full_version >= '3.14'
-    # via
-    #   arize-phoenix
-    #   google-api-core
-    #   google-cloud-secret-manager
-    #   googleapis-common-protos
-    #   grpc-google-iam-v1
-    #   grpc-interceptor
-    #   grpcio-status
-    #   litellm
-    #   opentelemetry-exporter-otlp-proto-grpc
-grpcio-status==1.62.3 ; python_full_version >= '3.11' and python_full_version < '3.14'
+    #   xai-sdk
+grpcio-status==1.76.0
     # via google-api-core
-grpcio-status==1.76.0 ; python_full_version < '3.11' or python_full_version >= '3.14'
-    # via google-api-core
-gunicorn==23.0.0
+gunicorn==25.0.1
     # via potpie
 h11==0.16.0
     # via
@@ -353,8 +317,7 @@ httpcore==1.0.9
 httpx==0.28.1
     # via
     #   anthropic
-    #   arize-phoenix
-    #   arize-phoenix-client
+    #   auth0-python
     #   cohere
     #   fastmcp
     #   firebase-admin
@@ -371,21 +334,19 @@ httpx==0.28.1
     #   potpie
     #   pydantic-ai-slim
     #   pydantic-graph
-httpx-sse==0.4.0
-    # via
-    #   cohere
-    #   mcp
-huggingface-hub==0.36.0
+httpx-sse==0.4.3
+    # via mcp
+huggingface-hub==0.36.1
     # via
     #   pydantic-ai-slim
     #   sentence-transformers
     #   tokenizers
     #   transformers
-humanize==4.14.0
+humanize==4.15.0
     # via flower
 hyperframe==6.1.0
     # via h2
-identify==2.6.15
+identify==2.6.16
     # via pre-commit
 idna==3.11
     # via
@@ -394,14 +355,14 @@ idna==3.11
     #   httpx
     #   requests
     #   yarl
-importlib-metadata==8.7.0
+importlib-metadata==8.7.1
     # via
     #   keyring
     #   litellm
     #   opentelemetry-api
 iniconfig==2.3.0
     # via pytest
-instructor==1.13.0
+instructor==1.14.5
     # via potpie
 invoke==2.2.1
     # via mistralai
@@ -409,9 +370,9 @@ isort==7.0.0
     # via pylint
 jaraco-classes==3.4.0
     # via keyring
-jaraco-context==6.0.1
+jaraco-context==6.1.0
     # via keyring
-jaraco-functools==4.3.0
+jaraco-functools==4.4.0
     # via keyring
 jeepney==0.9.0 ; sys_platform == 'linux'
     # via
@@ -419,7 +380,6 @@ jeepney==0.9.0 ; sys_platform == 'linux'
     #   secretstorage
 jinja2==3.1.6
     # via
-    #   arize-phoenix
     #   instructor
     #   litellm
     #   torch
@@ -429,9 +389,8 @@ jiter==0.11.1
     #   instructor
     #   openai
     #   potpie
-jmespath==1.0.1
+jmespath==1.1.0
     # via
-    #   arize-phoenix
     #   boto3
     #   botocore
 joblib==1.5.3
@@ -439,17 +398,17 @@ joblib==1.5.3
     #   nltk
     #   potpie
     #   scikit-learn
-json-repair==0.54.3
+json-repair==0.56.0
     # via potpie
-json5==0.12.1
+json5==0.13.0
     # via potpie
 jsonpatch==1.33
     # via langchain-core
-jsonpath-ng==1.7.0
-    # via arize-phoenix-evals
 jsonpointer==3.0.0
     # via jsonpatch
-jsonschema==4.25.1
+jsonref==1.1.0
+    # via fastmcp
+jsonschema==4.26.0
     # via
     #   litellm
     #   mcp
@@ -459,39 +418,37 @@ jsonschema-specifications==2025.9.1
     # via jsonschema
 keyring==25.7.0
     # via py-key-value-aio
-kombu==5.6.1
+kombu==5.6.2
     # via
     #   celery
     #   potpie
-langchain==1.2.0
+langchain==1.2.8
     # via potpie
-langchain-core==1.2.6
+langchain-core==1.2.8
     # via
     #   langchain
     #   langgraph
     #   langgraph-checkpoint
     #   langgraph-prebuilt
-langgraph==1.0.5
+langgraph==1.0.7
     # via langchain
-langgraph-checkpoint==3.0.1
+langgraph-checkpoint==4.0.0
     # via
     #   langgraph
     #   langgraph-prebuilt
-langgraph-prebuilt==1.0.5
+langgraph-prebuilt==1.0.7
     # via langgraph
-langgraph-sdk==0.3.0
+langgraph-sdk==0.3.3
     # via langgraph
-langsmith==0.5.0
+langsmith==0.6.8
     # via langchain-core
-ldap3==2.9.1
-    # via arize-phoenix
-litellm==1.80.5 ; python_full_version < '3.11'
+litellm==1.81.7
     # via potpie
-litellm==1.80.10 ; python_full_version >= '3.11'
-    # via potpie
-logfire==4.16.0
-    # via pydantic-ai-slim
-logfire-api==4.16.0
+logfire==4.22.0
+    # via
+    #   potpie
+    #   pydantic-ai-slim
+logfire-api==4.22.0
     # via
     #   pydantic-evals
     #   pydantic-graph
@@ -509,7 +466,7 @@ markupsafe==3.0.3
     #   mako
 mccabe==0.7.0
     # via pylint
-mcp==1.24.0
+mcp==1.26.0
     # via
     #   fastmcp
     #   pydantic-ai-slim
@@ -525,13 +482,13 @@ mpmath==1.3.0
     # via sympy
 msgpack==1.1.2
     # via cachecontrol
-multidict==6.7.0
+multidict==6.7.1
     # via
     #   aiohttp
     #   yarl
 mypy-extensions==1.1.0
     # via black
-neo4j==6.0.3
+neo4j==6.1.0
     # via potpie
 nest-asyncio==1.6.0
     # via firecrawl-py
@@ -543,27 +500,25 @@ networkx==3.6.1 ; python_full_version >= '3.11'
     # via
     #   potpie
     #   torch
-newrelic==11.2.0
+newrelic==11.4.0
     # via potpie
 nexus-rpc==1.2.0
     # via temporalio
 nltk==3.9.2
     # via potpie
-nodeenv==1.9.1
+nodeenv==1.10.0
     # via pre-commit
 numpy==2.2.6 ; python_full_version < '3.11'
     # via
-    #   arize-phoenix
-    #   pandas
     #   scikit-learn
     #   scipy
+    #   sentence-transformers
     #   transformers
-numpy==2.3.5 ; python_full_version >= '3.11'
+numpy==2.4.2 ; python_full_version >= '3.11'
     # via
-    #   arize-phoenix
-    #   pandas
     #   scikit-learn
     #   scipy
+    #   sentence-transformers
     #   transformers
 nvidia-cublas-cu12==12.8.4.1 ; platform_machine == 'x86_64' and sys_platform == 'linux'
     # via
@@ -600,11 +555,11 @@ nvidia-nvjitlink-cu12==12.8.93 ; platform_machine == 'x86_64' and sys_platform =
     #   nvidia-cusolver-cu12
     #   nvidia-cusparse-cu12
     #   torch
-nvidia-nvshmem-cu12==3.3.20 ; platform_machine == 'x86_64' and sys_platform == 'linux'
+nvidia-nvshmem-cu12==3.4.5 ; platform_machine == 'x86_64' and sys_platform == 'linux'
     # via torch
 nvidia-nvtx-cu12==12.8.90 ; platform_machine == 'x86_64' and sys_platform == 'linux'
     # via torch
-openai==2.13.0
+openai==2.16.0
     # via
     #   instructor
     #   litellm
@@ -612,113 +567,64 @@ openai==2.13.0
     #   pydantic-ai-slim
 openapi-pydantic==0.5.1
     # via fastmcp
-openinference-instrumentation==0.1.42
+openinference-instrumentation==0.1.44
+    # via openinference-instrumentation-litellm
+openinference-instrumentation-litellm==0.1.29
+    # via logfire
+openinference-semantic-conventions==0.1.26
     # via
-    #   arize-phoenix
-    #   arize-phoenix-client
-    #   arize-phoenix-evals
-    #   arize-phoenix-otel
-    #   openinference-instrumentation-litellm
-    #   openinference-instrumentation-openai
-    #   openinference-instrumentation-pydantic-ai
-openinference-instrumentation-litellm==0.1.28
-    # via potpie
-openinference-instrumentation-openai==0.1.41
-    # via potpie
-openinference-instrumentation-pydantic-ai==0.1.9
-    # via potpie
-openinference-semantic-conventions==0.1.25
-    # via
-    #   arize-phoenix
-    #   arize-phoenix-client
-    #   arize-phoenix-evals
-    #   arize-phoenix-otel
     #   openinference-instrumentation
     #   openinference-instrumentation-litellm
-    #   openinference-instrumentation-openai
-    #   openinference-instrumentation-pydantic-ai
 opentelemetry-api==1.39.1
     # via
-    #   arize-phoenix-evals
     #   openinference-instrumentation
     #   openinference-instrumentation-litellm
-    #   openinference-instrumentation-openai
-    #   openinference-instrumentation-pydantic-ai
-    #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-exporter-otlp-proto-http
-    #   opentelemetry-exporter-prometheus
     #   opentelemetry-instrumentation
     #   opentelemetry-instrumentation-httpx
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
     #   pydantic-ai-slim
     #   pydocket
-opentelemetry-exporter-otlp==1.39.1
-    # via
-    #   arize-phoenix
-    #   arize-phoenix-client
-    #   arize-phoenix-otel
 opentelemetry-exporter-otlp-proto-common==1.39.1
-    # via
-    #   opentelemetry-exporter-otlp-proto-grpc
-    #   opentelemetry-exporter-otlp-proto-http
-opentelemetry-exporter-otlp-proto-grpc==1.39.1
-    # via opentelemetry-exporter-otlp
+    # via opentelemetry-exporter-otlp-proto-http
 opentelemetry-exporter-otlp-proto-http==1.39.1
-    # via
-    #   logfire
-    #   opentelemetry-exporter-otlp
-opentelemetry-exporter-prometheus==0.60b1
-    # via pydocket
+    # via logfire
 opentelemetry-instrumentation==0.60b1
     # via
     #   logfire
     #   openinference-instrumentation-litellm
-    #   openinference-instrumentation-openai
-    #   openinference-instrumentation-pydantic-ai
     #   opentelemetry-instrumentation-httpx
-    #   pydocket
 opentelemetry-instrumentation-httpx==0.60b1
     # via logfire
 opentelemetry-proto==1.39.1
     # via
-    #   arize-phoenix
-    #   arize-phoenix-otel
     #   opentelemetry-exporter-otlp-proto-common
-    #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-exporter-otlp-proto-http
 opentelemetry-sdk==1.39.1
     # via
-    #   arize-phoenix
-    #   arize-phoenix-client
-    #   arize-phoenix-otel
     #   logfire
     #   openinference-instrumentation
     #   openinference-instrumentation-litellm
-    #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-exporter-otlp-proto-http
-    #   opentelemetry-exporter-prometheus
+    #   xai-sdk
 opentelemetry-semantic-conventions==0.60b1
     # via
-    #   arize-phoenix
-    #   arize-phoenix-otel
-    #   openinference-instrumentation-openai
-    #   openinference-instrumentation-pydantic-ai
     #   opentelemetry-instrumentation
     #   opentelemetry-instrumentation-httpx
     #   opentelemetry-sdk
 opentelemetry-util-http==0.60b1
     # via opentelemetry-instrumentation-httpx
-orjson==3.11.5
+orjson==3.11.7
     # via
-    #   arize-phoenix
     #   langgraph-sdk
     #   langsmith
-ormsgpack==1.12.1
+ormsgpack==1.12.2
     # via langgraph-checkpoint
-packaging==24.2
+packaging==25.0
     # via
     #   black
+    #   fastmcp
     #   gunicorn
     #   huggingface-hub
     #   kombu
@@ -726,22 +632,18 @@ packaging==24.2
     #   langsmith
     #   opentelemetry-instrumentation
     #   pytest
-    #   strawberry-graphql
     #   transformers
-pandas==2.3.3
-    # via
-    #   arize-phoenix
-    #   arize-phoenix-evals
+    #   xai-sdk
 pathable==0.4.4
     # via jsonschema-path
-pathspec==0.12.1
+pathspec==1.0.4
     # via
     #   black
     #   grep-ast
     #   potpie
 pathvalidate==3.3.1
     # via py-key-value-aio
-pillow==12.0.0
+pillow==12.1.0
     # via potpie
 platformdirs==4.5.1
     # via
@@ -751,19 +653,14 @@ platformdirs==4.5.1
     #   virtualenv
 pluggy==1.6.0
     # via pytest
-ply==3.11
-    # via jsonpath-ng
 postgres==4.0
     # via potpie
-posthog==7.4.0
+posthog==7.8.2
     # via potpie
 pre-commit==4.5.1
-    # via instructor
-prometheus-client==0.23.1
+prometheus-client==0.24.1
     # via
-    #   arize-phoenix
     #   flower
-    #   opentelemetry-exporter-prometheus
     #   pydocket
 prompt-toolkit==3.0.52
     # via
@@ -773,14 +670,13 @@ propcache==0.4.1
     # via
     #   aiohttp
     #   yarl
-proto-plus==1.27.0
+proto-plus==1.27.1
     # via
     #   google-api-core
     #   google-cloud-firestore
     #   google-cloud-secret-manager
 protobuf==6.33.5
     # via
-    #   arize-phoenix
     #   google-api-core
     #   google-cloud-firestore
     #   google-cloud-secret-manager
@@ -792,8 +688,7 @@ protobuf==6.33.5
     #   potpie
     #   proto-plus
     #   temporalio
-psutil==7.0.0
-    # via arize-phoenix
+    #   xai-sdk
 psycopg-binary==3.3.2
     # via potpie
 psycopg2-binary==2.9.11
@@ -808,24 +703,20 @@ py-key-value-aio==0.3.0
     #   pydocket
 py-key-value-shared==0.3.0
     # via py-key-value-aio
-pyarrow==22.0.0
-    # via arize-phoenix
 pyasn1==0.6.2
     # via
-    #   ldap3
     #   potpie
     #   pyasn1-modules
     #   rsa
 pyasn1-modules==0.4.2
     # via google-auth
-pycparser==2.23 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy'
+pycparser==3.0 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy'
     # via cffi
 pydantic==2.12.5
     # via
     #   ag-ui-protocol
     #   anthropic
-    #   arize-phoenix
-    #   arize-phoenix-evals
+    #   auth0-python
     #   cohere
     #   fastapi
     #   fastmcp
@@ -848,24 +739,26 @@ pydantic==2.12.5
     #   pydantic-evals
     #   pydantic-graph
     #   pydantic-settings
-pydantic-ai==1.34.0
+    #   xai-sdk
+pydantic-ai==1.54.0
     # via potpie
-pydantic-ai-slim==1.34.0
+pydantic-ai-slim==1.54.0
     # via
     #   pydantic-ai
     #   pydantic-evals
 pydantic-core==2.41.5
     # via
+    #   auth0-python
     #   cohere
     #   instructor
     #   pydantic
-pydantic-evals==1.34.0
+pydantic-evals==1.54.0
     # via pydantic-ai-slim
-pydantic-graph==1.34.0
+pydantic-graph==1.54.0
     # via pydantic-ai-slim
 pydantic-settings==2.12.0
     # via mcp
-pydocket==0.15.6
+pydocket==0.17.5
     # via fastmcp
 pygithub==2.8.1
     # via potpie
@@ -874,7 +767,7 @@ pygments==2.19.2
     #   potpie
     #   pytest
     #   rich
-pyjwt==2.10.1
+pyjwt==2.11.0
     # via
     #   auth0-python
     #   firebase-admin
@@ -892,8 +785,6 @@ pyperclip==1.11.0
     # via
     #   fastmcp
     #   pydantic-ai-slim
-pystache==0.6.8
-    # via arize-phoenix-evals
 pytest==9.0.2
     # via
     #   potpie
@@ -902,13 +793,11 @@ pytest-asyncio==1.3.0
     # via potpie
 python-dateutil==2.9.0.post0
     # via
-    #   arize-phoenix
     #   botocore
     #   celery
+    #   croniter
     #   mistralai
-    #   pandas
     #   posthog
-    #   strawberry-graphql
     #   temporalio
 python-dotenv==1.2.1
     # via
@@ -921,16 +810,15 @@ python-json-logger==4.0.0
     # via pydocket
 python-multipart==0.0.22
     # via
-    #   arize-phoenix
     #   mcp
     #   potpie
-pytokens==0.3.0
+pytokens==0.4.1
     # via black
 pytz==2025.2
     # via
+    #   croniter
     #   flower
     #   neo4j
-    #   pandas
 pywin32==311 ; sys_platform == 'win32'
     # via mcp
 pywin32-ctypes==0.2.3 ; sys_platform == 'win32'
@@ -956,7 +844,7 @@ referencing==0.36.2
     #   jsonschema
     #   jsonschema-path
     #   jsonschema-specifications
-regex==2025.11.3
+regex==2026.1.15
     # via
     #   nltk
     #   tiktoken
@@ -984,11 +872,12 @@ requests==2.32.5
     #   resend
     #   tiktoken
     #   transformers
+    #   xai-sdk
 requests-toolbelt==1.0.0
     # via langsmith
-resend==2.19.0
+resend==2.21.0
     # via potpie
-rich==14.2.0
+rich==14.3.2
     # via
     #   bandit
     #   cyclopts
@@ -1008,38 +897,34 @@ rpds-py==0.30.0
     #   referencing
 rsa==4.9.1
     # via google-auth
-ruff==0.14.9
+ruff==0.15.0
 s3transfer==0.16.0
     # via boto3
 safetensors==0.7.0
     # via transformers
 scikit-learn==1.7.2 ; python_full_version < '3.11'
     # via
-    #   arize-phoenix
     #   potpie
     #   sentence-transformers
 scikit-learn==1.8.0 ; python_full_version >= '3.11'
     # via
-    #   arize-phoenix
     #   potpie
     #   sentence-transformers
 scipy==1.15.3 ; python_full_version < '3.11'
     # via
-    #   arize-phoenix
     #   scikit-learn
     #   sentence-transformers
-scipy==1.16.3 ; python_full_version >= '3.11'
+scipy==1.17.0 ; python_full_version >= '3.11'
     # via
-    #   arize-phoenix
     #   scikit-learn
     #   sentence-transformers
 secretstorage==3.5.0 ; sys_platform == 'linux'
     # via keyring
-sentence-transformers==5.2.0
+sentence-transformers==5.2.2
     # via potpie
-sentry-sdk==2.48.0
+sentry-sdk==2.52.0
     # via potpie
-setuptools==80.9.0
+setuptools==80.10.2
     # via
     #   openinference-instrumentation-litellm
     #   torch
@@ -1059,28 +944,24 @@ sniffio==1.3.1
     #   openai
 sortedcontainers==2.4.0
     # via fakeredis
-sqlalchemy==2.0.45
+sqlalchemy==2.0.46
     # via
     #   alembic
-    #   arize-phoenix
     #   potpie
-sqlean-py==3.49.1
-    # via arize-phoenix
-sse-starlette==3.0.4
+sse-starlette==3.2.0
     # via mcp
 starlette==0.50.0
     # via
-    #   arize-phoenix
     #   fastapi
     #   mcp
     #   pydantic-ai-slim
     #   sse-starlette
 stevedore==5.6.0
     # via bandit
-strawberry-graphql==0.270.1
-    # via arize-phoenix
 sympy==1.14.0
     # via torch
+taskgroup==0.2.2 ; python_full_version < '3.11'
+    # via pydocket
 temporalio==1.20.0
     # via pydantic-ai-slim
 tenacity==9.1.2
@@ -1095,12 +976,13 @@ tiktoken==0.12.0
     # via
     #   litellm
     #   potpie
-tokenizers==0.22.1
+    #   pydantic-ai-slim
+tokenizers==0.22.2
     # via
     #   cohere
     #   litellm
     #   transformers
-tomli==2.3.0 ; python_full_version < '3.11'
+tomli==2.4.0 ; python_full_version < '3.11'
     # via
     #   alembic
     #   black
@@ -1108,24 +990,21 @@ tomli==2.3.0 ; python_full_version < '3.11'
     #   logfire
     #   pylint
     #   pytest
-tomlkit==0.13.3
+tomlkit==0.14.0
     # via pylint
-torch==2.9.1
+torch==2.10.0
     # via sentence-transformers
 tornado==6.5.4
     # via flower
-tqdm==4.67.1
+tqdm==4.67.3
     # via
-    #   arize-phoenix
-    #   arize-phoenix-client
-    #   arize-phoenix-evals
     #   huggingface-hub
     #   nltk
     #   openai
     #   potpie
     #   sentence-transformers
     #   transformers
-transformers==4.57.3
+transformers==4.57.6
     # via
     #   potpie
     #   sentence-transformers
@@ -1143,17 +1022,15 @@ tree-sitter-language-pack==0.13.0
     #   potpie
 tree-sitter-yaml==0.7.2
     # via tree-sitter-language-pack
-triton==3.5.1 ; platform_machine == 'x86_64' and sys_platform == 'linux'
+triton==3.6.0 ; platform_machine == 'x86_64' and sys_platform == 'linux'
     # via torch
-ty==0.0.2
-    # via instructor
-typer==0.20.0
+typer==0.21.1
     # via
     #   instructor
     #   pydocket
 types-protobuf==6.32.1.20251210
     # via temporalio
-types-requests==2.32.4.20250913 ; sys_platform != 'emscripten'
+types-requests==2.32.4.20260107 ; sys_platform != 'emscripten'
     # via cohere
 typing-extensions==4.15.0
     # via
@@ -1161,11 +1038,8 @@ typing-extensions==4.15.0
     #   alembic
     #   anthropic
     #   anyio
-    #   arize-phoenix
-    #   arize-phoenix-client
-    #   arize-phoenix-evals
-    #   arize-phoenix-otel
     #   astroid
+    #   auth0-python
     #   black
     #   cohere
     #   cryptography
@@ -1183,10 +1057,7 @@ typing-extensions==4.15.0
     #   multidict
     #   nexus-rpc
     #   openai
-    #   openinference-instrumentation-openai
-    #   openinference-instrumentation-pydantic-ai
     #   opentelemetry-api
-    #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-exporter-otlp-proto-http
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
@@ -1203,7 +1074,7 @@ typing-extensions==4.15.0
     #   sentence-transformers
     #   sqlalchemy
     #   starlette
-    #   strawberry-graphql
+    #   taskgroup
     #   temporalio
     #   torch
     #   typer
@@ -1221,7 +1092,6 @@ typing-inspection==0.4.2
 tzdata==2025.3
     # via
     #   kombu
-    #   pandas
     #   tzlocal
 tzlocal==5.3.1
     # via celery
@@ -1234,15 +1104,14 @@ urllib3==2.6.3
     #   requests
     #   sentry-sdk
     #   types-requests
-uuid-utils==0.12.0
+uuid-utils==0.14.0
     # via
     #   langchain-core
     #   langsmith
 uuid6==2025.0.1
     # via potpie
-uvicorn==0.38.0
+uvicorn==0.40.0
     # via
-    #   arize-phoenix
     #   fastmcp
     #   mcp
     #   potpie
@@ -1255,7 +1124,7 @@ virtualenv==20.36.1
     # via
     #   potpie
     #   pre-commit
-wcwidth==0.2.14
+wcwidth==0.5.3
     # via prompt-toolkit
 websockets==15.0.1
     # via
@@ -1266,16 +1135,16 @@ win32-setctime==1.2.0 ; sys_platform == 'win32'
     # via loguru
 wrapt==1.17.3
     # via
-    #   arize-phoenix
-    #   arize-phoenix-otel
     #   openinference-instrumentation
     #   openinference-instrumentation-litellm
-    #   openinference-instrumentation-openai
-    #   openinference-instrumentation-pydantic-ai
     #   opentelemetry-instrumentation
     #   opentelemetry-instrumentation-httpx
+xai-sdk==1.6.1
+    # via pydantic-ai-slim
 xxhash==3.6.0
-    # via langgraph
+    # via
+    #   langgraph
+    #   langsmith
 yarl==1.22.0
     # via aiohttp
 zipp==3.23.0
