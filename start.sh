@@ -75,11 +75,10 @@ fi
 
 # Apply database migrations within the uv-managed environment
 
-uv venv
+uv sync
 
 source .venv/bin/activate
 
-uv sync
 
 alembic upgrade heads
 
