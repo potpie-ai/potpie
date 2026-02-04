@@ -240,7 +240,17 @@ class S3StorageClient(StorageClient):
 
 
 class AzureBlobStorageClient(StorageClient):
-    """StorageClient backed by the native Azure Blob Storage SDK."""
+    """StorageClient backed by the native Azure Blob Storage SDK.
+
+    Supports both block blob and page blob storage accounts.  Premium Page Blob
+    accounts reject block blobs, so the client auto-detects the account kind on
+    first upload and falls back to page blobs when necessary.  Page blobs
+    require 512-byte aligned data — the client transparently pads on upload and
+    trims on download using the ``actual_size`` blob metadata field.
+    """
+
+    _PAGE_ALIGN = 512  # page blob alignment requirement
+    _use_page_blobs: bool | None = None  # class-level: persists across instances
 
     def __init__(
         self, account_name: str, account_key: str, timeout_seconds: int = 30
@@ -255,6 +265,14 @@ class AzureBlobStorageClient(StorageClient):
             credential=account_key,
             connection_timeout=timeout_seconds,
         )
+
+    @staticmethod
+    def _pad_to_page_boundary(data: bytes) -> bytes:
+        """Pad data to a 512-byte boundary for page blob compatibility."""
+        remainder = len(data) % AzureBlobStorageClient._PAGE_ALIGN
+        if remainder == 0:
+            return data
+        return data + b"\x00" * (AzureBlobStorageClient._PAGE_ALIGN - remainder)
 
     def check_bucket(self, bucket_name: str, create_if_missing: bool = True) -> None:
         try:
@@ -288,6 +306,52 @@ class AzureBlobStorageClient(StorageClient):
                 f"Failed to create container '{bucket_name}': {e}"
             ) from e
 
+    def _upload_block_blob(
+        self,
+        blob_client: Any,
+        data: bytes,
+        content_type: str,
+        md5_digest: bytearray,
+    ) -> None:
+        from azure.storage.blob import ContentSettings
+
+        blob_client.upload_blob(
+            data=data,
+            overwrite=True,
+            content_settings=ContentSettings(
+                content_type=content_type,
+                content_md5=md5_digest,
+            ),
+        )
+
+    def _upload_page_blob(
+        self,
+        blob_client: Any,
+        data: bytes,
+        content_type: str,
+        md5_digest: bytearray,
+    ) -> None:
+        from azure.storage.blob import ContentSettings
+
+        actual_size = len(data)
+        padded = self._pad_to_page_boundary(data)
+
+        # Delete existing blob first — page blob create doesn't support overwrite
+        try:
+            blob_client.delete_blob()
+        except Exception:
+            pass
+
+        blob_client.create_page_blob(
+            size=len(padded),
+            content_settings=ContentSettings(
+                content_type=content_type,
+                content_md5=md5_digest,
+            ),
+            metadata={"actual_size": str(actual_size)},
+        )
+        blob_client.upload_page(padded, offset=0, length=len(padded))
+
     @_retry_transient
     def upload(
         self,
@@ -296,22 +360,44 @@ class AzureBlobStorageClient(StorageClient):
         data: bytes,
         content_type: str,
     ) -> None:
-        from azure.storage.blob import ContentSettings
+        from azure.core.exceptions import HttpResponseError
 
         try:
             blob_client = self._service_client.get_blob_client(
                 container=bucket_name, blob=key
             )
             md5_digest = bytearray(hashlib.md5(data).digest())
-            blob_client.upload_blob(
-                data=data,
-                overwrite=True,
-                content_settings=ContentSettings(
-                    content_type=content_type,
-                    content_md5=md5_digest,
-                ),
-            )
+
+            if self._use_page_blobs is True:
+                self._upload_page_blob(blob_client, data, content_type, md5_digest)
+            elif self._use_page_blobs is False:
+                self._upload_block_blob(blob_client, data, content_type, md5_digest)
+            else:
+                # Auto-detect: try block blob first, fall back to page blob
+                try:
+                    self._upload_block_blob(
+                        blob_client, data, content_type, md5_digest
+                    )
+                    AzureBlobStorageClient._use_page_blobs = False
+                    logger.info("Azure account supports block blobs — using block blobs")
+                except HttpResponseError as exc:
+                    if "BlobTypeNotSupported" in str(exc) or (
+                        hasattr(exc, "error_code")
+                        and exc.error_code == "BlobTypeNotSupported"
+                    ):
+                        logger.info(
+                            "Block blobs not supported — switching to page blobs"
+                        )
+                        AzureBlobStorageClient._use_page_blobs = True
+                        self._upload_page_blob(
+                            blob_client, data, content_type, md5_digest
+                        )
+                    else:
+                        raise
+
             logger.debug("Uploaded %s/%s (%d bytes)", bucket_name, key, len(data))
+        except StorageClientError:
+            raise
         except Exception as e:
             raise StorageClientError(f"Upload failed: {e}") from e
 
@@ -323,8 +409,17 @@ class AzureBlobStorageClient(StorageClient):
             blob_client = self._service_client.get_blob_client(
                 container=bucket_name, blob=key
             )
+            # Fetch properties to check for page blob metadata
+            props = blob_client.get_blob_properties()
             stream = blob_client.download_blob()
             data = stream.readall()
+
+            # If this is a page blob with padding, trim to actual size
+            actual_size_str = (props.metadata or {}).get("actual_size")
+            if actual_size_str is not None:
+                actual_size = int(actual_size_str)
+                data = data[:actual_size]
+
             logger.debug("Downloaded %s/%s (%d bytes)", bucket_name, key, len(data))
             return data
         except ResourceNotFoundError as e:
