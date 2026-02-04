@@ -1,15 +1,21 @@
 import os
+from asyncio import create_task
 from typing import Any, Dict
 
 from dotenv import load_dotenv
 from fastapi import HTTPException
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
-from sqlalchemy import select, or_
 from uuid6 import uuid7
 
 from app.celery.tasks.parsing_tasks import process_parsing
 from app.core.config_provider import config_provider
+from app.modules.code_provider.code_provider_service import CodeProviderService
+from app.modules.conversations.conversation.conversation_model import (
+    Conversation,
+    Visibility,
+)
 from app.modules.parsing.graph_construction.parsing_helper import ParseHelper
 from app.modules.parsing.graph_construction.parsing_schema import (
     ParsingRequest,
@@ -20,13 +26,12 @@ from app.modules.parsing.graph_construction.parsing_validator import (
     validate_parsing_input,
 )
 from app.modules.parsing.utils.repo_name_normalizer import normalize_repo_name
+from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
-from app.modules.utils.posthog_helper import PostHogClient
-from app.modules.conversations.conversation.conversation_model import Conversation
-from app.modules.conversations.conversation.conversation_model import Visibility
-from app.modules.projects.projects_model import Project
+from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.logger import setup_logger
+from app.modules.utils.posthog_helper import PostHogClient
 
 logger = setup_logger(__name__)
 
@@ -109,6 +114,76 @@ class ParsingController:
                 repo_path=repo_details.repo_path,
                 commit_id=repo_details.commit_id,
             )
+            demo_repos = [
+                "Portkey-AI/gateway",
+                "crewAIInc/crewAI",
+                "AgentOps-AI/agentops",
+                "calcom/cal.com",
+                "langchain-ai/langchain",
+                "AgentOps-AI/AgentStack",
+                "formbricks/formbricks",
+            ]
+            if not project and repo_details.repo_name in demo_repos:
+                existing_project = await project_manager.get_global_project_from_db(
+                    normalized_repo_name,
+                    repo_details.branch_name,
+                    repo_details.commit_id,
+                )
+
+                new_project_id = str(uuid7())
+
+                if existing_project:
+                    await project_manager.duplicate_project(
+                        repo_name,
+                        repo_details.branch_name,
+                        user_id,
+                        new_project_id,
+                        existing_project.properties,
+                        existing_project.commit_id,
+                    )
+                    await project_manager.update_project_status(
+                        new_project_id, ProjectStatusEnum.SUBMITTED
+                    )
+
+                    old_project_id = await project_manager.get_demo_project_id(
+                        repo_name
+                    )
+
+                    asyncio.create_task(
+                        CodeProviderService(db).get_project_structure_async(
+                            new_project_id
+                        )
+                    )
+                    # Duplicate the graph under the new repo ID
+                    await parsing_service.duplicate_graph(
+                        old_project_id, new_project_id
+                    )
+
+                    # Update the project status to READY after copying
+                    await project_manager.update_project_status(
+                        new_project_id, ProjectStatusEnum.READY
+                    )
+                    create_task(
+                        EmailHelper().send_email(
+                            user_email, repo_name, repo_details.branch_name
+                        )
+                    )
+
+                    return {
+                        "project_id": new_project_id,
+                        "status": ProjectStatusEnum.READY.value,
+                    }
+                else:
+                    return await ParsingController.handle_new_project(
+                        repo_details,
+                        user_id,
+                        user_email,
+                        new_project_id,
+                        project_manager,
+                        db,
+                    )
+
+            # Handle existing projects (including previously duplicated demo projects)
             if project:
                 project_id = project.id
 
