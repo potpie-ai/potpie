@@ -1,3 +1,14 @@
+# See https://pre-commit.com for more information
+# See https://pre-commit.com/hooks.html for more hooks
+ci:
+  autofix_commit_msg: 'chore(pre-commit): auto-fix checks'
+  autofix_prs: false
+  autoupdate_branch: ''
+  autoupdate_commit_msg: 'chore(pre-commit): pre-commit autoupdate'
+  autoupdate_schedule: weekly
+  skip: []
+  submodules: false
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -15,7 +26,6 @@ repos:
     rev: v0.8.2
     hooks:
       - id: ruff
-        args: ["--fix"]
         exclude: ^app/alembic/
       - id: ruff-format
         exclude: ^app/alembic/
