@@ -1,0 +1,71 @@
+name: Question/Support
+description: Ask a question or get help with Potpie
+title: "[Question]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reaching out! We're here to help. Please fill out the form below with your question.
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      description: What category does your question fall into?
+      options:
+        - Setup/Installation
+        - Usage/How-to
+        - Configuration
+        - API Usage
+        - Agent Creation
+        - Integration Setup
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What's your question?
+      placeholder: |
+        Please describe your question in detail. The more context you provide, the better we can help!
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What I've Tried
+      description: What steps have you already taken to solve this?
+      placeholder: |
+        Describe what you've already tried:
+        - Steps you've taken
+        - Documentation you've read
+        - Solutions you've attempted
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Your setup details (optional but helpful)
+      placeholder: |
+        Python version:
+        Docker version:
+        Operating System:
+        Environment variables (sanitize sensitive data):
+        Any other relevant details:
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other context or information that might be helpful
+      placeholder: Add any other context about your question here.
+    validations:
+      required: false

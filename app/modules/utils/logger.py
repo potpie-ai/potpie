@@ -4,11 +4,20 @@ import os
 import re
 import sys
 from contextlib import contextmanager
-from loguru import logger as _loguru_logger
 from typing import Optional
+
+from loguru import logger as _loguru_logger
 
 _LOGGING_CONFIGURED = False
 _logger = _loguru_logger
+
+# Control whether to include stack traces in error logs
+# Set LOG_STACK_TRACES=false to disable stack traces
+SHOW_STACK_TRACES = os.getenv("LOG_STACK_TRACES", "true").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 
 # Sensitive data patterns to redact in logs
 SENSITIVE_PATTERNS = [
@@ -116,9 +125,11 @@ def production_log_sink(message):
     exc = record.get("exception")
     if exc:
         exception = {
-            "type": exc.get("type", {}).get("name", "Exception")
-            if isinstance(exc.get("type"), dict)
-            else str(exc.get("type", "Exception")),
+            "type": (
+                exc.get("type", {}).get("name", "Exception")
+                if isinstance(exc.get("type"), dict)
+                else str(exc.get("type", "Exception"))
+            ),
             "value": filter_sensitive_data(str(exc.get("value", ""))),
             "traceback": filter_sensitive_data(str(exc.get("traceback", ""))),
         }
@@ -190,7 +201,7 @@ def configure_logging(level: Optional[str] = None):
     if level is None:
         level = os.getenv("LOG_LEVEL", "INFO").upper()
 
-    env = os.getenv("ENV", "development")
+    env = (os.getenv("ENV") or "development").lower().strip()
 
     _logger.remove()
 
@@ -206,33 +217,39 @@ def configure_logging(level: Optional[str] = None):
 
     _logger = _logger.patch(patcher)
 
-    if env == "production":
-        # Production: Flat JSON format for better machine readability
-        # This format is easier for log aggregation tools (ELK, Datadog, Splunk, etc.)
-        # Use serialize=True to get structured data, then format as flat JSON
+    if env != "development":
         _logger.add(
             production_log_sink,
             format="{message}",
             level=level,
             serialize=True,  # Get structured record, then format in sink
+            backtrace=SHOW_STACK_TRACES,
+            diagnose=SHOW_STACK_TRACES,
         )
     else:
-        # Development: Add colorized output with sensitive data filtering
-        def development_filter(record):
+
+        def _filter(record):
             """Filter sensitive data in development logs"""
             record["message"] = filter_sensitive_data(str(record["message"]))
             # Filter extra fields
+            extra_value = ""
             for key, value in record.get("extra", {}).items():
                 if isinstance(value, (str, bytes)):
                     record["extra"][key] = filter_sensitive_data(str(value))
+                if key != "name":
+                    extra_value += f" {key}: {record['extra'][key]},"
+            if extra_value:
+                record["message"] = record["message"] + " |" + extra_value[:-1]
             return True
 
         _logger.add(
             sys.stdout,
-            format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{extra[name]}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | <level>{message}</level> - {extra}",
+            format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{extra[name]}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | <level>{message}</level>",
             level=level,
             colorize=True,
-            filter=development_filter,
+            filter=_filter,
+            backtrace=SHOW_STACK_TRACES,
+            diagnose=SHOW_STACK_TRACES,
         )
 
     intercept_handler = InterceptHandler()
@@ -328,6 +345,18 @@ def setup_logger(name: str):
     return _logger.bind(name=name)
 
 
+def should_show_stack_trace() -> bool:
+    """Check if stack traces should be shown in logs.
+
+    Controlled by LOG_STACK_TRACES environment variable.
+    Set LOG_STACK_TRACES=false to disable stack traces.
+
+    Usage in logging calls:
+        logger.warning("Error occurred", exc_info=should_show_stack_trace())
+    """
+    return SHOW_STACK_TRACES
+
+
 # Convenience function for dynamic level adjustment
 def set_library_log_level(library_name: str, level: str):
     """
@@ -340,28 +369,3 @@ def set_library_log_level(library_name: str, level: str):
     lib_logger = logging.getLogger(library_name)
     lib_logger.setLevel(level)
     _logger.info(f"Set log level for '{library_name}' to {level}")
-
-
-def log_error_with_context(logger, message: str, error: Exception, **context):
-    """
-    DEPRECATED: Use logger.exception() with context kwargs instead.
-
-    This helper is kept for backward compatibility during migration.
-    Prefer the native Loguru pattern:
-
-    ✅ RECOMMENDED:
-        try:
-            # code
-        except Exception as e:
-            logger.exception("Error message", user_id=user_id, project_id=project_id)
-
-    ❌ OLD WAY (still works but not recommended):
-        log_error_with_context(logger, "Error message", e, user_id=user_id)
-
-    The native pattern is better because:
-    - Uses Loguru's built-in exception handling
-    - Context is added as kwargs (more Pythonic)
-    - Works seamlessly with log_context() context manager
-    """
-    # Use logger.exception() with context - Loguru's native way
-    logger.bind(**context).exception(f"{message}: {str(error)}")

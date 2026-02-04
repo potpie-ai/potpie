@@ -183,7 +183,7 @@ class GithubService:
 
     def get_github_oauth_token(self, uid: str) -> Optional[str]:
         """
-        Get user's GitHub OAuth token from provider_info.
+        Get user's GitHub OAuth token from UserAuthProvider (new system) or provider_info (legacy).
 
         Returns:
             OAuth token if available, None otherwise
@@ -195,20 +195,53 @@ class GithubService:
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 
-        # Safely access provider_info and access_token
+        # Try new UserAuthProvider system first
+        try:
+            from app.modules.auth.auth_provider_model import UserAuthProvider
+            from app.modules.integrations.token_encryption import decrypt_token
+
+            github_provider = (
+                self.db.query(UserAuthProvider)
+                .filter(
+                    UserAuthProvider.user_id == uid,
+                    UserAuthProvider.provider_type == "firebase_github",
+                )
+                .first()
+            )
+            if github_provider and github_provider.access_token:
+                logger.info("Found GitHub token in UserAuthProvider for user %s", uid)
+                # Decrypt the token before returning
+                try:
+                    decrypted_token = decrypt_token(github_provider.access_token)
+                    return decrypted_token
+                except Exception as e:
+                    logger.warning(
+                        "Failed to decrypt GitHub token for user %s: %s. "
+                        "Assuming plaintext token (backward compatibility).",
+                        uid,
+                        str(e),
+                    )
+                    # Token might be plaintext (from before encryption was added)
+                    return github_provider.access_token
+        except Exception as e:
+            logger.debug("Error checking UserAuthProvider: %s", str(e))
+
+        # Fallback to legacy provider_info system
         if user.provider_info is None:
-            logger.warning(f"User {uid} has no provider_info")
+            logger.warning("User %s has no provider_info", uid)
             return None
 
         if not isinstance(user.provider_info, dict):
             logger.warning(
-                f"User {uid} provider_info is not a dict: {type(user.provider_info)}"
+                "User %s provider_info is not a dict: %s",
+                uid,
+                type(user.provider_info),
             )
             return None
 
         access_token = user.provider_info.get("access_token")
         if not access_token:
-            logger.warning(f"User {uid} has no access_token in provider_info")
+            logger.warning("User %s has no access_token in provider_info", uid)
             return None
 
         return access_token
@@ -244,15 +277,64 @@ class GithubService:
                 raise HTTPException(status_code=404, detail="User not found")
 
             firebase_uid = user.uid
-            github_username = user.provider_username
 
-            if not github_username:
-                raise HTTPException(
-                    status_code=400, detail="GitHub username not found for this user"
+            # Check if user has GitHub provider via unified auth system
+            from app.modules.auth.auth_provider_model import UserAuthProvider
+
+            github_provider = (
+                self.db.query(UserAuthProvider)
+                .filter(
+                    UserAuthProvider.user_id == user_id,
+                    UserAuthProvider.provider_type == "firebase_github",
                 )
+                .first()
+            )
+
+            # If no GitHub provider linked, check if user needs to link GitHub
+            if not github_provider:
+                # Check legacy provider_username as fallback (for old accounts)
+                if not user.provider_username:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="GitHub account not linked. Please link your GitHub account to access repositories.",
+                    )
+                # If legacy username exists, continue (backward compatibility)
+                github_username = user.provider_username
+            else:
+                # Get GitHub username from provider data (new unified auth system)
+                github_username = None
+                if github_provider.provider_data:
+                    provider_data = github_provider.provider_data
+                    if isinstance(provider_data, dict):
+                        github_username = provider_data.get(
+                            "username"
+                        ) or provider_data.get("login")
+
+                # Fallback to legacy provider_username field
+                if not github_username:
+                    github_username = user.provider_username
 
             # Try to get user's OAuth token first
             github_oauth_token = self.get_github_oauth_token(firebase_uid)
+
+            # If we have a token but no username, get it from GitHub API
+            if not github_username and github_oauth_token:
+                try:
+                    user_github = Github(github_oauth_token)
+                    github_user = user_github.get_user()
+                    github_username = github_user.login
+                    logger.info(
+                        f"Retrieved GitHub username {github_username} from API for user {user_id}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to get GitHub username from API: {str(e)}")
+
+            # If still no username, we can't proceed
+            if not github_username:
+                raise HTTPException(
+                    status_code=400,
+                    detail="GitHub username not found. Please ensure your GitHub account is properly linked.",
+                )
 
             # Fall back to system tokens if user OAuth token not available
             if not github_oauth_token:

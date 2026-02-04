@@ -18,6 +18,10 @@ from app.modules.intelligence.provider.provider_service import (
 )
 from .agent_config import AgentConfig, TaskConfig
 from app.modules.utils.logger import setup_logger
+from app.modules.intelligence.tools.reasoning_manager import (
+    _get_reasoning_manager,
+    _reset_reasoning_manager,
+)
 
 from ..chat_agent import (
     ChatAgent,
@@ -80,6 +84,10 @@ class PydanticRagAgent(ChatAgent):
         self.tools = tools
         self.config = config
         self.mcp_servers = mcp_servers or []
+        # Initialize history processor for token-aware context management
+        from .history_processor import create_history_processor
+
+        self._history_processor = create_history_processor(llm_provider)
 
     def _create_agent(self, ctx: ChatContext) -> Agent:
         config = self.config
@@ -125,15 +133,40 @@ class PydanticRagAgent(ChatAgent):
             ],
             "mcp_servers": mcp_toolsets,
             "instructions": f"""
-            Role: {config.role}
-            Goal: {config.goal}
-            Backstory:
-            {config.backstory}
+# Agent Execution Guidelines
 
-            {multimodal_instructions}
+You are an AI assistant that helps users with code analysis and tasks. Follow these principles:
 
-            CURRENT CONTEXT AND AGENT TASK OVERVIEW:
-            {self._create_task_description(task_config=config.tasks[0],ctx=ctx)}
+1. **Be thorough**: Analyze code carefully before making recommendations
+2. **Use tools effectively**: Leverage available tools to gather information
+3. **Provide clear explanations**: Explain your reasoning and findings
+4. **Handle errors gracefully**: If a tool fails, try alternative approaches
+
+## Tool Usage Best Practices
+
+- Use `fetch_file` with `with_line_numbers=true` for precise code references
+- Use `ask_knowledge_graph_queries` for semantic code search
+- Use `get_code_file_structure` to understand project layout
+- Verify your findings before presenting conclusions
+
+## Output Guidelines
+
+- Structure responses with clear headings
+- Include relevant code snippets with file paths
+- Summarize key findings at the end
+
+<!-- CACHE_BREAKPOINT -->
+
+Your Identity:
+Role: {config.role}
+Goal: {config.goal}
+Backstory:
+{config.backstory}
+
+{multimodal_instructions}
+
+CURRENT CONTEXT AND AGENT TASK OVERVIEW:
+{self._create_task_description(task_config=config.tasks[0],ctx=ctx)}
             """,
             "output_retries": 3,
             "output_type": str,
@@ -141,6 +174,7 @@ class PydanticRagAgent(ChatAgent):
             "end_strategy": "exhaustive",
             "model_settings": {"max_tokens": 14000},
             "instrument": True,
+            "history_processors": [self._history_processor],
         }
 
         if not allow_parallel_tools:
@@ -447,6 +481,16 @@ class PydanticRagAgent(ChatAgent):
             f"Running pydantic-ai agent {'with multimodal support' if ctx.has_images() else ''}"
         )
 
+        # Initialize code changes manager with conversation_id for persistence across messages
+        from app.modules.intelligence.tools.code_changes_manager import (
+            _init_code_changes_manager,
+        )
+
+        _init_code_changes_manager(ctx.conversation_id)
+        logger.info(
+            f"🔄 Initialized code changes manager for conversation_id={ctx.conversation_id}"
+        )
+
         # Check if we have images and if the model supports vision
         if ctx.has_images() and self.llm_provider.is_vision_model():
             logger.info(
@@ -560,6 +604,10 @@ class PydanticRagAgent(ChatAgent):
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         """Stream multimodal response using PydanticAI's native capabilities"""
+        # Reset reasoning manager for this run
+        _reset_reasoning_manager()
+        reasoning_manager = _get_reasoning_manager()
+
         try:
             # Debug multimodal content
             self._debug_multimodal_content(ctx)
@@ -586,6 +634,8 @@ class PydanticRagAgent(ChatAgent):
                                 if isinstance(event, PartStartEvent) and isinstance(
                                     event.part, TextPart
                                 ):
+                                    # Accumulate TextPart content for reasoning dump
+                                    reasoning_manager.append_content(event.part.content)
                                     yield ChatAgentResponse(
                                         response=event.part.content,
                                         tool_calls=[],
@@ -594,6 +644,10 @@ class PydanticRagAgent(ChatAgent):
                                 if isinstance(event, PartDeltaEvent) and isinstance(
                                     event.delta, TextPartDelta
                                 ):
+                                    # Accumulate TextPartDelta content for reasoning dump
+                                    reasoning_manager.append_content(
+                                        event.delta.content_delta
+                                    )
                                     yield ChatAgentResponse(
                                         response=event.delta.content_delta,
                                         tool_calls=[],
@@ -604,6 +658,7 @@ class PydanticRagAgent(ChatAgent):
                         async with node.stream(run.ctx) as handle_stream:
                             async for event in handle_stream:
                                 if isinstance(event, FunctionToolCallEvent):
+                                    tool_args = event.part.args_as_dict()
                                     yield ChatAgentResponse(
                                         response="",
                                         tool_calls=[
@@ -612,12 +667,12 @@ class PydanticRagAgent(ChatAgent):
                                                 event_type=ToolCallEventType.CALL,
                                                 tool_name=event.part.tool_name,
                                                 tool_response=get_tool_run_message(
-                                                    event.part.tool_name
+                                                    event.part.tool_name, tool_args
                                                 ),
                                                 tool_call_details={
                                                     "summary": get_tool_call_info_content(
                                                         event.part.tool_name,
-                                                        event.part.args_as_dict(),
+                                                        tool_args,
                                                     )
                                                 },
                                             )
@@ -651,6 +706,12 @@ class PydanticRagAgent(ChatAgent):
 
                     elif Agent.is_end_node(node):
                         logger.info("multimodal result streamed successfully!!")
+                        # Finalize and save reasoning content
+                        reasoning_hash = reasoning_manager.finalize_and_save()
+                        if reasoning_hash:
+                            logger.info(
+                                f"Reasoning content saved with hash: {reasoning_hash}"
+                            )
 
         except Exception:
             logger.exception("Error in multimodal stream")
@@ -662,6 +723,10 @@ class PydanticRagAgent(ChatAgent):
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         """Standard streaming execution with MCP server support"""
+        # Reset reasoning manager for this run
+        _reset_reasoning_manager()
+        reasoning_manager = _get_reasoning_manager()
+
         # Create agent directly
         agent = self._create_agent(ctx)
 
@@ -685,6 +750,10 @@ class PydanticRagAgent(ChatAgent):
                                             if isinstance(
                                                 event, PartStartEvent
                                             ) and isinstance(event.part, TextPart):
+                                                # Accumulate TextPart content for reasoning dump
+                                                reasoning_manager.append_content(
+                                                    event.part.content
+                                                )
                                                 yield ChatAgentResponse(
                                                     response=event.part.content,
                                                     tool_calls=[],
@@ -695,6 +764,10 @@ class PydanticRagAgent(ChatAgent):
                                             ) and isinstance(
                                                 event.delta, TextPartDelta
                                             ):
+                                                # Accumulate TextPartDelta content for reasoning dump
+                                                reasoning_manager.append_content(
+                                                    event.delta.content_delta
+                                                )
                                                 yield ChatAgentResponse(
                                                     response=event.delta.content_delta,
                                                     tool_calls=[],
@@ -735,6 +808,7 @@ class PydanticRagAgent(ChatAgent):
                                     async with node.stream(run.ctx) as handle_stream:
                                         async for event in handle_stream:
                                             if isinstance(event, FunctionToolCallEvent):
+                                                tool_args = event.part.args_as_dict()
                                                 yield ChatAgentResponse(
                                                     response="",
                                                     tool_calls=[
@@ -744,12 +818,13 @@ class PydanticRagAgent(ChatAgent):
                                                             event_type=ToolCallEventType.CALL,
                                                             tool_name=event.part.tool_name,
                                                             tool_response=get_tool_run_message(
-                                                                event.part.tool_name
+                                                                event.part.tool_name,
+                                                                tool_args,
                                                             ),
                                                             tool_call_details={
                                                                 "summary": get_tool_call_info_content(
                                                                     event.part.tool_name,
-                                                                    event.part.args_as_dict(),
+                                                                    tool_args,
                                                                 )
                                                             },
                                                         )
@@ -815,6 +890,12 @@ class PydanticRagAgent(ChatAgent):
 
                             elif Agent.is_end_node(node):
                                 logger.info("result streamed successfully!!")
+                                # Finalize and save reasoning content
+                                reasoning_hash = reasoning_manager.finalize_and_save()
+                                if reasoning_hash:
+                                    logger.info(
+                                        f"Reasoning content saved with hash: {reasoning_hash}"
+                                    )
 
             except (TimeoutError, anyio.WouldBlock, Exception) as mcp_error:
                 logger.warning(f"MCP server initialization failed: {mcp_error}")
@@ -837,6 +918,10 @@ class PydanticRagAgent(ChatAgent):
                                             if isinstance(
                                                 event, PartStartEvent
                                             ) and isinstance(event.part, TextPart):
+                                                # Accumulate TextPart content for reasoning dump
+                                                reasoning_manager.append_content(
+                                                    event.part.content
+                                                )
                                                 yield ChatAgentResponse(
                                                     response=event.part.content,
                                                     tool_calls=[],
@@ -847,6 +932,10 @@ class PydanticRagAgent(ChatAgent):
                                             ) and isinstance(
                                                 event.delta, TextPartDelta
                                             ):
+                                                # Accumulate TextPartDelta content for reasoning dump
+                                                reasoning_manager.append_content(
+                                                    event.delta.content_delta
+                                                )
                                                 yield ChatAgentResponse(
                                                     response=event.delta.content_delta,
                                                     tool_calls=[],
@@ -887,6 +976,7 @@ class PydanticRagAgent(ChatAgent):
                                     async with node.stream(run.ctx) as handle_stream:
                                         async for event in handle_stream:
                                             if isinstance(event, FunctionToolCallEvent):
+                                                tool_args = event.part.args_as_dict()
                                                 yield ChatAgentResponse(
                                                     response="",
                                                     tool_calls=[
@@ -896,12 +986,13 @@ class PydanticRagAgent(ChatAgent):
                                                             event_type=ToolCallEventType.CALL,
                                                             tool_name=event.part.tool_name,
                                                             tool_response=get_tool_run_message(
-                                                                event.part.tool_name
+                                                                event.part.tool_name,
+                                                                tool_args,
                                                             ),
                                                             tool_call_details={
                                                                 "summary": get_tool_call_info_content(
                                                                     event.part.tool_name,
-                                                                    event.part.args_as_dict(),
+                                                                    tool_args,
                                                                 )
                                                             },
                                                         )
@@ -967,6 +1058,12 @@ class PydanticRagAgent(ChatAgent):
 
                             elif Agent.is_end_node(node):
                                 logger.info("result streamed successfully!!")
+                                # Finalize and save reasoning content
+                                reasoning_hash = reasoning_manager.finalize_and_save()
+                                if reasoning_hash:
+                                    logger.info(
+                                        f"Reasoning content saved with hash: {reasoning_hash}"
+                                    )
 
                 except (ModelRetry, AgentRunError, UserError) as pydantic_error:
                     logger.error(

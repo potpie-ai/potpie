@@ -49,7 +49,6 @@ class IntegrationTestAgent(ChatAgent):
                 "get_code_from_probable_node_name",
                 "webpage_extractor",
                 "web_search_tool",
-                "github_tool",
                 "fetch_file",
                 "analyze_code_structure",
                 "bash_command",

@@ -1,5 +1,5 @@
 import asyncio
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -14,66 +14,50 @@ class ThinkTool:
     """Tool for thinking and processing thoughts."""
 
     name = "think"
-    description = """Use the tool to think about something. It will not obtain new information or make any changes to the repository, but just log the thought. Use it when complex reasoning or brainstorming is needed. For example, if you explore the repo and discover the source of a bug, call this tool to brainstorm several unique ways of fixing the bug, and assess which change(s) are likely to be simplest and most effective. Alternatively, if you receive some test results, call this tool to brainstorm ways to fix the failing tests."""
+    description = """Use this tool to pause, recollect your thoughts, and figure out the problem at hand.
 
-    def __init__(self, sql_db: Session, user_id: str):
+When calling this tool, include in your thought:
+- What you've learned so far from tool results and conversation
+- The current problem or question you're trying to solve
+- What information you have and what's missing
+- What you're considering doing next
+
+This helps you step back, synthesize information, and plan your next actions. The tool uses the same LLM as your parent agent."""
+
+    def __init__(
+        self,
+        sql_db: Session,
+        user_id: str,
+        provider_service: Optional[ProviderService] = None,
+    ):
         self.sql_db = sql_db
         self.user_id = user_id
-        self.provider_service = ProviderService(sql_db, user_id)
+        # Use provided ProviderService if available, otherwise create a new one
+        # This ensures the think tool uses the same LLM configuration as the parent agent
+        self.provider_service = provider_service or ProviderService(sql_db, user_id)
 
     async def arun(self, thought: str) -> Dict[str, Any]:
         """Process the thought using structured thinking asynchronously."""
-        prompt = """
-        ## Using the think tool
+        prompt = """You are helping an AI agent pause and reflect on its current situation. The agent has shared its thoughts, context, and what it's trying to figure out.
 
-        Before taking any action or responding to the user after receiving tool results, use the think tool as a scratchpad to:
-        - List the specific rules that apply to the current request
-        - Check if all required information is collected
-        - Verify that the planned action complies with all policies
-        - Iterate over tool results for correctness
+Your role is to:
+1. **Synthesize** - Summarize what the agent knows and what the core problem is
+2. **Identify gaps** - What information is missing or unclear?
+3. **Suggest next steps** - What should the agent do next? Be specific and actionable
 
-        Here are some examples of what to iterate over inside the think tool:
-        <think_tool_example_1>
-        User wants to cancel flight ABC123
-        - Need to verify: user ID, reservation ID, reason
-        - Check cancellation rules:
-          * Is it within 24h of booking?
-          * If not, check ticket class and insurance
-        - Verify no segments flown or are in the past
-        - Plan: collect missing info, verify rules, get confirmation
-        </think_tool_example_1>
+Keep your response concise and focused. Structure it as:
+- **Current understanding:** Brief summary of what's known
+- **Key questions:** What needs to be clarified or investigated?
+- **Recommended next steps:** Specific actions to take
 
-        <think_tool_example_2>
-        User wants to book 3 tickets to NYC with 2 checked bags each
-        - Need user ID to check:
-          * Membership tier for baggage allowance
-          * Which payments methods exist in profile
-        - Baggage calculation:
-          * Economy class × 3 passengers
-          * If regular member: 1 free bag each → 3 extra bags = $150
-          * If silver member: 2 free bags each → 0 extra bags = $0
-          * If gold member: 3 free bags each → 0 extra bags = $0
-        - Payment rules to verify:
-          * Max 1 travel certificate, 1 credit card, 3 gift cards
-          * All payment methods must be in profile
-          * Travel certificate remainder goes to waste
-        - Plan:
-        1. Get user ID
-        2. Verify membership level for bag fees
-        3. Check which payment methods in profile and if their combination is allowed
-        4. Calculate total: ticket price + any bag fees
-        5. Get explicit confirmation for booking
-        </think_tool_example_2>
+Here's what the agent shared:
 
-        Given the following thought, process it using structured thinking and return a detailed analysis:
-
-        {thought}
-        """
+{thought}"""
 
         messages = [
             {
                 "role": "system",
-                "content": "You are an expert at structured thinking and analysis.",
+                "content": "You help AI agents pause, reflect, and plan next steps. Provide concise, actionable guidance.",
             },
             {"role": "user", "content": prompt.format(thought=thought)},
         ]
@@ -117,9 +101,18 @@ class ThinkTool:
                 loop.close()
 
 
-def think_tool(sql_db: Session, user_id: str) -> StructuredTool:
-    """Create and return the think tool."""
-    tool_instance = ThinkTool(sql_db, user_id)
+def think_tool(
+    sql_db: Session, user_id: str, provider_service: Optional[ProviderService] = None
+) -> StructuredTool:
+    """Create and return the think tool.
+
+    Args:
+        sql_db: Database session
+        user_id: User ID for the tool
+        provider_service: Optional ProviderService instance to share with parent agent.
+                         If not provided, a new instance will be created.
+    """
+    tool_instance = ThinkTool(sql_db, user_id, provider_service)
     return StructuredTool.from_function(
         coroutine=tool_instance.arun,
         func=tool_instance.run,

@@ -2,15 +2,15 @@ from typing import Dict, Any, Optional
 import os
 
 # Default models
-DEFAULT_CHAT_MODEL = "openai/gpt-4o"
-DEFAULT_INFERENCE_MODEL = "openai/gpt-4.1-mini"
+DEFAULT_CHAT_MODEL = "openai/gpt-5.2"
+DEFAULT_INFERENCE_MODEL = "openai/gpt-5-mini"
 
 # Model configuration mappings - now keyed by full model name
 MODEL_CONFIG_MAP = {
     # OpenAI Models
-    "openai/gpt-4.1-mini": {
+    "openai/gpt-5.2": {
         "provider": "openai",
-        "default_params": {"temperature": 0.3},
+        "default_params": {"temperature": 1},
         "capabilities": {
             "supports_pydantic": True,
             "supports_streaming": True,
@@ -20,9 +20,9 @@ MODEL_CONFIG_MAP = {
         "base_url": None,
         "api_version": None,
     },
-    "openai/gpt-4.1": {
+    "openai/gpt-5.1": {
         "provider": "openai",
-        "default_params": {"temperature": 0.3},
+        "default_params": {"temperature": 1},
         "capabilities": {
             "supports_pydantic": True,
             "supports_streaming": True,
@@ -32,9 +32,9 @@ MODEL_CONFIG_MAP = {
         "base_url": None,
         "api_version": None,
     },
-    "openai/gpt-4o": {
+    "openai/gpt-5-mini": {
         "provider": "openai",
-        "default_params": {"temperature": 0.3},
+        "default_params": {"temperature": 1},
         "capabilities": {
             "supports_pydantic": True,
             "supports_streaming": True,
@@ -117,6 +117,18 @@ MODEL_CONFIG_MAP = {
         "base_url": None,
         "api_version": None,
     },
+    "anthropic/claude-opus-4-5-20251101": {
+        "provider": "anthropic",
+        "default_params": {"temperature": 0.3, "max_tokens": 8000},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": True,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": None,
+        "api_version": None,
+    },
     # DeepSeek Models
     "openrouter/deepseek/deepseek-chat-v3-0324": {
         "provider": "deepseek",
@@ -168,6 +180,33 @@ MODEL_CONFIG_MAP = {
             "supports_streaming": True,
             "supports_vision": True,
             "supports_tool_parallelism": True,
+        },
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_version": None,
+    },
+    "openrouter/google/gemini-3-pro-preview": {
+        "provider": "gemini",
+        "auth_provider": "openrouter",
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": True,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_version": None,
+    },
+    # Z-AI / GLM Models
+    "openrouter/z-ai/glm-4.7": {
+        "provider": "zai",
+        "auth_provider": "openrouter",
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": True,
+            "supports_tool_parallelism": False,  # Disable parallel tool calls for stability
         },
         "base_url": "https://openrouter.ai/api/v1",
         "api_version": None,

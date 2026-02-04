@@ -6,13 +6,14 @@ for long-running tasks, providing state management across multiple delegations.
 """
 
 import uuid
+from contextvars import ContextVar
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from enum import Enum
 from dataclasses import dataclass, asdict
 
 # Removed langchain_core dependency - using simple tool structure instead
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class TodoStatus(str, Enum):
@@ -154,23 +155,33 @@ class TodoManager:
         }
 
 
-# Global todo manager instance for the session
-# This will be replaced with a new instance for each agent run
-_todo_manager = None
+# Context variable for todo manager - provides isolation per execution context
+# This ensures parallel agent runs have separate, isolated state
+_todo_manager_ctx: ContextVar[Optional[TodoManager]] = ContextVar(
+    "_todo_manager_ctx", default=None
+)
 
 
 def _get_todo_manager() -> TodoManager:
-    """Get the current todo manager, creating a new one if needed"""
-    global _todo_manager
-    if _todo_manager is None:
-        _todo_manager = TodoManager()
-    return _todo_manager
+    """Get the current todo manager for this execution context, creating a new one if needed.
+
+    Uses ContextVar to ensure each async execution context (agent run) has its own isolated instance.
+    This allows parallel agent runs to have separate state without interference.
+    """
+    manager = _todo_manager_ctx.get()
+    if manager is None:
+        manager = TodoManager()
+        _todo_manager_ctx.set(manager)
+    return manager
 
 
 def _reset_todo_manager() -> None:
-    """Reset the todo manager for a new agent run"""
-    global _todo_manager
-    _todo_manager = TodoManager()
+    """Reset the todo manager for a new agent run - creates a completely fresh instance in this execution context.
+
+    This ensures each agent run starts with a clean state, isolated from other parallel runs.
+    """
+    new_manager = TodoManager()
+    _todo_manager_ctx.set(new_manager)
 
 
 def _format_current_todo_list() -> str:
@@ -211,8 +222,24 @@ class CreateTodoInput(BaseModel):
         description="Agent type this task will be delegated to (e.g., 'think_execute')",
     )
     dependencies: Optional[List[str]] = Field(
-        default=None, description="List of todo IDs this task depends on"
+        default=None,
+        description="List of todo IDs (strings) that must be completed before this task. Must be an array/list, not a string. Example: ['abc123', 'def456'] or [] for no dependencies. Leave as null/empty if no dependencies.",
     )
+
+    @field_validator("dependencies", mode="before")
+    @classmethod
+    def coerce_dependencies_to_list(cls, v):
+        """Coerce string to list if a string is accidentally passed"""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            # If a string is passed, treat it as a single-item list
+            # This handles cases where the model passes a string instead of a list
+            return [v]
+        if isinstance(v, list):
+            return v
+        # For any other type, try to convert to list
+        return [str(v)]
 
 
 class UpdateTodoStatusInput(BaseModel):
@@ -455,7 +482,7 @@ def create_todo_management_tools() -> List[SimpleTool]:
     tools = [
         SimpleTool(
             name="create_todo",
-            description="Create a new todo item for task tracking. Use this to break down complex requests into manageable tasks.",
+            description="Create a new todo item for task tracking. Use this to break down complex requests into manageable tasks. IMPORTANT: The 'dependencies' parameter must be a list/array of todo IDs (strings), not a single string. Use [] for no dependencies or ['todo_id1', 'todo_id2'] for multiple dependencies.",
             func=create_todo_tool,
             args_schema=CreateTodoInput,
         ),

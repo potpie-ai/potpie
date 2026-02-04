@@ -421,6 +421,9 @@ class UniversalAnalyzeCodeTool:
 
         Extracts detailed information about:
         - All classes, structs, interfaces, enums with their docstrings and line ranges
+
+        ⚠️ IMPORTANT: Large files with many elements may result in truncated responses (max 80,000 characters).
+        If the response is truncated, a notice will be included indicating the truncation occurred.
         - All functions and methods with signatures and docstrings
         - Exact start and end line numbers for each code element
         - Language-specific elements (traits in Rust, namespaces in C++, modules in Ruby, etc.)
@@ -546,7 +549,15 @@ class UniversalAnalyzeCodeTool:
 
             self.redis.setex(cache_key, 1800, json.dumps(result))
 
-            return result
+            # Truncate response if it exceeds character limits
+            from app.modules.intelligence.tools.tool_utils import truncate_dict_response
+
+            truncated_result = truncate_dict_response(result)
+            if len(json.dumps(result)) > 80000:
+                logging.warning(
+                    f"analyze_code_structure output truncated for file {file_path}, project_id={project_id}"
+                )
+            return truncated_result
 
         except Exception as e:
             logger.exception(

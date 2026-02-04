@@ -194,20 +194,22 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
         """Delegate to wrapped provider."""
         return self._provider.get_rate_limit_info()
 
+    def get_client(self) -> Optional[Any]:
+        """
+        Get the underlying provider client by delegating to wrapped provider.
+
+        Uses the interface method to respect abstraction.
+        """
+        return self._provider.get_client()
+
     @property
     def client(self):
         """
-        Delegate client access to wrapped provider.
+        Property for backward compatibility with code that directly accesses provider.client.
 
-        This allows access to provider-specific clients (e.g., PyGithub client)
-        for backward compatibility with code that directly accesses provider.client
+        Delegates to get_client() method which uses the interface abstraction.
         """
-        client = getattr(self._provider, "client", None)
-        if client is not None:
-            return client
-        raise AttributeError(
-            f"Wrapped provider {type(self._provider).__name__} does not have a 'client' attribute"
-        )
+        return self.get_client()
 
     # ============ Override methods to use local copies ============
 
@@ -234,15 +236,50 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                 # Read file from local filesystem
                 full_path = os.path.join(worktree_path, file_path)
                 if not os.path.exists(full_path):
-                    logger.info(
-                        f"[REPO_MANAGER] File {file_path} not found in local copy at {full_path}, "
-                        f"falling back to provider API for {repo_name}@{ref}"
+                    # File doesn't exist in worktree - check if underlying provider is LocalProvider
+                    # If so, try to read from base repo path directly (avoid git show which blocks)
+                    from app.modules.code_provider.local_repo.local_provider import (
+                        LocalProvider,
                     )
-                    logger.info(
-                        f"[PROVIDER_API] Fetching file content: {repo_name}/{file_path}@{ref}"
+
+                    if isinstance(self._provider, LocalProvider):
+                        # Try to read from base repo path directly without using git show
+                        base_repo_path = self._repo_manager.get_repo_path(repo_name)
+                        if base_repo_path:
+                            base_file_path = os.path.join(base_repo_path, file_path)
+                            if os.path.exists(base_file_path):
+                                logger.info(
+                                    f"[REPO_MANAGER] File not in worktree, reading from base repo: "
+                                    f"{base_file_path} for {repo_name}@{ref}"
+                                )
+                                with open(
+                                    base_file_path,
+                                    "r",
+                                    encoding="utf-8",
+                                    errors="replace",
+                                ) as f:
+                                    content = f.read()
+                                # Apply line range if specified
+                                if start_line is not None or end_line is not None:
+                                    lines = content.split("\n")
+                                    start = (
+                                        (start_line - 1)
+                                        if start_line is not None
+                                        else 0
+                                    )
+                                    end = (
+                                        end_line if end_line is not None else len(lines)
+                                    )
+                                    content = "\n".join(lines[start:end])
+                                return content
+
+                    # File doesn't exist - raise FileNotFoundError instead of falling back to git show
+                    logger.warning(
+                        f"[REPO_MANAGER] File {file_path} not found in worktree at {full_path} "
+                        f"or base repo for {repo_name}@{ref}. File may not exist at this ref."
                     )
-                    return self._provider.get_file_content(
-                        repo_name, file_path, ref, start_line, end_line
+                    raise FileNotFoundError(
+                        f"File '{file_path}' not found in worktree or base repo for {repo_name}@{ref}"
                     )
 
                 with open(full_path, "r", encoding="utf-8", errors="replace") as f:
@@ -261,7 +298,23 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                 )
                 return content
 
+            except FileNotFoundError:
+                # Re-raise FileNotFoundError - don't fall back to git show which blocks
+                raise
             except Exception as e:
+                # For other exceptions, check if provider is LocalProvider
+                # If so, don't fall back to git show - re-raise instead
+                from app.modules.code_provider.local_repo.local_provider import (
+                    LocalProvider,
+                )
+
+                if isinstance(self._provider, LocalProvider):
+                    logger.error(
+                        f"[REPO_MANAGER] Error reading file from worktree: {e}, "
+                        f"for {repo_name}/{file_path}@{ref}. Not falling back to git show to avoid blocking."
+                    )
+                    raise
+                # For non-LocalProvider, it's safe to fall back (e.g., GitHub API)
                 logger.warning(
                     f"[REPO_MANAGER] Error reading file from local copy: {e}, "
                     f"falling back to provider API for {repo_name}/{file_path}@{ref}"
@@ -436,7 +489,7 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
         if not ref:
             base_path = self._repo_manager.get_repo_path(repo_name)
             if base_path and os.path.exists(base_path):
-                logger.debug(
+                logger.info(
                     f"[REPO_MANAGER] Found base repo for {repo_name} at {base_path}"
                 )
                 return base_path
@@ -461,12 +514,22 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
 
         # Try to create/access worktree from base repo
         try:
-            from git import Repo
+            from app.modules.code_provider.git_safe import safe_git_repo_operation
 
-            repo = Repo(base_path)
+            def _setup_worktree(repo):
+                # Get or create worktree for this ref
+                return self._ensure_worktree(repo, ref, commit_id is not None)
 
-            # Get or create worktree for this ref
-            worktree_path = self._ensure_worktree(repo, ref, commit_id is not None)
+            # Use a short timeout to avoid blocking the caller
+            # This is often called from within an outer timeout (e.g., 20s in _get_current_content)
+            # so we need a shorter timeout here to prevent orphaned threads
+            worktree_path = safe_git_repo_operation(
+                base_path,
+                _setup_worktree,
+                max_retries=1,  # Reduced retries for faster failure
+                timeout=10.0,  # Short timeout - worktree setup should be fast
+                operation_name=f"setup_worktree({repo_name}@{ref})",
+            )
             logger.debug(
                 f"[REPO_MANAGER] Created/accessed worktree for {repo_name}@{ref} at {worktree_path}"
             )
@@ -531,9 +594,52 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                 try:
                     repo.git.worktree("add", worktree_dir, ref)
                 except GitCommandError:
-                    # Branch might not exist locally, fetch and create
-                    repo.git.fetch("origin", f"{ref}:{ref}")
-                    repo.git.worktree("add", worktree_dir, ref)
+                    # Branch might not exist locally, try to fetch and create
+                    # First check if origin remote exists
+                    remotes = [r.name for r in repo.remotes]
+                    if "origin" in remotes:
+                        try:
+                            # Try to fetch the branch from origin
+                            repo.git.fetch("origin", f"{ref}:{ref}")
+                            repo.git.worktree("add", worktree_dir, ref)
+                        except GitCommandError as fetch_error:
+                            # Fetch failed, try local branch creation
+                            logger.warning(
+                                f"Failed to fetch {ref} from origin: {fetch_error}. "
+                                f"Trying to create from local branches."
+                            )
+                            # Check if branch exists locally
+                            local_branches = [branch.name for branch in repo.heads]
+                            if ref in local_branches:
+                                # Branch exists locally, try worktree again
+                                repo.git.worktree("add", worktree_dir, ref)
+                            else:
+                                # Branch doesn't exist, create it from HEAD without checking out
+                                # Use worktree add with -b flag to create branch in worktree
+                                current_head = repo.head.commit.hexsha
+                                repo.git.worktree(
+                                    "add", "-b", ref, worktree_dir, current_head
+                                )
+                    else:
+                        # No origin remote, work with local branches only
+                        logger.info(
+                            f"No 'origin' remote found, working with local branches only for {ref}"
+                        )
+                        # Check if branch exists locally
+                        local_branches = [branch.name for branch in repo.heads]
+                        if ref in local_branches:
+                            # Branch exists locally, create worktree
+                            repo.git.worktree("add", worktree_dir, ref)
+                        else:
+                            # Branch doesn't exist, create it in the worktree from current HEAD
+                            # This creates the branch in the worktree without affecting the main repo
+                            current_head = repo.head.commit.hexsha
+                            repo.git.worktree(
+                                "add", "-b", ref, worktree_dir, current_head
+                            )
+                            logger.info(
+                                f"Created new branch '{ref}' in worktree from HEAD ({current_head[:8]})"
+                            )
 
             logger.info(f"Created worktree for {ref} at {worktree_dir}")
             return worktree_dir

@@ -192,38 +192,56 @@ class LocalProvider(ICodeProvider):
             FileNotFoundError: If file doesn't exist
             ValueError: If ref is invalid
         """
-        repo = self._get_repo(repo_name)
+        from app.modules.code_provider.git_safe import safe_git_repo_operation
 
-        # Use active branch if no ref specified
-        if not ref:
-            ref = repo.active_branch.name
+        expanded_path = os.path.abspath(
+            os.path.expanduser(repo_name or self.default_repo_path)
+        )
 
-        # Use git show to read file without checking out
-        # This avoids modifying working directory state
-        try:
-            file_content = repo.git.show(f"{ref}:{file_path}")
-        except GitCommandError as e:
-            if "does not exist" in str(e) or "path not in" in str(e):
-                raise FileNotFoundError(
-                    f"File not found: {file_path} at ref {ref}"
-                ) from e
-            elif "unknown revision" in str(e):
-                raise ValueError(f"Invalid ref: {ref}") from e
-            else:
-                raise
+        def _get_content(repo):
+            # Use active branch if no ref specified
+            actual_ref = ref
+            if not actual_ref:
+                actual_ref = repo.active_branch.name
 
-        # Apply line range if specified
-        if start_line is not None or end_line is not None:
-            lines = file_content.splitlines()
+            # Use git show to read file without checking out
+            # This avoids modifying working directory state
+            try:
+                file_content = repo.git.show(f"{actual_ref}:{file_path}")
+            except GitCommandError as e:
+                if "does not exist" in str(e) or "path not in" in str(e):
+                    raise FileNotFoundError(
+                        f"File not found: {file_path} at ref {actual_ref}"
+                    ) from e
+                elif "unknown revision" in str(e):
+                    raise ValueError(f"Invalid ref: {actual_ref}") from e
+                else:
+                    raise
 
-            # Convert to 0-indexed
-            start_idx = (start_line - 1) if start_line else 0
-            end_idx = end_line if end_line else len(lines)
+            # Apply line range if specified
+            if start_line is not None or end_line is not None:
+                lines = file_content.splitlines()
 
-            # Extract line range
-            file_content = "\n".join(lines[start_idx:end_idx])
+                # Convert to 0-indexed
+                start_idx = (start_line - 1) if start_line else 0
+                end_idx = end_line if end_line else len(lines)
 
-        return file_content
+                # Extract line range
+                file_content = "\n".join(lines[start_idx:end_idx])
+
+            return file_content
+
+        operation_name = f"get_file_content({file_path}@{ref or 'default'})"
+        # Use explicit timeout to prevent blocking when called from within an outer timeout
+        # The outer timeout (e.g., 20s in _get_current_content) must be longer than this
+        # to prevent orphaned threads from nested ThreadPoolExecutors
+        return safe_git_repo_operation(
+            expanded_path,
+            _get_content,
+            max_retries=1,  # Reduced retries for faster failure
+            timeout=15.0,  # Explicit timeout shorter than typical outer timeouts
+            operation_name=operation_name,
+        )
 
     def get_repository_structure(
         self,

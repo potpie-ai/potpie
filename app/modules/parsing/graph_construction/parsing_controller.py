@@ -13,7 +13,10 @@ from app.celery.tasks.parsing_tasks import process_parsing
 from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.parsing.graph_construction.parsing_helper import ParseHelper
-from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
+from app.modules.parsing.graph_construction.parsing_schema import (
+    ParsingRequest,
+    ParsingStatusRequest,
+)
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
 from app.modules.parsing.graph_construction.parsing_validator import (
     validate_parsing_input,
@@ -185,41 +188,56 @@ class ParsingController:
             # Handle existing projects (including previously duplicated demo projects)
             if project:
                 project_id = project.id
-                is_latest = await parse_helper.check_commit_status(
-                    project_id, requested_commit_id=repo_details.commit_id
+
+                # Check if this project is already parsed for the requested commit
+                # Only check commit status if commit_id is provided
+                if repo_details.commit_id:
+                    is_latest = await parse_helper.check_commit_status(
+                        project_id, requested_commit_id=repo_details.commit_id
+                    )
+                else:
+                    # If no commit_id provided, check if project is READY (assume it's for the branch)
+                    is_latest = project.status == ProjectStatusEnum.READY.value
+
+                # If project exists with this commit_id and is READY, return it immediately
+                if is_latest and project.status == ProjectStatusEnum.READY.value:
+                    logger.info(
+                        f"Project {project_id} already exists and is READY for commit {repo_details.commit_id or 'branch'}. "
+                        "Returning existing project."
+                    )
+                    return {"project_id": project_id, "status": project.status}
+
+                # If project exists but commit doesn't match or status is not READY, reparse
+                cleanup_graph = True
+                logger.info(
+                    f"Submitting parsing task for existing project {project_id} "
+                    f"(is_latest={is_latest}, status={project.status})"
+                )
+                process_parsing.delay(
+                    repo_details.model_dump(),
+                    user_id,
+                    user_email,
+                    project_id,
+                    cleanup_graph,
                 )
 
-                if not is_latest or project.status != ProjectStatusEnum.READY.value:
-                    cleanup_graph = True
-                    logger.info(
-                        f"Submitting parsing task for existing project {project_id}"
-                    )
-                    process_parsing.delay(
-                        repo_details.model_dump(),
-                        user_id,
-                        user_email,
-                        project_id,
-                        cleanup_graph,
-                    )
-
-                    await project_manager.update_project_status(
-                        project_id, ProjectStatusEnum.SUBMITTED
-                    )
-                    PostHogClient().send_event(
-                        user_id,
-                        "parsed_repo_event",
-                        {
-                            "repo_name": repo_details.repo_name,
-                            "branch": repo_details.branch_name,
-                            "project_id": project_id,
-                        },
-                    )
-                    return {
+                await project_manager.update_project_status(
+                    project_id, ProjectStatusEnum.SUBMITTED
+                )
+                PostHogClient().send_event(
+                    user_id,
+                    "parsed_repo_event",
+                    {
+                        "repo_name": repo_details.repo_name,
+                        "branch": repo_details.branch_name,
+                        "commit_id": repo_details.commit_id,
                         "project_id": project_id,
-                        "status": ProjectStatusEnum.SUBMITTED.value,
-                    }
-
-                return {"project_id": project_id, "status": project.status}
+                    },
+                )
+                return {
+                    "project_id": project_id,
+                    "status": ProjectStatusEnum.SUBMITTED.value,
+                }
             else:
                 # Handle new non-demo projects
                 new_project_id = str(uuid7())
@@ -322,4 +340,44 @@ class ParsingController:
             raise
         except Exception as e:
             logger.error(f"Error in fetch_parsing_status: {str(e)}")
+            raise HTTPException(status_code=500, detail="Internal server error")
+
+    @staticmethod
+    async def fetch_parsing_status_by_repo(
+        request: ParsingStatusRequest, db: AsyncSession, user: Dict[str, Any]
+    ):
+        try:
+            user_id = user["user_id"]
+            project_manager = ProjectService(db)
+
+            # Use ProjectService to find project by repo_name and commit_id/branch_name
+            normalized_repo_name = normalize_repo_name(request.repo_name)
+            project = await project_manager.get_project_from_db(
+                normalized_repo_name,
+                request.branch_name,
+                user_id,
+                repo_path=None,
+                commit_id=request.commit_id,
+            )
+
+            if not project:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Project not found for the given repo_name and commit_id/branch_name",
+                )
+
+            parse_helper = ParseHelper(db)
+            is_latest = await parse_helper.check_commit_status(project.id)
+
+            return {
+                "project_id": project.id,
+                "repo_name": project.repo_name,
+                "status": project.status,
+                "latest": is_latest,
+            }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error in fetch_parsing_status_by_repo: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")

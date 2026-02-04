@@ -6,6 +6,7 @@ Only works if the project's worktree exists in the repo manager.
 """
 
 import os
+import re
 import shlex
 from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
@@ -18,6 +19,71 @@ from app.modules.utils.gvisor_runner import run_command_isolated, CommandResult
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+# Character limits for command output to prevent sending insanely large content to LLM
+MAX_OUTPUT_LENGTH = 80000  # 80k characters for stdout
+MAX_ERROR_LENGTH = 10000  # 10k characters for stderr
+
+# SECURITY: Whitelist of allowed read-only commands
+# Only these commands are permitted to execute
+ALLOWED_COMMANDS = {
+    # File search and listing
+    "grep",
+    "find",
+    "locate",
+    "which",
+    "whereis",
+    "ls",
+    "dir",  # Windows equivalent
+    # File content viewing (read-only)
+    "cat",
+    "head",
+    "tail",
+    "less",
+    "more",
+    "wc",  # Word count
+    "nl",  # Number lines
+    # Text processing (read-only operations)
+    "awk",  # Only read-only, -i flag blocked separately
+    "sed",  # Only read-only, -i flag blocked separately
+    "cut",
+    "sort",
+    "uniq",
+    "tr",
+    "grep",
+    "egrep",
+    "fgrep",
+    # File information
+    "file",
+    "stat",
+    "readlink",
+    "realpath",
+    # Directory operations (read-only)
+    "pwd",
+    "dirname",
+    "basename",
+    # Text utilities
+    "diff",  # Read-only comparison
+    "cmp",  # Read-only comparison
+    # Archive viewing (read-only)
+    "tar",  # Only with -t (list) flag, extraction blocked
+    "zipinfo",  # List zip contents
+    "unzip",  # Only with -l (list) flag, extraction blocked
+    # Process info (read-only)
+    "ps",
+    # System info (read-only)
+    "uname",
+    "date",
+    "id",
+    # String utilities
+    "strings",
+    "od",  # Octal dump
+    "hexdump",
+    # Search tools
+    "ag",  # The Silver Searcher
+    "rg",  # ripgrep
+    "ack",  # ack-grep
+}
 
 # SECURITY: Commands that are ALWAYS blocked (write/modify operations)
 ALWAYS_BLOCKED_COMMANDS = {
@@ -72,9 +138,195 @@ INJECTION_PATTERNS = [
 ]
 
 
+def _split_pipes_respecting_quotes(command: str) -> list[str]:
+    """
+    Split a command on pipes (|) while respecting quoted strings.
+
+    This handles cases like: grep "pattern|with|pipes" | head
+    where the pipe inside quotes should not be treated as a separator.
+
+    Args:
+        command: The command string that may contain pipes
+
+    Returns:
+        List of command parts split on pipes (outside of quotes)
+    """
+    parts = []
+    current_part = []
+    in_single_quote = False
+    in_double_quote = False
+    i = 0
+
+    while i < len(command):
+        char = command[i]
+
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+            current_part.append(char)
+        elif char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+            current_part.append(char)
+        elif char == "|" and not in_single_quote and not in_double_quote:
+            # This is a real pipe separator
+            parts.append("".join(current_part).strip())
+            current_part = []
+        else:
+            current_part.append(char)
+        i += 1
+
+    # Add the last part
+    if current_part:
+        parts.append("".join(current_part).strip())
+
+    return parts if parts else [command.strip()]
+
+
+def _extract_command_name(command: str) -> str:
+    """
+    Extract the base command name from a command string.
+    Handles commands with paths, pipes, and arguments.
+
+    Args:
+        command: The command string
+
+    Returns:
+        The base command name (e.g., 'grep' from '/usr/bin/grep -r pattern .')
+    """
+    # Remove leading/trailing whitespace
+    command = command.strip()
+
+    # Handle pipes - extract first command
+    if "|" in command:
+        # Use proper quote-aware splitting
+        pipe_parts = _split_pipes_respecting_quotes(command)
+        if pipe_parts:
+            command = pipe_parts[0].strip()
+
+    # Split by whitespace to get first token
+    parts = command.split()
+    if not parts:
+        return ""
+
+    # Get the first part (command name or path)
+    first_part = parts[0]
+
+    # Extract just the command name (handle paths like /usr/bin/grep or ./script.sh)
+    # Remove any path components
+    if "/" in first_part:
+        first_part = first_part.split("/")[-1]
+
+    return first_part.lower()
+
+
+def _is_semicolon_in_find_exec(command: str) -> bool:
+    """
+    Check if a semicolon is part of a valid find -exec syntax.
+
+    The find -exec command requires a semicolon (often escaped as \\;)
+    to terminate the exec command. This is a legitimate use case.
+
+    Args:
+        command: The command string to check
+
+    Returns:
+        True if the semicolon appears to be part of find -exec syntax
+    """
+    # Check if command starts with 'find' (case insensitive)
+    command_lower = command.lower().strip()
+    if not command_lower.startswith("find "):
+        return False
+
+    # Look for -exec flag followed by a semicolon (escaped or not)
+    # Pattern: -exec ... ; or -exec ... \;
+    # The semicolon can be at the end or followed by other find options like -o, -and, etc.
+    # We match: -exec followed by whitespace, then any characters (non-greedy), then ; or \;
+    exec_pattern = r"-exec\s+[^;]+[\\]?;"
+    if re.search(exec_pattern, command):
+        return True
+
+    return False
+
+
+def _is_semicolon_safe_in_single_command(command: str) -> bool:
+    """
+    Check if a semicolon is safe because it's part of a single command syntax,
+    not used for command chaining.
+
+    We allow semicolons when:
+    1. They're part of find -exec syntax
+    2. They're inside quoted strings (not actual command separators)
+    3. There's only one unquoted semicolon and it appears to be part of command syntax
+
+    Args:
+        command: The command string to check
+
+    Returns:
+        True if the semicolon appears safe (part of single command syntax)
+    """
+    # First check if it's find -exec (already handled, but check anyway)
+    if _is_semicolon_in_find_exec(command):
+        return True
+
+    # Count unquoted, unescaped semicolons (actual command separators)
+    # and check if they appear to separate distinct commands
+    semicolon_positions = []
+    in_single_quote = False
+    in_double_quote = False
+    i = 0
+
+    while i < len(command):
+        char = command[i]
+
+        # Handle escaping (skip escaped characters)
+        if char == "\\" and i + 1 < len(command):
+            # Skip the escaped character
+            i += 2
+            continue
+
+        # Track quote state
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+        elif char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+        elif char == ";" and not in_single_quote and not in_double_quote:
+            # This is an unquoted, unescaped semicolon - potential command separator
+            semicolon_positions.append(i)
+        i += 1
+
+    # If no unquoted semicolons, it's safe (all semicolons were in quotes)
+    if not semicolon_positions:
+        return True
+
+    # If there's only one unquoted semicolon, check if it looks like command chaining
+    # Command chaining typically has whitespace before and after the semicolon,
+    # and the parts before/after look like separate commands
+    if len(semicolon_positions) == 1:
+        semicolon_pos = semicolon_positions[0]
+        before = command[:semicolon_pos].strip()
+        after = command[semicolon_pos + 1 :].strip()
+
+        # If there's substantial content before and after, it's likely command chaining
+        # Check if both parts look like they could be standalone commands
+        # (have at least a few characters and don't look like part of find -exec)
+        if len(before) > 3 and len(after) > 3:
+            # Check if the part before looks like a complete command
+            # (starts with a command name, not part of find -exec syntax)
+            before_lower = before.lower()
+            if not before_lower.startswith("find ") or "-exec" not in before_lower:
+                # This looks like command chaining - block it
+                return False
+
+        # If we get here, it's likely part of command syntax (like find -exec)
+        return True
+
+    # Multiple unquoted semicolons definitely indicate command chaining - block it
+    return False
+
+
 def _validate_command_safety(command: str) -> tuple[bool, Optional[str]]:
     """
     Validate that a command is safe (read-only) and doesn't attempt write operations.
+    Uses a whitelist approach - only explicitly allowed commands are permitted.
 
     Args:
         command: The command string to validate
@@ -94,20 +346,59 @@ def _validate_command_safety(command: str) -> tuple[bool, Optional[str]]:
                 f"Command contains write operation pattern '{pattern}'. Write operations are not allowed.",
             )
 
-    # Check for command injection patterns
+    # Check for command injection patterns (except pipes which are handled separately)
+    # Allow semicolons if they're part of a single command (not command chaining)
     for pattern in INJECTION_PATTERNS:
         if pattern in command:
+            # Special case: allow semicolons when they're part of a single command syntax
+            # (e.g., find -exec) rather than used for command chaining
+            if pattern == ";" and _is_semicolon_safe_in_single_command(command):
+                continue  # Skip this check, it's a valid semicolon in single command
             return (
                 False,
                 f"Command contains injection pattern '{pattern}'. Command chaining/substitution is not allowed.",
             )
 
-    # Check if command starts with an always-blocked command
+    # SECURITY: Whitelist check - only allowed commands can execute
+    # Handle pipes - validate each command in the pipe chain
+    # Use quote-aware splitting to handle pipes inside quoted strings
+    if "|" in command:
+        pipe_commands = _split_pipes_respecting_quotes(command)
+        for pipe_cmd in pipe_commands:
+            if not pipe_cmd:  # Skip empty parts
+                continue
+            cmd_name = _extract_command_name(pipe_cmd)
+            if not cmd_name:
+                return (
+                    False,
+                    "Invalid command in pipe chain.",
+                )
+            if cmd_name not in ALLOWED_COMMANDS:
+                return (
+                    False,
+                    f"Command '{cmd_name}' is not in the whitelist of allowed read-only commands. Only safe read-only commands like grep, find, cat, head, tail, etc. are permitted.",
+                )
+    else:
+        # Single command - check if it's whitelisted
+        cmd_name = _extract_command_name(command)
+        if not cmd_name:
+            return (
+                False,
+                "Invalid command.",
+            )
+        if cmd_name not in ALLOWED_COMMANDS:
+            return (
+                False,
+                f"Command '{cmd_name}' is not in the whitelist of allowed read-only commands. Only safe read-only commands like grep, find, cat, head, tail, etc. are permitted.",
+            )
+
+    # Additional check: block commands that are in the always-blocked list
+    # (redundant with whitelist, but provides clearer error messages)
     first_word = command_lower.split()[0] if command_lower.split() else ""
     if first_word in ALWAYS_BLOCKED_COMMANDS:
         return (
             False,
-            f"Command '{first_word}' is not allowed. This tool only supports read-only operations.",
+            f"Command '{first_word}' is explicitly blocked. This tool only supports read-only operations.",
         )
 
     # Check for write-blocked commands with dangerous flags
@@ -168,18 +459,24 @@ class BashCommandTool:
         IMPORTANT: This tool only works if the repository has been parsed and is available in the repo manager.
         If the worktree doesn't exist, the tool will return an error.
 
-        ✅ ALLOWED (Read-only commands):
+        ✅ ALLOWED (Whitelisted read-only commands only):
         - Search for patterns: grep -r "pattern" .
         - Find files: find . -name "*.py" -type f
-        - Process text: awk '/pattern/ {print $1}' file.txt (read-only)
+        - Process text: awk '/pattern/ {print $1}' file.txt (read-only, no -i flag)
         - Count occurrences: grep -c "pattern" file.txt
         - List files: ls -la directory/
         - Filter output: grep "error" log.txt | head -20 (pipes allowed for filtering)
         - View file contents: cat file.txt, head file.txt, tail file.txt
         - Check file info: stat file.txt, file file.txt
-        - Search in files: grep, ag, rg (ripgrep)
+        - Search in files: grep, ag (Silver Searcher), rg (ripgrep)
+        - Text utilities: sort, uniq, cut, wc, diff, cmp
+        - File information: stat, file, readlink, realpath
 
-        ❌ NOT ALLOWED (Write/modify commands):
+        ⚠️ SECURITY: Only whitelisted commands are allowed. Commands like python, python3,
+        node, bash, sh, and other interpreters are BLOCKED for security reasons.
+
+        ❌ NOT ALLOWED:
+        - Interpreters/executables: python, python3, node, bash, sh, perl, ruby, etc.
         - File modification: echo > file, sed -i, awk -i
         - File creation: touch, mkdir, > file, >> file
         - File deletion: rm, rmdir
@@ -189,6 +486,7 @@ class BashCommandTool:
         - Command chaining: ; && || (use pipes | for filtering instead)
         - Command substitution: `command` or $(command)
         - Environment access: env (blocked to prevent secret exposure)
+        - Any command not in the whitelist
         - Any command that modifies the filesystem
 
         🔒 Security Features:
@@ -238,7 +536,8 @@ class BashCommandTool:
 
     def _get_project_details(self, project_id: str) -> Dict[str, str]:
         """Get project details and validate user access."""
-        details = self.project_service.get_project_from_db_by_id_sync(project_id)
+        # Note: get_project_from_db_by_id_sync type hint says int, but Project.id is Text (string)
+        details = self.project_service.get_project_from_db_by_id_sync(project_id)  # type: ignore[arg-type]
         if not details or "project_name" not in details:
             raise ValueError(f"Cannot find repo details for project_id: {project_id}")
         if details["user_id"] != self.user_id:
@@ -248,30 +547,36 @@ class BashCommandTool:
         return details
 
     def _get_worktree_path(
-        self, repo_name: str, branch: Optional[str], commit_id: Optional[str]
+        self,
+        repo_name: str,
+        branch: Optional[str],
+        commit_id: Optional[str],
+        user_id: Optional[str],
     ) -> Optional[str]:
         """Get the worktree path for the project."""
         if not self.repo_manager:
             return None
 
-        # Try to get worktree path
+        # Try to get worktree path with user_id for security
         worktree_path = self.repo_manager.get_repo_path(
-            repo_name, branch=branch, commit_id=commit_id
+            repo_name, branch=branch, commit_id=commit_id, user_id=user_id
         )
         if worktree_path and os.path.exists(worktree_path):
             return worktree_path
 
-        # Try with just commit_id
+        # Try with just commit_id (with user_id)
         if commit_id:
             worktree_path = self.repo_manager.get_repo_path(
-                repo_name, commit_id=commit_id
+                repo_name, commit_id=commit_id, user_id=user_id
             )
             if worktree_path and os.path.exists(worktree_path):
                 return worktree_path
 
-        # Try with just branch
+        # Try with just branch (with user_id)
         if branch:
-            worktree_path = self.repo_manager.get_repo_path(repo_name, branch=branch)
+            worktree_path = self.repo_manager.get_repo_path(
+                repo_name, branch=branch, user_id=user_id
+            )
             if worktree_path and os.path.exists(worktree_path):
                 return worktree_path
 
@@ -299,9 +604,12 @@ class BashCommandTool:
             repo_name = details["project_name"]
             branch = details.get("branch_name")
             commit_id = details.get("commit_id")
+            user_id = details.get("user_id")
 
-            # Get worktree path
-            worktree_path = self._get_worktree_path(repo_name, branch, commit_id)
+            # Get worktree path (with user_id for security)
+            worktree_path = self._get_worktree_path(
+                repo_name, branch, commit_id, user_id
+            )
             if not worktree_path:
                 return {
                     "success": False,
@@ -309,6 +617,16 @@ class BashCommandTool:
                     "output": "",
                     "exit_code": -1,
                 }
+
+            # Update last accessed time for usage tracking
+            try:
+                self.repo_manager.update_last_accessed(
+                    repo_name, branch=branch, commit_id=commit_id, user_id=user_id
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[BASH_COMMAND] Failed to update last_accessed for {repo_name}: {e}"
+                )
 
             # SECURITY: Normalize paths to prevent directory traversal
             # Only the specific project's worktree will be accessible
@@ -379,24 +697,33 @@ class BashCommandTool:
                 f"(project: {repo_name}@{commit_id or branch})"
             )
 
-            # Parse command into list for gVisor runner
-            # Split the command properly, handling quoted strings
-            try:
-                # Use shlex to properly parse the command while preserving quotes
-                command_parts = shlex.split(command)
-            except ValueError as e:
-                # If parsing fails, try a simpler approach
-                logger.warning(
-                    f"[BASH_COMMAND] Failed to parse command with shlex: {e}, using simple split"
-                )
-                command_parts = command.split()
+            # Check if command contains pipes - pipes require shell execution
+            has_pipe = "|" in command
 
-            # If we need to run in a subdirectory, prepend cd command
-            if relative_working_dir and relative_working_dir != ".":
-                # Prepend cd command to change to the subdirectory
-                cd_command = f"cd {shlex.quote(relative_working_dir)} && {' '.join(shlex.quote(arg) for arg in command_parts)}"
-                final_command = ["sh", "-c", cd_command]
+            # If command has pipes or we need to run in a subdirectory, use shell execution
+            if has_pipe or (relative_working_dir and relative_working_dir != "."):
+                # Execute via shell to support pipes and working directory changes
+                if relative_working_dir and relative_working_dir != ".":
+                    # Change to subdirectory and run command
+                    shell_command = (
+                        f"cd {shlex.quote(relative_working_dir)} && {command}"
+                    )
+                else:
+                    # Just run the command (pipes require shell)
+                    shell_command = command
+                final_command = ["sh", "-c", shell_command]
             else:
+                # No pipes and no subdirectory - can use list-based execution for better security
+                # Parse command into list for gVisor runner
+                try:
+                    # Use shlex to properly parse the command while preserving quotes
+                    command_parts = shlex.split(command)
+                except ValueError as e:
+                    # If parsing fails, try a simpler approach
+                    logger.warning(
+                        f"[BASH_COMMAND] Failed to parse command with shlex: {e}, using simple split"
+                    )
+                    command_parts = command.split()
                 final_command = command_parts
 
             # SECURITY: Don't pass environment variables - they will be filtered by gVisor runner
@@ -427,12 +754,54 @@ class BashCommandTool:
                     f"(success: {result.success}) for project {project_id}"
                 )
 
-                return {
+                # Truncate output if it exceeds character limits
+                output = result.stdout
+                error = result.stderr
+                output_truncated = False
+                error_truncated = False
+
+                if len(output) > MAX_OUTPUT_LENGTH:
+                    output = output[:MAX_OUTPUT_LENGTH]
+                    output_truncated = True
+                    logger.warning(
+                        f"[BASH_COMMAND] Output truncated from {len(result.stdout)} to {MAX_OUTPUT_LENGTH} characters "
+                        f"for project {project_id}"
+                    )
+
+                if len(error) > MAX_ERROR_LENGTH:
+                    error = error[:MAX_ERROR_LENGTH]
+                    error_truncated = True
+                    logger.warning(
+                        f"[BASH_COMMAND] Error output truncated from {len(result.stderr)} to {MAX_ERROR_LENGTH} characters "
+                        f"for project {project_id}"
+                    )
+
+                # Build response with truncation notices
+                response = {
                     "success": result.success,
-                    "output": result.stdout,
-                    "error": result.stderr,
+                    "output": output,
+                    "error": error,
                     "exit_code": result.returncode,
                 }
+
+                # Add truncation notices if applicable
+                truncation_notices = []
+                if output_truncated:
+                    truncation_notices.append(
+                        f"⚠️ Output truncated: showing first {MAX_OUTPUT_LENGTH:,} characters of {len(result.stdout):,} total"
+                    )
+                if error_truncated:
+                    truncation_notices.append(
+                        f"⚠️ Error output truncated: showing first {MAX_ERROR_LENGTH:,} characters of {len(result.stderr):,} total"
+                    )
+
+                if truncation_notices:
+                    # Prepend truncation notices to output
+                    response["output"] = (
+                        "\n".join(truncation_notices) + "\n\n" + response["output"]
+                    )
+
+                return response
             except Exception:
                 logger.exception(
                     "[BASH_COMMAND] Error executing command with gVisor",

@@ -73,6 +73,7 @@ if [[ "$OSTYPE" == "darwin"* ]] || [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == 
   fi
 fi
 
+# Apply database migrations within the uv-managed environment
 
 uv sync
 source .venv/bin/activate

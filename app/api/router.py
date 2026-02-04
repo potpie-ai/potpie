@@ -1,4 +1,5 @@
 from datetime import datetime
+import logging
 import os
 from typing import List, Optional
 
@@ -26,7 +27,10 @@ from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.parsing.graph_construction.parsing_controller import ParsingController
-from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
+from app.modules.parsing.graph_construction.parsing_schema import (
+    ParsingRequest,
+    ParsingStatusRequest,
+)
 from app.modules.projects.projects_controller import ProjectController
 from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
@@ -38,6 +42,8 @@ from app.modules.integrations.integrations_schema import (
     IntegrationSaveRequest,
     IntegrationSaveResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -79,6 +85,13 @@ async def get_api_key_user(
         )
 
     return user
+
+
+from app.modules.conversations.utils.conversation_routing import (
+    normalize_run_id,
+    ensure_unique_run_id,
+    start_celery_task_and_stream,
+)
 
 
 @router.post("/conversations/", response_model=CreateConversationResponse)
@@ -125,10 +138,25 @@ async def get_parsing_status(
     return await ParsingController.fetch_parsing_status(project_id, db, user)
 
 
+@router.post("/parsing-status")
+async def get_parsing_status_by_repo(
+    request: ParsingStatusRequest,
+    db: Session = Depends(get_db),
+    user=Depends(get_api_key_user),
+):
+    return await ParsingController.fetch_parsing_status_by_repo(request, db, user)
+
+
 @router.post("/conversations/{conversation_id}/message/")
 async def post_message(
     conversation_id: str,
     message: MessageRequest,
+    stream: bool = Query(True, description="Whether to stream the response"),
+    session_id: Optional[str] = Query(None, description="Session ID for reconnection"),
+    prev_human_message_id: Optional[str] = Query(
+        None, description="Previous human message ID for deterministic session ID"
+    ),
+    cursor: Optional[str] = Query(None, description="Stream cursor for replay"),
     db: Session = Depends(get_db),
     async_db: AsyncSession = Depends(get_async_db),
     user=Depends(get_api_key_user),
@@ -144,11 +172,49 @@ async def post_message(
             detail="Subscription required to create a conversation.",
         )
 
-    # Note: email is no longer available with API key auth
-    controller = ConversationController(db, async_db, user_id, None)
-    message_stream = controller.post_message(conversation_id, message, stream=False)
-    async for chunk in message_stream:
-        return chunk
+    # Use Celery for both streaming and non-streaming requests
+    run_id = normalize_run_id(
+        conversation_id, user_id, session_id, prev_human_message_id
+    )
+
+    # For fresh requests without cursor, ensure we get a unique stream
+    if not cursor:
+        run_id = ensure_unique_run_id(conversation_id, run_id)
+
+    # Extract agent_id from conversation (will be handled in background task)
+    agent_id = None
+
+    # Extract node_id strings from NodeContext objects
+    node_ids_list = [nc.node_id for nc in (message.node_ids or [])]
+
+    if not stream:
+        # Non-streaming: use Celery but wait for complete response
+        from app.modules.conversations.utils.conversation_routing import (
+            start_celery_task_and_wait,
+        )
+
+        return await start_celery_task_and_wait(
+            conversation_id=conversation_id,
+            run_id=run_id,
+            user_id=user_id,
+            query=message.content,
+            agent_id=agent_id,
+            node_ids=node_ids_list,
+            attachment_ids=message.attachment_ids or [],
+        )
+
+    # Streaming: use Celery with streaming response
+
+    return start_celery_task_and_stream(
+        conversation_id=conversation_id,
+        run_id=run_id,
+        user_id=user_id,
+        query=message.content,
+        agent_id=agent_id,
+        node_ids=node_ids_list,
+        attachment_ids=message.attachment_ids or [],
+        cursor=cursor,
+    )
 
 
 @router.post("/project/{project_id}/message/")

@@ -53,15 +53,45 @@ def execute_agent_background(
                 # This avoids asyncpg Future binding issues across tasks sharing the same event loop
                 async with self.async_db() as async_db:
                     # Get user email for service creation
+                    from app.modules.users.user_model import User
+
                     user_service = UserService(self.db)
                     user = user_service.get_user_by_uid(user_id)
+
+                    # Debug: Direct query to verify user exists
+                    if not user:
+                        direct_user = (
+                            self.db.query(User).filter(User.uid == user_id).first()
+                        )
+                        if direct_user:
+                            logger.warning(
+                                f"UserService.get_user_by_uid returned None but direct query found user: {direct_user.uid}, email: {direct_user.email}"
+                            )
+                            user = direct_user
+                        else:
+                            logger.warning(
+                                f"User not found in database for user_id: {user_id}. Using empty string as fallback."
+                            )
 
                     conversation_store = ConversationStore(self.db, async_db)
                     message_store = MessageStore(self.db, async_db)
 
-                    if not user or not user.email:
-                        raise Exception(f"User email not found for user_id: {user_id}")
-                    user_email = user.email
+                    # Handle missing user or email gracefully
+                    if not user:
+                        user_email = ""
+                    elif not user.email:
+                        logger.warning(
+                            f"User found but email is None/empty for user_id: {user_id}, "
+                            f"user.uid: {user.uid if user else 'N/A'}, "
+                            f"email value: {repr(user.email) if user else 'N/A'}. "
+                            f"Using empty string as fallback."
+                        )
+                        user_email = ""
+                    else:
+                        user_email = user.email
+                        logger.debug(
+                            f"Retrieved user email: {user_email} for user_id: {user_id}"
+                        )
 
                     service = ConversationService.create(
                         conversation_store=conversation_store,
@@ -258,9 +288,22 @@ def execute_regenerate_background(
                 # Get user email for service creation
                 user_service = UserService(self.db)
                 user = user_service.get_user_by_uid(user_id)
-                if not user or not user.email:
-                    raise Exception(f"User email not found for user_id: {user_id}")
-                user_email = user.email
+                # Handle missing user or email gracefully
+                if not user:
+                    logger.warning(
+                        f"User not found for user_id: {user_id}. Using empty string as fallback."
+                    )
+                    user_email = ""
+                elif not user.email:
+                    logger.warning(
+                        f"User found but email is None/empty for user_id: {user_id}, user object: {user}, email value: {repr(user.email)}. Using empty string as fallback."
+                    )
+                    user_email = ""
+                else:
+                    user_email = user.email
+                    logger.debug(
+                        f"Retrieved user email: {user_email} for user_id: {user_id}"
+                    )
 
                 conversation_store = ConversationStore(self.db, async_db)
                 message_store = MessageStore(self.db, async_db)
