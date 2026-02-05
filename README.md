@@ -1,6 +1,10 @@
 <p align="center">
   <a href="https://potpie.ai?utm_source=github">
-    <img src="./potpie-ui/public/images/potpie-newlogo.svg" width="318px" alt="Potpie AI logo" />
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="./assets/logo_dark.svg" />
+      <source media="(prefers-color-scheme: light)" srcset="./assets/logo_light.svg" />
+      <img src="./assets/logo_light.svg" width="318px" alt="Potpie AI logo" />
+    </picture>
   </a>
 </p>
 
