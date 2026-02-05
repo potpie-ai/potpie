@@ -386,6 +386,7 @@ class GithubService:
             }
 
             ssl_context = ssl.create_default_context(cafile=certifi.where())
+            ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
             connector = aiohttp.TCPConnector(
                 ssl=ssl_context,
                 ttl_dns_cache=300,
