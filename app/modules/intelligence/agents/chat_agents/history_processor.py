@@ -216,22 +216,6 @@ class TokenAwareHistoryProcessor:
         # Summary prompt would go here if needed in the future
         # For now, we're using the basic truncation approach above
 
-Omit:
-- Repetitive content
-- Verbose explanations that can be condensed
-- Full tool result content (summarize what tools did, not their full output)
-- Unnecessary details
-
-For tool calls/results:
-- Include: Tool name, what it was used for, key findings/outcomes
-- Exclude: Full file contents, long code snippets, verbose tool outputs
-
-Keep the summary concise but comprehensive enough to maintain context for future interactions.
-Target: approximately {self.target_summary_tokens} tokens.
-
-Conversation history to summarize:
-"""
-
         # LLM summarization is commented out - using simple truncation fallback instead
         # # Convert messages to a readable format for summarization
         # # We'll use the message history directly with the summarize agent
@@ -848,7 +832,6 @@ Conversation history to summarize:
 
         for i, msg in enumerate(messages):
             call_ids = self._extract_tool_call_ids_from_message(msg)
-            is_call = self._is_tool_call_message(msg)
             is_result = self._is_tool_result_message(msg)
 
             for tool_call_id in call_ids:
