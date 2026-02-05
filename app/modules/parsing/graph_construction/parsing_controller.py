@@ -5,13 +5,18 @@ from typing import Any, Dict
 
 from dotenv import load_dotenv
 from fastapi import HTTPException
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.celery.tasks.parsing_tasks import process_parsing
 from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
+from app.modules.conversations.conversation.conversation_model import (
+    Conversation,
+    Visibility,
+)
 from app.modules.parsing.graph_construction.parsing_helper import ParseHelper
 from app.modules.parsing.graph_construction.parsing_schema import (
     ParsingRequest,
@@ -22,14 +27,12 @@ from app.modules.parsing.graph_construction.parsing_validator import (
     validate_parsing_input,
 )
 from app.modules.parsing.utils.repo_name_normalizer import normalize_repo_name
+from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.utils.email_helper import EmailHelper
-from app.modules.utils.posthog_helper import PostHogClient
-from app.modules.conversations.conversation.conversation_model import Conversation
-from app.modules.conversations.conversation.conversation_model import Visibility
-from app.modules.projects.projects_model import Project
 from app.modules.utils.logger import setup_logger
+from app.modules.utils.posthog_helper import PostHogClient
 
 logger = setup_logger(__name__)
 
@@ -40,7 +43,7 @@ class ParsingController:
     @staticmethod
     @validate_parsing_input
     async def parse_directory(
-        repo_details: ParsingRequest, db: AsyncSession, user: Dict[str, Any]
+        repo_details: ParsingRequest, db: Session, user: Dict[str, Any]
     ):
         if "email" not in user:
             user_email = None
@@ -98,21 +101,10 @@ class ParsingController:
                     project_manager,
                     db,
                 )
-
-        demo_repos = [
-            "Portkey-AI/gateway",
-            "crewAIInc/crewAI",
-            "AgentOps-AI/agentops",
-            "calcom/cal.com",
-            "langchain-ai/langchain",
-            "AgentOps-AI/AgentStack",
-            "formbricks/formbricks",
-        ]
-
         try:
             # Normalize repository name for consistent database lookups
             normalized_repo_name = normalize_repo_name(repo_name)
-            logger.info(
+            logger.debug(
                 f"Original repo_name: {repo_name}, Normalized: {normalized_repo_name}"
             )
 
@@ -123,8 +115,15 @@ class ParsingController:
                 repo_path=repo_details.repo_path,
                 commit_id=repo_details.commit_id,
             )
-
-            # First check if this is a demo project that hasn't been accessed by this user yet
+            demo_repos = [
+                "Portkey-AI/gateway",
+                "crewAIInc/crewAI",
+                "AgentOps-AI/agentops",
+                "calcom/cal.com",
+                "langchain-ai/langchain",
+                "AgentOps-AI/AgentStack",
+                "formbricks/formbricks",
+            ]
             if not project and repo_details.repo_name in demo_repos:
                 existing_project = await project_manager.get_global_project_from_db(
                     normalized_repo_name,
@@ -151,11 +150,25 @@ class ParsingController:
                         repo_name
                     )
 
-                    asyncio.create_task(
+                    task = asyncio.create_task(
                         CodeProviderService(db).get_project_structure_async(
                             new_project_id
                         )
                     )
+
+                    def _on_structure_done(t: asyncio.Task) -> None:
+                        if t.cancelled():
+                            return
+                        try:
+                            exc = t.exception()
+                        except asyncio.CancelledError:
+                            return
+                        if exc is not None:
+                            logger.exception(
+                                "Failed to get project structure", exc_info=exc
+                            )
+
+                    task.add_done_callback(_on_structure_done)
                     # Duplicate the graph under the new repo ID
                     await parsing_service.duplicate_graph(
                         old_project_id, new_project_id
@@ -165,11 +178,23 @@ class ParsingController:
                     await project_manager.update_project_status(
                         new_project_id, ProjectStatusEnum.READY
                     )
-                    create_task(
+                    email_task = create_task(
                         EmailHelper().send_email(
                             user_email, repo_name, repo_details.branch_name
                         )
                     )
+
+                    def _on_email_done(t: asyncio.Task) -> None:
+                        if t.cancelled():
+                            return
+                        try:
+                            exc = t.exception()
+                        except asyncio.CancelledError:
+                            return
+                        if exc is not None:
+                            logger.exception("Failed to send email", exc_info=exc)
+
+                    email_task.add_done_callback(_on_email_done)
 
                     return {
                         "project_id": new_project_id,
@@ -210,8 +235,10 @@ class ParsingController:
                 # If project exists but commit doesn't match or status is not READY, reparse
                 cleanup_graph = True
                 logger.info(
-                    f"Submitting parsing task for existing project {project_id} "
-                    f"(is_latest={is_latest}, status={project.status})"
+                    "Submitting parsing task for existing project.",
+                    project_id=project_id,
+                    is_latest=is_latest,
+                    status=project.status,
                 )
                 process_parsing.delay(
                     repo_details.model_dump(),
@@ -258,10 +285,10 @@ class ParsingController:
     async def handle_new_project(
         repo_details: ParsingRequest,
         user_id: str,
-        user_email: str,
+        user_email: str | None,
         new_project_id: str,
         project_manager: ProjectService,
-        db: AsyncSession,
+        db: Session,
     ):
         response = {
             "project_id": new_project_id,
@@ -278,9 +305,9 @@ class ParsingController:
             repo_details.commit_id,
             repo_details.repo_path,
         )
-        asyncio.create_task(
-            CodeProviderService(db).get_project_structure_async(new_project_id)
-        )
+        # asyncio.create_task(
+        #     CodeProviderService(db).get_project_structure_async(new_project_id)
+        # )
         if not user_email:
             user_email = None
 

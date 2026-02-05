@@ -186,7 +186,7 @@ class ProjectService:
             project_list.append(project_dict)
         return project_list
 
-    async def update_project_status(self, project_id: int, status: ProjectStatusEnum):
+    async def update_project_status(self, project_id: str, status: ProjectStatusEnum):
         try:
             ProjectService.update_project(self.db, project_id, status=status.value)
             logger.info(
@@ -200,7 +200,7 @@ class ProjectService:
     async def get_project_from_db(
         self,
         repo_name: str,
-        branch_name: str,
+        branch_name: str | None,
         user_id: str,
         repo_path: str | None = None,
         commit_id: str | None = None,
@@ -296,7 +296,7 @@ class ProjectService:
         )
         return project
 
-    async def get_project_from_db_by_id(self, project_id: int):
+    async def get_project_from_db_by_id(self, project_id: str):
         project = ProjectService.get_project_by_id(self.db, project_id)
         if project:
             return {
@@ -396,7 +396,8 @@ class ProjectService:
             logger.exception(f"Error creating project {project.id}")
             raise
 
-    def update_project(db: Session, project_id: int, **kwargs):
+    @staticmethod
+    def update_project(db, project_id: str, **kwargs):
         project = db.query(Project).filter(Project.id == project_id).first()
 
         if project is None:

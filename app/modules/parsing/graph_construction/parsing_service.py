@@ -1,6 +1,6 @@
+import asyncio
 import os
-import shutil
-import traceback
+import json
 from asyncio import create_task
 from contextlib import contextmanager
 
@@ -17,10 +17,10 @@ from app.modules.parsing.graph_construction.parsing_helper import (
     ParsingServiceError,
 )
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
-from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
+from app.modules.repo_manager import RepoManager
 from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.logger import log_context, setup_logger
 from app.modules.utils.parse_webhook_helper import ParseWebhookHelper
@@ -57,6 +57,7 @@ class ParsingService:
         self.github_service = CodeProviderService(db)
         self._neo4j_config = neo4j_config
         self._raise_library_exceptions = raise_library_exceptions
+        self.repo_manager = RepoManager()
 
     @classmethod
     def create_from_config(
@@ -104,7 +105,7 @@ class ParsingService:
         repo_details: ParsingRequest,
         user_id: str,
         user_email: str,
-        project_id: int,
+        project_id: str,
         cleanup_graph: bool = True,
     ):
         # Set up logging context with domain IDs
@@ -159,52 +160,113 @@ class ParsingService:
                             status_code=500, detail="Internal server error"
                         )
 
-                # Convert ParsingRequest to RepoDetails
-                repo_details_converted = RepoDetails(
-                    repo_name=repo_details.repo_name or "",
-                    branch_name=repo_details.branch_name or "",
-                    repo_path=repo_details.repo_path,
-                    commit_id=repo_details.commit_id,
-                )
-                repo, owner, auth = await self.parse_helper.clone_or_copy_repository(
-                    repo_details_converted, user_id
-                )
-                if config_provider.get_is_development_mode():
-                    (
-                        extracted_dir,
-                        project_id,
-                    ) = await self.parse_helper.setup_project_directory(
-                        repo,
-                        repo_details.branch_name,
-                        auth,
-                        repo_details,
-                        user_id,
-                        project_id,
-                        commit_id=repo_details.commit_id,
+                if repo_details.repo_path:
+                    if not os.path.exists(repo_details.repo_path):
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Local repository does not exist on the given path",
+                        )
+                    repo = Repo(repo_details.repo_path)
+                    logger.info(
+                        f"ParsingHelper: clone_or_copy_repository created local Repo object for path: {repo_details.repo_path}"
                     )
+                    extracted_dir = repo_details.repo_path
                 else:
-                    (
-                        extracted_dir,
-                        project_id,
-                    ) = await self.parse_helper.setup_project_directory(
-                        repo,
-                        repo_details.branch_name,
-                        auth,
-                        repo,
-                        user_id,
-                        project_id,
-                        commit_id=repo_details.commit_id,
+                    if not repo_details.repo_name:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="repo_name must be provided when repo_path is not specified",
+                        )
+                    ref = (
+                        repo_details.commit_id
+                        if repo_details.commit_id
+                        else repo_details.branch_name
                     )
+                    if not ref:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Either commit_id or branch_name must be provided",
+                        )
+                    worktree = self.repo_manager.prepare_for_parsing(
+                        repo_details.repo_name,
+                        ref=ref,
+                        is_commit=bool(repo_details.commit_id),
+                    )
+                    repo = Repo(worktree)
+                    extracted_dir = worktree
 
-                if isinstance(repo, Repo):
-                    language = self.parse_helper.detect_repo_language(extracted_dir)
-                else:
-                    languages = repo.get_languages()
-                    if languages:
-                        language = max(languages, key=languages.get).lower()
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        "git",
+                        "-C",
+                        extracted_dir,
+                        "rev-parse",
+                        "HEAD",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    stdout, stderr = await asyncio.wait_for(
+                        proc.communicate(), timeout=30
+                    )
+                    if proc.returncode == 0:
+                        latest_commit_sha = stdout.decode().strip()
+                        logger.info(
+                            f"Retrieved latest commit SHA for worktree {extracted_dir}: {latest_commit_sha[:8]}"
+                        )
                     else:
-                        language = self.parse_helper.detect_repo_language(extracted_dir)
+                        logger.warning(
+                            f"Failed to get commit SHA from {extracted_dir}: {stderr.decode()}"
+                        )
+                        latest_commit_sha = None
+                except asyncio.TimeoutError:
+                    logger.warning(f"Timeout getting commit SHA from {extracted_dir}")
+                    latest_commit_sha = None
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to get commit SHA from {extracted_dir}: {e}"
+                    )
+                    latest_commit_sha = None
 
+                # Detect language - use GitHub API for accuracy when available
+                if repo_details.repo_name and not repo_details.repo_path:
+                    # GitHub repo - use API for accurate language detection
+                    try:
+                        _, github_repo = self.github_service.get_repo(
+                            repo_details.repo_name
+                        )
+                        languages = github_repo.get_languages()
+                        if languages:
+                            language = max(languages, key=languages.get).lower()
+                            logger.debug(
+                                f"Detected language from GitHub API: {language} "
+                                f"(from {len(languages)} languages)"
+                            )
+                        else:
+                            language = self.parse_helper.detect_repo_language(
+                                extracted_dir
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to get language from GitHub API, falling back to manual detection: {e}"
+                        )
+                        language = self.parse_helper.detect_repo_language(extracted_dir)
+                else:
+                    # Local repo - use manual detection
+                    language = self.parse_helper.detect_repo_language(extracted_dir)
+
+                # Use repo instead of repo_details for metadata extraction
+                # repo is always the MockRepo (remote) or Repo (local) object with required methods
+                # repo_details can be ParsingRequest in dev mode, which lacks these methods
+                repo_metadata = self.parse_helper.extract_repository_metadata(repo)
+                repo_metadata["error_message"] = None
+                project_metadata = json.dumps(repo_metadata).encode("utf-8")
+                self.project_service.update_project(
+                    self.db,
+                    project_id,
+                    properties=project_metadata,
+                    commit_id=latest_commit_sha,
+                    status=ProjectStatusEnum.CLONED.value,
+                )
                 await self.analyze_directory(
                     extracted_dir, project_id, user_id, self.db, language, user_email
                 )
@@ -224,20 +286,11 @@ class ParsingService:
                 raise
 
             except Exception as e:
-                # Log the full traceback server-side for debugging
-                tb_str = "".join(traceback.format_exception(None, e, e.__traceback__))
                 logger.exception(
                     "Error during parsing",
                     project_id=project_id,
                     user_id=user_id,
                 )
-                # Log the formatted traceback string explicitly for detailed debugging
-                logger.error(
-                    f"Full traceback:\n{tb_str}",
-                    project_id=project_id,
-                    user_id=user_id,
-                )
-                # Rollback the database session to clear any pending transactions
                 self.db.rollback()
                 try:
                     await project_manager.update_project_status(
@@ -259,17 +312,6 @@ class ParsingService:
                     status_code=500,
                     detail=f"Internal server error. Please contact support with project ID: {project_id}",
                 )
-
-            finally:
-                project_path = os.getenv("PROJECT_PATH")
-                if (
-                    extracted_dir
-                    and isinstance(extracted_dir, str)
-                    and os.path.exists(extracted_dir)
-                    and project_path
-                    and extracted_dir.startswith(project_path)
-                ):
-                    shutil.rmtree(extracted_dir, ignore_errors=True)
 
     def create_neo4j_indices(self, graph_manager):
         # Create existing indices from blar_graph
@@ -299,7 +341,7 @@ class ParsingService:
     async def analyze_directory(
         self,
         extracted_dir: str,
-        project_id: int,
+        project_id: str,
         user_id: str,
         db,
         language: str,
@@ -323,7 +365,7 @@ class ParsingService:
             raise FileNotFoundError(f"Directory not found: {extracted_dir}")
 
         logger.info(
-            f"ParsingService: Directory exists and is accessible: {extracted_dir}"
+            "ParsingService: Directory exists and is accessible", dir=extracted_dir
         )
         project_details = await self.project_service.get_project_from_db_by_id(
             project_id
@@ -362,9 +404,21 @@ class ParsingService:
                     project_id, ProjectStatusEnum.READY
                 )
                 if not self._raise_library_exceptions and user_email:
-                    create_task(
+                    task = create_task(
                         EmailHelper().send_email(user_email, repo_name, branch_name)
                     )
+
+                    def _on_email_done(t: asyncio.Task) -> None:
+                        if t.cancelled():
+                            return
+                        try:
+                            exc = t.exception()
+                        except asyncio.CancelledError:
+                            return
+                        if exc is not None:
+                            logger.exception("Failed to send email", exc_info=exc)
+
+                    task.add_done_callback(_on_email_done)
                 logger.info(f"DEBUGNEO4J: After update project status {project_id}")
                 self.inference_service.log_graph_stats(project_id)
             finally:
@@ -384,16 +438,17 @@ class ParsingService:
                 "Repository doesn't consist of a language currently supported."
             )
 
-    async def duplicate_graph(self, old_repo_id: str, new_repo_id: str):
-        await self.search_service.clone_search_indices(old_repo_id, new_repo_id)
-        node_batch_size = 3000  # Fixed batch size for nodes
-        relationship_batch_size = 3000  # Fixed batch size for relationships
-        try:
-            # Step 1: Fetch and duplicate nodes in batches
-            with self.inference_service.driver.session() as session:
-                offset = 0
-                while True:
-                    nodes_query = """
+
+async def duplicate_graph(self, old_repo_id: str, new_repo_id: str):
+    await self.search_service.clone_search_indices(old_repo_id, new_repo_id)
+    node_batch_size = 3000  # Fixed batch size for nodes
+    relationship_batch_size = 3000  # Fixed batch size for relationships
+    try:
+        # Step 1: Fetch and duplicate nodes in batches
+        with self.inference_service.driver.session() as session:
+            offset = 0
+            while True:
+                nodes_query = """
                     MATCH (n:NODE {repoId: $old_repo_id})
                     RETURN n.node_id AS node_id, n.text AS text, n.file_path AS file_path,
                            n.start_line AS start_line, n.end_line AS end_line, n.name AS name,
@@ -402,19 +457,19 @@ class ParsingService:
                            labels(n) AS labels
                     SKIP $offset LIMIT $limit
                     """
-                    nodes_result = session.run(
-                        nodes_query,
-                        old_repo_id=old_repo_id,
-                        offset=offset,
-                        limit=node_batch_size,
-                    )
-                    nodes = [dict(record) for record in nodes_result]
+                nodes_result = session.run(
+                    nodes_query,
+                    old_repo_id=old_repo_id,
+                    offset=offset,
+                    limit=node_batch_size,
+                )
+                nodes = [dict(record) for record in nodes_result]
 
-                    if not nodes:
-                        break
+                if not nodes:
+                    break
 
-                    # Insert nodes under the new repo ID, preserving labels, docstring, and embedding
-                    create_query = """
+                # Insert nodes under the new repo ID, preserving labels, docstring, and embedding
+                create_query = """
                     UNWIND $batch AS node
                     CALL apoc.create.node(node.labels, {
                         repoId: $new_repo_id,
@@ -429,48 +484,48 @@ class ParsingService:
                     }) YIELD node AS new_node
                     RETURN new_node
                     """
-                    session.run(create_query, new_repo_id=new_repo_id, batch=nodes)
-                    offset += node_batch_size
+                session.run(create_query, new_repo_id=new_repo_id, batch=nodes)
+                offset += node_batch_size
 
-            # Step 2: Fetch and duplicate relationships in batches
-            with self.inference_service.driver.session() as session:
-                offset = 0
-                while True:
-                    relationships_query = """
+        # Step 2: Fetch and duplicate relationships in batches
+        with self.inference_service.driver.session() as session:
+            offset = 0
+            while True:
+                relationships_query = """
                     MATCH (n:NODE {repoId: $old_repo_id})-[r]->(m:NODE)
                     RETURN n.node_id AS start_node_id, type(r) AS relationship_type, m.node_id AS end_node_id
                     SKIP $offset LIMIT $limit
                     """
-                    relationships_result = session.run(
-                        relationships_query,
-                        old_repo_id=old_repo_id,
-                        offset=offset,
-                        limit=relationship_batch_size,
-                    )
-                    relationships = [dict(record) for record in relationships_result]
+                relationships_result = session.run(
+                    relationships_query,
+                    old_repo_id=old_repo_id,
+                    offset=offset,
+                    limit=relationship_batch_size,
+                )
+                relationships = [dict(record) for record in relationships_result]
 
-                    if not relationships:
-                        break
+                if not relationships:
+                    break
 
-                    relationship_query = """
+                relationship_query = """
                     UNWIND $batch AS relationship
                     MATCH (a:NODE {repoId: $new_repo_id, node_id: relationship.start_node_id}),
                           (b:NODE {repoId: $new_repo_id, node_id: relationship.end_node_id})
                     CALL apoc.create.relationship(a, relationship.relationship_type, {}, b) YIELD rel
                     RETURN rel
                     """
-                    session.run(
-                        relationship_query, new_repo_id=new_repo_id, batch=relationships
-                    )
-                    offset += relationship_batch_size
+                session.run(
+                    relationship_query, new_repo_id=new_repo_id, batch=relationships
+                )
+                offset += relationship_batch_size
 
-            logger.info(
-                f"Successfully duplicated graph from {old_repo_id} to {new_repo_id}"
-            )
+        logger.info(
+            f"Successfully duplicated graph from {old_repo_id} to {new_repo_id}"
+        )
 
-        except Exception:
-            logger.exception(
-                "Error duplicating graph",
-                old_repo_id=old_repo_id,
-                new_repo_id=new_repo_id,
-            )
+    except Exception:
+        logger.exception(
+            "Error duplicating graph",
+            old_repo_id=old_repo_id,
+            new_repo_id=new_repo_id,
+        )

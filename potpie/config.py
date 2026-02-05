@@ -49,6 +49,11 @@ class RuntimeConfig:
     db_pool_timeout: int = 30
     db_pool_recycle: int = 1800
 
+    repos_base_path: Optional[str] = None
+    repos_volume_limit_bytes: Optional[int] = None
+    repos_eviction_threshold_percent: Optional[float] = None
+    github_base_url: Optional[str] = None
+
     def validate(self) -> None:
         """Validate configuration, raise ConfigurationError if invalid."""
         if not self.postgres_url:
@@ -111,7 +116,7 @@ class RuntimeConfig:
                 return default
             return value.lower() in ("true", "1", "yes", "enabled")
 
-        def get_env_int(key: str, default: int) -> int:
+        def get_env_int(key: str, default: Optional[int] = None) -> Optional[int]:
             value = get_env(key)
             if value is None:
                 return default
@@ -120,6 +125,17 @@ class RuntimeConfig:
             except ValueError:
                 raise ConfigurationError(
                     f"Environment variable {env_prefix}{key} must be an integer"
+                )
+
+        def get_env_float(key: str, default: Optional[float] = None) -> Optional[float]:
+            value = get_env(key)
+            if value is None:
+                return default
+            try:
+                return float(value)
+            except ValueError:
+                raise ConfigurationError(
+                    f"Environment variable {env_prefix}{key} must be a float"
                 )
 
         # Build Redis URL from components if individual vars are set
@@ -155,6 +171,12 @@ class RuntimeConfig:
             db_max_overflow=get_env_int("DB_MAX_OVERFLOW", 10),
             db_pool_timeout=get_env_int("DB_POOL_TIMEOUT", 30),
             db_pool_recycle=get_env_int("DB_POOL_RECYCLE", 1800),
+            repos_base_path=get_env("REPOS_BASE_PATH"),
+            repos_volume_limit_bytes=get_env_int("REPOS_VOLUME_LIMIT_BYTES", None),
+            repos_eviction_threshold_percent=get_env_float(
+                "REPOS_EVICTION_THRESHOLD_PERCENT", None
+            ),
+            github_base_url=get_env("GITHUB_BASE_URL"),
         )
 
         config.validate()
@@ -184,6 +206,10 @@ class RuntimeConfigBuilder:
         self._db_max_overflow: int = 10
         self._db_pool_timeout: int = 30
         self._db_pool_recycle: int = 1800
+        self._repos_base_path: Optional[str] = None
+        self._repos_volume_limit_bytes: Optional[int] = None
+        self._repos_eviction_threshold_percent: Optional[float] = None
+        self._github_base_url: Optional[str] = None
 
     def postgres(self, url: str) -> RuntimeConfigBuilder:
         """Set PostgreSQL connection URL."""
@@ -253,6 +279,19 @@ class RuntimeConfigBuilder:
         self._db_pool_recycle = recycle
         return self
 
+    def repositories(
+        self,
+        base_path: Optional[str] = None,
+        volume_limit_bytes: Optional[int] = None,
+        eviction_threshold_percent: Optional[float] = None,
+        github_base_url: Optional[str] = None,
+    ) -> RuntimeConfigBuilder:
+        self._repos_base_path = base_path
+        self._repos_volume_limit_bytes = volume_limit_bytes
+        self._repos_eviction_threshold_percent = eviction_threshold_percent
+        self._github_base_url = github_base_url
+        return self
+
     def build(self) -> RuntimeConfig:
         """Build and validate the RuntimeConfig."""
         if self._postgres_url is None:
@@ -280,6 +319,10 @@ class RuntimeConfigBuilder:
             db_max_overflow=self._db_max_overflow,
             db_pool_timeout=self._db_pool_timeout,
             db_pool_recycle=self._db_pool_recycle,
+            repos_base_path=self._repos_base_path,
+            repos_volume_limit_bytes=self._repos_volume_limit_bytes,
+            repos_eviction_threshold_percent=self._repos_eviction_threshold_percent,
+            github_base_url=self._github_base_url,
         )
         config.validate()
         return config

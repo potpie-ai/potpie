@@ -1,22 +1,18 @@
-import json
 import os
 import shutil
-import tarfile
 import uuid
-from pathlib import Path
-from typing import Any, Optional, Tuple
+from typing import Any, Tuple
 from urllib.parse import urlparse, urlunparse
+from pathlib import Path
+from collections import defaultdict
 
-import requests
-import requests.auth
+
 from fastapi import HTTPException
-from git import GitCommandError, InvalidGitRepositoryError, Repo
+from git import GitCommandError, Repo
 from sqlalchemy.orm import Session
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
-from app.modules.parsing.utils.repo_name_normalizer import normalize_repo_name
-from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.utils.logger import setup_logger
 
@@ -54,9 +50,17 @@ class ParseHelper:
     @staticmethod
     def get_directory_size(path):
         total_size = 0
-        for dirpath, dirnames, filenames in os.walk(path):
+        for dirpath, dirnames, filenames in os.walk(path, followlinks=False):
+            # # Skip symlinked directories
+            # dirnames[:] = [
+            #     d for d in dirnames if not os.path.islink(os.path.join(dirpath, d))
+            # ]
+
             for f in filenames:
                 fp = os.path.join(dirpath, f)
+                # Skip all symlinks
+                if os.path.islink(fp):
+                    continue
                 total_size += os.path.getsize(fp)
         return total_size
 
@@ -200,290 +204,6 @@ class ParseHelper:
         else:
             return False
 
-    async def download_and_extract_tarball(
-        self, repo, branch, target_dir, auth, repo_details, user_id
-    ):
-        # Get repo name for logging - handle both Repo objects and repo objects with full_name
-        repo_name = (
-            repo.working_tree_dir
-            if isinstance(repo, Repo)
-            else getattr(repo, "full_name", "unknown")
-        )
-
-        logger.info(
-            f"ParsingHelper: Starting tarball download for repo '{repo_name}', branch '{branch}'"
-        )
-
-        try:
-            logger.info(
-                f"ParsingHelper: Getting archive link for repo '{repo_name}', branch '{branch}'"
-            )
-            tarball_url = repo.get_archive_link("tarball", branch)
-            logger.info(f"ParsingHelper: Retrieved tarball URL: {tarball_url}")
-
-            # Validate that tarball_url is a string, not an exception object
-            if not isinstance(tarball_url, str):
-                logger.error(
-                    f"ParsingHelper: Invalid tarball URL type: {type(tarball_url)}, value: {tarball_url}"
-                )
-                raise ValueError(
-                    f"Expected string URL, got {type(tarball_url)}: {tarball_url}"
-                )
-
-            # For GitBucket private repos, use PyGithub client's requester for authenticated requests
-            # According to GitBucket API docs: https://github.com/gitbucket/gitbucket/wiki/API-WebHook
-            # Authentication: "Authorization: token YOUR_TOKEN" in header
-            provider_type = os.getenv("CODE_PROVIDER", "github").lower()
-
-            if (
-                provider_type == "gitbucket"
-                and hasattr(repo, "_provider")
-                and repo._provider
-            ):
-                # For GitBucket, use the provider's authentication
-                # According to GitBucket API docs: https://github.com/gitbucket/gitbucket/wiki/API-WebHook
-                # Authentication format: "Authorization: token YOUR_TOKEN" in header
-                try:
-                    github_client = repo._provider.client
-                    if hasattr(github_client, "_Github__requester"):
-                        requester = github_client._Github__requester
-
-                        # Use the requester's session which has authentication already configured
-                        if hasattr(requester, "_Requester__session"):
-                            session = requester._Requester__session
-                            response = session.get(tarball_url, stream=True, timeout=30)
-
-                            # If we get 401, the session auth might not be working, fall back to manual token
-                            if response.status_code == 401:
-                                raise requests.exceptions.HTTPError(
-                                    "401 Unauthorized from session"
-                                )
-                        else:
-                            raise AttributeError("Requester session not available")
-                    else:
-                        raise AttributeError("Requester not found")
-                except Exception:
-                    # Fallback to manual token extraction
-                    token = None
-                    headers = {}
-
-                    # Priority 1: Try to get token from auth parameter
-                    if auth and hasattr(auth, "token"):
-                        token = auth.token
-
-                    # Priority 2: Try to extract from PyGithub client's requester
-                    if not token and hasattr(repo, "_provider") and repo._provider:
-                        try:
-                            github_client = repo._provider.client
-                            if hasattr(github_client, "_Github__requester"):
-                                requester = github_client._Github__requester
-
-                                if hasattr(requester, "auth") and hasattr(
-                                    requester.auth, "token"
-                                ):
-                                    token = requester.auth.token
-                                elif hasattr(
-                                    requester, "_Requester__authorizationHeader"
-                                ):
-                                    auth_header = (
-                                        requester._Requester__authorizationHeader
-                                    )
-                                    if auth_header:
-                                        if auth_header.startswith("token "):
-                                            token = auth_header[6:]
-                                        elif auth_header.startswith("Bearer "):
-                                            token = auth_header[7:]
-                        except Exception:
-                            pass  # Token extraction failed, will try next method
-
-                    # Priority 3: Fallback to environment variable
-                    if not token:
-                        token = os.getenv("CODE_PROVIDER_TOKEN")
-
-                    if not token:
-                        error_msg = "No authentication token available for GitBucket archive download"
-                        logger.error(f"ParsingHelper: {error_msg}")
-                        raise ValueError(error_msg)
-
-                    # GitBucket web endpoints (archive downloads) may require Basic Auth
-                    # Try token header format first (API standard per GitBucket docs)
-                    headers = {"Authorization": f"token {token}"}
-                    logger.debug(
-                        "ParsingHelper: Attempting archive download with token header"
-                    )
-
-                    response = requests.get(
-                        tarball_url, stream=True, headers=headers, timeout=30
-                    )
-
-                    # If token header fails with 401, try Basic Auth with repo owner username
-                    # GitBucket web endpoints sometimes require Basic Auth (supported since v4.3)
-                    if response.status_code == 401:
-                        logger.debug(
-                            "ParsingHelper: Token header auth failed, trying Basic Auth"
-                        )
-                        response.close()
-
-                        # Try Basic Auth with repo owner username and token as password
-                        if hasattr(repo, "owner") and hasattr(repo.owner, "login"):
-                            username = repo.owner.login
-                            basic_auth = requests.auth.HTTPBasicAuth(username, token)
-                            response = requests.get(
-                                tarball_url, stream=True, auth=basic_auth, timeout=30
-                            )
-                            logger.debug(
-                                f"ParsingHelper: Basic Auth response status: {response.status_code}"
-                            )
-            else:
-                # For GitHub and other providers, use standard token auth
-                headers = {}
-                if auth:
-                    headers = {"Authorization": f"token {auth.token}"}
-                response = requests.get(
-                    tarball_url, stream=True, headers=headers, timeout=30
-                )
-
-            response.raise_for_status()
-
-        except requests.exceptions.HTTPError as e:
-            # If we get 401, archive download might not be supported for private repos
-            # Fall back to git clone for GitBucket
-            status_code = None
-            if hasattr(e, "response") and e.response is not None:
-                status_code = e.response.status_code
-            elif "401" in str(e):
-                status_code = 401
-
-            if status_code == 401:
-                provider_type = os.getenv("CODE_PROVIDER", "github").lower()
-                if provider_type == "gitbucket":
-                    logger.info(
-                        "ParsingHelper: Archive download failed with 401 for GitBucket private repo, "
-                        "falling back to git clone"
-                    )
-                    return await self._clone_repository_with_auth(
-                        repo, branch, target_dir, user_id
-                    )
-
-            logger.exception("ParsingHelper: Failed to download repository archive")
-            raise ParsingFailedError("Failed to download repository archive") from e
-        except requests.exceptions.RequestException as e:
-            logger.exception("ParsingHelper: Error fetching tarball")
-            raise ParsingFailedError("Failed to download repository archive") from e
-        except Exception as e:
-            logger.exception("ParsingHelper: Unexpected error in tarball download")
-            raise ParsingFailedError(
-                "Unexpected error during repository download"
-            ) from e
-        tarball_path = os.path.join(
-            target_dir,
-            f"{repo.full_name.replace('/', '-').replace('.', '-')}-{branch.replace('/', '-').replace('.', '-')}.tar.gz",
-        )
-
-        final_dir = os.path.join(
-            target_dir,
-            f"{repo.full_name.replace('/', '-').replace('.', '-')}-{branch.replace('/', '-').replace('.', '-')}-{user_id}",
-        )
-
-        logger.info(f"ParsingHelper: Tarball path: {tarball_path}")
-        logger.info(f"ParsingHelper: Final directory: {final_dir}")
-
-        try:
-            logger.info(f"ParsingHelper: Writing tarball to {tarball_path}")
-            with open(tarball_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            tarball_size = os.path.getsize(tarball_path)
-            logger.info(
-                f"ParsingHelper: Successfully downloaded tarball, size: {tarball_size} bytes"
-            )
-
-            # Validate tarball size - very small files are likely error responses
-            if tarball_size < 100:
-                error_msg = (
-                    f"Tarball is suspiciously small ({tarball_size} bytes). "
-                    "This may indicate an error response from the server or an empty repository."
-                )
-                logger.error(f"ParsingHelper: {error_msg}")
-                raise ParsingFailedError(error_msg)
-
-            logger.info(f"ParsingHelper: Extracting tarball to {final_dir}")
-            try:
-                with tarfile.open(tarball_path, "r:gz") as tar:
-                    # Validate that the tarball is not empty
-                    if not tar.getmembers():
-                        error_msg = "Tarball contains no files"
-                        logger.error(f"ParsingHelper: {error_msg}")
-                        raise ParsingFailedError(error_msg)
-
-                    temp_dir = os.path.join(final_dir, "temp_extract")
-                    os.makedirs(temp_dir, exist_ok=True)
-                    tar.extractall(path=temp_dir)
-                    logger.info(
-                        f"ParsingHelper: Extracted tarball contents to {temp_dir}"
-                    )
-
-                    # Check if extraction directory has contents
-                    extracted_contents = os.listdir(temp_dir)
-                    if not extracted_contents:
-                        error_msg = (
-                            "Tarball extraction resulted in empty directory. "
-                            "The archive may be corrupted or the repository may be empty."
-                        )
-                        logger.error(f"ParsingHelper: {error_msg}")
-                        raise ParsingFailedError(error_msg)
-
-                    extracted_dir = os.path.join(temp_dir, extracted_contents[0])
-                    logger.info(
-                        f"ParsingHelper: Main extracted directory: {extracted_dir}"
-                    )
-
-                    text_files_count = 0
-                    for root, dirs, files in os.walk(extracted_dir):
-                        for file in files:
-                            if file.startswith("."):
-                                continue
-                            file_path = os.path.join(root, file)
-                            if self.is_text_file(file_path):
-                                try:
-                                    relative_path = os.path.relpath(
-                                        file_path, extracted_dir
-                                    )
-                                    dest_path = os.path.join(final_dir, relative_path)
-                                    os.makedirs(
-                                        os.path.dirname(dest_path), exist_ok=True
-                                    )
-                                    shutil.copy2(file_path, dest_path)
-                                    text_files_count += 1
-                                except (shutil.Error, OSError):
-                                    logger.exception(
-                                        "ParsingHelper: Error copying file",
-                                        file_path=file_path,
-                                    )
-
-                    logger.info(
-                        f"ParsingHelper: Copied {text_files_count} text files to final directory"
-                    )
-                    # Remove the temporary directory
-                    try:
-                        shutil.rmtree(temp_dir)
-                    except OSError:
-                        logger.exception("Error removing temporary directory")
-                        pass
-            except tarfile.TarError as e:
-                error_msg = f"Failed to extract tarball: {e}. The archive may be corrupted or invalid."
-                logger.error(f"ParsingHelper: {error_msg}")
-                raise ParsingFailedError(error_msg) from e
-
-        except (IOError, tarfile.TarError, shutil.Error) as e:
-            logger.exception("Error handling tarball")
-            raise ParsingFailedError("Failed to process repository archive") from e
-        finally:
-            if os.path.exists(tarball_path):
-                os.remove(tarball_path)
-
-        return final_dir
-
     async def _clone_repository_with_auth(self, repo, branch, target_dir, user_id):
         """
         Clone repository using git with authentication.
@@ -625,19 +345,13 @@ class ParseHelper:
             logger.exception("ParsingHelper: Git clone failed")
             # Clean up temp directory on error
             if os.path.exists(temp_clone_dir):
-                try:
-                    shutil.rmtree(temp_clone_dir)
-                except Exception:
-                    pass
+                shutil.rmtree(temp_clone_dir)
             raise ParsingFailedError(f"Failed to clone repository: {e}") from e
         except Exception as e:
             logger.exception("ParsingHelper: Unexpected error during git clone")
             # Clean up temp directory on error
             if os.path.exists(temp_clone_dir):
-                try:
-                    shutil.rmtree(temp_clone_dir)
-                except Exception:
-                    pass
+                shutil.rmtree(temp_clone_dir)
             raise ParsingFailedError(
                 f"Unexpected error during repository clone: {e}"
             ) from e
@@ -746,389 +460,15 @@ class ParseHelper:
         predominant_language = max(lang_count, key=lang_count.get)
         return predominant_language if lang_count[predominant_language] > 0 else "other"
 
-    async def setup_project_directory(
-        self,
-        repo,
-        branch,
-        auth,
-        repo_details,
-        user_id,
-        project_id=None,  # Change type to str
-        commit_id=None,
-    ):
-        # Check if this is a local repository by examining the repo object
-        # In development mode: repo is Repo object, repo_details is ParsingRequest
-        # In non-development mode: both repo and repo_details can be Repo objects
-        logger.info(
-            f"ParsingHelper: setup_project_directory called with repo type: {type(repo).__name__}, "
-            f"repo_details type: {type(repo_details).__name__}"
-        )
-
-        if isinstance(repo, Repo):
-            # Local repository - use full path from Repo object
-            repo_path = repo.working_tree_dir
-            full_name = repo_path.split("/")[
-                -1
-            ]  # Extract just the directory name for display
-            logger.info(
-                f"ParsingHelper: Detected local repository at {repo_path} with name {full_name}"
-            )
-        elif isinstance(repo_details, Repo):
-            # Alternative: repo_details is the Repo object (non-dev mode)
-            repo_path = repo_details.working_tree_dir
-            full_name = repo_path.split("/")[-1]
-            logger.info(
-                f"ParsingHelper: Detected local repository at {repo_path} with name {full_name}"
-            )
-        else:
-            # Remote repository - get name from repo_details (ParsingRequest)
-            repo_path = None
-            if hasattr(repo_details, "repo_name"):
-                full_name = repo_details.repo_name
-            else:
-                full_name = repo.full_name if hasattr(repo, "full_name") else None
-            logger.info(f"ParsingHelper: Detected remote repository {full_name}")
-
-        if full_name is None:
-            full_name = repo_path.split("/")[-1] if repo_path else "unknown"
-
-        # Normalize repository name for consistent database lookups
-        normalized_full_name = normalize_repo_name(full_name)
-        logger.info(
-            f"ParsingHelper: Original full_name: {full_name}, Normalized: {normalized_full_name}, repo_path: {repo_path}"
-        )
-
-        project = await self.project_manager.get_project_from_db(
-            normalized_full_name, branch, user_id, repo_path, commit_id
-        )
-        if not project:
-            project_id = await self.project_manager.register_project(
-                normalized_full_name,
-                branch,
-                user_id,
-                project_id,
-                commit_id=commit_id,
-                repo_path=repo_path,  # Pass repo_path when registering
-            )
-        if repo_path is not None:
-            # Local repository detected - return the path directly without downloading tarball
-            logger.info(f"ParsingHelper: Using local repository at {repo_path}")
-            return repo_path, project_id
-        if isinstance(repo_details, Repo):
-            extracted_dir = repo_details.working_tree_dir
-            try:
-                current_dir = os.getcwd()
-                os.chdir(extracted_dir)  # Change to the cloned repo directory
-                if commit_id:
-                    repo_details.git.checkout(commit_id)
-                    latest_commit_sha = commit_id
-                else:
-                    repo_details.git.checkout(branch)
-                    branch_details = repo_details.head.commit
-                    latest_commit_sha = branch_details.hexsha
-            except GitCommandError as e:
-                logger.error(
-                    f"Error checking out {'commit' if commit_id else 'branch'}: {e}"
-                )
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Failed to checkout {'commit ' + commit_id if commit_id else 'branch ' + branch}",
-                )
-            finally:
-                os.chdir(current_dir)  # Restore the original working directory
-        else:
-            try:
-                if commit_id:
-                    # For GitHub API, we need to download tarball for specific commit
-                    extracted_dir = await self.download_and_extract_tarball(
-                        repo,
-                        commit_id,
-                        str(Path(os.getenv("PROJECT_PATH", "projects/")).absolute()),
-                        auth,
-                        repo_details,
-                        user_id,
-                    )
-                    latest_commit_sha = commit_id
-                else:
-                    extracted_dir = await self.download_and_extract_tarball(
-                        repo,
-                        branch,
-                        str(Path(os.getenv("PROJECT_PATH", "projects/")).absolute()),
-                        auth,
-                        repo_details,
-                        user_id,
-                    )
-                    # Use repo.get_branch() instead of repo_details.get_branch()
-                    # repo is the MockRepo object (or PyGithub Repository) with get_branch method
-                    # repo_details can be ParsingRequest in dev mode, which doesn't have get_branch
-                    branch_details = repo.get_branch(branch)
-                    latest_commit_sha = branch_details.commit.sha
-            except ParsingFailedError as e:
-                logger.exception("Failed to download repository")
-                raise HTTPException(
-                    status_code=500, detail=f"Repository download failed: {e}"
-                ) from e
-            except Exception as e:
-                logger.exception("Unexpected error during repository download")
-                raise HTTPException(
-                    status_code=500, detail=f"Repository download failed: {e}"
-                ) from e
-
-        # Use repo instead of repo_details for metadata extraction
-        # repo is always the MockRepo (remote) or Repo (local) object with required methods
-        # repo_details can be ParsingRequest in dev mode, which lacks these methods
-        repo_metadata = ParseHelper.extract_repository_metadata(repo)
-        repo_metadata["error_message"] = None
-        project_metadata = json.dumps(repo_metadata).encode("utf-8")
-        ProjectService.update_project(
-            self.db,
-            project_id,
-            properties=project_metadata,
-            commit_id=latest_commit_sha,
-            status=ProjectStatusEnum.CLONED.value,
-        )
-
-        # Copy repo to .repos if repo manager is enabled
-        if self.repo_manager and extracted_dir and os.path.exists(extracted_dir):
-            try:
-                await self._copy_repo_to_repo_manager(
-                    normalized_full_name,
-                    extracted_dir,
-                    branch,
-                    latest_commit_sha,
-                    user_id,
-                    repo_metadata,
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to copy repo to repo manager: {e}. Continuing with parsing."
-                )
-
-        return extracted_dir, project_id
-
-    async def _copy_repo_to_repo_manager(
-        self,
-        repo_name: str,
-        extracted_dir: str,
-        branch: Optional[str],
-        commit_id: Optional[str],
-        user_id: str,
-        metadata: dict,
-    ):
-        """
-        Copy repository to .repos folder using git worktree and register with repo manager.
-
-        Args:
-            repo_name: Full repository name (e.g., 'owner/repo')
-            extracted_dir: Path to extracted repository
-            branch: Branch name
-            commit_id: Commit SHA
-            user_id: User ID
-            metadata: Repository metadata
-        """
-        if not self.repo_manager:
-            return
-
-        # Check if repo is already available
-        if self.repo_manager.is_repo_available(
-            repo_name, branch=branch, commit_id=commit_id, user_id=user_id
-        ):
-            logger.info(
-                f"Repo {repo_name}@{commit_id or branch} already available in repo manager"
-            )
-            # Update last accessed time
-            self.repo_manager.update_last_accessed(
-                repo_name, branch=branch, commit_id=commit_id, user_id=user_id
-            )
-            return
-
-        # Determine base repo path in .repos (hierarchical: owner/repo)
-        base_repo_path = self.repo_manager._get_repo_local_path(repo_name)
-
-        # Determine ref (commit_id takes precedence over branch)
-        ref = commit_id if commit_id else branch
-        if not ref:
-            logger.warning(
-                f"No branch or commit_id provided for {repo_name}, skipping worktree creation"
-            )
-            return
-
-        try:
-            # Initialize or get the base git repository
-            base_repo = self._initialize_base_repo(base_repo_path, extracted_dir)
-
-            # Create worktree for the specific branch/commit
-            worktree_path = self._create_worktree(
-                base_repo, ref, commit_id is not None, extracted_dir
-            )
-
-            logger.info(f"Created worktree for {repo_name}@{ref} at {worktree_path}")
-
-            # Register with repo manager (store worktree path)
-            self.repo_manager.register_repo(
-                repo_name=repo_name,
-                local_path=str(worktree_path),
-                branch=branch,
-                commit_id=commit_id,
-                user_id=user_id,
-                metadata=metadata,
-            )
-            logger.info(
-                f"Registered repo {repo_name}@{ref} with repo manager at {worktree_path}"
-            )
-        except Exception:
-            logger.exception("Error creating worktree for repo manager")
-            raise
-
-    def _initialize_base_repo(self, base_repo_path: Path, extracted_dir: str) -> Repo:
-        """
-        Initialize or get the base git repository.
-
-        If the base repo doesn't exist, initialize it and copy the extracted repo.
-        If it exists, return the existing repo.
-        """
-
-        # Check if base repo already exists and is a valid git repo
-        if base_repo_path.exists():
-            try:
-                base_repo = Repo(base_repo_path)
-                logger.info(f"Using existing base repo at {base_repo_path}")
-                return base_repo
-            except InvalidGitRepositoryError:
-                logger.warning(
-                    f"Path {base_repo_path} exists but is not a git repo, removing"
-                )
-                shutil.rmtree(base_repo_path)
-
-        # Create base directory
-        base_repo_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Initialize bare repository (worktrees need a bare or regular repo)
-        # We'll use a regular repo with a detached HEAD initially
-        logger.info(f"Initializing base git repository at {base_repo_path}")
-
-        # Copy extracted repo to base location
-        shutil.copytree(extracted_dir, base_repo_path, dirs_exist_ok=True)
-
-        # Initialize git repo if not already a git repo
-        try:
-            base_repo = Repo(base_repo_path)
-        except InvalidGitRepositoryError:
-            # Initialize new git repo
-            base_repo = Repo.init(base_repo_path)
-            # Add all files and create initial commit
-            base_repo.git.add(A=True)
-            try:
-                base_repo.index.commit("Initial commit from parsing")
-            except Exception as e:
-                logger.warning(f"Could not create initial commit: {e}")
-
-        return base_repo
-
-    def _create_worktree(
-        self, base_repo: Repo, ref: str, is_commit: bool, extracted_dir: str
-    ) -> Path:
-        """
-        Create a git worktree for the given ref.
-
-        Args:
-            base_repo: Base git repository
-            ref: Branch name or commit SHA
-            is_commit: Whether ref is a commit SHA
-            extracted_dir: Path to extracted repository (to copy files from)
-
-        Returns:
-            Path to the worktree
-        """
-        from git import GitCommandError
-
-        # Generate worktree path
-        base_path = Path(base_repo.working_tree_dir or base_repo.git_dir)
-        worktrees_dir = base_path / "worktrees"
-        worktree_name = ref.replace("/", "_").replace("\\", "_")
-        worktree_path = worktrees_dir / worktree_name
-
-        # Remove existing worktree if it exists
-        if worktree_path.exists():
-            try:
-                logger.info(f"Removing existing worktree at {worktree_path}")
-                base_repo.git.worktree("remove", str(worktree_path), force=True)
-            except GitCommandError:
-                # Worktree might not be registered, just remove directory
-                shutil.rmtree(worktree_path, ignore_errors=True)
-
-        # Create worktree directory
-        worktrees_dir.mkdir(parents=True, exist_ok=True)
-
-        try:
-            # Try to create worktree from existing ref
-            if is_commit:
-                # For commits, use detached HEAD
-                base_repo.git.worktree("add", str(worktree_path), ref, "--detach")
-            else:
-                # For branches, try to checkout branch
-                try:
-                    base_repo.git.worktree("add", str(worktree_path), ref)
-                except GitCommandError:
-                    # Branch might not exist, create it from extracted_dir
-                    # First, ensure the ref exists in the base repo
-                    # Copy files from extracted_dir to worktree and commit
-                    worktree_path.mkdir(parents=True, exist_ok=True)
-                    # Copy files
-                    for item in os.listdir(extracted_dir):
-                        if item == ".git":
-                            continue
-                        src = os.path.join(extracted_dir, item)
-                        dst = worktree_path / item
-                        if os.path.isdir(src):
-                            shutil.copytree(src, dst, dirs_exist_ok=True)
-                        else:
-                            shutil.copy2(src, dst)
-
-                    # Initialize worktree as new repo and add as worktree
-                    worktree_repo = Repo.init(worktree_path)
-                    worktree_repo.git.add(A=True)
-                    try:
-                        worktree_repo.index.commit(f"Initial commit for {ref}")
-                    except Exception:
-                        pass
-
-                    # Add remote reference in base repo if needed
-                    # For now, we'll just use the worktree directly
-                    logger.info(
-                        f"Created worktree directory at {worktree_path} with copied files"
-                    )
-        except GitCommandError as e:
-            logger.warning(f"Could not create worktree using git command: {e}")
-            # Fallback: create directory and copy files
-            if not worktree_path.exists():
-                worktree_path.mkdir(parents=True, exist_ok=True)
-
-            # Copy files from extracted_dir
-            for item in os.listdir(extracted_dir):
-                if item == ".git":
-                    continue
-                src = os.path.join(extracted_dir, item)
-                dst = worktree_path / item
-                if os.path.isdir(src):
-                    if dst.exists():
-                        shutil.rmtree(dst)
-                    shutil.copytree(src, dst)
-                else:
-                    shutil.copy2(src, dst)
-
-            logger.info(f"Created worktree at {worktree_path} by copying files")
-
-        return worktree_path
-
-    def extract_repository_metadata(repo):
+    def extract_repository_metadata(self, repo):
         if isinstance(repo, Repo):
             metadata = ParseHelper.extract_local_repo_metadata(repo)
         else:
             metadata = ParseHelper.extract_remote_repo_metadata(repo)
         return metadata
 
-    def extract_local_repo_metadata(repo):
+    @staticmethod
+    def extract_local_repo_metadata(repo: Repo):
         languages = ParseHelper.get_local_repo_languages(repo.working_tree_dir)
         total_bytes = sum(languages.values())
 
@@ -1160,25 +500,46 @@ class ParseHelper:
 
         return metadata
 
-    def get_local_repo_languages(path):
+    @staticmethod
+    def get_local_repo_languages(path: str | os.PathLike[str]) -> dict[str, int]:
+        root = Path(path).resolve()
+        if not root.exists():
+            return {}
+
+        language_bytes = defaultdict(int)
         total_bytes = 0
-        python_bytes = 0
 
-        for dirpath, _, filenames in os.walk(path):
-            for filename in filenames:
-                file_extension = os.path.splitext(filename)[1]
-                file_path = os.path.join(dirpath, filename)
-                file_size = os.path.getsize(file_path)
-                total_bytes += file_size
-                if file_extension == ".py":
-                    python_bytes += file_size
+        stack = [root]
 
-        languages = {}
-        if total_bytes > 0:
-            languages["Python"] = python_bytes
-            languages["Other"] = total_bytes - python_bytes
+        while stack:
+            current = stack.pop()
 
-        return languages
+            try:
+                entries = current.iterdir()
+                for entry in entries:
+                    try:
+                        if not entry.is_symlink() and entry.is_dir():
+                            stack.append(entry)
+                        elif not entry.is_symlink() and entry.is_file():
+                            size = entry.stat().st_size
+                            total_bytes += size
+
+                            if entry.suffix == ".py":
+                                language_bytes["Python"] += size
+                            elif entry.suffix == ".ts":
+                                language_bytes["TypeScript"] += size
+                            elif entry.suffix == ".js":
+                                language_bytes["JavaScript"] += size
+                            else:
+                                language_bytes["Other"] += size
+
+                    except OSError:
+                        # Permission issues, broken files, etc.
+                        continue
+            except OSError:
+                continue
+
+        return dict(language_bytes) if total_bytes else {}
 
     def extract_remote_repo_metadata(repo):
         languages = repo.get_languages()
