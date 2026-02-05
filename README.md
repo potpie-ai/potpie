@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://potpie.ai?utm_source=github">
-    <img src="./potpie-ui/public/images/potpie-newlogo.svg" width="318px" alt="Potpie AI logo" />
+    <img src="./assets/logo.svg" width="318px" alt="Potpie AI logo" />
   </a>
 </p>
 
