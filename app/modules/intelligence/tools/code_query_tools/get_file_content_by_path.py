@@ -96,7 +96,7 @@ class FetchFileTool:
         if include_line_number:
             lines = content.splitlines()
             numbered_lines = [
-                f"{starting_line+ i}:{line}" for i, line in enumerate(lines)
+                f"{starting_line + i}:{line}" for i, line in enumerate(lines)
             ]
             return "\n".join(numbered_lines)
         return content

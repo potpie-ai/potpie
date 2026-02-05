@@ -307,9 +307,9 @@ class ChangeDetectionTool:
         CALL {{
             WITH start
             MATCH (neighbor:Function {{project_id: $project_id}})-[:CALLS*]->(start)
-            RETURN neighbor{', neighbor.body AS body' if with_bodies else ''}
+            RETURN neighbor{", neighbor.body AS body" if with_bodies else ""}
         }}
-        RETURN start, collect({{neighbor: neighbor{', body: neighbor.body' if with_bodies else ''}}}) AS neighbors
+        RETURN start, collect({{neighbor: neighbor{", body: neighbor.body" if with_bodies else ""}}}) AS neighbors
         """
         endpoint_id = node_id
         result = tx.run(query, endpoint_id, project_id)

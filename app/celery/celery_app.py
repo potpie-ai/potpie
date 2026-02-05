@@ -265,7 +265,6 @@ def configure_litellm_for_celery():
                 import litellm.utils as litellm_utils
 
                 if hasattr(litellm_utils, "_client_async_logging_helper"):
-                    original_helper = litellm_utils._client_async_logging_helper
 
                     async def patched_helper(*args, **kwargs):
                         """

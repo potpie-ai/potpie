@@ -60,7 +60,7 @@ class SessionService:
 
             # Get stream info to determine cursor position
             try:
-                stream_info = self.redis_manager.redis_client.xinfo_stream(active_key)
+                self.redis_manager.redis_client.xinfo_stream(active_key)
                 # Get the latest event ID as cursor
                 latest_events = self.redis_manager.redis_client.xrevrange(
                     active_key, count=1

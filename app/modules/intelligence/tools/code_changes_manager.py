@@ -2447,7 +2447,7 @@ def _wrap_tool(func, input_model):
     sig = inspect.signature(func)
     param = list(sig.parameters.values())[0]
     new_param = param.replace(annotation=input_model)
-    new_sig = sig.replace(parameters=[new_param])
+    sig.replace(parameters=[new_param])
 
     # Use functools.update_wrapper with signature preservation
     functools.update_wrapper(wrapped_func, func)

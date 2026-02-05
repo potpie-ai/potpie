@@ -151,7 +151,7 @@ class GithubService:
                     decoded_content = content_bytes.decode("latin1", errors="replace")
             lines = decoded_content.splitlines()
 
-            if (start_line == end_line == 0) or (start_line == end_line == None):
+            if (start_line == end_line == 0) or (start_line == end_line is None):
                 return decoded_content
             # added -2 to start and end line to include the function definition/ decorator line
             # start = start_line - 2 if start_line - 2 > 0 else 0
@@ -499,7 +499,7 @@ class GithubService:
                 for installation in user_installations:
                     app_auth = auth.get_installation_auth(installation["id"])
                     repos_url = installation["repositories_url"]
-                    github = Github(auth=app_auth)  # do not remove this line
+                    Github(auth=app_auth)  # do not remove this line
                     auth_headers = {"Authorization": f"Bearer {app_auth.token}"}
 
                     async with session.get(

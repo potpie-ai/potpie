@@ -922,7 +922,7 @@ description:
                     elements = content.get("elements")
                     if elements:
                         return f"""
-{[ f''' {element.get("type")}: {element.get("name")} ''' for element in elements]}
+{[f''' {element.get("type")}: {element.get("name")} ''' for element in elements]}
 """
             return ""
         case "WebSearchTool":
@@ -942,13 +942,13 @@ description:
                     error_msg = f"Command failed with exit code {exit_code}"
                     if error:
                         error_msg += (
-                            f"\n\nError output:\n```\n{error[:min(len(error), 500)]}"
+                            f"\n\nError output:\n```\n{error[: min(len(error), 500)]}"
                         )
                         if len(error) > 500:
                             error_msg += " ..."
                         error_msg += "\n```"
                     if output:
-                        error_msg += f"\n\nStandard output:\n```\n{output[:min(len(output), 500)]}"
+                        error_msg += f"\n\nStandard output:\n```\n{output[: min(len(output), 500)]}"
                         if len(output) > 500:
                             error_msg += " ..."
                         error_msg += "\n```"
@@ -959,13 +959,13 @@ description:
                     )
                     if output:
                         result_msg += (
-                            f"\n\nOutput:\n```\n{output[:min(len(output), 1000)]}"
+                            f"\n\nOutput:\n```\n{output[: min(len(output), 1000)]}"
                         )
                         if len(output) > 1000:
                             result_msg += "\n... (output truncated)"
                         result_msg += "\n```"
                     if error:
-                        result_msg += f"\n\nWarning/Error output:\n```\n{error[:min(len(error), 500)]}"
+                        result_msg += f"\n\nWarning/Error output:\n```\n{error[: min(len(error), 500)]}"
                         if len(error) > 500:
                             result_msg += " ..."
                         result_msg += "\n```"
