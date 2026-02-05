@@ -2,13 +2,10 @@
 #    uv export --no-hashes --format requirements-txt --output-file requirements.txt
 ag-ui-protocol==0.1.10
     # via pydantic-ai-slim
-aiofiles==25.1.0
-    # via potpie
 aiohappyeyeballs==2.6.1
     # via aiohttp
 aiohttp==3.13.3
     # via
-    #   auth0-python
     #   firecrawl-py
     #   huggingface-hub
     #   instructor
@@ -57,8 +54,6 @@ attrs==25.4.0
     #   cyclopts
     #   jsonschema
     #   referencing
-auth0-python==5.0.0
-    # via potpie
 authlib==1.6.6
     # via
     #   fastmcp
@@ -143,7 +138,6 @@ croniter==6.0.0
     # via pydocket
 cryptography==46.0.4
     # via
-    #   auth0-python
     #   authlib
     #   google-auth
     #   potpie
@@ -211,7 +205,6 @@ fastuuid==0.14.0
 filelock==3.20.3
     # via
     #   huggingface-hub
-    #   potpie
     #   torch
     #   transformers
     #   virtualenv
@@ -317,7 +310,6 @@ httpcore==1.0.9
 httpx==0.28.1
     # via
     #   anthropic
-    #   auth0-python
     #   cohere
     #   fastmcp
     #   firebase-admin
@@ -398,10 +390,6 @@ joblib==1.5.3
     #   nltk
     #   potpie
     #   scikit-learn
-json-repair==0.56.0
-    # via potpie
-json5==0.13.0
-    # via potpie
 jsonpatch==1.33
     # via langchain-core
 jsonpointer==3.0.0
@@ -500,8 +488,6 @@ networkx==3.6.1 ; python_full_version >= '3.11'
     # via
     #   potpie
     #   torch
-newrelic==11.4.0
-    # via potpie
 nexus-rpc==1.2.0
     # via temporalio
 nltk==3.9.2
@@ -716,7 +702,6 @@ pydantic==2.12.5
     # via
     #   ag-ui-protocol
     #   anthropic
-    #   auth0-python
     #   cohere
     #   fastapi
     #   fastmcp
@@ -748,7 +733,6 @@ pydantic-ai-slim==1.54.0
     #   pydantic-evals
 pydantic-core==2.41.5
     # via
-    #   auth0-python
     #   cohere
     #   instructor
     #   pydantic
@@ -769,7 +753,6 @@ pygments==2.19.2
     #   rich
 pyjwt==2.11.0
     # via
-    #   auth0-python
     #   firebase-admin
     #   mcp
     #   potpie
@@ -779,18 +762,13 @@ pynacl==1.6.2
     # via
     #   potpie
     #   pygithub
-pypdf==6.6.2
-    # via potpie
 pyperclip==1.11.0
     # via
     #   fastmcp
     #   pydantic-ai-slim
 pytest==9.0.2
-    # via
-    #   potpie
-    #   pytest-asyncio
+    # via pytest-asyncio
 pytest-asyncio==1.3.0
-    # via potpie
 python-dateutil==2.9.0.post0
     # via
     #   botocore
@@ -851,7 +829,6 @@ regex==2026.1.15
     #   transformers
 requests==2.32.5
     # via
-    #   auth0-python
     #   cachecontrol
     #   cohere
     #   firecrawl-py
@@ -1039,7 +1016,6 @@ typing-extensions==4.15.0
     #   anthropic
     #   anyio
     #   astroid
-    #   auth0-python
     #   black
     #   cohere
     #   cryptography
@@ -1067,7 +1043,6 @@ typing-extensions==4.15.0
     #   pydantic-core
     #   pydocket
     #   pygithub
-    #   pypdf
     #   pytest-asyncio
     #   referencing
     #   resend
@@ -1097,7 +1072,6 @@ tzlocal==5.3.1
     # via celery
 urllib3==2.6.3
     # via
-    #   auth0-python
     #   botocore
     #   potpie
     #   pygithub
@@ -1121,9 +1095,7 @@ vine==5.1.0
     #   celery
     #   kombu
 virtualenv==20.36.1
-    # via
-    #   potpie
-    #   pre-commit
+    # via pre-commit
 wcwidth==0.5.3
     # via prompt-toolkit
 websockets==15.0.1
