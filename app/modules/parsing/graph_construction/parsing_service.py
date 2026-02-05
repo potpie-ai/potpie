@@ -1,6 +1,6 @@
+import asyncio
 import os
 import json
-import subprocess
 from asyncio import create_task
 from contextlib import contextmanager
 
@@ -196,23 +196,34 @@ class ParsingService:
                     extracted_dir = worktree
 
                 try:
-                    result = subprocess.run(
-                        ["git", "-C", extracted_dir, "rev-parse", "HEAD"],
-                        capture_output=True,
-                        text=True,
-                        timeout=30,
-                        check=True,
+                    proc = await asyncio.create_subprocess_exec(
+                        "git",
+                        "-C",
+                        extracted_dir,
+                        "rev-parse",
+                        "HEAD",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
                     )
-                    latest_commit_sha = result.stdout.strip()
-                    logger.info(
-                        f"Retrieved latest commit SHA for worktree {extracted_dir}: {latest_commit_sha[:8]}"
+                    stdout, stderr = await asyncio.wait_for(
+                        proc.communicate(), timeout=30
                     )
-                except subprocess.TimeoutExpired:
+                    if proc.returncode == 0:
+                        latest_commit_sha = stdout.decode().strip()
+                        logger.info(
+                            f"Retrieved latest commit SHA for worktree {extracted_dir}: {latest_commit_sha[:8]}"
+                        )
+                    else:
+                        logger.warning(
+                            f"Failed to get commit SHA from {extracted_dir}: {stderr.decode()}"
+                        )
+                        latest_commit_sha = None
+                except asyncio.TimeoutError:
                     logger.warning(f"Timeout getting commit SHA from {extracted_dir}")
                     latest_commit_sha = None
-                except subprocess.CalledProcessError as e:
+                except Exception as e:
                     logger.warning(
-                        f"Failed to get commit SHA from {extracted_dir}: {e.stderr}"
+                        f"Failed to get commit SHA from {extracted_dir}: {e}"
                     )
                     latest_commit_sha = None
 

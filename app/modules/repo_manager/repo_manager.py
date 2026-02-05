@@ -494,6 +494,11 @@ class RepoManager(IRepoManager):
         else:
             metadata = metadata_raw
 
+        # Merge top-level "type" into metadata for list_repos filtering
+        repo_type = raw_data.get("type")
+        if repo_type and not metadata.get("type"):
+            metadata["type"] = repo_type
+
         registered_at = self._deserialize_datetime(raw_data.get("registered_at"))
         last_accessed = self._deserialize_datetime(raw_data.get("last_accessed"))
 
