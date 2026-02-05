@@ -1,9 +1,9 @@
 <p align="center">
   <a href="https://potpie.ai?utm_source=github">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="./assets/logo_dark.png" />
-      <source media="(prefers-color-scheme: light)" srcset="./assets/logo_light.png" />
-      <img src="./assets/logo_light.png" width="318px" alt="Potpie AI logo" />
+      <source media="(prefers-color-scheme: dark)" srcset="./assets/logo_dark.svg" />
+      <source media="(prefers-color-scheme: light)" srcset="./assets/logo_light.svg" />
+      <img src="./assets/logo_light.svg" width="318px" alt="Potpie AI logo" />
     </picture>
   </a>
 </p>
