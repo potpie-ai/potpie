@@ -15,7 +15,7 @@ Design Principles:
 
 import json
 import os
-import random
+import secrets
 import shutil
 import subprocess
 from datetime import datetime, timedelta
@@ -171,7 +171,7 @@ class RepoManager(IRepoManager):
         if token_list_str:
             token_list = [t.strip() for t in token_list_str.split(",") if t.strip()]
             if token_list:
-                token = random.choice(token_list)
+                token = secrets.choice(token_list)
                 logger.info(f"Selected token from pool ({len(token_list)} available)")
                 return token
 

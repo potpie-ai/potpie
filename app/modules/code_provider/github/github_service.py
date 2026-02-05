@@ -1,6 +1,6 @@
 import asyncio
 import os
-import random
+import secrets
 import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
@@ -346,7 +346,7 @@ class GithubService:
                 if token_list_str:
                     tokens = [t.strip() for t in token_list_str.split(",") if t.strip()]
                     if tokens:
-                        github_oauth_token = random.choice(tokens)
+                        github_oauth_token = secrets.choice(tokens)
                         logger.info("Using token from GH_TOKEN_LIST as fallback")
 
                 # Fall back to CODE_PROVIDER_TOKEN if GH_TOKEN_LIST not available
@@ -698,7 +698,7 @@ class GithubService:
 
         # Use factory to create provider with PAT
 
-        token = random.choice(cls.gh_token_list)
+        token = secrets.choice(cls.gh_token_list)
         provider = GitHubProvider()
         provider.authenticate({"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN)
         return provider.client
