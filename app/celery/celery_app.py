@@ -129,22 +129,22 @@ def configure_celery(queue_prefix: str):
 configure_celery(queue_name)
 
 
-def setup_phoenix_tracing():
-    """Initialize Phoenix tracing for LLM monitoring in Celery workers."""
+def setup_logfire_tracing():
+    """Initialize Logfire tracing for LLM monitoring in Celery workers."""
     try:
-        from app.modules.intelligence.tracing.phoenix_tracer import (
-            initialize_phoenix_tracing,
+        from app.modules.intelligence.tracing.logfire_tracer import (
+            initialize_logfire_tracing,
         )
 
-        initialize_phoenix_tracing()
+        initialize_logfire_tracing()
     except Exception as e:
         logger.warning(
-            "Phoenix tracing initialization failed in Celery worker (non-fatal)",
+            "Logfire tracing initialization failed in Celery worker (non-fatal)",
             error=str(e),
         )
 
 
-setup_phoenix_tracing()
+setup_logfire_tracing()
 
 
 def configure_litellm_for_celery():
@@ -265,7 +265,6 @@ def configure_litellm_for_celery():
                 import litellm.utils as litellm_utils
 
                 if hasattr(litellm_utils, "_client_async_logging_helper"):
-                    original_helper = litellm_utils._client_async_logging_helper
 
                     async def patched_helper(*args, **kwargs):
                         """

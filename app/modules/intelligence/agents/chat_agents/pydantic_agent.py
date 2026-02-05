@@ -166,7 +166,7 @@ Backstory:
 {multimodal_instructions}
 
 CURRENT CONTEXT AND AGENT TASK OVERVIEW:
-{self._create_task_description(task_config=config.tasks[0],ctx=ctx)}
+{self._create_task_description(task_config=config.tasks[0], ctx=ctx)}
             """,
             "output_retries": 3,
             "output_type": str,
@@ -458,7 +458,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                     continue
 
         logger.info(
-            f"Final multimodal content has {len(content)} elements: 1 text + {len(content)-1} images"
+            f"Final multimodal content has {len(content)} elements: 1 text + {len(content) - 1} images"
         )
         return content
 

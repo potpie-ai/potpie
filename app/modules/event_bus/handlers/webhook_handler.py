@@ -49,7 +49,7 @@ class WebhookEventHandler:
 
         try:
             # Validate integration exists and is active
-            integrations_service = IntegrationsService(self.db)
+            IntegrationsService(self.db)
             # Note: For now, we'll skip integration validation in the event handler
             # since the webhook endpoints already validate the integration
             integration = {"active": True}  # Placeholder for validation

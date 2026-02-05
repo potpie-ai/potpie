@@ -230,7 +230,6 @@ class InferenceService:
         lines = node_text.split("\n")
         chunks = []
         current_chunk_lines = []
-        current_tokens = 0
 
         for line in lines:
             test_chunk = "\n".join(current_chunk_lines + [line])
@@ -248,10 +247,9 @@ class InferenceService:
                     }
                 )
                 current_chunk_lines = [line]
-                current_tokens = self.num_tokens_from_string(line, model)
+                self.num_tokens_from_string(line, model)
             else:
                 current_chunk_lines.append(line)
-                current_tokens = test_tokens
 
         # Add final chunk
         if current_chunk_lines:
@@ -290,7 +288,7 @@ class InferenceService:
             # Combine multiple chunk descriptions intelligently
             consolidated_text = f"This is a large code component split across {len(all_docstrings)} sections: "
             consolidated_text += " | ".join(
-                [f"Section {i+1}: {doc}" for i, doc in enumerate(all_docstrings)]
+                [f"Section {i + 1}: {doc}" for i, doc in enumerate(all_docstrings)]
             )
 
         # Create single consolidated docstring for parent node

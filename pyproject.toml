@@ -5,15 +5,11 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "agentops>=0.4.21",
     "aiofiles>=25.1.0",
     "aiohttp>=3.13.3",
     "alembic>=1.17.1",
     "anthropic>=0.72.0",
-    "arize-phoenix>=12.18.0",
-    "arize-phoenix-client>=1.26.0",
-    "arize-phoenix-evals>=2.6.1",
-    "arize-phoenix-otel>=0.14.0",
+    "logfire[litellm]>=3.2.0",
     "asyncpg>=0.30.0",
     "auth0-python>=4.13.0",
     "authlib>=1.6.6",
@@ -40,8 +36,6 @@ dependencies = [
     "json5>=0.9.28",
     "kombu>=5.5.4",
     "langchain>=1.0.3",
-    "langgraph>=1.0.2",
-    "langsmith>=0.4.41",
     "litellm>=1.80",
     "loguru>=0.7.3",
     "neo4j>=5.28.2",
@@ -49,13 +43,11 @@ dependencies = [
     "newrelic>=11.1.0",
     "nltk>=3.9.2",
     "openai>=2.7.1",
-    "openinference-instrumentation-litellm>=0.1.28",
-    "openinference-instrumentation-openai>=0.1.40",
-    "openinference-instrumentation-pydantic-ai>=0.1.9",
     "pathspec>=0.12.1",
     "pillow>=12.0.0",
     "postgres>=4.0",
     "posthog>=6.9.0",
+    "protobuf>=6.33.5",
     "psycopg-binary>=3.2.12",
     "pydantic-ai>=1.11.1",
     "pydantic[email]>=2.12.4",
@@ -63,12 +55,12 @@ dependencies = [
     "pygments>=2.19.2",
     "pyjwt>=2.10.1",
     "pynacl>=1.6.2",
-    "pypdf>=6.6.0",
+    "pypdf>=6.6.2",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
     "python-dotenv>=1.2.1",
     "pyasn1>=0.6.2",
-    "python-multipart>=0.0.20",
+    "python-multipart>=0.0.22",
     "redis>=7.0.1",
     "requests>=2.32.5",
     "resend>=2.19.0",
@@ -77,7 +69,6 @@ dependencies = [
     "sentry-sdk[fastapi]>=2.43.0",
     "sqlalchemy>=2.0.44",
     "tiktoken>=0.12.0",
-    "torch>=2.9.0",
     "tqdm>=4.67.1",
     "transformers>=4.57.1",
     "tree-sitter>=0.20.4",
@@ -86,6 +77,7 @@ dependencies = [
     "uuid6>=2025.0.1",
     "uvicorn>=0.38.0",
     "virtualenv>=20.36.1",
+    "greenlet>=3.3.0",
 ]
 
 [dependency-groups]
@@ -109,3 +101,16 @@ skips = ["B101", "B601"]  # Skip assert_used and shell injection warnings
 
 [tool.ruff]
 exclude = ["tests", "app/alembic"]
+
+[tool.pytest.ini_options]
+testpaths = ["app/modules/auth/tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "asyncio: Async tests",
+]
+asyncio_mode = "auto"
+addopts = "-v --strict-markers --tb=short --disable-warnings"
