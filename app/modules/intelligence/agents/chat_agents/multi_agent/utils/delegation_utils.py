@@ -206,7 +206,7 @@ def format_delegation_error(
 **Issue:** The subagent did not provide a properly formatted Task Result section
 
 **Raw Response (truncated):**
-{raw_response[:500]}{'...' if len(raw_response) > 500 else ''}
+{raw_response[:500]}{"..." if len(raw_response) > 500 else ""}
 
 **Recommendation:** The supervisor should retry the delegation with clearer instructions.
         """.strip()

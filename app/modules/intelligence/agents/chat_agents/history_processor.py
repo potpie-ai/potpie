@@ -214,28 +214,6 @@ class TokenAwareHistoryProcessor:
         )
 
         # Create a summary prompt
-        summary_prompt = f"""Summarize the following conversation history, preserving:
-1. Key decisions and conclusions
-2. Important context and findings
-3. Critical information needed for continuation
-4. Any unresolved questions or pending tasks
-5. Tool calls that were made and their outcomes (but not full tool result content)
-
-Omit:
-- Repetitive content
-- Verbose explanations that can be condensed
-- Full tool result content (summarize what tools did, not their full output)
-- Unnecessary details
-
-For tool calls/results:
-- Include: Tool name, what it was used for, key findings/outcomes
-- Exclude: Full file contents, long code snippets, verbose tool outputs
-
-Keep the summary concise but comprehensive enough to maintain context for future interactions.
-Target: approximately {self.target_summary_tokens} tokens.
-
-Conversation history to summarize:
-"""
 
         # LLM summarization is commented out - using simple truncation fallback instead
         # # Convert messages to a readable format for summarization
@@ -853,7 +831,7 @@ Conversation history to summarize:
 
         for i, msg in enumerate(messages):
             call_ids = self._extract_tool_call_ids_from_message(msg)
-            is_call = self._is_tool_call_message(msg)
+            self._is_tool_call_message(msg)
             is_result = self._is_tool_result_message(msg)
 
             for tool_call_id in call_ids:
@@ -876,7 +854,7 @@ Conversation history to summarize:
                         tool_call_ids_without_result.update(missing_results)
                         logger.debug(
                             f"[History Processor] Tool calls {missing_results} at message {i} "
-                            f"don't have results in next message {i+1}"
+                            f"don't have results in next message {i + 1}"
                         )
                 else:
                     # Tool call at the end with no next message
@@ -961,7 +939,7 @@ Conversation history to summarize:
                         if not self._is_llm_response_message(next_msg):
                             messages_to_skip.add(i + 1)
                             logger.debug(
-                                f"[History Processor] Also marking message {i+1} for removal "
+                                f"[History Processor] Also marking message {i + 1} for removal "
                                 f"(tool_result for removed tool_call)"
                             )
 
@@ -975,7 +953,7 @@ Conversation history to summarize:
                         ) and not self._is_llm_response_message(prev_msg):
                             messages_to_skip.add(i - 1)
                             logger.debug(
-                                f"[History Processor] Also marking message {i-1} for removal "
+                                f"[History Processor] Also marking message {i - 1} for removal "
                                 f"(tool_call for removed tool_result)"
                             )
 
@@ -1040,7 +1018,7 @@ Conversation history to summarize:
             max_iterations = 10
             iteration = 0
             current_messages = validated_messages
-            original_count = len(messages)
+            len(messages)
 
             while iteration < max_iterations:
                 previous_count = len(current_messages)
@@ -1081,7 +1059,7 @@ Conversation history to summarize:
 
                 for i, msg in enumerate(working_messages):
                     call_ids = working_tool_call_ids[i]
-                    is_call = self._is_tool_call_message(msg)
+                    self._is_tool_call_message(msg)
                     is_result = self._is_tool_result_message(msg)
 
                     for tool_call_id in call_ids:
@@ -1355,7 +1333,7 @@ Conversation history to summarize:
                 if is_tool_call and i + 1 < len(messages):
                     messages_to_skip.add(i + 1)
                     logger.debug(
-                        f"[History Processor] Removing tool call message {i} and its result message {i+1}"
+                        f"[History Processor] Removing tool call message {i} and its result message {i + 1}"
                     )
                 else:
                     logger.debug(f"[History Processor] Removing tool message {i}")
@@ -1591,9 +1569,9 @@ Conversation history to summarize:
 
                 # Log RunContext information if provided
                 if ctx is not None:
-                    f.write(f"\n{'='*50}\n")
+                    f.write(f"\n{'=' * 50}\n")
                     f.write("RunContext Information:\n")
-                    f.write(f"{'='*50}\n")
+                    f.write(f"{'=' * 50}\n")
                     try:
                         # Try to extract useful information from RunContext
                         ctx_info = {}
@@ -1634,9 +1612,9 @@ Conversation history to summarize:
                         f.write(f"RunContext type: {type(ctx)}\n")
                         f.write(f"RunContext repr: {repr(ctx)[:500]}\n")
 
-                f.write(f"\n{'='*50}\n")
+                f.write(f"\n{'=' * 50}\n")
                 f.write("CONTENT:\n")
-                f.write(f"{'='*50}\n\n")
+                f.write(f"{'=' * 50}\n\n")
                 f.write(content)
 
             logger.info(
@@ -1677,9 +1655,9 @@ Conversation history to summarize:
 
                 # Log RunContext information if provided
                 if ctx is not None:
-                    f.write(f"\n{'='*50}\n")
+                    f.write(f"\n{'=' * 50}\n")
                     f.write("RunContext Information:\n")
-                    f.write(f"{'='*50}\n")
+                    f.write(f"{'=' * 50}\n")
                     try:
                         ctx_info = {}
                         if hasattr(ctx, "usage") and ctx.usage:
@@ -1719,15 +1697,15 @@ Conversation history to summarize:
                         f.write(f"RunContext type: {type(ctx)}\n")
                         f.write(f"RunContext repr: {repr(ctx)[:500]}\n")
 
-                f.write(f"\n{'='*50}\n")
+                f.write(f"\n{'=' * 50}\n")
                 f.write("MESSAGE CONTENT (as sent to LLM):\n")
-                f.write(f"{'='*50}\n\n")
+                f.write(f"{'=' * 50}\n\n")
                 f.write(message_text)
 
                 # Also write a detailed breakdown of each message
-                f.write(f"\n\n{'='*50}\n")
+                f.write(f"\n\n{'=' * 50}\n")
                 f.write("DETAILED MESSAGE BREAKDOWN:\n")
-                f.write(f"{'='*50}\n\n")
+                f.write(f"{'=' * 50}\n\n")
                 for i, msg in enumerate(messages):
                     f.write(f"--- Message {i} ---\n")
                     f.write(f"Type: {type(msg).__name__}\n")

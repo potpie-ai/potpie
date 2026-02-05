@@ -241,7 +241,7 @@ def robust_llm_call(settings: Optional[RetrySettings] = None):
 
                     logger.warning(
                         f"{provider.capitalize()} API error: {str(e)}. "
-                        f"Retry {retries+1}/{settings.max_retries}, "
+                        f"Retry {retries + 1}/{settings.max_retries}, "
                         f"waiting {delay:.2f}s before next attempt..."
                     )
 
@@ -938,7 +938,6 @@ class ProviderService:
 
         # Build parameters
         params = self._build_llm_params(config)
-        routing_provider = config.provider
 
         request_kwargs = {
             key: params[key]
