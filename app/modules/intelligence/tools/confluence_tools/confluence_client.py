@@ -7,17 +7,18 @@ OAuth 2.0 (3LO) requires using api.atlassian.com endpoints with the cloud ID.
 API Reference: https://developer.atlassian.com/cloud/confluence/rest/v2/intro/
 """
 
-from app.modules.utils.logger import setup_logger
-
-logger = setup_logger(__name__)
 from typing import Dict, Any, Optional
+from datetime import datetime, timezone, timedelta
+
 from sqlalchemy.orm import Session
 import httpx
 
 from app.modules.integrations.integration_model import Integration
 from app.modules.integrations.integrations_schema import IntegrationType
 from app.modules.integrations.token_encryption import decrypt_token
-from datetime import datetime, timezone, timedelta
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 async def check_confluence_integration_exists(user_id: str, db: Session) -> bool:

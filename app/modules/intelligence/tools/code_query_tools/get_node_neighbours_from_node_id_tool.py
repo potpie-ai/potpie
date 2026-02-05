@@ -1,8 +1,5 @@
 import asyncio
 from typing import Any, Dict, List, Optional
-from app.modules.utils.logger import setup_logger
-
-logger = setup_logger(__name__)
 
 from langchain_core.tools import StructuredTool
 from neo4j import GraphDatabase
@@ -10,6 +7,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class GetNodeNeighboursInput(BaseModel):

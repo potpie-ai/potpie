@@ -14,7 +14,6 @@ from app.modules.auth.auth_provider_model import (
     UserAuthProvider,
     PendingProviderLink,
     OrganizationSSOConfig,
-    AuthAuditLog,
 )
 
 

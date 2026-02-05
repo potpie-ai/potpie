@@ -461,7 +461,6 @@ class MediaService:
                 ).update(
                     {MessageAttachment.message_id: message_id},
                     synchronize_session=False,
-                    )
                 )
 
                 # Update message has_attachments flag

@@ -6,14 +6,10 @@ They require a test database and mock SSO providers.
 """
 
 import pytest
-from datetime import datetime
-from unittest.mock import patch, Mock, AsyncMock
-
-from fastapi.testclient import TestClient
 from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from app.modules.auth.auth_router import auth_router
-from app.modules.auth.auth_provider_model import UserAuthProvider
 
 
 # Note: These tests require a test FastAPI app instance
@@ -62,7 +58,6 @@ class TestSSOLoginEndpoint:
         )
 
         assert response.status_code in [200, 202]
-        data = response.json()
         # Should be "needs_linking" since user has GitHub but not Google
 
     @pytest.mark.skip("Requires full FastAPI app setup")

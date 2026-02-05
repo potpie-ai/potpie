@@ -1,15 +1,17 @@
-from app.modules.utils.logger import setup_logger
-
-logger = setup_logger(__name__)
 from typing import Optional, Type, Dict, Any
+
 from pydantic import BaseModel, Field
 from redis import Redis
 from sqlalchemy.orm import Session
 from langchain_core.tools import StructuredTool
+
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_service import ProjectService
 from app.core.config_provider import config_provider
 from app.modules.intelligence.tools.tool_utils import truncate_response
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class FetchFileToolInput(BaseModel):

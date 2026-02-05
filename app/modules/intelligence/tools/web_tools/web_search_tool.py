@@ -1,8 +1,5 @@
 import os
 import asyncio
-from app.modules.utils.logger import setup_logger
-
-logger = setup_logger(__name__)
 from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
@@ -11,6 +8,9 @@ from sqlalchemy.orm import Session
 
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_utils import truncate_dict_response
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class WebSearchToolInput(BaseModel):

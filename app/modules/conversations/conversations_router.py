@@ -37,17 +37,15 @@ from .conversation.conversation_schema import (
 from .message.message_schema import MessageRequest, MessageResponse, RegenerateRequest
 from .session.session_service import SessionService
 from app.modules.users.user_schema import UserConversationListResponse
-
-router = APIRouter()
-logger = setup_logger(__name__)
-
-
 from app.modules.conversations.utils.conversation_routing import (
     normalize_run_id,
     ensure_unique_run_id,
     redis_stream_generator,
     start_celery_task_and_stream,
 )
+
+router = APIRouter()
+logger = setup_logger(__name__)
 
 
 async def get_stream(data_stream: AsyncGenerator[Any, None]):

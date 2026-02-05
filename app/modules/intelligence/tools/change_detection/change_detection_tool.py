@@ -1,8 +1,5 @@
 import asyncio
 import os
-from app.modules.utils.logger import setup_logger
-
-logger = setup_logger(__name__)
 from typing import Dict, List, Optional
 
 from fastapi import HTTPException
@@ -10,6 +7,7 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 from tree_sitter_language_pack import get_parser
 import pathspec
+from neo4j import GraphDatabase
 
 from app.core.database import get_db
 from app.core.config_provider import config_provider
@@ -23,7 +21,9 @@ from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
-from neo4j import GraphDatabase
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class ChangeDetectionInput(BaseModel):

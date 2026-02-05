@@ -1,7 +1,4 @@
 import os
-from app.modules.utils.logger import setup_logger
-
-logger = setup_logger(__name__)
 import warnings
 from collections import namedtuple
 from pathlib import Path
@@ -19,6 +16,9 @@ from tree_sitter_language_pack import get_language, get_parser
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_service import ProjectService
 from app.core.config_provider import config_provider
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 # tree_sitter is throwing a FutureWarning
 warnings.simplefilter("ignore", category=FutureWarning)

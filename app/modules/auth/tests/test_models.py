@@ -3,7 +3,7 @@ Unit tests for auth models
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.modules.auth.auth_provider_model import (
     UserAuthProvider,
@@ -28,7 +28,7 @@ class TestUserModel:
 
         assert primary is not None
         assert primary.provider_type == "firebase_github"
-        assert primary.is_primary == True
+        assert primary.is_primary
 
     def test_get_primary_provider_none(self, db_session, test_user):
         """Test get_primary_provider when user has no providers"""
@@ -37,8 +37,8 @@ class TestUserModel:
 
     def test_has_provider(self, db_session, test_user_with_github):
         """Test User.has_provider()"""
-        assert test_user_with_github.has_provider("firebase_github") == True
-        assert test_user_with_github.has_provider("sso_google") == False
+        assert test_user_with_github.has_provider("firebase_github")
+        assert not test_user_with_github.has_provider("sso_google")
 
     def test_organization_fields(self, db_session):
         """Test User has organization fields"""
@@ -249,7 +249,7 @@ class TestOrganizationSSOConfig:
 
         assert config.id is not None
         assert config.domain == "company.com"
-        assert config.enforce_sso == True
+        assert config.enforce_sso
 
     def test_unique_domain_constraint(self, db_session, org_sso_config):
         """Test unique constraint on domain"""
