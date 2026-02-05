@@ -59,11 +59,14 @@ class GithubService:
         self.is_development_mode = config_provider.get_is_development_mode()
 
     def get_github_repo_details(self, repo_name: str) -> Tuple[Github, Dict, str]:
-        private_key = (
-            "-----BEGIN RSA PRIVATE KEY-----\n"
-            + config_provider.get_github_key()
-            + "\n-----END RSA PRIVATE KEY-----\n"
-        )
+        private_key = config_provider.get_github_key()
+        # Add headers only if not already present
+        if not private_key.startswith("-----BEGIN"):
+            private_key = (
+                "-----BEGIN RSA PRIVATE KEY-----\n"
+                + private_key
+                + "\n-----END RSA PRIVATE KEY-----\n"
+            )
         app_id = os.environ["GITHUB_APP_ID"]
         auth = AppAuth(app_id=app_id, private_key=private_key)
         jwt = auth.create_jwt()
@@ -151,7 +154,7 @@ class GithubService:
                     decoded_content = content_bytes.decode("latin1", errors="replace")
             lines = decoded_content.splitlines()
 
-            if (start_line == end_line == 0) or (start_line == end_line == None):
+            if (start_line == end_line == 0) or (start_line == end_line is None):
                 return decoded_content
             # added -2 to start and end line to include the function definition/ decorator line
             # start = start_line - 2 if start_line - 2 > 0 else 0
@@ -265,9 +268,6 @@ class GithubService:
         return links
 
     async def get_repos_for_user(self, user_id: str):
-        if self.is_development_mode:
-            return {"repositories": []}
-
         import time  # Import the time module
 
         start_time = time.time()  # Start timing the entire method
@@ -367,11 +367,14 @@ class GithubService:
             user_orgs = user_github.get_user().get_orgs()
             org_logins = [org.login.lower() for org in user_orgs]
 
-            private_key = (
-                "-----BEGIN RSA PRIVATE KEY-----\n"
-                + config_provider.get_github_key()
-                + "\n-----END RSA PRIVATE KEY-----\n"
-            )
+            private_key = config_provider.get_github_key()
+            # Add headers only if not already present
+            if not private_key.startswith("-----BEGIN"):
+                private_key = (
+                    "-----BEGIN RSA PRIVATE KEY-----\n"
+                    + private_key
+                    + "\n-----END RSA PRIVATE KEY-----\n"
+                )
             app_id = os.environ["GITHUB_APP_ID"]
 
             auth = AppAuth(app_id=app_id, private_key=private_key)
@@ -499,7 +502,7 @@ class GithubService:
                 for installation in user_installations:
                     app_auth = auth.get_installation_auth(installation["id"])
                     repos_url = installation["repositories_url"]
-                    github = Github(auth=app_auth)  # do not remove this line
+                    _ = Github(auth=app_auth)  # Instantiate for side effects
                     auth_headers = {"Authorization": f"Bearer {app_auth.token}"}
 
                     async with session.get(

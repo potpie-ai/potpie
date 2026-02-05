@@ -554,7 +554,7 @@ class UniversalAnalyzeCodeTool:
 
             truncated_result = truncate_dict_response(result)
             if len(json.dumps(result)) > 80000:
-                logging.warning(
+                logger.warning(
                     f"analyze_code_structure output truncated for file {file_path}, project_id={project_id}"
                 )
             return truncated_result

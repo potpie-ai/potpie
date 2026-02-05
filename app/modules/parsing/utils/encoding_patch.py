@@ -52,7 +52,7 @@ def patched_open(
             except (UnicodeDecodeError, UnicodeError):
                 try:
                     f.close()
-                except:
+                except Exception:
                     pass
                 continue
             except Exception:

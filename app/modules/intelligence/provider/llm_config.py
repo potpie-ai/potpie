@@ -19,6 +19,7 @@ MODEL_CONFIG_MAP = {
         },
         "base_url": None,
         "api_version": None,
+        "auth_provider": "openai",
     },
     "openai/gpt-5.1": {
         "provider": "openai",
@@ -31,6 +32,7 @@ MODEL_CONFIG_MAP = {
         },
         "base_url": None,
         "api_version": None,
+        "auth_provider": "openai",
     },
     "openai/gpt-5-mini": {
         "provider": "openai",
@@ -43,6 +45,7 @@ MODEL_CONFIG_MAP = {
         },
         "base_url": None,
         "api_version": None,
+        "auth_provider": "openai",
     },
     # Anthropic Models
     "anthropic/claude-haiku-4-5-20251001": {

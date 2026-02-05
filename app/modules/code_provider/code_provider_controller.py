@@ -192,3 +192,71 @@ class CodeProviderController:
         except Exception:
             # If we can't access it, assume it's private or doesn't exist
             return False
+
+    async def get_repo_structure(
+        self, repo_name: str, branch_name: str
+    ) -> Dict[str, Any]:
+        """
+        Get repository file structure for a given repo and branch.
+
+        Args:
+            repo_name: Repository name (e.g., "owner/repo")
+            branch_name: Branch name
+
+        Returns:
+            Dictionary containing repository structure
+        """
+        from app.modules.utils.logger import setup_logger
+
+        logger = setup_logger(__name__)
+
+        try:
+            # Use fallback provider that tries PAT first, then GitHub App
+            provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
+
+            # Get repository object
+            repo = provider.get_repository(repo_name)
+
+            # Get the tree for the specified branch
+            try:
+                # Get branch reference
+                branch_ref = repo.get_branch(branch_name)
+                # Get the tree SHA from the commit
+                tree_sha = branch_ref.commit.commit.tree.sha
+                # Get the full tree recursively
+                tree = repo.get_git_tree(tree_sha, recursive=True)
+
+                # Build structure from tree
+                structure = []
+                for item in tree.tree:
+                    structure.append(
+                        {
+                            "path": item.path,
+                            "type": item.type,  # "blob" for file, "tree" for directory
+                            "size": item.size if item.type == "blob" else None,
+                            "sha": item.sha,
+                        }
+                    )
+
+                return {"structure": structure, "branch": branch_name}
+
+            except Exception as branch_error:
+                logger.error(
+                    f"Error getting tree for branch {branch_name}: {str(branch_error)}"
+                )
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Branch {branch_name} not found in repository {repo_name}",
+                )
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(
+                f"Error fetching repo structure for {repo_name}/{branch_name}: {str(e)}",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error fetching repository structure: {str(e)}",
+            )

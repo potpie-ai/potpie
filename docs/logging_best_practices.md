@@ -246,6 +246,42 @@ Set via `ENV=production` environment variable.
 
 **Solution**: Ensure you're using `log_context()` context manager, not just `logger.bind()`
 
+### GitHub Bad Credentials Error (401) in Development Mode
+
+**Problem**: Repositories not showing in development mode with error `github.GithubException.BadCredentialsException: 401 Bad credentials` even when `GH_TOKEN_LIST` contains valid Personal Access Tokens.
+
+**Root Cause**:
+- The system checks for stored OAuth tokens in the database (`users.provider_info` field) before falling back to `GH_TOKEN_LIST`
+- In development mode with `isDevelopmentMode=enabled`, the default user (`defaultuser`) may have expired or invalid OAuth tokens stored in the database
+- The authentication flow (in `github_service.py` lines 187-250) prioritizes database tokens over environment variable tokens, preventing valid fallback tokens from being used
+
+**Error Location**:
+- Error occurs at `github_service.py:367-368` when attempting to fetch user organizations
+- Authentication check in `github_service.py:get_github_oauth_token()` method (lines 187-250)
+- Fallback logic in `github_service.py:get_repos_for_user()` method (lines 340-363)
+
+**Solution**:
+1. Clear stale OAuth tokens from database:
+   ```sql
+   UPDATE users SET provider_info = NULL WHERE uid = 'defaultuser';
+   ```
+2. Verify `GH_TOKEN_LIST` is properly configured in `.env`:
+   ```bash
+   GH_TOKEN_LIST=ghp_token1,ghp_token2
+   ```
+3. Restart the backend to reload environment variables
+4. System will now fall back to valid `GH_TOKEN_LIST` tokens
+
+**Prevention**:
+- In development mode, consider prioritizing `GH_TOKEN_LIST` over database tokens
+- Implement token validation before using stored OAuth tokens
+- Add token expiration checks to prevent using expired credentials
+
+**Verification**:
+- Test tokens directly with GitHub API: `curl -H "Authorization: token ghp_xxx" https://api.github.com/user`
+- Check token scopes include: `repo`, `read:org`, `read:user`
+- Verify repositories endpoint returns data: `/github/user-repos`
+
 ## References
 
 - Loguru Documentation: https://loguru.readthedocs.io/

@@ -150,7 +150,6 @@ class LibraryParsingService:
 
         project_service = self._get_project_service()
         parse_helper = self._get_parse_helper()
-        inference_service = self._get_inference_service()
         extracted_dir = None
 
         try:

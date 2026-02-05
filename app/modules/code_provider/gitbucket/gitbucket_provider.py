@@ -187,7 +187,7 @@ class GitBucketProvider(ICodeProvider):
         try:
             self.get_repository(repo_name)
             return True
-        except:
+        except Exception:
             return False
 
     # ============ Content Operations ============
@@ -392,7 +392,7 @@ class GitBucketProvider(ICodeProvider):
                                 getattr(item, "size", 0) if hasattr(item, "size") else 0
                             )
                             item_sha = getattr(item, "sha", "")
-                        except:
+                        except Exception:
                             # Last resort: use empty defaults
                             item_type = "file"
                             item_path = ""
@@ -1068,8 +1068,6 @@ class GitBucketProvider(ICodeProvider):
         )
 
         try:
-            repo = self._get_repo(repo_name)
-
             # GitBucket uses a different URL format than GitHub API
             # The correct format is: http://hostname/owner/repo/archive/ref.format
             # We need to extract the base URL without /api/v3 and construct the proper path

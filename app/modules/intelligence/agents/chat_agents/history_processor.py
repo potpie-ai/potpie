@@ -213,13 +213,8 @@ class TokenAwareHistoryProcessor:
             f"Summarization disabled: would have summarized {len(messages)} messages ({total_msg_tokens} tokens)"
         )
 
-        # Create a summary prompt
-        summary_prompt = f"""Summarize the following conversation history, preserving:
-1. Key decisions and conclusions
-2. Important context and findings
-3. Critical information needed for continuation
-4. Any unresolved questions or pending tasks
-5. Tool calls that were made and their outcomes (but not full tool result content)
+        # Summary prompt would go here if needed in the future
+        # For now, we're using the basic truncation approach above
 
 Omit:
 - Repetitive content
@@ -1040,7 +1035,6 @@ Conversation history to summarize:
             max_iterations = 10
             iteration = 0
             current_messages = validated_messages
-            original_count = len(messages)
 
             while iteration < max_iterations:
                 previous_count = len(current_messages)
@@ -1081,7 +1075,6 @@ Conversation history to summarize:
 
                 for i, msg in enumerate(working_messages):
                     call_ids = working_tool_call_ids[i]
-                    is_call = self._is_tool_call_message(msg)
                     is_result = self._is_tool_result_message(msg)
 
                     for tool_call_id in call_ids:

@@ -575,7 +575,7 @@ class ChangeDetectionTool:
 
                 # GitBucket workaround: Use commits API to get diff
                 if provider_type == "gitbucket":
-                    logging.info(
+                    logger.info(
                         "[CHANGE_DETECTION] Using commits API for GitBucket diff"
                     )
 
@@ -604,7 +604,7 @@ class ChangeDetectionTool:
                                         f"[CHANGE_DETECTION] Reached common ancestor at commit {commit.sha[:7]}"
                                     )
                                     break
-                            except:
+                            except Exception:
                                 pass
 
                             # Get the commit details with files

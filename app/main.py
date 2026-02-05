@@ -129,16 +129,17 @@ class MainApp:
         logger.info("Logging context middleware configured")
 
     def setup_data(self):
+        # Initialize Firebase in both dev and production modes
+        FirebaseSetup.firebase_init()
+
+        # In development mode, also create dummy user for backend testing
         if os.getenv("isDevelopmentMode") == "enabled":
-            logger.info("Development mode enabled. Skipping Firebase setup.")
-            # Setup dummy user for development mode
+            logger.info("Development mode enabled. Creating dummy user for backend testing.")
             db = SessionLocal()
             user_service = UserService(db)
             user_service.setup_dummy_user()
             db.close()
             logger.info("Dummy user created")
-        else:
-            FirebaseSetup.firebase_init()
 
     def initialize_database(self):
         # Initialize database tables

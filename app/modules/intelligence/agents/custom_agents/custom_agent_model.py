@@ -1,7 +1,10 @@
 from sqlalchemy import Column, DateTime, ForeignKeyConstraint, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
-from typing import List
+from typing import List, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.modules.users.user_model import User
 
 from app.core.base_model import Base
 

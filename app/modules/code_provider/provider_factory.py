@@ -297,6 +297,7 @@ class CodeProviderFactory:
             )
 
         # Check if GitHub App is configured (only relevant for GitHub provider)
+        # In dev mode, skip GitHub App and use PAT directly
         app_id = os.getenv("GITHUB_APP_ID")
         private_key = (
             config_provider.get_github_key()
@@ -304,9 +305,10 @@ class CodeProviderFactory:
             else None
         )
         is_github_app_configured = bool(app_id and private_key)
+        use_github_app = getattr(config_provider, 'use_github_app', True)
 
-        # For GitHub with App configured: Try GitHub App first, then PAT
-        if provider_type == ProviderType.GITHUB and is_github_app_configured:
+        # For GitHub with App configured: Try GitHub App first (unless dev mode), then PAT
+        if provider_type == ProviderType.GITHUB and is_github_app_configured and use_github_app:
             logger.info(
                 "GitHub App is configured, trying App auth first", repo_name=repo_name
             )
@@ -317,6 +319,10 @@ class CodeProviderFactory:
                     f"GitHub App authentication failed for {repo_name}: {e}, falling back to PAT"
                 )
                 # Continue to PAT fallback below
+        elif provider_type == ProviderType.GITHUB and is_github_app_configured and not use_github_app:
+            logger.info(
+                "Development mode: Skipping GitHub App auth, using PAT directly", repo_name=repo_name
+            )
 
         # For GitHub: Try GH_TOKEN_LIST first (where GitHub PATs are stored)
         # For other providers: Try CODE_PROVIDER_TOKEN first

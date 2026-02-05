@@ -8,8 +8,11 @@ from .storage_strategies import (
     GCSStorageStrategy,
     AzureStorageStrategy,
 )
+from app.modules.utils.logger import setup_logger
 
 load_dotenv()
+
+logger = setup_logger(__name__)
 
 
 class MediaServiceConfigError(Exception):
@@ -25,8 +28,26 @@ class ConfigProvider:
             "username": os.getenv("NEO4J_USERNAME"),
             "password": os.getenv("NEO4J_PASSWORD"),
         }
-        self.github_key = os.getenv("GITHUB_PRIVATE_KEY")
+
+        # GitHub authentication configuration
+        # In dev mode: always use PAT directly
+        # In production: use GitHub App if configured, fallback to PAT
         self.is_development_mode = os.getenv("isDevelopmentMode", "disabled")
+        self.github_app_id = os.getenv("GITHUB_APP_ID")
+        self.github_key = os.getenv("GITHUB_PRIVATE_KEY")
+
+        if self.is_development_mode == "enabled":
+            # Dev mode: Force PAT authentication, ignore GitHub App
+            logger.info("Development mode: Using GitHub PAT authentication (GitHub App disabled)")
+            self.use_github_app = False
+        else:
+            # Production mode: Use GitHub App if both credentials are present
+            if self.github_app_id and self.github_key:
+                logger.info("Production mode: GitHub App credentials found, will use App authentication")
+                self.use_github_app = True
+            else:
+                logger.info("Production mode: GitHub App credentials not found, will fallback to PAT authentication")
+                self.use_github_app = False
         self.is_multimodal_enabled = os.getenv("isMultimodalEnabled", "auto")
         self.gcp_project_id = os.getenv("GCS_PROJECT_ID")
         self.gcp_bucket_name = os.getenv("GCS_BUCKET_NAME")

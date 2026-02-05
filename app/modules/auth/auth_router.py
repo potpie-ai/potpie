@@ -7,11 +7,10 @@ from dotenv import load_dotenv
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import HTTPException
+from fastapi.security import HTTPAuthorizationCredentials
 
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-
-logger = logging.getLogger(__name__)
 
 from app.core.database import get_db
 from app.modules.auth.auth_schema import (
@@ -23,10 +22,10 @@ from app.modules.auth.auth_schema import (
     UserAuthProvidersResponse,
     AuthProviderResponse,
     AccountResponse,
+    AuthProviderCreate,
 )
 from app.modules.auth.auth_service import auth_handler, AuthService
 from app.modules.auth.auth_provider_model import UserAuthProvider
-from app.modules.auth.auth_schema import AuthProviderCreate
 from app.modules.auth.unified_auth_service import (
     UnifiedAuthService,
     PROVIDER_TYPE_FIREBASE_GITHUB,
@@ -36,6 +35,8 @@ from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
 from app.modules.utils.posthog_helper import PostHogClient
 from app.modules.utils.email_helper import is_personal_email_domain
+
+logger = logging.getLogger(__name__)
 
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", None)
 
@@ -698,7 +699,14 @@ class AuthAPI:
         """Set a provider as the primary login method"""
         try:
             # Get user from auth token
-            user_data = await auth_handler.check_auth(request, None)
+            # Extract credentials from request header
+            auth_header = request.headers.get("Authorization")
+            credential = None
+            if auth_header and auth_header.startswith("Bearer "):
+                token = auth_header.replace("Bearer ", "")
+                credential = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+            user_data = await auth_handler.check_auth(request, Response(), credential)
             user_id = user_data.get("user_id")
 
             if not user_id:
@@ -739,7 +747,14 @@ class AuthAPI:
         """Unlink a provider from account"""
         try:
             # Get user from auth token
-            user_data = await auth_handler.check_auth(request, None)
+            # Extract credentials from request header
+            auth_header = request.headers.get("Authorization")
+            credential = None
+            if auth_header and auth_header.startswith("Bearer "):
+                token = auth_header.replace("Bearer ", "")
+                credential = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+            user_data = await auth_handler.check_auth(request, Response(), credential)
             user_id = user_data.get("user_id")
 
             if not user_id:
@@ -788,7 +803,14 @@ class AuthAPI:
         """Get complete account information including all providers"""
         try:
             # Get user from auth token
-            user_data = await auth_handler.check_auth(request, None)
+            # Extract credentials from request header
+            auth_header = request.headers.get("Authorization")
+            credential = None
+            if auth_header and auth_header.startswith("Bearer "):
+                token = auth_header.replace("Bearer ", "")
+                credential = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+            user_data = await auth_handler.check_auth(request, Response(), credential)
             user_id = user_data.get("user_id")
 
             if not user_id:
