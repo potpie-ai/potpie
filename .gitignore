@@ -10,6 +10,7 @@ venv/
 .env
 *.json
 .momentum
+.encryption_key_persistent
 db
 cli/momentum_cli/.momentum
 .hypothesis

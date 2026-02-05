@@ -35,7 +35,9 @@ class TokenEncryption:
                 else:
                     # Generate new key and persist it
                     encryption_key = Fernet.generate_key().decode()
-                    with open(key_file, 'w') as f:
+                    # Create file with restrictive permissions (owner read/write only)
+                    fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    with os.fdopen(fd, 'w') as f:
                         f.write(encryption_key)
                     logger.warning(
                         f"Generated and saved encryption key to {key_file}"
