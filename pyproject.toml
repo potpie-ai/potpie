@@ -101,3 +101,16 @@ skips = ["B101", "B601"]  # Skip assert_used and shell injection warnings
 
 [tool.ruff]
 exclude = ["tests", "app/alembic"]
+
+[tool.pytest.ini_options]
+testpaths = ["app/modules/auth/tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "asyncio: Async tests",
+]
+asyncio_mode = "auto"
+addopts = "-v --strict-markers --tb=short --disable-warnings"
