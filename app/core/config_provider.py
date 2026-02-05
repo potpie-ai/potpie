@@ -53,6 +53,8 @@ class ConfigProvider:
                 logger.error(f"Failed to read GitHub private key from {private_key_path}: {e}")
                 # Fall back to environment variable
                 self.github_key = os.getenv("GITHUB_PRIVATE_KEY")
+                if not self.github_key:
+                    logger.warning("GITHUB_PRIVATE_KEY also not set - GitHub App authentication will not work")
         else:
             # No path specified, use environment variable directly
             self.github_key = os.getenv("GITHUB_PRIVATE_KEY")

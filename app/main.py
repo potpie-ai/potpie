@@ -136,10 +136,12 @@ class MainApp:
         if os.getenv("isDevelopmentMode") == "enabled":
             logger.info("Development mode enabled. Creating dummy user for backend testing.")
             db = SessionLocal()
-            user_service = UserService(db)
-            user_service.setup_dummy_user()
-            db.close()
-            logger.info("Dummy user created")
+            try:
+                user_service = UserService(db)
+                user_service.setup_dummy_user()
+                logger.info("Dummy user created")
+            finally:
+                db.close()
 
     def initialize_database(self):
         # Initialize database tables
