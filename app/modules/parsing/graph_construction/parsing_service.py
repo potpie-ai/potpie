@@ -393,8 +393,15 @@ class ParsingService:
                     project_id, ProjectStatusEnum.READY
                 )
                 if not self._raise_library_exceptions and user_email:
-                    create_task(
+                    task = create_task(
                         EmailHelper().send_email(user_email, repo_name, branch_name)
+                    )
+                    task.add_done_callback(
+                        lambda t: logger.exception(
+                            "Failed to send email", exc_info=t.exception()
+                        )
+                        if t.exception()
+                        else None
                     )
                 logger.info(f"DEBUGNEO4J: After update project status {project_id}")
                 self.inference_service.log_graph_stats(project_id)

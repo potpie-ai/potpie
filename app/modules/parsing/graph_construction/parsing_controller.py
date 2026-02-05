@@ -1,3 +1,4 @@
+import asyncio
 import os
 from asyncio import create_task
 from typing import Any, Dict
@@ -149,10 +150,17 @@ class ParsingController:
                         repo_name
                     )
 
-                    asyncio.create_task(
+                    task = asyncio.create_task(
                         CodeProviderService(db).get_project_structure_async(
                             new_project_id
                         )
+                    )
+                    task.add_done_callback(
+                        lambda t: logger.exception(
+                            "Failed to get project structure", exc_info=t.exception()
+                        )
+                        if t.exception()
+                        else None
                     )
                     # Duplicate the graph under the new repo ID
                     await parsing_service.duplicate_graph(
@@ -163,10 +171,17 @@ class ParsingController:
                     await project_manager.update_project_status(
                         new_project_id, ProjectStatusEnum.READY
                     )
-                    create_task(
+                    email_task = create_task(
                         EmailHelper().send_email(
                             user_email, repo_name, repo_details.branch_name
                         )
+                    )
+                    email_task.add_done_callback(
+                        lambda t: logger.exception(
+                            "Failed to send email", exc_info=t.exception()
+                        )
+                        if t.exception()
+                        else None
                     )
 
                     return {
