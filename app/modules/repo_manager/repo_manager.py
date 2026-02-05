@@ -392,7 +392,7 @@ class RepoManager(IRepoManager):
                 logger.info(
                     f"Volume limit would be exceeded (current: {current_total:,}, new: {volume_bytes:,}, limit: {self.volume_limit_bytes:,}). Evicting LRU repos..."
                 )
-                evicted = self._evict_lru_repos_until_space_available(volume_bytes)
+                self._evict_lru_repos_until_space_available(volume_bytes)
                 # Check if we freed enough space
                 new_total = self.get_total_volume_bytes()
                 if new_total + volume_bytes > self.volume_limit_bytes:

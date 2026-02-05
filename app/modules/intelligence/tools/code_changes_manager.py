@@ -2444,10 +2444,6 @@ def _wrap_tool(func, input_model):
 
     # Use functools.wraps but update the annotation to use the input_model
     # This preserves the signature for PydanticAI introspection
-    sig = inspect.signature(func)
-    param = list(sig.parameters.values())[0]
-    new_param = param.replace(annotation=input_model)
-    new_sig = sig.replace(parameters=[new_param])
 
     # Use functools.update_wrapper with signature preservation
     functools.update_wrapper(wrapped_func, func)

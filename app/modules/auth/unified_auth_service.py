@@ -1250,7 +1250,7 @@ class UnifiedAuthService:
             .filter(
                 and_(
                     OrganizationSSOConfig.domain == domain,
-                    OrganizationSSOConfig.is_active == True,
+                    OrganizationSSOConfig.is_active,
                 )
             )
             .first()

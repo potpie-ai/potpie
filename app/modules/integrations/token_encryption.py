@@ -25,21 +25,27 @@ class TokenEncryption:
             encryption_key = os.getenv("ENCRYPTION_KEY")
 
             if not encryption_key:
-                # Generate a new key if none exists (for development)
+                # Auto-generate and persist key to file (works in both dev and prod)
+                key_file = ".encryption_key_persistent"
+                if os.path.exists(key_file):
+                    # Load existing persisted key
+                    with open(key_file, 'r') as f:
+                        encryption_key = f.read().strip()
+                    logger.info(f"Loaded persisted encryption key from {key_file}")
+                else:
+                    # Generate new key and persist it
+                    encryption_key = Fernet.generate_key().decode()
+                    with open(key_file, 'w') as f:
+                        f.write(encryption_key)
+                    logger.warning(
+                        f"Generated and saved encryption key to {key_file}"
+                    )
+                    # Log a non-reversible fingerprint for debugging
+                    key_fingerprint = hashlib.sha256(encryption_key.encode()).hexdigest()[:8]
+                    logger.debug(f"Key fingerprint: {key_fingerprint}")
+
                 logger.warning(
-                    "ENCRYPTION_KEY not found in environment. Generating new key for development."
-                )
-                encryption_key = Fernet.generate_key().decode()
-                # Log a non-reversible fingerprint for debugging (first 8 chars of SHA256)
-                # Using DEBUG level to avoid exposing key generation events in production logs
-                key_fingerprint = hashlib.sha256(encryption_key.encode()).hexdigest()[
-                    :8
-                ]
-                logger.debug(
-                    f"Generated encryption key for development (fingerprint: {key_fingerprint})"
-                )
-                logger.warning(
-                    "IMPORTANT: Set ENCRYPTION_KEY environment variable in production!"
+                    "IMPORTANT: For better security, set ENCRYPTION_KEY environment variable!"
                 )
 
             # Ensure key is properly formatted
@@ -89,7 +95,32 @@ class TokenEncryption:
             return decrypted_bytes.decode()
 
         except Exception as e:
-            logger.exception("Failed to decrypt token")
+            # Try OLD_ENCRYPTION_KEY for key rotation support
+            old_key = os.getenv("OLD_ENCRYPTION_KEY")
+            if old_key:
+                try:
+                    logger.info("Attempting decryption with OLD_ENCRYPTION_KEY")
+                    # Format old key
+                    if isinstance(old_key, str):
+                        old_key = old_key.encode()
+                    if len(old_key) != 32:
+                        if len(old_key) < 32:
+                            old_key = old_key.ljust(32, b"0")
+                        else:
+                            old_key = old_key[:32]
+
+                    old_fernet = Fernet(base64.urlsafe_b64encode(old_key))
+                    decrypted_bytes = old_fernet.decrypt(encrypted_token.encode())
+                    logger.warning(
+                        "Token was encrypted with old key. "
+                        "It will be re-encrypted with new key on next update."
+                    )
+                    return decrypted_bytes.decode()
+                except Exception as old_key_error:
+                    logger.debug(f"OLD_ENCRYPTION_KEY also failed: {old_key_error}")
+
+            # Both current and old keys failed
+            logger.exception("Failed to decrypt token with current and old keys")
             raise Exception(f"Token decryption failed: {str(e)}")
 
 

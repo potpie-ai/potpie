@@ -15,8 +15,8 @@ async def get_user_repos(
     user=Depends(AuthService.check_auth), db: Session = Depends(get_db)
 ):
     user_repo_list = await CodeProviderController(db).get_user_repos(user=user)
-    if not config_provider.get_is_development_mode():
-        user_repo_list["repositories"].extend(config_provider.get_demo_repo_list())
+    # Add demo repos in both dev and production for testing
+    user_repo_list["repositories"].extend(config_provider.get_demo_repo_list())
 
     # Remove duplicates while preserving order
     seen = set()
@@ -49,3 +49,16 @@ async def check_public_repo(
     db: Session = Depends(get_db),
 ):
     return await CodeProviderController(db).check_public_repo(repo_name=repo_name)
+
+
+@router.get("/github/repo-structure")
+async def get_repo_structure(
+    repo_name: str = Query(..., description="Repository name"),
+    branch_name: str = Query(..., description="Branch name"),
+    user=Depends(AuthService.check_auth),
+    db: Session = Depends(get_db),
+):
+    """Get repository file structure for a given repo and branch"""
+    return await CodeProviderController(db).get_repo_structure(
+        repo_name=repo_name, branch_name=branch_name
+    )

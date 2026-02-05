@@ -212,11 +212,17 @@ def execute_agent_background(
             return completed
 
         except Exception as e:
+            # Log comprehensive error details with full traceback
             logger.exception(
-                "Background agent execution failed",
-                conversation_id=conversation_id,
-                run_id=run_id,
-                user_id=user_id,
+                f"Agent execution failed for conversation {conversation_id}",
+                extra={
+                    "conversation_id": conversation_id,
+                    "run_id": run_id,
+                    "user_id": user_id,
+                    "agent_id": agent_id,
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                }
             )
 
             # Set task status to error
@@ -229,13 +235,17 @@ def execute_agent_background(
                     run_id=run_id,
                 )
 
-            # Ensure end event is always published
+            # Ensure end event is always published with detailed error info
             try:
                 redis_manager.publish_event(
                     conversation_id,
                     run_id,
                     "end",
-                    {"status": "error", "message": str(e)},
+                    {
+                        "status": "error",
+                        "message": str(e),
+                        "error_type": type(e).__name__
+                    },
                 )
             except Exception:
                 logger.exception(
@@ -243,7 +253,8 @@ def execute_agent_background(
                     conversation_id=conversation_id,
                     run_id=run_id,
                 )
-            raise
+            # Don't re-raise - error already published to stream
+            # Re-raising causes Celery to log it again without helping the user
 
 
 @celery_app.task(
@@ -423,11 +434,16 @@ def execute_regenerate_background(
         return completed
 
     except Exception as e:
+        # Log comprehensive error details with full traceback
         logger.exception(
-            "Background regenerate execution failed",
-            conversation_id=conversation_id,
-            run_id=run_id,
-            user_id=user_id,
+            f"Regenerate execution failed for conversation {conversation_id}",
+            extra={
+                "conversation_id": conversation_id,
+                "run_id": run_id,
+                "user_id": user_id,
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+            }
         )
 
         # Set task status to error
@@ -441,13 +457,17 @@ def execute_regenerate_background(
                 user_id=user_id,
             )
 
-        # Ensure end event is always published
+        # Ensure end event is always published with detailed error info
         try:
             redis_manager.publish_event(
                 conversation_id,
                 run_id,
                 "end",
-                {"status": "error", "message": str(e)},
+                {
+                    "status": "error",
+                    "message": str(e),
+                    "error_type": type(e).__name__
+                },
             )
         except Exception:
             logger.exception(
@@ -456,4 +476,5 @@ def execute_regenerate_background(
                 run_id=run_id,
                 user_id=user_id,
             )
-        raise
+        # Don't re-raise - error already published to stream
+        # Re-raising causes Celery to log it again without helping the user

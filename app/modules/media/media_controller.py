@@ -126,9 +126,6 @@ class MediaController:
             # Get the file data from storage
             file_data = await self.media_service.get_attachment_data(attachment_id)
 
-            # Create streaming response
-            file_stream = io.BytesIO(file_data)
-
             # Set appropriate headers
             headers = {
                 "Content-Disposition": f'inline; filename="{attachment.file_name}"',

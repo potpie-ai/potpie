@@ -69,7 +69,7 @@ class MessageStore(BaseStore):
                 Message.conversation_id == conversation_id,
                 Message.type == MessageType.HUMAN,
                 Message.status == MessageStatus.ACTIVE,
-                Message.has_attachments == True,
+                Message.has_attachments,
             )
             .order_by(Message.created_at.desc())
         )

@@ -81,7 +81,7 @@ class LocalRepoService:
             file_full_path = os.path.join(repo_path, file_path)
             with open(file_full_path, "r", encoding="utf-8") as file:
                 lines = file.readlines()
-                if (start_line == end_line == 0) or (start_line == end_line == None):
+                if (start_line == end_line == 0) or (start_line == end_line is None):
                     return "".join(lines)
                 start = start_line - 2 if start_line - 2 > 0 else 0
                 selected_lines = lines[start:end_line]

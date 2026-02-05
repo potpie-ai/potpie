@@ -36,3 +36,13 @@ async def get_parsing_status_by_repo(
     user=Depends(AuthService.check_auth),
 ):
     return await ParsingController.fetch_parsing_status_by_repo(request, db, user)
+
+
+@router.post("/check-status")
+async def check_parsing_status(
+    request: ParsingStatusRequest,
+    db: Session = Depends(get_db),
+    user=Depends(AuthService.check_auth),
+):
+    """Check if a repository/branch is already parsed (alias for parsing-status)"""
+    return await ParsingController.fetch_parsing_status_by_repo(request, db, user)

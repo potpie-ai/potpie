@@ -57,7 +57,8 @@ class AuthService:
         logging.info("DEBUG: Credential provided: %s", credential is not None)
 
         # Check if the application is in debug mode
-        if os.getenv("isDevelopmentMode") == "enabled" and credential is None:
+        if os.getenv("isDevelopmentMode") == "enabled":
+            # In development mode, always use mock authentication
             request.state.user = {"user_id": os.getenv("defaultUsername")}
             logging.info("DEBUG: Development mode enabled. Using Mock Authentication.")
             return {

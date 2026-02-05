@@ -646,37 +646,46 @@ class ProviderService:
         """Get API key for the specified provider. Caches the result per provider for the session."""
         # Check explicit API key first (for library usage via create_from_config)
         if hasattr(self, "_explicit_api_key") and self._explicit_api_key:
+            logger.debug(f"Using explicit API key for provider: {provider}")
             return self._explicit_api_key
 
         # Check cache first
         if provider in self._api_key_cache:
             cached_key = self._api_key_cache[provider]
             if cached_key is not None:
+                logger.debug(f"Using cached API key for provider: {provider}")
                 return cached_key
             # If cached as None, we already checked and it's not available
+            logger.debug(f"Cached None for provider {provider}, no API key available")
             return None
 
         # Check environment variable first (fastest)
         env_key = os.getenv("LLM_API_KEY", None)
         if env_key:
+            logger.info(f"Using LLM_API_KEY environment variable for provider: {provider}")
             self._api_key_cache[provider] = env_key
             return env_key
 
         # Try to get from secret manager (only once per provider per session)
         try:
             secret = SecretManager.get_secret(provider, self.user_id, self.db)
+            logger.info(f"Using Secret Manager API key for provider: {provider}")
             self._api_key_cache[provider] = secret
             return secret
         except Exception as e:
             if "404" in str(e):
+                logger.debug(f"Secret Manager returned 404 for provider {provider}, trying fallback")
                 # Try provider-specific env var as fallback
                 env_key = os.getenv(f"{provider.upper()}_API_KEY")
                 if env_key:
+                    logger.info(f"Using {provider.upper()}_API_KEY environment variable for provider: {provider}")
                     self._api_key_cache[provider] = env_key
                     return env_key
                 # Cache None to indicate we've checked and it's not available
+                logger.warning(f"No API key found for provider {provider} after checking all sources")
                 self._api_key_cache[provider] = None
                 return None
+            logger.error(f"Error retrieving API key for provider {provider}: {str(e)}")
             raise e
 
     def _build_llm_params(self, config: LLMProviderConfig) -> Dict[str, Any]:
@@ -816,6 +825,13 @@ class ProviderService:
 
         routing_provider = config.provider
 
+        # Log detailed call information for debugging
+        logger.info(
+            f"Calling LLM with model: {model_identifier}, provider: {routing_provider}, "
+            f"auth_provider: {config.auth_provider}, stream: {stream}"
+        )
+        logger.debug(f"LLM params (excluding API key): {[k for k in params.keys() if k != 'api_key']}")
+
         try:
             if output_schema:
                 # Use structured output with instructor
@@ -885,9 +901,16 @@ class ProviderService:
                     return response.choices[0].message.content
         except Exception as e:
             logger.exception(
-                "Error calling LLM",
-                model_identifier=model_identifier,
-                provider=routing_provider,
+                f"Error calling LLM with model {model_identifier}",
+                extra={
+                    "model_identifier": model_identifier,
+                    "provider": routing_provider,
+                    "auth_provider": config.auth_provider,
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "has_api_key": bool(params.get("api_key")),
+                    "base_url": params.get("base_url"),
+                }
             )
             raise e
 
@@ -906,6 +929,13 @@ class ProviderService:
         params = self._build_llm_params(config)
         routing_provider = config.provider
 
+        # Log detailed call information for debugging
+        logger.info(
+            f"Calling LLM with config_type: {config_type}, model: {config.model}, "
+            f"provider: {routing_provider}, auth_provider: {config.auth_provider}, stream: {stream}"
+        )
+        logger.debug(f"LLM params (excluding API key): {[k for k in params.keys() if k != 'api_key']}")
+
         # Handle streaming response if requested
         try:
             if stream:
@@ -922,7 +952,19 @@ class ProviderService:
                 response = await acompletion(messages=messages, **params)
                 return response.choices[0].message.content
         except Exception as e:
-            logger.exception("Error calling LLM", provider=routing_provider)
+            logger.exception(
+                f"Error calling LLM with config_type {config_type}",
+                extra={
+                    "config_type": config_type,
+                    "model": config.model,
+                    "provider": routing_provider,
+                    "auth_provider": config.auth_provider,
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "has_api_key": bool(params.get("api_key")),
+                    "base_url": params.get("base_url"),
+                }
+            )
             raise e
 
     @robust_llm_call()
@@ -989,7 +1031,19 @@ class ProviderService:
                 )
             return response
         except Exception as e:
-            logger.exception("LLM call with structured output failed")
+            logger.exception(
+                f"LLM call with structured output failed for config_type {config_type}",
+                extra={
+                    "config_type": config_type,
+                    "model": config.model,
+                    "provider": routing_provider,
+                    "auth_provider": config.auth_provider,
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "has_api_key": bool(params.get("api_key")),
+                    "output_schema": output_schema.__name__ if output_schema else None,
+                }
+            )
             raise e
 
     @robust_llm_call()

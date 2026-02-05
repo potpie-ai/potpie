@@ -8,8 +8,11 @@ from .storage_strategies import (
     GCSStorageStrategy,
     AzureStorageStrategy,
 )
+from app.modules.utils.logger import setup_logger
 
 load_dotenv()
+
+logger = setup_logger(__name__)
 
 
 class MediaServiceConfigError(Exception):
@@ -25,7 +28,38 @@ class ConfigProvider:
             "username": os.getenv("NEO4J_USERNAME"),
             "password": os.getenv("NEO4J_PASSWORD"),
         }
-        self.github_key = os.getenv("GITHUB_PRIVATE_KEY")
+
+        # Load GitHub private key from file or environment variable
+        # Try GITHUB_PRIVATE_KEY_PATH first (recommended), fall back to GITHUB_PRIVATE_KEY
+        private_key_path = os.getenv("GITHUB_PRIVATE_KEY_PATH")
+        if private_key_path:
+            try:
+                # Resolve relative paths relative to project root
+                if not os.path.isabs(private_key_path):
+                    # Get project root (assuming config_provider is in app/core/)
+                    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                    private_key_path = os.path.join(project_root, private_key_path)
+
+                with open(private_key_path, 'r') as f:
+                    self.github_key = f.read()
+                logger.info(f"Loaded GitHub private key from file: {private_key_path}")
+            except FileNotFoundError:
+                logger.error(f"GITHUB_PRIVATE_KEY_PATH specified but file not found: {private_key_path}")
+                # Fall back to environment variable
+                self.github_key = os.getenv("GITHUB_PRIVATE_KEY")
+                if not self.github_key:
+                    logger.warning("GITHUB_PRIVATE_KEY also not set - GitHub App authentication will not work")
+            except Exception as e:
+                logger.error(f"Failed to read GitHub private key from {private_key_path}: {e}")
+                # Fall back to environment variable
+                self.github_key = os.getenv("GITHUB_PRIVATE_KEY")
+        else:
+            # No path specified, use environment variable directly
+            self.github_key = os.getenv("GITHUB_PRIVATE_KEY")
+            if self.github_key:
+                logger.info("Using GitHub private key from GITHUB_PRIVATE_KEY environment variable")
+            else:
+                logger.debug("No GitHub private key configured (GITHUB_PRIVATE_KEY_PATH or GITHUB_PRIVATE_KEY)")
         self.is_development_mode = os.getenv("isDevelopmentMode", "disabled")
         self.is_multimodal_enabled = os.getenv("isMultimodalEnabled", "auto")
         self.gcp_project_id = os.getenv("GCS_PROJECT_ID")

@@ -269,7 +269,6 @@ class LocalProvider(ICodeProvider):
                 "children": [...]  # For directories
             }]
         """
-        repo = self._get_repo(repo_name)
         repo_path = os.path.abspath(
             os.path.expanduser(repo_name or self.default_repo_path)
         )

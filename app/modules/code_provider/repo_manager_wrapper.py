@@ -9,7 +9,10 @@ Uses git worktree to manage multiple branches/commits efficiently.
 """
 
 import os
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from git import Repo
 
 from app.modules.code_provider.base.code_provider_interface import (
     ICodeProvider,

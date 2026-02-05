@@ -205,7 +205,7 @@ class GetCodeFromProbableNodeNameTool:
         truncated_result = truncate_dict_response(result)
         if len(str(result)) > 80000:
             logger.warning(
-                f"get_code_from_probable_node_name output truncated for node_id={node_id}, project_id={project_id}"
+                f"get_code_from_probable_node_name output truncated for node_id={node_id}, project_id={project.id}"
             )
         return truncated_result
 

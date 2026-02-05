@@ -230,7 +230,6 @@ class InferenceService:
         lines = node_text.split("\n")
         chunks = []
         current_chunk_lines = []
-        current_tokens = 0
 
         for line in lines:
             test_chunk = "\n".join(current_chunk_lines + [line])
@@ -248,10 +247,10 @@ class InferenceService:
                     }
                 )
                 current_chunk_lines = [line]
-                current_tokens = self.num_tokens_from_string(line, model)
+                # Token count tracked in num_tokens_from_string
             else:
                 current_chunk_lines.append(line)
-                current_tokens = test_tokens
+                # Token count tracked in test_tokens
 
         # Add final chunk
         if current_chunk_lines:
