@@ -58,6 +58,7 @@ dependencies = [
     "posthog>=6.9.0",
     "psycopg-binary>=3.2.12",
     "pydantic-ai>=1.11.1",
+    "pydantic-ai-todo>=0.1.6",
     "pydantic[email]>=2.12.4",
     "pygithub>=2.8.1",
     "pygments>=2.19.2",
@@ -105,7 +106,7 @@ include = ["potpie*", "app*"]
 
 [tool.bandit]
 exclude_dirs = ["tests", "app/alembic"]
-skips = ["B101", "B601"]  # Skip assert_used and shell injection warnings
+skips = ["B101", "B601"]                # Skip assert_used and shell injection warnings
 
 [tool.ruff]
 exclude = ["tests", "app/alembic"]

@@ -22,6 +22,7 @@ def init_managers(
     agent_id: Optional[str] = None,
     user_id: Optional[str] = None,
     tunnel_url: Optional[str] = None,
+    local_mode: bool = False,
 ):
     """Initialize managers for agent run.
 
@@ -34,6 +35,7 @@ def init_managers(
         agent_id: The agent ID to determine routing (e.g., "code" for LocalServer routing).
         user_id: The user ID for tunnel routing.
         tunnel_url: Optional tunnel URL from request (takes priority over stored state).
+        local_mode: When True, show_diff tool will refuse to execute (VSCode extension handles diff).
     """
     from app.modules.intelligence.tools.todo_management_tool import (
         _reset_todo_manager,
@@ -47,13 +49,14 @@ def init_managers(
 
     _reset_todo_manager()
     logger.info(
-        f"🔄 [init_managers] Calling _init_code_changes_manager with tunnel_url={tunnel_url}"
+        f"🔄 [init_managers] Calling _init_code_changes_manager with tunnel_url={tunnel_url}, local_mode={local_mode}"
     )
     _init_code_changes_manager(
         conversation_id=conversation_id,
         agent_id=agent_id,
         user_id=user_id,
         tunnel_url=tunnel_url,
+        local_mode=local_mode,
     )
     _reset_requirement_manager()
     logger.info(
@@ -267,12 +270,16 @@ class StreamingExecutionFlow:
 
                 # Check for specific error types
                 if isinstance(mcp_error, ModelHTTPError):
-                    error_body = getattr(mcp_error, "body", {})
-                    error_message = (
-                        error_body.get("error", {}).get("message", "")
-                        if isinstance(error_body, dict)
-                        else str(error_body)
-                    )
+                    error_body = getattr(mcp_error, "body", None) or {}
+                    if isinstance(error_body, dict):
+                        # Support both top-level "message" (OpenAI-style) and nested "error.message"
+                        error_message = error_body.get("message", "")
+                        if not error_message:
+                            err_obj = error_body.get("error")
+                            if isinstance(err_obj, dict):
+                                error_message = err_obj.get("message", "")
+                    else:
+                        error_message = str(error_body)
 
                     # Check for duplicate tool_result error
                     if (

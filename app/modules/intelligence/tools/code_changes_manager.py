@@ -2249,6 +2249,9 @@ _user_id_ctx: ContextVar[Optional[str]] = ContextVar("_user_id_ctx", default=Non
 # Context variable for tunnel_url - used for tunnel routing (takes priority over stored state)
 _tunnel_url_ctx: ContextVar[Optional[str]] = ContextVar("_tunnel_url_ctx", default=None)
 
+# Context variable for local_mode - when True, show_diff tool refuses to execute (VSCode extension handles diff)
+_local_mode_ctx: ContextVar[bool] = ContextVar("_local_mode_ctx", default=False)
+
 
 def _set_conversation_id(conversation_id: Optional[str]) -> None:
     """Set the conversation_id for the current execution context.
@@ -2307,6 +2310,16 @@ def _set_tunnel_url(tunnel_url: Optional[str]) -> None:
 def _get_tunnel_url() -> Optional[str]:
     """Get the tunnel_url for the current execution context."""
     return _tunnel_url_ctx.get()
+
+
+def _set_local_mode(local_mode: bool) -> None:
+    """Set local_mode for the current execution context. When True, show_diff refuses to execute."""
+    _local_mode_ctx.set(local_mode)
+
+
+def _get_local_mode() -> bool:
+    """Get local_mode for the current execution context."""
+    return _local_mode_ctx.get()
 
 
 def _extract_error_message(error_text: str, status_code: int) -> str:
@@ -2407,6 +2420,15 @@ def _route_to_local_server(
             if lines_deleted is not None:
                 parts.append(f"lines_deleted={lines_deleted}")
             msg += "\n\n**Line stats:** " + ", ".join(parts)
+            # Warn when many lines were deleted—often indicates placeholder like "... rest of file unchanged ..." was used
+            lines_deleted_val = lines_deleted if lines_deleted is not None else 0
+            if lines_deleted_val > 15:
+                msg += (
+                    f"\n\n⚠️ **Many lines were deleted ({lines_deleted_val} lines).** "
+                    "Double-check with get_file_from_changes that the file content is correct. "
+                    "Do NOT use placeholders like '... rest of file unchanged ...' in content—they are written literally and remove real code. "
+                    "If this was unintended, use revert_file then re-apply with full content or targeted edits."
+                )
             msg += (
                 "\n\nIf these numbers don't match what you intended (e.g. you expected to delete lines but lines_deleted=0), "
                 "use get_file_from_changes to verify the file and fix with revert_file or a corrected edit."
@@ -2603,6 +2625,48 @@ def _route_to_local_server(
                         replacements_made = result.get("replacements_made", 0)
                         total_matches = result.get("total_matches", replacements_made)
                         pattern = data.get("pattern", "pattern")
+
+                        # Enrich result with diff and line stats if LocalServer didn't return them
+                        if not result.get("diff") or (
+                            result.get("lines_changed") is None
+                            and result.get("lines_added") is None
+                            and result.get("lines_deleted") is None
+                        ):
+                            try:
+                                manager = _get_code_changes_manager()
+                                file_data = manager.get_file(file_path)
+                                before = (
+                                    (file_data.get("content") or "")
+                                    if file_data
+                                    else None
+                                )
+                                after = _fetch_file_content_from_local_server(file_path)
+                                if before is not None and after is not None:
+                                    if not result.get("diff"):
+                                        result["diff"] = manager._create_unified_diff(
+                                            before,
+                                            after,
+                                            file_path,
+                                            file_path,
+                                            3,
+                                        )
+                                    if (
+                                        result.get("lines_changed") is None
+                                        and result.get("lines_added") is None
+                                        and result.get("lines_deleted") is None
+                                    ):
+                                        old_lines = len(before.splitlines())
+                                        new_lines = len(after.splitlines())
+                                        result["lines_added"] = max(
+                                            0, new_lines - old_lines
+                                        )
+                                        result["lines_deleted"] = max(
+                                            0, old_lines - new_lines
+                                        )
+                            except Exception as e:
+                                logger.debug(
+                                    f"[Tunnel Routing] Could not enrich replace_in_file diff: {e}"
+                                )
 
                         response_msg = (
                             f"✅ Replaced pattern '{pattern}' in '{file_path}'\n\n"
@@ -3438,6 +3502,7 @@ def _init_code_changes_manager(
     agent_id: Optional[str] = None,
     user_id: Optional[str] = None,
     tunnel_url: Optional[str] = None,
+    local_mode: bool = False,
 ) -> None:
     """Initialize the code changes manager for a new agent run.
 
@@ -3450,12 +3515,14 @@ def _init_code_changes_manager(
         agent_id: The agent ID to determine routing (e.g., "code" for LocalServer routing).
         user_id: The user ID for tunnel routing.
         tunnel_url: Optional tunnel URL from request (takes priority over stored state).
+        local_mode: When True, show_diff tool will refuse to execute (VSCode extension handles diff).
     """
     logger.info(
         f"CodeChangesManager: _init_code_changes_manager called with "
         f"conversation_id={conversation_id}, agent_id={agent_id}, "
-        f"user_id={user_id}, tunnel_url={tunnel_url}"
+        f"user_id={user_id}, tunnel_url={tunnel_url}, local_mode={local_mode}"
     )
+    _set_local_mode(local_mode)
     _set_conversation_id(conversation_id)
     _set_agent_id(agent_id)
     _set_user_id(user_id)
@@ -4221,11 +4288,41 @@ def replace_in_file_tool(input_data: ReplaceInFileInput) -> str:
                     f"\n  ... and {len(result['match_locations']) - 5} more"
                 )
 
-            return (
+            msg = (
                 f"✅ Replaced pattern '{input_data.pattern}' in '{input_data.file_path}'\n\n"
                 + f"Made {result['replacements_made']} replacement(s) out of {result['total_matches']} match(es)\n\n"
                 + f"Match locations:\n{locations_str}"
             )
+            # Append diff and line stats from manager (cloud path has no LocalServer)
+            file_data = manager.get_file(input_data.file_path)
+            if (
+                file_data
+                and file_data.get("previous_content")
+                and file_data.get("content")
+            ):
+                try:
+                    diff = manager._create_unified_diff(
+                        file_data["previous_content"],
+                        file_data["content"],
+                        input_data.file_path,
+                        input_data.file_path,
+                        3,
+                    )
+                    if diff:
+                        msg += (
+                            "\n\n**Diff (uncommitted changes):**\n```diff\n"
+                            + diff
+                            + "\n```"
+                        )
+                    old_lines = len(file_data["previous_content"].splitlines())
+                    new_lines = len(file_data["content"].splitlines())
+                    msg += (
+                        f"\n\n**Line stats:** lines_added={max(0, new_lines - old_lines)}, "
+                        f"lines_deleted={max(0, old_lines - new_lines)}"
+                    )
+                except Exception:
+                    pass
+            return msg
         else:
             return f"❌ Error replacing pattern: {result.get('error', 'Unknown error')}"
     except Exception:
@@ -4533,6 +4630,12 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
     to show all the code changes you've made. The content is automatically shown to the user
     without consuming LLM context.
     """
+    if _get_local_mode():
+        return (
+            "❌ **show_diff is not available in local mode.** "
+            "The VSCode Extension handles diff display directly. Use get_file_diff per file to verify changes."
+        )
+
     logger.info(
         f"Tool show_diff_tool: Displaying diff(s) (file_path: {input_data.file_path}, context_lines: {input_data.context_lines}, project_id: {input_data.project_id})"
     )
@@ -4994,7 +5097,7 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
         ),
         SimpleTool(
             name="update_file_in_changes",
-            description="Update an existing file with full content. Use ONLY when you need to replace the entire file. DON'T use when targeted edits suffice—prefer update_file_lines, replace_in_file, insert_lines, or delete_lines. When using the VS Code extension, check lines_changed/added/deleted in the response; if they don't match your intent, use get_file_from_changes to verify and fix or revert_file then re-apply.",
+            description="Update an existing file with full content. Use ONLY when you need to replace the entire file. NEVER put placeholders like '... rest of file unchanged ...' or '// ... rest unchanged ...' in content—they are written literally and delete the rest of the file; always provide the complete file content. DON'T use when targeted edits suffice—prefer update_file_lines, replace_in_file, insert_lines, or delete_lines. When using the VS Code extension, check lines_changed/added/deleted in the response; if they don't match your intent (e.g. many lines deleted unexpectedly), use get_file_from_changes to verify and fix or revert_file then re-apply.",
             func=update_file_tool,
             args_schema=UpdateFileInput,
         ),

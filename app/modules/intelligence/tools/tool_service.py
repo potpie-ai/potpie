@@ -2,6 +2,8 @@ from typing import Any, Dict, List
 
 from sqlalchemy.orm import Session
 
+from app.modules.utils.logger import setup_logger
+
 from app.modules.intelligence.tools.change_detection.change_detection_tool import (
     get_change_detection_tool,
 )
@@ -97,6 +99,9 @@ from .code_changes_manager import create_code_changes_management_tools
 from .requirement_verification_tool import create_requirement_verification_tools
 
 
+logger = setup_logger(__name__)
+
+
 class ToolService:
     # Tools that depend on embeddings/docstrings and should be disabled during INFERRING status
     # These tools require AI-inferenced content (embeddings, tags) that doesn't exist during inference
@@ -147,13 +152,27 @@ class ToolService:
         Note: Tool filtering based on local_mode is handled in the agent
         (e.g., code_gen_agent.py) by specifying different tool lists.
         """
+        if not tool_names:
+            logger.debug(
+                "ToolService.get_tools: tool_names is empty; returning empty list"
+            )
+            return []
         tools = []
+        missing: List[str] = []
         for tool_name in tool_names:
             # Skip embedding-dependent tools if requested (during INFERRING status)
             if exclude_embedding_tools and tool_name in self.EMBEDDING_DEPENDENT_TOOLS:
                 continue
             if self.tools.get(tool_name) is not None:
                 tools.append(self.tools[tool_name])
+            else:
+                missing.append(tool_name)
+        if missing:
+            logger.warning(
+                "ToolService.get_tools: requested tool names not found (omitted) missing={} returned_count={}",
+                missing,
+                len(tools),
+            )
         return tools
 
     def _initialize_tools(self) -> Dict[str, Any]:

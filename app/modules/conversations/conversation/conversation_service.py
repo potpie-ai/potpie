@@ -33,6 +33,11 @@ from app.modules.intelligence.agents.custom_agents.custom_agents_service import 
 )
 from app.modules.intelligence.agents.agents_service import AgentsService
 from app.modules.intelligence.agents.chat_agent import ChatContext
+from app.modules.intelligence.agents.context_config import (
+    ESTIMATED_TOKENS_PER_MESSAGE,
+    HISTORY_MESSAGE_CAP,
+    get_history_token_budget,
+)
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.projects.projects_service import ProjectService
@@ -976,6 +981,16 @@ class ConversationService:
                     f"Multimodal context: {len(image_attachments) if image_attachments else 0} current images, {len(context_images) if context_images else 0} context images"
                 )
 
+            # Single history cap for all agent types (Phase 2: token- and model-aware limits)
+            token_budget = get_history_token_budget(None)
+            msg_cap = min(
+                HISTORY_MESSAGE_CAP,
+                max(8, token_budget // ESTIMATED_TOKENS_PER_MESSAGE),
+            )
+            # Ensure we never pass empty history due to HISTORY_MESSAGE_CAP=0 or misconfig
+            msg_cap = max(1, msg_cap)
+            capped_history = validated_history[-msg_cap:]
+
             if type == "CUSTOM_AGENT":
                 res = (
                     await self.agent_service.custom_agent_service.execute_agent_runtime(
@@ -984,7 +999,7 @@ class ConversationService:
                             project_id=str(project_id),
                             project_name=project_name,
                             curr_agent_id=str(agent_id),
-                            history=validated_history[-12:],
+                            history=capped_history,
                             node_ids=[node.node_id for node in node_ids],
                             query=query,
                             project_status=project_status,
@@ -1019,7 +1034,7 @@ class ConversationService:
                     project_id=str(project_id),
                     project_name=project_name,
                     curr_agent_id=str(agent_id),
-                    history=validated_history[-8:],
+                    history=capped_history,
                     node_ids=nodes,
                     query=query,
                     project_status=project_status,
@@ -1198,6 +1213,23 @@ class ConversationService:
             if deleted_conversation == 0:
                 raise ConversationNotFoundError(
                     f"Conversation with id {conversation_id} not found"
+                )
+
+            # Phase 3: clear persisted compressed history for this conversation
+            try:
+                from app.modules.intelligence.agents.chat_agents.compressed_history_store import (
+                    get_compressed_history_store,
+                )
+
+                store = get_compressed_history_store()
+                if store:
+                    store.delete(conversation_id, user_id=user_id)
+            except Exception as e:
+                logger.warning(
+                    "Failed to delete compressed history for conversation %s: %s",
+                    conversation_id,
+                    e,
+                    exc_info=False,
                 )
 
             PostHogClient().send_event(

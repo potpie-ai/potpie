@@ -113,28 +113,43 @@ class ParsingService:
             project_manager = ProjectService(self.db)
             extracted_dir = None
             try:
-                # Early check: if project already exists and is READY for this commit, skip parsing
-                if cleanup_graph and repo_details.commit_id:
-                    existing_project = await project_manager.get_project_from_db_by_id(
-                        project_id
+                # Early check: if project is already inferring, return without re-running (avoids duplicate work and status update errors)
+                existing_project = await project_manager.get_project_from_db_by_id(
+                    project_id
+                )
+                if (
+                    existing_project
+                    and existing_project.get("status")
+                    == ProjectStatusEnum.INFERRING.value
+                ):
+                    logger.info(
+                        "Skipping parse for project %s - already in inferring state",
+                        project_id,
                     )
-                    if existing_project:
-                        is_latest = await self.parse_helper.check_commit_status(
-                            str(project_id), requested_commit_id=repo_details.commit_id
+                    return {
+                        "message": "Project already inferring",
+                        "id": project_id,
+                        "status": ProjectStatusEnum.INFERRING.value,
+                    }
+
+                # Early check: if project already exists and is READY for this commit, skip parsing
+                if cleanup_graph and repo_details.commit_id and existing_project:
+                    is_latest = await self.parse_helper.check_commit_status(
+                        str(project_id), requested_commit_id=repo_details.commit_id
+                    )
+                    if is_latest:
+                        logger.info(
+                            "Skipping parse for project %s - already parsed at commit %s",
+                            project_id,
+                            existing_project.get("commit_id"),
                         )
-                        if is_latest:
-                            logger.info(
-                                "Skipping parse for project %s - already parsed at commit %s",
-                                project_id,
-                                existing_project.get("commit_id"),
-                            )
-                            await project_manager.update_project_status(
-                                project_id, ProjectStatusEnum.READY
-                            )
-                            return {
-                                "message": "Project already parsed for requested commit",
-                                "id": project_id,
-                            }
+                        await project_manager.update_project_status(
+                            project_id, ProjectStatusEnum.READY
+                        )
+                        return {
+                            "message": "Project already parsed for requested commit",
+                            "id": project_id,
+                        }
 
                 if cleanup_graph:
                     neo4j_config = self._get_neo4j_config()
@@ -290,9 +305,10 @@ class ParsingService:
                     project_id=project_id,
                     user_id=user_id,
                 )
-                # Log the formatted traceback string explicitly for detailed debugging
+                # Log the formatted traceback as extra to avoid format-placeholder issues in message
                 logger.error(
-                    f"Full traceback:\n{tb_str}",
+                    "Full traceback (see full_traceback extra)",
+                    full_traceback=tb_str,
                     project_id=project_id,
                     user_id=user_id,
                 )

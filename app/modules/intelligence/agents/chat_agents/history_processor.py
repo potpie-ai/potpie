@@ -11,9 +11,20 @@ import logging
 import os
 import re
 from datetime import datetime
-from typing import Dict, List, Optional, Set, Tuple
-import tiktoken
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Set, Tuple
+
+if TYPE_CHECKING:
+    from app.modules.intelligence.agents.chat_agents.compressed_history_store import (
+        CompressedHistoryStore,
+    )
+    from app.modules.intelligence.agents.chat_agents.history_summarizer import (
+        HistorySummarizer,
+    )
+
 from pydantic_ai import Agent, RunContext
+from app.modules.intelligence.agents.chat_agents.token_utils import (
+    count_tokens as shared_count_tokens,
+)
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -40,6 +51,11 @@ RECENT_TOOL_RESULTS_TO_KEEP = 7  # Always keep last N tool results in full
 MAX_TOOL_ARGS_CHARS = 500  # Maximum characters for tool args in compressed metadata
 MAX_TOOL_RESULT_LINES = 6  # Maximum lines of tool result to keep in compressed metadata
 
+# Protection zone: messages/tokens in this zone are never pruned during compaction.
+# Avoids thrashing and keeps the most recent context intact.
+PROTECTION_ZONE_MESSAGES = 6  # Last N messages are never pruned
+PROTECTION_ZONE_TOKENS = 5000  # Last M tokens (from end) are never pruned; 0 to disable
+
 
 class TokenAwareHistoryProcessor:
     """
@@ -59,57 +75,51 @@ class TokenAwareHistoryProcessor:
         target_summary_tokens: int = TARGET_SUMMARY_TOKENS,
         large_tool_result_threshold: int = LARGE_TOOL_RESULT_THRESHOLD,
         max_tool_result_tokens: int = MAX_TOOL_RESULT_TOKENS,
+        protection_zone_messages: int = PROTECTION_ZONE_MESSAGES,
+        protection_zone_tokens: int = PROTECTION_ZONE_TOKENS,
+        context_window_resolver: Optional[Callable[[str], Optional[int]]] = None,
+        compressed_history_store: Optional["CompressedHistoryStore"] = None,
+        history_summarizer: Optional["HistorySummarizer"] = None,
+        summarization_head_messages: int = 2,
+        summarization_tail_messages: int = 6,
     ):
         """
         Initialize the history processor.
 
         Args:
-            summarize_agent: Agent to use for summarization. If None, summarization
-                            will fall back to keeping only recent messages.
-            token_limit: Token threshold at which to trigger summarization
+            summarize_agent: Agent to use for summarization (legacy). Prefer history_summarizer.
+            token_limit: Token threshold at which to trigger compaction.
             target_summary_tokens: Target token count for summarized history
             large_tool_result_threshold: Tool results exceeding this token count will be compressed
             max_tool_result_tokens: Maximum tokens to keep for large tool results
+            protection_zone_messages: Last N messages never pruned (avoids thrashing).
+            protection_zone_tokens: Last M tokens from end never pruned; 0 to disable.
+            context_window_resolver: Optional (model_string -> context_window in tokens).
+            compressed_history_store: Optional Phase 3 store for conversation-scoped persistence.
+            history_summarizer: Optional Phase 4 summarizer (head + summary + tail when over limit).
+            summarization_head_messages: Number of messages to keep at start when summarizing (Phase 4).
+            summarization_tail_messages: Number of messages to keep at end when summarizing (Phase 4).
         """
         self.token_limit = token_limit
         self.target_summary_tokens = target_summary_tokens
         self.summarize_agent = summarize_agent
         self.large_tool_result_threshold = large_tool_result_threshold
         self.max_tool_result_tokens = max_tool_result_tokens
+        self.protection_zone_messages = protection_zone_messages
+        self.protection_zone_tokens = max(0, protection_zone_tokens)
+        self._context_window_resolver = context_window_resolver
+        self._compressed_history_store = compressed_history_store
+        self._history_summarizer = history_summarizer
+        self._summarization_head_messages = max(0, summarization_head_messages)
+        self._summarization_tail_messages = max(0, summarization_tail_messages)
         # Cache for agent instructions and tools (keyed by agent instance id)
         self._agent_cache: dict[int, Tuple[str, str]] = {}
         # Store last compressed output per conversation (key: conversation_key, value: compressed messages)
-        # This allows retrieval of compressed messages for subsequent runs within the same agent execution
         self._last_compressed_output: Dict[str, List[ModelMessage]] = {}
 
-    def _get_tokenizer(self, model_name: Optional[str] = None):
-        """Get tiktoken tokenizer for the given model, or fallback to cl100k_base."""
-        try:
-            if model_name:
-                # Try to get encoding for the specific model
-                try:
-                    return tiktoken.encoding_for_model(model_name)
-                except KeyError:
-                    logger.debug(
-                        f"Model {model_name} not found in tiktoken, using cl100k_base"
-                    )
-            # Fallback to cl100k_base (used by GPT-3.5, GPT-4, etc.)
-            return tiktoken.get_encoding("cl100k_base")
-        except Exception as e:
-            logger.warning(f"Failed to get tokenizer: {e}, using cl100k_base")
-            return tiktoken.get_encoding("cl100k_base")
-
     def _count_tokens_exact(self, text: str, model_name: Optional[str] = None) -> int:
-        """Count exact tokens using tiktoken."""
-        if not text:
-            return 0
-        try:
-            encoding = self._get_tokenizer(model_name)
-            return len(encoding.encode(str(text), disallowed_special=set()))
-        except Exception as e:
-            logger.warning(f"Failed to count tokens with tiktoken: {e}, using fallback")
-            # Fallback to character-based estimate (roughly 4 chars per token)
-            return len(str(text)) // 4
+        """Count exact tokens using shared token utility (tiktoken)."""
+        return shared_count_tokens(text, model_name)
 
     def _extract_system_prompt_from_messages(self, messages: List[ModelMessage]) -> str:
         """Extract system prompt from messages (usually in first ModelRequest with SystemPromptPart)."""
@@ -847,9 +857,9 @@ Conversation history to summarize:
         tool_call_ids_without_result: Set[str] = set()
 
         # Build a map of all tool_call_ids and where they appear
-        tool_call_id_locations: Dict[
-            str, List[Tuple[int, bool]]
-        ] = {}  # tool_call_id -> [(message_index, is_result), ...]
+        tool_call_id_locations: Dict[str, List[Tuple[int, bool]]] = (
+            {}
+        )  # tool_call_id -> [(message_index, is_result), ...]
 
         for i, msg in enumerate(messages):
             call_ids = self._extract_tool_call_ids_from_message(msg)
@@ -981,7 +991,10 @@ Conversation history to summarize:
 
             # Second pass: build the validated messages list
             # For LLM response messages with problematic tool calls, strip the tool calls
-            # but preserve the text content
+            # but preserve the text content. CRITICAL: skip the immediately following
+            # tool result message(s) for stripped call_ids so we don't leave orphaned
+            # tool results (API requires tool to follow a message with tool_calls).
+            ids_whose_tool_results_must_skip: Set[str] = set()
             for i, msg in enumerate(messages):
                 if i in messages_to_skip:
                     call_ids = message_tool_call_ids[i]
@@ -989,6 +1002,18 @@ Conversation history to summarize:
                         f"[History Processor] Removing message {i} with tool_call_ids: {call_ids}"
                     )
                     continue
+
+                # Skip tool result messages that are responses to tool calls we stripped
+                if self._is_tool_result_message(msg):
+                    call_ids = message_tool_call_ids[i]
+                    overlap = call_ids & ids_whose_tool_results_must_skip
+                    if overlap:
+                        ids_whose_tool_results_must_skip -= call_ids
+                        logger.debug(
+                            f"[History Processor] Skipping tool result message {i} "
+                            f"(results for stripped call_ids: {overlap})"
+                        )
+                        continue
 
                 # Check if this is an LLM response that needs tool call stripping
                 if isinstance(msg, ModelResponse) and self._is_llm_response_message(
@@ -1010,11 +1035,10 @@ Conversation history to summarize:
                                 f"[History Processor] Stripped problematic tool calls from LLM response {i}, "
                                 f"kept text content"
                             )
-                        else:
-                            # Shouldn't happen since we checked _is_llm_response_message
-                            logger.warning(
-                                f"[History Processor] Stripping tool calls from message {i} left no content"
-                            )
+                        # Mark that the next tool result message(s) for these ids must be skipped
+                        ids_whose_tool_results_must_skip |= (
+                            call_ids & problematic_tool_call_ids
+                        )
                         continue
 
                 validated_messages.append(msg)
@@ -1169,6 +1193,15 @@ Conversation history to summarize:
                     f"[History Processor] Reached max iterations ({max_iterations}) in validation"
                 )
 
+            # CRITICAL: Never return empty when input had messages - API requires valid sequence.
+            # Empty list would trigger fallback to messages[-5:] which can have orphaned tool results.
+            if not current_messages and messages:
+                logger.warning(
+                    "[History Processor] Re-validation left no messages; using safe fallback (user messages or first message)."
+                )
+                user_only = [m for m in messages if self._is_user_message(m)]
+                current_messages = user_only if user_only else [messages[0]]
+
             return current_messages
 
         return messages
@@ -1178,6 +1211,7 @@ Conversation history to summarize:
         ctx: RunContext,
         messages: List[ModelMessage],
         model_name: Optional[str] = None,
+        token_limit: Optional[int] = None,
     ) -> List[ModelMessage]:
         """Continue removing older tool calls/results until under token limit.
 
@@ -1187,9 +1221,10 @@ Conversation history to summarize:
         CRITICAL: When removing a tool call message, we MUST also remove its
         corresponding tool result message (the next message) to maintain pairing.
         """
+        limit = token_limit if token_limit is not None else self.token_limit
         current_tokens = self._count_total_context_tokens(ctx, messages, model_name)
 
-        if current_tokens <= self.token_limit:
+        if current_tokens <= limit:
             return messages
 
         # Build message metadata with tool call/result pairing information
@@ -1375,7 +1410,7 @@ Conversation history to summarize:
             current_tokens = self._count_total_context_tokens(
                 ctx, filtered_messages, model_name
             )
-            if current_tokens <= self.token_limit:
+            if current_tokens <= limit:
                 break
 
         # CRITICAL: Validate tool call/result pairing after compression
@@ -1473,6 +1508,39 @@ Conversation history to summarize:
         else:
             self._last_compressed_output.clear()
             logger.debug("Cleared all compressed history")
+
+    def _write_to_conversation_store(self, messages: List[ModelMessage]) -> None:
+        """Write final messages to conversation-scoped store (Phase 3).
+
+        Uses context vars set by init_managers(conversation_id=..., user_id=...)
+        before the run. No-op if store is None or conversation_id is not set.
+        """
+        if not self._compressed_history_store or not messages:
+            return
+        try:
+            from app.modules.intelligence.tools.code_changes_manager import (
+                _get_conversation_id,
+                _get_user_id,
+            )
+
+            conversation_id = _get_conversation_id()
+            if not conversation_id:
+                return
+            user_id = _get_user_id()
+            self._compressed_history_store.set(
+                conversation_id, messages, user_id=user_id
+            )
+            logger.debug(
+                "Stored compressed history for conversation_id=%s (%s messages)",
+                conversation_id,
+                len(messages),
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to write compressed history to conversation store: %s",
+                e,
+                exc_info=False,
+            )
 
     def _get_model_name_from_context(self, ctx: RunContext) -> Optional[str]:
         """Extract model name from RunContext if available."""
@@ -1879,23 +1947,46 @@ Conversation history to summarize:
         """
         Process message history based on token usage.
 
-        SIMPLIFIED APPROACH: This processor now only logs token counts and returns
-        messages unchanged to avoid breaking tool_call/tool_result pairing required
-        by OpenAI and Anthropic APIs.
+        When total_tokens < token_limit, returns messages unchanged.
+        When total_tokens >= token_limit, runs compaction: removes older tool call/result
+        pairs while preserving a protection zone (last N messages / last M tokens),
+        never removes LLM text responses, and always validates tool pairing after
+        removal. Result is stored in _last_compressed_output for retrieval on the next
+        turn within the same run.
 
-        The previous implementation tried to remove/modify messages to stay under
-        token limits, but this was causing "tool messages must follow tool_calls"
-        errors. It's better to exceed token limits than to send malformed messages.
+        Invariants:
+        - Tool use/result pairing is always valid after compaction.
+        - LLM response messages (ModelResponse with TextPart) are never removed.
+        - Messages in the protection zone are never pruned.
 
         Args:
             ctx: RunContext containing usage information and model access
             messages: Current message history
 
         Returns:
-            Original message history (unchanged)
+            Message history, possibly compacted if over token limit
         """
         # Get model name from context if available
         model_name = self._get_model_name_from_context(ctx)
+
+        # Model-aware effective limit and protection zone (Phase 2)
+        effective_limit = self.token_limit
+        effective_protection_zone_tokens = self.protection_zone_tokens
+        if model_name and self._context_window_resolver:
+            context_window = self._context_window_resolver(model_name)
+            if context_window is not None and context_window > 0:
+                from app.modules.intelligence.agents.context_config import (
+                    HISTORY_TOKEN_BUDGET_RATIO,
+                    get_protection_zone_tokens,
+                )
+
+                effective_limit = min(
+                    self.token_limit,
+                    int(context_window * HISTORY_TOKEN_BUDGET_RATIO),
+                )
+                effective_protection_zone_tokens = get_protection_zone_tokens(
+                    context_window
+                )
 
         # Count total context tokens (system prompt + tool schemas + message history)
         total_tokens = self._count_total_context_tokens(ctx, messages, model_name)
@@ -1908,33 +1999,17 @@ Conversation history to summarize:
             f"(system + tools + messages, using tiktoken{model_info})"
         )
 
-        # SIMPLIFIED: Always return original messages to preserve message structure
-        # The previous complex logic was breaking tool_call/tool_result pairing
-        if total_tokens >= self.token_limit:
-            logger.warning(
-                f"[History Processor] Token count {total_tokens} exceeds limit {self.token_limit}, "
-                f"but returning original messages to preserve message structure. "
-                f"Message count: {len(messages)}"
-            )
-        else:
+        if total_tokens < effective_limit:
             logger.debug(
-                f"Token count {total_tokens} < limit {self.token_limit}, no action needed"
+                f"Token count {total_tokens} < limit {effective_limit}, no action needed"
             )
+            self._write_to_conversation_store(messages)
+            return messages
 
-        return messages
-
-        # ============================================================================
-        # DISABLED: The complex message processing below was causing errors like:
-        # "An assistant message with 'tool_calls' must be followed by tool messages
-        #  responding to each 'tool_call_id'"
-        #
-        # The logic tried to remove old tool calls/results to save tokens, but this
-        # broke the tool_call/tool_result pairing required by OpenAI and Anthropic.
-        # ============================================================================
-
-        # We need to summarize - split messages into old (to summarize) and recent (to keep)
+        # Over limit: run compaction with protection zone and strict tool pairing
+        # We need to compact - split messages into old (to remove) and recent (to keep)
         logger.info(
-            f"Token count {total_tokens} >= limit {self.token_limit}, triggering summarization"
+            f"Token count {total_tokens} >= limit {effective_limit}, triggering summarization"
         )
 
         # Strategy: Prioritize user messages, then recent small tool results, then summarize large/old ones
@@ -1946,9 +2021,9 @@ Conversation history to summarize:
         other_messages: List[ModelMessage] = []
 
         # Message metadata: (message, token_count, is_user, is_tool_call, is_tool_result, tool_call_ids)
-        message_metadata: List[
-            Tuple[ModelMessage, int, bool, bool, bool, Set[str]]
-        ] = []
+        message_metadata: List[Tuple[ModelMessage, int, bool, bool, bool, Set[str]]] = (
+            []
+        )
 
         for msg in messages:
             is_user = self._is_user_message(msg)
@@ -2034,9 +2109,9 @@ Conversation history to summarize:
 
         # Collect metadata about removed tool calls for creating summary messages
         # Process in forward order to collect both calls and results
-        removed_tool_metadata: Dict[
-            str, Tuple[str, str, str]
-        ] = {}  # tool_call_id -> (tool_name, tool_args, result_summary)
+        removed_tool_metadata: Dict[str, Tuple[str, str, str]] = (
+            {}
+        )  # tool_call_id -> (tool_name, tool_args, result_summary)
 
         # First pass: collect metadata for all tool calls/results to be removed
         for (
@@ -2101,6 +2176,27 @@ Conversation history to summarize:
         # First, mark which messages should be kept (not marked for removal)
         messages_to_keep_mask = [False] * len(message_metadata)
 
+        # Protection zone: indices that must never be pruned (last N messages and/or last M tokens)
+        n_msgs = len(message_metadata)
+        protected_indices: Set[int] = set()
+        if self.protection_zone_messages > 0:
+            for i in range(max(0, n_msgs - self.protection_zone_messages), n_msgs):
+                protected_indices.add(i)
+        if effective_protection_zone_tokens > 0:
+            cum_tokens = 0
+            for i in range(n_msgs - 1, -1, -1):
+                _, msg_tokens, *_ = message_metadata[i]
+                cum_tokens += msg_tokens
+                if cum_tokens <= effective_protection_zone_tokens:
+                    protected_indices.add(i)
+                else:
+                    break
+        if protected_indices:
+            logger.debug(
+                f"[History Processor] Protection zone: {len(protected_indices)} messages "
+                f"(last {self.protection_zone_messages} msgs, last {effective_protection_zone_tokens} tokens)"
+            )
+
         # Count preserved LLM responses for logging
         preserved_llm_responses = 0
 
@@ -2141,6 +2237,13 @@ Conversation history to summarize:
             )
 
             if should_remove:
+                # Protection zone: never prune messages in the protected tail
+                if i in protected_indices:
+                    messages_to_keep_mask[i] = True
+                    logger.debug(
+                        f"[History Processor] Keeping tool message at {i} (in protection zone)"
+                    )
+                    continue
                 # Mark for removal - but only if this is a PURE tool message
                 # (we already preserved LLM responses above)
                 logger.debug(
@@ -2298,20 +2401,20 @@ Conversation history to summarize:
         )
 
         # If we're still over the limit, continue compressing older messages
-        if keep_tokens > self.token_limit:
+        if keep_tokens > effective_limit:
             logger.info(
-                f"Still over limit ({keep_tokens} > {self.token_limit}), "
+                f"Still over limit ({keep_tokens} > {effective_limit}), "
                 f"compressing more messages..."
             )
             # Continue compressing older tool results until we're under the limit
             messages_to_keep = self._continue_compressing_until_under_limit(
-                ctx, messages_to_keep, model_name
+                ctx, messages_to_keep, model_name, token_limit=effective_limit
             )
             final_tokens = self._count_total_context_tokens(
                 ctx, messages_to_keep, model_name
             )
             logger.info(
-                f"Final token count: {final_tokens} (target: {self.token_limit})"
+                f"Final token count: {final_tokens} (target: {effective_limit})"
             )
 
         # LLM summarization is commented out - just return the messages we decided to keep
@@ -2367,8 +2470,74 @@ Conversation history to summarize:
             f"({reduction} saved, {reduction_pct:.1f}% reduction)"
         )
 
-        # Get final messages that will be sent to LLM
-        final_messages = messages_to_keep if messages_to_keep else messages[-5:]
+        # Phase 4: Optional LLM summarization when still over limit after compaction
+        # When compaction left no messages, never use raw messages[-5:] - it can have
+        # orphaned tool results (tool without preceding tool_calls), causing API 400.
+        if messages_to_keep:
+            final_messages = messages_to_keep
+        else:
+            fallback = messages[-5:] if messages else []
+            final_messages = (
+                self._validate_and_fix_tool_pairing(fallback) if fallback else []
+            )
+        if final_tokens > effective_limit and self._history_summarizer is not None:
+            from app.modules.intelligence.agents.context_config import (
+                CONTEXT_MANAGEMENT_SUMMARIZATION_ENABLED,
+            )
+            from app.modules.intelligence.agents.chat_agents.history_summarizer import (
+                NoOpHistorySummarizer,
+            )
+
+            if CONTEXT_MANAGEMENT_SUMMARIZATION_ENABLED and not isinstance(
+                self._history_summarizer, NoOpHistorySummarizer
+            ):
+                head_count = self._summarization_head_messages
+                tail_count = self._summarization_tail_messages
+                if len(messages_to_keep) > head_count + tail_count:
+                    head = messages_to_keep[:head_count]
+                    tail = messages_to_keep[-tail_count:]
+                    middle = messages_to_keep[head_count:-tail_count]
+                    logger.info(
+                        "Summarization triggered: over limit after compaction "
+                        "(before=%s, limit=%s)",
+                        final_tokens,
+                        effective_limit,
+                    )
+                    try:
+                        summarized_middle = await self._history_summarizer.summarize(
+                            middle,
+                            model_name=model_name,
+                            target_tokens=self.target_summary_tokens,
+                        )
+                        final_messages = head + summarized_middle + tail
+                        final_messages = self._validate_and_fix_tool_pairing(
+                            final_messages
+                        )
+                        tokens_after = self._count_total_context_tokens(
+                            ctx, final_messages, model_name
+                        )
+                        logger.info(
+                            "Summarization complete: head=%s, middle=%s, tail=%s, "
+                            "summary_messages=%s, tokens_after=%s",
+                            len(head),
+                            len(middle),
+                            len(tail),
+                            len(summarized_middle),
+                            tokens_after,
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Summarization failed, using compacted history: %s", e
+                        )
+                        final_messages = messages_to_keep
+                else:
+                    logger.debug(
+                        "Summarization skipped: no middle segment "
+                        "(len=%s <= head=%s + tail=%s)",
+                        len(messages_to_keep),
+                        head_count,
+                        tail_count,
+                    )
 
         # Log output RunContext to debug file (only if DEBUG enabled)
         # Commented out - not needed right now
@@ -2402,6 +2571,9 @@ Conversation history to summarize:
                 f"Stored compressed output for key '{history_key}': {len(final_messages)} messages"
             )
 
+        # Phase 3: Also persist to conversation-scoped store for cross-request reuse
+        self._write_to_conversation_store(final_messages)
+
         return final_messages
 
 
@@ -2411,50 +2583,87 @@ def create_history_processor(
     target_summary_tokens: int = TARGET_SUMMARY_TOKENS,
 ):
     """
-    Factory function to create a history processor function with a summarization agent.
+    Factory function to create a history processor function with optional summarization.
+
+    Phase 4: When CONTEXT_MANAGEMENT_SUMMARIZATION_ENABLED is True, builds an
+    LLMHistorySummarizer and injects it so that when context is still over the
+    token limit after compaction, a middle segment is replaced with an LLM summary
+    (head and tail preserved).
 
     Args:
-        llm_provider: ProviderService instance to create summarization agent
-        token_limit: Token threshold for triggering summarization
+        llm_provider: ProviderService instance to create summarization agent/summarizer
+        token_limit: Token threshold for triggering compaction (overridden by model-aware budget)
         target_summary_tokens: Target token count for summarized history
 
     Returns:
         A function that can be used as a history processor (takes ctx and messages)
     """
-    # Create a cheaper model for summarization (use inference config if available)
-    # For now, we'll use the same provider but could be optimized to use a cheaper model
+    from app.modules.intelligence.agents.context_config import (
+        CONTEXT_MANAGEMENT_SUMMARIZATION_MODEL,
+        SUMMARIZATION_HEAD_MESSAGES,
+        SUMMARIZATION_TAIL_MESSAGES,
+        SUMMARIZATION_TARGET_TOKENS,
+        get_history_token_budget,
+    )
+    from app.modules.intelligence.agents.chat_agents.compressed_history_store import (
+        get_compressed_history_store,
+    )
+    from app.modules.intelligence.agents.chat_agents.history_summarizer import (
+        get_history_summarizer,
+    )
+    from app.modules.intelligence.provider.llm_config import get_context_window
+
+    # Model-aware token budget (Phase 2)
+    model_string = None
+    if hasattr(llm_provider, "chat_config") and llm_provider.chat_config:
+        model_string = getattr(llm_provider.chat_config, "model", None)
+    effective_token_limit = (
+        get_history_token_budget(model_string) if model_string else token_limit
+    )
+
+    # Phase 4: Build optional history summarizer (LLM or NoOp)
+    history_summarizer = get_history_summarizer(
+        llm_provider,
+        summarization_model=CONTEXT_MANAGEMENT_SUMMARIZATION_MODEL,
+        target_tokens=target_summary_tokens or SUMMARIZATION_TARGET_TOKENS,
+    )
+
+    # Legacy summarize_agent for backward compatibility (processor may still reference it)
+    summarize_agent = None
     try:
-        # Try to get a cheaper model from inference config if available
-        if hasattr(llm_provider, "inference_config"):
+        if hasattr(llm_provider, "inference_config") and llm_provider.inference_config:
             summarize_model = llm_provider.get_pydantic_model(
                 model=llm_provider.inference_config.model
             )
         else:
-            # Fallback to chat model
             summarize_model = llm_provider.get_pydantic_model()
+        from pydantic_ai import Agent
 
         summarize_agent = Agent(
             model=summarize_model,
-            instructions="""
-            You are a conversation summarizer. Your task is to condense conversation history
-            while preserving critical context, key decisions, important findings, and information
-            needed for continuation. Be concise but comprehensive.
-            """,
+            instructions=(
+                "You are a conversation summarizer. Condense conversation history "
+                "while preserving critical context, key decisions, and important findings."
+            ),
             output_type=str,
         )
-
-        logger.info("Created summarization agent for history processor")
     except Exception as e:
-        logger.warning(
-            f"Failed to create summarization agent: {e}. History processor will use fallback."
+        logger.debug(
+            "Optional summarization agent not created: %s (Phase 4 summarizer used when enabled).",
+            e,
         )
-        summarize_agent = None
 
-    # Create the processor instance
+    compressed_history_store = get_compressed_history_store()
+
     processor = TokenAwareHistoryProcessor(
         summarize_agent=summarize_agent,
-        token_limit=token_limit,
-        target_summary_tokens=target_summary_tokens,
+        token_limit=effective_token_limit,
+        target_summary_tokens=target_summary_tokens or SUMMARIZATION_TARGET_TOKENS,
+        context_window_resolver=get_context_window,
+        compressed_history_store=compressed_history_store,
+        history_summarizer=history_summarizer,
+        summarization_head_messages=SUMMARIZATION_HEAD_MESSAGES,
+        summarization_tail_messages=SUMMARIZATION_TAIL_MESSAGES,
     )
 
     # Return a function closure that Pydantic AI can inspect properly
@@ -2464,4 +2673,7 @@ def create_history_processor(
         """History processor function that wraps the TokenAwareHistoryProcessor instance."""
         return await processor(ctx, messages)
 
+    # Expose processor so prepare_multimodal_message_history can retrieve compressed history
+    # (keyed by run context id) for the next turn within the same agent execution
+    history_processor.processor = processor  # type: ignore[attr-defined]
     return history_processor

@@ -4468,6 +4468,7 @@ dependencies = [
     { name = "pyasn1" },
     { name = "pydantic", extra = ["email"] },
     { name = "pydantic-ai" },
+    { name = "pydantic-ai-todo" },
     { name = "pygithub" },
     { name = "pygments" },
     { name = "pyjwt" },
@@ -4566,6 +4567,7 @@ requires-dist = [
     { name = "pyasn1", specifier = ">=0.6.2" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.12.4" },
     { name = "pydantic-ai", specifier = ">=1.11.1" },
+    { name = "pydantic-ai-todo", specifier = ">=0.1.6" },
     { name = "pygithub", specifier = ">=2.8.1" },
     { name = "pygments", specifier = ">=2.19.2" },
     { name = "pyjwt", specifier = ">=2.10.1" },
@@ -5203,6 +5205,20 @@ ui = [
 vertexai = [
     { name = "google-auth" },
     { name = "requests" },
+]
+
+[[package]]
+name = "pydantic-ai-todo"
+version = "0.1.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "asyncpg" },
+    { name = "pydantic" },
+    { name = "pydantic-ai-slim" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/06/7f/3c5463d7b6170d332d917077e821294422e7da1d674546a1e86eda56987c/pydantic_ai_todo-0.1.6.tar.gz", hash = "sha256:d6fcf2b875c13b0a2843a10a37d38a3f1cd9b43266419cf51b39e613d791467b", size = 94271, upload-time = "2026-02-03T14:51:21.792Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e6/70/5c059f9af91a84efce962bcb1c7f0506d015fbc242c36cc8def5d4b79d53/pydantic_ai_todo-0.1.6-py3-none-any.whl", hash = "sha256:8bed7a5ecf27fa957786261f88f01855cb3d2fc112c98fe24c76ec503d93743f", size = 19323, upload-time = "2026-02-03T14:51:18.612Z" },
 ]
 
 [[package]]

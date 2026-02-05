@@ -1,9 +1,13 @@
 """Tool utility functions for multi-agent system"""
 
+import copy
 import functools
+import inspect
 import json
-from typing import List, Sequence, Any
+import re
+from typing import Any, List, Sequence
 
+from pydantic import BaseModel
 from pydantic_ai import Tool
 from pydantic_ai.messages import FunctionToolCallEvent, FunctionToolResultEvent
 
@@ -181,16 +185,133 @@ def create_tool_result_response(event: FunctionToolResultEvent) -> ToolCallRespo
         )
 
 
-def wrap_structured_tools(tools: Sequence[Any]) -> List[Tool]:
-    """Convert tool instances (StructuredTool or similar) to PydanticAI Tool instances"""
-    return [
-        Tool(
-            name=tool.name,
-            description=tool.description,
-            function=handle_exception(tool.func),  # type: ignore
+# OpenAI-compatible APIs require tool function names to match ^[a-zA-Z0-9_-]+$
+_TOOL_NAME_PATTERN = re.compile(r"[^a-zA-Z0-9_-]+")
+
+
+def sanitize_tool_name_for_api(name: str) -> str:
+    """Sanitize a tool name so it matches OpenAI-style API requirement: ^[a-zA-Z0-9_-]+$"""
+    if not name:
+        return "unnamed_tool"
+    sanitized = _TOOL_NAME_PATTERN.sub("_", name)
+    sanitized = re.sub(r"_+", "_", sanitized).strip("_")
+    return sanitized or "unnamed_tool"
+
+
+def _inline_json_schema_refs(
+    schema: dict[str, Any], defs: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Return a deep copy of the schema with all $ref inlined so every node has a 'type' key.
+
+    Some APIs (e.g. OpenAI) require every schema node to have a 'type' and do not resolve $ref.
+    """
+    resolved_defs: dict[str, Any] = schema.get("$defs", {}) if defs is None else defs
+    schema = copy.deepcopy(schema)
+
+    def resolve(obj: Any) -> Any:
+        if isinstance(obj, dict):
+            if "$ref" in obj:
+                ref = obj["$ref"]
+                key = ref.split("/")[-1]
+                return resolve(resolved_defs.get(key, obj))
+            return {k: resolve(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [resolve(x) for x in obj]
+        return obj
+
+    out = resolve(schema)
+    out.pop("$defs", None)
+    return out
+
+
+def _get_tool_args_schema(tool: Any) -> dict[str, Any] | None:
+    """Get JSON schema for a tool's args if it has an args_schema (Pydantic model or dict)."""
+    args_schema = getattr(tool, "args_schema", None)
+    if args_schema is None:
+        return None
+    if isinstance(args_schema, type) and issubclass(args_schema, BaseModel):
+        schema_fn = getattr(args_schema, "model_json_schema", None) or getattr(
+            args_schema, "schema", None
         )
-        for tool in tools
-    ]
+        if schema_fn:
+            return schema_fn()
+    if isinstance(args_schema, dict):
+        return args_schema
+    return None
+
+
+def _adapt_func_for_from_schema(tool: Any) -> Any:
+    """If the tool's func takes a single Pydantic model arg, wrap it so Tool.from_schema's **kwargs are converted to that model.
+
+    Tool.from_schema calls the function with **kwargs (schema property names). Many tools are defined as
+    func(input_data: SomeInput) and expect one model instance. This wrapper builds the model from kwargs
+    and calls the original func with it, so both styles work without changing every tool implementation.
+    Only wraps when the single parameter's type annotation is a BaseModel subclass (not e.g. str).
+    """
+    raw_schema = getattr(tool, "args_schema", None)
+    if not (isinstance(raw_schema, type) and issubclass(raw_schema, BaseModel)):
+        return tool.func
+    try:
+        sig = inspect.signature(tool.func)
+    except (TypeError, ValueError):
+        return tool.func
+    params = [p for p in sig.parameters.values() if p.name != "self"]
+    if len(params) != 1:
+        return tool.func
+    param = params[0]
+    annotation = param.annotation
+    if annotation is inspect.Parameter.empty:
+        return tool.func
+    if not (isinstance(annotation, type) and issubclass(annotation, BaseModel)):
+        return tool.func
+    model_cls = annotation
+
+    def wrapper(**kwargs: Any) -> Any:
+        return tool.func(model_cls(**kwargs))
+
+    return wrapper
+
+
+def wrap_structured_tools(tools: Sequence[Any]) -> List[Tool]:
+    """Convert tool instances (StructuredTool or similar) to PydanticAI Tool instances.
+    Tool names are sanitized to match API requirement ^[a-zA-Z0-9_-]+$.
+    When a tool has args_schema (e.g. SimpleTool with a Pydantic model), the schema is
+    inlined so APIs that require a 'type' key in every node (e.g. OpenAI) accept it.
+
+    Tools whose function takes a single Pydantic model argument (e.g. input_data: XInput)
+    are adapted so that Tool.from_schema's **kwargs are converted to that model before calling.
+    """
+    result: List[Tool] = []
+    for tool in tools:
+        name = sanitize_tool_name_for_api(tool.name)
+        description = tool.description
+        func = _adapt_func_for_from_schema(tool)
+        func = handle_exception(func)  # type: ignore[arg-type]
+        args_schema = _get_tool_args_schema(tool)
+        if args_schema is not None:
+            # Inline $ref so APIs that require a 'type' key in every node (e.g. OpenAI) accept the schema
+            json_schema = (
+                _inline_json_schema_refs(args_schema)
+                if args_schema.get("$defs")
+                else args_schema
+            )
+            result.append(
+                Tool.from_schema(
+                    function=func,
+                    name=name,
+                    description=description,
+                    json_schema=json_schema,
+                )
+            )
+        else:
+            result.append(
+                Tool(
+                    name=name,
+                    description=description,
+                    function=func,
+                )
+            )
+    return result
 
 
 def deduplicate_tools_by_name(tools: List[Tool]) -> List[Tool]:

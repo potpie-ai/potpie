@@ -138,18 +138,22 @@ def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
                     mode_text = f" ({mode} mode)" if mode == "async" else ""
                     return f"Executing terminal command: {display_cmd}{mode_text}"
             return "Executing terminal command"
-        case "create_todo":
-            return "Creating todo item"
+        case "read_todos":
+            return "Reading todo list"
+        case "write_todos":
+            return "Updating todo list"
+        case "add_todo":
+            return "Adding todo item"
         case "update_todo_status":
             return "Updating todo status"
-        case "add_todo_note":
-            return "Adding todo note"
-        case "get_todo":
-            return "Retrieving todo details"
-        case "list_todos":
-            return "Listing todos"
-        case "get_todo_summary":
-            return "Getting todo summary"
+        case "remove_todo":
+            return "Removing todo"
+        case "add_subtask":
+            return "Adding subtask"
+        case "set_dependency":
+            return "Setting task dependency"
+        case "get_available_tasks":
+            return "Getting available tasks"
         case "add_requirements":
             return "Updating requirements document"
         case "delete_requirements":
@@ -480,11 +484,11 @@ def get_tool_response_message(
                 _format_small_result(result) if _is_small_result(result) else ""
             )
             return f"Terminal command executed successfully{result_suffix}"
-        case "create_todo":
-            title = args.get("title") if args else None
-            if title:
-                return f"Todo item created successfully: {title[:50]}"
-            return "Todo item created successfully"
+        case "add_todo":
+            content = args.get("content") if args else None
+            if content:
+                return f"Todo item added successfully: {content[:50]}"
+            return "Todo item added successfully"
         case "update_todo_status":
             todo_id = args.get("todo_id") if args else None
             status = args.get("status") if args else None
@@ -493,23 +497,26 @@ def get_tool_response_message(
             elif todo_id:
                 return f"Todo status updated successfully: {todo_id}"
             return "Todo status updated successfully"
-        case "add_todo_note":
+        case "remove_todo":
             todo_id = args.get("todo_id") if args else None
             if todo_id:
-                return f"Todo note added successfully: {todo_id}"
-            return "Todo note added successfully"
-        case "get_todo":
-            todo_id = args.get("todo_id") if args else None
-            if todo_id:
-                return f"Todo details retrieved successfully: {todo_id}"
-            return "Todo details retrieved successfully"
-        case "list_todos":
-            status_filter = args.get("status_filter") if args else None
-            if status_filter:
-                return f"Todos listed successfully (filter: {status_filter})"
-            return "Todos listed successfully"
-        case "get_todo_summary":
-            return "Todo summary generated successfully"
+                return f"Todo removed successfully: {todo_id}"
+            return "Todo removed successfully"
+        case "read_todos":
+            return "Todo list retrieved successfully"
+        case "write_todos":
+            todos_arg = args.get("todos", []) if args else []
+            count = len(todos_arg) if isinstance(todos_arg, list) else 0
+            return f"Todo list updated successfully ({count} items)"
+        case "add_subtask":
+            parent_id = args.get("parent_id") if args else None
+            if parent_id:
+                return f"Subtask added successfully (parent: {parent_id})"
+            return "Subtask added successfully"
+        case "set_dependency":
+            return "Dependency set successfully"
+        case "get_available_tasks":
+            return "Available tasks retrieved successfully"
         case "add_requirements":
             return "Requirements document updated successfully"
         case "delete_requirements":
@@ -851,27 +858,34 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
                 timeout_info = f" (timeout: {timeout}ms)" if timeout else ""
                 return f"-> executing terminal command: {command}{dir_info}{mode_info}{timeout_info}\n"
             return "-> executing terminal command\n"
-        case "create_todo":
-            title = args.get("title", "")
-            priority = args.get("priority", "medium")
-            return f"-> creating todo: '{title}' (priority: {priority})\n"
+        case "add_todo":
+            content = args.get("content", "")
+            return f"-> adding todo: '{content[:60]}{'...' if len(content) > 60 else ''}'\n"
         case "update_todo_status":
             todo_id = args.get("todo_id", "")
             status = args.get("status", "")
             return f"-> updating todo {todo_id} to status: {status}\n"
-        case "add_todo_note":
+        case "remove_todo":
             todo_id = args.get("todo_id", "")
-            return f"-> adding note to todo {todo_id}\n"
-        case "get_todo":
+            return f"-> removing todo {todo_id}\n"
+        case "read_todos":
+            hierarchical = args.get("hierarchical", False)
+            if hierarchical:
+                return "-> reading todos (hierarchical view)\n"
+            return "-> reading todo list\n"
+        case "write_todos":
+            count = len(args.get("todos", [])) if args else 0
+            return f"-> writing {count} todo(s)\n"
+        case "add_subtask":
+            parent_id = args.get("parent_id", "")
+            content = args.get("content", "")[:50]
+            return f"-> adding subtask to {parent_id}: {content}\n"
+        case "set_dependency":
             todo_id = args.get("todo_id", "")
-            return f"-> retrieving details for todo {todo_id}\n"
-        case "list_todos":
-            status_filter = args.get("status_filter")
-            if status_filter:
-                return f"-> listing todos with status: {status_filter}\n"
-            return "-> listing all todos\n"
-        case "get_todo_summary":
-            return "-> generating todo summary\n"
+            depends_on_id = args.get("depends_on_id", "")
+            return f"-> setting dependency: {todo_id} depends on {depends_on_id}\n"
+        case "get_available_tasks":
+            return "-> getting available tasks\n"
         case "add_requirements":
             requirements = args.get("requirements", "")
             preview = requirements[:150] if len(requirements) > 150 else requirements
@@ -1354,14 +1368,16 @@ description:
                 return result_msg
             return ""
         case (
-            "create_todo"
+            "read_todos"
+            | "write_todos"
+            | "add_todo"
             | "update_todo_status"
-            | "add_todo_note"
-            | "get_todo"
-            | "list_todos"
-            | "get_todo_summary"
+            | "remove_todo"
+            | "add_subtask"
+            | "set_dependency"
+            | "get_available_tasks"
         ):
-            # For todo tools, return the content directly as it already includes the formatted todo list
+            # For todo tools, return the content directly (may include formatted todo list)
             if isinstance(content, str):
                 return content
             return str(content)

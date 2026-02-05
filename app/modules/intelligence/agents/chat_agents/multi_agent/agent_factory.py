@@ -6,9 +6,15 @@ from pydantic_ai.mcp import MCPServerStreamableHTTP
 from langchain_core.tools import StructuredTool
 
 from .utils.delegation_utils import AgentType
-from .utils.tool_utils import wrap_structured_tools, deduplicate_tools_by_name
+from .utils.tool_utils import (
+    wrap_structured_tools,
+    deduplicate_tools_by_name,
+    sanitize_tool_name_for_api,
+)
 from .agent_instructions import (
     DELEGATE_AGENT_INSTRUCTIONS,
+    SEARCH_FLOW_INSTRUCTIONS,
+    get_delegate_agent_instructions,
     get_integration_agent_instructions,
     get_supervisor_instructions,
     prepare_multimodal_instructions,
@@ -22,6 +28,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from app.modules.intelligence.tools.tool_service import ToolService
+    from app.modules.intelligence.tools.registry.resolver import ToolResolver
 
 logger = setup_logger(__name__)
 
@@ -38,6 +45,7 @@ class AgentFactory:
         history_processor: Any,
         create_delegation_function: Callable[[AgentType], Callable],
         tools_provider: "ToolService | None" = None,
+        tool_resolver: "ToolResolver | None" = None,
     ):
         """Initialize the agent factory
 
@@ -51,6 +59,9 @@ class AgentFactory:
             tools_provider: Optional ToolService for integration agents to get their tools directly.
                            If provided, integration agents (GitHub, Jira, etc.) will get their tools
                            from this service instead of filtering from the passed tools list.
+            tool_resolver: Optional ToolResolver for registry-driven tool sets (Phase 2).
+                          When set, supervisor/delegate/integration tools are built from registry
+                          allow-lists (supervisor, execute, integration_*) instead of self.tools.
         """
         self.llm_provider = llm_provider
         self.tools = tools
@@ -59,26 +70,38 @@ class AgentFactory:
         self.history_processor = history_processor
         self.create_delegation_function = create_delegation_function
         self.tools_provider = tools_provider
+        self.tool_resolver = tool_resolver
 
-        # Clean tool names (no spaces for pydantic agents)
-        import re
-
+        # Sanitize tool names for OpenAI-compatible API: ^[a-zA-Z0-9_-]+$
         for i, tool in enumerate(tools):
-            tools[i].name = re.sub(r" ", "", tool.name)
+            tools[i].name = sanitize_tool_name_for_api(tool.name)
 
-        # Cache for agent instances - keyed by (agent_type, conversation_id) to avoid stale context
-        self._agent_instances: Dict[tuple[AgentType, str], Agent] = {}
-        # Cache for supervisor agents - keyed by (conversation_id, local_mode) to avoid stale context
-        # local_mode affects instructions and show_diff availability, so we need separate caches
-        self._supervisor_agents: Dict[tuple[str, bool], Agent] = {}
+        # Cache for agent instances - keyed by (agent_type, conversation_id, use_tool_search_flow)
+        # Cache key: (agent_type, curr_agent_id, local_mode, use_tool_search_flow)
+        self._agent_instances: Dict[tuple[AgentType, str, bool, bool], Agent] = {}
+        # Cache for supervisor agents - keyed by (conversation_id, local_mode, use_tool_search_flow)
+        self._supervisor_agents: Dict[tuple[str, bool, bool], Agent] = {}
 
     def create_mcp_servers(self) -> List[MCPServerStreamableHTTP]:
-        """Create MCP server instances from configuration"""
+        """Create MCP server instances from configuration.
+
+        Each MCP server is given a tool_prefix so its tools do not conflict with
+        the agent's built-in tools (e.g. read_todos from the todo toolset).
+        """
         mcp_toolsets: List[MCPServerStreamableHTTP] = []
-        for mcp_server in self.mcp_servers:
+        for i, mcp_server in enumerate(self.mcp_servers):
             try:
+                name = mcp_server.get("name") or f"mcp{i}"
+                prefix = "".join(
+                    c if c.isalnum() or c in "_-" else "_" for c in str(name).lower()
+                )
+                if not prefix:
+                    prefix = f"mcp{i}"
+                tool_prefix = f"{prefix}_"
                 mcp_server_instance = MCPServerStreamableHTTP(
-                    url=mcp_server["link"], timeout=10.0
+                    url=mcp_server["link"],
+                    timeout=10.0,
+                    tool_prefix=tool_prefix,
                 )
                 mcp_toolsets.append(mcp_server_instance)
             except Exception as e:
@@ -117,92 +140,120 @@ class AgentFactory:
                     break  # Don't check other patterns for this tool
         return filtered
 
+    # Phase 2: AgentType → registry allow-list id for integration agents
+    _INTEGRATION_ALLOW_LIST_MAP = {
+        AgentType.JIRA: "integration_jira",
+        AgentType.GITHUB: "integration_github",
+        AgentType.CONFLUENCE: "integration_confluence",
+        AgentType.LINEAR: "integration_linear",
+    }
+
     def build_integration_agent_tools(
-        self, agent_type: AgentType, local_mode: bool = False
+        self,
+        agent_type: AgentType,
+        local_mode: bool = False,
+        log_tool_annotations: bool = True,
     ) -> List[Tool]:
-        """Build tool list for integration-specific agents
+        """Build tool list for integration-specific agents.
 
-        Integration agents receive their domain-specific tools. Most integration agents
-        focus exclusively on their integration domain, but GitHub agent also receives
-        code changes tools so it can access and commit changes tracked in the conversation.
+        When tool_resolver is set (Phase 2), integration tool names are resolved from
+        registry allow-lists (integration_jira, integration_github, etc.). Otherwise
+        uses hardcoded integration_tools_map for backward compatibility.
 
-        If tools_provider is available, integration agents get their tools directly from it.
-        Otherwise, they try to filter from the passed tools list.
+        GitHub agent also receives code changes tools for committing tracked changes.
         """
         # Import code changes tools here to avoid circular imports
         from app.modules.intelligence.tools.code_changes_manager import (
             create_code_changes_management_tools,
         )
 
-        # Define integration-specific tool names
-        integration_tools_map = {
-            AgentType.JIRA: [
-                "get_jira_issue",
-                "search_jira_issues",
-                "create_jira_issue",
-                "update_jira_issue",
-                "add_jira_comment",
-                "transition_jira_issue",
-                "get_jira_projects",
-                "get_jira_project_details",
-                "get_jira_project_users",
-                "link_jira_issues",
-            ],
-            AgentType.GITHUB: [
-                "github_tool",
-                "code_provider_tool",
-                "github_create_branch",
-                "code_provider_create_branch",
-                "github_create_pull_request",
-                "code_provider_create_pr",
-                "github_add_pr_comments",
-                "code_provider_add_pr_comments",
-                "github_update_branch",
-                "code_provider_update_file",
-            ],
-            AgentType.CONFLUENCE: [
-                "get_confluence_spaces",
-                "get_confluence_page",
-                "search_confluence_pages",
-                "get_confluence_space_pages",
-                "create_confluence_page",
-                "update_confluence_page",
-                "add_confluence_comment",
-            ],
-            AgentType.LINEAR: [
-                "get_linear_issue",
-                "update_linear_issue",
-            ],
-        }
-
-        # Get integration-specific tool names
-        integration_tool_names = integration_tools_map.get(agent_type, [])
-
-        # Try to get tools from tools_provider first (preferred), fall back to filtering
-        if self.tools_provider:
-            # Get tools directly from ToolService - this ensures integration agents
-            # always have access to their tools even if not in the agent config
-            integration_tools = self.tools_provider.get_tools(integration_tool_names)
-            logger.info(
-                f"Got {len(integration_tools)} tools from tools_provider for {agent_type.value}: "
-                f"{[t.name for t in integration_tools]}"
-            )
+        if self.tool_resolver:
+            allow_list_id = self._INTEGRATION_ALLOW_LIST_MAP.get(agent_type)
+            if not allow_list_id:
+                integration_tools = []
+                logger.warning(
+                    "AgentFactory: no registry allow-list for agent_type=%s",
+                    agent_type.value,
+                )
+            else:
+                integration_tools = self.tool_resolver.get_tools_for_agent(
+                    allow_list_id,
+                    local_mode=local_mode,
+                    exclude_embedding_tools=False,
+                    log_tool_annotations=log_tool_annotations,
+                )
+                logger.info(
+                    "AgentFactory: integration tools from registry (allow_list=%s), "
+                    "tool_count=%s for agent_type=%s",
+                    allow_list_id,
+                    len(integration_tools),
+                    agent_type.value,
+                )
         else:
-            # Fall back to filtering from passed tools
-            integration_tools = self._filter_tools_by_names(integration_tool_names)
-            logger.info(
-                f"Filtered {len(integration_tools)} tools from passed tools for {agent_type.value}: "
-                f"{[t.name for t in integration_tools]}"
-            )
+            # Backward compatibility: hardcoded map
+            integration_tools_map = {
+                AgentType.JIRA: [
+                    "get_jira_issue",
+                    "search_jira_issues",
+                    "create_jira_issue",
+                    "update_jira_issue",
+                    "add_jira_comment",
+                    "transition_jira_issue",
+                    "get_jira_projects",
+                    "get_jira_project_details",
+                    "get_jira_project_users",
+                    "link_jira_issues",
+                ],
+                AgentType.GITHUB: [
+                    "github_tool",
+                    "code_provider_tool",
+                    "github_create_branch",
+                    "code_provider_create_branch",
+                    "github_create_pull_request",
+                    "code_provider_create_pr",
+                    "github_add_pr_comments",
+                    "code_provider_add_pr_comments",
+                    "github_update_branch",
+                    "code_provider_update_file",
+                ],
+                AgentType.CONFLUENCE: [
+                    "get_confluence_spaces",
+                    "get_confluence_page",
+                    "search_confluence_pages",
+                    "get_confluence_space_pages",
+                    "create_confluence_page",
+                    "update_confluence_page",
+                    "add_confluence_comment",
+                ],
+                AgentType.LINEAR: [
+                    "get_linear_issue",
+                    "update_linear_issue",
+                ],
+            }
+            integration_tool_names = integration_tools_map.get(agent_type, [])
+            if self.tools_provider:
+                integration_tools = self.tools_provider.get_tools(
+                    integration_tool_names
+                )
+                logger.info(
+                    "Got %s tools from tools_provider for %s: %s",
+                    len(integration_tools),
+                    agent_type.value,
+                    [t.name for t in integration_tools],
+                )
+            else:
+                integration_tools = self._filter_tools_by_names(integration_tool_names)
+                logger.info(
+                    "Filtered %s tools from passed tools for %s: %s",
+                    len(integration_tools),
+                    agent_type.value,
+                    [t.name for t in integration_tools],
+                )
 
         wrapped_tools = wrap_structured_tools(integration_tools)
 
-        # GitHub agent also gets code changes tools so it can access tracked changes
-        # for committing to branches/PRs. This uses the same conversation_id-keyed
-        # code changes manager as the rest of the conversation.
         if agent_type == AgentType.GITHUB:
             code_changes_tools = create_code_changes_management_tools()
-            # In local mode, filter out show_diff (VSCode extension handles diff display)
             if local_mode:
                 code_changes_tools = [
                     t for t in code_changes_tools if t.name != "show_diff"
@@ -212,54 +263,88 @@ class AgentFactory:
 
         return wrapped_tools
 
-    def build_delegate_agent_tools(self, local_mode: bool = False) -> List[Tool]:
-        """Build the tool list for delegate agents - includes supervisor tools EXCEPT delegation, todo, and requirement tools.
+    def build_delegate_agent_tools(
+        self,
+        local_mode: bool = False,
+        use_tool_search_flow: bool = False,
+        log_tool_annotations: bool = True,
+    ) -> List[Tool]:
+        """Build the tool list for delegate agents (THINK_EXECUTE).
+
+        When tool_resolver is set (Phase 2), delegate gets full execution set from
+        registry allow-list "execute". When use_tool_search_flow=True (Phase 3),
+        delegate gets the three discovery meta-tools instead of the full list.
 
         Subagents get code execution tools and code changes tools, but NOT:
         - Delegation tools (they don't delegate)
         - Todo management tools (supervisor-only for coordination)
         - Requirement verification tools (supervisor-only for verification)
-
-        This ensures subagents focus on execution while the supervisor handles coordination and verification.
-
         """
         # Import tools here to avoid circular imports
         from app.modules.intelligence.tools.code_changes_manager import (
             create_code_changes_management_tools,
         )
 
-        # Create code changes tools (always create, filter show_diff in local mode)
         code_changes_tools = create_code_changes_management_tools()
         if local_mode:
-            # In local mode, filter out show_diff (VSCode extension handles diff display)
             code_changes_tools = [
                 t for t in code_changes_tools if t.name != "show_diff"
             ]
 
-        # Filter out todo and requirement tools from self.tools (supervisor-only)
-        # These tool names should not be available to subagents
-        supervisor_only_tool_names = {
-            # Todo management tools
-            "create_todo",
-            "update_todo_status",
-            "add_todo_note",
-            "get_todo",
-            "list_todos",
-            "get_todo_summary",
-            # Requirement verification tools
-            "add_requirements",
-            "delete_requirements",
-            "get_requirements",
-        }
-
-        # Filter tools to exclude supervisor-only tools
-        filtered_tools = [
-            tool for tool in self.tools if tool.name not in supervisor_only_tool_names
-        ]
-
-        # Subagents get execution tools and code changes tools, but NOT todo/requirement tools
-        all_tools = wrap_structured_tools(filtered_tools)
-        all_tools = all_tools + wrap_structured_tools(code_changes_tools)
+        if self.tool_resolver:
+            if use_tool_search_flow:
+                # Phase 3: delegate gets discovery meta-tools instead of full list
+                execute_tools = self.tool_resolver.get_discovery_tools_for_agent(
+                    "execute",
+                    local_mode=local_mode,
+                    exclude_embedding_tools=False,
+                    log_tool_annotations=log_tool_annotations,
+                )
+                all_tools = wrap_structured_tools(
+                    execute_tools
+                ) + wrap_structured_tools(code_changes_tools)
+                logger.info(
+                    "AgentFactory: delegate (execute) discovery tools from registry, "
+                    "discovery_tool_count=3, total_with_code_changes=%s",
+                    len(all_tools),
+                )
+            else:
+                # Phase 2: delegate gets full execution set from registry
+                execute_tools = self.tool_resolver.get_tools_for_agent(
+                    "execute",
+                    local_mode=local_mode,
+                    exclude_embedding_tools=False,
+                    log_tool_annotations=log_tool_annotations,
+                )
+                all_tools = wrap_structured_tools(
+                    execute_tools
+                ) + wrap_structured_tools(code_changes_tools)
+                logger.info(
+                    "AgentFactory: delegate (execute) tools from registry (allow_list=execute), "
+                    "execute_tool_count=%s, total_with_code_changes=%s",
+                    len(execute_tools),
+                    len(all_tools),
+                )
+        else:
+            supervisor_only_tool_names = {
+                "read_todos",
+                "write_todos",
+                "add_todo",
+                "update_todo_status",
+                "remove_todo",
+                "add_subtask",
+                "set_dependency",
+                "get_available_tasks",
+                "add_requirements",
+                "delete_requirements",
+                "get_requirements",
+            }
+            filtered_tools = [
+                t for t in self.tools if t.name not in supervisor_only_tool_names
+            ]
+            all_tools = wrap_structured_tools(filtered_tools) + wrap_structured_tools(
+                code_changes_tools
+            )
 
         return deduplicate_tools_by_name(all_tools)
 
@@ -528,23 +613,34 @@ Subagents DON'T get your history. Provide comprehensive context:
             description = self._get_delegation_tool_description(agent_type)
             delegation_tools.append(
                 Tool(
-                    name=f"delegate_to_{agent_type.value}_agent",
+                    name=sanitize_tool_name_for_api(
+                        f"delegate_to_{agent_type.value}_agent"
+                    ),
                     description=description,
                     function=self.create_delegation_function(agent_type),
                 )
             )
         return delegation_tools
 
-    def build_supervisor_agent_tools(self, local_mode: bool = False) -> List[Tool]:
-        """Build the tool list for supervisor agent including delegation, todo, code changes, and requirement verification tools
+    def build_supervisor_agent_tools(
+        self,
+        local_mode: bool = False,
+        use_tool_search_flow: bool = False,
+        log_tool_annotations: bool = True,
+    ) -> List[Tool]:
+        """Build the tool list for supervisor agent including delegation, todo, code changes, and requirement verification tools.
+
+        When tool_resolver is set (Phase 2), supervisor gets a curated set from registry
+        allow-list "supervisor" (includes todo/requirement tools). When use_tool_search_flow=True (Phase 3),
+        supervisor gets the three discovery meta-tools instead of the full tool list.
+
+        Note: Todo/requirement tools are provided via the registry (SUPERVISOR_TOOLS), not via a
+        separate toolset, to avoid name conflicts with MCP servers that may also expose read_todos.
 
         Note: Tool filtering for local_mode is handled in code_gen_agent.py.
         Here we only filter out show_diff in local mode (VSCode extension handles diff display).
         """
         # Import tools here to avoid circular imports
-        from app.modules.intelligence.tools.todo_management_tool import (
-            create_todo_management_tools,
-        )
         from app.modules.intelligence.tools.code_changes_manager import (
             create_code_changes_management_tools,
         )
@@ -552,11 +648,6 @@ Subagents DON'T get your history. Provide comprehensive context:
             create_requirement_verification_tools,
         )
 
-        logger.debug(
-            f"build_supervisor_agent_tools: local_mode={local_mode}, initial_tools_count={len(self.tools)}"
-        )
-
-        todo_tools = create_todo_management_tools()
         # Create code changes tools (always create, filter show_diff in local mode)
         code_changes_tools = create_code_changes_management_tools()
         if local_mode:
@@ -565,30 +656,76 @@ Subagents DON'T get your history. Provide comprehensive context:
                 t for t in code_changes_tools if t.name != "show_diff"
             ]
         requirement_tools = create_requirement_verification_tools()
-
-        # Create delegation tools - these are subagent tools that can execute tasks
         delegation_tools = self.build_delegation_tools()
 
-        # Build the complete tool list
-        all_tools = (
-            wrap_structured_tools(self.tools)
-            + delegation_tools
-            + wrap_structured_tools(todo_tools)
-            + wrap_structured_tools(code_changes_tools)
-            + wrap_structured_tools(requirement_tools)
-        )
+        if self.tool_resolver:
+            if use_tool_search_flow:
+                # Phase 3: supervisor gets discovery meta-tools instead of full list
+                supervisor_tools = self.tool_resolver.get_discovery_tools_for_agent(
+                    "supervisor",
+                    local_mode=local_mode,
+                    exclude_embedding_tools=False,
+                    log_tool_annotations=log_tool_annotations,
+                )
+                all_tools = (
+                    wrap_structured_tools(supervisor_tools)
+                    + delegation_tools
+                    + wrap_structured_tools(code_changes_tools)
+                    + wrap_structured_tools(requirement_tools)
+                )
+                logger.info(
+                    "AgentFactory: supervisor discovery tools from registry, "
+                    "discovery_tool_count=3, total_with_coordination=%s",
+                    len(all_tools),
+                )
+            else:
+                # Phase 2: supervisor gets curated set from registry (no terminal, no full execution suite)
+                supervisor_tools = self.tool_resolver.get_tools_for_agent(
+                    "supervisor",
+                    local_mode=local_mode,
+                    exclude_embedding_tools=False,
+                    log_tool_annotations=log_tool_annotations,
+                )
+                all_tools = (
+                    wrap_structured_tools(supervisor_tools)
+                    + delegation_tools
+                    + wrap_structured_tools(code_changes_tools)
+                    + wrap_structured_tools(requirement_tools)
+                )
+                logger.info(
+                    "AgentFactory: supervisor tools from registry (allow_list=supervisor), "
+                    "supervisor_tool_count=%s, total_with_coordination=%s",
+                    len(supervisor_tools),
+                    len(all_tools),
+                )
+        else:
+            logger.debug(
+                "build_supervisor_agent_tools: local_mode=%s, initial_tools_count=%s (no tool_resolver)",
+                local_mode,
+                len(self.tools),
+            )
+            all_tools = (
+                wrap_structured_tools(self.tools)
+                + delegation_tools
+                + wrap_structured_tools(code_changes_tools)
+                + wrap_structured_tools(requirement_tools)
+            )
 
-        # Deduplicate tools by name before returning
         final_tools = deduplicate_tools_by_name(all_tools)
         logger.debug(
-            f"build_supervisor_agent_tools: local_mode={local_mode}, final_tools_count={len(final_tools)}"
+            "build_supervisor_agent_tools: local_mode=%s, final_tools_count=%s",
+            local_mode,
+            len(final_tools),
         )
         return final_tools
 
     def create_delegate_agent(self, agent_type: AgentType, ctx: ChatContext) -> Agent:
         """Create a delegate agent - either generic (THINK_EXECUTE) or integration-specific"""
-        # Cache key includes conversation_id to ensure context-specific agents are not reused
-        cache_key = (agent_type, ctx.curr_agent_id)
+        # Cache key includes curr_agent_id, local_mode, and use_tool_search_flow (Phase 3)
+        # local_mode must be in key so we don't reuse a delegate built for the other mode (tools differ)
+        use_tool_search_flow = getattr(ctx, "use_tool_search_flow", False)
+        local_mode = ctx.local_mode if hasattr(ctx, "local_mode") else False
+        cache_key = (agent_type, ctx.curr_agent_id, local_mode, use_tool_search_flow)
         if cache_key in self._agent_instances:
             return self._agent_instances[cache_key]
 
@@ -600,18 +737,25 @@ Subagents DON'T get your history. Provide comprehensive context:
             AgentType.LINEAR,
         }
 
-        local_mode = ctx.local_mode if hasattr(ctx, "local_mode") else False
-
+        log_tool_annotations = getattr(ctx, "log_tool_annotations", True)
         if agent_type in integration_agents:
-            # Use integration-specific tools and instructions
+            # Use integration-specific tools and instructions (no discovery flow)
             tools = self.build_integration_agent_tools(
-                agent_type, local_mode=local_mode
+                agent_type,
+                local_mode=local_mode,
+                log_tool_annotations=log_tool_annotations,
             )
             instructions = get_integration_agent_instructions(agent_type.value)
         else:
-            # Use generic tools and instructions (THINK_EXECUTE)
-            tools = self.build_delegate_agent_tools(local_mode=local_mode)
-            instructions = DELEGATE_AGENT_INSTRUCTIONS
+            # Use generic tools and instructions (THINK_EXECUTE); Phase 3 discovery flow when enabled
+            tools = self.build_delegate_agent_tools(
+                local_mode=local_mode,
+                use_tool_search_flow=use_tool_search_flow,
+                log_tool_annotations=log_tool_annotations,
+            )
+            instructions = get_delegate_agent_instructions(local_mode=local_mode)
+            if use_tool_search_flow:
+                instructions = instructions + SEARCH_FLOW_INSTRUCTIONS
 
         agent = Agent(
             model=self.llm_provider.get_pydantic_model(),
@@ -633,14 +777,17 @@ Subagents DON'T get your history. Provide comprehensive context:
 
     def create_supervisor_agent(self, ctx: ChatContext, config: AgentConfig) -> Agent:
         """Create the supervisor agent that coordinates other agents"""
-        # Cache key includes conversation_id and local_mode to ensure context-specific instructions
-        # and tools are not reused (local_mode affects instructions and show_diff availability)
+        # Cache key includes conversation_id, local_mode, and use_tool_search_flow (Phase 3)
         conversation_id = ctx.curr_agent_id
         local_mode = ctx.local_mode if hasattr(ctx, "local_mode") else False
-        cache_key = (conversation_id, local_mode)
+        use_tool_search_flow = getattr(ctx, "use_tool_search_flow", False)
+        cache_key = (conversation_id, local_mode, use_tool_search_flow)
         if cache_key in self._supervisor_agents:
             logger.debug(
-                f"Returning cached supervisor agent for conversation_id={conversation_id}, local_mode={local_mode}"
+                "Returning cached supervisor agent for conversation_id=%s, local_mode=%s, use_tool_search_flow=%s",
+                conversation_id,
+                local_mode,
+                use_tool_search_flow,
             )
             return self._supervisor_agents[cache_key]
 
@@ -650,18 +797,31 @@ Subagents DON'T get your history. Provide comprehensive context:
         # Get supervisor task description
         supervisor_task_description = create_supervisor_task_description(ctx)
 
-        # Generate supervisor instructions
+        # Generate supervisor instructions (task_description is code_gen_task_prompt or code_gen_task_prompt_local when code gen agent)
+        task_description = config.tasks[0].description if config.tasks else ""
+        if task_description and "local mode" in task_description.lower():
+            logger.info(
+                "create_supervisor_agent: using LOCAL task prompt (code_gen_task_prompt_local) [local_mode=%s]",
+                local_mode,
+            )
         instructions = get_supervisor_instructions(
             config_role=config.role,
             config_goal=config.goal,
-            task_description=config.tasks[0].description if config.tasks else "",
+            task_description=task_description,
             multimodal_instructions=multimodal_instructions,
             supervisor_task_description=supervisor_task_description,
             local_mode=local_mode,
         )
+        if use_tool_search_flow:
+            instructions = instructions + SEARCH_FLOW_INSTRUCTIONS
 
-        # Build tools (local_mode only affects show_diff availability)
-        tools = self.build_supervisor_agent_tools(local_mode=local_mode)
+        # Build tools (local_mode affects show_diff; use_tool_search_flow selects discovery vs full list)
+        log_tool_annotations = getattr(ctx, "log_tool_annotations", True)
+        tools = self.build_supervisor_agent_tools(
+            local_mode=local_mode,
+            use_tool_search_flow=use_tool_search_flow,
+            log_tool_annotations=log_tool_annotations,
+        )
         logger.info(
             f"Creating supervisor agent: conversation_id={conversation_id}, local_mode={local_mode}, "
             f"tools_count={len(tools)}, tool_names={[t.name for t in tools[:10]]}..."

@@ -561,6 +561,18 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
             os.path.dirname(base_path), "worktrees", ref.replace("/", "_")
         )
 
+        # If the requested branch is already checked out in the main repo, use it.
+        # Creating another worktree for the same branch would fail (Git forbids it).
+        if not is_commit and not repo.head.is_detached:
+            try:
+                if repo.active_branch.name == ref:
+                    logger.debug(
+                        f"Using main repo for {ref} (already checked out at {base_path})"
+                    )
+                    return base_path
+            except Exception:
+                pass
+
         # Check if worktree already exists
         if os.path.exists(worktree_dir):
             try:

@@ -75,12 +75,14 @@ class DebugAgent(ChatAgent):
                 "fetch_files_batch",
                 "analyze_code_structure",
                 "bash_command",
-                "create_todo",
+                "read_todos",
+                "write_todos",
+                "add_todo",
                 "update_todo_status",
-                "get_todo",
-                "list_todos",
-                "add_todo_note",
-                "get_todo_summary",
+                "remove_todo",
+                "add_subtask",
+                "set_dependency",
+                "get_available_tasks",
                 "add_requirements",
                 "get_requirements",
             ],
@@ -213,7 +215,7 @@ For questions, explanations, code exploration, and general codebase queries:
 - **Be concise**: Avoid repetition, focus on what's asked
 
 ### When to Use Tools
-- Use `create_todo` for complex multi-step exploration tasks
+- Use `add_todo` for complex multi-step exploration tasks
 - Use `add_requirements` if user specifies specific deliverables
 - Generally, tools are available but not always necessary for simple Q&A
 
@@ -281,7 +283,7 @@ Extract only: "Method gets reset during redirect" ← THIS is the problem to inv
    - Core principles you'll follow
    - Success criteria
 
-2. **Call `create_todo`** to break down into trackable tasks:
+2. **Call `add_todo`** to break down into trackable tasks:
    - Example: "Trace execution path for method reset issue"
    - Example: "Identify all locations where method could be modified"
    - Example: "Verify fix covers all affected components"
@@ -300,7 +302,7 @@ Extract only: "Method gets reset during redirect" ← THIS is the problem to inv
 ### Step 2: Explore & Hypothesize
 
 - Formulate hypotheses about root causes
-- **Use `create_todo`** to add each hypothesis as a verification task
+- **Use `add_todo`** to add each hypothesis as a verification task
 - **Use `update_todo_status`** as you verify each one
 - Use web search, docstrings, README for feature understanding
 
@@ -363,7 +365,7 @@ ROOT CAUSE IDENTIFIED: [exact description of the bug and where it occurs]
 ```
 
 **Update tracking:**
-- Use `add_todo_note` to document the root cause on relevant todos
+- Use `update_todo_status` to mark tasks completed and document root cause in your response
 - **Once you can state the exact root cause → immediately proceed to Step 4 to generalize.**
 
 ---
@@ -459,7 +461,7 @@ FIX LOCATION DECISION:
 - FIX LOCATION: [chosen location and justification]
 ```
 
-**Use `create_todo` or `update_todo_status` for:**
+**Use `add_todo` or `update_todo_status` for:**
 - "Fix generalized issue - [pattern description]"
 - "Verify fix covers all affected components"
 
@@ -472,8 +474,8 @@ add_requirements("- GENERALIZED ISSUE: Loop copies from original request instead
 - DESIGN FIX: Update req to reference transformed request after each iteration
 - FIX LOCATION: [file]:[line] - where request is prepared (prevents issue at source)")
 
-create_todo("Fix generalized issue - request propagation through redirect loop")
-create_todo("Verify fix covers: method, headers, body, url, auth")
+add_todo(content="Fix generalized issue - request propagation through redirect loop", active_form="Fixing...")
+add_todo(content="Verify fix covers: method, headers, body, url, auth", active_form="Verifying...")
 ```
 
 ---
@@ -592,7 +594,7 @@ UNTIL: All cases pass
 
 ☐ **Future-proof**: New callers/consumers automatically get the fix
 
-**Use `list_todos` to verify all tracking todos are completed or updated**
+**Use `read_todos` to verify all tracking todos are completed or updated**
 
 ---
 
@@ -608,8 +610,8 @@ UNTIL: All cases pass
 
 - **Call `get_requirements`** - verify EACH requirement including GENERALIZED ISSUE, AFFECTED COMPONENTS, DESIGN FIX
 - Confirm your fix addresses the generalized pattern, not just the original symptom
-- **Call `list_todos`** - ensure all todos are completed
-- **Call `get_todo_summary`** - verify overall progress
+- **Call `read_todos`** - ensure all todos are completed
+- **Call `get_available_tasks`** if needed - verify overall progress
 
 ---
 
@@ -626,7 +628,7 @@ UNTIL: All cases pass
 
 - **BE EXHAUSTIVE**: Follow each step carefully, do not assume and try to exit early
 - **DO NOT SKIP STEPS**: Don't skip steps by assuming
-- **USE TOOLS EFFECTIVELY**: Use `create_todo`, `update_todo_status`, `add_requirements`, `get_requirements` throughout
+- **USE TOOLS EFFECTIVELY**: Use `add_todo`, `update_todo_status`, `add_requirements`, `get_requirements` throughout
 - **ONE SHOT**: You need to explore and confirm results in each step, do not shy away from extra or repeated tool calls to validate each step result
 
 ---

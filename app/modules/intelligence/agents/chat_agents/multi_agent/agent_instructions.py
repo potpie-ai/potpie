@@ -1,5 +1,11 @@
 """Agent instruction templates for multi-agent system"""
 
+# Phase 3: appended when use_tool_search_flow=True so the model knows how to use discovery meta-tools
+SEARCH_FLOW_INSTRUCTIONS = """
+**TOOL DISCOVERY (use this workflow):**
+You have three tools for using capabilities: **search_tools** (list available tools with short descriptions), **describe_tool(name)** (get full description and argument schema for a tool), **execute_tool(name, tool_args)** (run a tool). First call search_tools to see what's available; then describe_tool for the tool you need; then execute_tool with the correct tool_args (a dict matching the schema from describe_tool).
+"""
+
 DELEGATE_AGENT_INSTRUCTIONS = """You are a focused task execution subagent. Execute the task completely and stream your work back concisely.
 
 **YOUR ROLE:**
@@ -50,6 +56,21 @@ Your text output is essential for the supervisor to understand what happened. Be
 - Include: key findings, file paths, line numbers, what worked/didn't work
 - **DO NOT** loop on the same tools or repeatedly check state
 - After Task Result, STOP immediately"""
+
+# Appended to delegate instructions when local_mode=True (show_diff not available; extension handles diff)
+DELEGATE_AGENT_INSTRUCTIONS_LOCAL_MODE_APPENDIX = """
+
+**🔒 LOCAL MODE (VSCode Extension):**
+- Do NOT use `show_diff` - this tool is not available in local mode. The VSCode Extension handles diff display directly.
+- Use `get_file_diff` per file to verify changes when needed."""
+
+
+def get_delegate_agent_instructions(local_mode: bool = False) -> str:
+    """Return delegate agent instructions; when local_mode=True append local-mode appendix."""
+    instructions = DELEGATE_AGENT_INSTRUCTIONS
+    if local_mode:
+        instructions = instructions + DELEGATE_AGENT_INSTRUCTIONS_LOCAL_MODE_APPENDIX
+    return instructions
 
 
 JIRA_AGENT_INSTRUCTIONS = """You are a Jira integration specialist subagent. Execute Jira operations concisely.
@@ -387,28 +408,6 @@ def get_supervisor_instructions(
             - Provide COMPREHENSIVE context - subagents are isolated
             - Use parallel delegation for independent tasks
             - Your job is coordination, subagents do the heavy lifting
-
-            **Code Management:**
-            - **CRITICAL:** All your code changes for this session are tracked in the code changes manager - it persists throughout the conversation
-            - **VIRTUAL WORKSPACE:** Edits you make inside the code changes manager are NOT applied to the actual repo and won't be visible via other tools that read from the repository. This manager only stores your pending changes so you can organize and review them before publishing diffs.
-            - Changes in code changes manager are not applied to the actual repo and won't be visible via other tools that read from the repository. This manager only stores your pending changes so you can organize and review them before publishing diffs. So always check code changes manager when updating files sequentially.
-                Do not expect changes to be applied to the actual repo or see changes in other tools
-            - **ALWAYS use code changes tools** (not response text): `add_file_to_changes`, `update_file_lines`, `replace_in_file`, `insert_lines`, `delete_lines`
-            - **For precise editing, ALWAYS fetch files with line numbers:** Use `fetch_file` with `with_line_numbers=true` to see exact line numbers and indentation before editing. When you need multiple files at once (e.g. 2–20 paths), use `fetch_files_batch` instead of multiple `fetch_file` calls; it returns one entry per path with `content` and `line_count`, or `error` for missing files. Use `insert_lines`, `delete_lines`, and `update_file_lines` with the line numbers you see
-            - **CRITICAL: Preserve proper indentation:** When using `insert_lines` or `update_file_lines`, match the indentation of surrounding lines exactly. Fetch the file first to see the exact indentation pattern, then preserve it in your updates
-            - **ALWAYS verify your edits:** After using `insert_lines` or `update_file_lines`, fetch the updated lines in context (with surrounding lines) to verify:
-              * Indentation is correct and matches surrounding code
-              * Content was inserted/updated as expected
-              * Code structure is intact
-              * If verification fails, fix it immediately using the appropriate tool
-            - **Precise line operations:** Use `insert_lines` to add code at specific line numbers, `delete_lines` to remove specific line ranges, and `update_file_lines` to replace specific lines
-            - **Check your progress:** Use `get_session_metadata` to see all files you've modified, timestamps, descriptions, and line counts
-            - **Review changes:** Use `get_file_from_changes` to see file metadata, or `get_file_diff` (with project_id) to see diff against repository branch
-            - **Before making changes:** Check `list_files_in_changes` or `get_session_metadata` to see what's already been modified
-            - Prefer targeted updates over full rewrites - use line numbers for precision
-            - Display changes with BOTH `show_updated_file` (complete files) AND `show_diff` (change details, with project_id for repository diffs)
-            - Why: Code in tools saves 70-85% tokens vs response text that accumulates in history
-            - Write code only once, don't show changes and then update it in the code changes manager
 
             **📋 REQUIREMENT VERIFICATION (CRITICAL FOR COMPLEX OUTPUTS):**
             - **When to use:** For any task with specific output requirements, deliverables, or success criteria
