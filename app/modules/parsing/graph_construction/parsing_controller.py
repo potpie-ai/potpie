@@ -155,13 +155,20 @@ class ParsingController:
                             new_project_id
                         )
                     )
-                    task.add_done_callback(
-                        lambda t: logger.exception(
-                            "Failed to get project structure", exc_info=t.exception()
-                        )
-                        if t.exception()
-                        else None
-                    )
+
+                    def _on_structure_done(t: asyncio.Task) -> None:
+                        if t.cancelled():
+                            return
+                        try:
+                            exc = t.exception()
+                        except asyncio.CancelledError:
+                            return
+                        if exc is not None:
+                            logger.exception(
+                                "Failed to get project structure", exc_info=exc
+                            )
+
+                    task.add_done_callback(_on_structure_done)
                     # Duplicate the graph under the new repo ID
                     await parsing_service.duplicate_graph(
                         old_project_id, new_project_id
@@ -176,13 +183,18 @@ class ParsingController:
                             user_email, repo_name, repo_details.branch_name
                         )
                     )
-                    email_task.add_done_callback(
-                        lambda t: logger.exception(
-                            "Failed to send email", exc_info=t.exception()
-                        )
-                        if t.exception()
-                        else None
-                    )
+
+                    def _on_email_done(t: asyncio.Task) -> None:
+                        if t.cancelled():
+                            return
+                        try:
+                            exc = t.exception()
+                        except asyncio.CancelledError:
+                            return
+                        if exc is not None:
+                            logger.exception("Failed to send email", exc_info=exc)
+
+                    email_task.add_done_callback(_on_email_done)
 
                     return {
                         "project_id": new_project_id,

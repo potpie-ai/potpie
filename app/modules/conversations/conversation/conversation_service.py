@@ -266,13 +266,18 @@ class ConversationService:
 
             # Create background task with proper exception handling
             fetch_task = asyncio.create_task(_fetch_structure_with_timeout())
-            fetch_task.add_done_callback(
-                lambda t: logger.exception(
-                    "Failed to fetch project structure", exc_info=t.exception()
-                )
-                if t.exception()
-                else None
-            )
+
+            def _on_fetch_done(t: asyncio.Task) -> None:
+                if t.cancelled():
+                    return
+                try:
+                    exc = t.exception()
+                except asyncio.CancelledError:
+                    return
+                if exc is not None:
+                    logger.exception("Failed to fetch project structure", exc_info=exc)
+
+            fetch_task.add_done_callback(_on_fetch_done)
 
             await self._add_system_message(conversation_id, project_name, user_id)
 

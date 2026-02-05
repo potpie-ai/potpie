@@ -396,13 +396,18 @@ class ParsingService:
                     task = create_task(
                         EmailHelper().send_email(user_email, repo_name, branch_name)
                     )
-                    task.add_done_callback(
-                        lambda t: logger.exception(
-                            "Failed to send email", exc_info=t.exception()
-                        )
-                        if t.exception()
-                        else None
-                    )
+
+                    def _on_email_done(t: asyncio.Task) -> None:
+                        if t.cancelled():
+                            return
+                        try:
+                            exc = t.exception()
+                        except asyncio.CancelledError:
+                            return
+                        if exc is not None:
+                            logger.exception("Failed to send email", exc_info=exc)
+
+                    task.add_done_callback(_on_email_done)
                 logger.info(f"DEBUGNEO4J: After update project status {project_id}")
                 self.inference_service.log_graph_stats(project_id)
             finally:

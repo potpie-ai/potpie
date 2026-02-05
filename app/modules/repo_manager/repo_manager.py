@@ -580,7 +580,11 @@ class RepoManager(IRepoManager):
 
         # Update fields
         data["last_accessed"] = self._serialize_datetime(datetime.utcnow())
-        data["local_path"] = str(self._get_repo_local_path(repo_name))
+        bare_repo_path = self._get_bare_repo_path(repo_name)
+        if bare_repo_path.exists():
+            data["local_path"] = str(bare_repo_path)
+        else:
+            data["local_path"] = str(self._get_repo_local_path(repo_name))
         if repo_url is not None:
             data["repo_url"] = repo_url
         if auth_used is not None:
@@ -1003,6 +1007,8 @@ class RepoManager(IRepoManager):
 
         logger.info(f"Removing worktree: {repo_name}@{ref}")
 
+        worktree_removed = False
+
         try:
             result = subprocess.run(
                 [
@@ -1022,35 +1028,43 @@ class RepoManager(IRepoManager):
 
             if result.returncode == 0:
                 logger.info(f"Successfully removed worktree via git: {repo_name}@{ref}")
+                worktree_removed = True
             else:
                 logger.warning(
                     f"Git worktree remove failed, using rmtree: {result.stderr}"
                 )
                 shutil.rmtree(worktree_path, ignore_errors=True)
+                worktree_removed = not os.path.exists(worktree_path)
 
         except subprocess.TimeoutExpired:
             logger.warning("Timeout removing worktree, using rmtree")
             shutil.rmtree(worktree_path, ignore_errors=True)
+            worktree_removed = not os.path.exists(worktree_path)
         except Exception as e:
             logger.warning(f"Failed to remove worktree via git: {e}, using rmtree")
             shutil.rmtree(worktree_path, ignore_errors=True)
+            worktree_removed = not os.path.exists(worktree_path)
 
-        # Remove metadata entry
-        # Detect whether ref was stored as branch or commit by checking existing metadata
-        metadata_as_branch = self._load_metadata_entry(repo_name, ref, None)
-        if metadata_as_branch:
-            self._delete_metadata_entry(repo_name, ref, None)
-        else:
-            metadata_as_commit = self._load_metadata_entry(repo_name, None, ref)
-            if metadata_as_commit:
-                self._delete_metadata_entry(repo_name, None, ref)
-            else:
-                logger.warning(
-                    f"No metadata found for {repo_name}@{ref}, deleting as branch"
-                )
+        if worktree_removed:
+            # Remove metadata entry
+            # Detect whether ref was stored as branch or commit by checking existing metadata
+            metadata_as_branch = self._load_metadata_entry(repo_name, ref, None)
+            if metadata_as_branch:
                 self._delete_metadata_entry(repo_name, ref, None)
+            else:
+                metadata_as_commit = self._load_metadata_entry(repo_name, None, ref)
+                if metadata_as_commit:
+                    self._delete_metadata_entry(repo_name, None, ref)
+                else:
+                    logger.warning(
+                        f"No metadata found for {repo_name}@{ref}, deleting as branch"
+                    )
+                    self._delete_metadata_entry(repo_name, ref, None)
 
-        return True
+            return True
+        else:
+            logger.error(f"Failed to remove worktree: {repo_name}@{ref}")
+            return False
 
     def get_worktree_path(
         self,
