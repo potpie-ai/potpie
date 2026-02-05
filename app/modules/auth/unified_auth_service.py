@@ -63,6 +63,7 @@ class UnifiedAuthService:
     - Link new providers to existing accounts
     - Prevent account duplication
     - Manage provider preferences
+    - Sync Firebase providers to local DB
     """
 
     def __init__(self, db: Session):
@@ -78,6 +79,217 @@ class UnifiedAuthService:
     def get_sso_provider(self, provider_name: str) -> Optional[BaseSSOProvider]:
         """Get SSO provider by name"""
         return self.sso_providers.get(provider_name.lower())
+
+    # ===== Firebase Sync Methods =====
+
+    def get_firebase_user_by_email(self, email: str) -> Optional[Any]:
+        """
+        Get Firebase user by email.
+        
+        Returns Firebase UserRecord if found, None if not found or Firebase not initialized.
+        """
+        try:
+            import firebase_admin
+            from firebase_admin import auth
+            from firebase_admin.exceptions import NotFoundError
+            
+            # Check if Firebase is initialized
+            try:
+                firebase_admin.get_app()
+            except ValueError:
+                logger.warning("Firebase not initialized, cannot get user by email")
+                return None
+            
+            try:
+                firebase_user = auth.get_user_by_email(email)
+                return firebase_user
+            except NotFoundError:
+                return None
+            except Exception as e:
+                logger.error(f"Error getting Firebase user by email {email}: {e}")
+                return None
+        except ImportError:
+            logger.warning("Firebase Admin SDK not available")
+            return None
+
+    def get_firebase_user_providers(self, firebase_user: Any) -> List[Dict[str, Any]]:
+        """
+        Extract provider information from a Firebase UserRecord.
+        
+        Returns list of provider info dicts with provider_id and uid.
+        """
+        providers = []
+        if firebase_user and hasattr(firebase_user, 'provider_data'):
+            for provider in firebase_user.provider_data:
+                providers.append({
+                    'provider_id': provider.provider_id,  # e.g., 'github.com', 'google.com'
+                    'uid': provider.uid,  # Provider-specific UID
+                    'email': getattr(provider, 'email', None),
+                    'display_name': getattr(provider, 'display_name', None),
+                    'photo_url': getattr(provider, 'photo_url', None),
+                })
+        return providers
+
+    def has_github_in_firebase(self, email: str) -> Tuple[bool, Optional[str]]:
+        """
+        Check if a user has GitHub linked in Firebase.
+        
+        Returns (has_github, github_uid) tuple.
+        """
+        firebase_user = self.get_firebase_user_by_email(email)
+        if not firebase_user:
+            return False, None
+        
+        providers = self.get_firebase_user_providers(firebase_user)
+        for provider in providers:
+            if provider['provider_id'] == 'github.com':
+                return True, provider['uid']
+        
+        return False, None
+
+    def sync_firebase_providers_to_local(
+        self, 
+        user_id: str, 
+        email: str,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> List[UserAuthProvider]:
+        """
+        Sync Firebase providers to local database.
+        
+        Checks what providers the user has in Firebase and ensures they exist locally.
+        This handles the case where local DB was deleted but Firebase still has the user.
+        
+        Returns list of synced providers.
+        """
+        firebase_user = self.get_firebase_user_by_email(email)
+        if not firebase_user:
+            logger.info(f"No Firebase user found for email {email}, skipping provider sync")
+            return []
+        
+        firebase_providers = self.get_firebase_user_providers(firebase_user)
+        synced_providers = []
+        
+        for fb_provider in firebase_providers:
+            provider_id = fb_provider['provider_id']
+            
+            # Map Firebase provider IDs to our provider types
+            if provider_id == 'github.com':
+                provider_type = PROVIDER_TYPE_FIREBASE_GITHUB
+                # For GitHub, the provider_uid should be the Firebase UID (not GitHub UID)
+                # because that's how we store it elsewhere
+                provider_uid = firebase_user.uid
+            elif provider_id == 'google.com':
+                provider_type = PROVIDER_TYPE_SSO_GOOGLE
+                provider_uid = firebase_user.uid
+            elif provider_id == 'password':
+                provider_type = PROVIDER_TYPE_FIREBASE_EMAIL
+                provider_uid = firebase_user.uid
+            else:
+                # Skip unknown provider types
+                logger.info(f"Skipping unknown Firebase provider: {provider_id}")
+                continue
+            
+            # Check if provider already exists locally
+            existing_provider = self.get_provider(user_id, provider_type)
+            if existing_provider:
+                logger.info(f"Provider {provider_type} already exists locally for user {user_id}")
+                synced_providers.append(existing_provider)
+                continue
+            
+            # Check if this provider_uid is already linked to a different user
+            existing_with_uid = (
+                self.db.query(UserAuthProvider)
+                .filter(
+                    UserAuthProvider.provider_type == provider_type,
+                    UserAuthProvider.provider_uid == provider_uid,
+                )
+                .first()
+            )
+            
+            if existing_with_uid and existing_with_uid.user_id != user_id:
+                logger.warning(
+                    f"Provider {provider_type} with uid {provider_uid} is linked to different user "
+                    f"{existing_with_uid.user_id}, cannot sync to user {user_id}"
+                )
+                continue
+            
+            # Create the provider locally
+            try:
+                provider_create = AuthProviderCreate(
+                    provider_type=provider_type,
+                    provider_uid=provider_uid,
+                    provider_data={
+                        'synced_from_firebase': True,
+                        'firebase_provider_id': provider_id,
+                        'firebase_provider_uid': fb_provider['uid'],
+                    },
+                    is_primary=(provider_type != PROVIDER_TYPE_FIREBASE_GITHUB),  # SSO is typically primary
+                )
+                new_provider = self.add_provider(
+                    user_id=user_id,
+                    provider_create=provider_create,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                )
+                synced_providers.append(new_provider)
+                logger.info(f"Synced Firebase provider {provider_type} to local DB for user {user_id}")
+            except Exception as e:
+                logger.error(f"Failed to sync provider {provider_type} for user {user_id}: {e}")
+        
+        return synced_providers
+
+    def validate_github_token(self, access_token: str) -> Tuple[bool, Optional[str]]:
+        """
+        Validate a GitHub access token by calling the GitHub API.
+        
+        Returns (is_valid, github_username) tuple.
+        - is_valid: True if the token can access GitHub API
+        - github_username: The GitHub username if valid, None otherwise
+        """
+        import requests
+        
+        if not access_token:
+            return False, None
+        
+        try:
+            # Try to get user info from GitHub
+            response = requests.get(
+                'https://api.github.com/user',
+                headers={
+                    'Authorization': f'token {access_token}',
+                    'Accept': 'application/vnd.github.v3+json',
+                },
+                timeout=10,
+            )
+            
+            if response.status_code == 200:
+                user_data = response.json()
+                return True, user_data.get('login')
+            else:
+                logger.warning(f"GitHub token validation failed with status {response.status_code}")
+                return False, None
+        except Exception as e:
+            logger.error(f"Error validating GitHub token: {e}")
+            return False, None
+
+    def check_github_repos_accessible(self, user_id: str) -> Tuple[bool, Optional[str]]:
+        """
+        Check if we can fetch GitHub repos for a user.
+        
+        Returns (can_access, github_username) tuple.
+        """
+        # Get the GitHub provider for this user
+        github_provider = self.get_provider(user_id, PROVIDER_TYPE_FIREBASE_GITHUB)
+        if not github_provider:
+            return False, None
+        
+        # Get decrypted token
+        access_token = self.get_decrypted_access_token(user_id, PROVIDER_TYPE_FIREBASE_GITHUB)
+        if not access_token:
+            return False, None
+        
+        return self.validate_github_token(access_token)
 
     async def verify_sso_token(
         self, provider_name: str, id_token: str
@@ -575,11 +787,20 @@ class UnifiedAuthService:
                         f"No GitHub provider found for user {existing_user.uid} ({email}). "
                         f"Available providers: {provider_types}"
                     )
+                else:
+                    # GitHub is linked - but is the token still valid?
+                    github_token_valid, _ = self.check_github_repos_accessible(existing_user.uid)
+                    if not github_token_valid:
+                        logger.warning(
+                            f"User {existing_user.uid} ({email}) has GitHub linked but token is invalid/expired. "
+                            "Treating as needs GitHub linking."
+                        )
+                        has_github = False  # Treat as not linked if token doesn't work
 
                 if not has_github:
-                    # GitHub not linked - don't complete login, redirect to onboarding
+                    # GitHub not linked (or token invalid) - don't complete login, redirect to onboarding
                     logger.info(
-                        f"User {existing_user.uid} ({email}) authenticated but GitHub not linked. "
+                        f"User {existing_user.uid} ({email}) authenticated but GitHub not linked/valid. "
                         "Requiring GitHub linking before login completion."
                     )
 
@@ -605,10 +826,11 @@ class UnifiedAuthService:
                             display_name=existing_user.display_name,
                             message="Login successful, but GitHub account linking required",
                             needs_github_linking=True,  # Frontend will redirect to onboarding
+                            github_token_valid=False,  # Token invalid or not linked
                         ),
                     )
 
-                # GitHub is linked - proceed with normal login
+                # GitHub is linked and token is valid - proceed with normal login
                 self.update_last_used(existing_user.uid, provider_type)
 
                 # Set this provider as primary since user is signing in with it
@@ -642,6 +864,7 @@ class UnifiedAuthService:
                     display_name=existing_user.display_name,
                     message="Login successful",
                     needs_github_linking=False,  # Explicitly set to False
+                    github_token_valid=True,  # We verified the token is valid above
                 )
             else:
                 # Scenario 2: User exists but not this provider → Create pending link
@@ -700,10 +923,17 @@ class UnifiedAuthService:
                         existing_user.uid
                     )
 
+                    # Also validate GitHub token if linked
+                    github_token_valid = False
+                    if has_github:
+                        github_token_valid, _ = self.check_github_repos_accessible(existing_user.uid)
+                        if not github_token_valid:
+                            has_github = False  # Treat as not linked if token invalid
+                    
                     if not has_github:
-                        # GitHub not linked - require linking before login completion
+                        # GitHub not linked or token invalid - require linking before login completion
                         logger.info(
-                            f"User {existing_user.uid} ({email}) authenticated but GitHub not linked. "
+                            f"User {existing_user.uid} ({email}) authenticated but GitHub not linked/valid. "
                             "Requiring GitHub linking before login completion (race condition path)."
                         )
                         existing_user.last_login_at = utc_now()
@@ -717,10 +947,11 @@ class UnifiedAuthService:
                                 display_name=existing_user.display_name,
                                 message="Login successful, but GitHub account linking required",
                                 needs_github_linking=True,  # Frontend will redirect to onboarding
+                                github_token_valid=False,
                             ),
                         )
 
-                    # GitHub is linked - proceed with normal login
+                    # GitHub is linked and token is valid - proceed with normal login
                     self.update_last_used(existing_user.uid, provider_type)
                     existing_user.last_login_at = utc_now()
                     self.db.commit()
@@ -732,6 +963,7 @@ class UnifiedAuthService:
                         display_name=existing_user.display_name,
                         message="Login successful",
                         needs_github_linking=False,  # Explicitly set to False
+                        github_token_valid=True,
                     )
                 else:
                     # User exists but not this provider → Create pending link
@@ -758,7 +990,10 @@ class UnifiedAuthService:
                         existing_providers=existing_providers,
                     )
 
-            # User truly doesn't exist - create new user
+            # User truly doesn't exist in local DB - create new user
+            # BUT first check if they exist in Firebase (handles DB reset scenario)
+            firebase_user = self.get_firebase_user_by_email(email)
+            
             new_user = self._create_user_with_provider(
                 email=email,
                 provider_type=provider_type,
@@ -771,7 +1006,26 @@ class UnifiedAuthService:
                 user_agent=user_agent,
             )
 
-            # Check GitHub linking for new users (new users won't have GitHub linked yet)
+            # Sync any existing Firebase providers to local DB
+            # This handles the case where user existed in Firebase but local DB was reset
+            if firebase_user:
+                logger.info(
+                    f"User {email} exists in Firebase (UID: {firebase_user.uid}). "
+                    "Syncing providers to local DB..."
+                )
+                synced_providers = self.sync_firebase_providers_to_local(
+                    user_id=new_user.uid,
+                    email=email,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                )
+                if synced_providers:
+                    logger.info(
+                        f"Synced {len(synced_providers)} providers from Firebase for user {new_user.uid}"
+                    )
+
+            # Check GitHub linking for new users
+            # First check local DB
             github_provider = (
                 self.db.query(UserAuthProvider)
                 .filter(
@@ -780,10 +1034,20 @@ class UnifiedAuthService:
                 )
                 .first()
             )
-
-            # Only check for GitHub provider in database - don't rely on provider_username
-            # as it may exist for other providers (e.g., Google SSO)
+            
             has_github = github_provider is not None
+            github_token_valid = False
+            
+            # If GitHub is linked, validate the token can actually access GitHub
+            if has_github:
+                github_token_valid, _ = self.check_github_repos_accessible(new_user.uid)
+                if not github_token_valid:
+                    logger.warning(
+                        f"User {new_user.uid} has GitHub linked but token is invalid/expired. "
+                        "Will require re-linking."
+                    )
+                    # GitHub is linked but token doesn't work - treat as needs linking
+                    has_github = False
 
             # Audit log
             self._log_auth_event(
@@ -801,7 +1065,8 @@ class UnifiedAuthService:
                 email=email,
                 display_name=new_user.display_name,
                 message="Account created successfully",
-                needs_github_linking=not has_github,  # Set to True if GitHub not linked
+                needs_github_linking=not has_github,  # Set to True if GitHub not linked or token invalid
+                github_token_valid=github_token_valid if has_github else None,
             )
 
     # ===== Pending Provider Links =====

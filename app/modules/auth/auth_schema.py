@@ -86,6 +86,10 @@ class SSOLoginResponse(BaseModel):
     needs_github_linking: Optional[bool] = Field(
         default=False, description="True if user needs to link GitHub account"
     )
+    github_token_valid: Optional[bool] = Field(
+        default=None, 
+        description="True if GitHub token can access repos, False if expired/invalid, None if GitHub not linked"
+    )
 
 
 # ===== Provider Linking Flow =====
