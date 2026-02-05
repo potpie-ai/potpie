@@ -1,6 +1,6 @@
 """Message history utility functions for multi-agent system"""
 
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Set
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -8,7 +8,11 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
 )
-from typing import Set
+
+from app.modules.intelligence.agents.chat_agent import ChatContext
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 def _is_llm_response_with_text(msg: ModelMessage) -> bool:
@@ -64,12 +68,6 @@ def _strip_problematic_tool_calls(
         return None
 
     return ModelResponse(parts=kept_parts, model_name=msg.model_name)
-
-
-from app.modules.intelligence.agents.chat_agent import ChatContext
-from app.modules.utils.logger import setup_logger
-
-logger = setup_logger(__name__)
 
 
 def _remove_duplicate_tool_results(messages: List[ModelMessage]) -> List[ModelMessage]:

@@ -1,9 +1,7 @@
 import os
-from app.modules.utils.logger import setup_logger
-
-logger = setup_logger(__name__)
 import random
 from typing import Dict, Any, Optional, Type, List
+
 from pydantic import BaseModel, Field
 from github import Github
 from github.GithubException import GithubException
@@ -11,6 +9,9 @@ from sqlalchemy.orm import Session
 from langchain_core.tools import StructuredTool
 
 from app.modules.code_provider.provider_factory import CodeProviderFactory
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class CodeProviderCreatePullRequestInput(BaseModel):

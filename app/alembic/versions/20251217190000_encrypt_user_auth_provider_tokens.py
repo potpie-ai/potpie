@@ -10,7 +10,6 @@ Handles NULL tokens gracefully and provides backward compatibility.
 from typing import Sequence, Union
 
 from alembic import op
-import sqlalchemy as sa
 from sqlalchemy import text
 
 # revision identifiers, used by Alembic.

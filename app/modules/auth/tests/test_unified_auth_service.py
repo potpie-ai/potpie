@@ -4,11 +4,11 @@ Unit tests for UnifiedAuthService
 
 import pytest
 from datetime import datetime, timedelta, timezone
-from unittest.mock import Mock, patch, AsyncMock
+from unittest.mock import Mock, patch
 
 from app.modules.auth.unified_auth_service import UnifiedAuthService
 from app.modules.auth.auth_schema import AuthProviderCreate
-from app.modules.auth.auth_provider_model import UserAuthProvider, PendingProviderLink
+from app.modules.auth.auth_provider_model import PendingProviderLink
 
 
 class TestUnifiedAuthService:
@@ -32,7 +32,7 @@ class TestUnifiedAuthService:
 
         assert len(providers) == 1
         assert providers[0].provider_type == "firebase_github"
-        assert providers[0].is_primary == True
+        assert providers[0].is_primary
 
     def test_get_user_providers_multiple(self, db_session, test_user_with_multiple_providers):
         """Test getting multiple providers ordered by primary first"""
@@ -41,7 +41,7 @@ class TestUnifiedAuthService:
 
         assert len(providers) == 2
         # Primary provider should be first
-        assert providers[0].is_primary == True
+        assert providers[0].is_primary
         assert providers[0].provider_type == "firebase_github"
 
     def test_get_provider(self, db_session, test_user_with_github):
@@ -79,7 +79,7 @@ class TestUnifiedAuthService:
         )
 
         assert provider.provider_type == "firebase_github"
-        assert provider.is_primary == True  # First provider is always primary
+        assert provider.is_primary  # First provider is always primary
 
     def test_add_provider_second(self, db_session, test_user_with_github):
         """Test adding second provider (should not be primary by default)"""
@@ -97,7 +97,7 @@ class TestUnifiedAuthService:
         )
 
         assert provider.provider_type == "sso_google"
-        assert provider.is_primary == False
+        assert not provider.is_primary
 
     def test_add_provider_duplicate(self, db_session, test_user_with_github):
         """Test adding duplicate provider (should return existing)"""
@@ -127,22 +127,22 @@ class TestUnifiedAuthService:
             "sso_google"
         )
 
-        assert result == True
+        assert result
 
         # Verify
         providers = service.get_user_providers(test_user_with_multiple_providers.uid)
         google_provider = next(p for p in providers if p.provider_type == "sso_google")
         github_provider = next(p for p in providers if p.provider_type == "firebase_github")
 
-        assert google_provider.is_primary == True
-        assert github_provider.is_primary == False
+        assert google_provider.is_primary
+        assert not github_provider.is_primary
 
     def test_set_primary_provider_not_found(self, db_session, test_user):
         """Test setting non-existent provider as primary"""
         service = UnifiedAuthService(db_session)
         result = service.set_primary_provider(test_user.uid, "sso_okta")
 
-        assert result == False
+        assert not result
 
     def test_unlink_provider(self, db_session, test_user_with_multiple_providers):
         """Test unlinking non-primary provider"""
@@ -154,7 +154,7 @@ class TestUnifiedAuthService:
             "sso_google"
         )
 
-        assert result == True
+        assert result
 
         # Verify
         providers = service.get_user_providers(test_user_with_multiple_providers.uid)
@@ -181,13 +181,13 @@ class TestUnifiedAuthService:
             "firebase_github"
         )
 
-        assert result == True
+        assert result
 
         # Verify Google is now primary
         providers = service.get_user_providers(test_user_with_multiple_providers.uid)
         assert len(providers) == 1
         assert providers[0].provider_type == "sso_google"
-        assert providers[0].is_primary == True
+        assert providers[0].is_primary
 
     def test_update_last_used(self, db_session, test_user_with_github):
         """Test updating provider last_used_at"""
@@ -311,7 +311,7 @@ class TestUnifiedAuthService:
         service = UnifiedAuthService(db_session)
 
         result = service.cancel_pending_link(pending_link.token)
-        assert result == True
+        assert result
 
         # Verify deleted
         db_session.expire_all()
@@ -335,7 +335,7 @@ class TestUnifiedAuthService:
 
         enforce, provider = service.should_enforce_sso("user@company.com")
 
-        assert enforce == True
+        assert enforce
         assert provider == "google"
 
     def test_should_enforce_sso_no_config(self, db_session):
@@ -344,7 +344,7 @@ class TestUnifiedAuthService:
 
         enforce, provider = service.should_enforce_sso("user@example.com")
 
-        assert enforce == False
+        assert not enforce
         assert provider is None
 
     @pytest.mark.asyncio

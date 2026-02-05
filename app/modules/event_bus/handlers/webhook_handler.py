@@ -8,7 +8,6 @@ from typing import Any, Dict
 
 from sqlalchemy.orm import Session
 
-from app.modules.integrations.integrations_service import IntegrationsService
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)

@@ -18,7 +18,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from app.modules.utils.install_gvisor import main
+from app.modules.utils.install_gvisor import main  # noqa: E402
 
 if __name__ == "__main__":
     main()

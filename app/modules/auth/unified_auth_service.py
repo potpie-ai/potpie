@@ -13,6 +13,22 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_
 
 from app.modules.integrations.token_encryption import encrypt_token, decrypt_token
+from app.modules.auth.sso_providers import (
+    BaseSSOProvider,
+)
+from app.modules.auth.sso_providers.provider_registry import SSOProviderRegistry
+from app.modules.auth.auth_provider_model import (
+    UserAuthProvider,
+    PendingProviderLink,
+    OrganizationSSOConfig,
+    AuthAuditLog,
+)
+from app.modules.users.user_model import User
+from app.modules.users.user_service import UserService
+from app.modules.auth.auth_schema import (
+    AuthProviderCreate,
+    SSOLoginResponse,
+)
 
 # Constants
 LINKING_TOKEN_LENGTH = 32  # Length of URL-safe token for provider linking
@@ -32,24 +48,6 @@ def utc_now() -> datetime:
     """Get current UTC time as timezone-aware datetime"""
     return datetime.now(timezone.utc)
 
-
-from app.modules.auth.sso_providers import (
-    BaseSSOProvider,
-)
-from app.modules.auth.sso_providers.provider_registry import SSOProviderRegistry
-
-from app.modules.auth.auth_provider_model import (
-    UserAuthProvider,
-    PendingProviderLink,
-    OrganizationSSOConfig,
-    AuthAuditLog,
-)
-from app.modules.users.user_model import User
-from app.modules.users.user_service import UserService
-from app.modules.auth.auth_schema import (
-    AuthProviderCreate,
-    SSOLoginResponse,
-)
 
 logger = logging.getLogger(__name__)
 

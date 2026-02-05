@@ -12,7 +12,7 @@ from pathlib import Path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from app.modules.utils.gvisor_runner import (
+from app.modules.utils.gvisor_runner import (  # noqa: E402
     is_gvisor_available,
     run_command_isolated,
     run_shell_command_isolated,

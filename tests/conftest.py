@@ -9,6 +9,12 @@ import urllib.parse
 from pathlib import Path
 from dotenv import load_dotenv
 from unittest.mock import MagicMock
+import pytest
+import pytest_asyncio
+from httpx import AsyncClient
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 
 # --- Basic Setup ---
 load_dotenv()  # Load .env for all environment variables
@@ -17,27 +23,20 @@ sys.path.insert(0, str(project_root))
 os.environ["isDevelopmentMode"] = "enabled"
 os.environ["defaultUsername"] = "test-user"
 
-import pytest
-import pytest_asyncio
-from httpx import AsyncClient
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-
 # --- App and Model Imports ---
-from app.main import app
-from app.core.base_model import Base
-from app.core.database import get_db, get_async_db
-from app.modules.auth.auth_service import AuthService
-from app.modules.usage.usage_service import UsageService
-from app.modules.users.user_model import User
-from app.modules.projects.projects_model import Project
-from app.modules.conversations.conversation.conversation_model import (
+from app.main import app  # noqa: E402
+from app.core.base_model import Base  # noqa: E402
+from app.core.database import get_db, get_async_db  # noqa: E402
+from app.modules.auth.auth_service import AuthService  # noqa: E402
+from app.modules.usage.usage_service import UsageService  # noqa: E402
+from app.modules.users.user_model import User  # noqa: E402
+from app.modules.projects.projects_model import Project  # noqa: E402
+from app.modules.conversations.conversation.conversation_model import (  # noqa: E402
     Conversation,
     ConversationStatus,
 )
-from app.modules.conversations.utils.redis_streaming import RedisStreamManager
-from app.modules.code_provider.github.github_service import GithubService
+from app.modules.conversations.utils.redis_streaming import RedisStreamManager  # noqa: E402
+from app.modules.code_provider.github.github_service import GithubService  # noqa: E402
 
 
 # =================================================================

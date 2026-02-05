@@ -1,8 +1,5 @@
 import asyncio
 import os
-from app.modules.utils.logger import setup_logger
-
-logger = setup_logger(__name__)
 import random
 from typing import Any, Dict, List, Optional
 
@@ -13,6 +10,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.modules.code_provider.provider_factory import CodeProviderFactory
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class CodeProviderToolInput(BaseModel):

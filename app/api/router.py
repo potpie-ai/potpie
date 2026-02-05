@@ -42,6 +42,11 @@ from app.modules.integrations.integrations_schema import (
     IntegrationSaveRequest,
     IntegrationSaveResponse,
 )
+from app.modules.conversations.utils.conversation_routing import (
+    normalize_run_id,
+    ensure_unique_run_id,
+    start_celery_task_and_stream,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -85,13 +90,6 @@ async def get_api_key_user(
         )
 
     return user
-
-
-from app.modules.conversations.utils.conversation_routing import (
-    normalize_run_id,
-    ensure_unique_run_id,
-    start_celery_task_and_stream,
-)
 
 
 @router.post("/conversations/", response_model=CreateConversationResponse)

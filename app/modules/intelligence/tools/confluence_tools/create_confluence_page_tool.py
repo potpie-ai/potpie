@@ -3,11 +3,9 @@
 Allows agents to create new Confluence pages in a space.
 """
 
-from app.modules.utils.logger import setup_logger
-
-logger = setup_logger(__name__)
 import asyncio
 from typing import Any, Dict, Optional
+
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -16,6 +14,9 @@ from .confluence_client import (
     get_confluence_client_for_user,
     check_confluence_integration_exists,
 )
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class CreateConfluencePageInput(BaseModel):
