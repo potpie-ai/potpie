@@ -90,6 +90,7 @@ class ConversationService:
         redis_manager: RedisStreamManager = None,
     ):
         self.db = db
+        self.sql_db = db  # Initialize sql_db to fix undefined variable error
         self.user_id = user_id
         self.user_email = user_email
         self.conversation_store = conversation_store
