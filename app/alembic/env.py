@@ -8,7 +8,18 @@ from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool
 
 from app.core.base_model import Base
-from app.core.models import *  # noqa
+from app.modules.conversations.conversation.conversation_model import Conversation
+from app.modules.conversations.message.message_model import Message
+from app.modules.integrations.integration_model import Integration
+from app.modules.media.media_model import MessageAttachment
+from app.modules.intelligence.prompts.prompt_model import AgentPromptMapping, Prompt
+from app.modules.intelligence.agents.custom_agents.custom_agent_model import CustomAgent, CustomAgentShare
+from app.modules.projects.projects_model import Project
+from app.modules.search.search_models import SearchIndex
+from app.modules.tasks.task_model import Task
+from app.modules.users.user_model import User
+from app.modules.users.user_preferences_model import UserPreferences
+from app.modules.auth.auth_provider_model import UserAuthProvider, PendingProviderLink, OrganizationSSOConfig, AuthAuditLog
 
 target_metadata = Base.metadata
 # Load environment variables from .env

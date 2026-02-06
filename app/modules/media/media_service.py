@@ -144,8 +144,7 @@ class MediaService:
             # Generate storage path
             storage_path = self._generate_storage_path(attachment_id, file_name)
 
-            # Upload to GCS
-            # await self._upload_to_gcs(storage_path, processed_image_data, mime_type)
+            # Upload to cloud storage
             await self._upload_to_cloud(storage_path, processed_image_data, mime_type)
 
             # Create database record

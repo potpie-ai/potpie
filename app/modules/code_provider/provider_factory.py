@@ -97,12 +97,10 @@ class CodeProviderFactory:
 
         elif provider_type == ProviderType.GITLAB:
             base_url = base_url or "https://gitlab.com"
-            # provider = GitLabProvider(base_url=base_url)
             raise NotImplementedError("GitLab provider not yet implemented")
 
         elif provider_type == ProviderType.BITBUCKET:
             base_url = base_url or "https://api.bitbucket.org/2.0"
-            # provider = BitbucketProvider(base_url=base_url)
             raise NotImplementedError("Bitbucket provider not yet implemented")
 
         elif provider_type == ProviderType.LOCAL:

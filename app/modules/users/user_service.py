@@ -90,8 +90,7 @@ class UserService:
 
     def setup_dummy_user(self):
         defaultUserId = os.getenv("defaultUsername")
-        user_service = UserService(self.db)
-        user = user_service.get_user_by_uid(defaultUserId)
+        user = self.get_user_by_uid(defaultUserId)
         if user:
             print("Dummy user already exists")
             return
@@ -101,15 +100,13 @@ class UserService:
                 email="defaultuser@potpie.ai",
                 display_name="Dummy User",
                 email_verified=True,
-                created_at=datetime.utcnow(),
-                last_login_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
+                last_login_at=datetime.now(timezone.utc),
                 provider_info={"access_token": "dummy_token"},
                 provider_username="self",
             )
-            uid, message, error = user_service.create_user(user)
-
-        uid, _, _ = user_service.create_user(user)
-        logger.info(f"Created dummy user with uid: {uid}")
+            uid, message, error = self.create_user(user)
+            logger.info(f"Created dummy user with uid: {uid}")
 
     def get_user_by_uid(self, uid: str):
         try:

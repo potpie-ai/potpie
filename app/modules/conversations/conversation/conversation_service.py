@@ -82,7 +82,7 @@ class ConversationService:
         history_manager: ChatHistoryService,
         provider_service: ProviderService,
         tools_service: ToolService,
-        promt_service: PromptService,
+        prompt_service: PromptService,
         agent_service: AgentsService,
         custom_agent_service: CustomAgentService,
         media_service: MediaService,
@@ -99,7 +99,7 @@ class ConversationService:
         self.history_manager = history_manager
         self.provider_service = provider_service
         self.tool_service = tools_service
-        self.prompt_service = promt_service
+        self.prompt_service = prompt_service
         self.agent_service = agent_service
         self.custom_agent_service = custom_agent_service
         self.media_service = media_service
