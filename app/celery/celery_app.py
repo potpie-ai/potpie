@@ -10,7 +10,18 @@ from celery import Celery
 from celery.signals import worker_process_shutdown, worker_process_init
 from dotenv import load_dotenv
 
-from app.core.models import *  # noqa #This will import and initialize all models
+from app.modules.conversations.conversation.conversation_model import Conversation
+from app.modules.conversations.message.message_model import Message
+from app.modules.integrations.integration_model import Integration
+from app.modules.media.media_model import MessageAttachment
+from app.modules.intelligence.prompts.prompt_model import AgentPromptMapping, Prompt
+from app.modules.intelligence.agents.custom_agents.custom_agent_model import CustomAgent, CustomAgentShare
+from app.modules.projects.projects_model import Project
+from app.modules.search.search_models import SearchIndex
+from app.modules.tasks.task_model import Task
+from app.modules.users.user_model import User
+from app.modules.users.user_preferences_model import UserPreferences
+from app.modules.auth.auth_provider_model import UserAuthProvider, PendingProviderLink, OrganizationSSOConfig, AuthAuditLog
 from app.modules.utils.logger import configure_logging, setup_logger
 
 # Load environment variables from a .env file if present
