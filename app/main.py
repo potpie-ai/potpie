@@ -13,7 +13,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.router import router as potpie_api_router
 from app.core.base_model import Base
 from app.core.database import SessionLocal, engine
-from app.core.models import *  # noqa #necessary for models to not give import errors
+from app.modules.conversations.conversation.conversation_model import Conversation
+from app.modules.conversations.message.message_model import Message
+from app.modules.integrations.integration_model import Integration
+from app.modules.media.media_model import MessageAttachment
+from app.modules.intelligence.prompts.prompt_model import AgentPromptMapping, Prompt
+from app.modules.intelligence.agents.custom_agents.custom_agent_model import CustomAgent, CustomAgentShare
+from app.modules.projects.projects_model import Project
+from app.modules.search.search_models import SearchIndex
+from app.modules.tasks.task_model import Task
+from app.modules.users.user_model import User
+from app.modules.users.user_preferences_model import UserPreferences
+from app.modules.auth.auth_provider_model import UserAuthProvider, PendingProviderLink, OrganizationSSOConfig, AuthAuditLog
 from app.modules.auth.auth_router import auth_router
 from app.modules.code_provider.github.github_router import router as github_router
 from app.modules.conversations.conversations_router import (

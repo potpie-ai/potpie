@@ -685,18 +685,18 @@ class JiraClient:
                 )
                 priority_response.raise_for_status()
                 priority_data = priority_response.json()
-                default_priority_scheme = priority_data.get("values")[0].get(
-                    "priorities", []
-                )
-                priority_values = default_priority_scheme.get("values", [])
-                for p in priority_values:
-                    priorities.append(
-                        {
-                            "id": p.get("id"),
-                            "name": p.get("name"),
-                            "description": p.get("description", ""),
-                        }
-                    )
+                values = priority_data.get("values", [])
+                if values:
+                    default_priority_scheme = values[0].get("priorities", [])
+                    priority_values = default_priority_scheme.get("values", [])
+                    for p in priority_values:
+                        priorities.append(
+                            {
+                                "id": p.get("id"),
+                                "name": p.get("name"),
+                                "description": p.get("description", ""),
+                            }
+                        )
             except Exception as e:
                 logger.warning(f"Could not fetch priorities: {str(e)}")
 
