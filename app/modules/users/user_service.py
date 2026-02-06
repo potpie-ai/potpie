@@ -1,6 +1,6 @@
 import asyncio
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List
 
 from firebase_admin import auth
@@ -28,7 +28,7 @@ class UserService:
         try:
             user = self.db.query(User).filter(User.uid == uid).first()
             if user:
-                user.last_login_at = datetime.utcnow()
+                user.last_login_at = datetime.now(timezone.utc)
 
                 # Safely update provider_info with OAuth token
                 if user.provider_info is None:
