@@ -9,9 +9,14 @@ from sqlalchemy.pool import NullPool
 
 load_dotenv(override=True)
 
+# Validate POSTGRES_SERVER environment variable
+POSTGRES_SERVER = os.getenv("POSTGRES_SERVER")
+if POSTGRES_SERVER is None:
+    raise ValueError("POSTGRES_SERVER environment variable is not set")
+
 # Create engine with connection pooling and best practices
 engine = create_engine(
-    os.getenv("POSTGRES_SERVER"),
+    POSTGRES_SERVER,
     pool_size=10,  # Initial number of connections in the pool
     max_overflow=10,  # Maximum number of connections beyond pool_size
     pool_timeout=30,  # Timeout in seconds for getting a connection from the pool
