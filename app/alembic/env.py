@@ -21,6 +21,11 @@ from app.modules.users.user_model import User
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.auth.auth_provider_model import UserAuthProvider, PendingProviderLink, OrganizationSSOConfig, AuthAuditLog
 
+# Register all models with SQLAlchemy by referencing them
+_MODELS = (Conversation, Message, Integration, MessageAttachment, AgentPromptMapping, Prompt,
+           CustomAgent, CustomAgentShare, Project, SearchIndex, Task, User, UserPreferences,
+           UserAuthProvider, PendingProviderLink, OrganizationSSOConfig, AuthAuditLog)
+
 target_metadata = Base.metadata
 # Load environment variables from .env
 load_dotenv(override=True)

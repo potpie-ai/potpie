@@ -50,6 +50,11 @@ from app.modules.utils.firebase_setup import FirebaseSetup
 from app.modules.utils.logger import configure_logging, setup_logger
 from app.modules.utils.logging_middleware import LoggingContextMiddleware
 
+# Register all models with SQLAlchemy by referencing them
+_MODELS = (Conversation, Message, Integration, MessageAttachment, AgentPromptMapping, Prompt,
+           CustomAgent, CustomAgentShare, Project, SearchIndex, Task, User, UserPreferences,
+           UserAuthProvider, PendingProviderLink, OrganizationSSOConfig, AuthAuditLog)
+
 configure_logging()
 logger = setup_logger(__name__)
 
