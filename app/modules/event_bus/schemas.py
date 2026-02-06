@@ -4,7 +4,7 @@ Event Bus Schemas
 Pydantic models for event bus data structures.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
@@ -22,7 +22,7 @@ class EventMetadata(BaseModel):
     user_id: Optional[str] = Field(None, description="User ID if applicable")
     project_id: Optional[str] = Field(None, description="Project ID if applicable")
     timestamp: datetime = Field(
-        default_factory=datetime.utcnow, description="Event timestamp"
+        default_factory=lambda: datetime.now(timezone.utc), description="Event timestamp"
     )
     retry_count: int = Field(default=0, description="Number of retries attempted")
 
@@ -47,7 +47,7 @@ class WebhookEvent(BaseModel):
     )
     source_ip: Optional[str] = Field(None, description="Source IP address")
     received_at: datetime = Field(
-        default_factory=datetime.utcnow, description="When webhook was received"
+        default_factory=lambda: datetime.now(timezone.utc), description="When webhook was received"
     )
     metadata: EventMetadata = Field(
         default_factory=EventMetadata, description="Event metadata"
@@ -70,7 +70,7 @@ class CustomEvent(BaseModel):
     )
     data: Dict[str, Any] = Field(..., description="Event data payload")
     created_at: datetime = Field(
-        default_factory=datetime.utcnow, description="When event was created"
+        default_factory=lambda: datetime.now(timezone.utc), description="When event was created"
     )
     metadata: EventMetadata = Field(
         default_factory=EventMetadata, description="Event metadata"
@@ -94,7 +94,7 @@ class Event(BaseModel):
         default_factory=EventMetadata, description="Event metadata"
     )
     created_at: datetime = Field(
-        default_factory=datetime.utcnow, description="When event was created"
+        default_factory=lambda: datetime.now(timezone.utc), description="When event was created"
     )
 
     class Config:

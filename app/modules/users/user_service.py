@@ -1,6 +1,6 @@
 import asyncio
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List
 
 from firebase_admin import auth
@@ -28,7 +28,7 @@ class UserService:
         try:
             user = self.db.query(User).filter(User.uid == uid).first()
             if user:
-                user.last_login_at = datetime.utcnow()
+                user.last_login_at = datetime.now(timezone.utc)
 
                 # Safely update provider_info with OAuth token
                 if user.provider_info is None:
@@ -101,8 +101,8 @@ class UserService:
                 email="defaultuser@potpie.ai",
                 display_name="Dummy User",
                 email_verified=True,
-                created_at=datetime.utcnow(),
-                last_login_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
+                last_login_at=datetime.now(timezone.utc),
                 provider_info={"access_token": "dummy_token"},
                 provider_username="self",
             )

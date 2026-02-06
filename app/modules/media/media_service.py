@@ -291,9 +291,9 @@ class MediaService:
             file_extension = file_name.split(".")[-1].lower()
 
         # Create path: attachments/year/month/attachment_id.extension
-        from datetime import datetime
+        from datetime import datetime, timezone
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         path = f"attachments/{now.year:04d}/{now.month:02d}/{attachment_id}"
 
         if file_extension:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
 from potpie.exceptions import UserError, UserNotFoundError
@@ -73,8 +73,8 @@ class UserResource(BaseResource):
                 email=email,
                 display_name=display_name or email.split("@")[0],
                 email_verified=True,
-                created_at=datetime.utcnow(),
-                last_login_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
+                last_login_at=datetime.now(timezone.utc),
                 provider_info={},
                 provider_username="library",
             )

@@ -49,7 +49,7 @@ class TestUserModel:
             email_verified=True,
             organization="company.com",
             organization_name="Test Company",
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         db_session.add(user)
         db_session.commit()
@@ -69,7 +69,7 @@ class TestUserAuthProvider:
             provider_uid="google-123",
             provider_data={"email": "test@example.com"},
             is_primary=True,
-            linked_at=datetime.utcnow(),
+            linked_at=datetime.now(timezone.utc),
         )
         db_session.add(provider)
         db_session.commit()
@@ -85,7 +85,7 @@ class TestUserAuthProvider:
             user_id=test_user_with_github.uid,
             provider_type="firebase_github",  # Same as existing
             provider_uid="different-uid",
-            linked_at=datetime.utcnow(),
+            linked_at=datetime.now(timezone.utc),
         )
         db_session.add(duplicate)
 
@@ -99,7 +99,7 @@ class TestUserAuthProvider:
             user_id=test_user.uid,  # Different user
             provider_type="firebase_github",
             provider_uid="github-123",  # Same as existing
-            linked_at=datetime.utcnow(),
+            linked_at=datetime.now(timezone.utc),
         )
         db_session.add(duplicate)
 
@@ -171,7 +171,7 @@ class TestPendingProviderLink:
             provider_uid="google-789",
             provider_data={"email": "test@example.com"},
             token="unique-token-123",
-            expires_at=datetime.utcnow() + timedelta(minutes=15),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
             ip_address="127.0.0.1",
             user_agent="Mozilla/5.0",
         )
@@ -189,7 +189,7 @@ class TestPendingProviderLink:
             provider_uid="azure-123",
             provider_data={},
             token=pending_link.token,  # Same token
-            expires_at=datetime.utcnow() + timedelta(minutes=15),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
         )
         db_session.add(duplicate)
 
@@ -204,12 +204,12 @@ class TestPendingProviderLink:
             provider_uid="google-789",
             provider_data={},
             token="token-123",
-            expires_at=datetime.utcnow() - timedelta(minutes=1),  # Expired
+            expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),  # Expired
         )
         db_session.add(link)
         db_session.commit()
 
-        assert link.expires_at < datetime.utcnow()
+        assert link.expires_at < datetime.now(timezone.utc)
 
     def test_cascade_delete_with_user(self, db_session, test_user, pending_link):
         """Test pending links are deleted when user is deleted"""
@@ -241,7 +241,7 @@ class TestOrganizationSSOConfig:
             },
             enforce_sso=True,
             allow_other_providers=False,
-            configured_at=datetime.utcnow(),
+            configured_at=datetime.now(timezone.utc),
             is_active=True,
         )
         db_session.add(config)
@@ -257,7 +257,7 @@ class TestOrganizationSSOConfig:
             domain=org_sso_config.domain,  # Same domain
             sso_provider="azure",
             sso_config={},
-            configured_at=datetime.utcnow(),
+            configured_at=datetime.now(timezone.utc),
         )
         db_session.add(duplicate)
 
@@ -276,7 +276,7 @@ class TestOrganizationSSOConfig:
             domain="inactive.com",
             sso_provider="google",
             sso_config={},
-            configured_at=datetime.utcnow(),
+            configured_at=datetime.now(timezone.utc),
             is_active=False,
         )
         db_session.add(inactive)
@@ -303,7 +303,7 @@ class TestAuthAuditLog:
             status="success",
             ip_address="127.0.0.1",
             user_agent="Mozilla/5.0",
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         db_session.add(log)
         db_session.commit()
@@ -321,7 +321,7 @@ class TestAuthAuditLog:
             status="failure",
             error_message="Invalid token",
             ip_address="192.168.1.1",
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         db_session.add(log)
         db_session.commit()
@@ -340,7 +340,7 @@ class TestAuthAuditLog:
                 "custom_field": "value",
                 "nested": {"key": "value"},
             },
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         db_session.add(log)
         db_session.commit()
@@ -356,7 +356,7 @@ class TestAuthAuditLog:
                 user_id=test_user.uid,
                 event_type=event,
                 status="success",
-                created_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
             )
             db_session.add(log)
         db_session.commit()
@@ -374,19 +374,19 @@ class TestAuthAuditLog:
             user_id=test_user.uid,
             event_type="login",
             status="success",
-            created_at=datetime.utcnow() - timedelta(days=2),
+            created_at=datetime.now(timezone.utc) - timedelta(days=2),
         )
         recent_log = AuthAuditLog(
             user_id=test_user.uid,
             event_type="login",
             status="success",
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         db_session.add_all([old_log, recent_log])
         db_session.commit()
 
         # Query last 24 hours
-        cutoff = datetime.utcnow() - timedelta(hours=24)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
         recent_logs = db_session.query(AuthAuditLog).filter(
             AuthAuditLog.created_at >= cutoff
         ).all()

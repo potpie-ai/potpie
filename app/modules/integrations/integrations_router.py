@@ -452,7 +452,7 @@ async def linear_oauth_callback(
 
                 # Create a LinearSaveRequest with the authorization code
                 from .integrations_schema import LinearSaveRequest
-                from datetime import datetime
+                from datetime import datetime, timezone
 
                 # Always use HTTPS in production
                 save_request = LinearSaveRequest(
@@ -460,7 +460,7 @@ async def linear_oauth_callback(
                     redirect_uri=f"https://{request.url.hostname}/api/v1/integrations/linear/callback",
                     instance_name="Linear Integration",  # Will be updated with org name in service
                     integration_type="linear",
-                    timestamp=datetime.utcnow().isoformat() + "Z",
+                    timestamp=datetime.now(timezone.utc).isoformat() + "Z",
                 )
 
                 # Save the integration (this will exchange code for tokens)
@@ -684,7 +684,7 @@ async def jira_oauth_callback(
                 integrations_service = IntegrationsService(db)
 
                 from .integrations_schema import JiraSaveRequest
-                from datetime import datetime
+                from datetime import datetime, timezone
 
                 # Prefer configured redirect URI so it exactly matches what's registered
                 config = Config()
@@ -717,7 +717,7 @@ async def jira_oauth_callback(
                     instance_name="Jira Integration",
                     user_id=user_id,
                     integration_type="jira",
-                    timestamp=datetime.utcnow().isoformat() + "Z",
+                    timestamp=datetime.now(timezone.utc).isoformat() + "Z",
                 )
 
                 # Save the integration (this will exchange the code and persist tokens)
