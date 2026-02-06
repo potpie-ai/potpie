@@ -24,6 +24,11 @@ from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.auth.auth_provider_model import UserAuthProvider, PendingProviderLink, OrganizationSSOConfig, AuthAuditLog
 from app.modules.utils.logger import configure_logging, setup_logger
 
+# Register all models with SQLAlchemy by referencing them
+_MODELS = (Conversation, Message, Integration, MessageAttachment, AgentPromptMapping, Prompt,
+           CustomAgent, CustomAgentShare, Project, SearchIndex, Task, User, UserPreferences,
+           UserAuthProvider, PendingProviderLink, OrganizationSSOConfig, AuthAuditLog)
+
 # Load environment variables from a .env file if present
 load_dotenv()
 
