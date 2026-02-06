@@ -1,5 +1,5 @@
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
@@ -20,8 +20,8 @@ class Task(Base):
     id = Column(Integer, primary_key=True)
     task_type = Column(Enum(TaskType), nullable=False)
     custom_status = Column(String(50), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     project_id = Column(String, ForeignKey("projects.id"), nullable=False)
     result = Column(String, nullable=True)
 
