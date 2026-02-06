@@ -20,6 +20,9 @@ from app.modules.conversations.conversations_router import (
     router as conversations_router,
 )
 from app.modules.intelligence.agents.agents_router import router as agent_router
+from app.modules.intelligence.agents.gap_analysis_router import (
+    router as gap_analysis_router,
+)
 from app.modules.intelligence.prompts.prompt_router import router as prompt_router
 from app.modules.intelligence.prompts.system_prompt_setup import SystemPromptSetup
 from app.modules.intelligence.provider.provider_router import router as provider_router
@@ -156,6 +159,9 @@ class MainApp:
         self.app.include_router(search_router, prefix="/api/v1", tags=["Search"])
         self.app.include_router(github_router, prefix="/api/v1", tags=["Github"])
         self.app.include_router(agent_router, prefix="/api/v1", tags=["Agents"])
+        self.app.include_router(
+            gap_analysis_router, prefix="/api/v1", tags=["Gap Analysis"]
+        )
         self.app.include_router(provider_router, prefix="/api/v1", tags=["Providers"])
         self.app.include_router(tool_router, prefix="/api/v1", tags=["Tools"])
         self.app.include_router(usage_router, prefix="/api/v1/usage", tags=["Usage"])

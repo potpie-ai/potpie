@@ -27,6 +27,7 @@ from .chat_agents.system_agents import (
     blast_radius_agent,
     code_gen_agent,
     debug_agent,
+    gap_analysis_agent,
     integration_test_agent,
     low_level_design_agent,
     qna_agent,
@@ -143,6 +144,14 @@ class AgentsService:
                 name="SWEB Debug Agent",
                 description="An agent specialized in debugging issues in a codebase.",
                 agent=sweb_debug_agent.SWEBDebugAgent(
+                    llm_provider, tools_provider, prompt_provider
+                ),
+            ),
+            "gap_analysis_agent": AgentWithInfo(
+                id="gap_analysis_agent",
+                name="Gap Analysis Agent",
+                description="An agent specialized in identifying ambiguities and generating clarifying questions before implementation. Use this before starting new features to surface critical questions.",
+                agent=gap_analysis_agent.GapAnalysisAgent(
                     llm_provider, tools_provider, prompt_provider
                 ),
             ),

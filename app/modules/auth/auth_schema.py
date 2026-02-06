@@ -117,6 +117,15 @@ class UnlinkProviderRequest(BaseModel):
     provider_type: str = Field(..., description="Provider to unlink")
 
 
+class ResolveCredentialConflictRequest(BaseModel):
+    """Request to resolve credential conflict when GitHub is linked to another Firebase user"""
+    
+    current_user_uid: str = Field(..., description="Current SSO user's Firebase UID")
+    conflicting_github_uid: str = Field(..., description="Firebase UID of the user that has GitHub linked")
+    github_access_token: Optional[str] = Field(None, description="GitHub OAuth access token if available")
+    github_username: Optional[str] = Field(None, description="GitHub username if available")
+
+
 # ===== Organization SSO Config =====
 
 

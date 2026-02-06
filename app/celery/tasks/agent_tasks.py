@@ -1,9 +1,9 @@
-from typing import Optional, List
+from typing import List, Optional
 
 from app.celery.celery_app import celery_app
 from app.celery.tasks.base_task import BaseTask
 from app.modules.conversations.utils.redis_streaming import RedisStreamManager
-from app.modules.utils.logger import setup_logger, log_context
+from app.modules.utils.logger import log_context, setup_logger
 
 logger = setup_logger(__name__)
 
@@ -457,3 +457,249 @@ def execute_regenerate_background(
                 user_id=user_id,
             )
         raise
+
+
+@celery_app.task(
+    bind=True,
+    base=BaseTask,
+    name="app.celery.tasks.agent_tasks.execute_gap_analysis_background",
+)
+def execute_gap_analysis_background(
+    self,
+    conversation_id: str,
+    run_id: str,
+    user_id: str,
+    query: str,
+    project_id: str,
+    node_ids: Optional[List[str]] = None,
+    attachment_ids: Optional[List[str]] = None,
+) -> None:
+    """Execute gap analysis agent in the background and publish results to Redis streams
+
+    This task performs JANUS-style gap analysis to identify ambiguities and
+    generate clarifying questions before implementation begins.
+    """
+    redis_manager = RedisStreamManager()
+
+    # Set up logging context with domain IDs
+    with log_context(
+        conversation_id=conversation_id,
+        user_id=user_id,
+        run_id=run_id,
+        project_id=project_id,
+    ):
+        logger.info("Starting gap analysis background execution")
+
+        # Set task status to indicate task has started
+        redis_manager.set_task_status(conversation_id, run_id, "running")
+
+        try:
+            # Execute gap analysis with Redis publishing
+            async def run_gap_analysis():
+                from app.modules.conversations.conversation.conversation_service import (
+                    ConversationService,
+                )
+                from app.modules.conversations.conversation.conversation_store import (
+                    ConversationStore,
+                )
+                from app.modules.conversations.message.message_model import MessageType
+                from app.modules.conversations.message.message_schema import (
+                    MessageRequest,
+                )
+                from app.modules.conversations.message.message_store import MessageStore
+                from app.modules.users.user_service import UserService
+
+                # Use BaseTask's context manager to get a fresh, non-pooled async session
+                async with self.async_db() as async_db:
+                    # Get user email for service creation
+                    from app.modules.users.user_model import User
+
+                    user_service = UserService(self.db)
+                    user = user_service.get_user_by_uid(user_id)
+
+                    # Debug: Direct query to verify user exists
+                    if not user:
+                        direct_user = (
+                            self.db.query(User).filter(User.uid == user_id).first()
+                        )
+                        if direct_user:
+                            logger.warning(
+                                f"UserService.get_user_by_uid returned None but direct query found user: {direct_user.uid}, email: {direct_user.email}"
+                            )
+                            user = direct_user
+                        else:
+                            logger.warning(
+                                f"User not found in database for user_id: {user_id}. Using empty string as fallback."
+                            )
+
+                    conversation_store = ConversationStore(self.db, async_db)
+                    message_store = MessageStore(self.db, async_db)
+
+                    # Handle missing user or email gracefully
+                    if not user:
+                        user_email = ""
+                    elif not user.email:
+                        logger.warning(
+                            f"User found but email is None/empty for user_id: {user_id}, "
+                            f"user.uid: {user.uid if user else 'N/A'}, "
+                            f"email value: {repr(user.email) if user else 'N/A'}. "
+                            f"Using empty string as fallback."
+                        )
+                        user_email = ""
+                    else:
+                        user_email = user.email
+                        logger.debug(
+                            f"Retrieved user email: {user_email} for user_id: {user_id}"
+                        )
+
+                    service = ConversationService.create(
+                        conversation_store=conversation_store,
+                        message_store=message_store,
+                        db=self.db,
+                        user_id=user_id,
+                        user_email=user_email,
+                    )
+
+                    # Publish start event
+                    redis_manager.publish_event(
+                        conversation_id,
+                        run_id,
+                        "start",
+                        {
+                            "agent_id": "gap_analysis_agent",
+                            "status": "processing",
+                            "message": "Starting gap analysis",
+                        },
+                    )
+
+                    # Create message request
+                    message_request = MessageRequest(
+                        content=query,
+                        node_ids=node_ids,
+                        attachment_ids=attachment_ids if attachment_ids else None,
+                    )
+
+                    # Store user message and generate response
+                    async for chunk in service.store_message(
+                        conversation_id,
+                        message_request,
+                        MessageType.HUMAN,
+                        user_id,
+                        agent_id="gap_analysis_agent",  # Explicitly set agent
+                        stream=True,
+                    ):
+                        # Check for cancellation
+                        if redis_manager.check_cancellation(conversation_id, run_id):
+                            logger.info("Gap analysis cancelled")
+
+                            # Flush any buffered AI response chunks before cancelling
+                            try:
+                                message_id = (
+                                    service.history_manager.flush_message_buffer(
+                                        conversation_id, MessageType.AI_GENERATED
+                                    )
+                                )
+                                if message_id:
+                                    logger.debug(
+                                        "Flushed partial AI response for cancelled gap analysis",
+                                        message_id=message_id,
+                                    )
+                            except Exception as e:
+                                logger.warning(
+                                    "Failed to flush message buffer on cancellation",
+                                    error=str(e),
+                                )
+                            # Continue with cancellation even if flush fails
+                            redis_manager.publish_event(
+                                conversation_id,
+                                run_id,
+                                "end",
+                                {
+                                    "status": "cancelled",
+                                    "message": "Gap analysis cancelled by user",
+                                },
+                            )
+                            return False
+
+                        # Serialize tool calls
+                        serialized_tool_calls = []
+                        if chunk.tool_calls:
+                            for tool_call in chunk.tool_calls:
+                                if hasattr(tool_call, "model_dump"):
+                                    serialized_tool_calls.append(tool_call.model_dump())
+                                elif hasattr(tool_call, "dict"):
+                                    serialized_tool_calls.append(tool_call.dict())
+                                else:
+                                    serialized_tool_calls.append(tool_call)
+
+                        # Publish chunk
+                        redis_manager.publish_event(
+                            conversation_id,
+                            run_id,
+                            "chunk",
+                            {
+                                "content": chunk.message or "",
+                                "citations_json": chunk.citations or [],
+                                "tool_calls_json": serialized_tool_calls,
+                            },
+                        )
+
+                    return True
+
+            # Run the async gap analysis on the worker's long-lived loop
+            completed = self.run_async(run_gap_analysis())
+
+            # Only publish completion event if not cancelled
+            if completed:
+                # Publish completion event
+                redis_manager.publish_event(
+                    conversation_id,
+                    run_id,
+                    "end",
+                    {"status": "completed", "message": "Gap analysis completed"},
+                )
+
+                # Set task status to completed
+                redis_manager.set_task_status(conversation_id, run_id, "completed")
+
+                logger.info("Gap analysis background execution completed")
+            else:
+                logger.info("Gap analysis background execution cancelled")
+
+            # Return the completion status
+            return completed
+
+        except Exception as e:
+            logger.exception(
+                "Gap analysis background execution failed",
+                conversation_id=conversation_id,
+                run_id=run_id,
+                user_id=user_id,
+            )
+
+            # Set task status to error
+            try:
+                redis_manager.set_task_status(conversation_id, run_id, "error")
+            except Exception:
+                logger.exception(
+                    "Failed to set task status to error",
+                    conversation_id=conversation_id,
+                    run_id=run_id,
+                )
+
+            # Ensure end event is always published
+            try:
+                redis_manager.publish_event(
+                    conversation_id,
+                    run_id,
+                    "end",
+                    {"status": "error", "message": str(e)},
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to publish error event to Redis",
+                    conversation_id=conversation_id,
+                    run_id=run_id,
+                    user_id=user_id,
+                )
+            raise
