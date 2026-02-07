@@ -82,3 +82,8 @@ worktrees/
 
 .ruff_cache/
 .pytest_cache/
+
+# Local tracking files
+SONARQUBE_ISSUES.md
+SONARQUBE_PROGRESS.md
+CODE_QUALITY_ISSUES.md

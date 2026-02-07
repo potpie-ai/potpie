@@ -665,8 +665,9 @@ class ChangeDetectionTool:
             raise HTTPException(
                 status_code=400, detail=f"Error while fetching changes: {str(e)}"
             )
-        finally:
-            if project_details is not None:
+
+        # Process patches and build response
+        if project_details is not None:
                 logger.info(
                     f"[CHANGE_DETECTION] Processing patches: {len(patches_dict)} files"
                 )
@@ -818,7 +819,7 @@ class ChangeDetectionTool:
                     return result
                 except Exception as e:
                     logger.error(
-                        f"[CHANGE_DETECTION] Exception in finally block - project_id: {project_id}, error: {type(e).__name__}: {str(e)}",
+                        f"[CHANGE_DETECTION] Exception during patch processing - project_id: {project_id}, error: {type(e).__name__}: {str(e)}",
                         exc_info=True,
                     )
 
