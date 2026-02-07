@@ -348,6 +348,140 @@ class InferenceService:
 
         return DocstringResponse(docstrings=consolidated_responses)
 
+    def _replace_referenced_text(
+        self, text: str, node_dict: Dict[str, Dict[str, str]]
+    ) -> str:
+        """Replace node references in text with actual node content."""
+        if text is None:
+            return ""
+
+        pattern = r"Code replaced for brevity\. See node_id ([a-f0-9]+)"
+        regex = re.compile(pattern)
+
+        resolved_refs = 0
+        failed_refs = 0
+
+        def replace_match(match):
+            nonlocal resolved_refs, failed_refs
+            node_id = match.group(1)
+            if node_id in node_dict and node_dict[node_id].get("text"):
+                resolved_refs += 1
+                return node_dict[node_id]["text"]
+            else:
+                failed_refs += 1
+                logger.debug(f"Failed to resolve reference to node_id: {node_id}")
+                return match.group(0)
+
+        previous_text = None
+        current_text = text
+
+        while previous_text != current_text:
+            previous_text = current_text
+            current_text = regex.sub(replace_match, current_text)
+
+        if resolved_refs > 0 or failed_refs > 0:
+            logger.debug(
+                f"Reference resolution: {resolved_refs} resolved, {failed_refs} failed"
+            )
+
+        return current_text
+
+    def _initialize_cache_service(self):
+        """Initialize cache service for batch processing."""
+        db = None
+        try:
+            db = next(get_db())
+            return InferenceCacheService(db), db
+        except Exception as e:
+            logger.warning(
+                f"Failed to initialize cache service: {e}. Continuing without cache."
+            )
+            if db:
+                db.close()
+            return None, None
+
+    def _process_cache_check(
+        self, node: Dict, updated_text: str, cache_service
+    ) -> tuple[bool, Optional[str]]:
+        """
+        Check cache for node and mark it accordingly.
+
+        Returns:
+            (skip_llm_batch, content_hash) tuple
+        """
+        if not cache_service or not is_content_cacheable(updated_text):
+            return False, None
+
+        content_hash = generate_content_hash(updated_text, node.get("node_type"))
+        cached_inference = cache_service.get_cached_inference(content_hash)
+
+        if cached_inference:
+            node["cached_inference"] = cached_inference
+            node["content_hash"] = content_hash
+            logger.debug(
+                f"✅ CACHE HIT | "
+                f"node={node['node_id'][:8]} | "
+                f"hash={content_hash[:12]} | "
+                f"type={node.get('node_type', 'MISSING')}"
+            )
+            return True, content_hash
+
+        logger.debug(
+            f"❌ CACHE MISS | "
+            f"node={node['node_id'][:8]} | "
+            f"hash={content_hash[:12]} | "
+            f"type={node.get('node_type', 'MISSING')} | "
+            f"preview={updated_text[:80].replace(chr(10), ' ')}"
+        )
+
+        if "Code replaced for brevity" in updated_text:
+            logger.warning(
+                f"⚠️  UNRESOLVED REFERENCE | "
+                f"node={node['node_id'][:8]} | "
+                f"text contains unreplaced placeholder - SKIPPING CACHE"
+            )
+            return False, None
+
+        node["content_hash"] = content_hash
+        node["should_cache"] = True
+        return False, content_hash
+
+    def _add_node_chunks_to_batch(
+        self,
+        node_chunks: List[Dict],
+        current_batch: List,
+        current_tokens: int,
+        batches: List,
+        max_tokens: int,
+        model: str,
+    ) -> tuple[List, int, List]:
+        """Add node chunks to batches, creating new batches as needed."""
+        for chunk in node_chunks:
+            chunk_tokens = self.num_tokens_from_string(chunk["text"], model)
+
+            if current_tokens + chunk_tokens > max_tokens:
+                if current_batch:
+                    batches.append(current_batch)
+                current_batch = []
+                current_tokens = 0
+
+            current_batch.append(
+                DocstringRequest(
+                    node_id=chunk["node_id"],
+                    text=chunk["text"],
+                    metadata={
+                        "is_chunk": True,
+                        "parent_node_id": chunk["parent_node_id"],
+                        "chunk_index": chunk.get("chunk_index", 0),
+                        "should_cache": True,
+                        "content_hash": generate_content_hash(chunk["text"], "chunk"),
+                    },
+                )
+            )
+            current_tokens += chunk_tokens
+
+        return current_batch, current_tokens, batches
+
     def batch_nodes(
         self,
         nodes: List[Dict],
@@ -366,121 +500,29 @@ class InferenceService:
         cache_misses = 0
         uncacheable_nodes = 0
 
-        # Get database session for cache operations
-        cache_service = None
-        db = None
-        try:
-            db = next(get_db())
-            cache_service = InferenceCacheService(db)
-        except Exception as e:
-            logger.warning(
-                f"Failed to initialize cache service: {e}. Continuing without cache."
-            )
-            if db:
-                db.close()
-            cache_service = None
-
-        def replace_referenced_text(
-            text: str, node_dict: Dict[str, Dict[str, str]]
-        ) -> str:
-            # Handle None input gracefully
-            if text is None:
-                return ""
-
-            pattern = r"Code replaced for brevity\. See node_id ([a-f0-9]+)"
-            regex = re.compile(pattern)
-
-            resolved_refs = 0
-            failed_refs = 0
-
-            def replace_match(match):
-                nonlocal resolved_refs, failed_refs
-                node_id = match.group(1)
-                if node_id in node_dict and node_dict[node_id].get("text"):
-                    resolved_refs += 1
-                    # Return full text of referenced node for consistent cache hashing
-                    return node_dict[node_id]["text"]
-                else:
-                    failed_refs += 1
-                    logger.debug(f"Failed to resolve reference to node_id: {node_id}")
-                    return match.group(0)
-
-            previous_text = None
-            current_text = text
-
-            while previous_text != current_text:
-                previous_text = current_text
-                current_text = regex.sub(replace_match, current_text)
-
-            # Log reference resolution stats if any references were found
-            if resolved_refs > 0 or failed_refs > 0:
-                logger.debug(
-                    f"Reference resolution: {resolved_refs} resolved, {failed_refs} failed"
-                )
-
-            return current_text
+        cache_service, db = self._initialize_cache_service()
 
         for node in nodes:
             if not node.get("text"):
                 logger.warning(f"Node {node['node_id']} has no text. Skipping...")
                 continue
 
-            updated_text = replace_referenced_text(node.get("text"), node_dict)
+            updated_text = self._replace_referenced_text(node.get("text"), node_dict)
             node_tokens = self.num_tokens_from_string(updated_text, model)
 
-            # Check if content is cacheable and look for cached inference
-            if cache_service and is_content_cacheable(updated_text):
-                content_hash = generate_content_hash(
-                    updated_text, node.get("node_type")
-                )
-
-                # Check cache for existing inference
-                # Simplified - project_id parameter ignored by cache service
-                cached_inference = cache_service.get_cached_inference(content_hash)
-
-                if cached_inference:
-                    # Cache hit - store inference directly in node
-                    node["cached_inference"] = cached_inference
-                    node["content_hash"] = content_hash
-                    cache_hits += 1
-
-                    # Detailed logging for cache hits
-                    logger.debug(
-                        f"✅ CACHE HIT | "
-                        f"node={node['node_id'][:8]} | "
-                        f"hash={content_hash[:12]} | "
-                        f"type={node.get('node_type', 'MISSING')}"
-                    )
-                    continue  # Skip adding to LLM batch
-                else:
-                    cache_misses += 1
-
-                    # Detailed logging for cache misses
-                    logger.debug(
-                        f"❌ CACHE MISS | "
-                        f"node={node['node_id'][:8]} | "
-                        f"hash={content_hash[:12]} | "
-                        f"type={node.get('node_type', 'MISSING')} | "
-                        f"preview={updated_text[:80].replace(chr(10), ' ')}"
-                    )
-
-                    # Check for unresolved references
-                    if "Code replaced for brevity" in updated_text:
-                        logger.warning(
-                            f"⚠️  UNRESOLVED REFERENCE | "
-                            f"node={node['node_id'][:8]} | "
-                            f"text contains unreplaced placeholder - SKIPPING CACHE"
-                        )
-                        # DON'T mark for caching - unresolved references have low reuse value
-                        # Continue to LLM processing but without cache storage
-                    else:
-                        # Only mark resolved nodes for caching
-                        node["content_hash"] = content_hash
-                        node["should_cache"] = True
+            # Check cache and update node accordingly
+            skip_llm, content_hash = self._process_cache_check(
+                node, updated_text, cache_service
+            )
+            if skip_llm:
+                cache_hits += 1
+                continue
+            elif content_hash:
+                cache_misses += 1
             else:
                 uncacheable_nodes += 1
 
-            # Handle large nodes (existing logic from Phase 1)
+            # Handle large nodes - split into chunks
             if node_tokens > max_tokens:
                 logger.info(
                     f"Node {node['node_id']} exceeds token limit ({node_tokens} tokens). Splitting into chunks..."
@@ -488,41 +530,20 @@ class InferenceService:
                 node_chunks = self.split_large_node(
                     updated_text, node["node_id"], max_tokens
                 )
+                current_batch, current_tokens, batches = self._add_node_chunks_to_batch(
+                    node_chunks,
+                    current_batch,
+                    current_tokens,
+                    batches,
+                    max_tokens,
+                    model,
+                )
+                continue
 
-                # Process each chunk as a separate node
-                for chunk in node_chunks:
-                    chunk_tokens = self.num_tokens_from_string(chunk["text"], model)
-
-                    if current_tokens + chunk_tokens > max_tokens:
-                        if current_batch:
-                            batches.append(current_batch)
-                        current_batch = []
-                        current_tokens = 0
-
-                    current_batch.append(
-                        DocstringRequest(
-                            node_id=chunk["node_id"],
-                            text=chunk["text"],
-                            metadata={
-                                "is_chunk": True,
-                                "parent_node_id": chunk["parent_node_id"],
-                                "chunk_index": chunk.get("chunk_index", 0),
-                                "should_cache": True,
-                                "content_hash": generate_content_hash(
-                                    chunk["text"], "chunk"
-                                ),
-                            },
-                        )
-                    )
-                    current_tokens += chunk_tokens
-                continue  # Skip normal processing for large nodes
-
+            # Add node to batch
             if current_tokens + node_tokens > max_tokens:
-                # Finalize current batch if it has nodes
                 if current_batch:
                     batches.append(current_batch)
-
-                # Start new batch with current node
                 current_batch = [
                     DocstringRequest(
                         node_id=node["node_id"], text=updated_text, metadata=node
@@ -530,7 +551,6 @@ class InferenceService:
                 ]
                 current_tokens = node_tokens
             else:
-                # Add to current batch
                 current_batch.append(
                     DocstringRequest(
                         node_id=node["node_id"], text=updated_text, metadata=node
@@ -550,7 +570,8 @@ class InferenceService:
                 for n in nodes
                 if n.get("text")
                 and self.num_tokens_from_string(
-                    replace_referenced_text(n.get("text", ""), node_dict) or "", model
+                    self._replace_referenced_text(n.get("text", ""), node_dict) or "",
+                    model,
                 )
                 > max_tokens
             ]

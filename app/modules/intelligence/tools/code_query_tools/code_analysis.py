@@ -86,101 +86,97 @@ class UniversalCodeAnalyzer:
         """Detect programming language from file extension using grep_ast."""
         return filename_to_lang(file_path)
 
-    def get_tags_raw(self, fname, rel_fname, code=None):
-        """Extract tags from source code using tree-sitter queries."""
-        lang = filename_to_lang(fname)
-        if not lang:
-            return
-
+    def _initialize_parser_and_query(self, lang: str, fname: str):
+        """Initialize language parser and query for tag extraction."""
         try:
             language = get_language(lang)
             parser = get_parser(lang)
         except Exception as e:
             logger.warning(f"Could not get language/parser for {lang}: {e}")
-            return
+            return None, None, None
 
         query_scm = self.get_scm_fname(lang)
         if not query_scm or not query_scm.exists():
-            return
+            return None, None, None
 
         query_scm_content = query_scm.read_text()
+        return language, parser, query_scm_content
 
-        if code is None:
-            try:
-                with open(fname, "r", encoding="utf-8") as f:
-                    code = f.read()
-            except Exception as e:
-                logger.warning(f"Could not read file {fname}: {e}")
-                return
-
-        if not code:
-            return
+    def _read_code_from_file(self, fname: str, code: Optional[str]) -> Optional[str]:
+        """Read code from file if not provided."""
+        if code is not None:
+            return code if code else None
 
         try:
-            tree = parser.parse(bytes(code, "utf-8"))
+            with open(fname, "r", encoding="utf-8") as f:
+                code = f.read()
+                return code if code else None
+        except Exception as e:
+            logger.warning(f"Could not read file {fname}: {e}")
+            return None
+
+    def _parse_code_to_tree(self, parser, code: str, fname: str):
+        """Parse source code into syntax tree."""
+        try:
+            return parser.parse(bytes(code, "utf-8"))
         except Exception as e:
             logger.warning(f"Could not parse code for {fname}: {e}")
-            return
+            return None
 
-        # Run the tags queries
+    def _run_tree_query(self, language, query_scm_content: str, tree, fname: str):
+        """Run tree-sitter query to get captures."""
         try:
             query = language.query(query_scm_content)
             captures = query.captures(tree.root_node)
-            captures = list(captures)
+            return list(captures)
         except Exception as e:
             logger.warning(f"Could not run query for {fname}: {e}")
-            return
+            return None
 
-        saw = set()
+    def _process_capture_node(
+        self, node, tag, lang: str, rel_fname: str, fname: str
+    ) -> Optional[tuple[Tag, str]]:
+        """Process a single capture node and return Tag with kind."""
+        try:
+            node_text = node.text.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
 
-        for node, tag in captures:
-            try:
-                node_text = node.text.decode("utf-8")
-            except UnicodeDecodeError:
-                continue
+        if tag.startswith("name.definition."):
+            kind = "def"
+            type_name = tag.split(".")[-1]
+        elif tag.startswith("name.reference."):
+            kind = "ref"
+            type_name = tag.split(".")[-1]
+        else:
+            return None
 
-            if tag.startswith("name.definition."):
-                kind = "def"
-                type_name = tag.split(".")[-1]
-            elif tag.startswith("name.reference."):
-                kind = "ref"
-                type_name = tag.split(".")[-1]
-            else:
-                continue
+        # Enhanced node text extraction for Java methods
+        if lang == "java" and type_name == "method":
+            parent = node.parent
+            if parent and parent.type == "method_invocation":
+                object_node = parent.child_by_field_name("object")
+                if object_node:
+                    try:
+                        object_text = object_node.text.decode("utf-8")
+                        node_text = f"{object_text}.{node_text}"
+                    except UnicodeDecodeError:
+                        pass
 
-            saw.add(kind)
+        result = Tag(
+            rel_fname=rel_fname,
+            fname=fname,
+            name=node_text,
+            kind=kind,
+            line=node.start_point[0],
+            end_line=node.end_point[0],
+            type=type_name,
+        )
 
-            # Enhanced node text extraction for Java methods
-            if lang == "java" and type_name == "method":
-                # Handle method calls with object references (e.g., productService.listAllProducts())
-                parent = node.parent
-                if parent and parent.type == "method_invocation":
-                    object_node = parent.child_by_field_name("object")
-                    if object_node:
-                        try:
-                            object_text = object_node.text.decode("utf-8")
-                            node_text = f"{object_text}.{node_text}"
-                        except UnicodeDecodeError:
-                            pass
+        return result, kind
 
-            result = Tag(
-                rel_fname=rel_fname,
-                fname=fname,
-                name=node_text,
-                kind=kind,
-                line=node.start_point[0],
-                end_line=node.end_point[0],
-                type=type_name,
-            )
-
-            yield result
-
-        # If we only saw definitions but no references, use pygments to backfill
-        if "ref" in saw:
-            return
-        if "def" not in saw:
-            return
-
+    def _backfill_with_pygments(self, fname: str, code: str, rel_fname: str):
+        """Backfill references using pygments lexer when tree-sitter has no refs."""
         try:
             lexer = guess_lexer_for_filename(fname, code)
         except ClassNotFound:
@@ -199,6 +195,43 @@ class UniversalCodeAnalyzer:
                 end_line=-1,
                 type="unknown",
             )
+
+    def get_tags_raw(self, fname, rel_fname, code=None):
+        """Extract tags from source code using tree-sitter queries."""
+        lang = filename_to_lang(fname)
+        if not lang:
+            return
+
+        language, parser, query_scm_content = self._initialize_parser_and_query(
+            lang, fname
+        )
+        if not language:
+            return
+
+        code = self._read_code_from_file(fname, code)
+        if not code:
+            return
+
+        tree = self._parse_code_to_tree(parser, code, fname)
+        if not tree:
+            return
+
+        captures = self._run_tree_query(language, query_scm_content, tree, fname)
+        if captures is None:
+            return
+
+        saw = set()
+
+        for node, tag in captures:
+            result = self._process_capture_node(node, tag, lang, rel_fname, fname)
+            if result:
+                tag_obj, kind = result
+                saw.add(kind)
+                yield tag_obj
+
+        # If we only saw definitions but no references, use pygments to backfill
+        if "ref" not in saw and "def" in saw:
+            yield from self._backfill_with_pygments(fname, code, rel_fname)
 
     def get_tags(self, fname, rel_fname, code=None):
         """Get tags for a file, handling file existence checks."""

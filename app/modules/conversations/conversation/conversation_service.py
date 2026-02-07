@@ -341,34 +341,138 @@ class ConversationService:
             )
             # Don't fail the message if repo registration fails
 
+    def _get_project_by_id_sync(self, project_id: str):
+        """
+        Get project details from database, handling both string and int project_id formats.
+
+        Returns:
+            Project dict or None if not found
+        """
+        try:
+            return self.project_service.get_project_from_db_by_id_sync(
+                project_id
+            )  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            # Try converting to int if it's a numeric string
+            try:
+                return self.project_service.get_project_from_db_by_id_sync(
+                    int(project_id)
+                )  # type: ignore[arg-type]
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"Cannot ensure repo in repo manager: invalid project_id {project_id}"
+                )
+                return None
+
+    def _try_register_worktree(self, expected_base_path, repo_name, ref, branch, commit_id, user_id):
+        """
+        Try to register a worktree if it exists but is not registered.
+
+        Returns:
+            True if worktree was registered, False otherwise
+        """
+        worktree_name = ref.replace("/", "_").replace("\\", "_")
+        expected_worktree_path = expected_base_path / "worktrees" / worktree_name
+
+        if expected_worktree_path.exists() and expected_worktree_path.is_dir():
+            git_dir = expected_worktree_path / ".git"
+            if git_dir.exists():
+                try:
+                    self.repo_manager.register_repo(
+                        repo_name=repo_name,
+                        local_path=str(expected_worktree_path),
+                        branch=branch,
+                        commit_id=commit_id,
+                        user_id=user_id,
+                        metadata={"registered_from": "conversation_message"},
+                    )
+                    logger.info(
+                        f"Registered existing worktree {repo_name}@{ref} in repo manager from conversation"
+                    )
+                    return True
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to register existing worktree {repo_name} in repo manager: {e}"
+                    )
+        return False
+
+    def _try_register_base_repo(self, expected_base_path, repo_name, branch, commit_id, user_id):
+        """
+        Try to register a base repo if it exists but is not registered.
+
+        Returns:
+            True if base repo was registered, False otherwise
+        """
+        if expected_base_path.exists() and expected_base_path.is_dir():
+            git_dir = expected_base_path / ".git"
+            if git_dir.exists():
+                try:
+                    self.repo_manager.register_repo(
+                        repo_name=repo_name,
+                        local_path=str(expected_base_path),
+                        branch=branch,
+                        commit_id=commit_id,
+                        user_id=user_id,
+                        metadata={"registered_from": "conversation_message"},
+                    )
+                    logger.info(
+                        f"Registered existing base repo {repo_name} in repo manager from conversation"
+                    )
+                    return True
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to register existing base repo {repo_name} in repo manager: {e}"
+                    )
+        return False
+
+    def _try_register_local_repo(self, repo_path, repo_name, branch, commit_id, user_id):
+        """
+        Try to register a local repo if it exists and is within repo manager's base path.
+
+        Returns:
+            True if local repo was registered, False otherwise
+        """
+        if not repo_path or not os.path.exists(repo_path):
+            return False
+
+        # Only register if it's within repo manager's base path
+        if not str(repo_path).startswith(str(self.repo_manager.repos_base_path)):
+            logger.debug(
+                f"Repo {repo_name} has external path {repo_path}, not registering in repo manager. "
+                f"Repo manager base path: {self.repo_manager.repos_base_path}"
+            )
+            return False
+
+        try:
+            self.repo_manager.register_repo(
+                repo_name=repo_name,
+                local_path=repo_path,
+                branch=branch,
+                commit_id=commit_id,
+                user_id=user_id,
+                metadata={"registered_from": "conversation_message"},
+            )
+            logger.info(
+                f"Registered local repo {repo_name}@{commit_id or branch} in repo manager from conversation"
+            )
+            return True
+        except Exception as e:
+            logger.warning(
+                f"Failed to register local repo {repo_name} in repo manager: {e}"
+            )
+            return False
+
     def _ensure_repo_in_repo_manager_sync(self, project_id: str, user_id: str) -> None:
         """
         Synchronous version of _ensure_repo_in_repo_manager.
         Runs in a thread pool to avoid blocking the async event loop.
         """
-        # Double-check repo_manager is available (defensive check)
         if not self.repo_manager:
             return
 
         try:
-            # Get project details (use sync method)
-            # Note: project_id is Text in DB, but type hint says int - handle both
-            try:
-                project = self.project_service.get_project_from_db_by_id_sync(
-                    project_id
-                )  # type: ignore[arg-type]
-            except (TypeError, ValueError):
-                # Try converting to int if it's a numeric string
-                try:
-                    project = self.project_service.get_project_from_db_by_id_sync(
-                        int(project_id)
-                    )  # type: ignore[arg-type]
-                except (ValueError, TypeError):
-                    logger.warning(
-                        f"Cannot ensure repo in repo manager: invalid project_id {project_id}"
-                    )
-                    return
-
+            # Get project details
+            project = self._get_project_by_id_sync(project_id)
             if not project:
                 logger.warning(
                     f"Cannot ensure repo in repo manager: project {project_id} not found"
@@ -378,7 +482,7 @@ class ConversationService:
             repo_name = project.get("project_name")
             branch = project.get("branch_name")
             commit_id = project.get("commit_id")
-            repo_path = project.get("repo_path")  # For local repos
+            repo_path = project.get("repo_path")
 
             if not repo_name:
                 logger.warning(
@@ -393,113 +497,40 @@ class ConversationService:
                 logger.debug(
                     f"Repo {repo_name}@{commit_id or branch} already available in repo manager"
                 )
-                # Update last accessed time
                 self.repo_manager.update_last_accessed(
                     repo_name, branch=branch, commit_id=commit_id, user_id=user_id
                 )
                 return
 
-            # Check if repo exists in repo manager's expected location but not registered
-            # Use repo manager's method to get expected path (respects REPOS_BASE_PATH)
-            # This ensures we're checking the correct location based on REPOS_BASE_PATH env var
+            # Get expected base path for the repo
             try:
                 expected_base_path = self.repo_manager._get_repo_local_path(repo_name)
             except Exception as e:
                 logger.warning(f"Failed to get repo local path for {repo_name}: {e}")
                 return
 
-            # Check for worktree path (where repos are actually stored)
+            # Try registering worktree, base repo, or local repo in order
             ref = commit_id if commit_id else branch
-            if ref:
-                # Worktrees are stored in <base_path>/worktrees/<ref>
-                worktree_name = ref.replace("/", "_").replace("\\", "_")
-                expected_worktree_path = (
-                    expected_base_path / "worktrees" / worktree_name
-                )
+            if ref and self._try_register_worktree(
+                expected_base_path, repo_name, ref, branch, commit_id, user_id
+            ):
+                return
 
-                # Check if worktree exists but not registered
-                if expected_worktree_path.exists() and expected_worktree_path.is_dir():
-                    # Check if it's a valid git repository
-                    git_dir = expected_worktree_path / ".git"
-                    if git_dir.exists():
-                        try:
-                            self.repo_manager.register_repo(
-                                repo_name=repo_name,
-                                local_path=str(expected_worktree_path),
-                                branch=branch,
-                                commit_id=commit_id,
-                                user_id=user_id,
-                                metadata={"registered_from": "conversation_message"},
-                            )
-                            logger.info(
-                                f"Registered existing worktree {repo_name}@{ref} in repo manager from conversation"
-                            )
-                            return
-                        except Exception as e:
-                            logger.warning(
-                                f"Failed to register existing worktree {repo_name} in repo manager: {e}"
-                            )
+            if self._try_register_base_repo(
+                expected_base_path, repo_name, branch, commit_id, user_id
+            ):
+                return
 
-            # Check base repo path (for repos without worktrees)
-            if expected_base_path.exists() and expected_base_path.is_dir():
-                git_dir = expected_base_path / ".git"
-                if git_dir.exists():
-                    try:
-                        self.repo_manager.register_repo(
-                            repo_name=repo_name,
-                            local_path=str(expected_base_path),
-                            branch=branch,
-                            commit_id=commit_id,
-                            user_id=user_id,
-                            metadata={"registered_from": "conversation_message"},
-                        )
-                        logger.info(
-                            f"Registered existing base repo {repo_name} in repo manager from conversation"
-                        )
-                        return
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to register existing base repo {repo_name} in repo manager: {e}"
-                        )
+            if self._try_register_local_repo(
+                repo_path, repo_name, branch, commit_id, user_id
+            ):
+                return
 
-            # For local repos (repo_path), check if it's a different location
-            if repo_path and os.path.exists(repo_path):
-                # Only register if it's not already in repo manager's base path
-                # (to avoid registering external paths)
-                if not str(repo_path).startswith(
-                    str(self.repo_manager.repos_base_path)
-                ):
-                    logger.debug(
-                        f"Repo {repo_name} has external path {repo_path}, not registering in repo manager. "
-                        f"Repo manager base path: {self.repo_manager.repos_base_path}"
-                    )
-                else:
-                    try:
-                        self.repo_manager.register_repo(
-                            repo_name=repo_name,
-                            local_path=repo_path,
-                            branch=branch,
-                            commit_id=commit_id,
-                            user_id=user_id,
-                            metadata={"registered_from": "conversation_message"},
-                        )
-                        logger.info(
-                            f"Registered local repo {repo_name}@{commit_id or branch} in repo manager from conversation"
-                        )
-                        return
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to register local repo {repo_name} in repo manager: {e}"
-                        )
-
-            # If we get here, repo doesn't exist in repo manager's directory structure
-            ref = commit_id if commit_id else branch
+            # Log detailed info if no registration succeeded
             expected_worktree_info = "N/A"
             if ref:
                 worktree_name = ref.replace("/", "_").replace("\\", "_")
-                expected_worktree_path = (
-                    expected_base_path / "worktrees" / worktree_name
-                )
+                expected_worktree_path = expected_base_path / "worktrees" / worktree_name
                 expected_worktree_info = f"{expected_worktree_path} (exists: {expected_worktree_path.exists()})"
 
             logger.info(
