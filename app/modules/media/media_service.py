@@ -21,6 +21,9 @@ from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+# Error message constants
+ERR_ATTACHMENT_NOT_FOUND = "Attachment not found"
+
 
 class MediaServiceError(Exception):
     """Base exception for MediaService errors"""
@@ -290,9 +293,9 @@ class MediaService:
             file_extension = file_name.split(".")[-1].lower()
 
         # Create path: attachments/year/month/attachment_id.extension
-        from datetime import datetime
+        from datetime import datetime, timezone
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         path = f"attachments/{now.year:04d}/{now.month:02d}/{attachment_id}"
 
         if file_extension:
@@ -342,7 +345,7 @@ class MediaService:
         try:
             attachment = await self.get_attachment(attachment_id)
             if not attachment:
-                raise HTTPException(status_code=404, detail="Attachment not found")
+                raise HTTPException(status_code=404, detail=ERR_ATTACHMENT_NOT_FOUND)
 
             if not self.s3_client or not self.bucket_name:
                 raise MediaServiceError(
@@ -376,7 +379,7 @@ class MediaService:
         try:
             attachment = await self.get_attachment(attachment_id)
             if not attachment:
-                raise HTTPException(status_code=404, detail="Attachment not found")
+                raise HTTPException(status_code=404, detail=ERR_ATTACHMENT_NOT_FOUND)
 
             if not self.s3_client or not self.bucket_name:
                 raise MediaServiceError(
@@ -657,7 +660,7 @@ class MediaService:
             # Get attachment info
             attachment = await self.get_attachment(attachment_id)
             if not attachment:
-                return {"error": "Attachment not found"}
+                return {"error": ERR_ATTACHMENT_NOT_FOUND}
 
             # Test base64 conversion
             base64_data = await self.get_image_as_base64(attachment_id)

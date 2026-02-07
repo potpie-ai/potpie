@@ -93,12 +93,12 @@ class IntegrationsService:
             created_at=(
                 datetime.fromisoformat(data["created_at"])
                 if data["created_at"]
-                else datetime.utcnow()
+                else datetime.now(timezone.utc)
             ),
             updated_at=(
                 datetime.fromisoformat(data["updated_at"])
                 if data["updated_at"]
-                else datetime.utcnow()
+                else datetime.now(timezone.utc)
             ),
         )
 
@@ -259,7 +259,7 @@ class IntegrationsService:
                 )
 
                 # Parse token expiration
-                expires_at = datetime.utcnow() + timedelta(
+                expires_at = datetime.now(timezone.utc) + timedelta(
                     seconds=token_response.get("expires_in", 3600)
                 )
 
@@ -279,7 +279,7 @@ class IntegrationsService:
                 setattr(
                     db_integration, "auth_data", new_auth_data.model_dump(mode="json")
                 )
-                setattr(db_integration, "updated_at", datetime.utcnow())
+                setattr(db_integration, "updated_at", datetime.now(timezone.utc))
 
                 self.db.commit()
                 self.db.refresh(db_integration)
@@ -330,7 +330,7 @@ class IntegrationsService:
                     expires_at = datetime.fromisoformat(
                         expires_at_str.replace("Z", "+00:00")
                     )
-                    if datetime.utcnow() >= expires_at:
+                    if datetime.now(timezone.utc) >= expires_at:
                         # Token expired, refresh it
                         logger.info(
                             f"Token expired for integration {integration_id}, refreshing..."
@@ -661,7 +661,7 @@ class IntegrationsService:
                     request.timestamp.replace("Z", "+00:00")
                 )
             except ValueError:
-                created_at = datetime.utcnow()
+                created_at = datetime.now(timezone.utc)
 
             # Parse token expiration
             try:
@@ -669,7 +669,7 @@ class IntegrationsService:
                     tokens["expires_at"].replace("Z", "+00:00")
                 )
             except (ValueError, KeyError):
-                expires_at = datetime.utcnow() + timedelta(
+                expires_at = datetime.now(timezone.utc) + timedelta(
                     seconds=tokens.get("expires_in", 3600)
                 )
 
@@ -1000,7 +1000,7 @@ class IntegrationsService:
             if db_integration:
                 # Use setattr to avoid linter issues with SQLAlchemy columns
                 setattr(db_integration, "active", active)
-                setattr(db_integration, "updated_at", datetime.utcnow())
+                setattr(db_integration, "updated_at", datetime.now(timezone.utc))
                 self.db.commit()
                 logger.info(
                     f"Integration status updated: {integration_id} -> active: {active}"
@@ -1040,8 +1040,8 @@ class IntegrationsService:
             )
             setattr(db_integration, "unique_identifier", request.unique_identifier)
             setattr(db_integration, "created_by", request.created_by)
-            setattr(db_integration, "created_at", datetime.utcnow())
-            setattr(db_integration, "updated_at", datetime.utcnow())
+            setattr(db_integration, "created_at", datetime.now(timezone.utc))
+            setattr(db_integration, "updated_at", datetime.now(timezone.utc))
 
             # Save to database
             self.db.add(db_integration)
@@ -1086,7 +1086,7 @@ class IntegrationsService:
 
             # Update only the name field
             setattr(db_integration, "name", request.name)
-            setattr(db_integration, "updated_at", datetime.utcnow())
+            setattr(db_integration, "updated_at", datetime.now(timezone.utc))
 
             self.db.commit()
             self.db.refresh(db_integration)
@@ -1581,7 +1581,7 @@ class IntegrationsService:
                     request.timestamp.replace("Z", "+00:00")
                 )
             except ValueError:
-                created_at = datetime.utcnow()
+                created_at = datetime.now(timezone.utc)
 
             # Parse token expiration
             try:
@@ -1589,7 +1589,7 @@ class IntegrationsService:
                     tokens.get("expires_at", time.time() + 3600)
                 )
             except (ValueError, KeyError):
-                expires_at = datetime.utcnow() + timedelta(
+                expires_at = datetime.now(timezone.utc) + timedelta(
                     seconds=tokens.get("expires_in", 3600)
                 )
 
@@ -1749,8 +1749,8 @@ class IntegrationsService:
             )
             setattr(db_integration, "unique_identifier", unique_identifier)
             setattr(db_integration, "created_by", user_id)
-            setattr(db_integration, "created_at", datetime.utcnow())
-            setattr(db_integration, "updated_at", datetime.utcnow())
+            setattr(db_integration, "created_at", datetime.now(timezone.utc))
+            setattr(db_integration, "updated_at", datetime.now(timezone.utc))
 
             # Save to database
             self.db.add(db_integration)
@@ -1768,7 +1768,7 @@ class IntegrationsService:
                 "active": request.active,
                 "unique_identifier": unique_identifier,
                 "created_by": user_id,
-                "created_at": datetime.utcnow().isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
                 "has_auth_data": bool(auth_data.access_token),
                 "has_scope_data": bool(scope_data.org_slug or scope_data.workspace_id),
                 "metadata": metadata.model_dump(mode="json"),
@@ -1823,7 +1823,7 @@ class IntegrationsService:
                     request.timestamp.replace("Z", "+00:00")
                 )
             except ValueError:
-                created_at = datetime.utcnow()
+                created_at = datetime.now(timezone.utc)
 
             expires_at = None
             if tokens.get("expires_at"):
@@ -1831,7 +1831,7 @@ class IntegrationsService:
                     tokens["expires_at"], tz=timezone.utc
                 )
             else:
-                expires_at = datetime.utcnow() + timedelta(
+                expires_at = datetime.now(timezone.utc) + timedelta(
                     seconds=tokens.get("expires_in", 3600)
                 )
 
@@ -2080,7 +2080,7 @@ class IntegrationsService:
                     ).isoformat()
 
                     setattr(db_integration, "auth_data", auth_data)
-                    setattr(db_integration, "updated_at", datetime.utcnow())
+                    setattr(db_integration, "updated_at", datetime.now(timezone.utc))
                     self.db.commit()
 
                     access_token = new_tokens["access_token"]
@@ -2293,7 +2293,7 @@ class IntegrationsService:
                     {
                         "active": False,
                         "status": IntegrationStatus.INACTIVE.value,
-                        "updated_at": datetime.utcnow(),
+                        "updated_at": datetime.now(timezone.utc),
                     },
                     synchronize_session=False,
                 )
@@ -2356,7 +2356,7 @@ class IntegrationsService:
                     request.timestamp.replace("Z", "+00:00")
                 )
             except ValueError:
-                created_at = datetime.utcnow()
+                created_at = datetime.now(timezone.utc)
 
             expires_at = None
             if tokens.get("expires_at"):
@@ -2364,7 +2364,7 @@ class IntegrationsService:
                     tokens["expires_at"], tz=timezone.utc
                 )
             else:
-                expires_at = datetime.utcnow() + timedelta(
+                expires_at = datetime.now(timezone.utc) + timedelta(
                     seconds=tokens.get("expires_in", 3600)
                 )
 
@@ -2648,7 +2648,7 @@ class IntegrationsService:
                     {
                         "active": False,
                         "status": IntegrationStatus.INACTIVE.value,
-                        "updated_at": datetime.utcnow(),
+                        "updated_at": datetime.now(timezone.utc),
                     },
                     synchronize_session=False,
                 )

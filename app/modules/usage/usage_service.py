@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 import os
 import httpx
 
@@ -72,7 +72,7 @@ class UsageService:
         if end_date_str:
             end_date = datetime.fromisoformat(end_date_str)
         else:
-            end_date = datetime.utcnow()
+            end_date = datetime.now(timezone.utc)
 
         start_date = end_date - timedelta(days=30)
 

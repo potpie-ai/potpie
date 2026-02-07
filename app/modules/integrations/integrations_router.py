@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from starlette.config import Config
 from starlette.responses import RedirectResponse
 from typing import Dict, Any, Optional
+from datetime import timezone
 import hmac
 import hashlib
 import base64
@@ -48,6 +49,12 @@ from .integrations_schema import (
     IntegrationSaveResponse,
 )
 
+# Constants
+HTTP_PROTOCOL = "http://"
+HTTPS_PROTOCOL = "https://"
+DEFAULT_LOCALHOST_URL = "http://localhost:3000"
+HTTP_PROTOCOLS = (HTTP_PROTOCOL, HTTPS_PROTOCOL)
+ERR_INVALID_INTEGRATION_ID = "Invalid integration ID format"
 
 logger = setup_logger(__name__)
 router = APIRouter(prefix="/integrations", tags=["integrations"])
@@ -460,7 +467,7 @@ async def linear_oauth_callback(
                     redirect_uri=f"https://{request.url.hostname}/api/v1/integrations/linear/callback",
                     instance_name="Linear Integration",  # Will be updated with org name in service
                     integration_type="linear",
-                    timestamp=datetime.utcnow().isoformat() + "Z",
+                    timestamp=datetime.now(timezone.utc).isoformat() + "Z",
                 )
 
                 # Save the integration (this will exchange code for tokens)
@@ -473,11 +480,11 @@ async def linear_oauth_callback(
 
                 # Redirect to frontend with success
                 config = Config()
-                frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
+                frontend_url = config("FRONTEND_URL", default=DEFAULT_LOCALHOST_URL)
 
                 # Ensure frontend_url has protocol
                 if frontend_url and not frontend_url.startswith(
-                    ("http://", "https://")
+                    HTTP_PROTOCOLS
                 ):
                     frontend_url = f"https://{frontend_url}"
 
@@ -490,11 +497,11 @@ async def linear_oauth_callback(
 
                 # Redirect to frontend with error
                 config = Config()
-                frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
+                frontend_url = config("FRONTEND_URL", default=DEFAULT_LOCALHOST_URL)
 
                 # Ensure frontend_url has protocol
                 if frontend_url and not frontend_url.startswith(
-                    ("http://", "https://")
+                    HTTP_PROTOCOLS
                 ):
                     frontend_url = f"https://{frontend_url}"
 
@@ -505,10 +512,10 @@ async def linear_oauth_callback(
         else:
             # No code provided, redirect to frontend with error
             config = Config()
-            frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
+            frontend_url = config("FRONTEND_URL", default=DEFAULT_LOCALHOST_URL)
 
             # Ensure frontend_url has protocol
-            if frontend_url and not frontend_url.startswith(("http://", "https://")):
+            if frontend_url and not frontend_url.startswith(HTTP_PROTOCOLS):
                 frontend_url = f"https://{frontend_url}"
 
             error_msg = "No authorization code received from Linear"
@@ -526,10 +533,10 @@ async def linear_oauth_callback(
 
         # Redirect to frontend with error
         config = Config()
-        frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
+        frontend_url = config("FRONTEND_URL", default=DEFAULT_LOCALHOST_URL)
 
         # Ensure frontend_url has protocol
-        if frontend_url and not frontend_url.startswith(("http://", "https://")):
+        if frontend_url and not frontend_url.startswith(HTTP_PROTOCOLS):
             frontend_url = f"https://{frontend_url}"
 
         error_message = urllib.parse.quote(
@@ -717,7 +724,7 @@ async def jira_oauth_callback(
                     instance_name="Jira Integration",
                     user_id=user_id,
                     integration_type="jira",
-                    timestamp=datetime.utcnow().isoformat() + "Z",
+                    timestamp=datetime.now(timezone.utc).isoformat() + "Z",
                 )
 
                 # Save the integration (this will exchange the code and persist tokens)
@@ -729,11 +736,11 @@ async def jira_oauth_callback(
 
                 # Redirect to frontend with success info
                 config = Config()
-                frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
+                frontend_url = config("FRONTEND_URL", default=DEFAULT_LOCALHOST_URL)
 
                 # Ensure frontend_url has protocol
                 if frontend_url and not frontend_url.startswith(
-                    ("http://", "https://")
+                    HTTP_PROTOCOLS
                 ):
                     frontend_url = f"https://{frontend_url}"
 
@@ -746,10 +753,10 @@ async def jira_oauth_callback(
 
                 # Redirect to frontend with error
                 config = Config()
-                frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
+                frontend_url = config("FRONTEND_URL", default=DEFAULT_LOCALHOST_URL)
 
                 if frontend_url and not frontend_url.startswith(
-                    ("http://", "https://")
+                    HTTP_PROTOCOLS
                 ):
                     frontend_url = f"https://{frontend_url}"
 
@@ -761,9 +768,9 @@ async def jira_oauth_callback(
         else:
             # No code provided — redirect to frontend with error
             config = Config()
-            frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
+            frontend_url = config("FRONTEND_URL", default=DEFAULT_LOCALHOST_URL)
 
-            if frontend_url and not frontend_url.startswith(("http://", "https://")):
+            if frontend_url and not frontend_url.startswith(HTTP_PROTOCOLS):
                 frontend_url = f"https://{frontend_url}"
 
             error_msg = "No authorization code received from Jira"
@@ -1055,9 +1062,9 @@ async def confluence_oauth_callback(
                 )
 
                 # Redirect to frontend with success
-                frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
+                frontend_url = config("FRONTEND_URL", default=DEFAULT_LOCALHOST_URL)
                 if frontend_url and not frontend_url.startswith(
-                    ("http://", "https://")
+                    HTTP_PROTOCOLS
                 ):
                     frontend_url = f"https://{frontend_url}"
 
@@ -1068,9 +1075,9 @@ async def confluence_oauth_callback(
                 logger.exception("Error saving Confluence integration")
                 # Redirect to frontend with error
                 config = Config()
-                frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
+                frontend_url = config("FRONTEND_URL", default=DEFAULT_LOCALHOST_URL)
                 if frontend_url and not frontend_url.startswith(
-                    ("http://", "https://")
+                    HTTP_PROTOCOLS
                 ):
                     frontend_url = f"https://{frontend_url}"
 
@@ -1083,8 +1090,8 @@ async def confluence_oauth_callback(
         else:
             # No code provided — redirect to frontend with error
             config = Config()
-            frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
-            if frontend_url and not frontend_url.startswith(("http://", "https://")):
+            frontend_url = config("FRONTEND_URL", default=DEFAULT_LOCALHOST_URL)
+            if frontend_url and not frontend_url.startswith(HTTP_PROTOCOLS):
                 frontend_url = f"https://{frontend_url}"
 
             error_msg = "No authorization code received from Confluence"
@@ -1975,7 +1982,7 @@ async def delete_integration(
 
         # Validate integration_id format (basic UUID format check)
         if not integration_id or len(integration_id) < 10:
-            raise HTTPException(status_code=400, detail="Invalid integration ID format")
+            raise HTTPException(status_code=400, detail=ERR_INVALID_INTEGRATION_ID)
 
         # Check if integration exists before attempting deletion
         existing_integration = await integrations_service.get_integration_by_id(
@@ -2123,7 +2130,7 @@ async def update_integration_schema(
         # Validate integration_id format
         if not integration_id or len(integration_id) < 10:
             return IntegrationResponse(
-                success=False, data=None, error="Invalid integration ID format"
+                success=False, data=None, error=ERR_INVALID_INTEGRATION_ID
             )
 
         # Check ownership before updating
@@ -2178,7 +2185,7 @@ async def delete_integration_schema(
         # Validate integration_id format (basic UUID format check)
         if not integration_id or len(integration_id) < 10:
             return IntegrationResponse(
-                success=False, data=None, error="Invalid integration ID format"
+                success=False, data=None, error=ERR_INVALID_INTEGRATION_ID
             )
 
         # Check ownership before deleting
@@ -2493,7 +2500,7 @@ async def debug_oauth_config(
                     "value": redirect_uri,
                     "length": len(redirect_uri),
                     "is_url": (
-                        redirect_uri.startswith(("http://", "https://"))
+                        redirect_uri.startswith(HTTP_PROTOCOLS)
                         if redirect_uri
                         else False
                     ),
