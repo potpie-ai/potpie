@@ -758,22 +758,12 @@ class InferenceService:
             logger.error(f"Entry point response generation failed: {e}")
             return DocstringResponse(docstrings=[])
 
-    async def generate_docstrings(self, repo_id: str) -> Dict[str, DocstringResponse]:
-        logger.info(
-            f"DEBUGNEO4J: Function: {self.generate_docstrings.__name__}, Repo ID: {repo_id}"
-        )
-        self.log_graph_stats(repo_id)
-
-        nodes = self.fetch_graph(repo_id)
-        logger.info(
-            f"DEBUGNEO4J: After fetch graph, Repo ID: {repo_id}, Nodes: {len(nodes)}"
-        )
-        self.log_graph_stats(repo_id)
+    async def _create_search_indices(self, repo_id: str, nodes: List[Dict]) -> None:
+        """Create search indices for project nodes."""
         logger.info(
             f"Creating search indices for project {repo_id} with nodes count {len(nodes)}"
         )
 
-        # Prepare a list of nodes for bulk insert
         nodes_to_index = [
             {
                 "project_id": repo_id,
@@ -787,28 +777,82 @@ class InferenceService:
             and node.get("name") not in {None, ""}
         ]
 
-        # Perform bulk insert
         await self.search_service.bulk_create_search_indices(nodes_to_index)
-
         logger.info(
             f"Project {repo_id}: Created search indices over {len(nodes_to_index)} nodes"
         )
-
         await self.search_service.commit_indices()
-        # entry_points = self.get_entry_points(repo_id)
-        # logger.info(
-        #     f"DEBUGNEO4J: After get entry points, Repo ID: {repo_id}, Entry points: {len(entry_points)}"
-        # )
-        # self.log_graph_stats(repo_id)
-        # entry_points_neighbors = {}
-        # for entry_point in entry_points:
-        #     neighbors = self.get_neighbours(entry_point, repo_id)
-        #     entry_points_neighbors[entry_point] = neighbors
 
-        # logger.info(
-        #     f"DEBUGNEO4J: After get neighbours, Repo ID: {repo_id}, Entry points neighbors: {len(entry_points_neighbors)}"
-        # )
-        # self.log_graph_stats(repo_id)
+    async def _process_inference_batch(
+        self, batch, batch_index: int, repo_id: str, cache_service
+    ):
+        """Process a single batch of inference requests."""
+        logger.info(f"Processing batch {batch_index} for project {repo_id}")
+        try:
+            # Generate inference for batch
+            response = await self.generate_response(batch, repo_id)
+            if not isinstance(response, DocstringResponse):
+                logger.warning(
+                    f"Parsing project {repo_id}: Invalid response from LLM. Not an instance of DocstringResponse. Retrying..."
+                )
+                response = await self.generate_response(batch, repo_id)
+
+            if isinstance(response, DocstringResponse):
+                # Store results in cache and Neo4j
+                for request, docstring_result in zip(batch, response.docstrings):
+                    metadata = request.metadata or {}
+
+                    # Store in cache if eligible
+                    if (
+                        cache_service
+                        and metadata.get("should_cache")
+                        and metadata.get("content_hash")
+                    ):
+                        try:
+                            # Convert DocstringResult to dictionary for caching
+                            inference_data = {
+                                "node_id": docstring_result.node_id,
+                                "docstring": docstring_result.docstring,
+                                "tags": docstring_result.tags,
+                            }
+
+                            cache_service.store_inference(
+                                content_hash=metadata["content_hash"],
+                                inference_data=inference_data,
+                                project_id=repo_id,
+                                node_type=metadata.get("node_type"),
+                                content_length=len(request.text),
+                                tags=docstring_result.tags,
+                            )
+                        except Exception as cache_error:
+                            logger.warning(
+                                f"Failed to cache inference for node {request.node_id}: {cache_error}"
+                            )
+
+                # Handle chunk consolidation before Neo4j update
+                processed_response = self.process_chunk_responses(response, batch)
+                if processed_response:
+                    self.update_neo4j_with_docstrings(repo_id, processed_response)
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Failed to process batch {batch_index}: {e}")
+            return DocstringResponse(docstrings=[])
+
+    async def generate_docstrings(self, repo_id: str) -> Dict[str, DocstringResponse]:
+        logger.info(
+            f"DEBUGNEO4J: Function: {self.generate_docstrings.__name__}, Repo ID: {repo_id}"
+        )
+        self.log_graph_stats(repo_id)
+
+        nodes = self.fetch_graph(repo_id)
+        logger.info(
+            f"DEBUGNEO4J: After fetch graph, Repo ID: {repo_id}, Nodes: {len(nodes)}"
+        )
+        self.log_graph_stats(repo_id)
+
+        await self._create_search_indices(repo_id, nodes)
         # Batch nodes (this mutates each node dict with cache-hit metadata)
         batches = self.batch_nodes(nodes, project_id=repo_id)
 
@@ -818,88 +862,21 @@ class InferenceService:
             node["project_id"] = repo_id
             await self.update_neo4j_with_cached_inference(node)
         logger.info(f"Processed {len(cached_nodes)} cached nodes for project {repo_id}")
-        all_docstrings = {"docstrings": []}
 
         # Process LLM batches and cache results
-        cache_service = None
-        result_db = None
-        try:
-            result_db = next(get_db())
-            cache_service = InferenceCacheService(result_db)
-        except Exception as e:
-            logger.warning(
-                f"Failed to initialize cache service for result storage: {e}"
-            )
-            if result_db:
-                result_db.close()
-            cache_service = None
+        cache_service, result_db = self._initialize_cache_service()
 
         semaphore = asyncio.Semaphore(self.parallel_requests)
 
-        async def process_batch(batch, batch_index: int):
+        async def process_batch_with_semaphore(batch, batch_index: int):
             async with semaphore:
-                logger.info(f"Processing batch {batch_index} for project {repo_id}")
-                try:
-                    # Generate inference for batch
-                    response = await self.generate_response(batch, repo_id)
-                    if not isinstance(response, DocstringResponse):
-                        logger.warning(
-                            f"Parsing project {repo_id}: Invalid response from LLM. Not an instance of DocstringResponse. Retrying..."
-                        )
-                        response = await self.generate_response(batch, repo_id)
+                return await self._process_inference_batch(
+                    batch, batch_index, repo_id, cache_service
+                )
 
-                    if isinstance(response, DocstringResponse):
-                        # Store results in cache and Neo4j
-                        for request, docstring_result in zip(
-                            batch, response.docstrings
-                        ):
-                            metadata = request.metadata or {}
-
-                            # Store in cache if eligible
-                            if (
-                                cache_service
-                                and metadata.get("should_cache")
-                                and metadata.get("content_hash")
-                            ):
-                                try:
-                                    # Convert DocstringResult to dictionary for caching
-                                    inference_data = {
-                                        "node_id": docstring_result.node_id,
-                                        "docstring": docstring_result.docstring,
-                                        "tags": docstring_result.tags,
-                                    }
-
-                                    # project_id stored for metadata/tracing only
-                                    cache_service.store_inference(
-                                        content_hash=metadata["content_hash"],
-                                        inference_data=inference_data,
-                                        project_id=repo_id,  # Metadata only
-                                        node_type=metadata.get("node_type"),
-                                        content_length=len(request.text),
-                                        tags=docstring_result.tags,
-                                    )
-                                except Exception as cache_error:
-                                    logger.warning(
-                                        f"Failed to cache inference for node {request.node_id}: {cache_error}"
-                                    )
-
-                        # Handle chunk consolidation before Neo4j update
-                        processed_response = self.process_chunk_responses(
-                            response, batch
-                        )
-                        if processed_response:
-                            self.update_neo4j_with_docstrings(
-                                repo_id, processed_response
-                            )
-
-                    return response
-
-                except Exception as e:
-                    logger.error(f"Failed to process batch {batch_index}: {e}")
-                    # Continue with next batch instead of failing entire operation
-                    return DocstringResponse(docstrings=[])
-
-        tasks = [process_batch(batch, i) for i, batch in enumerate(batches)]
+        tasks = [
+            process_batch_with_semaphore(batch, i) for i, batch in enumerate(batches)
+        ]
         results = await asyncio.gather(*tasks)
 
         for result in results:
@@ -908,15 +885,10 @@ class InferenceService:
                     f"Project {repo_id}: Invalid response from during inference. Manually verify the project completion."
                 )
 
-        # updated_docstrings = await self.generate_docstrings_for_entry_points(
-        #     all_docstrings, entry_points_neighbors
-        # )
-        updated_docstrings = all_docstrings
-
         if cache_service:
             cache_service.db.close()
 
-        return updated_docstrings
+        return {"docstrings": []}
 
     async def generate_response(
         self, batch: List[DocstringRequest], repo_id: str

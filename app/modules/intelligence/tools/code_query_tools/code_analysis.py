@@ -250,46 +250,57 @@ class UniversalCodeAnalyzer:
             logger.warning(f"Error getting tags for {fname}: {e}")
             return []
 
+    def _extract_python_docstring(self, node_text: str) -> Optional[str]:
+        """Extract Python docstring from node text."""
+        lines = node_text.split("\n")
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith('"""') or stripped.startswith("'''"):
+                quote_type = '"""' if stripped.startswith('"""') else "'''"
+                if stripped.count(quote_type) >= 2:
+                    # Single line docstring
+                    return stripped.strip(quote_type).strip()
+                else:
+                    # Multi-line docstring
+                    docstring_lines = [stripped[3:]]  # Remove opening quotes
+                    for j in range(i + 1, len(lines)):
+                        if quote_type in lines[j]:
+                            docstring_lines.append(
+                                lines[j][: lines[j].find(quote_type)]
+                            )
+                            break
+                        docstring_lines.append(lines[j])
+                    return "\n".join(docstring_lines).strip()
+        return None
+
+    def _extract_c_style_comment(
+        self, start_line: int, code_lines: List[str]
+    ) -> Optional[str]:
+        """Extract C-style or // comment from line before function/class."""
+        if start_line <= 0:
+            return None
+
+        prev_line = (
+            code_lines[start_line - 1].strip()
+            if start_line - 1 < len(code_lines)
+            else ""
+        )
+
+        if prev_line.startswith("/*") and prev_line.endswith("*/"):
+            return prev_line[2:-2].strip()
+        elif prev_line.startswith("//"):
+            return prev_line[2:].strip()
+
+        return None
+
     def _extract_docstring_comment(
         self, node_text: str, language: str, start_line: int, code_lines: List[str]
     ) -> Optional[str]:
         """Extract docstring or comment for a code element."""
         if language == "python":
-            # Look for triple-quoted strings at the beginning of function/class
-            lines = node_text.split("\n")
-            for i, line in enumerate(lines):
-                stripped = line.strip()
-                if stripped.startswith('"""') or stripped.startswith("'''"):
-                    # Find the end of the docstring
-                    quote_type = '"""' if stripped.startswith('"""') else "'''"
-                    if stripped.count(quote_type) >= 2:
-                        # Single line docstring
-                        return stripped.strip(quote_type).strip()
-                    else:
-                        # Multi-line docstring
-                        docstring_lines = [stripped[3:]]  # Remove opening quotes
-                        for j in range(i + 1, len(lines)):
-                            if quote_type in lines[j]:
-                                docstring_lines.append(
-                                    lines[j][: lines[j].find(quote_type)]
-                                )
-                                break
-                            docstring_lines.append(lines[j])
-                        return "\n".join(docstring_lines).strip()
-
+            return self._extract_python_docstring(node_text)
         elif language in ["javascript", "typescript", "java", "cpp", "c", "php"]:
-            # Look for comments before the function/class
-            if start_line > 0:
-                prev_line = (
-                    code_lines[start_line - 1].strip()
-                    if start_line - 1 < len(code_lines)
-                    else ""
-                )
-                if prev_line.startswith("/*") and prev_line.endswith("*/"):
-                    return prev_line[2:-2].strip()
-                elif prev_line.startswith("//"):
-                    return prev_line[2:].strip()
-
+            return self._extract_c_style_comment(start_line, code_lines)
         return None
 
     def _extract_signature(self, node_text: str, language: str) -> str:
