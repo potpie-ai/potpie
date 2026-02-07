@@ -157,10 +157,14 @@ git pull origin main
 
 Create a `.env` file in the `potpie-ui` directory and copy the required configuration from `.env.template`.
 
+**Mac/Linux:**
 ```bash
 cp .env.template .env
 ```
-
+**Windows:**
+```bash
+copy .env.template .env
+```
 ### 4. Build the Frontend
 
 ```bash
