@@ -49,6 +49,9 @@ from langchain_core.tools import StructuredTool
 
 logger = setup_logger(__name__)
 
+# Constants
+MIME_TYPE_JPEG = "image/jpeg"
+
 
 def handle_exception(tool_func):
     @functools.wraps(tool_func)
@@ -364,7 +367,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                     continue
 
                 # Get mime type with better fallback
-                mime_type = image_data.get("mime_type", "image/jpeg")
+                mime_type = image_data.get("mime_type", MIME_TYPE_JPEG)
                 if (
                     not mime_type
                     or not isinstance(mime_type, str)
@@ -373,7 +376,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                     logger.warning(
                         f"Invalid mime type for image {attachment_id}: {mime_type}, defaulting to image/jpeg"
                     )
-                    mime_type = "image/jpeg"
+                    mime_type = MIME_TYPE_JPEG
 
                 # Create data URL
                 data_url = f"data:{mime_type};base64,{base64_data}"
@@ -430,13 +433,13 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                         )
                         continue
 
-                    mime_type = image_data.get("mime_type", "image/jpeg")
+                    mime_type = image_data.get("mime_type", MIME_TYPE_JPEG)
                     if (
                         not mime_type
                         or not isinstance(mime_type, str)
                         or not mime_type.startswith("image/")
                     ):
-                        mime_type = "image/jpeg"
+                        mime_type = MIME_TYPE_JPEG
 
                     data_url = f"data:{mime_type};base64,{base64_data}"
 

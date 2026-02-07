@@ -45,6 +45,9 @@ from functools import wraps
 
 logger = setup_logger(__name__)
 
+# Constants
+MIME_TYPE_JPEG = "image/jpeg"
+
 litellm.num_retries = 5  # Number of retries for rate limited requests
 
 # Enable debug logging if LITELLM_DEBUG environment variable is set
@@ -1166,7 +1169,7 @@ class ProviderService:
         content = [{"type": "text", "text": text}]
 
         for attachment_id, image_data in images.items():
-            mime_type = image_data.get("mime_type", "image/jpeg")
+            mime_type = image_data.get("mime_type", MIME_TYPE_JPEG)
             base64_data = image_data["base64"]
 
             content.append(
@@ -1189,7 +1192,7 @@ class ProviderService:
 
         # Add images first for Claude
         for attachment_id, image_data in images.items():
-            mime_type = image_data.get("mime_type", "image/jpeg")
+            mime_type = image_data.get("mime_type", MIME_TYPE_JPEG)
             base64_data = image_data["base64"]
 
             content.append(
