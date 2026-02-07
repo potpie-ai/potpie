@@ -20,6 +20,10 @@ from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+# Error message constants
+ERR_ATTACHMENT_NOT_FOUND = "Attachment not found"
+ERR_ACCESS_DENIED = "Access denied"
+
 
 class MediaController:
     def __init__(self, db: Session, user_id: str, user_email: str):
@@ -81,7 +85,7 @@ class MediaController:
             # Get attachment to verify it exists and check permissions
             attachment = await self.media_service.get_attachment(attachment_id)
             if not attachment:
-                raise HTTPException(status_code=404, detail="Attachment not found")
+                raise HTTPException(status_code=404, detail=ERR_ATTACHMENT_NOT_FOUND)
 
             # Check if user has access to the message/conversation containing this attachment
             if attachment.message_id:
@@ -89,7 +93,7 @@ class MediaController:
                     attachment.message_id
                 )
                 if not access_granted:
-                    raise HTTPException(status_code=403, detail="Access denied")
+                    raise HTTPException(status_code=403, detail=ERR_ACCESS_DENIED)
 
             # Generate signed URL
             signed_url = await self.media_service.generate_signed_url(
@@ -113,7 +117,7 @@ class MediaController:
             # Get attachment to verify it exists and check permissions
             attachment = await self.media_service.get_attachment(attachment_id)
             if not attachment:
-                raise HTTPException(status_code=404, detail="Attachment not found")
+                raise HTTPException(status_code=404, detail=ERR_ATTACHMENT_NOT_FOUND)
 
             # Check if user has access to the message/conversation containing this attachment
             if attachment.message_id:
@@ -121,7 +125,7 @@ class MediaController:
                     attachment.message_id
                 )
                 if not access_granted:
-                    raise HTTPException(status_code=403, detail="Access denied")
+                    raise HTTPException(status_code=403, detail=ERR_ACCESS_DENIED)
 
             # Get the file data from storage
             file_data = await self.media_service.get_attachment_data(attachment_id)
@@ -148,7 +152,7 @@ class MediaController:
         try:
             attachment = await self.media_service.get_attachment(attachment_id)
             if not attachment:
-                raise HTTPException(status_code=404, detail="Attachment not found")
+                raise HTTPException(status_code=404, detail=ERR_ATTACHMENT_NOT_FOUND)
 
             # Check access permissions
             if attachment.message_id:
@@ -156,7 +160,7 @@ class MediaController:
                     attachment.message_id
                 )
                 if not access_granted:
-                    raise HTTPException(status_code=403, detail="Access denied")
+                    raise HTTPException(status_code=403, detail=ERR_ACCESS_DENIED)
 
             return AttachmentInfo(
                 id=attachment.id,
@@ -180,7 +184,7 @@ class MediaController:
         try:
             attachment = await self.media_service.get_attachment(attachment_id)
             if not attachment:
-                raise HTTPException(status_code=404, detail="Attachment not found")
+                raise HTTPException(status_code=404, detail=ERR_ATTACHMENT_NOT_FOUND)
 
             # Check if user has permission to delete (must be message owner or have write access)
             if attachment.message_id:
@@ -188,13 +192,13 @@ class MediaController:
                     attachment.message_id, require_write=True
                 )
                 if not access_granted:
-                    raise HTTPException(status_code=403, detail="Access denied")
+                    raise HTTPException(status_code=403, detail=ERR_ACCESS_DENIED)
 
             success = await self.media_service.delete_attachment(attachment_id)
             if success:
                 return {"message": "Attachment deleted successfully"}
             else:
-                raise HTTPException(status_code=404, detail="Attachment not found")
+                raise HTTPException(status_code=404, detail=ERR_ATTACHMENT_NOT_FOUND)
 
         except HTTPException:
             raise
@@ -208,7 +212,7 @@ class MediaController:
             # Check access to the message
             access_granted = await self._check_attachment_access(message_id)
             if not access_granted:
-                raise HTTPException(status_code=403, detail="Access denied")
+                raise HTTPException(status_code=403, detail=ERR_ACCESS_DENIED)
 
             attachments = await self.media_service.get_message_attachments(message_id)
             return attachments
@@ -257,7 +261,7 @@ class MediaController:
         try:
             attachment = await self.media_service.get_attachment(attachment_id)
             if not attachment:
-                raise HTTPException(status_code=404, detail="Attachment not found")
+                raise HTTPException(status_code=404, detail=ERR_ATTACHMENT_NOT_FOUND)
 
             # Check access permissions
             if attachment.message_id:
@@ -265,7 +269,7 @@ class MediaController:
                     attachment.message_id
                 )
                 if not access_granted:
-                    raise HTTPException(status_code=403, detail="Access denied")
+                    raise HTTPException(status_code=403, detail=ERR_ACCESS_DENIED)
 
             # Test multimodal functionality
             result = await self.media_service.test_multimodal_functionality(

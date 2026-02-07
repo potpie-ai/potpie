@@ -10,6 +10,10 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+# Field description constants
+DESC_UNIQUE_EVENT_ID = "Unique event ID"
+DESC_EVENT_METADATA = "Event metadata"
+
 
 class EventMetadata(BaseModel):
     """Metadata for events."""
@@ -31,7 +35,7 @@ class WebhookEvent(BaseModel):
     """Schema for webhook events from integrations."""
 
     event_id: str = Field(
-        default_factory=lambda: str(uuid4()), description="Unique event ID"
+        default_factory=lambda: str(uuid4()), description=DESC_UNIQUE_EVENT_ID
     )
     integration_id: str = Field(..., description="ID of the integration")
     integration_type: str = Field(
@@ -50,7 +54,7 @@ class WebhookEvent(BaseModel):
         default_factory=lambda: datetime.now(timezone.utc), description="When webhook was received"
     )
     metadata: EventMetadata = Field(
-        default_factory=EventMetadata, description="Event metadata"
+        default_factory=EventMetadata, description=DESC_EVENT_METADATA
     )
 
     class Config:
@@ -61,7 +65,7 @@ class CustomEvent(BaseModel):
     """Schema for custom events."""
 
     event_id: str = Field(
-        default_factory=lambda: str(uuid4()), description="Unique event ID"
+        default_factory=lambda: str(uuid4()), description=DESC_UNIQUE_EVENT_ID
     )
     topic: str = Field(..., description="Topic/queue name")
     event_type: str = Field(..., description="Type of event")
@@ -73,7 +77,7 @@ class CustomEvent(BaseModel):
         default_factory=lambda: datetime.now(timezone.utc), description="When event was created"
     )
     metadata: EventMetadata = Field(
-        default_factory=EventMetadata, description="Event metadata"
+        default_factory=EventMetadata, description=DESC_EVENT_METADATA
     )
 
     class Config:
@@ -84,14 +88,14 @@ class Event(BaseModel):
     """Generic event schema."""
 
     event_id: str = Field(
-        default_factory=lambda: str(uuid4()), description="Unique event ID"
+        default_factory=lambda: str(uuid4()), description=DESC_UNIQUE_EVENT_ID
     )
     event_type: str = Field(..., description="Type of event")
     event_source: str = Field(..., description="Source of the event")
     topic: str = Field(..., description="Topic/queue name")
     data: Dict[str, Any] = Field(..., description="Event data")
     metadata: EventMetadata = Field(
-        default_factory=EventMetadata, description="Event metadata"
+        default_factory=EventMetadata, description=DESC_EVENT_METADATA
     )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc), description="When event was created"
