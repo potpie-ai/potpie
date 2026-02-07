@@ -100,6 +100,61 @@ class IntelligentCodeGraphTool:
                 self.arun(project_id, node_id, relevance_threshold, max_depth)
             )
 
+    @staticmethod
+    def _parse_parameters(project_id, node_id, relevance_threshold, max_depth):
+        """Parse and normalize input parameters."""
+        if isinstance(project_id, dict):
+            params = project_id
+            return (
+                params.get("project_id"),
+                params.get("node_id"),
+                params.get("relevance_threshold", 0.6),
+                params.get("max_depth", 5),
+            )
+        return project_id, node_id, relevance_threshold, max_depth
+
+    @staticmethod
+    def _validate_result(result, node_id):
+        """Validate the graph result structure."""
+        if "error" in result:
+            return {"error": result["error"]}
+
+        if not result.get("graph") or not result["graph"].get("root_node"):
+            return {"error": f"Invalid graph structure returned for node {node_id}"}
+
+        root_node = result["graph"]["root_node"]
+        if (
+            not isinstance(root_node, dict)
+            or "id" not in root_node
+            or "name" not in root_node
+        ):
+            return {"error": f"Invalid root node structure for node {node_id}"}
+
+        return None
+
+    async def _fallback_process_children(
+        self, root_node, filtered_graph, relevance_threshold
+    ):
+        """Process children with simplified relevance assessment on error."""
+
+        async def process_child(child):
+            relevance = 0.9
+            reason = "Basic relevance assessment"
+
+            node_name = child.get("name", "").lower()
+            if any(term in node_name for term in ["log", "debug", "print", "test"]):
+                relevance = 0.4
+                reason = "Likely utility or debug code"
+
+            if relevance >= relevance_threshold:
+                return self._create_relevant_node(child, relevance, reason)
+            return None
+
+        tasks = [process_child(child) for child in root_node.get("children", [])]
+        results = await asyncio.gather(*tasks)
+        filtered_graph["children"] = [r for r in results if r is not None]
+        return filtered_graph
+
     async def arun(
         self,
         project_id: str = None,
@@ -109,12 +164,9 @@ class IntelligentCodeGraphTool:
         **kwargs,
     ) -> Dict[str, Any]:
         """Async version of run"""
-        if isinstance(project_id, dict):
-            params = project_id
-            project_id = params.get("project_id")
-            node_id = params.get("node_id")
-            relevance_threshold = params.get("relevance_threshold", 0.6)
-            max_depth = params.get("max_depth", 5)
+        project_id, node_id, relevance_threshold, max_depth = self._parse_parameters(
+            project_id, node_id, relevance_threshold, max_depth
+        )
 
         if not project_id or not node_id:
             return {
@@ -125,19 +177,12 @@ class IntelligentCodeGraphTool:
             self.visited_nodes = set()
 
             result = self.code_graph_tool.run(project_id, node_id, max_depth=1)
-            if "error" in result:
-                return result
 
-            if not result.get("graph") or not result["graph"].get("root_node"):
-                return {"error": f"Invalid graph structure returned for node {node_id}"}
+            validation_error = self._validate_result(result, node_id)
+            if validation_error:
+                return validation_error
 
             root_node = result["graph"]["root_node"]
-            if (
-                not isinstance(root_node, dict)
-                or "id" not in root_node
-                or "name" not in root_node
-            ):
-                return {"error": f"Invalid root node structure for node {node_id}"}
 
             code_result = await asyncio.to_thread(
                 self.code_from_node_tool.run, project_id, node_id
@@ -160,27 +205,9 @@ class IntelligentCodeGraphTool:
                 filtered_graph = self._create_relevant_node(
                     root_node, 1.0, "Root node (simplified processing due to error)"
                 )
-
-                async def process_child(child):
-                    relevance = 0.9
-                    reason = "Basic relevance assessment"
-
-                    node_name = child.get("name", "").lower()
-                    if any(
-                        term in node_name for term in ["log", "debug", "print", "test"]
-                    ):
-                        relevance = 0.4
-                        reason = "Likely utility or debug code"
-
-                    if relevance >= relevance_threshold:
-                        return self._create_relevant_node(child, relevance, reason)
-                    return None
-
-                tasks = [
-                    process_child(child) for child in root_node.get("children", [])
-                ]
-                results = await asyncio.gather(*tasks)
-                filtered_graph["children"] = [r for r in results if r is not None]
+                filtered_graph = await self._fallback_process_children(
+                    root_node, filtered_graph, relevance_threshold
+                )
 
             return {
                 "graph": {

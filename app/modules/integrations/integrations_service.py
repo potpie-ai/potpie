@@ -595,6 +595,94 @@ class IntegrationsService:
             integration_id, f"/projects/{org_slug}/{project_slug}/issues/"
         )
 
+    def _validate_oauth_request(self, request: SentrySaveRequest):
+        """Validate OAuth authorization code and request timing."""
+        if not request.code or len(request.code) < 20:
+            raise Exception("Invalid authorization code format")
+
+        if not request.redirect_uri:
+            raise Exception("Redirect URI is required for OAuth token exchange")
+
+        # Check if the code might be expired
+        try:
+            request_time = datetime.fromisoformat(
+                request.timestamp.replace("Z", UTC_TIMEZONE_SUFFIX)
+            )
+            from datetime import timezone
+
+            current_time = datetime.now(timezone.utc)
+            time_diff = (current_time - request_time).total_seconds()
+
+            if time_diff > 600:  # 10 minutes
+                logger.warning("Authorization code might be expired", age_seconds=time_diff)
+                raise Exception(
+                    f"Authorization code may be expired (age: {time_diff} seconds)"
+                )
+        except ValueError as e:
+            logger.warning(f"Could not parse request timestamp: {e}")
+
+    def _parse_timestamps(self, request: SentrySaveRequest, tokens: Dict):
+        """Parse and return created_at and expires_at timestamps."""
+        from datetime import timezone
+
+        try:
+            created_at = datetime.fromisoformat(
+                request.timestamp.replace("Z", UTC_TIMEZONE_SUFFIX)
+            )
+        except ValueError:
+            created_at = datetime.now(timezone.utc)
+
+        try:
+            expires_at = datetime.fromisoformat(
+                tokens["expires_at"].replace("Z", UTC_TIMEZONE_SUFFIX)
+            )
+        except (ValueError, KeyError):
+            expires_at = datetime.now(timezone.utc) + timedelta(
+                seconds=tokens.get("expires_in", 3600)
+            )
+
+        return created_at, expires_at
+
+    def _create_integration_record(
+        self, integration_id: str, request: SentrySaveRequest, auth_data: AuthData,
+        scope_data: ScopeData, metadata: IntegrationMetadata, org_info: Dict,
+        user_id: str, created_at: datetime
+    ):
+        """Create and return the database integration record."""
+        db_integration = Integration()
+        setattr(db_integration, "integration_id", integration_id)
+        setattr(db_integration, "name", request.instance_name)
+        setattr(db_integration, "integration_type", IntegrationType.SENTRY.value)
+        setattr(db_integration, "status", IntegrationStatus.ACTIVE.value)
+        setattr(db_integration, "active", True)
+        setattr(db_integration, "auth_data", auth_data.model_dump(mode="json"))
+        setattr(db_integration, "scope_data", scope_data.model_dump(mode="json"))
+        setattr(db_integration, "integration_metadata", metadata.model_dump(mode="json"))
+        setattr(db_integration, "unique_identifier", f"{org_info['slug']}-{user_id}")
+        setattr(db_integration, "created_by", user_id)
+        setattr(db_integration, "created_at", created_at)
+        setattr(db_integration, "updated_at", created_at)
+        return db_integration
+
+    @staticmethod
+    def _format_oauth_error(error_message: str) -> str:
+        """Format OAuth error messages to be more helpful."""
+        if "invalid_grant" in error_message:
+            return (
+                "OAuth authorization failed. This usually means:\n"
+                "1. The authorization code has expired (codes expire in ~10 minutes)\n"
+                "2. The authorization code has already been used\n"
+                "3. The redirect URI doesn't match what was used during authorization\n"
+                "4. The client credentials are incorrect\n\n"
+                "Please try the OAuth flow again with a fresh authorization code."
+            )
+        elif "expired" in error_message.lower():
+            return (
+                "The authorization code has expired. OAuth codes typically expire in 10 minutes. "
+                "Please initiate a new OAuth flow to get a fresh authorization code."
+            )
+        return error_message
+
     async def save_sentry_integration(
         self, request: SentrySaveRequest, user_id: str
     ) -> Dict[str, Any]:
@@ -614,34 +702,7 @@ class IntegrationsService:
             )
 
             # Validate the authorization code format and timing
-            if not request.code or len(request.code) < 20:
-                raise Exception("Invalid authorization code format")
-
-            # Validate redirect URI
-            if not request.redirect_uri:
-                raise Exception("Redirect URI is required for OAuth token exchange")
-
-            # Check if the code might be expired (OAuth codes typically expire in 10 minutes)
-            try:
-                request_time = datetime.fromisoformat(
-                    request.timestamp.replace("Z", UTC_TIMEZONE_SUFFIX)
-                )
-                # Use timezone-aware current time to match the request time
-                from datetime import timezone
-
-                current_time = datetime.now(timezone.utc)
-                time_diff = (current_time - request_time).total_seconds()
-
-                if time_diff > 600:  # 10 minutes
-                    logger.warning(
-                        "Authorization code might be expired", age_seconds=time_diff
-                    )
-                    raise Exception(
-                        f"Authorization code may be expired (age: {time_diff} seconds)"
-                    )
-
-            except ValueError as e:
-                logger.warning(f"Could not parse request timestamp: {e}")
+            self._validate_oauth_request(request)
 
             # Exchange authorization code for tokens
             logger.debug("Exchanging authorization code for tokens")
@@ -658,23 +719,8 @@ class IntegrationsService:
             # Generate a unique integration ID
             integration_id = str(uuid.uuid4())
 
-            # Parse the timestamp
-            try:
-                created_at = datetime.fromisoformat(
-                    request.timestamp.replace("Z", UTC_TIMEZONE_SUFFIX)
-                )
-            except ValueError:
-                created_at = datetime.now(timezone.utc)
-
-            # Parse token expiration
-            try:
-                expires_at = datetime.fromisoformat(
-                    tokens["expires_at"].replace("Z", UTC_TIMEZONE_SUFFIX)
-                )
-            except (ValueError, KeyError):
-                expires_at = datetime.now(timezone.utc) + timedelta(
-                    seconds=tokens.get("expires_in", 3600)
-                )
+            # Parse timestamps
+            created_at, expires_at = self._parse_timestamps(request, tokens)
 
             # Create auth data with encrypted tokens
             auth_data = AuthData(
@@ -723,27 +769,10 @@ class IntegrationsService:
             )
 
             # Create database model
-            db_integration = Integration()
-            setattr(db_integration, "integration_id", integration_id)
-            setattr(db_integration, "name", request.instance_name)
-            setattr(db_integration, "integration_type", IntegrationType.SENTRY.value)
-            setattr(db_integration, "status", IntegrationStatus.ACTIVE.value)
-            setattr(db_integration, "active", True)
-            setattr(db_integration, "auth_data", auth_data.model_dump(mode="json"))
-            setattr(db_integration, "scope_data", scope_data.model_dump(mode="json"))
-            setattr(
-                db_integration, "integration_metadata", metadata.model_dump(mode="json")
+            db_integration = self._create_integration_record(
+                integration_id, request, auth_data, scope_data, metadata,
+                org_info, user_id, created_at
             )
-            setattr(
-                db_integration,
-                "unique_identifier",
-                f"{org_info['slug']}-{user_id}",  # Use Potpie user_id for uniqueness
-            )
-            setattr(
-                db_integration, "created_by", user_id
-            )  # Use Potpie user_id, not Sentry OAuth user ID
-            setattr(db_integration, "created_at", created_at)
-            setattr(db_integration, "updated_at", created_at)
 
             # Save to database
             self.db.add(db_integration)
@@ -769,24 +798,7 @@ class IntegrationsService:
 
         except Exception as e:
             logger.exception("Error saving Sentry integration")
-
-            # Provide more helpful error messages based on the error type
-            error_message = str(e)
-            if "invalid_grant" in error_message:
-                error_message = (
-                    "OAuth authorization failed. This usually means:\n"
-                    "1. The authorization code has expired (codes expire in ~10 minutes)\n"
-                    "2. The authorization code has already been used\n"
-                    "3. The redirect URI doesn't match what was used during authorization\n"
-                    "4. The client credentials are incorrect\n\n"
-                    "Please try the OAuth flow again with a fresh authorization code."
-                )
-            elif "expired" in error_message.lower():
-                error_message = (
-                    "The authorization code has expired. OAuth codes typically expire in 10 minutes. "
-                    "Please initiate a new OAuth flow to get a fresh authorization code."
-                )
-
+            error_message = self._format_oauth_error(str(e))
             raise Exception(f"Failed to save Sentry integration: {error_message}")
 
     async def get_integration_by_id(

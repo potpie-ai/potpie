@@ -1,6 +1,5 @@
 import functools
 import inspect
-import re
 from typing import List, AsyncGenerator, Sequence
 
 import anyio
@@ -81,7 +80,7 @@ class PydanticRagAgent(ChatAgent):
 
         # tool name can't have spaces for langgraph/pydantic agents
         for i, tool in enumerate(tools):
-            tools[i].name = re.sub(r" ", "", tool.name)
+            tools[i].name = tool.name.replace(" ", "")
 
         self.llm_provider = llm_provider
         self.tools = tools

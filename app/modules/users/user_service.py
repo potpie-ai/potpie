@@ -92,7 +92,7 @@ class UserService:
         defaultUserId = os.getenv("defaultUsername")
         user = self.get_user_by_uid(defaultUserId)
         if user:
-            print("Dummy user already exists")
+            logger.info("Dummy user already exists")
             return
         else:
             user = CreateUser(

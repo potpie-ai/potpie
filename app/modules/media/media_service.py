@@ -101,6 +101,50 @@ class MediaService:
         """Check if multimodal functionality is available"""
         return self.is_multimodal_enabled
 
+    async def _extract_file_data(
+        self, file: Union[UploadFile, bytes], file_name: str, mime_type: str
+    ) -> tuple[bytes, str, str]:
+        """Extract and validate file data from UploadFile or bytes."""
+        if isinstance(file, UploadFile):
+            file_data = await file.read()
+            if not file_name:
+                file_name = file.filename or "unknown"
+            if not mime_type:
+                mime_type = file.content_type or "application/octet-stream"
+            # Validate that we actually got bytes
+            if not isinstance(file_data, bytes):
+                raise MediaServiceError(
+                    f"Expected bytes from file.read(), got {type(file_data)}"
+                )
+        else:
+            file_data = file
+            # Validate that file_data is bytes
+            if not isinstance(file_data, bytes):
+                raise MediaServiceError(f"Expected bytes, got {type(file_data)}")
+
+        return file_data, file_name, mime_type
+
+    def _create_and_save_attachment(
+        self, attachment_id: str, message_id: Optional[str], file_name: str,
+        mime_type: str, processed_image_data: bytes, storage_path: str,
+        file_metadata: Dict[str, Any]
+    ):
+        """Create attachment record and save to database."""
+        attachment = MessageAttachment(
+            id=attachment_id,
+            message_id=message_id,
+            attachment_type=AttachmentType.IMAGE,
+            file_name=file_name,
+            file_size=len(processed_image_data),
+            mime_type=mime_type,
+            storage_path=storage_path,
+            storage_provider=self.storage_provider,
+            file_metadata=file_metadata,
+        )
+
+        self.db.add(attachment)
+        self.db.commit()
+
     async def upload_image(
         self,
         file: Union[UploadFile, bytes],
@@ -111,23 +155,10 @@ class MediaService:
         """Upload and process an image file"""
         self._check_multimodal_enabled()
         try:
-            # Read file data
-            if isinstance(file, UploadFile):
-                file_data = await file.read()
-                if not file_name:
-                    file_name = file.filename or "unknown"
-                if not mime_type:
-                    mime_type = file.content_type or "application/octet-stream"
-                # Validate that we actually got bytes
-                if not isinstance(file_data, bytes):
-                    raise MediaServiceError(
-                        f"Expected bytes from file.read(), got {type(file_data)}"
-                    )
-            else:
-                file_data = file
-                # Validate that file_data is bytes
-                if not isinstance(file_data, bytes):
-                    raise MediaServiceError(f"Expected bytes, got {type(file_data)}")
+            # Extract and validate file data
+            file_data, file_name, mime_type = await self._extract_file_data(
+                file, file_name, mime_type
+            )
 
             # Validate the image
             logger.debug(
@@ -150,21 +181,11 @@ class MediaService:
             # Upload to cloud storage
             await self._upload_to_cloud(storage_path, processed_image_data, mime_type)
 
-            # Create database record
-            attachment = MessageAttachment(
-                id=attachment_id,
-                message_id=message_id,
-                attachment_type=AttachmentType.IMAGE,
-                file_name=file_name,
-                file_size=len(processed_image_data),
-                mime_type=mime_type,
-                storage_path=storage_path,
-                storage_provider=self.storage_provider,
-                file_metadata=file_metadata,
+            # Create and save database record
+            self._create_and_save_attachment(
+                attachment_id, message_id, file_name, mime_type,
+                processed_image_data, storage_path, file_metadata
             )
-
-            self.db.add(attachment)
-            self.db.commit()
 
             logger.info(
                 f"Successfully uploaded image {attachment_id} to {storage_path}"

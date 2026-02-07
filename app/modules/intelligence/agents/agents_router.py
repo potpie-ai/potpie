@@ -26,6 +26,7 @@ class AgentsAPI:
     def __init__(
         self,
     ):
+        """Initialize AgentsAPI. No instance state needed as all methods are static."""
         pass
 
     @staticmethod

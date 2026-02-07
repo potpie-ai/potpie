@@ -687,7 +687,9 @@ class SecretManager:
             )
             if not user_pref:
                 logger.info(f"No preferences found for user: {customer_id}")
-                raise
+                raise HTTPException(
+                    status_code=404, detail="No preferences found for user"
+                )
 
             if provider == "all":
                 # Get both chat and inference configurations

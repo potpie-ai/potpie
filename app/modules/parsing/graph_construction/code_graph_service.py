@@ -34,6 +34,47 @@ class CodeGraphService:
     def close(self):
         self.driver.close()
 
+    @staticmethod
+    def _process_node_data(node_id, node_data, project_id, user_id):
+        """Process a single node's data for graph insertion."""
+        # Get the node type and ensure it's one of our expected types
+        node_type = node_data.get("type", "UNKNOWN")
+        if node_type == "UNKNOWN":
+            return None
+
+        # Initialize labels with NODE
+        labels = ["NODE"]
+
+        # Add specific type label if it's a valid type
+        if node_type in ["FILE", "CLASS", "FUNCTION", "INTERFACE"]:
+            labels.append(node_type)
+
+        # Prepare node data
+        processed_node = {
+            "name": node_data.get("name", node_id),  # Use node_id as fallback
+            "file_path": node_data.get("file", ""),
+            "start_line": node_data.get("line", -1),
+            "end_line": node_data.get("end_line", -1),
+            "repoId": project_id,
+            "node_id": CodeGraphService.generate_node_id(node_id, user_id),
+            "entityId": user_id,
+            "type": node_type,
+            "text": node_data.get("text", ""),
+            "labels": labels,
+        }
+
+        # Remove None values
+        return {k: v for k, v in processed_node.items() if v is not None}
+
+    @staticmethod
+    def _create_edge_data(source, target, project_id, user_id):
+        """Create edge data for relationship insertion."""
+        return {
+            "source_id": CodeGraphService.generate_node_id(source, user_id),
+            "target_id": CodeGraphService.generate_node_id(target, user_id),
+            "repoId": project_id,
+        }
+
     def create_and_store_graph(self, repo_dir, project_id, user_id):
         # Create the graph using RepoMap
         self.repo_map = RepoMap(
@@ -65,38 +106,11 @@ class CodeGraphService:
                 nodes_to_create = []
 
                 for node_id, node_data in batch_nodes:
-                    # Get the node type and ensure it's one of our expected types
-                    node_type = node_data.get("type", "UNKNOWN")
-                    if node_type == "UNKNOWN":
-                        continue
-                    # Initialize labels with NODE
-                    labels = ["NODE"]
-
-                    # Add specific type label if it's a valid type
-                    if node_type in ["FILE", "CLASS", "FUNCTION", "INTERFACE"]:
-                        labels.append(node_type)
-
-                    # Prepare node data
-                    processed_node = {
-                        "name": node_data.get(
-                            "name", node_id
-                        ),  # Use node_id as fallback
-                        "file_path": node_data.get("file", ""),
-                        "start_line": node_data.get("line", -1),
-                        "end_line": node_data.get("end_line", -1),
-                        "repoId": project_id,
-                        "node_id": CodeGraphService.generate_node_id(node_id, user_id),
-                        "entityId": user_id,
-                        "type": node_type,
-                        "text": node_data.get("text", ""),
-                        "labels": labels,
-                    }
-
-                    # Remove None values
-                    processed_node = {
-                        k: v for k, v in processed_node.items() if v is not None
-                    }
-                    nodes_to_create.append(processed_node)
+                    processed_node = self._process_node_data(
+                        node_id, node_data, project_id, user_id
+                    )
+                    if processed_node:
+                        nodes_to_create.append(processed_node)
 
                 # Create nodes with labels
                 session.run(
@@ -134,20 +148,10 @@ class CodeGraphService:
 
                 for i in range(0, len(type_edges), batch_size):
                     batch_edges = type_edges[i : i + batch_size]
-                    edges_to_create = []
-
-                    for source, target, data in batch_edges:
-                        edges_to_create.append(
-                            {
-                                "source_id": CodeGraphService.generate_node_id(
-                                    source, user_id
-                                ),
-                                "target_id": CodeGraphService.generate_node_id(
-                                    target, user_id
-                                ),
-                                "repoId": project_id,
-                            }
-                        )
+                    edges_to_create = [
+                        self._create_edge_data(source, target, project_id, user_id)
+                        for source, target, data in batch_edges
+                    ]
 
                     # Type-specific relationship creation in one transaction
                     query = f"""

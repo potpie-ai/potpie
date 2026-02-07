@@ -428,6 +428,59 @@ async def linear_oauth_redirect(
         )
 
 
+def _get_frontend_url_with_protocol():
+    """Get frontend URL and ensure it has a protocol."""
+    config = Config()
+    frontend_url = config("FRONTEND_URL", default=DEFAULT_LOCALHOST_URL)
+
+    # Ensure frontend_url has protocol
+    if frontend_url and not frontend_url.startswith(HTTP_PROTOCOLS):
+        frontend_url = f"https://{frontend_url}"
+
+    return frontend_url
+
+
+def _build_error_redirect(frontend_url, error_message, user_id=None):
+    """Build redirect URL for error cases."""
+    encoded_error = urllib.parse.quote(str(error_message), safe="")
+    if user_id:
+        return f"{frontend_url}/integrations/linear/redirect?error={encoded_error}&user_id={user_id}"
+    return f"{frontend_url}/integrations/linear/redirect?error={encoded_error}"
+
+
+async def _save_linear_integration_and_redirect(request, code, user_id):
+    """Save Linear integration and return success redirect response."""
+    from app.core.database import SessionLocal
+    from .integrations_schema import LinearSaveRequest
+    from datetime import datetime
+
+    db = SessionLocal()
+    try:
+        integrations_service = IntegrationsService(db)
+
+        # Create save request
+        save_request = LinearSaveRequest(
+            code=code,
+            redirect_uri=f"https://{request.url.hostname}/api/v1/integrations/linear/callback",
+            instance_name="Linear Integration",
+            integration_type="linear",
+            timestamp=datetime.now(timezone.utc).isoformat() + "Z",
+        )
+
+        # Save the integration
+        save_result = await integrations_service.save_linear_integration(
+            save_request, user_id
+        )
+
+        # Build success redirect
+        frontend_url = _get_frontend_url_with_protocol()
+        redirect_url = f"{frontend_url}/integrations/linear/redirect?success=true&integration_id={save_result.get('integration_id')}&user_name={save_result.get('user_name', '')}"
+
+        return RedirectResponse(url=redirect_url)
+    finally:
+        db.close()
+
+
 @router.get("/linear/callback")
 async def linear_oauth_callback(
     request: Request,
@@ -451,101 +504,29 @@ async def linear_oauth_callback(
         # If we have an authorization code, exchange it for tokens and save to database
         if code:
             try:
-                # Get the integrations service to save the integration
-                from app.core.database import SessionLocal
-
-                db = SessionLocal()
-                integrations_service = IntegrationsService(db)
-
-                # Create a LinearSaveRequest with the authorization code
-                from .integrations_schema import LinearSaveRequest
-                from datetime import datetime
-
-                # Always use HTTPS in production
-                save_request = LinearSaveRequest(
-                    code=code,
-                    redirect_uri=f"https://{request.url.hostname}/api/v1/integrations/linear/callback",
-                    instance_name="Linear Integration",  # Will be updated with org name in service
-                    integration_type="linear",
-                    timestamp=datetime.now(timezone.utc).isoformat() + "Z",
-                )
-
-                # Save the integration (this will exchange code for tokens)
-                save_result = await integrations_service.save_linear_integration(
-                    save_request,
-                    user_id,
-                )
-
-                db.close()
-
-                # Redirect to frontend with success
-                config = Config()
-                frontend_url = config("FRONTEND_URL", default=DEFAULT_LOCALHOST_URL)
-
-                # Ensure frontend_url has protocol
-                if frontend_url and not frontend_url.startswith(
-                    HTTP_PROTOCOLS
-                ):
-                    frontend_url = f"https://{frontend_url}"
-
-                redirect_url = f"{frontend_url}/integrations/linear/redirect?success=true&integration_id={save_result.get('integration_id')}&user_name={save_result.get('user_name', '')}"
-
-                return RedirectResponse(url=redirect_url)
-
+                return await _save_linear_integration_and_redirect(request, code, user_id)
             except Exception as e:
                 logger.exception("Failed to save Linear integration")
-
-                # Redirect to frontend with error
-                config = Config()
-                frontend_url = config("FRONTEND_URL", default=DEFAULT_LOCALHOST_URL)
-
-                # Ensure frontend_url has protocol
-                if frontend_url and not frontend_url.startswith(
-                    HTTP_PROTOCOLS
-                ):
-                    frontend_url = f"https://{frontend_url}"
-
-                error_message = urllib.parse.quote(str(e), safe="")
-                redirect_url = f"{frontend_url}/integrations/linear/redirect?error={error_message}&user_id={user_id}"
-
+                frontend_url = _get_frontend_url_with_protocol()
+                redirect_url = _build_error_redirect(frontend_url, str(e), user_id)
                 return RedirectResponse(url=redirect_url)
         else:
             # No code provided, redirect to frontend with error
-            config = Config()
-            frontend_url = config("FRONTEND_URL", default=DEFAULT_LOCALHOST_URL)
-
-            # Ensure frontend_url has protocol
-            if frontend_url and not frontend_url.startswith(HTTP_PROTOCOLS):
-                frontend_url = f"https://{frontend_url}"
-
             error_msg = "No authorization code received from Linear"
             if error:
                 error_msg = f"OAuth error: {error}"
             elif error_description:
                 error_msg = f"OAuth error: {error_description}"
 
-            error_message = urllib.parse.quote(error_msg, safe="")
-            redirect_url = f"{frontend_url}/integrations/linear/redirect?error={error_message}&user_id={user_id}"
-
+            frontend_url = _get_frontend_url_with_protocol()
+            redirect_url = _build_error_redirect(frontend_url, error_msg, user_id)
             return RedirectResponse(url=redirect_url)
+
     except Exception as e:
         logger.exception("Linear OAuth callback failed")
-
-        # Redirect to frontend with error
-        config = Config()
-        frontend_url = config("FRONTEND_URL", default=DEFAULT_LOCALHOST_URL)
-
-        # Ensure frontend_url has protocol
-        if frontend_url and not frontend_url.startswith(HTTP_PROTOCOLS):
-            frontend_url = f"https://{frontend_url}"
-
-        error_message = urllib.parse.quote(
-            f"Linear OAuth callback failed: {str(e)}", safe=""
-        )
-        redirect_url = (
-            f"{frontend_url}/integrations/linear/redirect?error={error_message}"
-        )
-
+        frontend_url = _get_frontend_url_with_protocol()
+        error_message = f"Linear OAuth callback failed: {str(e)}"
+        redirect_url = _build_error_redirect(frontend_url, error_message)
         return RedirectResponse(url=redirect_url)
 
 

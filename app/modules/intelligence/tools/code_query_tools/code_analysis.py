@@ -326,6 +326,52 @@ class UniversalCodeAnalyzer:
         }
         return type_mapping.get(tag_type, tag_type)
 
+    def _should_skip_element(
+        self, element_type: str, is_private: bool,
+        include_methods: bool, include_private: bool
+    ) -> bool:
+        """Determine if element should be skipped based on filters."""
+        if element_type == "method" and not include_methods:
+            return True
+        if not include_private and is_private:
+            return True
+        return False
+
+    def _extract_node_text(
+        self, code_lines: List[str], tag_line: int, tag_end_line: int, tag_name: str
+    ) -> str:
+        """Extract node text from code lines."""
+        try:
+            start_line = max(0, tag_line)
+            end_line = min(len(code_lines) - 1, tag_end_line)
+            return "\n".join(code_lines[start_line : end_line + 1])
+        except (IndexError, ValueError):
+            return tag_name
+
+    def _create_code_element(
+        self, tag, element_type: str, parent_class: Optional[str],
+        signature: str, is_private: bool, docstring: Optional[str], language: str
+    ) -> CodeElement:
+        """Create a CodeElement from extracted information."""
+        is_async = "async" in signature.lower()
+        is_static = "static" in signature.lower()
+
+        return CodeElement(
+            name=tag.name,
+            type=element_type,
+            start_line=tag.line + 1,  # Convert to 1-indexed
+            end_line=tag.end_line + 1,
+            start_column=0,
+            end_column=0,
+            docstring=docstring,
+            parent_class=parent_class,
+            signature=signature,
+            is_private=is_private,
+            is_async=is_async,
+            is_static=is_static,
+            language=language,
+        )
+
     def analyze(
         self,
         source_code: str,
@@ -363,23 +409,17 @@ class UniversalCodeAnalyzer:
 
             element_type = self._get_element_type(tag.type, parent_class)
 
-            # Skip methods if not included
-            if element_type == "method" and not include_methods:
-                continue
-
-            # Extract signature from the code
-            try:
-                start_line = max(0, tag.line)
-                end_line = min(len(code_lines) - 1, tag.end_line)
-                node_text = "\n".join(code_lines[start_line : end_line + 1])
-            except (IndexError, ValueError):
-                node_text = tag.name
-
+            # Extract node text and signature
+            node_text = self._extract_node_text(
+                code_lines, tag.line, tag.end_line, tag.name
+            )
             signature = self._extract_signature(node_text, language)
             is_private = self._is_private(tag.name, signature, language)
 
-            # Skip private elements if not included
-            if not include_private and is_private:
+            # Skip filtered elements
+            if self._should_skip_element(
+                element_type, is_private, include_methods, include_private
+            ):
                 continue
 
             # Extract docstring
@@ -387,24 +427,10 @@ class UniversalCodeAnalyzer:
                 node_text, language, tag.line, code_lines
             )
 
-            # Detect async and static
-            is_async = "async" in signature.lower()
-            is_static = "static" in signature.lower()
-
-            element = CodeElement(
-                name=tag.name,
-                type=element_type,
-                start_line=tag.line + 1,  # Convert to 1-indexed
-                end_line=tag.end_line + 1,
-                start_column=0,  # Tree-sitter queries don't provide column info easily
-                end_column=0,
-                docstring=docstring,
-                parent_class=parent_class,
-                signature=signature,
-                is_private=is_private,
-                is_async=is_async,
-                is_static=is_static,
-                language=language,
+            # Create element
+            element = self._create_code_element(
+                tag, element_type, parent_class, signature,
+                is_private, docstring, language
             )
 
             elements.append(element)

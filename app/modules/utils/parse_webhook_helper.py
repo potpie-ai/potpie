@@ -3,6 +3,10 @@ import os
 
 import requests
 
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
+
 
 class ParseWebhookHelper:
     def __init__(self):
@@ -23,9 +27,9 @@ class ParseWebhookHelper:
                 )
 
                 if response.status_code != 200:
-                    print(
+                    logger.error(
                         f"Failed to send message to Slack: {response.status_code} {response.text}"
                     )
 
         except Exception as e:
-            print(f"Error sending message to Slack: {e}")
+            logger.error(f"Error sending message to Slack: {e}")

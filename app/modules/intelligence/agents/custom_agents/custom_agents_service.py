@@ -33,6 +33,9 @@ from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+# Constants
+ERR_AGENT_NOT_FOUND = "Agent not found"
+
 
 class CustomAgentService:
     def __init__(
@@ -651,7 +654,7 @@ class CustomAgentService:
                         logger.info(
                             f"Agent {ctx.curr_agent_id} is not shared with user {user_id}"
                         )
-                        raise HTTPException(status_code=404, detail="Agent not found")
+                        raise HTTPException(status_code=404, detail=ERR_AGENT_NOT_FOUND)
                     logger.info(
                         f"Agent {ctx.curr_agent_id} is shared with user {user_id}"
                     )
@@ -659,10 +662,10 @@ class CustomAgentService:
                     logger.info(
                         f"Agent {ctx.curr_agent_id} is private and user {user_id} is not the owner"
                     )
-                    raise HTTPException(status_code=404, detail="Agent not found")
+                    raise HTTPException(status_code=404, detail=ERR_AGENT_NOT_FOUND)
             else:
                 logger.info(f"Agent {ctx.curr_agent_id} not found")
-                raise HTTPException(status_code=404, detail="Agent not found")
+                raise HTTPException(status_code=404, detail=ERR_AGENT_NOT_FOUND)
 
         logger.info(
             f"Executing agent {ctx.curr_agent_id} with role: {agent_model.role}"

@@ -123,6 +123,7 @@ class RepoMap:
         return [path + ":"]
 
     def save_tags_cache(self):
+        """Placeholder for tags cache saving. Not currently implemented."""
         pass
 
     def get_mtime(self, fname):
@@ -608,6 +609,104 @@ class RepoMap:
 
         return False
 
+    def _process_file_tags(
+        self, G, file_path, rel_path, file_node_name, defines, references, seen_relationships
+    ):
+        """Process all tags in a file and add nodes/edges to graph."""
+        current_class = None
+        current_method = None
+
+        for tag in self.get_tags(file_path, rel_path):
+            if tag.kind == "def":
+                if tag.type == "class":
+                    node_type = "CLASS"
+                    current_class = tag.name
+                    current_method = None
+                elif tag.type == "interface":
+                    node_type = "INTERFACE"
+                    current_class = tag.name
+                    current_method = None
+                elif tag.type in ["method", "function"]:
+                    node_type = "FUNCTION"
+                    current_method = tag.name
+                else:
+                    continue
+
+                # Create fully qualified node name
+                if current_class:
+                    node_name = f"{rel_path}:{current_class}.{tag.name}"
+                else:
+                    node_name = f"{rel_path}:{tag.name}"
+
+                # Add node
+                if not G.has_node(node_name):
+                    G.add_node(
+                        node_name,
+                        file=rel_path,
+                        line=tag.line,
+                        end_line=tag.end_line,
+                        type=node_type,
+                        name=tag.name,
+                        class_name=current_class,
+                    )
+
+                    # Add CONTAINS relationship from file
+                    rel_key = (file_node_name, node_name, "CONTAINS")
+                    if rel_key not in seen_relationships:
+                        G.add_edge(
+                            file_node_name,
+                            node_name,
+                            type="CONTAINS",
+                            ident=tag.name,
+                        )
+                        seen_relationships.add(rel_key)
+
+                # Record definition
+                defines[tag.name].add(node_name)
+
+            elif tag.kind == "ref":
+                # Handle references
+                if current_class and current_method:
+                    source = f"{rel_path}:{current_class}.{current_method}"
+                elif current_method:
+                    source = f"{rel_path}:{current_method}"
+                else:
+                    source = rel_path
+
+                references[tag.name].add(
+                    (
+                        source,
+                        tag.line,
+                        tag.end_line,
+                        current_class,
+                        current_method,
+                    )
+                )
+
+    def _process_references(self, G, defines, references, seen_relationships):
+        """Process all references and create REFERENCES edges in graph."""
+        for ident, refs in references.items():
+            target_nodes = defines.get(ident, set())
+
+            for source, line, end_line, src_class, src_method in refs:
+                for target in target_nodes:
+                    if source == target:
+                        continue
+
+                    if G.has_node(source) and G.has_node(target):
+                        RepoMap.create_relationship(
+                            G,
+                            source,
+                            target,
+                            "REFERENCES",
+                            seen_relationships,
+                            {
+                                "ident": ident,
+                                "ref_line": line,
+                                "end_ref_line": end_line,
+                            },
+                        )
+
     def create_graph(self, repo_dir):
         G = nx.MultiDiGraph()
         defines = defaultdict(set)
@@ -640,98 +739,13 @@ class RepoMap:
                         name=rel_path.split("/")[-1],
                     )
 
-                current_class = None
-                current_method = None
-
                 # Process all tags in file
-                for tag in self.get_tags(file_path, rel_path):
-                    if tag.kind == "def":
-                        if tag.type == "class":
-                            node_type = "CLASS"
-                            current_class = tag.name
-                            current_method = None
-                        elif tag.type == "interface":
-                            node_type = "INTERFACE"
-                            current_class = tag.name
-                            current_method = None
-                        elif tag.type in ["method", "function"]:
-                            node_type = "FUNCTION"
-                            current_method = tag.name
-                        else:
-                            continue
+                self._process_file_tags(
+                    G, file_path, rel_path, file_node_name, defines, references, seen_relationships
+                )
 
-                        # Create fully qualified node name
-                        if current_class:
-                            node_name = f"{rel_path}:{current_class}.{tag.name}"
-                        else:
-                            node_name = f"{rel_path}:{tag.name}"
-
-                        # Add node
-                        if not G.has_node(node_name):
-                            G.add_node(
-                                node_name,
-                                file=rel_path,
-                                line=tag.line,
-                                end_line=tag.end_line,
-                                type=node_type,
-                                name=tag.name,
-                                class_name=current_class,
-                            )
-
-                            # Add CONTAINS relationship from file
-                            rel_key = (file_node_name, node_name, "CONTAINS")
-                            if rel_key not in seen_relationships:
-                                G.add_edge(
-                                    file_node_name,
-                                    node_name,
-                                    type="CONTAINS",
-                                    ident=tag.name,
-                                )
-                                seen_relationships.add(rel_key)
-
-                        # Record definition
-                        defines[tag.name].add(node_name)
-
-                    elif tag.kind == "ref":
-                        # Handle references
-                        if current_class and current_method:
-                            source = f"{rel_path}:{current_class}.{current_method}"
-                        elif current_method:
-                            source = f"{rel_path}:{current_method}"
-                        else:
-                            source = rel_path
-
-                        references[tag.name].add(
-                            (
-                                source,
-                                tag.line,
-                                tag.end_line,
-                                current_class,
-                                current_method,
-                            )
-                        )
-
-        for ident, refs in references.items():
-            target_nodes = defines.get(ident, set())
-
-            for source, line, end_line, src_class, src_method in refs:
-                for target in target_nodes:
-                    if source == target:
-                        continue
-
-                    if G.has_node(source) and G.has_node(target):
-                        RepoMap.create_relationship(
-                            G,
-                            source,
-                            target,
-                            "REFERENCES",
-                            seen_relationships,
-                            {
-                                "ident": ident,
-                                "ref_line": line,
-                                "end_ref_line": end_line,
-                            },
-                        )
+        # Process all references and create edges
+        self._process_references(G, defines, references, seen_relationships)
 
         return G
 
