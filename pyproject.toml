@@ -5,7 +5,6 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "agentops>=0.4.21",
     "aiofiles>=25.1.0",
     "aiohttp>=3.13.3",
     "alembic>=1.17.1",
@@ -57,7 +56,7 @@ dependencies = [
     "postgres>=4.0",
     "posthog>=6.9.0",
     "psycopg-binary>=3.2.12",
-    "pydantic-ai>=1.11.1",
+    "pydantic-ai>=1.56.0",
     "pydantic[email]>=2.12.4",
     "pygithub>=2.8.1",
     "pygments>=2.19.2",
