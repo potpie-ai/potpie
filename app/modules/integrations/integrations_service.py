@@ -36,6 +36,9 @@ from .token_encryption import decrypt_token
 
 logger = setup_logger(__name__)
 
+# Constants
+UTC_TIMEZONE_SUFFIX = "+00:00"
+
 
 class IntegrationsService:
     """Service layer for integrations"""
@@ -328,7 +331,7 @@ class IntegrationsService:
             if expires_at_str:
                 try:
                     expires_at = datetime.fromisoformat(
-                        expires_at_str.replace("Z", "+00:00")
+                        expires_at_str.replace("Z", UTC_TIMEZONE_SUFFIX)
                     )
                     if datetime.now(timezone.utc) >= expires_at:
                         # Token expired, refresh it
@@ -621,7 +624,7 @@ class IntegrationsService:
             # Check if the code might be expired (OAuth codes typically expire in 10 minutes)
             try:
                 request_time = datetime.fromisoformat(
-                    request.timestamp.replace("Z", "+00:00")
+                    request.timestamp.replace("Z", UTC_TIMEZONE_SUFFIX)
                 )
                 # Use timezone-aware current time to match the request time
                 from datetime import timezone
@@ -658,7 +661,7 @@ class IntegrationsService:
             # Parse the timestamp
             try:
                 created_at = datetime.fromisoformat(
-                    request.timestamp.replace("Z", "+00:00")
+                    request.timestamp.replace("Z", UTC_TIMEZONE_SUFFIX)
                 )
             except ValueError:
                 created_at = datetime.now(timezone.utc)
@@ -666,7 +669,7 @@ class IntegrationsService:
             # Parse token expiration
             try:
                 expires_at = datetime.fromisoformat(
-                    tokens["expires_at"].replace("Z", "+00:00")
+                    tokens["expires_at"].replace("Z", UTC_TIMEZONE_SUFFIX)
                 )
             except (ValueError, KeyError):
                 expires_at = datetime.now(timezone.utc) + timedelta(
@@ -1516,7 +1519,7 @@ class IntegrationsService:
             # Check if the code might be expired (OAuth codes typically expire in 10 minutes)
             try:
                 request_time = datetime.fromisoformat(
-                    request.timestamp.replace("Z", "+00:00")
+                    request.timestamp.replace("Z", UTC_TIMEZONE_SUFFIX)
                 )
                 # Use timezone-aware current time to match the request time
                 from datetime import timezone
@@ -1578,7 +1581,7 @@ class IntegrationsService:
             # Parse the timestamp
             try:
                 created_at = datetime.fromisoformat(
-                    request.timestamp.replace("Z", "+00:00")
+                    request.timestamp.replace("Z", UTC_TIMEZONE_SUFFIX)
                 )
             except ValueError:
                 created_at = datetime.now(timezone.utc)
@@ -1820,7 +1823,7 @@ class IntegrationsService:
 
             try:
                 created_at = datetime.fromisoformat(
-                    request.timestamp.replace("Z", "+00:00")
+                    request.timestamp.replace("Z", UTC_TIMEZONE_SUFFIX)
                 )
             except ValueError:
                 created_at = datetime.now(timezone.utc)
@@ -2047,7 +2050,7 @@ class IntegrationsService:
                 if isinstance(expires_at, str):
                     try:
                         expires_at = datetime.fromisoformat(
-                            expires_at.replace("Z", "+00:00")
+                            expires_at.replace("Z", UTC_TIMEZONE_SUFFIX)
                         )
                     except ValueError:
                         expires_at = None
@@ -2239,7 +2242,7 @@ class IntegrationsService:
                 else:
                     try:
                         expires_at = datetime.fromisoformat(
-                            str(expires_at_value).replace("Z", "+00:00")
+                            str(expires_at_value).replace("Z", UTC_TIMEZONE_SUFFIX)
                         )
                     except ValueError:
                         expires_at = None
@@ -2353,7 +2356,7 @@ class IntegrationsService:
 
             try:
                 created_at = datetime.fromisoformat(
-                    request.timestamp.replace("Z", "+00:00")
+                    request.timestamp.replace("Z", UTC_TIMEZONE_SUFFIX)
                 )
             except ValueError:
                 created_at = datetime.now(timezone.utc)
@@ -2614,7 +2617,7 @@ class IntegrationsService:
                 else:
                     try:
                         expires_at = datetime.fromisoformat(
-                            str(expires_at_value).replace("Z", "+00:00")
+                            str(expires_at_value).replace("Z", UTC_TIMEZONE_SUFFIX)
                         )
                     except ValueError:
                         expires_at = None
