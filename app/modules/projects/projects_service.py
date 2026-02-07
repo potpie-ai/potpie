@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
 from sqlalchemy import String, cast
@@ -119,7 +119,7 @@ class ProjectService:
             existing_project.repo_path = repo_path
             existing_project.commit_id = commit_id
             existing_project.status = ProjectStatusEnum.SUBMITTED.value
-            existing_project.updated_at = datetime.utcnow()
+            existing_project.updated_at = datetime.now(timezone.utc)
             try:
                 self.db.commit()
                 self.db.refresh(existing_project)
@@ -380,8 +380,8 @@ class ProjectService:
         return db.query(Project).filter(Project.user_id == user_id).all()
 
     def create_project(db: Session, project: Project):
-        project.created_at = datetime.utcnow()
-        project.updated_at = datetime.utcnow()
+        project.created_at = datetime.now(timezone.utc)
+        project.updated_at = datetime.now(timezone.utc)
         db.add(project)
         try:
             db.commit()

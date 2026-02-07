@@ -4,7 +4,7 @@ import asyncio
 import redis
 import json
 from typing import Optional, AsyncGenerator
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import partial
 from app.core.config_provider import ConfigProvider
 from app.modules.utils.logger import setup_logger
@@ -64,7 +64,7 @@ class ToolCallStreamManager:
             "call_id": call_id,
             "stream_part": stream_part,
             "is_complete": "true" if is_complete else "false",
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
 
         if tool_response is not None:
@@ -115,7 +115,7 @@ class ToolCallStreamManager:
             "call_id": call_id,
             "stream_part": stream_part,
             "is_complete": "true" if is_complete else "false",
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
 
         if tool_response is not None:
@@ -177,7 +177,7 @@ class ToolCallStreamManager:
         end_event_data = {
             "type": "tool_call_stream_end",
             "call_id": call_id,
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
         try:
             self._sync_publish_end_event(key, end_event_data)
@@ -209,7 +209,7 @@ class ToolCallStreamManager:
         end_event_data = {
             "type": "tool_call_stream_end",
             "call_id": call_id,
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
         try:
             loop = asyncio.get_event_loop()

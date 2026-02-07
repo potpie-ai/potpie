@@ -697,7 +697,7 @@ class CustomAgentService:
         self, user_id: str, prompt: str, tools: List[str]
     ) -> Dict[str, Any]:
         """Create a plan for the agent using LLM"""
-        template = self.CREATE_AGENT_FROM_PROMPT
+        template = self.AGENT_CREATION_PROMPT_TEMPLATE
 
         formatted_prompt = template.format(prompt=prompt, tools=tools)
         messages = [{"role": "user", "content": formatted_prompt}]
@@ -895,7 +895,7 @@ class CustomAgentService:
             )
             raise
 
-    CREATE_AGENT_FROM_PROMPT = """
+    AGENT_CREATION_PROMPT_TEMPLATE = """
 You are an expert AI agent designer specializing in creating optimal agent configurations for the Potpie system. Your goal is to analyze user input and create a comprehensive agent plan that either preserves detailed existing instructions or expands minimal prompts with best practices.
 
 ### INPUT ANALYSIS PHASE

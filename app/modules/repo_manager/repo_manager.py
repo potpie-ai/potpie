@@ -10,7 +10,7 @@ import json
 import os
 import shutil
 import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -129,12 +129,12 @@ class RepoManager(IRepoManager):
     @staticmethod
     def _deserialize_datetime(dt_str: Optional[str]) -> datetime:
         if not dt_str:
-            return datetime.utcnow()
+            return datetime.now(timezone.utc)
         try:
             return datetime.fromisoformat(dt_str)
         except ValueError:
             logger.warning(f"Failed to parse datetime '{dt_str}'; defaulting to now()")
-            return datetime.utcnow()
+            return datetime.now(timezone.utc)
 
     def _load_metadata_entry(
         self,
@@ -407,7 +407,7 @@ class RepoManager(IRepoManager):
                         f"limit: {self.volume_limit_bytes:,}"
                     )
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         data = {
             "repo_name": repo_name,
             "local_path": local_path,
@@ -480,7 +480,7 @@ class RepoManager(IRepoManager):
         if user_id and entry.get("user_id") != user_id:
             return
 
-        entry["last_accessed"] = self._serialize_datetime(datetime.utcnow())
+        entry["last_accessed"] = self._serialize_datetime(datetime.now(timezone.utc))
         self._write_metadata_entry(repo_name, branch, commit_id, entry)
 
     def get_repo_info(
@@ -606,7 +606,7 @@ class RepoManager(IRepoManager):
         max_age_days: int,
         user_id: Optional[str] = None,
     ) -> List[str]:
-        cutoff = datetime.utcnow() - timedelta(days=max_age_days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
         evicted: List[str] = []
 
         for repo_info in self.list_available_repos(user_id=user_id):

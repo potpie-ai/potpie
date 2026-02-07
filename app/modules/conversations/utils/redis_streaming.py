@@ -1,7 +1,7 @@
 import redis
 from typing import Generator, Optional
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from app.core.config_provider import ConfigProvider
 from app.modules.utils.logger import setup_logger
 
@@ -43,7 +43,7 @@ class RedisStreamManager:
             "type": event_type,
             "conversation_id": conversation_id,
             "run_id": run_id,
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             **{k: serialize_value(v) for k, v in payload.items()},
         }
 

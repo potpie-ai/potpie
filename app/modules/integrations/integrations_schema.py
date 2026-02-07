@@ -3,6 +3,16 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 from enum import Enum
 
+# Field description constants
+DESC_AUTH_DATA = "Authentication data"
+DESC_SCOPE_DATA = "Scope-specific data"
+DESC_INTEGRATION_METADATA = "Integration metadata"
+DESC_INTEGRATION_NAME = "Integration name"
+DESC_INTEGRATION_TYPE = "Type of integration"
+DESC_OPERATION_SUCCESS = "Whether the operation was successful"
+DESC_INTEGRATION_DATA = "Integration data if successful"
+DESC_ERROR_MESSAGE = "Error message if operation failed"
+
 
 class IntegrationType(str, Enum):
     """Supported integration types"""
@@ -66,17 +76,17 @@ class Integration(BaseModel):
     """Core integration model"""
 
     integration_id: str = Field(..., description="Unique integration identifier")
-    name: str = Field(..., description="Integration name")
-    integration_type: IntegrationType = Field(..., description="Type of integration")
+    name: str = Field(..., description=DESC_INTEGRATION_NAME)
+    integration_type: IntegrationType = Field(..., description=DESC_INTEGRATION_TYPE)
     status: IntegrationStatus = Field(
         default=IntegrationStatus.ACTIVE, description="Integration status"
     )
     active: bool = Field(default=True, description="Whether integration is active")
 
     # Authentication and scope data
-    auth_data: AuthData = Field(..., description="Authentication data")
-    scope_data: ScopeData = Field(..., description="Scope-specific data")
-    metadata: IntegrationMetadata = Field(..., description="Integration metadata")
+    auth_data: AuthData = Field(..., description=DESC_AUTH_DATA)
+    scope_data: ScopeData = Field(..., description=DESC_SCOPE_DATA)
+    metadata: IntegrationMetadata = Field(..., description=DESC_INTEGRATION_METADATA)
 
     # System fields
     unique_identifier: str = Field(
@@ -99,11 +109,11 @@ class Integration(BaseModel):
 class IntegrationCreateRequest(BaseModel):
     """Request to create a new integration"""
 
-    name: str = Field(..., description="Integration name")
-    integration_type: IntegrationType = Field(..., description="Type of integration")
-    auth_data: AuthData = Field(..., description="Authentication data")
-    scope_data: ScopeData = Field(..., description="Scope-specific data")
-    metadata: IntegrationMetadata = Field(..., description="Integration metadata")
+    name: str = Field(..., description=DESC_INTEGRATION_NAME)
+    integration_type: IntegrationType = Field(..., description=DESC_INTEGRATION_TYPE)
+    auth_data: AuthData = Field(..., description=DESC_AUTH_DATA)
+    scope_data: ScopeData = Field(..., description=DESC_SCOPE_DATA)
+    metadata: IntegrationMetadata = Field(..., description=DESC_INTEGRATION_METADATA)
     unique_identifier: str = Field(
         ..., description="Unique identifier for the integration"
     )
@@ -113,7 +123,7 @@ class IntegrationCreateRequest(BaseModel):
 class IntegrationUpdateRequest(BaseModel):
     """Request to update an existing integration - currently only allows name updates"""
 
-    name: str = Field(..., description="Integration name", min_length=1, max_length=255)
+    name: str = Field(..., description=DESC_INTEGRATION_NAME, min_length=1, max_length=255)
 
     class Config:
         use_enum_values = True
@@ -122,22 +132,22 @@ class IntegrationUpdateRequest(BaseModel):
 class IntegrationResponse(BaseModel):
     """Response containing integration data"""
 
-    success: bool = Field(..., description="Whether the operation was successful")
+    success: bool = Field(..., description=DESC_OPERATION_SUCCESS)
     data: Optional[Integration] = Field(
-        None, description="Integration data if successful"
+        None, description=DESC_INTEGRATION_DATA
     )
-    error: Optional[str] = Field(None, description="Error message if operation failed")
+    error: Optional[str] = Field(None, description=DESC_ERROR_MESSAGE)
 
 
 class IntegrationListResponse(BaseModel):
     """Response containing list of integrations"""
 
-    success: bool = Field(..., description="Whether the operation was successful")
+    success: bool = Field(..., description=DESC_OPERATION_SUCCESS)
     count: int = Field(..., description="Number of integrations returned")
     integrations: Dict[str, Integration] = Field(
         ..., description="Dictionary of integrations"
     )
-    error: Optional[str] = Field(None, description="Error message if operation failed")
+    error: Optional[str] = Field(None, description=DESC_ERROR_MESSAGE)
 
 
 # OAuth-related schemas
@@ -216,7 +226,7 @@ class SentrySaveRequest(BaseModel):
     instance_name: str = Field(
         ..., description="User-defined name for this integration instance"
     )
-    integration_type: str = Field(default="sentry", description="Type of integration")
+    integration_type: str = Field(default="sentry", description=DESC_INTEGRATION_TYPE)
     timestamp: str = Field(
         ..., description="ISO timestamp when the integration was created"
     )
@@ -225,11 +235,11 @@ class SentrySaveRequest(BaseModel):
 class SentrySaveResponse(BaseModel):
     """Response after successfully saving Sentry integration"""
 
-    success: bool = Field(..., description="Whether the operation was successful")
+    success: bool = Field(..., description=DESC_OPERATION_SUCCESS)
     data: Optional[Dict[str, Any]] = Field(
-        None, description="Integration data if successful"
+        None, description=DESC_INTEGRATION_DATA
     )
-    error: Optional[str] = Field(None, description="Error message if operation failed")
+    error: Optional[str] = Field(None, description=DESC_ERROR_MESSAGE)
 
 
 # Linear-specific schemas
@@ -266,7 +276,7 @@ class LinearSaveRequest(BaseModel):
     instance_name: str = Field(
         ..., description="User-defined name for this integration instance"
     )
-    integration_type: str = Field(default="linear", description="Type of integration")
+    integration_type: str = Field(default="linear", description=DESC_INTEGRATION_TYPE)
     timestamp: str = Field(
         ..., description="ISO timestamp when the integration was created"
     )
@@ -275,11 +285,11 @@ class LinearSaveRequest(BaseModel):
 class LinearSaveResponse(BaseModel):
     """Response after successfully saving Linear integration"""
 
-    success: bool = Field(..., description="Whether the operation was successful")
+    success: bool = Field(..., description=DESC_OPERATION_SUCCESS)
     data: Optional[Dict[str, Any]] = Field(
-        None, description="Integration data if successful"
+        None, description=DESC_INTEGRATION_DATA
     )
-    error: Optional[str] = Field(None, description="Error message if operation failed")
+    error: Optional[str] = Field(None, description=DESC_ERROR_MESSAGE)
 
 
 # Jira-specific schemas
@@ -304,7 +314,7 @@ class JiraSaveRequest(BaseModel):
         ..., description="User-defined name for this integration instance"
     )
     user_id: str = Field(..., description="Potpie user initiating the integration")
-    integration_type: str = Field(default="jira", description="Type of integration")
+    integration_type: str = Field(default="jira", description=DESC_INTEGRATION_TYPE)
     timestamp: str = Field(
         ..., description="ISO timestamp when the integration was created"
     )
@@ -313,11 +323,11 @@ class JiraSaveRequest(BaseModel):
 class JiraSaveResponse(BaseModel):
     """Response after successfully saving Jira integration"""
 
-    success: bool = Field(..., description="Whether the operation was successful")
+    success: bool = Field(..., description=DESC_OPERATION_SUCCESS)
     data: Optional[Dict[str, Any]] = Field(
-        None, description="Integration data if successful"
+        None, description=DESC_INTEGRATION_DATA
     )
-    error: Optional[str] = Field(None, description="Error message if operation failed")
+    error: Optional[str] = Field(None, description=DESC_ERROR_MESSAGE)
 
 
 # Confluence-specific schemas
@@ -343,7 +353,7 @@ class ConfluenceSaveRequest(BaseModel):
     )
     user_id: str = Field(..., description="Potpie user initiating the integration")
     integration_type: str = Field(
-        default="confluence", description="Type of integration"
+        default="confluence", description=DESC_INTEGRATION_TYPE
     )
     timestamp: str = Field(
         ..., description="ISO timestamp when the integration was created"
@@ -353,11 +363,11 @@ class ConfluenceSaveRequest(BaseModel):
 class ConfluenceSaveResponse(BaseModel):
     """Response after successfully saving Confluence integration"""
 
-    success: bool = Field(..., description="Whether the operation was successful")
+    success: bool = Field(..., description=DESC_OPERATION_SUCCESS)
     data: Optional[Dict[str, Any]] = Field(
-        None, description="Integration data if successful"
+        None, description=DESC_INTEGRATION_DATA
     )
-    error: Optional[str] = Field(None, description="Error message if operation failed")
+    error: Optional[str] = Field(None, description=DESC_ERROR_MESSAGE)
 
 
 # Generic save integration schema
@@ -365,8 +375,8 @@ class IntegrationSaveRequest(BaseModel):
     """Request to save an integration with configurable and optional fields"""
 
     # Required fields
-    name: str = Field(..., description="Integration name", min_length=1, max_length=255)
-    integration_type: IntegrationType = Field(..., description="Type of integration")
+    name: str = Field(..., description=DESC_INTEGRATION_NAME, min_length=1, max_length=255)
+    integration_type: IntegrationType = Field(..., description=DESC_INTEGRATION_TYPE)
 
     # Optional fields with defaults
     status: IntegrationStatus = Field(
@@ -384,7 +394,7 @@ class IntegrationSaveRequest(BaseModel):
             scope=None,
             code=None,
         ),
-        description="Authentication data",
+        description=DESC_AUTH_DATA,
     )
 
     # Optional scope data with defaults
@@ -395,7 +405,7 @@ class IntegrationSaveRequest(BaseModel):
             workspace_id=None,
             project_id=None,
         ),
-        description="Scope-specific data",
+        description=DESC_SCOPE_DATA,
     )
 
     # Optional metadata with defaults
@@ -407,7 +417,7 @@ class IntegrationSaveRequest(BaseModel):
             version=None,
             tags=[],
         ),
-        description="Integration metadata",
+        description=DESC_INTEGRATION_METADATA,
     )
 
     # Optional unique identifier (will be generated if not provided)
@@ -420,8 +430,8 @@ class IntegrationSaveRequest(BaseModel):
 class IntegrationSaveResponse(BaseModel):
     """Response after successfully saving an integration"""
 
-    success: bool = Field(..., description="Whether the operation was successful")
+    success: bool = Field(..., description=DESC_OPERATION_SUCCESS)
     data: Optional[Dict[str, Any]] = Field(
-        None, description="Integration data if successful"
+        None, description=DESC_INTEGRATION_DATA
     )
-    error: Optional[str] = Field(None, description="Error message if operation failed")
+    error: Optional[str] = Field(None, description=DESC_ERROR_MESSAGE)
