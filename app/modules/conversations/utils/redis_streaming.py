@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 from app.core.config_provider import ConfigProvider
 from app.modules.utils.logger import setup_logger
+from app.modules.intelligence.provider.openrouter_usage_context import estimate_cost_for_log
 
 logger = setup_logger(__name__)
 
@@ -135,6 +136,35 @@ class RedisStreamManager:
                             logger.info(
                                 f"Stream {key} ended with status: {event.get('status')}"
                             )
+                            # Log OpenRouter usage/cost in API (uvicorn) so it appears in FastAPI logs
+                            usage_list = event.get("usage") or event.get("usage_json")
+                            if usage_list and isinstance(usage_list, list):
+                                total_cost = 0.0
+                                for u in usage_list:
+                                    if isinstance(u, dict):
+                                        c = u.get("cost")
+                                        pt = u.get("prompt_tokens", 0) or 0
+                                        ct = u.get("completion_tokens", 0) or 0
+                                        if c is not None:
+                                            total_cost += float(c)
+                                            cost_str = f", cost={c} credits"
+                                        else:
+                                            est = estimate_cost_for_log(pt, ct) if (pt or ct) else 0.0
+                                            cost_str = f", cost≈{est} credits (estimated)" if (pt or ct) else ""
+                                        logger.info(
+                                            "[OpenRouter usage] model=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s%s"
+                                            % (u.get("model", ""), pt, ct, u.get("total_tokens", 0), cost_str)
+                                        )
+                                if usage_list:
+                                    logger.info(
+                                        "[LLM cost this run] total=%s credits (see lines above for per-call breakdown)"
+                                        % (total_cost,)
+                                    )
+                            else:
+                                logger.info(
+                                    "[LLM cost] no usage data in stream — cost is logged in the Celery worker; "
+                                    "run worker with -Q staging_agent_tasks to see it (e.g. ./scripts/run_celery_worker.sh)"
+                                )
                             yield event
                             return
 

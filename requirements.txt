@@ -1151,3 +1151,5 @@ zipp==3.23.0
     # via importlib-metadata
 zstandard==0.25.0
     # via langsmith
+logfire==4.16.0
+logfire-api==4.16.0

@@ -12,6 +12,7 @@ from .utils.message_history_utils import (
 )
 from .utils.multimodal_utils import create_multimodal_user_content
 from app.modules.intelligence.agents.chat_agent import ChatContext, ChatAgentResponse
+from app.modules.intelligence.provider.openrouter_usage_context import push_usage_from_run
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -237,6 +238,18 @@ class StreamingExecutionFlow:
                             ):
                                 yield response
                         finally:
+                            # Capture run usage so Celery task can publish it in the stream end event (OpenRouter usage in logs)
+                            try:
+                                usage = run.usage() if hasattr(run, "usage") and callable(getattr(run, "usage")) else None
+                                if usage is not None:
+                                    model_name = getattr(
+                                        getattr(supervisor_agent, "model", None),
+                                        "model_name",
+                                        None,
+                                    ) or "openrouter"
+                                    push_usage_from_run(usage, model_name)
+                            except Exception:
+                                pass
                             # Clear the reference when done
                             self.current_supervisor_run_ref["run"] = None
 
@@ -411,6 +424,18 @@ class MultimodalStreamingExecutionFlow:
                     ):
                         yield response
                 finally:
+                    # Capture run usage so Celery task can publish it in the stream end event (OpenRouter usage in logs)
+                    try:
+                        usage = run.usage() if hasattr(run, "usage") and callable(getattr(run, "usage")) else None
+                        if usage is not None:
+                            model_name = getattr(
+                                getattr(supervisor_agent, "model", None),
+                                "model_name",
+                                None,
+                            ) or "openrouter"
+                            push_usage_from_run(usage, model_name)
+                    except Exception:
+                        pass
                     # Note: For streaming runs, compressed messages are handled by history processor
                     # Clear the reference when done
                     self.current_supervisor_run_ref["run"] = None
