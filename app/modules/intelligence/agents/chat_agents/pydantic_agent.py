@@ -710,7 +710,8 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                                 or "unknown tool",
                                                 tool_response=get_tool_response_message(
                                                     event.result.tool_name
-                                                    or "unknown tool"
+                                                    or "unknown tool",
+                                                    result=event.result.content,
                                                 ),
                                                 tool_call_details={
                                                     "summary": get_tool_result_info_content(
@@ -865,7 +866,8 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                                             or "unknown tool",
                                                             tool_response=get_tool_response_message(
                                                                 event.result.tool_name
-                                                                or "unknown tool"
+                                                                or "unknown tool",
+                                                                result=event.result.content,
                                                             ),
                                                             tool_call_details={
                                                                 "summary": get_tool_result_info_content(
@@ -1033,7 +1035,8 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                                             or "unknown tool",
                                                             tool_response=get_tool_response_message(
                                                                 event.result.tool_name
-                                                                or "unknown tool"
+                                                                or "unknown tool",
+                                                                result=event.result.content,
                                                             ),
                                                             tool_call_details={
                                                                 "summary": get_tool_result_info_content(

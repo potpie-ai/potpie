@@ -45,6 +45,19 @@ class AuthService:
             return None, {"error": f"An unexpected error occurred: {str(e)}"}
 
     @staticmethod
+    def create_custom_token(uid: str) -> str | None:
+        """
+        Create a Firebase custom token for the given uid (e.g. for VS Code extension).
+        Returns the token string or None on error.
+        """
+        try:
+            token = auth.create_custom_token(uid)
+            return token.decode("utf-8") if isinstance(token, bytes) else token
+        except Exception as e:
+            logging.warning("create_custom_token failed for uid=%s: %s", uid, e)
+            return None
+
+    @staticmethod
     async def check_auth(
         request: Request,
         res: Response,
@@ -52,6 +65,18 @@ class AuthService:
             HTTPBearer(auto_error=False)
         ),
     ):
+        # When invoked manually (e.g. auth_handler.check_auth(request, None)), the
+        # third argument defaults to the Depends() object. Resolve Bearer token from
+        # the request so both dependency-injected and manual calls work.
+        if not isinstance(credential, HTTPAuthorizationCredentials):
+            auth_header = request.headers.get("Authorization")
+            if auth_header and auth_header.startswith("Bearer "):
+                credential = HTTPAuthorizationCredentials(
+                    scheme="Bearer", credentials=auth_header[7:].strip()
+                )
+            else:
+                credential = None
+
         logging.info("DEBUG: AuthService.check_auth called")
         logging.info("DEBUG: Development mode: %s", os.getenv("isDevelopmentMode"))
         logging.info("DEBUG: Credential provided: %s", credential is not None)

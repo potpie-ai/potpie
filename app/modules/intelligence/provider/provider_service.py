@@ -1296,6 +1296,14 @@ class ProviderService:
 
         return is_vision
 
+    def get_chat_provider_config(self) -> LLMProviderConfig:
+        """Return the provider config for the current chat model.
+
+        Used by the agent factory to decide thinking/reasoning model_settings
+        (Anthropic vs OpenRouter and provider type).
+        """
+        return self._build_config_for_model_identifier(self.chat_config.model)
+
     def get_pydantic_model(
         self, provider: str | None = None, model: str | None = None
     ) -> Model | None:

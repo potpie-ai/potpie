@@ -43,6 +43,16 @@ auth_router = APIRouter()
 load_dotenv(override=True)
 
 
+def _signup_response_with_custom_token(payload: dict) -> dict:
+    """Add customToken to signup payload when applicable (e.g. for VS Code extension)."""
+    uid = payload.get("uid")
+    if uid:
+        custom_token = AuthService.create_custom_token(uid)
+        if custom_token:
+            payload["customToken"] = custom_token
+    return payload
+
+
 async def send_slack_message(message: str):
     payload = {"text": message}
     if SLACK_WEBHOOK_URL:
@@ -178,11 +188,13 @@ class AuthAPI:
                 logger.info(f"GitHub already linked to user {user.uid}")
                 return Response(
                     content=json.dumps(
-                        {
-                            "uid": user.uid,
-                            "exists": True,
-                            "needs_github_linking": False,
-                        }
+                        _signup_response_with_custom_token(
+                            {
+                                "uid": user.uid,
+                                "exists": True,
+                                "needs_github_linking": False,
+                            }
+                        )
                     ),
                     status_code=200,
                 )
@@ -269,11 +281,13 @@ class AuthAPI:
             logger.info(f"Successfully linked GitHub to user {user.uid}")
             return Response(
                 content=json.dumps(
-                    {
-                        "uid": user.uid,
-                        "exists": True,
-                        "needs_github_linking": False,
-                    }
+                    _signup_response_with_custom_token(
+                        {
+                            "uid": user.uid,
+                            "exists": True,
+                            "needs_github_linking": False,
+                        }
+                    )
                 ),
                 status_code=200,
             )
@@ -326,11 +340,13 @@ class AuthAPI:
 
                     return Response(
                         content=json.dumps(
-                            {
-                                "uid": user.uid,
-                                "exists": True,
-                                "needs_github_linking": False,
-                            }
+                            _signup_response_with_custom_token(
+                                {
+                                    "uid": user.uid,
+                                    "exists": True,
+                                    "needs_github_linking": False,
+                                }
+                            )
                         ),
                         status_code=200,
                     )
@@ -364,11 +380,13 @@ class AuthAPI:
 
                 return Response(
                     content=json.dumps(
-                        {
-                            "uid": new_user.uid,
-                            "exists": False,
-                            "needs_github_linking": False,  # They signed up with GitHub
-                        }
+                        _signup_response_with_custom_token(
+                            {
+                                "uid": new_user.uid,
+                                "exists": False,
+                                "needs_github_linking": False,  # They signed up with GitHub
+                            }
+                        )
                     ),
                     status_code=201,
                 )
@@ -396,11 +414,13 @@ class AuthAPI:
 
             return Response(
                 content=json.dumps(
-                    {
-                        "uid": user.uid,
-                        "exists": True,
-                        "needs_github_linking": not has_github,
-                    }
+                    _signup_response_with_custom_token(
+                        {
+                            "uid": user.uid,
+                            "exists": True,
+                            "needs_github_linking": not has_github,
+                        }
+                    )
                 ),
                 status_code=200,
             )
@@ -420,11 +440,13 @@ class AuthAPI:
 
                 return Response(
                     content=json.dumps(
-                        {
-                            "uid": new_user.uid,
-                            "exists": False,
-                            "needs_github_linking": True,  # Email users always need GitHub
-                        }
+                        _signup_response_with_custom_token(
+                            {
+                                "uid": new_user.uid,
+                                "exists": False,
+                                "needs_github_linking": True,  # Email users always need GitHub
+                            }
+                        )
                     ),
                     status_code=201,
                 )
@@ -435,6 +457,30 @@ class AuthAPI:
                     content=json.dumps({"error": str(e)}),
                     status_code=500,
                 )
+
+    @auth_router.post("/auth/custom-token")
+    async def custom_token(user=Depends(AuthService.check_auth)):
+        """
+        Create a Firebase custom token for the authenticated user (e.g. for VS Code extension).
+        Requires Authorization: Bearer <firebase_id_token>.
+        Returns { "customToken": "..." }.
+        """
+        uid = user.get("uid") or user.get("user_id")
+        if not uid:
+            return Response(
+                content=json.dumps({"error": "Missing uid in token"}),
+                status_code=401,
+            )
+        custom_token = AuthService.create_custom_token(uid)
+        if not custom_token:
+            return Response(
+                content=json.dumps({"error": "Failed to create custom token"}),
+                status_code=500,
+            )
+        return Response(
+            content=json.dumps({"customToken": custom_token}),
+            status_code=200,
+        )
 
     # ===== Multi-Provider SSO Endpoints =====
 

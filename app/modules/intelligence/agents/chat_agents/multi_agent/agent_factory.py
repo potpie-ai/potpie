@@ -1,7 +1,7 @@
 """Agent factory for creating supervisor and delegate agents"""
 
-from typing import List, Dict, Callable, Any
-from pydantic_ai import Agent, Tool
+from typing import List, Dict, Callable, Any, cast
+from pydantic_ai import Agent, Tool, ModelSettings
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 from langchain_core.tools import StructuredTool
 
@@ -76,11 +76,11 @@ class AgentFactory:
         for i, tool in enumerate(tools):
             tools[i].name = sanitize_tool_name_for_api(tool.name)
 
-        # Cache for agent instances - keyed by (agent_type, conversation_id, use_tool_search_flow)
-        # Cache key: (agent_type, curr_agent_id, local_mode, use_tool_search_flow)
-        self._agent_instances: Dict[tuple[AgentType, str, bool, bool], Agent] = {}
-        # Cache for supervisor agents - keyed by (conversation_id, local_mode, use_tool_search_flow)
-        self._supervisor_agents: Dict[tuple[str, bool, bool], Agent] = {}
+        # Cache for agent instances - keyed by (agent_type, conversation_id, use_tool_search_flow, chat_model)
+        # Cache key: (agent_type, curr_agent_id, local_mode, use_tool_search_flow, chat_model)
+        self._agent_instances: Dict[tuple[AgentType, str, bool, bool, str], Agent] = {}
+        # Cache for supervisor agents - keyed by (conversation_id, local_mode, use_tool_search_flow, chat_model)
+        self._supervisor_agents: Dict[tuple[str, bool, bool, str], Agent] = {}
 
     def create_mcp_servers(self) -> List[MCPServerStreamableHTTP]:
         """Create MCP server instances from configuration.
@@ -110,6 +110,46 @@ class AgentFactory:
                 )
                 continue
         return mcp_toolsets
+
+    def _build_thinking_model_settings(self) -> Dict[str, Any]:
+        """Build model_settings for interleaved thinking when the provider supports it.
+
+        Enables thinking whenever available: Anthropic (native) or OpenRouter-routed
+        Gemini, GLM (z-ai), Kimi (moonshot). Returns empty dict when not supported.
+        """
+        try:
+            config = self.llm_provider.get_chat_provider_config()
+        except Exception as e:
+            logger.debug(
+                "Could not get chat provider config for thinking settings: %s", e
+            )
+            return {}
+
+        # Anthropic native: extended + interleaved thinking
+        if config.provider == "anthropic":
+            return {
+                "anthropic_thinking": {
+                    "type": "enabled",
+                    "budget_tokens": 8192,
+                },
+                "extra_headers": {
+                    "anthropic-beta": "interleaved-thinking-2025-05-14",
+                },
+            }
+
+        # OpenRouter with reasoning-capable models (Gemini, GLM, Kimi)
+        if config.auth_provider == "openrouter" and config.provider in (
+            "gemini",
+            "zai",
+            "moonshot",
+        ):
+            return {
+                "extra_body": {
+                    "reasoning": {"effort": "high"},
+                },
+            }
+
+        return {}
 
     def _filter_tools_by_names(self, tool_names: List[str]) -> List[StructuredTool]:
         """Filter tools by a list of tool names. Uses keyword matching since tool names may vary."""
@@ -721,11 +761,18 @@ Subagents DON'T get your history. Provide comprehensive context:
 
     def create_delegate_agent(self, agent_type: AgentType, ctx: ChatContext) -> Agent:
         """Create a delegate agent - either generic (THINK_EXECUTE) or integration-specific"""
-        # Cache key includes curr_agent_id, local_mode, and use_tool_search_flow (Phase 3)
-        # local_mode must be in key so we don't reuse a delegate built for the other mode (tools differ)
+        # Cache key includes curr_agent_id, local_mode, use_tool_search_flow, and chat_model
+        # so we don't reuse an agent when the user switches model (thinking settings differ)
         use_tool_search_flow = getattr(ctx, "use_tool_search_flow", False)
         local_mode = ctx.local_mode if hasattr(ctx, "local_mode") else False
-        cache_key = (agent_type, ctx.curr_agent_id, local_mode, use_tool_search_flow)
+        chat_model = self.llm_provider.chat_config.model
+        cache_key = (
+            agent_type,
+            ctx.curr_agent_id,
+            local_mode,
+            use_tool_search_flow,
+            chat_model,
+        )
         if cache_key in self._agent_instances:
             return self._agent_instances[cache_key]
 
@@ -757,9 +804,13 @@ Subagents DON'T get your history. Provide comprehensive context:
             if use_tool_search_flow:
                 instructions = instructions + SEARCH_FLOW_INSTRUCTIONS
 
+        model_settings = self._build_thinking_model_settings()
         agent = Agent(
             model=self.llm_provider.get_pydantic_model(),
             tools=tools,
+            model_settings=(
+                cast(ModelSettings, model_settings) if model_settings else None
+            ),
             # NOTE: Subagents don't use MCP servers - they're focused workers that don't need them
             # Instructions are specialized for integration agents, generic for THINK_EXECUTE
             instructions=instructions,
@@ -777,17 +828,20 @@ Subagents DON'T get your history. Provide comprehensive context:
 
     def create_supervisor_agent(self, ctx: ChatContext, config: AgentConfig) -> Agent:
         """Create the supervisor agent that coordinates other agents"""
-        # Cache key includes conversation_id, local_mode, and use_tool_search_flow (Phase 3)
+        # Cache key includes conversation_id, local_mode, use_tool_search_flow, and chat_model
+        # so we don't reuse an agent when the user switches model (thinking settings differ)
         conversation_id = ctx.curr_agent_id
         local_mode = ctx.local_mode if hasattr(ctx, "local_mode") else False
         use_tool_search_flow = getattr(ctx, "use_tool_search_flow", False)
-        cache_key = (conversation_id, local_mode, use_tool_search_flow)
+        chat_model = self.llm_provider.chat_config.model
+        cache_key = (conversation_id, local_mode, use_tool_search_flow, chat_model)
         if cache_key in self._supervisor_agents:
             logger.debug(
-                "Returning cached supervisor agent for conversation_id=%s, local_mode=%s, use_tool_search_flow=%s",
+                "Returning cached supervisor agent for conversation_id=%s, local_mode=%s, use_tool_search_flow=%s, chat_model=%s",
                 conversation_id,
                 local_mode,
                 use_tool_search_flow,
+                chat_model,
             )
             return self._supervisor_agents[cache_key]
 
@@ -827,9 +881,13 @@ Subagents DON'T get your history. Provide comprehensive context:
             f"tools_count={len(tools)}, tool_names={[t.name for t in tools[:10]]}..."
         )
 
+        model_settings = self._build_thinking_model_settings()
         supervisor_agent = Agent(
             model=self.llm_provider.get_pydantic_model(),
             tools=tools,
+            model_settings=(
+                cast(ModelSettings, model_settings) if model_settings else None
+            ),
             mcp_servers=self.create_mcp_servers(),
             instrument=True,
             instructions=instructions,
