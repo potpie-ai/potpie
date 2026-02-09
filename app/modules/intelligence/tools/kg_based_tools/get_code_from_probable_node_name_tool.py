@@ -2,16 +2,17 @@ import asyncio
 from typing import Any, Dict, List
 
 from langchain_core.tools import StructuredTool
-from neo4j import GraphDatabase
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
 from app.modules.intelligence.tools.tool_utils import truncate_dict_response
+from app.modules.intelligence.tools.kg_based_tools.neo4j_driver_manager import (
+    get_neo4j_driver,
+)
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -45,15 +46,9 @@ class GetCodeFromProbableNodeNameTool:
     def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db
         self.user_id = user_id
-        self.neo4j_driver = self._create_neo4j_driver()
+        # Use shared driver from singleton manager - prevents resource leaks
+        self.neo4j_driver = get_neo4j_driver()
         self.search_service = SearchService(self.sql_db)
-
-    def _create_neo4j_driver(self) -> GraphDatabase.driver:
-        neo4j_config = config_provider.get_neo4j_config()
-        return GraphDatabase.driver(
-            neo4j_config["uri"],
-            auth=(neo4j_config["username"], neo4j_config["password"]),
-        )
 
     async def process_probable_node_name(
         self, project_id: str, probable_node_name: str
@@ -218,10 +213,6 @@ class GetCodeFromProbableNodeNameTool:
         except ValueError:
             return file_path
 
-    def __del__(self):
-        if hasattr(self, "neo4j_driver"):
-            self.neo4j_driver.close()
-
 
 def get_code_from_probable_node_name_tool(
     sql_db: Session, user_id: str
@@ -246,7 +237,7 @@ def get_code_from_probable_node_name_tool(
 
         Returns list of matching nodes with their code content and metadata.
 
-        ⚠️ IMPORTANT: Large code content may result in truncated responses (max 80,000 characters).
+        IMPORTANT: Large code content may result in truncated responses (max 80,000 characters).
         If the response is truncated, a notice will be included indicating the truncation occurred.
         """,
         args_schema=GetCodeFromProbableNodeNameInput,

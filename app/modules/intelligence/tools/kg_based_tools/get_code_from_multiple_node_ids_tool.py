@@ -2,14 +2,15 @@ import asyncio
 from typing import Any, Dict, List
 
 from langchain_core.tools import StructuredTool
-from neo4j import GraphDatabase
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_model import Project
 from app.modules.intelligence.tools.tool_utils import truncate_dict_response
+from app.modules.intelligence.tools.kg_based_tools.neo4j_driver_manager import (
+    get_neo4j_driver,
+)
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -41,14 +42,8 @@ class GetCodeFromMultipleNodeIdsTool:
     def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db
         self.user_id = user_id
-        self.neo4j_driver = self._create_neo4j_driver()
-
-    def _create_neo4j_driver(self) -> GraphDatabase.driver:
-        neo4j_config = config_provider.get_neo4j_config()
-        return GraphDatabase.driver(
-            neo4j_config["uri"],
-            auth=(neo4j_config["username"], neo4j_config["password"]),
-        )
+        # Use shared driver from singleton manager - prevents resource leaks
+        self.neo4j_driver = get_neo4j_driver()
 
     async def arun(self, project_id: str, node_ids: List[str]) -> Dict[str, Any]:
         return await asyncio.to_thread(self.run, project_id, node_ids)
@@ -160,10 +155,6 @@ class GetCodeFromMultipleNodeIdsTool:
             return "/".join(parts[projects_index + 2 :])
         except ValueError:
             return file_path
-
-    def __del__(self):
-        if hasattr(self, "neo4j_driver"):
-            self.neo4j_driver.close()
 
 
 def get_code_from_multiple_node_ids_tool(

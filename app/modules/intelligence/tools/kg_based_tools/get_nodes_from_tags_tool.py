@@ -4,10 +4,10 @@ from typing import List
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from app.core.config_provider import ConfigProvider
-from app.core.database import get_db
-from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.projects.projects_service import ProjectService
+from app.modules.intelligence.tools.kg_based_tools.neo4j_driver_manager import (
+    get_neo4j_driver,
+)
 
 
 class GetNodesFromTagsInput(BaseModel):
@@ -92,13 +92,11 @@ class GetNodesFromTags:
         WHERE ({tag_conditions}) AND n.repoId = '{project_id}'
         RETURN n.file_path AS file_path, n.docstring AS docstring, n.text AS text, n.node_id AS node_id, n.name AS name
         """
-        neo4j_config = ConfigProvider().get_neo4j_config()
-        nodes = CodeGraphService(
-            neo4j_config["uri"],
-            neo4j_config["username"],
-            neo4j_config["password"],
-            next(get_db()),
-        ).query_graph(query)
+        # Use shared driver from singleton manager - prevents resource leaks
+        driver = get_neo4j_driver()
+        with driver.session() as session:
+            result = session.run(query)
+            nodes = [dict(record) for record in result]
         return nodes
 
 
