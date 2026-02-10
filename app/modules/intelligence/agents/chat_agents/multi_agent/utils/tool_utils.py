@@ -243,12 +243,17 @@ def _get_tool_args_schema(tool: Any) -> dict[str, Any] | None:
 
 
 def _adapt_func_for_from_schema(tool: Any) -> Any:
-    """If the tool's func takes a single Pydantic model arg, wrap it so Tool.from_schema's **kwargs are converted to that model.
+    """Adapt the tool's func so Tool.from_schema's **kwargs are passed correctly.
 
-    Tool.from_schema calls the function with **kwargs (schema property names). Many tools are defined as
-    func(input_data: SomeInput) and expect one model instance. This wrapper builds the model from kwargs
-    and calls the original func with it, so both styles work without changing every tool implementation.
-    Only wraps when the single parameter's type annotation is a BaseModel subclass (not e.g. str).
+    Tool.from_schema calls the function with **kwargs (schema property names). Two cases:
+
+    1) Single Pydantic model arg: func(input_data: SomeInput). Wrap to build the model
+       from kwargs and call func(model), so both styles work.
+
+    2) Multiple params matching args_schema: func(project_id, paths, ...). Wrap to
+       validate kwargs via the args_schema and call func(**model.model_dump()). This
+       ensures required fields are validated (clear errors instead of "missing N
+       required positional arguments") when the model sends empty or malformed args.
     """
     raw_schema = getattr(tool, "args_schema", None)
     if not (isinstance(raw_schema, type) and issubclass(raw_schema, BaseModel)):
@@ -258,20 +263,32 @@ def _adapt_func_for_from_schema(tool: Any) -> Any:
     except (TypeError, ValueError):
         return tool.func
     params = [p for p in sig.parameters.values() if p.name != "self"]
-    if len(params) != 1:
-        return tool.func
-    param = params[0]
-    annotation = param.annotation
-    if annotation is inspect.Parameter.empty:
-        return tool.func
-    if not (isinstance(annotation, type) and issubclass(annotation, BaseModel)):
-        return tool.func
-    model_cls = annotation
+    if len(params) == 1:
+        param = params[0]
+        annotation = param.annotation
+        if (
+            annotation is not inspect.Parameter.empty
+            and isinstance(annotation, type)
+            and issubclass(annotation, BaseModel)
+        ):
+            model_cls = annotation
 
-    def wrapper(**kwargs: Any) -> Any:
-        return tool.func(model_cls(**kwargs))
+            def single_arg_wrapper(**kwargs: Any) -> Any:
+                return tool.func(model_cls(**kwargs))
 
-    return wrapper
+            return single_arg_wrapper
+    if len(params) >= 2:
+        # Multiple params (e.g. project_id, paths, with_line_numbers): validate
+        # kwargs with args_schema and call func(**validated) so missing/empty
+        # args produce a clear ValidationError instead of "missing N required positional arguments".
+        model_cls = raw_schema
+
+        def multi_arg_wrapper(**kwargs: Any) -> Any:
+            validated = model_cls(**kwargs)
+            return tool.func(**validated.model_dump())
+
+        return multi_arg_wrapper
+    return tool.func
 
 
 def wrap_structured_tools(tools: Sequence[Any]) -> List[Tool]:

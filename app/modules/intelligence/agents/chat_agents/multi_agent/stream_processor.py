@@ -322,6 +322,8 @@ class StreamProcessor:
                 drained_streams: set = set()
                 # Track Redis stream consumer tasks for tool call streaming
                 redis_stream_tasks: Dict[str, asyncio.Task] = {}
+                # Map tool_call_id -> tool_name for yielding subagent text as stream_part (not main message)
+                delegation_tool_names: Dict[str, str] = {}
 
                 # Track event counts for debugging
                 tool_call_event_count = 0
@@ -481,17 +483,39 @@ class StreamProcessor:
                                                     pass
                                     break
                                 chunks_yielded += 1
-                                # Drain but do not yield subagent chunks to the main stream;
-                                # subagent output is streamed separately and should not be duplicated
-                                if chunk.response and chunks_yielded <= 1:
-                                    logger.debug(
-                                        f"[process_tool_call_node] Draining subagent chunk (not yielding to main stream), "
-                                        f"queue_key={queue_key}"
+                                # Yield subagent text as tool_calls stream_part only (empty response)
+                                # so the frontend shows it in the delegation card and does not add to main message
+                                if queue_key.endswith("_redis"):
+                                    yield chunk
+                                elif chunk.response:
+                                    tool_name_for_call = delegation_tool_names.get(
+                                        queue_key, "subagent"
                                     )
+                                    logger.debug(
+                                        f"[process_tool_call_node] Yielding subagent text as stream_part "
+                                        f"(queue_key={queue_key}, length={len(chunk.response)})"
+                                    )
+                                    yield ChatAgentResponse(
+                                        response="",
+                                        tool_calls=[
+                                            ToolCallResponse(
+                                                call_id=queue_key,
+                                                event_type=ToolCallEventType.DELEGATION_RESULT,
+                                                tool_name=tool_name_for_call,
+                                                tool_response="",
+                                                tool_call_details={},
+                                                stream_part=chunk.response,
+                                                is_complete=False,
+                                            )
+                                        ],
+                                        citations=chunk.citations or [],
+                                    )
+                                else:
+                                    yield chunk
                             except asyncio.QueueEmpty:
                                 if chunks_yielded > 0:
                                     logger.debug(
-                                        f"[process_tool_call_node] Drained {chunks_yielded} chunks from queue {queue_key}"
+                                        f"[process_tool_call_node] Yielded {chunks_yielded} chunks from queue {queue_key}"
                                     )
                                 break
 
@@ -609,6 +633,7 @@ class StreamProcessor:
                                 output_queue: asyncio.Queue = asyncio.Queue()
                                 active_streams[tool_call_id] = input_queue
                                 output_queues[tool_call_id] = output_queue
+                                delegation_tool_names[tool_call_id] = tool_name
                                 self.delegation_manager.register_active_stream(
                                     tool_call_id, input_queue
                                 )

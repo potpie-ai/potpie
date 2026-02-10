@@ -125,7 +125,7 @@ pipeline {
 
                     if (!imageDeploySucceeded) {
                         echo 'Rolling back to previous revision...'
-                        sh 'kubectl rollout undo deployment/mom-api-deployment -n ${params.namespace}'
+                        sh "kubectl rollout undo deployment/mom-api-deployment -n ${params.namespace}"
                     }
                 }
             }
