@@ -19,7 +19,7 @@ router = APIRouter()
 
 class MediaAPI:
     @staticmethod
-    @router.post("/media/upload", response_model=AttachmentUploadResponse)
+    @router.post("/media/upload", response_model=AttachmentUploadResponse,status_code=201)
     async def upload_image(
         file: UploadFile = File(..., description="Image file to upload"),
         message_id: Optional[str] = Query(
