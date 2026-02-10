@@ -16,6 +16,9 @@ from app.modules.intelligence.agents.chat_agents.agent_config import (
     TaskConfig,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
+from app.modules.intelligence.tools.code_changes_manager import (
+    CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL,
+)
 from app.modules.intelligence.tools.registry import ToolResolver
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator, Optional
@@ -39,7 +42,7 @@ You are a systematic code generation specialist running in local mode via the VS
 
 **Note**: In local mode, you have access to (listed in order of preference for discovery and verification):
 - **Terminal tools**: `execute_terminal_command` (run grep, find, cat, tests, builds, git, scripts), `terminal_session_output`, `terminal_session_signal`
-- **Code Changes Manager**: `add_file_to_changes`, `update_file_in_changes`, `update_file_lines`, `replace_in_file`, `insert_lines`, `delete_lines`, `get_file_from_changes`, `list_files_in_changes`, `get_changes_summary`, `export_changes`, `show_updated_file`, `get_file_diff`
+- **Code Changes Manager**: `add_file_to_changes`, `update_file_in_changes`, `update_file_lines`, `replace_in_file`, `insert_lines`, `delete_lines`, `get_file_from_changes`, `list_files_in_changes`, `get_changes_summary`, `get_file_diff` (extension handles diff/export/display; show_diff, export_changes, show_updated_file are not available)
 - **Local search tools** (use when terminal-based discovery is insufficient): `search_text`, `search_files`, `search_symbols`, `search_workspace_symbols`, `search_references`, `search_definitions`, `search_code_structure`, `semantic_search`
 - **Web tools**: `web_search_tool`, `webpage_extractor`
 - **Task management**: TODO and requirements tools
@@ -832,23 +835,12 @@ class CodeGenAgent(ChatAgent):
             )
             base_tools = []  # Used only for logging below
         else:
-            # Legacy: hardcoded base tool list
+            # Legacy: hardcoded base tool list (align with registry: terminal tools only when local_mode)
             base_tools = [
                 "webpage_extractor",
                 "web_search_tool",
-                #  "search_text",
-                #  "search_files",
-                #  "search_symbols",
-                #  "search_workspace_symbols",
-                #  "search_references",
-                #  "search_definitions",
-                #  "search_code_structure",
-                #  "search_bash",
                 "semantic_search",
                 "ask_knowledge_graph_queries",
-                "execute_terminal_command",
-                "terminal_session_output",
-                "terminal_session_signal",
                 "read_todos",
                 "write_todos",
                 "add_todo",
@@ -878,6 +870,14 @@ class CodeGenAgent(ChatAgent):
                 "get_file_diff",
                 "get_session_metadata",
             ]
+            if local_mode:
+                base_tools.extend(
+                    [
+                        "execute_terminal_command",
+                        "terminal_session_output",
+                        "terminal_session_signal",
+                    ]
+                )
             if not local_mode:
                 base_tools.extend(
                     [
@@ -897,11 +897,13 @@ class CodeGenAgent(ChatAgent):
                 exclude_embedding_tools=exclude_embedding_tools,
             )
 
-        # In local mode, explicitly exclude show_diff (registry path already filters; this is defense-in-depth)
+        # In local mode, exclude show_diff, export_changes, show_updated_file (registry path already filters; this is defense-in-depth)
         if local_mode:
-            tools = [t for t in tools if t.name != "show_diff"]
+            tools = [
+                t for t in tools if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL
+            ]
 
-        # Verify show_diff is not present in local_mode
+        # Verify excluded tools are not present in local_mode
         if local_mode:
             show_diff_found = any(tool.name == "show_diff" for tool in tools)
             if show_diff_found:

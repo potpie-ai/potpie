@@ -2249,7 +2249,7 @@ _user_id_ctx: ContextVar[Optional[str]] = ContextVar("_user_id_ctx", default=Non
 # Context variable for tunnel_url - used for tunnel routing (takes priority over stored state)
 _tunnel_url_ctx: ContextVar[Optional[str]] = ContextVar("_tunnel_url_ctx", default=None)
 
-# Context variable for local_mode - when True, show_diff tool refuses to execute (VSCode extension handles diff)
+# Context variable for local_mode - only True for requests from VS Code extension; when True, show_diff refuses to execute (extension handles diff)
 _local_mode_ctx: ContextVar[bool] = ContextVar("_local_mode_ctx", default=False)
 
 
@@ -2313,7 +2313,7 @@ def _get_tunnel_url() -> Optional[str]:
 
 
 def _set_local_mode(local_mode: bool) -> None:
-    """Set local_mode for the current execution context. When True, show_diff refuses to execute."""
+    """Set local_mode for the current execution context (VS Code extension only). When True, show_diff refuses to execute."""
     _local_mode_ctx.set(local_mode)
 
 
@@ -3515,7 +3515,7 @@ def _init_code_changes_manager(
         agent_id: The agent ID to determine routing (e.g., "code" for LocalServer routing).
         user_id: The user ID for tunnel routing.
         tunnel_url: Optional tunnel URL from request (takes priority over stored state).
-        local_mode: When True, show_diff tool will refuse to execute (VSCode extension handles diff).
+        local_mode: True only for VS Code extension requests; when True, show_diff refuses to execute (extension handles diff).
     """
     logger.info(
         f"CodeChangesManager: _init_code_changes_manager called with "
@@ -5083,6 +5083,25 @@ class SimpleTool:
         self.description = description
         self.func = func
         self.args_schema = args_schema
+
+
+# Tools to exclude when local_mode=True (VS Code extension). Extension handles diff/export/display itself.
+CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL: frozenset[str] = frozenset(
+    {
+        "show_diff",  # Extension shows diffs
+        "export_changes",  # Extension applies changes directly
+        "show_updated_file",  # Extension shows file content in editor
+    }
+)
+
+# Tools to exclude when local_mode=False (web). Terminal tools require LocalServer tunnel (VS Code only).
+CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL: frozenset[str] = frozenset(
+    {
+        "execute_terminal_command",
+        "terminal_session_output",
+        "terminal_session_signal",
+    }
+)
 
 
 def create_code_changes_management_tools() -> List[SimpleTool]:

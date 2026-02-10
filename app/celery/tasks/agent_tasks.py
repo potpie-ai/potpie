@@ -1,3 +1,4 @@
+import asyncio
 from typing import Optional, List
 
 from app.celery.celery_app import celery_app
@@ -195,8 +196,18 @@ def execute_agent_background(
 
                     return True  # Indicate successful completion
 
-            # Run the async agent execution on the worker's long-lived loop
-            completed = self.run_async(run_agent())
+            # Run the async agent execution on the worker's long-lived loop.
+            # Convert asyncio.CancelledError to RuntimeError so Celery's result callback
+            # receives (failed, retval, runtime) instead of ExceptionInfo (avoids
+            # "cannot unpack non-iterable ExceptionInfo object").
+            try:
+                completed = self.run_async(run_agent())
+            except asyncio.CancelledError as e:
+                logger.warning(
+                    "Agent run was cancelled (asyncio.CancelledError); "
+                    "re-raising as RuntimeError for Celery"
+                )
+                raise RuntimeError("Agent stream was cancelled during execution") from e
 
             # Only publish completion event if not cancelled
             if completed:

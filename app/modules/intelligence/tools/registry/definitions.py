@@ -29,16 +29,25 @@ TOOL_DEFINITIONS: Dict[str, dict] = {
     "search_code_structure": {"tier": "medium", "category": "search"},
     "search_bash": {"tier": "low", "category": "search"},
     "semantic_search": {"tier": "medium", "category": "search"},
-    # Terminal (Phase 4: destructive, requires_confirmation)
+    # Terminal (local_mode_only: only sent when local_mode=True, i.e. VS Code extension)
     "execute_terminal_command": {
         "tier": "low",
         "category": "terminal",
         "short_description": "Execute a terminal command.",
         "destructive": True,
         "requires_confirmation": True,
+        "local_mode_only": True,
     },
-    "terminal_session_output": {"tier": "low", "category": "terminal"},
-    "terminal_session_signal": {"tier": "low", "category": "terminal"},
+    "terminal_session_output": {
+        "tier": "low",
+        "category": "terminal",
+        "local_mode_only": True,
+    },
+    "terminal_session_signal": {
+        "tier": "low",
+        "category": "terminal",
+        "local_mode_only": True,
+    },
     "bash_command": {"tier": "low", "category": "terminal"},
     # Code changes
     "add_file_to_changes": {

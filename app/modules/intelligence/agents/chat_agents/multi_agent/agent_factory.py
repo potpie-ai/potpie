@@ -204,6 +204,8 @@ class AgentFactory:
         """
         # Import code changes tools here to avoid circular imports
         from app.modules.intelligence.tools.code_changes_manager import (
+            CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL,
+            CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL,
             create_code_changes_management_tools,
         )
 
@@ -296,7 +298,15 @@ class AgentFactory:
             code_changes_tools = create_code_changes_management_tools()
             if local_mode:
                 code_changes_tools = [
-                    t for t in code_changes_tools if t.name != "show_diff"
+                    t
+                    for t in code_changes_tools
+                    if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL
+                ]
+            else:
+                code_changes_tools = [
+                    t
+                    for t in code_changes_tools
+                    if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL
                 ]
             wrapped_tools = wrapped_tools + wrap_structured_tools(code_changes_tools)
             wrapped_tools = deduplicate_tools_by_name(wrapped_tools)
@@ -322,13 +332,23 @@ class AgentFactory:
         """
         # Import tools here to avoid circular imports
         from app.modules.intelligence.tools.code_changes_manager import (
+            CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL,
+            CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL,
             create_code_changes_management_tools,
         )
 
         code_changes_tools = create_code_changes_management_tools()
         if local_mode:
             code_changes_tools = [
-                t for t in code_changes_tools if t.name != "show_diff"
+                t
+                for t in code_changes_tools
+                if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL
+            ]
+        else:
+            code_changes_tools = [
+                t
+                for t in code_changes_tools
+                if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL
             ]
 
         if self.tool_resolver:
@@ -677,23 +697,32 @@ Subagents DON'T get your history. Provide comprehensive context:
         Note: Todo/requirement tools are provided via the registry (SUPERVISOR_TOOLS), not via a
         separate toolset, to avoid name conflicts with MCP servers that may also expose read_todos.
 
-        Note: Tool filtering for local_mode is handled in code_gen_agent.py.
-        Here we only filter out show_diff in local mode (VSCode extension handles diff display).
+        Note: In local mode, code changes tools are filtered by CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL
+        (show_diff, export_changes, show_updated_file) so the extension handles diff/export/display.
         """
         # Import tools here to avoid circular imports
         from app.modules.intelligence.tools.code_changes_manager import (
+            CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL,
+            CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL,
             create_code_changes_management_tools,
         )
         from app.modules.intelligence.tools.requirement_verification_tool import (
             create_requirement_verification_tools,
         )
 
-        # Create code changes tools (always create, filter show_diff in local mode)
+        # Create code changes tools; filter by local_mode so web doesn't get terminal tools and extension doesn't get show_diff/export/show_updated_file
         code_changes_tools = create_code_changes_management_tools()
         if local_mode:
-            # In local mode, filter out show_diff (VSCode extension handles diff display)
             code_changes_tools = [
-                t for t in code_changes_tools if t.name != "show_diff"
+                t
+                for t in code_changes_tools
+                if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL
+            ]
+        else:
+            code_changes_tools = [
+                t
+                for t in code_changes_tools
+                if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL
             ]
         requirement_tools = create_requirement_verification_tools()
         delegation_tools = self.build_delegation_tools()

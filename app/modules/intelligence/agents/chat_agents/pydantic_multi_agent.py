@@ -197,10 +197,11 @@ class PydanticMultiAgent(ChatAgent):
             + (" with multimodal support" if ctx.has_images() else "")
         )
 
-        # Store context for delegation functions
+        # Store context for delegation functions (same ctx used when creating delegate agents)
         self._current_context = ctx
 
-        # Initialize managers with conversation_id for persistence across messages
+        # Initialize managers before any agent runs: CodeChangesManager (persistence + local_mode for show_diff),
+        # todo/requirement managers. local_mode is True only for VS Code extension; it controls tool list and show_diff behavior.
         logger.info(
             f"🔄 [PydanticMultiAgent] ctx.tunnel_url={ctx.tunnel_url}, ctx.user_id={ctx.user_id}, "
             f"ctx.conversation_id={ctx.conversation_id}"
@@ -210,7 +211,7 @@ class PydanticMultiAgent(ChatAgent):
             agent_id=ctx.curr_agent_id,
             user_id=ctx.user_id,
             tunnel_url=ctx.tunnel_url,
-            local_mode=ctx.local_mode if hasattr(ctx, "local_mode") else False,
+            local_mode=local_mode,
         )
 
         # Check if we have images and if the model supports vision
@@ -237,10 +238,10 @@ class PydanticMultiAgent(ChatAgent):
             + (" with multimodal support" if ctx.has_images() else "")
         )
 
-        # Store context for delegation functions
+        # Store context for delegation functions (same ctx used when creating delegate agents)
         self._current_context = ctx
 
-        # Initialize managers with conversation_id for persistence across messages
+        # Initialize managers before any agent runs (same as run()); local_mode controls tool list and show_diff behavior.
         logger.info(
             f"🔄 [PydanticMultiAgent] ctx.tunnel_url={ctx.tunnel_url}, ctx.user_id={ctx.user_id}, "
             f"ctx.conversation_id={ctx.conversation_id}"
@@ -250,7 +251,7 @@ class PydanticMultiAgent(ChatAgent):
             agent_id=ctx.curr_agent_id,
             user_id=ctx.user_id,
             tunnel_url=ctx.tunnel_url,
-            local_mode=ctx.local_mode if hasattr(ctx, "local_mode") else False,
+            local_mode=local_mode,
         )
 
         # Check if we have images and if the model supports vision

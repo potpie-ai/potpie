@@ -223,11 +223,7 @@ class StreamProcessor:
             node_type = (
                 "model_request"
                 if is_model_request
-                else "call_tools"
-                if is_call_tools
-                else "end"
-                if is_end
-                else "other"
+                else "call_tools" if is_call_tools else "end" if is_end else "other"
             )
 
             # Check if we've already processed this exact node object
@@ -425,30 +421,36 @@ class StreamProcessor:
                         except asyncio.QueueFull:
                             pass
 
-                async for event in handle_stream:
-                    # Yield any chunks from active delegation streams immediately
-                    # This ensures real-time streaming even when main stream is idle
-                    # Only process streams that haven't been fully drained yet
+                # Interleaved loop: drain delegation queues (subagent text) while waiting for
+                # the next tool-call event. The next event after a delegation call is the tool
+                # result, which only arrives when the subagent finishes - so we poll with
+                # asyncio.wait(FIRST_COMPLETED) so we never cancel the run's __anext__() (which
+                # runs the tool); when the drain timeout fires we just loop and drain, and the
+                # task that is getting the next event keeps running until the tool returns.
+                stream_iter = handle_stream.__aiter__()
+                DRAIN_POLL_TIMEOUT = 0.05  # seconds
+                next_event_task: Optional[asyncio.Task] = asyncio.create_task(
+                    stream_iter.__anext__()
+                )
+
+                while True:
+                    # Drain delegation output queues and yield any available subagent chunks
                     for queue_key in list(output_queues.keys()):
                         if queue_key in drained_streams:
-                            continue  # Skip streams that have already been fully drained
+                            continue
                         output_queue = output_queues[queue_key]
-                        # Consume all available chunks from output queue
                         chunks_yielded = 0
                         while True:
                             try:
                                 chunk = output_queue.get_nowait()
                                 if chunk is None:
-                                    # Stream completed, mark as drained and clean up
                                     drained_streams.add(queue_key)
                                     output_queues.pop(queue_key, None)
-                                    # Only cleanup active_streams and tasks for non-Redis queues
                                     if not queue_key.endswith("_redis"):
                                         active_streams.pop(queue_key, None)
                                         self.delegation_manager.remove_active_stream(
                                             queue_key
                                         )
-                                        # Cancel and wait for consumer task
                                         if queue_key in queue_consumer_tasks:
                                             task = queue_consumer_tasks.pop(queue_key)
                                             if not task.done():
@@ -457,7 +459,6 @@ class StreamProcessor:
                                                     await task
                                                 except asyncio.CancelledError:
                                                     pass
-                                        # Cancel the streaming task if it's still running
                                         if queue_key in streaming_tasks:
                                             task = streaming_tasks.pop(queue_key)
                                             if not task.done():
@@ -467,7 +468,6 @@ class StreamProcessor:
                                                 except asyncio.CancelledError:
                                                     pass
                                     else:
-                                        # Clean up Redis stream task
                                         actual_call_id = queue_key.replace("_redis", "")
                                         if actual_call_id in redis_stream_tasks:
                                             task = redis_stream_tasks.pop(
@@ -481,20 +481,64 @@ class StreamProcessor:
                                                     pass
                                     break
                                 chunks_yielded += 1
-                                # Subagent chunks should only contain text (tool calls are filtered out)
-                                # Log text content for debugging
-                                if chunk.response:
+                                # Drain but do not yield subagent chunks to the main stream;
+                                # subagent output is streamed separately and should not be duplicated
+                                if chunk.response and chunks_yielded <= 1:
                                     logger.debug(
-                                        f"[process_tool_call_node] Yielding subagent text chunk "
-                                        f"(queue_key={queue_key}, length={len(chunk.response)})"
+                                        f"[process_tool_call_node] Draining subagent chunk (not yielding to main stream), "
+                                        f"queue_key={queue_key}"
                                     )
-                                yield chunk
                             except asyncio.QueueEmpty:
                                 if chunks_yielded > 0:
                                     logger.debug(
-                                        f"[process_tool_call_node] Yielded {chunks_yielded} chunks from queue {queue_key}"
+                                        f"[process_tool_call_node] Drained {chunks_yielded} chunks from queue {queue_key}"
                                     )
                                 break
+
+                    # Wait for EITHER next event OR drain timeout; do not cancel the next-event
+                    # task on timeout so the run can finish the tool and produce the tool result.
+                    drain_done = asyncio.create_task(asyncio.sleep(DRAIN_POLL_TIMEOUT))
+                    try:
+                        done_set, _ = await asyncio.wait(
+                            [next_event_task, drain_done],
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                    except asyncio.CancelledError:
+                        drain_done.cancel()
+                        try:
+                            await drain_done
+                        except asyncio.CancelledError:
+                            pass
+                        logger.warning(
+                            "[process_tool_call_node] Async iteration cancelled during delegation drain"
+                        )
+                        raise RuntimeError(
+                            "Stream iteration was cancelled (e.g. during subagent delegation)"
+                        ) from None
+
+                    if drain_done in done_set:
+                        drain_done.cancel()
+                        try:
+                            await drain_done
+                        except asyncio.CancelledError:
+                            pass
+                        continue
+
+                    # next_event_task completed
+                    try:
+                        event = next_event_task.result()
+                    except StopAsyncIteration:
+                        break
+                    except asyncio.CancelledError:
+                        logger.warning(
+                            "[process_tool_call_node] Async iteration cancelled during delegation drain"
+                        )
+                        raise RuntimeError(
+                            "Stream iteration was cancelled (e.g. during subagent delegation)"
+                        ) from None
+
+                    # Schedule next event for next iteration
+                    next_event_task = asyncio.create_task(stream_iter.__anext__())
 
                     if isinstance(event, FunctionToolCallEvent):
                         tool_call_event_count += 1
@@ -602,7 +646,9 @@ class StreamProcessor:
                                 ):
                                     """Consume Redis stream for tool call and put updates in queue"""
                                     try:
-                                        async for stream_event in self.tool_call_stream_manager.consume_stream(
+                                        async for (
+                                            stream_event
+                                        ) in self.tool_call_stream_manager.consume_stream(
                                             call_id
                                         ):
                                             if (
@@ -694,19 +740,11 @@ class StreamProcessor:
                                     f"tool_call_id={tool_call_id[:8]}..."
                                 )
 
-                                # Yield a visual indicator that subagent is starting
-                                yield ChatAgentResponse(
-                                    response="\n\n---\n🤖 **Subagent Starting...**\n\n",
-                                    tool_calls=[],
-                                    citations=[],
-                                )
-
-                                # Immediately try to consume any early chunks from output queue
+                                # Do not yield subagent chunks to the main stream; they are streamed
+                                # separately. Consume any early chunks so we don't block.
                                 chunks, completed = await self.consume_queue_chunks(
                                     output_queue, timeout=0.01, max_chunks=5
                                 )
-                                for chunk in chunks:
-                                    yield chunk
                                 if completed:
                                     # Clean up if stream completed immediately
                                     active_streams.pop(tool_call_id, None)
@@ -793,8 +831,7 @@ class StreamProcessor:
                                         output_queue, timeout=0.1, max_chunks=50
                                     )
                                     total_drained_chunks += len(chunks)
-                                    for chunk in chunks:
-                                        yield chunk
+                                    # Drain only; do not yield subagent chunks to main stream
                                     if completed:
                                         # Mark as drained after completion
                                         drained_streams.add(tool_call_id)
@@ -825,13 +862,6 @@ class StreamProcessor:
                                     f"[process_tool_call_node] No output queue found for tool_call_id={tool_call_id[:8]}... "
                                     f"when trying to drain"
                                 )
-
-                            # Add a visual separator after subagent output
-                            yield ChatAgentResponse(
-                                response="\n\n---\n✅ **Subagent Complete**\n\n",
-                                tool_calls=[],
-                                citations=[],
-                            )
 
                             # Clean up streams and tasks
                             active_streams.pop(tool_call_id, None)
@@ -925,8 +955,7 @@ class StreamProcessor:
                             output_queue, timeout=0.1, max_chunks=50
                         )
                         total_final_chunks += len(chunks)
-                        for chunk in chunks:
-                            yield chunk
+                        # Drain only; do not yield subagent chunks to main stream
                         if completed:
                             drained_streams.add(queue_key)
                             final_drain_elapsed = (
@@ -1106,6 +1135,10 @@ class StreamProcessor:
             logger.warning("Tool call stream would block - continuing...")
         except Exception as e:
             error_str = str(e)
+            # Re-raise stream iteration cancelled so the task fails cleanly instead of
+            # leaving the pydantic-ai run inconsistent ("the stream should set _next_node before it ends").
+            if "stream iteration was cancelled" in error_str.lower():
+                raise
             # Check for duplicate tool_result error
             if "tool_result" in error_str.lower() and "multiple" in error_str.lower():
                 logger.error(

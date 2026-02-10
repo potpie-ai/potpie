@@ -395,13 +395,15 @@ class DelegationManager:
                                 f"(agent_type={agent_type.value}, chunk_count={chunk_count + 1})"
                             )
                     except StopAsyncIteration:
-                        # Stream completed normally
+                        # Stream completed normally (or with yielded error from subagent)
                         elapsed = asyncio.get_event_loop().time() - stream_start_time
                         logger.info(
                             f"[SUBAGENT STREAM] Stream completed normally after {elapsed:.1f}s "
                             f"(agent_type={agent_type.value}, cache_key={cache_key}, "
                             f"chunk_count={chunk_count})"
                         )
+                        # Signal end of stream so consumer and drain loop can finish
+                        await stream_queue.put(None)
                         break
                     except asyncio.TimeoutError:
                         time_since_last_chunk = (

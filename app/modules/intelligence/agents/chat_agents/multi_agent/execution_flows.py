@@ -35,7 +35,7 @@ def init_managers(
         agent_id: The agent ID to determine routing (e.g., "code" for LocalServer routing).
         user_id: The user ID for tunnel routing.
         tunnel_url: Optional tunnel URL from request (takes priority over stored state).
-        local_mode: When True, show_diff tool will refuse to execute (VSCode extension handles diff).
+        local_mode: True only for VS Code extension requests; when True, show_diff refuses to execute (extension handles diff).
     """
     from app.modules.intelligence.tools.todo_management_tool import (
         _reset_todo_manager,

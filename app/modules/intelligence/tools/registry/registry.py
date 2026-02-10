@@ -55,7 +55,9 @@ class ToolRegistry:
     ) -> List[str]:
         """
         Resolve an allow-list to a deduplicated list of primary tool names.
-        Applies filters: add_when_non_local when not local_mode, excludes exclude_in_local when local_mode.
+        Applies allow-list filters: add_when_non_local when not local_mode, exclude_in_local when local_mode.
+        Applies per-tool filters: local_mode_only tools are excluded when local_mode=False;
+        non_local_only tools are excluded when local_mode=True (so e.g. terminal tools are only sent in local/VSCode mode).
         """
         if allow_list_id not in self._allow_lists:
             raise RegistryError(f"Unknown allow_list_id: {allow_list_id!r}")
@@ -105,6 +107,21 @@ class ToolRegistry:
                 continue
             seen.add(primary)
             result.append(primary)
+
+        # Per-tool local_mode filtering: local_mode_only tools only when local_mode=True;
+        # non_local_only tools only when local_mode=False (e.g. VS Code extension gets terminal tools only in local_mode).
+        filtered: List[str] = []
+        for name in result:
+            meta = self.get_metadata(name)
+            if meta is None:
+                filtered.append(name)
+                continue
+            if local_mode and meta.non_local_only:
+                continue
+            if not local_mode and meta.local_mode_only:
+                continue
+            filtered.append(name)
+        result = filtered
 
         logger.debug(
             "resolve_allow_list allow_list_id=%s local_mode=%s exclude_embedding=%s result_count=%s",

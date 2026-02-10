@@ -4,10 +4,15 @@ Single source of truth for tool metadata and agent–tool binding. Agents resolv
 
 ## Schema
 
-- **ToolMetadata**: `id`, `name`, `description`, `tier`, `category`, optional `short_description`, `defer_loading`, `aliases`, and (Phase 4) optional `read_only`, `destructive`, `idempotent`, `requires_confirmation`.
+- **ToolMetadata**: `id`, `name`, `description`, `tier`, `category`, optional `short_description`, `defer_loading`, `aliases`, optional `local_mode_only`, `non_local_only`, and (Phase 4) optional `read_only`, `destructive`, `idempotent`, `requires_confirmation`.
 - **ToolTier**: `low` | `medium` | `high`.
 - **ToolCategory**: e.g. `search`, `code_changes`, `terminal`, `integration_jira`, `todo`, `requirement`, etc.
 - **AllowListDefinition**: named set of `tool_names` and/or `categories`, with optional `add_when_non_local`, `exclude_in_local`, `add_when_embedding_ok`.
+
+**Local mode (VS Code extension only):** `local_mode` is set from the request (e.g. when `User-Agent` is the VS Code extension). It controls which tools are sent to agents:
+
+- **Allow-list level:** `add_when_non_local` tools are added only when `local_mode=False`; `exclude_in_local` tools are excluded when `local_mode=True` (e.g. `show_diff` — extension handles diff).
+- **Per-tool level:** Tools with `local_mode_only=True` (e.g. `execute_terminal_command`, `terminal_session_output`, `terminal_session_signal`) are **excluded when `local_mode=False`**, so they are only sent to the agent in local/VS Code mode. Tools with `non_local_only=True` are excluded when `local_mode=True`.
 
 ## Usage
 

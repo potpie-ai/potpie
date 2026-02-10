@@ -371,14 +371,23 @@ def log_worker_memory_config(sender, **kwargs):
 
         process = psutil.Process()
         memory_info = process.memory_info()
-        max_memory_kb = int(os_module.getenv("CELERY_WORKER_MAX_MEMORY_KB", "2000000"))
+        # Env is the app default; actual limit may be overridden by CLI --max-memory-per-child
+        max_memory_kb_env = int(
+            os_module.getenv("CELERY_WORKER_MAX_MEMORY_KB", "2000000")
+        )
+        max_memory_kb_conf = celery_app.conf.get("worker_max_memory_per_child")
+        max_memory_kb = (
+            int(max_memory_kb_conf)
+            if max_memory_kb_conf is not None
+            else max_memory_kb_env
+        )
         max_memory_mb = max_memory_kb / 1024
         baseline_mb = memory_info.rss / 1024 / 1024
         logger.info(
             f"Worker process {process.pid} initialized. "
             f"Baseline memory (RSS): {baseline_mb:.2f} MB "
             f"(includes Python runtime + imported modules). "
-            f"Max memory limit: {max_memory_mb:.2f} MB. "
+            f"Max memory limit: {max_memory_mb:.2f} MB (conf worker_max_memory_per_child={max_memory_kb_conf}). "
             f"Memory pressure threshold: {max_memory_mb * 0.80:.2f} MB (80%). "
             f"File size limit: {8} MB (configured in CodeChangesManager, reduced from 10MB)"
         )
@@ -422,8 +431,13 @@ def cleanup_async_tasks_on_shutdown(sender, **kwargs):
     """
     Clean up any pending async tasks before worker process shutdown.
     This prevents "Task was destroyed but it is pending" warnings.
+    Shutdown is often triggered by worker_max_memory_per_child (RSS limit).
     """
-    logger.info("Worker process shutting down, cleaning up async tasks...")
+    logger.info(
+        "Worker process shutting down, cleaning up async tasks... "
+        "(If this occurs during subagent/model work, consider raising "
+        "CELERY_WORKER_MAX_MEMORY_KB or --max-memory-per-child.)"
+    )
 
     try:
         # Try to get any running event loop and clean up pending tasks
