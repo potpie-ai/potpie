@@ -1,8 +1,8 @@
 import os
+import secrets
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
-import random
 from typing import Dict, Any, Optional, Type, List
 from pydantic import BaseModel, Field
 from github import Github
@@ -71,7 +71,7 @@ class CodeProviderCreatePullRequestTool:
     def get_public_github_instance(cls):
         if not cls.gh_token_list:
             cls.initialize_tokens()
-        token = random.choice(cls.gh_token_list)
+        token = secrets.choice(cls.gh_token_list)
         return Github(token)
 
     def _get_github_client(self, repo_name: str) -> Github:

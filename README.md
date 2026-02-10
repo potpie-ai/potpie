@@ -1,6 +1,10 @@
 <p align="center">
   <a href="https://potpie.ai?utm_source=github">
-    <img src="https://github.com/user-attachments/assets/1a0b9824-833b-4c0a-b56d-ede5623295ca" width="318px" alt="Potpie AI logo" />
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="./assets/logo_dark.svg" />
+      <source media="(prefers-color-scheme: light)" srcset="./assets/logo_light.svg" />
+      <img src="./assets/logo_light.svg" width="318px" alt="Potpie AI logo" />
+    </picture>
   </a>
 </p>
 
@@ -258,15 +262,9 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
    To start all Potpie services:
 
    ```bash
-   chmod +x start.sh
-   ./start.sh
+   chmod +x scripts/start.sh
+   ./scripts/start.sh
    ```
-
-   **Windows**
-
-    ```powershell
-    ./start.ps1
-    ```
 
    This will:
    - Start required Docker services
@@ -275,20 +273,25 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
    - Start the FastAPI application
    - Start the Celery worker
 
-**Optional: Phoenix Tracing Setup (Local Only)**
+**Optional: Logfire Tracing Setup**
 
-   To monitor LLM traces and agent operations with Phoenix in local development:
-   ```bash
-   phoenix serve
-   ```
-   Run this in a new terminal to start the Phoenix server. Traces will be available at `http://localhost:6006` (default). Phoenix tracing is automatically initialized when Potpie starts, but you need to run `phoenix serve` separately to view the traces. **Note:** This setup is for local development only.
+   To monitor LLM traces and agent operations with Pydantic Logfire:
+
+   1. Get a Logfire token from https://logfire.pydantic.dev
+   2. Add it to your `.env` file:
+      ```bash
+      LOGFIRE_TOKEN=your_token_here
+      ```
+   3. Tracing is automatically initialized when Potpie starts. View traces at https://logfire.pydantic.dev
+
+   **Note:** Set `LOGFIRE_ENABLED=false` in your `.env` to disable tracing.
 
 3. **Stop Potpie**
 
    To stop all Potpie services:
 
    ```bash
-   ./stop.sh
+   ./scripts/stop.sh
    ```
 
    **Windows**

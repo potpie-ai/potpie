@@ -1068,7 +1068,7 @@ class GitBucketProvider(ICodeProvider):
         )
 
         try:
-            repo = self._get_repo(repo_name)
+            self._get_repo(repo_name)
 
             # GitBucket uses a different URL format than GitHub API
             # The correct format is: http://hostname/owner/repo/archive/ref.format

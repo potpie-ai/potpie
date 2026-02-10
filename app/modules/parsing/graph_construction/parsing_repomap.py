@@ -617,14 +617,13 @@ class RepoMap:
         for root, dirs, files in os.walk(repo_dir):
             # Get relative path from repo_dir to avoid skipping paths that contain .repos_local etc.
             try:
-                from pathlib import Path
                 rel_path = Path(root).relative_to(repo_dir)
                 # Handle root directory (rel_path == '.') and convert to tuple
                 rel_parts = rel_path.parts if rel_path != Path(".") else ()
             except ValueError:
                 # If relative_to fails, skip this path (shouldn't happen in normal os.walk)
                 continue
-            
+
             # Skip .git directory (worktrees have .git as a file, not a directory)
             skip_this_dir = False
             if ".git" in rel_parts:
@@ -639,10 +638,10 @@ class RepoMap:
                             break
                         # If it's a file, it's a worktree - continue processing
                         break
-            
+
             if skip_this_dir:
                 continue
-            
+
             # Skip hidden directories except .github, .vscode, etc. that might contain code
             # Only check relative path parts, not the base path
             if any(

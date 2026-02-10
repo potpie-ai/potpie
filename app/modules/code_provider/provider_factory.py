@@ -1,4 +1,5 @@
 import os
+import secrets
 from enum import Enum
 from typing import Any, Dict, Optional
 
@@ -160,13 +161,11 @@ class CodeProviderFactory:
                     # Fallback to legacy GH_TOKEN_LIST
                     token_list_str = os.getenv("GH_TOKEN_LIST", "")
                     if token_list_str:
-                        import random
-
                         tokens = [
                             t.strip() for t in token_list_str.split(",") if t.strip()
                         ]
                         if tokens:
-                            token = random.choice(tokens)
+                            token = secrets.choice(tokens)
                             logger.info(
                                 "Authenticating with GH_TOKEN_LIST (legacy PAT pool)"
                             )
@@ -388,9 +387,22 @@ class CodeProviderFactory:
                 logger.info(f"ProviderFactory: create_github_app_provider completed for {repo_name}")
                 return provider
             except Exception as e:
-                logger.warning(
-                    f"GitHub App authentication failed for {repo_name}: {e}, falling back to PAT"
+                # Check if this is an expected failure (app not installed on repo)
+                error_msg = str(e)
+                is_expected_failure = (
+                    "GitHub App not installed" in error_msg or "404" in error_msg
                 )
+
+                if is_expected_failure:
+                    # This is expected for public repos or repos where app isn't installed
+                    logger.debug(
+                        f"GitHub App not installed on repository {repo_name} (expected for public repos or repos where app isn't installed), falling back to PAT"
+                    )
+                else:
+                    # Unexpected error - log as warning
+                    logger.warning(
+                        f"GitHub App authentication failed for {repo_name}: {e}, falling back to PAT"
+                    )
                 # Continue to PAT fallback below
 
         # For GitHub: Try GH_TOKEN_LIST first (where GitHub PATs are stored)
@@ -409,8 +421,6 @@ class CodeProviderFactory:
                 logger.debug(f"  - Repr: {token_repr[:50]}...")
 
             if token_list_str:
-                import random
-
                 tokens = [t.strip() for t in token_list_str.split(",") if t.strip()]
                 logger.debug(f"Parsed {len(tokens)} token(s) from GH_TOKEN_LIST")
                 if tokens:
@@ -421,7 +431,7 @@ class CodeProviderFactory:
                     # Always use GitHub's API endpoint when using GH_TOKEN_LIST
                     base_url = "https://api.github.com"
                     provider = GitHubProvider(base_url=base_url)
-                    token = random.choice(tokens)
+                    token = secrets.choice(tokens)
 
                     provider.authenticate(
                         {"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN

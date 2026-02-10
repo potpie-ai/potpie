@@ -1,6 +1,6 @@
 import asyncio
 import os
-import random
+import secrets
 import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
@@ -153,7 +153,7 @@ class GithubService:
                     decoded_content = content_bytes.decode("latin1", errors="replace")
             lines = decoded_content.splitlines()
 
-            if (start_line == end_line == 0) or (start_line == end_line == None):
+            if (start_line == end_line == 0) or (start_line == end_line is None):
                 return decoded_content
             # added -2 to start and end line to include the function definition/ decorator line
             # start = start_line - 2 if start_line - 2 > 0 else 0
@@ -221,11 +221,15 @@ class GithubService:
                     # If so, it might be plaintext from before encryption was added
                     raw_token = github_provider.access_token
                     is_likely_plaintext = (
-                        raw_token and 
-                        len(raw_token) < 100 and  # Real tokens are short
-                        (raw_token.startswith("gh") or raw_token.startswith("gho_") or raw_token.startswith("ghs_"))
+                        raw_token
+                        and len(raw_token) < 100  # Real tokens are short
+                        and (
+                            raw_token.startswith("gh")
+                            or raw_token.startswith("gho_")
+                            or raw_token.startswith("ghs_")
+                        )
                     )
-                    
+
                     if is_likely_plaintext:
                         logger.warning(
                             "Failed to decrypt GitHub token for user %s: %s. "
@@ -363,7 +367,9 @@ class GithubService:
                             f"Error: {error_str[:500]}. Cannot retrieve GitHub username from API."
                         )
                     else:
-                        logger.warning(f"Failed to get GitHub username from API: {str(e)}")
+                        logger.warning(
+                            f"Failed to get GitHub username from API: {str(e)}"
+                        )
                 except Exception as e:
                     logger.warning(f"Failed to get GitHub username from API: {str(e)}")
 
@@ -384,7 +390,7 @@ class GithubService:
                 if token_list_str:
                     tokens = [t.strip() for t in token_list_str.split(",") if t.strip()]
                     if tokens:
-                        github_oauth_token = random.choice(tokens)
+                        github_oauth_token = secrets.choice(tokens)
                         logger.info("Using token from GH_TOKEN_LIST as fallback")
 
                 # Fall back to CODE_PROVIDER_TOKEN if GH_TOKEN_LIST not available
@@ -417,10 +423,12 @@ class GithubService:
                     "Authorization": f"Bearer {github_oauth_token}",
                     "X-GitHub-Api-Version": "2022-11-28",
                 }
-                
+
                 # Log URL length for debugging
-                logger.debug(f"Fetching organizations from: {orgs_url} (length: {len(orgs_url)})")
-                
+                logger.debug(
+                    f"Fetching organizations from: {orgs_url} (length: {len(orgs_url)})"
+                )
+
                 response = requests.get(orgs_url, headers=orgs_headers, timeout=10)
                 if response.status_code == 414:
                     logger.warning(
@@ -432,7 +440,9 @@ class GithubService:
                 elif response.status_code == 200:
                     orgs_data = response.json()
                     org_logins = [org["login"].lower() for org in orgs_data]
-                    logger.info(f"Retrieved {len(org_logins)} organizations for user {user_id}")
+                    logger.info(
+                        f"Retrieved {len(org_logins)} organizations for user {user_id}"
+                    )
                 else:
                     logger.warning(
                         f"Failed to get organizations for user {user_id}. "
@@ -471,6 +481,7 @@ class GithubService:
             }
 
             ssl_context = ssl.create_default_context(cafile=certifi.where())
+            ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
             connector = aiohttp.TCPConnector(
                 ssl=ssl_context,
                 ttl_dns_cache=300,
@@ -627,204 +638,218 @@ class GithubService:
                     # Check if original repos_url is already too long (before adding query params)
                     # This can happen if GitHub's API returns a URL with many query parameters
                     if len(repos_url) > 2000:
-                            logger.warning(
-                                f"Skipping installation {installation['id']} - original repos_url from GitHub API is too long: "
-                                f"{len(repos_url)} chars (limit: 2000). URL: {repos_url[:200]}..."
-                            )
-                            continue
+                        logger.warning(
+                            f"Skipping installation {installation['id']} - original repos_url from GitHub API is too long: "
+                            f"{len(repos_url)} chars (limit: 2000). URL: {repos_url[:200]}..."
+                        )
+                        continue
 
                     # Construct URL with proper query parameter handling
                     # repos_url might already have query params, so use URL parsing
                     # This prevents 414 URI Too Long errors when repos_url has existing query params
                     parsed_url = None
                     try:
-                            parsed_url = urlparse(repos_url)
-                            query_params = parse_qs(parsed_url.query)
-                            # Remove any existing per_page to avoid duplicates
-                            query_params.pop("per_page", None)
-                            query_params["per_page"] = ["100"]  # Set per_page to 100
-                            # Reconstruct URL with updated query params
-                            new_query = urlencode(query_params, doseq=True)
-                            first_page_url = urlunparse((
+                        parsed_url = urlparse(repos_url)
+                        query_params = parse_qs(parsed_url.query)
+                        # Remove any existing per_page to avoid duplicates
+                        query_params.pop("per_page", None)
+                        query_params["per_page"] = ["100"]  # Set per_page to 100
+                        # Reconstruct URL with updated query params
+                        new_query = urlencode(query_params, doseq=True)
+                        first_page_url = urlunparse(
+                            (
                                 parsed_url.scheme,
                                 parsed_url.netloc,
                                 parsed_url.path,
                                 parsed_url.params,
                                 new_query,
-                                parsed_url.fragment
-                            ))
-                            
-                            # Log URL length for debugging 414 errors
-                            logger.info(
-                                f"[get_repos_for_user] Constructed first_page_url for installation {installation['id']}: "
-                                f"length={len(first_page_url)}, url={first_page_url[:200]}..."
+                                parsed_url.fragment,
                             )
-                            # GitHub's URI limit is typically 8KB, but some proxies/servers have lower limits
-                            # Skip installations with URLs that are too long to prevent 414 errors
-                            if len(first_page_url) > 2000:
-                                logger.warning(
-                                    f"Skipping installation {installation['id']} due to URL too long: "
-                                    f"{len(first_page_url)} chars (limit: 2000). URL: {first_page_url[:200]}..."
-                                )
-                                continue
-                    except Exception as url_error:
-                            logger.error(
-                                f"Error parsing repos_url for installation {installation['id']}: {url_error}. "
-                                f"repos_url: {repos_url}"
-                            )
-                            # Fallback to simple concatenation if parsing fails
-                            # Check if per_page already exists to avoid duplicates
-                            if "?" in repos_url:
-                                if "per_page=" in repos_url:
-                                    # Remove all existing per_page params (handle multiple occurrences)
-                                    repos_url_cleaned = re.sub(r"[?&]per_page=\d+", "", repos_url)
-                                    # Fix invalid query string if per_page was the first param
-                                    # If query string now starts with & (e.g., ?&other=value), remove the &
-                                    repos_url_cleaned = re.sub(r"\?&", "?", repos_url_cleaned)
-                                    # Ensure we have proper separator
-                                    separator = "&" if "?" in repos_url_cleaned else "?"
-                                    first_page_url = f"{repos_url_cleaned}{separator}per_page=100"
-                                else:
-                                    first_page_url = f"{repos_url}&per_page=100"
-                            else:
-                                first_page_url = f"{repos_url}?per_page=100"
-                            
+                        )
+
+                        # Log URL length for debugging 414 errors
+                        logger.info(
+                            f"[get_repos_for_user] Constructed first_page_url for installation {installation['id']}: "
+                            f"length={len(first_page_url)}, url={first_page_url[:200]}..."
+                        )
+                        # GitHub's URI limit is typically 8KB, but some proxies/servers have lower limits
+                        # Skip installations with URLs that are too long to prevent 414 errors
+                        if len(first_page_url) > 2000:
                             logger.warning(
-                                f"[get_repos_for_user] Using fallback URL construction for installation {installation['id']}: "
-                                f"length={len(first_page_url)}, url={first_page_url[:200]}..."
+                                f"Skipping installation {installation['id']} due to URL too long: "
+                                f"{len(first_page_url)} chars (limit: 2000). URL: {first_page_url[:200]}..."
                             )
-                            # Check if fallback URL is also too long
-                            if len(first_page_url) > 2000:
-                                logger.warning(
-                                    f"Skipping installation {installation['id']} due to fallback URL too long: "
-                                    f"{len(first_page_url)} chars (limit: 2000). URL: {first_page_url[:200]}..."
+                            continue
+                    except Exception as url_error:
+                        logger.error(
+                            f"Error parsing repos_url for installation {installation['id']}: {url_error}. "
+                            f"repos_url: {repos_url}"
+                        )
+                        # Fallback to simple concatenation if parsing fails
+                        # Check if per_page already exists to avoid duplicates
+                        if "?" in repos_url:
+                            if "per_page=" in repos_url:
+                                # Remove all existing per_page params (handle multiple occurrences)
+                                repos_url_cleaned = re.sub(
+                                    r"[?&]per_page=\d+", "", repos_url
                                 )
-                                continue
-                            
-                            # For fallback, we need to parse the URL for pagination later
-                            try:
-                                parsed_url = urlparse(first_page_url)
-                            except Exception:
-                                parsed_url = None
+                                # Fix invalid query string if per_page was the first param
+                                # If query string now starts with & (e.g., ?&other=value), remove the &
+                                repos_url_cleaned = re.sub(
+                                    r"\?&", "?", repos_url_cleaned
+                                )
+                                # Ensure we have proper separator
+                                separator = "&" if "?" in repos_url_cleaned else "?"
+                                first_page_url = (
+                                    f"{repos_url_cleaned}{separator}per_page=100"
+                                )
+                            else:
+                                first_page_url = f"{repos_url}&per_page=100"
+                        else:
+                            first_page_url = f"{repos_url}?per_page=100"
+
+                        logger.warning(
+                            f"[get_repos_for_user] Using fallback URL construction for installation {installation['id']}: "
+                            f"length={len(first_page_url)}, url={first_page_url[:200]}..."
+                        )
+                        # Check if fallback URL is also too long
+                        if len(first_page_url) > 2000:
+                            logger.warning(
+                                f"Skipping installation {installation['id']} due to fallback URL too long: "
+                                f"{len(first_page_url)} chars (limit: 2000). URL: {first_page_url[:200]}..."
+                            )
+                            continue
+
+                        # For fallback, we need to parse the URL for pagination later
+                        try:
+                            parsed_url = urlparse(first_page_url)
+                        except Exception:
+                            parsed_url = None
 
                     async with session.get(
-                            first_page_url, headers=auth_headers
-                        ) as response:
-                            if response.status == 414:
+                        first_page_url, headers=auth_headers
+                    ) as response:
+                        if response.status == 414:
+                            logger.warning(
+                                f"414 URI Too Long for installation {installation['id']}. "
+                                f"URL length: {len(first_page_url)}. Skipping this installation."
+                            )
+                            continue
+                        elif response.status != 200:
+                            error_text = await response.text()
+                            logger.error(
+                                f"Failed to fetch repositories for installation ID {installation['id']}. "
+                                f"Status: {response.status}. Response: {error_text[:500]}"
+                            )
+                            continue
+
+                        first_page_data = await response.json()
+                        repos.extend(first_page_data.get("repositories", []))
+
+                        # Get last page from Link header
+                        last_page = 1
+                        if "Link" in response.headers:
+                            links = self._parse_link_header(response.headers["Link"])
+                            if "last" in links:
+                                last_url = links["last"]
+                                match = re.search(r"[?&]page=(\d+)", last_url)
+                                if match:
+                                    last_page = int(match.group(1))
+
+                        if last_page > 1:
+                            # Generate remaining page URLs (skip page 1)
+                            # Use the same URL parsing approach to ensure proper query params
+                            page_urls = []
+                            if parsed_url is None:
+                                # If parsed_url is not available, use Link header URLs from GitHub
                                 logger.warning(
-                                    f"414 URI Too Long for installation {installation['id']}. "
-                                    f"URL length: {len(first_page_url)}. Skipping this installation."
+                                    f"Cannot generate pagination URLs for installation {installation['id']} - parsed_url not available. "
+                                    f"Using Link header URLs instead."
                                 )
-                                continue
-                            elif response.status != 200:
-                                error_text = await response.text()
-                                logger.error(
-                                    f"Failed to fetch repositories for installation ID {installation['id']}. "
-                                    f"Status: {response.status}. Response: {error_text[:500]}"
-                                )
-                                continue
-
-                            first_page_data = await response.json()
-                            repos.extend(first_page_data.get("repositories", []))
-
-                            # Get last page from Link header
-                            last_page = 1
-                            if "Link" in response.headers:
-                                links = self._parse_link_header(response.headers["Link"])
-                                if "last" in links:
-                                    last_url = links["last"]
-                                    match = re.search(r"[?&]page=(\d+)", last_url)
-                                    if match:
-                                        last_page = int(match.group(1))
-
-                            if last_page > 1:
-                                # Generate remaining page URLs (skip page 1)
-                                # Use the same URL parsing approach to ensure proper query params
-                                page_urls = []
-                                if parsed_url is None:
-                                    # If parsed_url is not available, use Link header URLs from GitHub
-                                    logger.warning(
-                                        f"Cannot generate pagination URLs for installation {installation['id']} - parsed_url not available. "
-                                        f"Using Link header URLs instead."
+                                # Extract page URLs from Link header
+                                if "Link" in response.headers:
+                                    links = self._parse_link_header(
+                                        response.headers["Link"]
                                     )
-                                    # Extract page URLs from Link header
-                                    if "Link" in response.headers:
-                                        links = self._parse_link_header(response.headers["Link"])
-                                        for rel, url in links.items():
-                                            # Handle "next" link or page links (e.g., "page2", "page3")
-                                            should_add = False
-                                            if rel == "next":
-                                                should_add = True
-                                            elif rel.startswith("page"):
-                                                try:
-                                                    page_num = int(rel.replace("page", ""))
-                                                    if page_num > 1:
-                                                        should_add = True
-                                                except (ValueError, AttributeError):
-                                                    # Skip if rel format is unexpected (e.g., "pageabc")
-                                                    logger.debug(
-                                                        f"Skipping unexpected rel format in Link header: {rel}"
-                                                    )
-                                                    continue
-                                            
-                                            if should_add:
-                                                # Check URL length before adding to prevent 414 errors
-                                                if len(url) > 2000:
-                                                    logger.warning(
-                                                        f"Skipping {rel} page URL for installation {installation['id']} - URL too long: {len(url)} chars (limit: 2000). URL: {url[:200]}..."
-                                                    )
-                                                    continue
-                                                page_urls.append(url)
-                                else:
-                                    for page in range(2, last_page + 1):
-                                        page_query_params = parse_qs(parsed_url.query)
-                                        # Remove existing page param to avoid duplicates
-                                        page_query_params.pop("page", None)
-                                        page_query_params["per_page"] = ["100"]
-                                        page_query_params["page"] = [str(page)]
-                                        page_query = urlencode(page_query_params, doseq=True)
-                                        page_url = urlunparse((
+                                    for rel, url in links.items():
+                                        # Handle "next" link or page links (e.g., "page2", "page3")
+                                        should_add = False
+                                        if rel == "next":
+                                            should_add = True
+                                        elif rel.startswith("page"):
+                                            try:
+                                                page_num = int(rel.replace("page", ""))
+                                                if page_num > 1:
+                                                    should_add = True
+                                            except (ValueError, AttributeError):
+                                                # Skip if rel format is unexpected (e.g., "pageabc")
+                                                logger.debug(
+                                                    f"Skipping unexpected rel format in Link header: {rel}"
+                                                )
+                                                continue
+
+                                        if should_add:
+                                            # Check URL length before adding to prevent 414 errors
+                                            if len(url) > 2000:
+                                                logger.warning(
+                                                    f"Skipping {rel} page URL for installation {installation['id']} - URL too long: {len(url)} chars (limit: 2000). URL: {url[:200]}..."
+                                                )
+                                                continue
+                                            page_urls.append(url)
+                            else:
+                                for page in range(2, last_page + 1):
+                                    page_query_params = parse_qs(parsed_url.query)
+                                    # Remove existing page param to avoid duplicates
+                                    page_query_params.pop("page", None)
+                                    page_query_params["per_page"] = ["100"]
+                                    page_query_params["page"] = [str(page)]
+                                    page_query = urlencode(
+                                        page_query_params, doseq=True
+                                    )
+                                    page_url = urlunparse(
+                                        (
                                             parsed_url.scheme,
                                             parsed_url.netloc,
                                             parsed_url.path,
                                             parsed_url.params,
                                             page_query,
-                                            parsed_url.fragment
-                                        ))
-                                        # Check URL length before adding
-                                        if len(page_url) > 2000:
+                                            parsed_url.fragment,
+                                        )
+                                    )
+                                    # Check URL length before adding
+                                    if len(page_url) > 2000:
+                                        logger.warning(
+                                            f"Skipping page {page} for installation {installation['id']} - URL too long: {len(page_url)} chars"
+                                        )
+                                        continue
+                                    page_urls.append(page_url)
+
+                            # Process URLs in batches of 10
+                            for i in range(0, len(page_urls), 10):
+                                batch = page_urls[i : i + 10]
+                                tasks = [
+                                    session.get(url, headers=auth_headers)
+                                    for url in batch
+                                ]
+                                responses = await asyncio.gather(*tasks)
+
+                                for response in responses:
+                                    async with response:
+                                        if response.status == 414:
                                             logger.warning(
-                                                f"Skipping page {page} for installation {installation['id']} - URL too long: {len(page_url)} chars"
+                                                f"414 URI Too Long for pagination request. Skipping this page."
                                             )
                                             continue
-                                        page_urls.append(page_url)
-
-                                # Process URLs in batches of 10
-                                for i in range(0, len(page_urls), 10):
-                                    batch = page_urls[i : i + 10]
-                                    tasks = [
-                                        session.get(url, headers=auth_headers)
-                                        for url in batch
-                                    ]
-                                    responses = await asyncio.gather(*tasks)
-
-                                    for response in responses:
-                                        async with response:
-                                            if response.status == 414:
-                                                logger.warning(
-                                                    f"414 URI Too Long for pagination request. Skipping this page."
-                                                )
-                                                continue
-                                            elif response.status == 200:
-                                                page_data = await response.json()
-                                                repos.extend(
-                                                    page_data.get("repositories", [])
-                                                )
-                                            else:
-                                                error_text = await response.text()
-                                                logger.error(
-                                                    f"Failed to fetch repositories page. Status: {response.status}. Response: {error_text[:500]}"
-                                                )
+                                        elif response.status == 200:
+                                            page_data = await response.json()
+                                            repos.extend(
+                                                page_data.get("repositories", [])
+                                            )
+                                        else:
+                                            error_text = await response.text()
+                                            logger.error(
+                                                f"Failed to fetch repositories page. Status: {response.status}. Response: {error_text[:500]}"
+                                            )
 
                 # Remove duplicate repositories
                 unique_repos = {repo["id"]: repo for repo in repos}.values()
@@ -851,7 +876,7 @@ class GithubService:
                 or "414" in error_str
                 or "URI Too Long" in error_str
             )
-            
+
             if is_414_error:
                 logger.warning(
                     f"414 URI Too Long error from PyGithub for user {user_id}. "
@@ -862,10 +887,12 @@ class GithubService:
                 return {"repositories": []}
             else:
                 # Re-raise other GithubExceptions
-                logger.exception("GithubException in get_repos_for_user", user_id=user_id)
+                logger.exception(
+                    "GithubException in get_repos_for_user", user_id=user_id
+                )
                 raise HTTPException(
                     status_code=e.status if hasattr(e, "status") else 500,
-                    detail=f"GitHub API error: {error_str}"
+                    detail=f"GitHub API error: {error_str}",
                 ) from e
         except Exception as e:
             # Check if this is a 414 error that might have been wrapped
@@ -875,14 +902,14 @@ class GithubService:
                 or "URI Too Long" in error_str
                 or (hasattr(e, "status") and e.status == 414)
             )
-            
+
             if is_414_error:
                 logger.warning(
                     f"414 URI Too Long error (caught as generic Exception) for user {user_id}. "
                     f"Error: {error_str[:500]}. Returning empty repository list."
                 )
                 return {"repositories": []}
-            
+
             logger.exception("Failed to fetch repositories", user_id=user_id)
             raise HTTPException(
                 status_code=500, detail="Failed to fetch repositories"
@@ -1012,7 +1039,7 @@ class GithubService:
 
         # Use factory to create provider with PAT
 
-        token = random.choice(cls.gh_token_list)
+        token = secrets.choice(cls.gh_token_list)
         provider = GitHubProvider()
         provider.authenticate({"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN)
         return provider.client

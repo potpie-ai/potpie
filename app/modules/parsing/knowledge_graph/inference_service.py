@@ -429,7 +429,6 @@ class InferenceService:
         lines = node_text.split("\n")
         chunks = []
         current_chunk_lines = []
-        current_tokens = 0
 
         # Token overhead for newlines (approximately 1 token per newline)
         NEWLINE_OVERHEAD = 1

@@ -1,14 +1,13 @@
 import json
 import os
 import shutil
-import tarfile
 import uuid
-from pathlib import Path
 from typing import Any, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
+from pathlib import Path
+from collections import defaultdict
 
-import requests
-import requests.auth
+
 from fastapi import HTTPException
 from git import GitCommandError, InvalidGitRepositoryError, Repo
 from sqlalchemy.orm import Session
@@ -54,9 +53,17 @@ class ParseHelper:
     @staticmethod
     def get_directory_size(path):
         total_size = 0
-        for dirpath, dirnames, filenames in os.walk(path):
+        for dirpath, dirnames, filenames in os.walk(path, followlinks=False):
+            # # Skip symlinked directories
+            # dirnames[:] = [
+            #     d for d in dirnames if not os.path.islink(os.path.join(dirpath, d))
+            # ]
+
             for f in filenames:
                 fp = os.path.join(dirpath, f)
+                # Skip all symlinks
+                if os.path.islink(fp):
+                    continue
                 total_size += os.path.getsize(fp)
         return total_size
 
@@ -404,290 +411,6 @@ class ParseHelper:
         else:
             return False
 
-    async def download_and_extract_tarball(
-        self, repo, branch, target_dir, auth, repo_details, user_id
-    ):
-        # Get repo name for logging - handle both Repo objects and repo objects with full_name
-        repo_name = (
-            repo.working_tree_dir
-            if isinstance(repo, Repo)
-            else getattr(repo, "full_name", "unknown")
-        )
-
-        logger.info(
-            f"ParsingHelper: Starting tarball download for repo '{repo_name}', branch '{branch}'"
-        )
-
-        try:
-            logger.info(
-                f"ParsingHelper: Getting archive link for repo '{repo_name}', branch '{branch}'"
-            )
-            tarball_url = repo.get_archive_link("tarball", branch)
-            logger.info(f"ParsingHelper: Retrieved tarball URL: {tarball_url}")
-
-            # Validate that tarball_url is a string, not an exception object
-            if not isinstance(tarball_url, str):
-                logger.error(
-                    f"ParsingHelper: Invalid tarball URL type: {type(tarball_url)}, value: {tarball_url}"
-                )
-                raise ValueError(
-                    f"Expected string URL, got {type(tarball_url)}: {tarball_url}"
-                )
-
-            # For GitBucket private repos, use PyGithub client's requester for authenticated requests
-            # According to GitBucket API docs: https://github.com/gitbucket/gitbucket/wiki/API-WebHook
-            # Authentication: "Authorization: token YOUR_TOKEN" in header
-            provider_type = os.getenv("CODE_PROVIDER", "github").lower()
-
-            if (
-                provider_type == "gitbucket"
-                and hasattr(repo, "_provider")
-                and repo._provider
-            ):
-                # For GitBucket, use the provider's authentication
-                # According to GitBucket API docs: https://github.com/gitbucket/gitbucket/wiki/API-WebHook
-                # Authentication format: "Authorization: token YOUR_TOKEN" in header
-                try:
-                    github_client = repo._provider.client
-                    if hasattr(github_client, "_Github__requester"):
-                        requester = github_client._Github__requester
-
-                        # Use the requester's session which has authentication already configured
-                        if hasattr(requester, "_Requester__session"):
-                            session = requester._Requester__session
-                            response = session.get(tarball_url, stream=True, timeout=30)
-
-                            # If we get 401, the session auth might not be working, fall back to manual token
-                            if response.status_code == 401:
-                                raise requests.exceptions.HTTPError(
-                                    "401 Unauthorized from session"
-                                )
-                        else:
-                            raise AttributeError("Requester session not available")
-                    else:
-                        raise AttributeError("Requester not found")
-                except Exception:
-                    # Fallback to manual token extraction
-                    token = None
-                    headers = {}
-
-                    # Priority 1: Try to get token from auth parameter
-                    if auth and hasattr(auth, "token"):
-                        token = auth.token
-
-                    # Priority 2: Try to extract from PyGithub client's requester
-                    if not token and hasattr(repo, "_provider") and repo._provider:
-                        try:
-                            github_client = repo._provider.client
-                            if hasattr(github_client, "_Github__requester"):
-                                requester = github_client._Github__requester
-
-                                if hasattr(requester, "auth") and hasattr(
-                                    requester.auth, "token"
-                                ):
-                                    token = requester.auth.token
-                                elif hasattr(
-                                    requester, "_Requester__authorizationHeader"
-                                ):
-                                    auth_header = (
-                                        requester._Requester__authorizationHeader
-                                    )
-                                    if auth_header:
-                                        if auth_header.startswith("token "):
-                                            token = auth_header[6:]
-                                        elif auth_header.startswith("Bearer "):
-                                            token = auth_header[7:]
-                        except Exception:
-                            pass  # Token extraction failed, will try next method
-
-                    # Priority 3: Fallback to environment variable
-                    if not token:
-                        token = os.getenv("CODE_PROVIDER_TOKEN")
-
-                    if not token:
-                        error_msg = "No authentication token available for GitBucket archive download"
-                        logger.error(f"ParsingHelper: {error_msg}")
-                        raise ValueError(error_msg)
-
-                    # GitBucket web endpoints (archive downloads) may require Basic Auth
-                    # Try token header format first (API standard per GitBucket docs)
-                    headers = {"Authorization": f"token {token}"}
-                    logger.debug(
-                        "ParsingHelper: Attempting archive download with token header"
-                    )
-
-                    response = requests.get(
-                        tarball_url, stream=True, headers=headers, timeout=30
-                    )
-
-                    # If token header fails with 401, try Basic Auth with repo owner username
-                    # GitBucket web endpoints sometimes require Basic Auth (supported since v4.3)
-                    if response.status_code == 401:
-                        logger.debug(
-                            "ParsingHelper: Token header auth failed, trying Basic Auth"
-                        )
-                        response.close()
-
-                        # Try Basic Auth with repo owner username and token as password
-                        if hasattr(repo, "owner") and hasattr(repo.owner, "login"):
-                            username = repo.owner.login
-                            basic_auth = requests.auth.HTTPBasicAuth(username, token)
-                            response = requests.get(
-                                tarball_url, stream=True, auth=basic_auth, timeout=30
-                            )
-                            logger.debug(
-                                f"ParsingHelper: Basic Auth response status: {response.status_code}"
-                            )
-            else:
-                # For GitHub and other providers, use standard token auth
-                headers = {}
-                if auth:
-                    headers = {"Authorization": f"token {auth.token}"}
-                response = requests.get(
-                    tarball_url, stream=True, headers=headers, timeout=30
-                )
-
-            response.raise_for_status()
-
-        except requests.exceptions.HTTPError as e:
-            # If we get 401, archive download might not be supported for private repos
-            # Fall back to git clone for GitBucket
-            status_code = None
-            if hasattr(e, "response") and e.response is not None:
-                status_code = e.response.status_code
-            elif "401" in str(e):
-                status_code = 401
-
-            if status_code == 401:
-                provider_type = os.getenv("CODE_PROVIDER", "github").lower()
-                if provider_type == "gitbucket":
-                    logger.info(
-                        "ParsingHelper: Archive download failed with 401 for GitBucket private repo, "
-                        "falling back to git clone"
-                    )
-                    return await self._clone_repository_with_auth(
-                        repo, branch, target_dir, user_id
-                    )
-
-            logger.exception("ParsingHelper: Failed to download repository archive")
-            raise ParsingFailedError("Failed to download repository archive") from e
-        except requests.exceptions.RequestException as e:
-            logger.exception("ParsingHelper: Error fetching tarball")
-            raise ParsingFailedError("Failed to download repository archive") from e
-        except Exception as e:
-            logger.exception("ParsingHelper: Unexpected error in tarball download")
-            raise ParsingFailedError(
-                "Unexpected error during repository download"
-            ) from e
-        tarball_path = os.path.join(
-            target_dir,
-            f"{repo.full_name.replace('/', '-').replace('.', '-')}-{branch.replace('/', '-').replace('.', '-')}.tar.gz",
-        )
-
-        final_dir = os.path.join(
-            target_dir,
-            f"{repo.full_name.replace('/', '-').replace('.', '-')}-{branch.replace('/', '-').replace('.', '-')}-{user_id}",
-        )
-
-        logger.info(f"ParsingHelper: Tarball path: {tarball_path}")
-        logger.info(f"ParsingHelper: Final directory: {final_dir}")
-
-        try:
-            logger.info(f"ParsingHelper: Writing tarball to {tarball_path}")
-            with open(tarball_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            tarball_size = os.path.getsize(tarball_path)
-            logger.info(
-                f"ParsingHelper: Successfully downloaded tarball, size: {tarball_size} bytes"
-            )
-
-            # Validate tarball size - very small files are likely error responses
-            if tarball_size < 100:
-                error_msg = (
-                    f"Tarball is suspiciously small ({tarball_size} bytes). "
-                    "This may indicate an error response from the server or an empty repository."
-                )
-                logger.error(f"ParsingHelper: {error_msg}")
-                raise ParsingFailedError(error_msg)
-
-            logger.info(f"ParsingHelper: Extracting tarball to {final_dir}")
-            try:
-                with tarfile.open(tarball_path, "r:gz") as tar:
-                    # Validate that the tarball is not empty
-                    if not tar.getmembers():
-                        error_msg = "Tarball contains no files"
-                        logger.error(f"ParsingHelper: {error_msg}")
-                        raise ParsingFailedError(error_msg)
-
-                    temp_dir = os.path.join(final_dir, "temp_extract")
-                    os.makedirs(temp_dir, exist_ok=True)
-                    tar.extractall(path=temp_dir)
-                    logger.info(
-                        f"ParsingHelper: Extracted tarball contents to {temp_dir}"
-                    )
-
-                    # Check if extraction directory has contents
-                    extracted_contents = os.listdir(temp_dir)
-                    if not extracted_contents:
-                        error_msg = (
-                            "Tarball extraction resulted in empty directory. "
-                            "The archive may be corrupted or the repository may be empty."
-                        )
-                        logger.error(f"ParsingHelper: {error_msg}")
-                        raise ParsingFailedError(error_msg)
-
-                    extracted_dir = os.path.join(temp_dir, extracted_contents[0])
-                    logger.info(
-                        f"ParsingHelper: Main extracted directory: {extracted_dir}"
-                    )
-
-                    text_files_count = 0
-                    for root, dirs, files in os.walk(extracted_dir):
-                        for file in files:
-                            if file.startswith("."):
-                                continue
-                            file_path = os.path.join(root, file)
-                            if self.is_text_file(file_path):
-                                try:
-                                    relative_path = os.path.relpath(
-                                        file_path, extracted_dir
-                                    )
-                                    dest_path = os.path.join(final_dir, relative_path)
-                                    os.makedirs(
-                                        os.path.dirname(dest_path), exist_ok=True
-                                    )
-                                    shutil.copy2(file_path, dest_path)
-                                    text_files_count += 1
-                                except (shutil.Error, OSError):
-                                    logger.exception(
-                                        "ParsingHelper: Error copying file",
-                                        file_path=file_path,
-                                    )
-
-                    logger.info(
-                        f"ParsingHelper: Copied {text_files_count} text files to final directory"
-                    )
-                    # Remove the temporary directory
-                    try:
-                        shutil.rmtree(temp_dir)
-                    except OSError:
-                        logger.exception("Error removing temporary directory")
-                        pass
-            except tarfile.TarError as e:
-                error_msg = f"Failed to extract tarball: {e}. The archive may be corrupted or invalid."
-                logger.error(f"ParsingHelper: {error_msg}")
-                raise ParsingFailedError(error_msg) from e
-
-        except (IOError, tarfile.TarError, shutil.Error) as e:
-            logger.exception("Error handling tarball")
-            raise ParsingFailedError("Failed to process repository archive") from e
-        finally:
-            if os.path.exists(tarball_path):
-                os.remove(tarball_path)
-
-        return final_dir
-
     async def _clone_repository_with_auth(self, repo, branch, target_dir, user_id):
         """
         Clone repository using git with authentication.
@@ -829,19 +552,13 @@ class ParseHelper:
             logger.exception("ParsingHelper: Git clone failed")
             # Clean up temp directory on error
             if os.path.exists(temp_clone_dir):
-                try:
-                    shutil.rmtree(temp_clone_dir)
-                except Exception:
-                    pass
+                shutil.rmtree(temp_clone_dir)
             raise ParsingFailedError(f"Failed to clone repository: {e}") from e
         except Exception as e:
             logger.exception("ParsingHelper: Unexpected error during git clone")
             # Clean up temp directory on error
             if os.path.exists(temp_clone_dir):
-                try:
-                    shutil.rmtree(temp_clone_dir)
-                except Exception:
-                    pass
+                shutil.rmtree(temp_clone_dir)
             raise ParsingFailedError(
                 f"Unexpected error during repository clone: {e}"
             ) from e
@@ -1038,6 +755,111 @@ class ParseHelper:
             )
 
         return result
+
+    async def download_and_extract_tarball(
+        self,
+        repo,
+        ref: str,
+        target_dir: str,
+        auth: Any,
+        repo_details: Any,
+        user_id: str,
+    ) -> str:
+        """
+        Download repository tarball from GitHub (or provider) and extract to target_dir.
+
+        Args:
+            repo: PyGithub Repository or MockRepo with get_archive_link
+            ref: Branch name or commit SHA
+            target_dir: Base directory for extraction (e.g. projects/)
+            auth: Auth object (token used for authenticated download)
+            repo_details: ParsingRequest or repo object (for full_name etc.)
+            user_id: User ID for unique directory naming
+
+        Returns:
+            Path to the extracted directory (top-level content dir).
+        """
+        import tarfile
+        import tempfile
+
+        import aiohttp
+
+        full_name = getattr(repo, "full_name", None) or getattr(
+            repo_details, "repo_name", "unknown"
+        )
+        safe_name = full_name.replace("/", "-").replace(".", "-")
+        safe_ref = ref.replace("/", "_").replace("\\", "_") if ref else "head"
+        extract_subdir = os.path.join(
+            target_dir, f"{safe_name}-{safe_ref}-{user_id}-{uuid.uuid4().hex[:8]}"
+        )
+        os.makedirs(extract_subdir, exist_ok=True)
+
+        # Get archive URL (GitHub API or provider)
+        if hasattr(repo, "get_archive_link"):
+            archive_url = repo.get_archive_link("tarball", ref)
+        elif hasattr(repo, "full_name"):
+            # PyGithub Repository: build GitHub tarball URL
+            archive_url = f"https://api.github.com/repos/{repo.full_name}/tarball/{ref}"
+        else:
+            raise ParsingFailedError(
+                "Cannot get archive URL: repo has no get_archive_link or full_name"
+            )
+
+        # Resolve auth token for download
+        token = None
+        if auth is not None:
+            if hasattr(auth, "token"):
+                token = auth.token
+            elif hasattr(auth, "password"):
+                token = auth.password
+
+        headers = {}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        headers.setdefault("Accept", "application/vnd.github+json")
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    archive_url, headers=headers, allow_redirects=True
+                ) as resp:
+                    if resp.status != 200:
+                        raise ParsingFailedError(
+                            f"Failed to download tarball: HTTP {resp.status}"
+                        )
+                    data = await resp.read()
+
+            # Write to temp file and extract
+            with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp:
+                tmp.write(data)
+                tmp_path = tmp.name
+
+            try:
+                with tarfile.open(tmp_path, "r:gz") as tf:
+                    tf.extractall(extract_subdir)
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+            # GitHub tarballs have a single top-level dir (e.g. owner-repo-abc123/)
+            entries = [e for e in os.listdir(extract_subdir) if not e.startswith(".")]
+            if len(entries) == 1 and os.path.isdir(
+                os.path.join(extract_subdir, entries[0])
+            ):
+                return os.path.join(extract_subdir, entries[0])
+            return extract_subdir
+
+        except ParsingFailedError:
+            raise
+        except Exception as e:
+            if os.path.exists(extract_subdir):
+                shutil.rmtree(extract_subdir, ignore_errors=True)
+            logger.exception("ParsingHelper: download_and_extract_tarball failed")
+            raise ParsingFailedError(
+                f"Failed to download and extract repository: {e}"
+            ) from e
 
     async def setup_project_directory(
         self,
@@ -1291,7 +1113,7 @@ class ParseHelper:
         # Use repo instead of repo_details for metadata extraction
         # repo is always the MockRepo (remote) or Repo (local) object with required methods
         # repo_details can be ParsingRequest in dev mode, which lacks these methods
-        repo_metadata = ParseHelper.extract_repository_metadata(repo)
+        repo_metadata = self.extract_repository_metadata(repo)
         repo_metadata["error_message"] = None
         project_metadata = json.dumps(repo_metadata).encode("utf-8")
         ProjectService.update_project(
@@ -1892,14 +1714,15 @@ class ParseHelper:
 
         return worktree_path
 
-    def extract_repository_metadata(repo):
+    def extract_repository_metadata(self, repo):
         if isinstance(repo, Repo):
             metadata = ParseHelper.extract_local_repo_metadata(repo)
         else:
             metadata = ParseHelper.extract_remote_repo_metadata(repo)
         return metadata
 
-    def extract_local_repo_metadata(repo):
+    @staticmethod
+    def extract_local_repo_metadata(repo: Repo):
         languages = ParseHelper.get_local_repo_languages(repo.working_tree_dir)
         total_bytes = sum(languages.values())
 
@@ -1931,26 +1754,48 @@ class ParseHelper:
 
         return metadata
 
-    def get_local_repo_languages(path):
+    @staticmethod
+    def get_local_repo_languages(path: str | os.PathLike[str]) -> dict[str, int]:
+        root = Path(path).resolve()
+        if not root.exists():
+            return {}
+
+        language_bytes = defaultdict(int)
         total_bytes = 0
-        python_bytes = 0
 
-        for dirpath, _, filenames in os.walk(path):
-            for filename in filenames:
-                file_extension = os.path.splitext(filename)[1]
-                file_path = os.path.join(dirpath, filename)
-                file_size = os.path.getsize(file_path)
-                total_bytes += file_size
-                if file_extension == ".py":
-                    python_bytes += file_size
+        stack = [root]
 
-        languages = {}
-        if total_bytes > 0:
-            languages["Python"] = python_bytes
-            languages["Other"] = total_bytes - python_bytes
+        while stack:
+            current = stack.pop()
 
-        return languages
+            try:
+                entries = current.iterdir()
+                for entry in entries:
+                    try:
+                        if not entry.is_symlink() and entry.is_dir():
+                            stack.append(entry)
+                        elif not entry.is_symlink() and entry.is_file():
+                            size = entry.stat().st_size
+                            total_bytes += size
 
+                            if entry.suffix == ".py":
+                                language_bytes["Python"] += size
+                            elif entry.suffix == ".ts":
+                                language_bytes["TypeScript"] += size
+                            elif entry.suffix == ".js":
+                                language_bytes["JavaScript"] += size
+                            else:
+                                language_bytes["Other"] += size
+
+                    except OSError:
+                        # Permission issues, broken files, etc.
+                        continue
+            except OSError:
+                continue
+
+        return dict(language_bytes) if total_bytes else {}
+
+    @staticmethod
     def extract_remote_repo_metadata(repo):
         languages = repo.get_languages()
         total_bytes = sum(languages.values())

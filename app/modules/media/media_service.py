@@ -455,7 +455,7 @@ class MediaService:
             # Update attachments with message_id
             if attachment_ids:
                 # Update attachments with message_id
-                updated_count = (
+                (
                     self.db.query(MessageAttachment)
                     .filter(
                         MessageAttachment.id.in_(attachment_ids),
@@ -625,7 +625,7 @@ class MediaService:
             recent_messages = (
                 self.db.query(Message)
                 .filter_by(conversation_id=conversation_id, status=MessageStatus.ACTIVE)
-                .filter(Message.has_attachments == True)
+                .filter(Message.has_attachments)
                 .filter(Message.type == MessageType.HUMAN)  # Only user messages
                 .order_by(Message.created_at.desc())
                 .limit(limit)

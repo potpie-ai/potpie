@@ -1,3 +1,5 @@
+import asyncio
+import json
 import os
 import shutil
 import time
@@ -18,15 +20,15 @@ from app.modules.parsing.graph_construction.parsing_helper import (
     ParsingServiceError,
 )
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
-from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
+from app.modules.repo_manager import RepoManager
 from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.logger import log_context, setup_logger
 from app.modules.utils.parse_webhook_helper import ParseWebhookHelper
 
-from .parsing_schema import ParsingRequest
+from .parsing_schema import ParsingRequest, RepoDetails
 
 logger = setup_logger(__name__)
 
@@ -58,6 +60,7 @@ class ParsingService:
         self.github_service = CodeProviderService(db)
         self._neo4j_config = neo4j_config
         self._raise_library_exceptions = raise_library_exceptions
+        self.repo_manager = RepoManager()
 
     @classmethod
     def create_from_config(
@@ -105,7 +108,7 @@ class ParsingService:
         repo_details: ParsingRequest,
         user_id: str,
         user_email: str,
-        project_id: int,
+        project_id: str,
         cleanup_graph: bool = True,
     ):
         # Set up logging context with domain IDs
@@ -298,8 +301,6 @@ class ParsingService:
                 raise
 
             except Exception as e:
-                # Log the full traceback server-side for debugging
-                tb_str = "".join(traceback.format_exception(None, e, e.__traceback__))
                 logger.exception(
                     "Error during parsing",
                     project_id=project_id,
@@ -308,7 +309,7 @@ class ParsingService:
                 # Log the formatted traceback as extra to avoid format-placeholder issues in message
                 logger.error(
                     "Full traceback (see full_traceback extra)",
-                    full_traceback=tb_str,
+                    full_traceback=traceback.format_exc(),
                     project_id=project_id,
                     user_id=user_id,
                 )
@@ -334,17 +335,6 @@ class ParsingService:
                     status_code=500,
                     detail=f"Internal server error. Please contact support with project ID: {project_id}",
                 )
-
-            finally:
-                project_path = os.getenv("PROJECT_PATH")
-                if (
-                    extracted_dir
-                    and isinstance(extracted_dir, str)
-                    and os.path.exists(extracted_dir)
-                    and project_path
-                    and extracted_dir.startswith(project_path)
-                ):
-                    shutil.rmtree(extracted_dir, ignore_errors=True)
 
     def create_neo4j_indices(self, graph_manager):
         # Create existing indices from blar_graph
@@ -374,7 +364,7 @@ class ParsingService:
     async def analyze_directory(
         self,
         extracted_dir: str,
-        project_id: int,
+        project_id: str,
         user_id: str,
         db,
         language: str,
@@ -398,7 +388,7 @@ class ParsingService:
             raise FileNotFoundError(f"Directory not found: {extracted_dir}")
 
         logger.info(
-            f"ParsingService: Directory exists and is accessible: {extracted_dir}"
+            "ParsingService: Directory exists and is accessible", dir=extracted_dir
         )
         project_details = await self.project_service.get_project_from_db_by_id(
             project_id
@@ -477,9 +467,21 @@ class ParsingService:
                 final_status_time = time.time() - final_status_start
 
                 if not self._raise_library_exceptions and user_email:
-                    create_task(
+                    task = create_task(
                         EmailHelper().send_email(user_email, repo_name, branch_name)
                     )
+
+                    def _on_email_done(t: asyncio.Task) -> None:
+                        if t.cancelled():
+                            return
+                        try:
+                            exc = t.exception()
+                        except asyncio.CancelledError:
+                            return
+                        if exc is not None:
+                            logger.exception("Failed to send email", exc_info=exc)
+
+                    task.add_done_callback(_on_email_done)
 
                 total_analysis_time = time.time() - analysis_start_time
 
@@ -522,6 +524,7 @@ class ParsingService:
                     inference_time_seconds=inference_time,
                     status_update_time_seconds=status_update_time + final_status_time,
                 )
+                logger.info(f"DEBUGNEO4J: After update project status {project_id}")
                 self.inference_service.log_graph_stats(project_id)
             finally:
                 if service is not None:
@@ -543,16 +546,17 @@ class ParsingService:
                 "Repository doesn't consist of a language currently supported."
             )
 
-    async def duplicate_graph(self, old_repo_id: str, new_repo_id: str):
-        await self.search_service.clone_search_indices(old_repo_id, new_repo_id)
-        node_batch_size = 3000  # Fixed batch size for nodes
-        relationship_batch_size = 3000  # Fixed batch size for relationships
-        try:
-            # Step 1: Fetch and duplicate nodes in batches
-            with self.inference_service.driver.session() as session:
-                offset = 0
-                while True:
-                    nodes_query = """
+
+async def duplicate_graph(self, old_repo_id: str, new_repo_id: str):
+    await self.search_service.clone_search_indices(old_repo_id, new_repo_id)
+    node_batch_size = 3000  # Fixed batch size for nodes
+    relationship_batch_size = 3000  # Fixed batch size for relationships
+    try:
+        # Step 1: Fetch and duplicate nodes in batches
+        with self.inference_service.driver.session() as session:
+            offset = 0
+            while True:
+                nodes_query = """
                     MATCH (n:NODE {repoId: $old_repo_id})
                     RETURN n.node_id AS node_id, n.text AS text, n.file_path AS file_path,
                            n.start_line AS start_line, n.end_line AS end_line, n.name AS name,
@@ -561,19 +565,19 @@ class ParsingService:
                            labels(n) AS labels
                     SKIP $offset LIMIT $limit
                     """
-                    nodes_result = session.run(
-                        nodes_query,
-                        old_repo_id=old_repo_id,
-                        offset=offset,
-                        limit=node_batch_size,
-                    )
-                    nodes = [dict(record) for record in nodes_result]
+                nodes_result = session.run(
+                    nodes_query,
+                    old_repo_id=old_repo_id,
+                    offset=offset,
+                    limit=node_batch_size,
+                )
+                nodes = [dict(record) for record in nodes_result]
 
-                    if not nodes:
-                        break
+                if not nodes:
+                    break
 
-                    # Insert nodes under the new repo ID, preserving labels, docstring, and embedding
-                    create_query = """
+                # Insert nodes under the new repo ID, preserving labels, docstring, and embedding
+                create_query = """
                     UNWIND $batch AS node
                     CALL apoc.create.node(node.labels, {
                         repoId: $new_repo_id,
@@ -588,48 +592,48 @@ class ParsingService:
                     }) YIELD node AS new_node
                     RETURN new_node
                     """
-                    session.run(create_query, new_repo_id=new_repo_id, batch=nodes)
-                    offset += node_batch_size
+                session.run(create_query, new_repo_id=new_repo_id, batch=nodes)
+                offset += node_batch_size
 
-            # Step 2: Fetch and duplicate relationships in batches
-            with self.inference_service.driver.session() as session:
-                offset = 0
-                while True:
-                    relationships_query = """
+        # Step 2: Fetch and duplicate relationships in batches
+        with self.inference_service.driver.session() as session:
+            offset = 0
+            while True:
+                relationships_query = """
                     MATCH (n:NODE {repoId: $old_repo_id})-[r]->(m:NODE)
                     RETURN n.node_id AS start_node_id, type(r) AS relationship_type, m.node_id AS end_node_id
                     SKIP $offset LIMIT $limit
                     """
-                    relationships_result = session.run(
-                        relationships_query,
-                        old_repo_id=old_repo_id,
-                        offset=offset,
-                        limit=relationship_batch_size,
-                    )
-                    relationships = [dict(record) for record in relationships_result]
+                relationships_result = session.run(
+                    relationships_query,
+                    old_repo_id=old_repo_id,
+                    offset=offset,
+                    limit=relationship_batch_size,
+                )
+                relationships = [dict(record) for record in relationships_result]
 
-                    if not relationships:
-                        break
+                if not relationships:
+                    break
 
-                    relationship_query = """
+                relationship_query = """
                     UNWIND $batch AS relationship
                     MATCH (a:NODE {repoId: $new_repo_id, node_id: relationship.start_node_id}),
                           (b:NODE {repoId: $new_repo_id, node_id: relationship.end_node_id})
                     CALL apoc.create.relationship(a, relationship.relationship_type, {}, b) YIELD rel
                     RETURN rel
                     """
-                    session.run(
-                        relationship_query, new_repo_id=new_repo_id, batch=relationships
-                    )
-                    offset += relationship_batch_size
+                session.run(
+                    relationship_query, new_repo_id=new_repo_id, batch=relationships
+                )
+                offset += relationship_batch_size
 
-            logger.info(
-                f"Successfully duplicated graph from {old_repo_id} to {new_repo_id}"
-            )
+        logger.info(
+            f"Successfully duplicated graph from {old_repo_id} to {new_repo_id}"
+        )
 
-        except Exception:
-            logger.exception(
-                "Error duplicating graph",
-                old_repo_id=old_repo_id,
-                new_repo_id=new_repo_id,
-            )
+    except Exception:
+        logger.exception(
+            "Error duplicating graph",
+            old_repo_id=old_repo_id,
+            new_repo_id=new_repo_id,
+        )

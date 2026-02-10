@@ -1,7 +1,7 @@
 import os
+import secrets
 from app.modules.utils.logger import setup_logger
 
-import random
 from typing import Dict, Any, Optional, Type, List
 from pydantic import BaseModel, Field
 from github import Github
@@ -92,7 +92,7 @@ class CodeProviderAddPRCommentsTool:
     def get_public_github_instance(cls):
         if not cls.gh_token_list:
             cls.initialize_tokens()
-        token = random.choice(cls.gh_token_list)
+        token = secrets.choice(cls.gh_token_list)
         return Github(token)
 
     def _get_github_client(self, repo_name: str) -> Github:
@@ -295,7 +295,7 @@ class CodeProviderAddPRCommentsTool:
             for idx, comment in enumerate(comments):
                 try:
                     logger.info(
-                        f"[ADD_PR_COMMENT] Processing comment {idx+1}/{len(comments)}: file={comment.file_path}, line={comment.line_number}"
+                        f"[ADD_PR_COMMENT] Processing comment {idx + 1}/{len(comments)}: file={comment.file_path}, line={comment.line_number}"
                     )
                     # Format the comment body with code snippet and suggestion if provided
                     formatted_body = self._format_comment_body(comment)
@@ -319,11 +319,11 @@ class CodeProviderAddPRCommentsTool:
 
                     review_comments.append(comment_data)
                     logger.info(
-                        f"[ADD_PR_COMMENT] Successfully prepared comment {idx+1}"
+                        f"[ADD_PR_COMMENT] Successfully prepared comment {idx + 1}"
                     )
                 except Exception as e:
-                    error_msg = f"Error with comment {idx+1}: {str(e)}"
-                    logger.exception(f"[ADD_PR_COMMENT] Error with comment {idx+1}")
+                    error_msg = f"Error with comment {idx + 1}: {str(e)}"
+                    logger.exception(f"[ADD_PR_COMMENT] Error with comment {idx + 1}")
                     errors.append(error_msg)
 
             # If we have errors with any comments, return them
@@ -376,13 +376,13 @@ class CodeProviderAddPRCommentsTool:
 
                             added_comments.append(data.get("id"))
                             logger.info(
-                                f"[ADD_PR_COMMENT] Added comment {idx+1}/{len(review_comments)}"
+                                f"[ADD_PR_COMMENT] Added comment {idx + 1}/{len(review_comments)}"
                             )
                         except Exception as e:
                             logger.error(
-                                f"[ADD_PR_COMMENT] Failed to add comment {idx+1}: {str(e)}"
+                                f"[ADD_PR_COMMENT] Failed to add comment {idx + 1}: {str(e)}"
                             )
-                            errors.append(f"Comment {idx+1} failed: {str(e)}")
+                            errors.append(f"Comment {idx + 1} failed: {str(e)}")
 
                     # Add general comment if provided
                     if review_body:
