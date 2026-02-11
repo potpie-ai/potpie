@@ -58,7 +58,7 @@ async def get_stream(data_stream: AsyncGenerator[Any, None]):
 class ConversationAPI:
     @staticmethod
     @router.get(
-        "/conversations/",
+        "/conversations",
         response_model=List[UserConversationListResponse],
         description="Get a list of conversations for the current user with sorting options.",
     )
@@ -80,7 +80,7 @@ class ConversationAPI:
         return await controller.get_conversations_for_user(start, limit, sort, order)
 
     @staticmethod
-    @router.post("/conversations/", response_model=CreateConversationResponse)
+    @router.post("/conversations", response_model=CreateConversationResponse)
     async def create_conversation(
         conversation: CreateConversationRequest,
         hidden: bool = Query(
