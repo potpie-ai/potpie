@@ -742,7 +742,7 @@ pydantic==2.12.5
     #   xai-sdk
 pydantic-ai==1.54.0
     # via potpie
-pydantic-ai-slim==1.54.0
+pydantic-ai-slim==1.56.0
     # via
     #   pydantic-ai
     #   pydantic-evals
@@ -1151,5 +1151,3 @@ zipp==3.23.0
     # via importlib-metadata
 zstandard==0.25.0
     # via langsmith
-logfire==4.16.0
-logfire-api==4.16.0

@@ -33,9 +33,10 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from app.modules.intelligence.provider.openrouter_gemini_model import (
     OpenRouterGeminiModel,
 )
-from app.modules.intelligence.tracing.logfire_tracer import (
-    logfire_llm_call_metadata,
+from app.modules.intelligence.provider.openrouter_glm_model import (
+    OpenRouterGlmModel,
 )
+import logfire
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from app.modules.intelligence.provider.anthropic_caching_model import (
     CachingAnthropicModel,
@@ -846,6 +847,13 @@ class ProviderService:
 
         routing_provider = config.provider
 
+        # Environment for span attributes
+        env = (
+            os.getenv("LOGFIRE_ENVIRONMENT")
+            or os.getenv("ENV")
+            or "local"
+        ).strip()
+
         try:
             if output_schema:
                 # Use structured output with instructor
@@ -903,7 +911,11 @@ class ProviderService:
                 if stream:
 
                     async def generator() -> AsyncGenerator[str, None]:
-                        with logfire_llm_call_metadata(user_id=self.user_id):
+                        with logfire.span(
+                            "llm_call",
+                            user_id=self.user_id,
+                            environment=env,
+                        ):
                             response = await acompletion(
                                 messages=messages, stream=True, **params
                             )
@@ -917,7 +929,11 @@ class ProviderService:
 
                     return generator()
                 else:
-                    with logfire_llm_call_metadata(user_id=self.user_id):
+                    with logfire.span(
+                        "llm_call",
+                        user_id=self.user_id,
+                        environment=env,
+                    ):
                         response = await acompletion(messages=messages, **params)
                         _log_openrouter_usage(params.get("model", ""), response)
                         return response.choices[0].message.content
@@ -944,12 +960,24 @@ class ProviderService:
         params = self._build_llm_params(config)
         routing_provider = config.provider
 
-        # Handle streaming response if requested
+        # Environment for span attributes
+        env = (
+            os.getenv("LOGFIRE_ENVIRONMENT")
+            or os.getenv("ENV")
+            or "local"
+        ).strip()
+
+        # Handle streaming response if requested. We wrap the actual LiteLLM call
+        # in a Logfire span so we always get an app-owned span with user_id/env.
         try:
             if stream:
 
                 async def generator() -> AsyncGenerator[str, None]:
-                    with logfire_llm_call_metadata(user_id=self.user_id):
+                    with logfire.span(
+                        "llm_call",
+                        user_id=self.user_id,
+                        environment=env,
+                    ):
                         response = await acompletion(
                             messages=messages, stream=True, **params
                         )
@@ -963,7 +991,11 @@ class ProviderService:
 
                 return generator()
             else:
-                with logfire_llm_call_metadata(user_id=self.user_id):
+                with logfire.span(
+                    "llm_call",
+                    user_id=self.user_id,
+                    environment=env,
+                ):
                     response = await acompletion(messages=messages, **params)
                     _log_openrouter_usage(params.get("model", ""), response)
                     return response.choices[0].message.content
@@ -991,8 +1023,19 @@ class ProviderService:
             if key in params
         }
 
+        # Environment for span attributes
+        env = (
+            os.getenv("LOGFIRE_ENVIRONMENT")
+            or os.getenv("ENV")
+            or "local"
+        ).strip()
+
         try:
-            with logfire_llm_call_metadata(user_id=self.user_id):
+            with logfire.span(
+                "llm_call",
+                user_id=self.user_id,
+                environment=env,
+            ):
                 if config.provider == "ollama":
                     # use openai client to call ollama because of https://github.com/BerriAI/litellm/issues/7355
                     ollama_base_root = (
@@ -1089,7 +1132,11 @@ class ProviderService:
             if stream:
 
                 async def generator() -> AsyncGenerator[str, None]:
-                    with logfire_llm_call_metadata(user_id=self.user_id):
+                    with logfire.span(
+                        "llm_call",
+                        user_id=self.user_id,
+                        environment=env,
+                    ):
                         response = await acompletion(
                             messages=messages, stream=True, **params
                         )
@@ -1103,7 +1150,11 @@ class ProviderService:
 
                 return generator()
             else:
-                with logfire_llm_call_metadata(user_id=self.user_id):
+                with logfire.span(
+                    "llm_call",
+                    user_id=self.user_id,
+                    environment=env,
+                ):
                     response = await acompletion(messages=messages, **params)
                     _log_openrouter_usage(params.get("model", ""), response)
                     return response.choices[0].message.content
@@ -1389,11 +1440,20 @@ class ProviderService:
                     or "http://localhost:11434"
                 )
                 provider_kwargs["base_url"] = base_url_root.rstrip("/") + "/v1"
-            model_class = (
-                OpenRouterGeminiModel
-                if config.auth_provider == "openrouter" and config.provider == "gemini"
-                else OpenAIModel
-            )
+
+            # Choose a custom OpenRouter-backed model when appropriate so we can
+            # capture usage and cost from the streaming path.
+            if config.auth_provider == "openrouter":
+                if config.provider == "gemini":
+                    model_class = OpenRouterGeminiModel
+                elif config.provider == "zai":
+                    # Z-AI / GLM models via OpenRouter
+                    model_class = OpenRouterGlmModel
+                else:
+                    model_class = OpenAIModel
+            else:
+                model_class = OpenAIModel
+
             return model_class(
                 model_name=model_name,
                 provider=OpenAIProvider(

@@ -1,5 +1,6 @@
 """Execution flows for different agent execution modes"""
 
+import os
 import traceback
 from typing import AsyncGenerator, Any, Optional
 import anyio
@@ -16,6 +17,32 @@ from app.modules.intelligence.provider.openrouter_usage_context import push_usag
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+
+def _build_run_metadata(ctx: ChatContext) -> dict[str, Any]:
+    """
+    Build per-run metadata for Pydantic AI agents.
+
+    This metadata is attached to agent spans via Pydantic AI's `metadata` parameter
+    and shows up in Logfire as span attributes when instrumentation is enabled.
+    """
+    meta: dict[str, Any] = {
+        "project_id": ctx.project_id,
+        "project_name": ctx.project_name,
+        "agent_id": ctx.curr_agent_id,
+    }
+
+    if ctx.user_id:
+        meta["user_id"] = ctx.user_id
+    if ctx.conversation_id:
+        meta["conversation_id"] = ctx.conversation_id
+
+    # Also include environment if available so it is easy to query
+    env = os.getenv("LOGFIRE_ENVIRONMENT") or os.getenv("ENV")
+    if env:
+        meta["environment"] = env
+
+    return meta
 
 
 def init_managers(conversation_id: Optional[str] = None):
@@ -87,6 +114,7 @@ class StandardExecutionFlow:
                     resp = await supervisor_agent.run(
                         user_prompt=ctx.query,
                         message_history=message_history,
+                        metadata=_build_run_metadata(ctx),
                     )
             except (TimeoutError, anyio.WouldBlock, Exception) as mcp_error:
                 error_detail = f"{type(mcp_error).__name__}: {str(mcp_error)}"
@@ -108,6 +136,7 @@ class StandardExecutionFlow:
                 resp = await supervisor_agent.run(
                     user_prompt=ctx.query,
                     message_history=message_history,
+                    metadata=_build_run_metadata(ctx),
                 )
 
             return ChatAgentResponse(
@@ -164,6 +193,7 @@ class MultimodalExecutionFlow:
             resp = await supervisor_agent.run(
                 user_prompt=multimodal_content,
                 message_history=message_history,
+                metadata=_build_run_metadata(ctx),
             )
 
             return ChatAgentResponse(
@@ -227,6 +257,7 @@ class StreamingExecutionFlow:
                         usage_limits=UsageLimits(
                             request_limit=None
                         ),  # No request limit for long-running tasks
+                        metadata=_build_run_metadata(ctx),
                     ) as run:
                         # Store the supervisor run so delegation functions can access its message history
                         self.current_supervisor_run_ref["run"] = run
@@ -314,6 +345,7 @@ class StreamingExecutionFlow:
                     usage_limits=UsageLimits(
                         request_limit=None
                     ),  # No request limit for long-running tasks
+                    metadata=_build_run_metadata(ctx),
                 ) as run:
                     # Store the supervisor run so delegation functions can access its message history
                     self.current_supervisor_run_ref["run"] = run
@@ -415,6 +447,7 @@ class MultimodalStreamingExecutionFlow:
                 usage_limits=UsageLimits(
                     request_limit=None
                 ),  # No request limit for long-running tasks
+                metadata=_build_run_metadata(ctx),
             ) as run:
                 # Store the supervisor run so delegation functions can access its message history
                 self.current_supervisor_run_ref["run"] = run

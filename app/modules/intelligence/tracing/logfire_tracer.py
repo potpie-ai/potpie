@@ -195,7 +195,10 @@ def logfire_trace_metadata(**kwargs: Any):
     Example (FastAPI middleware): set user_id and request_id so HTTP and LLM spans
     can be filtered in Logfire SQL.
     """
-    if not _LOGFIRE_INITIALIZED or not kwargs:
+    # Don't rely on our private _LOGFIRE_INITIALIZED flag here — in some
+    # processes Logfire may have been configured elsewhere (or via env)
+    # so we just best-effort call set_baggage if kwargs are provided.
+    if not kwargs:
         yield
         return
 
@@ -247,10 +250,6 @@ def logfire_llm_call_metadata(
 
     Call from provider_service.call_llm (and similar) with user_id=self.user_id.
     """
-    if not _LOGFIRE_INITIALIZED:
-        yield
-        return
-
     attrs: Dict[str, str] = {}
     if user_id is not None:
         attrs["user_id"] = str(user_id).strip()[: _LOGFIRE_ATTR_MAX_LEN]

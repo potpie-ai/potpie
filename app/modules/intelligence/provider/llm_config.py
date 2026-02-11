@@ -201,7 +201,20 @@ MODEL_CONFIG_MAP = {
     "openrouter/z-ai/glm-4.7": {
         "provider": "zai",
         "auth_provider": "openrouter",
-        "default_params": {"temperature": 0.3},
+        "default_params": {
+            "temperature": 0.3,
+            # Pin OpenRouter routing for GLM 4.7 to a specific backend provider
+            # so we get a single provider's cost rather than an aggregate.
+            # You can change this slug to any other provider from the
+            # OpenRouter model page (e.g. "deepinfra", "parasail", "nebius", etc.).
+            "extra_body": {
+                "provider": {
+                    # Example: use Nebius Token Factory as the backend
+                    "order": ["nebius"],
+                    "allow_fallbacks": False,
+                }
+            },
+        },
         "capabilities": {
             "supports_pydantic": True,
             "supports_streaming": True,
