@@ -1474,31 +1474,77 @@ class ConversationService:
                 f"Found active session {run_id} for conversation {conversation_id}"
             )
 
-        # Set cancellation flag in Redis for background task to check
-        self.redis_manager.set_cancellation(conversation_id, run_id)
-
-        # Retrieve and revoke the Celery task
+        # Retrieve task_id before any mutation so we know whether we will revoke (and thus need to save from stream).
         task_id = self.redis_manager.get_task_id(conversation_id, run_id)
+        logger.info(
+            f"Stop generation: conversation_id={conversation_id}, run_id={run_id}, task_id={task_id or 'none'}"
+        )
 
+        # Snapshot the stream before revoke so we have a consistent read (worker may be killed mid-write after revoke).
+        snapshot = self.redis_manager.get_stream_snapshot(conversation_id, run_id)
+        content_len = len(snapshot.get("content") or "")
+        citations_count = len(snapshot.get("citations") or [])
+        tool_calls_count = len(snapshot.get("tool_calls") or [])
+        chunk_count = snapshot.get("chunk_count", 0)
+        logger.info(
+            f"Stream snapshot: conversation_id={conversation_id}, run_id={run_id}, "
+            f"content_len={content_len}, citations={citations_count}, tool_calls={tool_calls_count}, chunk_count={chunk_count}"
+        )
+
+        # Set cancellation flag and revoke the Celery task so it stops producing chunks.
+        self.redis_manager.set_cancellation(conversation_id, run_id)
         if task_id:
             try:
-                # Revoke the task - this works for both queued and running tasks:
-                # - For queued tasks: Prevents them from starting execution
-                # - For running tasks: Sends SIGTERM to terminate them
-                # terminate=True ensures both cases are handled
                 self.celery_app.control.revoke(
                     task_id, terminate=True, signal="SIGTERM"
                 )
                 logger.info(
-                    f"Revoked Celery task {task_id} for {conversation_id}:{run_id} (works for both queued and running tasks)"
+                    f"Revoked Celery task {task_id} for {conversation_id}:{run_id}"
                 )
             except Exception as e:
                 logger.warning(f"Failed to revoke Celery task {task_id}: {str(e)}")
-                # Continue anyway - cancellation flag is set
         else:
             logger.info(
-                f"No task ID found for {conversation_id}:{run_id} - task may have already completed or been revoked"
+                f"No task ID for {conversation_id}:{run_id} - already completed or revoked"
             )
+
+        # Only save from stream when we revoked (worker did not flush). Persist content or tool-only placeholder.
+        saved_partial = False
+        saved_message_id = None
+        if task_id:
+            try:
+                has_content = bool((snapshot.get("content") or "").strip())
+                has_tool_calls = bool(snapshot.get("tool_calls"))
+                if has_content:
+                    content_to_save = (snapshot.get("content") or "").strip()
+                elif has_tool_calls:
+                    content_to_save = "(Generation stopped — tools were running.)"
+                else:
+                    content_to_save = ""
+                if content_to_save:
+                    saved_message_id = self.history_manager.save_partial_ai_message(
+                        conversation_id,
+                        content=content_to_save,
+                        citations=snapshot.get("citations"),
+                    )
+                    saved_partial = saved_message_id is not None
+                    if saved_partial:
+                        logger.info(
+                            f"Saved partial response for {conversation_id}:{run_id}, message_id={saved_message_id}"
+                        )
+                    else:
+                        logger.info(
+                            f"Save partial skipped for {conversation_id}:{run_id} (save_partial_ai_message returned None)"
+                        )
+                else:
+                    logger.info(
+                        f"Save partial skipped for {conversation_id}:{run_id}: no content and no tool_calls"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to save partial response on stop for {conversation_id}:{run_id}: {e}",
+                    exc_info=True,
+                )
 
         # Always clear the session - publish end event and update status
         # This ensures clients know the session is stopped and prevents stale sessions
@@ -1515,6 +1561,8 @@ class ConversationService:
         return {
             "status": "success",
             "message": "Cancellation signal sent and task revoked",
+            "saved_partial": saved_partial,
+            "message_id": saved_message_id,
         }
 
     async def rename_conversation(

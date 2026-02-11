@@ -642,9 +642,9 @@ class AuthAPI:
             return JSONResponse(
                 content={
                     "message": "Provider linked successfully",
-                    "provider": AuthProviderResponse.from_orm(
-                        new_provider
-                    ).model_dump(),
+                    "provider": AuthProviderResponse.from_orm(new_provider).model_dump(
+                        mode="json"
+                    ),
                 },
                 status_code=200,
             )
@@ -725,7 +725,7 @@ class AuthAPI:
             )
 
             return JSONResponse(
-                content=response.model_dump(),
+                content=response.model_dump(mode="json"),
                 status_code=200,
             )
 
@@ -737,15 +737,13 @@ class AuthAPI:
 
     @auth_router.post("/providers/set-primary")
     async def set_primary_provider(
-        request: Request,
         primary_request: SetPrimaryProviderRequest,
+        user=Depends(AuthService.check_auth),
         db: Session = Depends(get_db),
     ):
         """Set a provider as the primary login method"""
         try:
-            # Get user from auth token
-            user_data = await auth_handler.check_auth(request, None)
-            user_id = user_data.get("user_id")
+            user_id = user.get("uid") or user.get("user_id")
 
             if not user_id:
                 return JSONResponse(
@@ -778,15 +776,13 @@ class AuthAPI:
 
     @auth_router.delete("/providers/unlink")
     async def unlink_provider(
-        request: Request,
         unlink_request: UnlinkProviderRequest,
+        user=Depends(AuthService.check_auth),
         db: Session = Depends(get_db),
     ):
         """Unlink a provider from account"""
         try:
-            # Get user from auth token
-            user_data = await auth_handler.check_auth(request, None)
-            user_id = user_data.get("user_id")
+            user_id = user.get("uid") or user.get("user_id")
 
             if not user_id:
                 return JSONResponse(
@@ -828,14 +824,12 @@ class AuthAPI:
 
     @auth_router.get("/account/me")
     async def get_my_account(
-        request: Request,
+        user=Depends(AuthService.check_auth),
         db: Session = Depends(get_db),
     ):
         """Get complete account information including all providers"""
         try:
-            # Get user from auth token
-            user_data = await auth_handler.check_auth(request, None)
-            user_id = user_data.get("user_id")
+            user_id = user.get("uid") or user.get("user_id")
 
             if not user_id:
                 return JSONResponse(
@@ -872,7 +866,7 @@ class AuthAPI:
             )
 
             return JSONResponse(
-                content=response.model_dump(),
+                content=response.model_dump(mode="json"),
                 status_code=200,
             )
 

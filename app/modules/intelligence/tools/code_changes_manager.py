@@ -1026,12 +1026,18 @@ class CodeChangesManager:
         db: Optional[Session] = None,
     ) -> Dict[str, Any]:
         """
-        Update specific lines in a file (1-indexed)
+        Update specific lines in a file (1-indexed).
+
+        When end_line is omitted or None, only the single line at start_line is
+        updated (single-line replace). When end_line is provided, the range
+        [start_line, end_line] inclusive is replaced with new_content.
 
         Args:
             file_path: Path to the file
             start_line: Starting line number (1-indexed, inclusive)
-            end_line: Ending line number (1-indexed, inclusive). If None, only start_line is replaced
+            end_line: Ending line number (1-indexed, inclusive). If None or omitted,
+                only the single line at start_line is replaced (single-line update).
+                When provided, replaces the range from start_line through end_line.
             new_content: Content to replace the lines with
             description: Optional description of the change
 
@@ -3654,7 +3660,7 @@ class UpdateFileLinesInput(BaseModel):
     start_line: int = Field(description="Starting line number (1-indexed, inclusive)")
     end_line: Optional[int] = Field(
         default=None,
-        description="Ending line number (1-indexed, inclusive). If None, only start_line is replaced",
+        description="Ending line number (1-indexed, inclusive). Omit or set to null to update only the single line at start_line; when provided, replaces the range from start_line through end_line.",
     )
     new_content: str = Field(description="Content to replace the lines with")
     description: Optional[str] = Field(
@@ -5122,7 +5128,7 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
         ),
         SimpleTool(
             name="update_file_lines",
-            description="Update specific lines using line numbers (1-indexed). DO: (1) Always provide project_id from conversation context. (2) Fetch file with get_file_from_changes with_line_numbers=true BEFORE this operation. (3) Verify changes after by refetching; check lines_changed/added/deleted in response to confirm success. (4) After insert/delete on same file, NEVER assume line numbers—refetch first. Match indentation of surrounding lines exactly. Check line stats in response to confirm the operation succeeded.",
+            description="Update specific lines using line numbers (1-indexed). end_line is optional: omit or set to null to replace only the single line at start_line; provide end_line to replace the range start_line through end_line. DO: (1) Always provide project_id from conversation context. (2) Fetch file with get_file_from_changes with_line_numbers=true BEFORE this operation. (3) Verify changes after by refetching; check lines_changed/added/deleted in response to confirm success. (4) After insert/delete on same file, NEVER assume line numbers—refetch first. Match indentation of surrounding lines exactly. Check line stats in response to confirm the operation succeeded.",
             func=update_file_lines_tool,
             args_schema=UpdateFileLinesInput,
         ),

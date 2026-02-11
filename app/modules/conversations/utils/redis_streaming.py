@@ -210,6 +210,54 @@ class RedisStreamManager:
         task_id = self.redis_client.get(task_id_key)
         return task_id.decode() if task_id else None
 
+    def get_stream_snapshot(self, conversation_id: str, run_id: str) -> dict:
+        """
+        Read all events from the stream and return accumulated chunk content.
+        Used when stopping generation so we can persist partial response before clearing.
+        Returns dict with keys: content (str), citations (list), tool_calls (list), chunk_count (int).
+        """
+        key = self.stream_key(conversation_id, run_id)
+        content = ""
+        citations = []
+        tool_calls = []
+        chunk_count = 0
+        try:
+            if not self.redis_client.exists(key):
+                return {
+                    "content": content,
+                    "citations": citations,
+                    "tool_calls": tool_calls,
+                    "chunk_count": chunk_count,
+                }
+            events = self.redis_client.xrange(key, min="-", max="+")
+            for event_id, event_data in events:
+                formatted = self._format_event(event_id, event_data)
+                if formatted.get("type") != "chunk":
+                    continue
+                chunk_count += 1
+                content += formatted.get("content", "") or ""
+                for c in formatted.get("citations") or []:
+                    if c not in citations:
+                        citations.append(c)
+                for tc in formatted.get("tool_calls") or []:
+                    tool_calls.append(tc)
+            return {
+                "content": content,
+                "citations": citations,
+                "tool_calls": tool_calls,
+                "chunk_count": chunk_count,
+            }
+        except Exception as e:
+            logger.error(
+                f"Failed to get stream snapshot for {conversation_id}:{run_id}: {str(e)}"
+            )
+            return {
+                "content": content,
+                "citations": citations,
+                "tool_calls": tool_calls,
+                "chunk_count": chunk_count,
+            }
+
     def clear_session(self, conversation_id: str, run_id: str) -> None:
         """Clear session data when stopping - publishes end event, then removes all keys from Redis."""
         try:

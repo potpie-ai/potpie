@@ -663,94 +663,9 @@ class StreamProcessor:
                                     f"tool_call_id={tool_call_id[:8]}..."
                                 )
 
-                                # Start Redis stream consumer task for tool call streaming
-                                async def consume_redis_stream_to_queue(
-                                    call_id: str,
-                                    tool_name: str,
-                                    redis_queue: asyncio.Queue,
-                                ):
-                                    """Consume Redis stream for tool call and put updates in queue"""
-                                    try:
-                                        async for (
-                                            stream_event
-                                        ) in self.tool_call_stream_manager.consume_stream(
-                                            call_id
-                                        ):
-                                            if (
-                                                stream_event.get("type")
-                                                == "tool_call_stream_part"
-                                            ):
-                                                stream_part = stream_event.get(
-                                                    "stream_part", ""
-                                                )
-                                                is_complete = (
-                                                    stream_event.get(
-                                                        "is_complete", "false"
-                                                    )
-                                                    == "true"
-                                                )
-                                                tool_response = stream_event.get(
-                                                    "tool_response", ""
-                                                )
-                                                tool_call_details = stream_event.get(
-                                                    "tool_call_details", {}
-                                                )
-
-                                                # Create tool call response with stream_part
-                                                stream_tool_response = ToolCallResponse(
-                                                    call_id=call_id,
-                                                    event_type=(
-                                                        ToolCallEventType.DELEGATION_RESULT
-                                                        if is_delegation_tool(tool_name)
-                                                        else ToolCallEventType.RESULT
-                                                    ),
-                                                    tool_name=tool_name,
-                                                    tool_response=tool_response
-                                                    or stream_part,
-                                                    tool_call_details=tool_call_details,
-                                                    stream_part=stream_part,
-                                                    is_complete=is_complete,
-                                                )
-
-                                                await redis_queue.put(
-                                                    ChatAgentResponse(
-                                                        response="",
-                                                        tool_calls=[
-                                                            stream_tool_response
-                                                        ],
-                                                        citations=[],
-                                                    )
-                                                )
-
-                                                if is_complete:
-                                                    await redis_queue.put(None)
-                                                    break
-
-                                            elif (
-                                                stream_event.get("type")
-                                                == "tool_call_stream_end"
-                                            ):
-                                                await redis_queue.put(None)
-                                                break
-
-                                    except Exception as e:
-                                        logger.warning(
-                                            f"Error consuming Redis stream for call_id {call_id}: {e}"
-                                        )
-                                        await redis_queue.put(None)
-
-                                # Create a queue for Redis stream updates
-                                redis_stream_queue: asyncio.Queue = asyncio.Queue()
-                                redis_stream_task = asyncio.create_task(
-                                    consume_redis_stream_to_queue(
-                                        tool_call_id, tool_name, redis_stream_queue
-                                    )
-                                )
-                                redis_stream_tasks[tool_call_id] = redis_stream_task
-                                # Store the queue for consumption in the main loop
-                                output_queues[f"{tool_call_id}_redis"] = (
-                                    redis_stream_queue
-                                )
+                                # Subagent chunks are streamed only via the in-process output_queue
+                                # (delegation_manager also publishes to Redis for potential future use;
+                                # we do not consume that here to avoid yielding each chunk twice.)
 
                                 # Start a background task to continuously consume from input_queue
                                 # and forward to output_queue for real-time streaming

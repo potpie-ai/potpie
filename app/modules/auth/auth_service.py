@@ -125,7 +125,8 @@ class AuthService:
                     detail=f"Invalid authentication from Firebase. {err}",
                     headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
                 )
-            res.headers["WWW-Authenticate"] = 'Bearer realm="auth_required"'
+            if res is not None:
+                res.headers["WWW-Authenticate"] = 'Bearer realm="auth_required"'
             return decoded_token
 
 
