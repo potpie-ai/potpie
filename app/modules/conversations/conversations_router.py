@@ -58,7 +58,7 @@ async def get_stream(data_stream: AsyncGenerator[Any, None]):
 class ConversationAPI:
     @staticmethod
     @router.get(
-        "/conversations/",
+        "/conversations",
         response_model=List[UserConversationListResponse],
         description="Get a list of conversations for the current user with sorting options.",
     )
@@ -80,7 +80,7 @@ class ConversationAPI:
         return await controller.get_conversations_for_user(start, limit, sort, order)
 
     @staticmethod
-    @router.post("/conversations/", response_model=CreateConversationResponse)
+    @router.post("/conversations", response_model=CreateConversationResponse)
     async def create_conversation(
         conversation: CreateConversationRequest,
         hidden: bool = Query(
@@ -103,7 +103,7 @@ class ConversationAPI:
 
     @staticmethod
     @router.get(
-        "/conversations/{conversation_id}/info/",
+        "/conversations/{conversation_id}/info",
         response_model=ConversationInfoResponse,
     )
     async def get_conversation_info(
@@ -129,7 +129,7 @@ class ConversationAPI:
 
     @staticmethod
     @router.get(
-        "/conversations/{conversation_id}/messages/",
+        "/conversations/{conversation_id}/messages",
         response_model=List[MessageResponse],
     )
     async def get_conversation_messages(
@@ -158,7 +158,7 @@ class ConversationAPI:
             raise
 
     @staticmethod
-    @router.post("/conversations/{conversation_id}/message/")
+    @router.post("/conversations/{conversation_id}/message")
     async def post_message(
         conversation_id: str,
         content: str = Form(...),
@@ -293,7 +293,7 @@ class ConversationAPI:
             )
 
     @staticmethod
-    @router.post("/conversations/{conversation_id}/regenerate/")
+    @router.post("/conversations/{conversation_id}/regenerate")
     async def regenerate_last_message(
         conversation_id: str,
         request: RegenerateRequest,
@@ -430,7 +430,7 @@ class ConversationAPI:
         )
 
     @staticmethod
-    @router.delete("/conversations/{conversation_id}/", response_model=dict)
+    @router.delete("/conversations/{conversation_id}", response_model=dict)
     async def delete_conversation(
         conversation_id: str,
         db: Session = Depends(get_db),
@@ -443,7 +443,7 @@ class ConversationAPI:
         return await controller.delete_conversation(conversation_id)
 
     @staticmethod
-    @router.post("/conversations/{conversation_id}/stop/", response_model=dict)
+    @router.post("/conversations/{conversation_id}/stop", response_model=dict)
     async def stop_generation(
         conversation_id: str,
         session_id: Optional[str] = Query(None, description="Session ID to stop"),
@@ -457,7 +457,7 @@ class ConversationAPI:
         return await controller.stop_generation(conversation_id, session_id)
 
     @staticmethod
-    @router.patch("/conversations/{conversation_id}/rename/", response_model=dict)
+    @router.patch("/conversations/{conversation_id}/rename", response_model=dict)
     async def rename_conversation(
         conversation_id: str,
         request: RenameConversationRequest,
