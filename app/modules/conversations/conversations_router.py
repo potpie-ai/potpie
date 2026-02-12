@@ -161,6 +161,7 @@ class ConversationAPI:
     @router.post("/conversations/{conversation_id}/message")
     async def post_message(
         conversation_id: str,
+        http_request: Request,
         content: str = Form(...),
         node_ids: Optional[str] = Form(None),
         tunnel_url: Optional[str] = Form(None, description="Tunnel URL from VS Code extension for local server routing"),
@@ -177,6 +178,10 @@ class ConversationAPI:
         async_db: AsyncSession = Depends(get_async_db),
         user=Depends(AuthService.check_auth),
     ):
+        # Check User-Agent header for local mode (same as regenerate_last_message)
+        user_agent = http_request.headers.get("user-agent", "")
+        local_mode = user_agent == "Potpie-VSCode-Extension/1.0.1"
+
         # Validate message content
         if content == "" or content is None or content.isspace():
             raise HTTPException(
@@ -289,6 +294,7 @@ class ConversationAPI:
                 node_ids=node_ids_list,
                 attachment_ids=attachment_ids or [],
                 cursor=cursor,
+                local_mode=local_mode,
                 tunnel_url=tunnel_url,
             )
 
