@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from pydantic_ai.models import Model
 from litellm import litellm, AsyncOpenAI, acompletion
 import instructor
+from fastapi import HTTPException
 
 from app.core.config_provider import config_provider
 from app.modules.key_management.secret_manager import SecretManager
@@ -484,6 +485,7 @@ class ProviderService:
         user_config = (
             user_pref.preferences if user_pref and user_pref.preferences else {}
         )
+        self.user_preferences = user_pref.preferences if user_pref else {}
 
         # Create configurations based on user input (or fallback defaults)
         self.chat_config = build_llm_provider_config(user_config, config_type="chat")
@@ -656,24 +658,27 @@ class ProviderService:
             # If cached as None, we already checked and it's not available
             return None
 
-        # Check environment variable first (fastest)
-        env_key = os.getenv("LLM_API_KEY", None)
-        if env_key:
-            self._api_key_cache[provider] = env_key
-            return env_key
+        # Check provider-specific environment variable first (before generic LLM_API_KEY)
+        provider_env_key = os.getenv(f"{provider.upper()}_API_KEY")
+        if provider_env_key:
+            self._api_key_cache[provider] = provider_env_key
+            return provider_env_key
+
+        # Check generic LLM_API_KEY as fallback (before SecretManager for speed)
+        generic_env_key = os.getenv("LLM_API_KEY", None)
+        if generic_env_key:
+            self._api_key_cache[provider] = generic_env_key
+            return generic_env_key
 
         # Try to get from secret manager (only once per provider per session)
         try:
-            secret = SecretManager.get_secret(provider, self.user_id, self.db)
+            secret = SecretManager.get_secret(
+                provider, self.user_id, self.db, preferences=self.user_preferences
+            )
             self._api_key_cache[provider] = secret
             return secret
         except Exception as e:
-            if "404" in str(e):
-                # Try provider-specific env var as fallback
-                env_key = os.getenv(f"{provider.upper()}_API_KEY")
-                if env_key:
-                    self._api_key_cache[provider] = env_key
-                    return env_key
+            if "404" in str(e) or isinstance(e, HTTPException):
                 # Cache None to indicate we've checked and it's not available
                 self._api_key_cache[provider] = None
                 return None

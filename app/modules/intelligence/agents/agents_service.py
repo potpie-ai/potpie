@@ -30,6 +30,7 @@ from .chat_agents.system_agents import (
     integration_test_agent,
     low_level_design_agent,
     qna_agent,
+    specgen,
     unit_test_agent,
 )
 
@@ -143,6 +144,14 @@ class AgentsService:
                 name="SWEB Debug Agent",
                 description="An agent specialized in debugging issues in a codebase.",
                 agent=sweb_debug_agent.SWEBDebugAgent(
+                    llm_provider, tools_provider, prompt_provider
+                ),
+            ),
+            "spec_generation_agent": AgentWithInfo(
+                id="spec_generation_agent",
+                name="Specification Generation Agent",
+                description="An agent specialized in generating comprehensive technical specifications from user requests through a systematic 7-step process.",
+                agent=specgen.SpecGenAgent(
                     llm_provider, tools_provider, prompt_provider
                 ),
             ),

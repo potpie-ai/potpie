@@ -226,7 +226,7 @@ rsa==4.9.1
 s3transfer==0.16.0
 safetensors==0.7.0
 scikit-learn==1.7.2
-scipy==1.16.3
+scipy==1.17.0
 sentence-transformers==5.1.2
 sentry-sdk==2.47.0
 setuptools==80.9.0
