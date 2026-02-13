@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
     from potpie.resources.projects import ProjectResource
     from potpie.resources.parsing import ParsingResource
+    from potpie.resources.repositories import RepositoriesResource
     from potpie.resources.users import UserResource
     from potpie.agents.runner import AgentRunner
 
@@ -70,6 +71,7 @@ class PotpieRuntime:
         # Lazy-initialized resource accessors (Phase 2)
         self._projects: Optional[ProjectResource] = None
         self._parsing: Optional[ParsingResource] = None
+        self._repositories: Optional[RepositoriesResource] = None
         self._users: Optional[UserResource] = None
         self._conversations = None
 
@@ -219,6 +221,31 @@ class PotpieRuntime:
                 neo4j_manager=self._neo4j_manager,
             )
         return self._parsing
+
+    @property
+    def repositories(self) -> RepositoriesResource:
+        """Access repository worktrees for codegen and workflows.
+
+        Returns:
+            RepositoriesResource for creating worktrees
+
+        Raises:
+            NotInitializedError: If runtime not initialized
+        """
+        if not self._initialized:
+            raise NotInitializedError(
+                "Runtime not initialized - call initialize() first"
+            )
+
+        if self._repositories is None:
+            from potpie.resources.repositories import RepositoriesResource
+
+            self._repositories = RepositoriesResource(
+                config=self._config,
+                db_manager=self._db_manager,
+                neo4j_manager=self._neo4j_manager,
+            )
+        return self._repositories
 
     @property
     def users(self) -> UserResource:
