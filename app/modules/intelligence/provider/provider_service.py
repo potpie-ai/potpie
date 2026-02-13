@@ -10,6 +10,9 @@ from app.modules.key_management.secret_manager import SecretManager
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.posthog_helper import PostHogClient
 from app.modules.utils.logger import setup_logger
+from app.modules.intelligence.tracing.logfire_tracer import (
+    logfire_llm_call_metadata,
+)
 
 from .provider_schema import (
     ProviderInfo,
@@ -911,8 +914,7 @@ class ProviderService:
                 if stream:
 
                     async def generator() -> AsyncGenerator[str, None]:
-                        with logfire.span(
-                            "llm_call",
+                        with logfire_llm_call_metadata(
                             user_id=self.user_id,
                             environment=env,
                         ):
@@ -929,8 +931,7 @@ class ProviderService:
 
                     return generator()
                 else:
-                    with logfire.span(
-                        "llm_call",
+                    with logfire_llm_call_metadata(
                         user_id=self.user_id,
                         environment=env,
                     ):
@@ -973,8 +974,7 @@ class ProviderService:
             if stream:
 
                 async def generator() -> AsyncGenerator[str, None]:
-                    with logfire.span(
-                        "llm_call",
+                    with logfire_llm_call_metadata(
                         user_id=self.user_id,
                         environment=env,
                     ):
@@ -991,8 +991,7 @@ class ProviderService:
 
                 return generator()
             else:
-                with logfire.span(
-                    "llm_call",
+                with logfire_llm_call_metadata(
                     user_id=self.user_id,
                     environment=env,
                 ):
@@ -1031,8 +1030,7 @@ class ProviderService:
         ).strip()
 
         try:
-            with logfire.span(
-                "llm_call",
+            with logfire_llm_call_metadata(
                 user_id=self.user_id,
                 environment=env,
             ):
@@ -1132,8 +1130,7 @@ class ProviderService:
             if stream:
 
                 async def generator() -> AsyncGenerator[str, None]:
-                    with logfire.span(
-                        "llm_call",
+                    with logfire_llm_call_metadata(
                         user_id=self.user_id,
                         environment=env,
                     ):
@@ -1150,8 +1147,7 @@ class ProviderService:
 
                 return generator()
             else:
-                with logfire.span(
-                    "llm_call",
+                with logfire_llm_call_metadata(
                     user_id=self.user_id,
                     environment=env,
                 ):

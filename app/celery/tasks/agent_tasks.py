@@ -1,5 +1,6 @@
 from typing import Optional, List
 
+import logfire
 from app.celery.celery_app import celery_app
 from app.celery.tasks.base_task import BaseTask
 from app.modules.conversations.utils.redis_streaming import RedisStreamManager
@@ -12,6 +13,35 @@ from app.modules.intelligence.provider.openrouter_usage_context import (
 )
 
 logger = setup_logger(__name__)
+
+
+def _record_openrouter_cost_in_logfire(usages: List[dict], outcome: str) -> float:
+    """
+    Compute total OpenRouter cost from usages and record as Logfire span attribute.
+    
+    Args:
+        usages: List of usage dicts (from get_and_clear_usages)
+        outcome: "completed" | "cancelled" | "error"
+    
+    Returns:
+        total_cost: Sum of API-returned costs (0.0 if none)
+    """
+    total_cost = 0.0
+    for u in usages:
+        c = u.get("cost")
+        if c is not None:
+            total_cost += float(c)
+    
+    # Record cost as Logfire span attribute so it appears in the trace
+    with logfire.span(
+        "agent_run_usage",
+        actual_cost=total_cost,
+        outcome=outcome,
+        usage_count=len(usages),
+    ):
+        pass
+    
+    return total_cost
 
 
 @celery_app.task(
@@ -32,12 +62,23 @@ def execute_agent_background(
     """Execute an agent in the background and publish results to Redis streams"""
     redis_manager = RedisStreamManager()
 
+    # Look up project_id from conversation so every span in this task gets it
+    project_id = None
+    try:
+        from app.modules.conversations.conversation.conversation_model import Conversation
+        conv = self.db.query(Conversation).filter(Conversation.id == conversation_id).first()
+        if conv and conv.project_ids:
+            project_id = conv.project_ids[0]
+    except Exception:
+        logger.debug("Could not resolve project_id for conversation %s", conversation_id)
+
     # Logfire: set trace metadata so all Pydantic AI / LiteLLM spans are queryable by user_id, etc.
     with logfire_trace_metadata(
         user_id=user_id,
         conversation_id=conversation_id,
         run_id=run_id,
         agent_id=agent_id or "default",
+        project_id=project_id,
     ):
         # Set up logging context with domain IDs
         with log_context(conversation_id=conversation_id, user_id=user_id, run_id=run_id):
@@ -207,23 +248,27 @@ def execute_agent_background(
                 # Run the async agent execution on the worker's long-lived loop
                 completed = self.run_async(run_agent())
 
+                # Collect OpenRouter usage and record cost in Logfire (for all outcomes)
+                usages = get_and_clear_usages()
+                total_cost = _record_openrouter_cost_in_logfire(
+                    usages, "completed" if completed else "cancelled"
+                )
+
                 # Only publish completion event if not cancelled
                 if completed:
                     # Include OpenRouter usage in end event so API (uvicorn) can log it
-                    usages = get_and_clear_usages()
                     end_payload = {
                         "status": "completed",
                         "message": "Agent execution completed",
                     }
                     if usages:
                         end_payload["usage_json"] = usages
-                        total_cost = 0.0
+                        # Log per-usage details (total_cost already computed and recorded in Logfire)
                         for u in usages:
                             c = u.get("cost")
                             pt = u.get("prompt_tokens", 0) or 0
                             ct = u.get("completion_tokens", 0) or 0
                             if c is not None:
-                                total_cost += float(c)
                                 cost_str = f", cost={c} credits"
                             else:
                                 est = estimate_cost_for_log(pt, ct) if (pt or ct) else 0.0
@@ -263,6 +308,39 @@ def execute_agent_background(
                     run_id=run_id,
                     user_id=user_id,
                 )
+
+                # Collect OpenRouter usage and record partial cost in Logfire (even on error)
+                try:
+                    usages = get_and_clear_usages()
+                    total_cost = _record_openrouter_cost_in_logfire(usages, "error")
+                    
+                    # Log partial cost to Celery logs so failed runs also show cost
+                    if usages:
+                        for u in usages:
+                            c = u.get("cost")
+                            pt = u.get("prompt_tokens", 0) or 0
+                            ct = u.get("completion_tokens", 0) or 0
+                            if c is not None:
+                                cost_str = f", cost={c} credits"
+                            else:
+                                est = estimate_cost_for_log(pt, ct) if (pt or ct) else 0.0
+                                cost_str = f", cost≈{est} credits (estimated)" if (pt or ct) else ""
+                            msg = (
+                                f"[OpenRouter usage - partial] model={u.get('model', '')} "
+                                f"prompt_tokens={pt} completion_tokens={ct} "
+                                f"total_tokens={u.get('total_tokens', 0)}{cost_str}"
+                            )
+                            logger.info(msg)
+                            print(msg, flush=True)
+                        logger.info(
+                            f"[LLM cost - partial before error] total={total_cost} credits"
+                        )
+                        print(
+                            f"[LLM cost - partial before error] total={total_cost} credits",
+                            flush=True,
+                        )
+                except Exception as cost_error:
+                    logger.warning(f"Failed to record partial cost on error: {cost_error}")
 
                 # Set task status to error
                 try:
@@ -307,12 +385,23 @@ def execute_regenerate_background(
     """Execute regeneration in the background and publish results to Redis streams"""
     redis_manager = RedisStreamManager()
 
+    # Look up project_id from conversation so every span in this task gets it
+    project_id = None
+    try:
+        from app.modules.conversations.conversation.conversation_model import Conversation
+        conv = self.db.query(Conversation).filter(Conversation.id == conversation_id).first()
+        if conv and conv.project_ids:
+            project_id = conv.project_ids[0]
+    except Exception:
+        logger.debug("Could not resolve project_id for conversation %s", conversation_id)
+
     # Logfire: set trace metadata so all Pydantic AI / LiteLLM spans are queryable by user_id, etc.
     with logfire_trace_metadata(
         user_id=user_id,
         conversation_id=conversation_id,
         run_id=run_id,
         agent_id="regenerate",
+        project_id=project_id,
     ):
         # Set up logging context with domain IDs
         with log_context(conversation_id=conversation_id, user_id=user_id, run_id=run_id):
@@ -320,6 +409,9 @@ def execute_regenerate_background(
 
             # Set task status to indicate task has started
             redis_manager.set_task_status(conversation_id, run_id, "running")
+
+            # Collect OpenRouter usage so we can record cost in Logfire
+            init_usage_context()
 
             try:
                 # Execute regeneration with Redis publishing
@@ -454,6 +546,38 @@ def execute_regenerate_background(
                 # Run the async regeneration on the worker's long-lived loop
                 completed = self.run_async(run_regeneration())
 
+                # Collect OpenRouter usage and record cost in Logfire (for all outcomes)
+                usages = get_and_clear_usages()
+                total_cost = _record_openrouter_cost_in_logfire(
+                    usages, "completed" if completed else "cancelled"
+                )
+
+                # Log usage to Celery logs (for both completed and cancelled)
+                if usages:
+                    for u in usages:
+                        c = u.get("cost")
+                        pt = u.get("prompt_tokens", 0) or 0
+                        ct = u.get("completion_tokens", 0) or 0
+                        if c is not None:
+                            cost_str = f", cost={c} credits"
+                        else:
+                            est = estimate_cost_for_log(pt, ct) if (pt or ct) else 0.0
+                            cost_str = f", cost≈{est} credits (estimated)" if (pt or ct) else ""
+                        msg = (
+                            f"[OpenRouter usage] model={u.get('model', '')} "
+                            f"prompt_tokens={pt} completion_tokens={ct} "
+                            f"total_tokens={u.get('total_tokens', 0)}{cost_str}"
+                        )
+                        logger.info(msg)
+                        print(msg, flush=True)
+                    logger.info(
+                        f"[LLM cost this run] total={total_cost} credits"
+                    )
+                    print(
+                        f"[LLM cost this run] total={total_cost} credits",
+                        flush=True,
+                    )
+
                 # Only publish completion event if not cancelled
                 if completed:
                     # Publish completion event
@@ -481,6 +605,39 @@ def execute_regenerate_background(
                     run_id=run_id,
                     user_id=user_id,
                 )
+
+                # Collect OpenRouter usage and record partial cost in Logfire (even on error)
+                try:
+                    usages = get_and_clear_usages()
+                    total_cost = _record_openrouter_cost_in_logfire(usages, "error")
+                    
+                    # Log partial cost to Celery logs so failed runs also show cost
+                    if usages:
+                        for u in usages:
+                            c = u.get("cost")
+                            pt = u.get("prompt_tokens", 0) or 0
+                            ct = u.get("completion_tokens", 0) or 0
+                            if c is not None:
+                                cost_str = f", cost={c} credits"
+                            else:
+                                est = estimate_cost_for_log(pt, ct) if (pt or ct) else 0.0
+                                cost_str = f", cost≈{est} credits (estimated)" if (pt or ct) else ""
+                            msg = (
+                                f"[OpenRouter usage - partial] model={u.get('model', '')} "
+                                f"prompt_tokens={pt} completion_tokens={ct} "
+                                f"total_tokens={u.get('total_tokens', 0)}{cost_str}"
+                            )
+                            logger.info(msg)
+                            print(msg, flush=True)
+                        logger.info(
+                            f"[LLM cost - partial before error] total={total_cost} credits"
+                        )
+                        print(
+                            f"[LLM cost - partial before error] total={total_cost} credits",
+                            flush=True,
+                        )
+                except Exception as cost_error:
+                    logger.warning(f"Failed to record partial cost on error: {cost_error}")
 
                 # Set task status to error
                 try:
