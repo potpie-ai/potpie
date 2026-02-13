@@ -2258,6 +2258,11 @@ _tunnel_url_ctx: ContextVar[Optional[str]] = ContextVar("_tunnel_url_ctx", defau
 # Context variable for local_mode - only True for requests from VS Code extension; when True, show_diff refuses to execute (extension handles diff)
 _local_mode_ctx: ContextVar[bool] = ContextVar("_local_mode_ctx", default=False)
 
+# Context variable for repository (e.g. owner/repo) - used for tunnel lookup by workspace
+_repository_ctx: ContextVar[Optional[str]] = ContextVar("_repository_ctx", default=None)
+# Context variable for branch - used for tunnel lookup by workspace
+_branch_ctx: ContextVar[Optional[str]] = ContextVar("_branch_ctx", default=None)
+
 
 def _set_conversation_id(conversation_id: Optional[str]) -> None:
     """Set the conversation_id for the current execution context.
@@ -2326,6 +2331,26 @@ def _set_local_mode(local_mode: bool) -> None:
 def _get_local_mode() -> bool:
     """Get local_mode for the current execution context."""
     return _local_mode_ctx.get()
+
+
+def _set_repository(repository: Optional[str]) -> None:
+    """Set the repository (e.g. owner/repo) for the current execution context. Used for tunnel lookup by workspace."""
+    _repository_ctx.set(repository)
+
+
+def _get_repository() -> Optional[str]:
+    """Get the repository for the current execution context."""
+    return _repository_ctx.get()
+
+
+def _set_branch(branch: Optional[str]) -> None:
+    """Set the branch for the current execution context. Used for tunnel lookup by workspace."""
+    _branch_ctx.set(branch)
+
+
+def _get_branch() -> Optional[str]:
+    """Get the branch for the current execution context."""
+    return _branch_ctx.get()
 
 
 def _extract_error_message(error_text: str, status_code: int) -> str:
@@ -2460,13 +2485,22 @@ def _route_to_local_server(
 
         user_id = _get_user_id()
         conversation_id = _get_conversation_id()
+        repository = _get_repository()
+        branch = _get_branch()
 
         if not user_id:
             logger.debug("No user_id in context, skipping tunnel routing")
             return None
 
         tunnel_service = get_tunnel_service()
-        tunnel_url = tunnel_service.get_tunnel_url(user_id, conversation_id)
+        # Resolve tunnel by workspace (repo + branch) when available; else conversation then user
+        tunnel_url = tunnel_service.get_tunnel_url(
+            user_id,
+            conversation_id,
+            tunnel_url=_get_tunnel_url(),
+            repository=repository,
+            branch=branch,
+        )
 
         if not tunnel_url:
             logger.debug(
@@ -2493,47 +2527,21 @@ def _route_to_local_server(
             logger.warning(f"Unknown operation for tunnel routing: {operation}")
             return None
 
-        # Smart routing: If backend is running locally, use direct connection to avoid hairpin
-        # Hairpin problem: Local backend → Internet → Tunnel → Back to same machine = timeout
+        # Smart routing: Use cloudflared tunnel by default (including in dev).
+        # Only use direct localhost when VSCODE_LOCAL_TUNNEL_SERVER is explicitly set (avoids hairpin when desired).
         try:
             import os
-            from urllib.parse import urlparse
 
-            # Check if we're running in a local environment
-            # Common indicators: localhost in BASE_URL, or ENVIRONMENT=local/dev
             # Allow forcing tunnel usage via FORCE_TUNNEL env var (for testing)
             force_tunnel = os.getenv("FORCE_TUNNEL", "").lower() in ["true", "1", "yes"]
 
-            base_url = os.getenv("BASE_URL", "").lower()
-            environment = os.getenv("ENVIRONMENT", "").lower()
-            is_local_backend = not force_tunnel and (  # Don't bypass if forcing tunnel
-                "localhost" in base_url
-                or "127.0.0.1" in base_url
-                or environment in ["local", "dev", "development"]
-                or not base_url  # If BASE_URL not set, assume local
+            from app.modules.tunnel.tunnel_service import (
+                _get_local_tunnel_server_url,
             )
 
-            if is_local_backend and not force_tunnel:
-                # Prefer VSCODE_LOCAL_TUNNEL_SERVER when set (e.g. http://localhost:3001)
-                from app.modules.tunnel.tunnel_service import (
-                    _get_local_tunnel_server_url,
-                )
-
-                direct_url = _get_local_tunnel_server_url()
-                if not direct_url:
-                    # Backend is local - try to get local port from tunnel registration
-                    tunnel_data = tunnel_service._get_tunnel_data(
-                        tunnel_service._get_tunnel_key(user_id, conversation_id)
-                    )
-                    local_port = None
-                    if tunnel_data:
-                        stored_port = tunnel_data.get("local_port")
-                        if stored_port:
-                            local_port = int(stored_port)
-                    if not local_port:
-                        local_port = 3001
-                    direct_url = f"http://localhost:{local_port}"
-
+            direct_url = _get_local_tunnel_server_url()
+            # Only use direct localhost when explicitly set; otherwise use registered tunnel (dev or prod)
+            if not force_tunnel and direct_url:
                 # Quick connectivity check - try to reach localhost before using it
                 try:
                     test_client = httpx.Client(timeout=2.0)
@@ -2541,8 +2549,8 @@ def _route_to_local_server(
                     test_client.close()
                     if health_check.status_code == 200:
                         logger.info(
-                            f"[Tunnel Routing] 🏠 Local backend + LocalServer detected, using direct connection: {direct_url} "
-                            f"(bypassing tunnel {tunnel_url} to avoid hairpin problem)"
+                            f"[Tunnel Routing] 🏠 VSCODE_LOCAL_TUNNEL_SERVER set, using direct connection: {direct_url} "
+                            f"(bypassing tunnel {tunnel_url})"
                         )
                         url = f"{direct_url}{endpoint}"
                     else:
@@ -2556,14 +2564,14 @@ def _route_to_local_server(
                     )
                     url = f"{tunnel_url}{endpoint}"
             else:
-                # Remote backend or force_tunnel enabled - use tunnel URL
+                # Use registered cloudflared tunnel (dev or prod; or FORCE_TUNNEL)
                 if force_tunnel:
                     logger.info(
                         f"[Tunnel Routing] 🔧 FORCE_TUNNEL enabled, using tunnel URL: {tunnel_url}{endpoint}"
                     )
                 else:
                     logger.info(
-                        f"[Tunnel Routing] 🌐 Remote backend, using tunnel URL: {tunnel_url}{endpoint}"
+                        f"[Tunnel Routing] 🌐 Using tunnel URL: {tunnel_url}{endpoint}"
                     )
                 url = f"{tunnel_url}{endpoint}"
         except Exception as e:
@@ -3509,6 +3517,8 @@ def _init_code_changes_manager(
     user_id: Optional[str] = None,
     tunnel_url: Optional[str] = None,
     local_mode: bool = False,
+    repository: Optional[str] = None,
+    branch: Optional[str] = None,
 ) -> None:
     """Initialize the code changes manager for a new agent run.
 
@@ -3522,17 +3532,22 @@ def _init_code_changes_manager(
         user_id: The user ID for tunnel routing.
         tunnel_url: Optional tunnel URL from request (takes priority over stored state).
         local_mode: True only for VS Code extension requests; when True, show_diff refuses to execute (extension handles diff).
+        repository: Optional repository (e.g. owner/repo) for tunnel lookup by workspace.
+        branch: Optional branch for tunnel lookup by workspace.
     """
     logger.info(
         f"CodeChangesManager: _init_code_changes_manager called with "
         f"conversation_id={conversation_id}, agent_id={agent_id}, "
-        f"user_id={user_id}, tunnel_url={tunnel_url}, local_mode={local_mode}"
+        f"user_id={user_id}, tunnel_url={tunnel_url}, local_mode={local_mode}, "
+        f"repository={repository}, branch={branch}"
     )
     _set_local_mode(local_mode)
     _set_conversation_id(conversation_id)
     _set_agent_id(agent_id)
     _set_user_id(user_id)
     _set_tunnel_url(tunnel_url)
+    _set_repository(repository)
+    _set_branch(branch)
 
     old_manager = _code_changes_manager_ctx.get()
     old_session = old_manager.session_id if old_manager else None

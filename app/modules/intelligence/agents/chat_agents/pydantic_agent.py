@@ -506,6 +506,8 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             user_id=ctx.user_id,
             tunnel_url=ctx.tunnel_url,
             local_mode=ctx.local_mode if hasattr(ctx, "local_mode") else False,
+            repository=getattr(ctx, "repository", None),
+            branch=getattr(ctx, "branch", None),
         )
         logger.info(
             f"🔄 Initialized code changes manager for conversation_id={ctx.conversation_id}, agent_id={ctx.curr_agent_id}, user_id={ctx.user_id}, tunnel_url={ctx.tunnel_url}"

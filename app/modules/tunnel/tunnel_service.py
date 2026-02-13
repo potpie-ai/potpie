@@ -23,8 +23,8 @@ TUNNEL_TTL_SECONDS = 60 * 60  # 1 hour expiry (refreshed on each registration)
 # Health check settings
 TUNNEL_HEALTH_TIMEOUT = 5.0  # seconds
 
-# When ENV=development or VSCODE_LOCAL_TUNNEL_SERVER is set, skip cloudflared and talk to LocalServer directly
-LOCAL_DEV_TUNNEL_URL = "http://localhost:3001"
+# When VSCODE_LOCAL_TUNNEL_SERVER is set, use that URL and skip cloudflared (optional override).
+# In dev mode we still use the registered cloudflared tunnel unless this env is set.
 
 
 def _get_local_tunnel_server_url() -> Optional[str]:
@@ -79,6 +79,15 @@ class TunnelService:
         """Generate Redis key for user-level tunnel"""
         return f"{TUNNEL_KEY_PREFIX}:user:{user_id}"
 
+    def _get_workspace_key(
+        self, user_id: str, repository: str, branch: str
+    ) -> str:
+        """Generate Redis key for workspace-level tunnel (one per user/repo/branch)."""
+        # Normalize for key: repo may be "owner/repo", branch is usually safe
+        repo_safe = (repository or "").strip().replace(" ", "_")
+        branch_safe = (branch or "").strip().replace(" ", "_")
+        return f"{TUNNEL_KEY_PREFIX}:workspace:{user_id}:{repo_safe}:{branch_safe}"
+
     def _get_tunnel_key(
         self, user_id: str, conversation_id: Optional[str] = None
     ) -> str:
@@ -96,13 +105,17 @@ class TunnelService:
         tunnel_url: str,
         conversation_id: Optional[str] = None,
         local_port: Optional[int] = None,
+        repository: Optional[str] = None,
+        branch: Optional[str] = None,
     ) -> bool:
         """
-        Register a tunnel connection for a user/conversation.
+        Register a tunnel connection for a user/conversation/workspace.
 
-        Stores tunnel at two levels:
-        1. User-level: Always stored at tunnel_connection:user:{user_id}
-        2. Conversation-level: If conversation_id provided, also stored at
+        Stores tunnel at:
+        1. Workspace-level: If repository and branch provided, stored at
+           tunnel_connection:workspace:{user_id}:{repository}:{branch} (one active tunnel per workspace).
+        2. User-level: Always stored at tunnel_connection:user:{user_id}
+        3. Conversation-level: If conversation_id provided, also stored at
            tunnel_connection:conversation:{conversation_id}
 
         Args:
@@ -110,6 +123,8 @@ class TunnelService:
             tunnel_url: URL of the tunnel (e.g., https://xyz.trycloudflare.com)
             conversation_id: Optional conversation ID for conversation-specific tunnels
             local_port: Optional local port (for direct connection when backend is local)
+            repository: Optional repository (e.g. owner/repo) for workspace-scoped tunnel
+            branch: Optional branch for workspace-scoped tunnel
 
         Returns:
             True if registration succeeded
@@ -126,14 +141,28 @@ class TunnelService:
             }
             if local_port:
                 tunnel_data["local_port"] = local_port
+            if repository:
+                tunnel_data["repository"] = repository
+            if branch:
+                tunnel_data["branch"] = branch
 
             tunnel_data_json = json.dumps(tunnel_data)
 
             logger.info(
                 f"[TunnelService] 📝 Registering tunnel: user_id={user_id}, "
                 f"conversation_id={conversation_id}, tunnel_url={tunnel_url}, "
-                f"local_port={local_port}, redis_available={self.redis_client is not None}"
+                f"local_port={local_port}, repository={repository}, branch={branch}, "
+                f"redis_available={self.redis_client is not None}"
             )
+
+            # Workspace-level: one active tunnel per (user, repository, branch)
+            if repository and branch:
+                workspace_key = self._get_workspace_key(user_id, repository, branch)
+                if not self._store_tunnel_data(workspace_key, tunnel_data_json):
+                    return False
+                logger.info(
+                    f"[TunnelService] ✅ Registered workspace-level tunnel: {workspace_key}"
+                )
 
             # Always register at user-level
             user_key = self._get_user_key(user_id)
@@ -156,7 +185,8 @@ class TunnelService:
                     )
 
             logger.info(
-                f"[TunnelService] Registered tunnel for user {user_id}, conversation {conversation_id}: {tunnel_url}"
+                f"[TunnelService] Registered tunnel for user {user_id}, conversation {conversation_id}, "
+                f"repo={repository}, branch={branch}: {tunnel_url}"
             )
             return True
         except Exception as e:
@@ -191,49 +221,41 @@ class TunnelService:
             )
             return False
 
-    def _is_development_env(self) -> bool:
-        """True when ENV=development; local tunnel requests go to localhost instead of cloudflared."""
-        return (os.getenv("ENV") or "").strip().lower() == "development"
-
     def get_tunnel_url(
         self,
         user_id: str,
         conversation_id: Optional[str] = None,
         tunnel_url: Optional[str] = None,
+        repository: Optional[str] = None,
+        branch: Optional[str] = None,
     ) -> Optional[str]:
         """
-        Get tunnel URL for a user/conversation.
+        Get tunnel URL for a user/conversation/workspace.
 
-        When ENV=development, always returns http://localhost:3001 (no cloudflared).
-
-        Lookup priority (non-development):
+        Lookup priority:
         1. tunnel_url parameter (if provided, takes highest priority)
-        2. Conversation-level: tunnel_connection:conversation:{conversation_id}
-        3. User-level: tunnel_connection:user:{user_id}
+        2. Workspace-level: tunnel_connection:workspace:{user_id}:{repository}:{branch} when repository and branch provided
+        3. Conversation-level: tunnel_connection:conversation:{conversation_id}
+        4. User-level: tunnel_connection:user:{user_id}
 
         Args:
             user_id: User ID
             conversation_id: Optional conversation ID
             tunnel_url: Optional tunnel URL from request (takes priority over stored state)
+            repository: Optional repository (e.g. owner/repo) to resolve tunnel for current workspace
+            branch: Optional branch to resolve tunnel for current workspace
 
         Returns:
             Tunnel URL if found, None otherwise
         """
         try:
-            # When VSCODE_LOCAL_TUNNEL_SERVER is set, use it for all local tool requests (no cloudflared)
+            # When VSCODE_LOCAL_TUNNEL_SERVER is set, use it (skip cloudflared; e.g. local testing)
             env_local_url = _get_local_tunnel_server_url()
             if env_local_url:
                 logger.debug(
                     f"[TunnelService] VSCODE_LOCAL_TUNNEL_SERVER set: using {env_local_url}"
                 )
                 return env_local_url
-
-            # In development, skip cloudflared and use LocalServer on localhost directly
-            if self._is_development_env():
-                logger.debug(
-                    f"[TunnelService] ENV=development: using direct URL {LOCAL_DEV_TUNNEL_URL}"
-                )
-                return LOCAL_DEV_TUNNEL_URL
 
             # If tunnel_url is provided directly, use it (highest priority)
             if tunnel_url:
@@ -243,10 +265,29 @@ class TunnelService:
                 return tunnel_url
 
             logger.info(
-                f"[TunnelService] 🔍 Looking up tunnel for user={user_id}, conversation={conversation_id}"
+                f"[TunnelService] 🔍 Looking up tunnel for user={user_id}, conversation={conversation_id}, "
+                f"repository={repository}, branch={branch}"
             )
 
-            # Try conversation-level first (if conversation_id provided)
+            # Workspace-level: match tunnel for this repo + branch (per tunnel_plan: route to correct tunnel by repo)
+            if repository and branch:
+                workspace_key = self._get_workspace_key(user_id, repository, branch)
+                logger.info(
+                    f"[TunnelService] Checking workspace-level key: {workspace_key}"
+                )
+                tunnel_data = self._get_tunnel_data(workspace_key)
+                if tunnel_data:
+                    tunnel_url = tunnel_data.get("tunnel_url")
+                    logger.info(
+                        f"[TunnelService] ✅ Found workspace-level tunnel for {repository}@{branch}: {tunnel_url}"
+                    )
+                    return tunnel_url
+                else:
+                    logger.info(
+                        f"[TunnelService] ❌ No workspace-level tunnel for {repository}@{branch}"
+                    )
+
+            # Try conversation-level (if conversation_id provided)
             if conversation_id:
                 conversation_key = self._get_conversation_key(conversation_id)
                 logger.info(
@@ -281,16 +322,26 @@ class TunnelService:
             return None
 
     def get_tunnel_info(
-        self, user_id: str, conversation_id: Optional[str] = None
+        self,
+        user_id: str,
+        conversation_id: Optional[str] = None,
+        repository: Optional[str] = None,
+        branch: Optional[str] = None,
     ) -> Optional[Dict]:
         """
-        Get tunnel metadata for a user/conversation (URL + optional local_port).
+        Get tunnel metadata for a user/conversation/workspace (URL + optional local_port).
+
+        Lookup order matches get_tunnel_url: workspace (when repo+branch) -> conversation -> user.
 
         Returns:
             Dict with at least {"tunnel_url": str, ...} or None if not found.
         """
         try:
-            # Try conversation-specific first, then user-level
+            if repository and branch:
+                key = self._get_workspace_key(user_id, repository, branch)
+                tunnel_data = self._get_tunnel_data(key)
+                if tunnel_data:
+                    return tunnel_data
             if conversation_id:
                 key = self._get_tunnel_key(user_id, conversation_id)
                 tunnel_data = self._get_tunnel_data(key)

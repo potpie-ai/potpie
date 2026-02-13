@@ -69,6 +69,9 @@ class ChatContext(BaseModel):
     local_mode: bool = (
         False  # Flag to indicate if running in local mode (VSCode Extension)
     )
+    # Workspace identity for tunnel lookup: one active tunnel per (user, repository, branch)
+    repository: Optional[str] = None  # e.g. owner/repo
+    branch: Optional[str] = None
     # Phase 3: when True, agent receives search_tools/describe_tool/execute_tool instead of full tool list
     use_tool_search_flow: bool = False
     # Phase 4: when True, tool calls log behavioral annotations for audits (default True)

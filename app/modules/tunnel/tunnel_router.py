@@ -35,6 +35,14 @@ class TunnelRegisterRequest(BaseModel):
         default=None,
         description="Optional local port being exposed (for debugging/ops)",
     )
+    repository: Optional[str] = Field(
+        default=None,
+        description="Repository identifier (e.g. owner/repo) for workspace-scoped tunnel; one active tunnel per (user, repository, branch)",
+    )
+    branch: Optional[str] = Field(
+        default=None,
+        description="Branch name for workspace-scoped tunnel; one active tunnel per (user, repository, branch)",
+    )
 
 
 class TunnelRegisterResponse(BaseModel):
@@ -123,8 +131,8 @@ async def register_tunnel(
     logger.info(
         f"[TunnelRouter] 📝 Registration request: user_id={user_id}, "
         f"conversation_id={req.conversation_id}, tunnel_url={req.tunnel_url}, "
-        f"local_port={req.local_port}, request_user_id={req.user_id}, "
-        f"auth_user_id={user['user_id']}"
+        f"local_port={req.local_port}, repository={req.repository}, branch={req.branch}, "
+        f"request_user_id={req.user_id}, auth_user_id={user['user_id']}"
     )
 
     # In development, allow http://localhost or http://127.0.0.1 (no cloudflared)
@@ -150,6 +158,8 @@ async def register_tunnel(
         tunnel_url=req.tunnel_url,
         conversation_id=req.conversation_id,
         local_port=req.local_port,
+        repository=req.repository,
+        branch=req.branch,
     )
     if not ok:
         logger.error(
@@ -158,8 +168,13 @@ async def register_tunnel(
         )
         raise HTTPException(status_code=500, detail="Failed to register tunnel")
 
-    # Verify registration was successful
-    verify_url = tunnel_service.get_tunnel_url(user_id, req.conversation_id)
+    # Verify registration was successful (by workspace when repo+branch provided, else conversation/user)
+    verify_url = tunnel_service.get_tunnel_url(
+        user_id,
+        req.conversation_id,
+        repository=req.repository,
+        branch=req.branch,
+    )
     if verify_url != req.tunnel_url:
         logger.warning(
             f"[TunnelRouter] ⚠️ Registration verification failed: "

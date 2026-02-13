@@ -23,6 +23,8 @@ def init_managers(
     user_id: Optional[str] = None,
     tunnel_url: Optional[str] = None,
     local_mode: bool = False,
+    repository: Optional[str] = None,
+    branch: Optional[str] = None,
 ):
     """Initialize managers for agent run.
 
@@ -36,6 +38,8 @@ def init_managers(
         user_id: The user ID for tunnel routing.
         tunnel_url: Optional tunnel URL from request (takes priority over stored state).
         local_mode: True only for VS Code extension requests; when True, show_diff refuses to execute (extension handles diff).
+        repository: Optional repository (e.g. owner/repo) for tunnel lookup by workspace.
+        branch: Optional branch for tunnel lookup by workspace.
     """
     from app.modules.intelligence.tools.todo_management_tool import (
         _reset_todo_manager,
@@ -49,7 +53,7 @@ def init_managers(
 
     _reset_todo_manager()
     logger.info(
-        f"🔄 [init_managers] Calling _init_code_changes_manager with tunnel_url={tunnel_url}, local_mode={local_mode}"
+        f"🔄 [init_managers] Calling _init_code_changes_manager with tunnel_url={tunnel_url}, local_mode={local_mode}, repository={repository}, branch={branch}"
     )
     _init_code_changes_manager(
         conversation_id=conversation_id,
@@ -57,6 +61,8 @@ def init_managers(
         user_id=user_id,
         tunnel_url=tunnel_url,
         local_mode=local_mode,
+        repository=repository,
+        branch=branch,
     )
     _reset_requirement_manager()
     logger.info(

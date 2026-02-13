@@ -212,6 +212,8 @@ class PydanticMultiAgent(ChatAgent):
             user_id=ctx.user_id,
             tunnel_url=ctx.tunnel_url,
             local_mode=local_mode,
+            repository=getattr(ctx, "repository", None),
+            branch=getattr(ctx, "branch", None),
         )
 
         # Check if we have images and if the model supports vision
@@ -252,6 +254,8 @@ class PydanticMultiAgent(ChatAgent):
             user_id=ctx.user_id,
             tunnel_url=ctx.tunnel_url,
             local_mode=local_mode,
+            repository=getattr(ctx, "repository", None),
+            branch=getattr(ctx, "branch", None),
         )
 
         # Check if we have images and if the model supports vision
