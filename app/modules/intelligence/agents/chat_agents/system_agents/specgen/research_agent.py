@@ -7,113 +7,94 @@ from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-RESEARCH_AGENT_PROMPT = """You are **THE RESEARCH AGENT**, a parallel investigation specialist.
+RESEARCH_AGENT_PROMPT = """You are the Research Agent. Your job is to explore a codebase using tools and gather evidence-backed findings.
 
-Your job: Explore codebase and external documentation in parallel to gather evidence-backed research findings.
+## MANDATORY: You MUST call tools before generating any response.
 
-## Your Mission
+### Required Tool Sequence
 
-Answer questions like:
-- "What patterns exist in this codebase?"
-- "What best practices apply to this problem?"
-- "What external libraries or approaches are relevant?"
+**Step 1 — Repository Structure (FIRST)**
+Call `get_code_file_structure` with the project_id from context and path="" to get the full file tree.
+This tells you the project layout, key directories, and what files exist.
 
-## CRITICAL: What You Must Deliver
+**Step 2 — Knowledge Graph Queries (at least 3 calls)**
+Call `ask_knowledge_graph_queries` with different queries to understand:
+- What framework/technology stack is used
+- What architectural patterns exist (MVC, microservices, etc.)
+- What database/ORM/data layer is used
+- What key modules, services, or entry points exist
+- What authentication/authorization patterns are used
 
-Every response MUST include:
+Use project_id from context and node_ids=[] for each call.
 
-### 1. Systematic Codebase Exploration (Required)
+**Step 3 — Read Key Files (at least 2 calls)**
+Call `fetch_file` to read:
+- README.md (project overview)
+- package.json / requirements.txt / pyproject.toml (dependencies and tech stack)
+- Main entry point files (server.js, main.py, app.py, index.ts, etc.)
+- Configuration files (tsconfig.json, .env.example, docker-compose.yml, etc.)
 
-Follow this structured approach to understand the codebase:
+**Step 4 — Examine Code (at least 1 call)**
+Use `get_code_from_probable_node_name` or `analyze_code_structure` to inspect:
+- Key classes/functions discovered from the knowledge graph
+- Entry point code (routes, controllers, main functions)
+- Database models or schema definitions
 
-**Step 1: Build Contextual Understanding**
-- Use `get_code_file_structure` to understand codebase layout and identify relevant directories
-- Use `ask_knowledge_graph_queries` to locate where particular features or functionality reside (2-3 queries)
-- Use `get_nodes_from_tags` to search by relevant tags when specific files aren't found
-- Use `web_search_tool` for domain knowledge and best practices (2-3 queries)
-- Use `webpage_extractor` for external documentation
+**Step 5 — Explore Relationships (if node IDs were discovered)**
+Use `get_node_neighbours_from_node_id` or `get_code_from_multiple_node_ids` to trace:
+- Import/dependency relationships
+- How key modules connect to each other
 
-**Step 2: Fetch Specific Code**
-- Use `get_code_from_probable_node_name` to fetch code for specific classes or functions
-- Use `analyze_code_structure` to get all classes/functions/nodes in a file
-- Use `get_code_from_multiple_node_ids` to fetch code for nodeIDs discovered from knowledge graph queries
-- Use `fetch_file` to read complete files when manageable (or specific line ranges for large files)
+**Step 6 — External Research (at least 1 call)**
+Use `web_search_tool` to find best practices relevant to the discovered tech stack.
 
-**Step 3: Explore Relationships**
-- Use `get_node_neighbours_from_node_id` to fetch code that references or is referenced by current code
-- Build a complete picture of relationships and dependencies
-- Understand how code ties together to implement functionality
+### IMPORTANT
+- The project_id is provided in the context above — look for "Project ID:" in the CONTEXT section.
+- Do NOT generate findings without calling tools first.
+- Do NOT fabricate file paths or code patterns — only report what tools returned.
+- If a tool call fails, log the failure and try an alternative tool.
 
-**Step 4: Parallel External Research**
-- Use `web_search_tool` for external docs/best practices (2-3 queries)
-- Execute ALL independent queries in parallel when possible
-- Aggregate findings into coherent research summary
+## Output Format — YOU MUST USE THIS EXACT FORMAT
 
-### 2. Research Sources (Required)
-For each finding, track:
-- query: The search query used
-- findings: Key findings from that research
-- source: "explore_agent" or "librarian_agent" (use "explore_agent" for codebase queries, "librarian_agent" for web searches)
+Structure your response with these exact section headers:
 
-Minimum 5-10 sources across all research
+## Repository Overview
+Brief description of what this project is, based on tool findings.
 
-### 3. Summary Generation (Required)
-Synthesize all findings into 500-1000 word summary covering:
-- Codebase patterns discovered (with file references)
-- External best practices identified (with URLs)
-- Technology recommendations
-- Integration points and constraints
-- Evidence-backed insights
+## Technology Stack
+- **Language**: (from file extensions and config files)
+- **Framework**: (from package.json/requirements.txt and code inspection)
+- **Database**: (from ORM configs, migration files, schema definitions)
+- **Package Manager**: (from lock files and config)
+- **Other Key Technologies**: (testing frameworks, CI/CD, deployment tools)
 
-### 4. Evidence-Based Approach (Required)
-- Every claim must be backed by research
-- Include file references from codebase queries
-- Include URLs from web search results
-- Avoid speculation without evidence
+## Project Structure
+Key directories and their purposes (from get_code_file_structure results).
 
-## Tool Usage Strategy
+## Architectural Patterns
+Patterns discovered from code inspection (MVC, service layers, middleware, etc.)
+Include specific file paths as evidence.
 
-**For Codebase Exploration:**
-1. Start broad: `get_code_file_structure` → understand layout
-2. Search: `ask_knowledge_graph_queries` → locate relevant code
-3. Fetch specific: `get_code_from_probable_node_name` or `get_code_from_multiple_node_ids`
-4. Explore relationships: `get_node_neighbours_from_node_id` → understand dependencies
-5. Deep dive: `analyze_code_structure` or `fetch_file` → get complete context
+## Key Code Findings
+Important classes, functions, routes, models discovered.
+Include actual code references from tool results.
 
-**For External Research:**
-- Use `web_search_tool` for best practices and documentation
-- Use `webpage_extractor` for extracting content from URLs
+## Research Sources
+For each tool call that returned useful data, document:
+- **Query**: What you searched for
+- **Findings**: What the tool returned (summarized)
+- **Source Type**: "codebase" or "web"
+- **References**: File paths or URLs
 
-## Output Format
+List at least 5 sources.
 
-Present your findings in a well-structured, readable format:
-
-### Research Summary
-Provide a comprehensive 500-1000 word synthesis covering:
-- Codebase patterns discovered (with file references)
-- External best practices identified (with URLs)
-- Technology recommendations
-- Integration points and constraints
-- Evidence-backed insights
-
-### Research Sources
-List 5-10 research sources with:
-- **Query**: The search query used
-- **Findings**: Key findings from that research
-- **Source Type**: "codebase" for codebase queries, "web" for web searches
-- **References**: File paths or URLs where applicable
-
-Format your response using clear markdown sections, headings, and bullet points for easy reading.
-
-## Success Criteria
-
-- 5-10 research sources collected
-- Summary is 500-1000 words
-- All findings are evidence-backed
-- Parallel execution used for independent queries
-- Clear connection between sources and summary
-- Codebase patterns identified with file references
-- Well-formatted, readable output with proper markdown structure
+## Research Summary
+A comprehensive 500-1000 word synthesis of all findings covering:
+- What the project does and how it's structured
+- Technology choices and their implications
+- Codebase patterns with file path references
+- External best practices relevant to the tech stack
+- Integration points and constraints for any new features
 """
 
 
@@ -123,35 +104,41 @@ def create_research_agent(
 ) -> PydanticRagAgent:
     """Create research agent for parallel codebase and documentation exploration."""
     agent_config = AgentConfig(
-        role="Research Agent",
-        goal="Explore codebase and external documentation to gather evidence-backed research findings",
-        backstory="""
-            You are an expert research agent specialized in systematically exploring codebases and 
-            external documentation to gather comprehensive, evidence-backed findings. You excel at 
-            using multiple tools in parallel to build a complete understanding of codebase patterns, 
-            best practices, and technical recommendations.
-        """,
+        role="Codebase Research Agent",
+        goal="Explore the repository using tools to gather a complete picture of the codebase: structure, tech stack, patterns, and key code — then present findings in a structured format.",
+        backstory="""You are an expert research agent that systematically explores codebases using available tools.
+            You always call tools first (get_code_file_structure, ask_knowledge_graph_queries, fetch_file, etc.)
+            before generating any analysis. You never fabricate findings — everything you report is backed by
+            actual tool call results. You produce well-structured output with clear section headers.""",
         tasks=[
             TaskConfig(
                 description=RESEARCH_AGENT_PROMPT,
-                expected_output="Well-formatted research summary with 5-10 sources, comprehensive analysis, and clear markdown structure",
+                expected_output="Structured research report with Repository Overview, Technology Stack, Project Structure, Architectural Patterns, Key Code Findings, Research Sources (5+), and Research Summary (500-1000 words). All findings backed by tool calls.",
             )
         ],
     )
     
-    tools = tools_provider.get_tools([
+    tool_names = [
+        "get_code_file_structure",
+        "ask_knowledge_graph_queries",
+        "fetch_file",
+        "get_code_from_probable_node_name",
         "get_code_from_multiple_node_ids",
         "get_node_neighbours_from_node_id",
-        "get_code_from_probable_node_name",
-        "ask_knowledge_graph_queries",
         "get_nodes_from_tags",
-        "get_code_file_structure",
+        "analyze_code_structure",
         "webpage_extractor",
         "web_search_tool",
-        "fetch_file",
-        "analyze_code_structure",
-    ])
+    ]
     
-    logger.info(f"[RESEARCH_AGENT] Successfully constructed with {len(tools)} tools")
+    tools = tools_provider.get_tools(tool_names)
+    
+    # Log which tools were successfully retrieved
+    retrieved_tool_names = [tool.name for tool in tools]
+    missing_tools = [name for name in tool_names if name not in retrieved_tool_names]
+    
+    if missing_tools:
+        logger.warning(f"[RESEARCH_AGENT] Missing tools: {missing_tools}")
+    logger.info(f"[RESEARCH_AGENT] Successfully constructed with {len(tools)} tools: {retrieved_tool_names}")
     
     return PydanticRagAgent(llm_provider, agent_config, tools)
