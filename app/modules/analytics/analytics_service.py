@@ -211,7 +211,7 @@ class AnalyticsService:
             })
         return result
 
-    async def get_user_analytics(
+    def get_user_analytics(
         self,
         user_id: str,
         start_date: Optional[date] = None,
@@ -540,7 +540,7 @@ class AnalyticsService:
             conversation_stats=conversation_stats,
         )
 
-    async def get_raw_spans(
+    def get_raw_spans(
         self,
         user_id: str,
         start_date: Optional[date] = None,

@@ -35,7 +35,8 @@ def get_firebase_token(email: str, password: str) -> dict:
                 "email": email,
                 "password": password,
                 "returnSecureToken": True
-            }
+            },
+            timeout=30,
         )
         
         if response.status_code == 200:
@@ -78,24 +79,24 @@ def main():
         print(f"User ID:    {result['userId']}")
         print(f"Email:      {result['email']}")
         print(f"Expires in: {result['expiresIn']} seconds")
-        print(f"\nAuth Token:\n{result['idToken']}")
+        print("Auth Token: (saved to file, not printed)")
         print("=" * 60)
-        
-        # Save for easy copy-paste
+
+        # Save for easy copy-paste (do not print full token)
         with open("my_credentials.txt", "w") as f:
             f.write(f"USER_ID={result['userId']}\n")
             f.write(f"AUTH_TOKEN={result['idToken']}\n")
-        
+
         print("\n💾 Credentials saved to: my_credentials.txt")
-        
+
         print("\n🚀 To test the Analytics API, run:")
-        print(f"\nexport TEST_USER_ID=\"{result['userId']}\"")
-        print(f"export TEST_AUTH_TOKEN=\"{result['idToken']}\"")
+        print(f'\nexport TEST_USER_ID="{result["userId"]}"')
+        print('export TEST_AUTH_TOKEN=$(grep AUTH_TOKEN my_credentials.txt | cut -d= -f2-)')
         print("python test_analytics_api.py")
-        
-        print("\nOr use curl:")
-        print(f'\ncurl -X GET "http://localhost:8001/api/v1/analytics/user/{result["userId"]}?days=7" \\')
-        print(f'  -H "Authorization: Bearer {result["idToken"]}"')
+
+        print("\nOr use curl (token from file):")
+        print('curl -X GET "http://localhost:8001/api/v1/analytics/summary?start_date=2026-01-01&end_date=2026-02-12" \\')
+        print('  -H "Authorization: Bearer $(grep AUTH_TOKEN my_credentials.txt | cut -d= -f2-)"')
         
     else:
         print(f"\n❌ Login failed!")

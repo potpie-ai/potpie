@@ -146,7 +146,10 @@ class RedisStreamManager:
                                         pt = u.get("prompt_tokens", 0) or 0
                                         ct = u.get("completion_tokens", 0) or 0
                                         if c is not None:
-                                            total_cost += float(c)
+                                            try:
+                                                total_cost += float(c)
+                                            except (TypeError, ValueError):
+                                                pass
                                             cost_str = f", cost={c} credits"
                                         else:
                                             est = estimate_cost_for_log(pt, ct) if (pt or ct) else 0.0

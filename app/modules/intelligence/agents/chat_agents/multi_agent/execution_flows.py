@@ -298,8 +298,8 @@ class StreamingExecutionFlow:
                                             None,
                                         ) or "openrouter"
                                         push_usage_from_run(usage, model_name)
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    logger.debug("Failed to capture run usage for stream: %s", e)
                                 # Clear the reference when done
                                 self.current_supervisor_run_ref["run"] = None
 
@@ -492,8 +492,8 @@ class MultimodalStreamingExecutionFlow:
                                     None,
                                 ) or "openrouter"
                                 push_usage_from_run(usage, model_name)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug("Failed to capture run usage for stream: %s", e)
                         # Note: For streaming runs, compressed messages are handled by history processor
                         # Clear the reference when done
                         self.current_supervisor_run_ref["run"] = None

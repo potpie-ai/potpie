@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from typing import Any, Dict, List
 
 from pydantic_ai.messages import ToolCallPart, ModelMessage, ModelResponse
@@ -12,24 +11,6 @@ from app.modules.intelligence.provider.openrouter_usage_context import (
     push_usage as push_usage_context,
     estimate_cost_for_log,
 )
-
-
-# ------------------------------------------------------------------
-# DEBUG CONFIG
-# ------------------------------------------------------------------
-
-DEBUG_FLOW = False  # set True to trace flow (init, _process_response, etc.)
-
-
-def dbg(msg: str):
-    if DEBUG_FLOW:
-        logging.warning(f"[DEBUG-FLOW] {msg}")
-        print(f"🧭 [DEBUG-FLOW] {msg}")
-
-
-# ------------------------------------------------------------------
-# LOGGING SETUP (use app logger so logs show in Celery worker too)
-# ------------------------------------------------------------------
 
 logger = setup_logger(__name__)
 
@@ -62,8 +43,8 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
                         cc = data.get("completion_cost") or 0
                         if pc or cc:
                             cost = float(pc) + float(cc)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Failed to extract cost from usage model_dump: %s", e)
             if cost is None and getattr(u, "model_extra", None):
                 cost = u.model_extra.get("total_cost") or u.model_extra.get("cost")
 
@@ -108,9 +89,7 @@ class OpenRouterGeminiModel(OpenAIModel):
     # ------------------------------------------------------------------
 
     def __init__(self, *args, **kwargs):
-        dbg("ENTER __init__ (OpenRouterGeminiModel)")
         super().__init__(*args, **kwargs)
-        dbg("RETURNED from super().__init__")
 
         self._tool_call_signatures: Dict[str, str] = {}
         self._tool_call_signature_counter: int = 0
@@ -118,14 +97,8 @@ class OpenRouterGeminiModel(OpenAIModel):
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
         self.total_tokens = 0
-
-        self.total_prompt_cost = 0.0
-        self.total_completion_cost = 0.0
         self.total_cost = 0.0
-
         self.request_count = 0
-
-        dbg("EXIT __init__")
 
     @property
     def _streamed_response_cls(self) -> type[OpenAIStreamedResponse]:
@@ -137,31 +110,21 @@ class OpenRouterGeminiModel(OpenAIModel):
     # ------------------------------------------------------------------
 
     def _capture_signatures_from_response(self, response) -> None:
-        dbg("ENTER _capture_signatures_from_response")
-
         try:
             choice = response.choices[0]
         except (AttributeError, IndexError):
-            dbg("No choices found on response")
             return
 
         tool_calls = getattr(choice.message, "tool_calls", None) or []
-        dbg(f"Tool calls found: {len(tool_calls)}")
 
         for call in tool_calls:
             signature = self._extract_signature_from_tool_call(call)
             if signature:
-                dbg(f"Captured signature for tool_call_id={call.id}")
                 self._tool_call_signatures[call.id] = signature
 
-        dbg("EXIT _capture_signatures_from_response")
-
     def _extract_signature_from_tool_call(self, tool_call: Any) -> str | None:
-        dbg("ENTER _extract_signature_from_tool_call")
-
         function_obj = getattr(tool_call, "function", None)
         if function_obj is None:
-            dbg("No function object on tool call")
             return None
 
         for accessor in (
@@ -169,31 +132,24 @@ class OpenRouterGeminiModel(OpenAIModel):
             getattr(function_obj, "model_dump", None) and function_obj.model_dump(),
         ):
             if isinstance(accessor, str) and accessor:
-                dbg("Found thought_signature as string")
                 return accessor
             if isinstance(accessor, dict):
                 signature = accessor.get("thought_signature") or accessor.get(
                     "thoughtSignature"
                 )
                 if signature:
-                    dbg("Found thought_signature inside dict")
                     return signature
 
-        dbg("No thought_signature found")
         return None
 
     def _get_or_create_tool_call_signature(self, tool_call_id: str) -> str:
-        dbg(f"ENTER _get_or_create_tool_call_signature ({tool_call_id})")
-
         if tool_call_id in self._tool_call_signatures:
-            dbg("Signature already exists")
             return self._tool_call_signatures[tool_call_id]
 
         signature = f"{tool_call_id}-{self._tool_call_signature_counter:08d}"
         self._tool_call_signatures[tool_call_id] = signature
         self._tool_call_signature_counter += 1
 
-        dbg(f"Generated new signature: {signature}")
         return signature
 
     # ------------------------------------------------------------------
@@ -214,7 +170,7 @@ class OpenRouterGeminiModel(OpenAIModel):
         # OpenRouter returns a single "cost" in credits (not prompt_cost/completion_cost)
         cost = getattr(usage, "cost", None)
         if cost is None:
-            cost = getattr(usage, "total_cost", 0.0) or 0.0
+            cost = getattr(usage, "total_cost", None)
 
         self.total_prompt_tokens += prompt_tokens
         self.total_completion_tokens += completion_tokens
@@ -244,30 +200,17 @@ class OpenRouterGeminiModel(OpenAIModel):
     # ------------------------------------------------------------------
 
     def _process_response(self, response):
-        dbg("ENTER _process_response (custom)")
-
-        dbg("Calling _extract_and_log_usage")
         self._extract_and_log_usage(response)
-
-        dbg("Calling _capture_signatures_from_response")
         self._capture_signatures_from_response(response)
 
-        dbg("CALLING super()._process_response")
         model_response = super()._process_response(response)
-        dbg("RETURNED from super()._process_response")
-
-        dbg(f"ModelResponse parts count = {len(model_response.parts)}")
 
         for part in model_response.parts:
-            dbg(f"Inspecting part type={type(part).__name__}")
             if isinstance(part, ToolCallPart):
-                dbg(f"ToolCallPart detected: {part.tool_call_id}")
                 signature = self._tool_call_signatures.get(part.tool_call_id)
                 if signature:
-                    dbg(f"Attaching thought_signature={signature}")
                     setattr(part, "thought_signature", signature)
 
-        dbg("EXIT _process_response")
         return model_response
 
     # ------------------------------------------------------------------
@@ -275,13 +218,9 @@ class OpenRouterGeminiModel(OpenAIModel):
     # ------------------------------------------------------------------
 
     def _map_tool_call(self, t: ToolCallPart):
-        dbg(f"ENTER _map_tool_call (tool_call_id={t.tool_call_id})")
-
         tool_call_param = super()._map_tool_call(t)
-        dbg("RETURNED from super()._map_tool_call")
 
         function_payload = tool_call_param.get("function")
-        dbg(f"Function payload pre-injection: {function_payload}")
 
         if isinstance(function_payload, dict):
             signature = getattr(t, "thought_signature", None) or self._tool_call_signatures.get(
@@ -289,15 +228,11 @@ class OpenRouterGeminiModel(OpenAIModel):
             )
 
             if not signature:
-                dbg("No signature found — generating one")
                 signature = self._get_or_create_tool_call_signature(t.tool_call_id)
 
             function_payload["thought_signature"] = signature
             self._tool_call_signatures[t.tool_call_id] = signature
 
-            dbg(f"Injected thought_signature={signature}")
-
-        dbg("EXIT _map_tool_call")
         return tool_call_param
 
     # ------------------------------------------------------------------
@@ -309,20 +244,11 @@ class OpenRouterGeminiModel(OpenAIModel):
         messages: List[ModelMessage],
         model_request_parameters: ModelRequestParameters,
     ) -> List[Any]:
-        dbg("ENTER _map_messages")
-
-        dbg(f"Messages count = {len(messages)}")
-
-        for i, message in enumerate(messages):
-            dbg(f"Message[{i}] type={type(message).__name__}")
-
+        for message in messages:
             if isinstance(message, ModelResponse):
                 for part in message.parts:
                     if isinstance(part, ToolCallPart):
-                        dbg(f"ToolCallPart in history: {part.tool_call_id}")
-
                         if not getattr(part, "thought_signature", None):
-                            dbg("Missing signature in history — attaching")
                             signature = self._tool_call_signatures.get(
                                 part.tool_call_id
                             ) or self._get_or_create_tool_call_signature(
@@ -330,11 +256,7 @@ class OpenRouterGeminiModel(OpenAIModel):
                             )
                             setattr(part, "thought_signature", signature)
 
-        dbg("CALLING super()._map_messages")
         result = await super()._map_messages(messages, model_request_parameters)
-        dbg("RETURNED from super()._map_messages")
-
-        dbg("EXIT _map_messages")
         return result
 
     # ------------------------------------------------------------------
@@ -342,14 +264,11 @@ class OpenRouterGeminiModel(OpenAIModel):
     # ------------------------------------------------------------------
 
     def get_usage_summary(self) -> Dict[str, Any]:
-        dbg("ENTER get_usage_summary")
         return {
             "total_requests": self.request_count,
             "total_prompt_tokens": self.total_prompt_tokens,
             "total_completion_tokens": self.total_completion_tokens,
             "total_tokens": self.total_tokens,
-            "total_prompt_cost": self.total_prompt_cost,
-            "total_completion_cost": self.total_completion_cost,
             "total_cost": self.total_cost,
             "average_tokens_per_request": (
                 self.total_tokens / self.request_count
@@ -364,13 +283,9 @@ class OpenRouterGeminiModel(OpenAIModel):
         }
 
     def reset_counters(self) -> None:
-        dbg("RESETTING counters")
-
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
         self.total_tokens = 0
-        self.total_prompt_cost = 0.0
-        self.total_completion_cost = 0.0
         self.total_cost = 0.0
         self.request_count = 0
 

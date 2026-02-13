@@ -2,10 +2,12 @@
 
 ## ✅ What's Been Built
 
-A complete analytics API that queries Logfire data and returns JSON suitable for graphing. The API includes:
+A complete analytics API that queries Logfire data and returns JSON suitable for graphing. The API uses Bearer auth; the user is derived from the token. Endpoints:
 
-- **GET `/api/v1/analytics/user/{user_id}`** - Aggregated analytics (costs, runs, conversations)
-- **GET `/api/v1/analytics/user/{user_id}/raw`** - Raw span data for debugging
+- **GET `/api/v1/analytics/tokens-by-day`** - Total tokens per day, grouped by project (`start_date`, `end_date`)
+- **GET `/api/v1/analytics/summary`** - Aggregated analytics (costs, runs, conversations) (`start_date`, `end_date`)
+- **GET `/api/v1/analytics/raw`** - Raw span data for debugging (`start_date`, `end_date`, `limit`)
+- **GET `/api/v1/analytics/debug/raw`** - Raw Logfire response (debug; only in local/development)
 
 ## 🚀 How to Test It
 
@@ -21,15 +23,13 @@ gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8001
 uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
-### Step 2: Get Your User ID and Auth Token
+### Step 2: Get Your Auth Token
 
-You'll need:
-1. **User ID**: The user_id that's being logged to Logfire (check your Logfire UI or database)
-2. **Auth Token**: A valid Firebase authentication token
+You need a valid Firebase authentication token. The API derives the user from the token.
 
 **To get your auth token**, you can:
 - Use your frontend login flow and copy the token
-- Or generate one via Firebase Admin SDK
+- Run `python get_token.py --email YOUR_EMAIL --password YOUR_PASSWORD` (saves to `my_credentials.txt`)
 - Or check your browser's localStorage/cookies after logging in
 
 ### Step 3: Run the Test Script
@@ -39,13 +39,12 @@ Using the provided test script:
 ```bash
 # Option 1: Command line arguments
 python test_analytics_api.py \
-  --user-id "your_user_id_here" \
   --token "your_auth_token_here" \
-  --days 30
+  --start-date 2026-01-01 \
+  --end-date 2026-02-12
 
-# Option 2: Environment variables
-export TEST_USER_ID="your_user_id_here"
-export TEST_AUTH_TOKEN="your_auth_token_here"
+# Option 2: Environment variables (token from file)
+export TEST_AUTH_TOKEN=$(grep AUTH_TOKEN my_credentials.txt | cut -d= -f2-)
 python test_analytics_api.py
 ```
 
@@ -56,20 +55,24 @@ The test script will:
 
 ### Step 4: Test with cURL
 
-Or test directly with cURL:
+Or test directly with cURL (user is derived from token):
 
 ```bash
-# Replace these values
-USER_ID="your_user_id"
+# Token from file or env
 AUTH_TOKEN="your_auth_token"
 
-# Test the analytics endpoint
-curl -X GET "http://localhost:8001/api/v1/analytics/user/${USER_ID}?days=30" \
+# Test the summary endpoint (date range)
+curl -X GET "http://localhost:8001/api/v1/analytics/summary?start_date=2026-01-01&end_date=2026-02-12" \
+  -H "Authorization: Bearer ${AUTH_TOKEN}" \
+  | jq .
+
+# Test the tokens-by-day endpoint
+curl -X GET "http://localhost:8001/api/v1/analytics/tokens-by-day?start_date=2026-01-01&end_date=2026-02-12" \
   -H "Authorization: Bearer ${AUTH_TOKEN}" \
   | jq .
 
 # Test the raw spans endpoint
-curl -X GET "http://localhost:8001/api/v1/analytics/user/${USER_ID}/raw?days=7&limit=10" \
+curl -X GET "http://localhost:8001/api/v1/analytics/raw?start_date=2026-01-01&end_date=2026-02-12&limit=10" \
   -H "Authorization: Bearer ${AUTH_TOKEN}" \
   | jq .
 ```
@@ -96,7 +99,7 @@ FastAPI automatically generates interactive docs:
   },
   "summary": {
     "total_cost": 12.45,
-    "total_agent_runs": 156,
+    "total_llm_calls": 156,
     "avg_duration_ms": 2340.5,
     "success_rate": 0.94
   },
@@ -196,7 +199,7 @@ Then restart your server.
 - You haven't generated any traces yet
 
 **To verify:**
-- Check `/api/v1/analytics/user/{user_id}/raw` to see if ANY spans exist
+- Check `/api/v1/analytics/raw` to see if ANY spans exist for your token
 - Look at your Logfire UI to confirm data is being sent
 
 ## 📁 Files Created

@@ -43,13 +43,25 @@ gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8001
 
 ## API Endpoints
 
-### GET `/api/v1/analytics/user/{user_id}`
+All endpoints require Bearer authentication; the user is derived from the token. Query parameters use `start_date` and `end_date` (YYYY-MM-DD).
 
-Get aggregated analytics data for a user.
+### GET `/api/v1/analytics/tokens-by-day`
+
+Total tokens per day, grouped by project.
 
 **Parameters:**
-- `user_id` (path): The user ID to query
-- `days` (query, optional): Number of days to look back (default: 30, max: 90)
+- `start_date` (query, required): Start date YYYY-MM-DD
+- `end_date` (query, required): End date YYYY-MM-DD
+
+**Authentication:** Required (Bearer token)
+
+### GET `/api/v1/analytics/summary`
+
+Aggregated analytics (costs, runs, conversations) for the authenticated user.
+
+**Parameters:**
+- `start_date` (query, required): Start date YYYY-MM-DD
+- `end_date` (query, required): End date YYYY-MM-DD
 
 **Authentication:** Required (Bearer token)
 
@@ -65,7 +77,7 @@ Get aggregated analytics data for a user.
   },
   "summary": {
     "total_cost": 12.45,
-    "total_agent_runs": 156,
+    "total_llm_calls": 156,
     "avg_duration_ms": 2340.5,
     "success_rate": 0.94
   },
@@ -95,35 +107,47 @@ Get aggregated analytics data for a user.
 }
 ```
 
-### GET `/api/v1/analytics/user/{user_id}/raw`
+### GET `/api/v1/analytics/raw`
 
-Get raw Logfire span data (useful for debugging or custom analysis).
+Raw Logfire span data (useful for debugging or custom analysis).
 
 **Parameters:**
-- `user_id` (path): The user ID to query
-- `days` (query, optional): Number of days to look back (default: 7, max: 30)
+- `start_date` (query, required): Start date YYYY-MM-DD
+- `end_date` (query, required): End date YYYY-MM-DD
 - `limit` (query, optional): Max number of spans (default: 100, max: 1000)
 
 **Authentication:** Required (Bearer token)
 
 **Response:** Array of raw span objects
 
+### GET `/api/v1/analytics/debug/raw`
+
+Raw Logfire API response. **Only available when `ENV` or `LOGFIRE_ENVIRONMENT` is `local`, `development`, or `dev`.**
+
+**Parameters:** Same as `/api/v1/analytics/raw`
+
+**Authentication:** Required (Bearer token)
+
 ## Example Usage
 
 ### Using cURL
 
 ```bash
-# Get analytics for last 30 days
-curl -X GET "http://localhost:8001/api/v1/analytics/user/YOUR_USER_ID?days=30" \
-  -H "Authorization: Bearer YOUR_AUTH_TOKEN"
+AUTH_TOKEN="your_auth_token"
+START="2026-01-01"
+END="2026-02-12"
 
-# Get analytics for last 7 days
-curl -X GET "http://localhost:8001/api/v1/analytics/user/YOUR_USER_ID?days=7" \
-  -H "Authorization: Bearer YOUR_AUTH_TOKEN"
+# Summary (aggregated analytics)
+curl -X GET "http://localhost:8001/api/v1/analytics/summary?start_date=${START}&end_date=${END}" \
+  -H "Authorization: Bearer ${AUTH_TOKEN}"
 
-# Get raw spans
-curl -X GET "http://localhost:8001/api/v1/analytics/user/YOUR_USER_ID/raw?days=7&limit=100" \
-  -H "Authorization: Bearer YOUR_AUTH_TOKEN"
+# Tokens by day
+curl -X GET "http://localhost:8001/api/v1/analytics/tokens-by-day?start_date=${START}&end_date=${END}" \
+  -H "Authorization: Bearer ${AUTH_TOKEN}"
+
+# Raw spans
+curl -X GET "http://localhost:8001/api/v1/analytics/raw?start_date=${START}&end_date=${END}&limit=100" \
+  -H "Authorization: Bearer ${AUTH_TOKEN}"
 ```
 
 ### Using Python Requests
@@ -132,22 +156,23 @@ curl -X GET "http://localhost:8001/api/v1/analytics/user/YOUR_USER_ID/raw?days=7
 import requests
 
 BASE_URL = "http://localhost:8001"
-USER_ID = "your_user_id"
 AUTH_TOKEN = "your_auth_token"
+START_DATE = "2026-01-01"
+END_DATE = "2026-02-12"
 
 headers = {"Authorization": f"Bearer {AUTH_TOKEN}"}
 
 # Get analytics
 response = requests.get(
-    f"{BASE_URL}/api/v1/analytics/user/{USER_ID}",
-    params={"days": 30},
+    f"{BASE_URL}/api/v1/analytics/summary",
+    params={"start_date": START_DATE, "end_date": END_DATE},
     headers=headers
 )
 
 if response.status_code == 200:
     data = response.json()
     print(f"Total cost: ${data['summary']['total_cost']}")
-    print(f"Total runs: {data['summary']['total_agent_runs']}")
+    print(f"Total LLM calls: {data['summary']['total_llm_calls']}")
     print(f"Success rate: {data['summary']['success_rate']*100}%")
 else:
     print(f"Error: {response.status_code} - {response.text}")
@@ -157,12 +182,12 @@ else:
 
 ```typescript
 const BASE_URL = "http://localhost:8001";
-const USER_ID = "your_user_id";
 const AUTH_TOKEN = "your_auth_token";
 
-async function getAnalytics(userId: string, days: number = 30) {
+async function getAnalytics(startDate: string, endDate: string) {
+  const params = new URLSearchParams({ start_date: startDate, end_date: endDate });
   const response = await fetch(
-    `${BASE_URL}/api/v1/analytics/user/${userId}?days=${days}`,
+    `${BASE_URL}/api/v1/analytics/summary?${params}`,
     {
       headers: {
         Authorization: `Bearer ${AUTH_TOKEN}`,
@@ -178,7 +203,7 @@ async function getAnalytics(userId: string, days: number = 30) {
 }
 
 // Usage
-getAnalytics(USER_ID, 30)
+getAnalytics("2026-01-01", "2026-02-12")
   .then((data) => {
     console.log("Total cost:", data.summary.total_cost);
     console.log("Daily costs:", data.daily_costs);
@@ -240,18 +265,18 @@ const outcomesData = Object.entries(analytics.agent_runs_by_outcome).map(([outco
 
 **Possible causes:**
 1. The user has no activity in the specified time period
-2. The user_id doesn't match what's being logged to Logfire
+2. The authenticated user doesn't match what's being logged to Logfire
 3. The Logfire project doesn't have data yet
 
 **Debug:**
-- Check the `/raw` endpoint to see if any spans exist
-- Verify the user_id is correct in your Logfire UI
+- Check the `/api/v1/analytics/raw` endpoint to see if any spans exist
+- Verify the user in your Logfire UI matches the token
 - Check application logs for errors
 
 ### Query timeout or slow response
 
 **Solutions:**
-- Reduce the `days` parameter (query less data)
+- Narrow the date range (start_date/end_date) to query less data
 - Check Logfire query limits in your plan
 - Consider adding caching for frequently accessed data
 

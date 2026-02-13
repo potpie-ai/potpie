@@ -26,11 +26,18 @@ read -sp "Password: " PASSWORD
 echo ""
 echo ""
 
+# Build JSON body safely (handles special chars in email/password)
+if ! command -v jq &> /dev/null; then
+    echo "❌ Error: jq is required. Install with: brew install jq"
+    exit 1
+fi
+BODY=$(jq -n --arg email "$EMAIL" --arg password "$PASSWORD" '{email:$email,password:$password,returnSecureToken:true}')
+
 # Login
 echo "🔄 Logging in..."
 RESPONSE=$(curl -s -X POST "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=$API_KEY" \
   -H "Content-Type: application/json" \
-  -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\",\"returnSecureToken\":true}")
+  -d "$BODY")
 
 # Check for error
 if echo "$RESPONSE" | grep -q "error"; then
@@ -52,32 +59,25 @@ fi
 echo "✅ Login successful!"
 echo ""
 echo "============================================"
-echo "YOUR CREDENTIALS:"
-echo "============================================"
 echo "User ID:  $USER_ID"
 echo "Email:    $EMAIL_FROM_RESPONSE"
-echo ""
-echo "Bearer Token:"
-echo "$TOKEN"
 echo "============================================"
 echo ""
 
-# Save to file
+# Save to file (no token printed to stdout)
 cat > my_token.txt << EOF
 USER_ID=$USER_ID
 EMAIL=$EMAIL_FROM_RESPONSE
 TOKEN=$TOKEN
 EOF
+chmod 600 my_token.txt
 
-echo "💾 Saved to: my_token.txt"
+echo "💾 Credentials saved to: my_token.txt (token not shown for security)"
 echo ""
-echo "🚀 To test the API in FastAPI docs:"
-echo "   1. Go to http://localhost:8001/docs"
-echo "   2. Click 'Authorize' button (top right)"
-echo "   3. Paste this token: $TOKEN"
-echo "   4. Click 'Authorize' then 'Close'"
-echo ""
-echo "🔬 Or test with curl:"
-echo "curl \"http://localhost:8001/api/v1/analytics/user/$USER_ID?days=7\" \\"
-echo "  -H \"Authorization: Bearer $TOKEN\""
+echo "🚀 To test the API:"
+echo "   1. FastAPI docs: http://localhost:8001/docs → Authorize → paste token from my_token.txt"
+echo "   2. Curl example (use token from file):"
+echo "      TOKEN=\$(grep TOKEN= my_token.txt | cut -d= -f2-)"
+echo "      curl \"http://localhost:8001/api/v1/analytics/summary?start_date=2026-01-01&end_date=2026-02-12\" \\"
+echo "        -H \"Authorization: Bearer \$TOKEN\""
 echo ""

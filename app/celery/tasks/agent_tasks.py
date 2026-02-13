@@ -1,6 +1,10 @@
 from typing import Optional, List
 
-import logfire
+try:
+    import logfire
+except ImportError:
+    logfire = None  # type: ignore[assignment]
+
 from app.celery.celery_app import celery_app
 from app.celery.tasks.base_task import BaseTask
 from app.modules.conversations.utils.redis_streaming import RedisStreamManager
@@ -18,11 +22,11 @@ logger = setup_logger(__name__)
 def _record_openrouter_cost_in_logfire(usages: List[dict], outcome: str) -> float:
     """
     Compute total OpenRouter cost from usages and record as Logfire span attribute.
-    
+
     Args:
         usages: List of usage dicts (from get_and_clear_usages)
         outcome: "completed" | "cancelled" | "error"
-    
+
     Returns:
         total_cost: Sum of API-returned costs (0.0 if none)
     """
@@ -31,16 +35,19 @@ def _record_openrouter_cost_in_logfire(usages: List[dict], outcome: str) -> floa
         c = u.get("cost")
         if c is not None:
             total_cost += float(c)
-    
-    # Record cost as Logfire span attribute so it appears in the trace
-    with logfire.span(
-        "agent_run_usage",
-        actual_cost=total_cost,
-        outcome=outcome,
-        usage_count=len(usages),
-    ):
-        pass
-    
+
+    if logfire is not None:
+        try:
+            with logfire.span(
+                "agent_run_usage",
+                actual_cost=total_cost,
+                outcome=outcome,
+                usage_count=len(usages),
+            ):
+                pass
+        except Exception:
+            pass  # non-fatal: cost is still returned
+
     return total_cost
 
 
@@ -122,7 +129,8 @@ def execute_agent_background(
                             )
                             if direct_user:
                                 logger.warning(
-                                    f"UserService.get_user_by_uid returned None but direct query found user: {direct_user.uid}, email: {direct_user.email}"
+                                    "UserService.get_user_by_uid returned None but direct query found user: user_id=%s",
+                                    direct_user.uid,
                                 )
                                 user = direct_user
                             else:
@@ -138,17 +146,13 @@ def execute_agent_background(
                             user_email = ""
                         elif not user.email:
                             logger.warning(
-                                f"User found but email is None/empty for user_id: {user_id}, "
-                                f"user.uid: {user.uid if user else 'N/A'}, "
-                                f"email value: {repr(user.email) if user else 'N/A'}. "
-                                f"Using empty string as fallback."
+                                "User found but email is None/empty for user_id=%s, using empty string as fallback",
+                                user_id,
                             )
                             user_email = ""
                         else:
                             user_email = user.email
-                            logger.debug(
-                                f"Retrieved user email: {user_email} for user_id: {user_id}"
-                            )
+                            logger.debug("Retrieved user email for user_id=%s", user_id)
 
                         service = ConversationService.create(
                             conversation_store=conversation_store,
@@ -440,14 +444,13 @@ def execute_regenerate_background(
                             user_email = ""
                         elif not user.email:
                             logger.warning(
-                                f"User found but email is None/empty for user_id: {user_id}, user object: {user}, email value: {repr(user.email)}. Using empty string as fallback."
+                                "User found but email is None/empty for user_id=%s, using empty string as fallback",
+                                user_id,
                             )
                             user_email = ""
                         else:
                             user_email = user.email
-                            logger.debug(
-                                f"Retrieved user email: {user_email} for user_id: {user_id}"
-                            )
+                            logger.debug("Retrieved user email for user_id=%s", user_id)
 
                         conversation_store = ConversationStore(self.db, async_db)
                         message_store = MessageStore(self.db, async_db)

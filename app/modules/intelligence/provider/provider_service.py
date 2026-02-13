@@ -39,7 +39,6 @@ from app.modules.intelligence.provider.openrouter_gemini_model import (
 from app.modules.intelligence.provider.openrouter_glm_model import (
     OpenRouterGlmModel,
 )
-import logfire
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from app.modules.intelligence.provider.anthropic_caching_model import (
     CachingAnthropicModel,

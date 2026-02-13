@@ -18,24 +18,27 @@ import sys
 import requests
 
 
-def test_analytics_endpoint(base_url: str, user_id: str, auth_token: str, days: int = 30):
-    """Test the analytics endpoint."""
-    
+def test_analytics_endpoint(base_url: str, auth_token: str, start_date: str = None, end_date: str = None):
+    """Test the analytics endpoint (user is derived from auth token)."""
+    if start_date is None or end_date is None:
+        from datetime import date, timedelta
+        end_date = end_date or str(date.today())
+        start_date = start_date or str(date.today() - timedelta(days=30))
+
     print(f"\n{'='*60}")
     print(f"Testing Analytics API")
     print(f"{'='*60}")
     print(f"Base URL: {base_url}")
-    print(f"User ID: {user_id}")
-    print(f"Days: {days}")
+    print(f"Date range: {start_date} to {end_date}")
     print(f"{'='*60}\n")
-    
+
     # Test 1: Get aggregated analytics
-    print("Test 1: GET /api/v1/analytics/user/{user_id}")
+    print("Test 1: GET /api/v1/analytics/summary")
     print("-" * 60)
-    
-    url = f"{base_url}/api/v1/analytics/user/{user_id}"
+
+    url = f"{base_url}/api/v1/analytics/summary"
     headers = {"Authorization": f"Bearer {auth_token}"}
-    params = {"days": days}
+    params = {"start_date": start_date, "end_date": end_date}
     
     try:
         response = requests.get(url, params=params, headers=headers, timeout=30)
@@ -50,7 +53,7 @@ def test_analytics_endpoint(base_url: str, user_id: str, auth_token: str, days: 
             # Print summary
             print("Summary:")
             print(f"  Total Cost: ${data['summary']['total_cost']:.4f}")
-            print(f"  Total Agent Runs: {data['summary']['total_agent_runs']}")
+            print(f"  Total LLM Calls: {data['summary']['total_llm_calls']}")
             print(f"  Avg Duration: {data['summary']['avg_duration_ms']:.2f}ms")
             print(f"  Success Rate: {data['summary']['success_rate']*100:.2f}%")
             
@@ -105,16 +108,20 @@ def test_analytics_endpoint(base_url: str, user_id: str, auth_token: str, days: 
         return False
 
 
-def test_raw_spans_endpoint(base_url: str, user_id: str, auth_token: str, days: int = 7, limit: int = 10):
-    """Test the raw spans endpoint."""
-    
+def test_raw_spans_endpoint(base_url: str, auth_token: str, start_date: str = None, end_date: str = None, limit: int = 10):
+    """Test the raw spans endpoint (user is derived from auth token)."""
+    if start_date is None or end_date is None:
+        from datetime import date, timedelta
+        end_date = end_date or str(date.today())
+        start_date = start_date or str(date.today() - timedelta(days=7))
+
     print(f"\n\n{'='*60}")
-    print(f"Test 2: GET /api/v1/analytics/user/{user_id}/raw")
+    print("Test 2: GET /api/v1/analytics/raw")
     print(f"{'='*60}\n")
-    
-    url = f"{base_url}/api/v1/analytics/user/{user_id}/raw"
+
+    url = f"{base_url}/api/v1/analytics/raw"
     headers = {"Authorization": f"Bearer {auth_token}"}
-    params = {"days": days, "limit": limit}
+    params = {"start_date": start_date, "end_date": end_date, "limit": limit}
     
     try:
         response = requests.get(url, params=params, headers=headers, timeout=30)
@@ -154,7 +161,8 @@ def test_raw_spans_endpoint(base_url: str, user_id: str, auth_token: str, days: 
 
 def main():
     """Main test function."""
-    
+    from datetime import date, timedelta
+
     parser = argparse.ArgumentParser(description="Test the Analytics API")
     parser.add_argument(
         "--base-url",
@@ -162,47 +170,50 @@ def main():
         help="Base URL of the API (default: http://localhost:8001)"
     )
     parser.add_argument(
-        "--user-id",
-        default=os.getenv("TEST_USER_ID"),
-        help="User ID to test with"
-    )
-    parser.add_argument(
         "--token",
         default=os.getenv("TEST_AUTH_TOKEN"),
-        help="Authentication token"
+        help="Authentication token (user is derived from token)"
     )
     parser.add_argument(
-        "--days",
-        type=int,
-        default=30,
-        help="Number of days to query (default: 30)"
+        "--start-date",
+        default=None,
+        help="Start date YYYY-MM-DD (default: 30 days ago)"
     )
-    
+    parser.add_argument(
+        "--end-date",
+        default=None,
+        help="End date YYYY-MM-DD (default: today)"
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Limit for raw spans (default: 10)"
+    )
+
     args = parser.parse_args()
-    
-    # Validate required arguments
-    if not args.user_id:
-        print("❌ Error: --user-id is required (or set TEST_USER_ID environment variable)")
-        sys.exit(1)
-    
+
     if not args.token:
         print("❌ Error: --token is required (or set TEST_AUTH_TOKEN environment variable)")
         sys.exit(1)
-    
+
+    end = args.end_date or str(date.today())
+    start = args.start_date or str(date.today() - timedelta(days=30))
+
     # Run tests
     success1 = test_analytics_endpoint(
         base_url=args.base_url,
-        user_id=args.user_id,
         auth_token=args.token,
-        days=args.days
+        start_date=start,
+        end_date=end,
     )
-    
+
     success2 = test_raw_spans_endpoint(
         base_url=args.base_url,
-        user_id=args.user_id,
         auth_token=args.token,
-        days=7,
-        limit=10
+        start_date=start,
+        end_date=end,
+        limit=args.limit,
     )
     
     # Print summary

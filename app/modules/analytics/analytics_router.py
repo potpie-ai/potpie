@@ -1,5 +1,6 @@
 """FastAPI router for analytics endpoints."""
 
+import os
 from datetime import date
 from typing import List, Optional
 
@@ -114,13 +115,13 @@ class AnalyticsAPI:
                 )
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to process tokens by day: {error_msg}",
+                detail="Failed to process tokens by day.",
             )
         except Exception as e:
-            logger.exception(f"Error fetching tokens by day: {e}")
+            logger.exception("Error fetching tokens by day: %s", e)
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to retrieve tokens by day: {str(e)}",
+                detail="Failed to retrieve tokens by day.",
             )
 
     # ---- Aggregated analytics ----
@@ -147,7 +148,7 @@ class AnalyticsAPI:
 
         try:
             service = AnalyticsService()
-            analytics_data = await service.get_user_analytics(
+            analytics_data = service.get_user_analytics(
                 user_id=user_id,
                 start_date=start_date,
                 end_date=end_date,
@@ -164,13 +165,13 @@ class AnalyticsAPI:
                 )
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to process analytics data: {error_msg}",
+                detail="Failed to process analytics data.",
             )
         except Exception as e:
-            logger.exception(f"Error fetching analytics: {e}")
+            logger.exception("Error fetching analytics: %s", e)
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to retrieve analytics data: {str(e)}",
+                detail="Failed to retrieve analytics data.",
             )
 
     # ---- Raw span data ----
@@ -203,7 +204,7 @@ class AnalyticsAPI:
 
         try:
             service = AnalyticsService()
-            spans = await service.get_raw_spans(
+            spans = service.get_raw_spans(
                 user_id=user_id,
                 start_date=start_date,
                 end_date=end_date,
@@ -221,13 +222,13 @@ class AnalyticsAPI:
                 )
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to process raw span data: {error_msg}",
+                detail="Failed to process raw span data.",
             )
         except Exception as e:
-            logger.exception(f"Error fetching raw spans: {e}")
+            logger.exception("Error fetching raw spans: %s", e)
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to retrieve raw span data: {str(e)}",
+                detail="Failed to retrieve raw span data.",
             )
 
     # ---- Debug: raw Logfire response ----
@@ -244,6 +245,12 @@ class AnalyticsAPI:
         end_date: Optional[date] = _END_DATE_QUERY,
         user=Depends(AuthService.check_auth),
     ):
+        env = (os.getenv("ENV") or os.getenv("LOGFIRE_ENVIRONMENT") or "").strip().lower()
+        if env not in ("local", "development", "dev"):
+            raise HTTPException(
+                status_code=403,
+                detail="Debug endpoint is only available in local/development environment.",
+            )
         _validate_date_range(start_date, end_date)
         user_id = user.get("user_id")
         try:
@@ -264,11 +271,11 @@ class AnalyticsAPI:
                 )
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to process debug data: {error_msg}",
+                detail="Failed to process debug data.",
             )
         except Exception as e:
-            logger.exception(f"Error fetching raw Logfire response: {e}")
+            logger.exception("Error fetching raw Logfire response: %s", e)
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to retrieve raw response: {str(e)}",
+                detail="Failed to retrieve raw response.",
             )

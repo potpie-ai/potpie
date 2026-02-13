@@ -6,7 +6,7 @@ from contextvars import ContextVar
 from typing import List, Dict, Any, Optional
 
 _openrouter_usage_list: ContextVar[List[Dict[str, Any]]] = ContextVar(
-    "openrouter_usage_list", default=[]
+    "openrouter_usage_list"
 )
 
 # Rough credits per 1K tokens for estimation when API doesn't return cost (OpenRouter-style).
