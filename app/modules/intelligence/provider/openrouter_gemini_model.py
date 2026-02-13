@@ -54,23 +54,23 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
             if total_tokens is None:
                 total_tokens = prompt_tokens + completion_tokens
 
-            # Always push when we have usage: use API cost if present, else estimate so logs show a cost
+            # Push usage when we have token data.
+            # Only push API-reported cost; estimates are for log display only.
             if prompt_tokens or completion_tokens:
                 from_api = cost is not None
-                if cost is None:
-                    cost = estimate_cost_for_log(prompt_tokens, completion_tokens)
                 push_usage_context(
                     str(self.model_name),
                     int(prompt_tokens),
                     int(completion_tokens),
                     int(total_tokens),
-                    float(cost),
+                    float(cost) if from_api else None,
                 )
+                log_cost = cost if from_api else estimate_cost_for_log(prompt_tokens, completion_tokens)
                 suffix = "" if from_api else " (estimated)"
                 msg = (
                     f"[OpenRouter cost] model={self.model_name} "
                     f"prompt_tokens={prompt_tokens} completion_tokens={completion_tokens} "
-                    f"cost={cost} credits{suffix}"
+                    f"cost={log_cost} credits{suffix}"
                 )
                 logger.info(msg)
                 print(msg, flush=True)

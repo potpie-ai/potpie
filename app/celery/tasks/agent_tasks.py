@@ -362,7 +362,7 @@ def execute_agent_background(
                         conversation_id,
                         run_id,
                         "end",
-                        {"status": "error", "message": str(e)},
+                        {"status": "error", "message": "An internal error occurred."},
                     )
                 except Exception:
                     logger.exception(
@@ -659,7 +659,7 @@ def execute_regenerate_background(
                         conversation_id,
                         run_id,
                         "end",
-                        {"status": "error", "message": str(e)},
+                        {"status": "error", "message": "An internal error occurred."},
                     )
                 except Exception:
                     logger.exception(

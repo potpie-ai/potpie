@@ -13,7 +13,7 @@ if [ ! -f .env ]; then
 fi
 
 # Get the API key from .env
-API_KEY=$(grep GOOGLE_IDENTITY_TOOL_KIT_KEY .env | cut -d '=' -f2)
+API_KEY=$(grep GOOGLE_IDENTITY_TOOL_KIT_KEY .env | cut -d '=' -f2-)
 
 if [ -z "$API_KEY" ]; then
     echo "❌ Error: GOOGLE_IDENTITY_TOOL_KIT_KEY not found in .env"

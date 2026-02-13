@@ -21,8 +21,10 @@ def get_firebase_token(email: str, password: str) -> dict:
     identity_key = os.getenv("GOOGLE_IDENTITY_TOOL_KIT_KEY")
     
     if not identity_key:
-        print("❌ Error: GOOGLE_IDENTITY_TOOL_KIT_KEY not found in .env")
-        sys.exit(1)
+        return {
+            "success": False,
+            "error": "GOOGLE_IDENTITY_TOOL_KIT_KEY not found in .env",
+        }
     
     url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={identity_key}"
     
@@ -99,7 +101,7 @@ def main():
         print('  -H "Authorization: Bearer $(grep AUTH_TOKEN my_credentials.txt | cut -d= -f2-)"')
         
     else:
-        print(f"\n❌ Login failed!")
+        print("\n❌ Login failed!")
         print(f"Error: {result['error']}")
         sys.exit(1)
 

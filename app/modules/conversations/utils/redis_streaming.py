@@ -147,10 +147,12 @@ class RedisStreamManager:
                                         ct = u.get("completion_tokens", 0) or 0
                                         if c is not None:
                                             try:
-                                                total_cost += float(c)
+                                                cost_val = float(c)
+                                                total_cost += cost_val
+                                                cost_str = f", cost={cost_val} credits"
                                             except (TypeError, ValueError):
-                                                pass
-                                            cost_str = f", cost={c} credits"
+                                                logger.debug("Malformed cost value in stream: %r", c)
+                                                cost_str = ""
                                         else:
                                             est = estimate_cost_for_log(pt, ct) if (pt or ct) else 0.0
                                             cost_str = f", cost≈{est} credits (estimated)" if (pt or ct) else ""

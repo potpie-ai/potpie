@@ -234,9 +234,7 @@ class AnalyticsService:
         sd, ed, start_dt, end_dt = self._resolve_date_range(start_date, end_date)
         days = (ed - sd).days + 1  # inclusive
 
-        logger.info(
-            f"Fetching analytics for user {user_id} from {sd} to {ed} ({days} days)"
-        )
+        logger.info("Fetching analytics from %s to %s (%s days)", sd, ed, days)
 
         # Query Logfire for different data types
         with LogfireQueryClient(read_token=self.read_token) as client:
@@ -447,15 +445,17 @@ class AnalyticsService:
                 )
                 date_key = timestamp.strftime("%Y-%m-%d")
 
-                # Parse tokens and estimate cost
-                # Using rough pricing: $0.50 per 1M input tokens, $1.50 per 1M output tokens
-                # (Adjust based on your actual model pricing)
+                # Parse tokens and estimate cost.
+                # NOTE: These are fallback estimates — actual per-model pricing
+                # should come from OpenRouter response metadata when available.
+                # Default: $0.50/1M input tokens, $1.50/1M output tokens.
                 input_tokens = float(record.get('input_tokens') or 0)
                 output_tokens = float(record.get('output_tokens') or 0)
-                
-                # Calculate cost (price per million tokens)
-                input_cost = (input_tokens / 1_000_000) * 0.50
-                output_cost = (output_tokens / 1_000_000) * 1.50
+
+                input_cost_per_million = float(os.getenv("LLM_INPUT_COST_PER_MILLION", "0.50"))
+                output_cost_per_million = float(os.getenv("LLM_OUTPUT_COST_PER_MILLION", "1.50"))
+                input_cost = (input_tokens / 1_000_000) * input_cost_per_million
+                output_cost = (output_tokens / 1_000_000) * output_cost_per_million
                 record_cost = input_cost + output_cost
                 
                 total_cost += record_cost
@@ -485,9 +485,10 @@ class AnalyticsService:
         # Calculate LLM call stats
         total_llm_calls = sum(outcomes_count.values())
         if total_llm_calls == 0:
-            total_llm_calls = len(cost_data)  # Count all LLM records
-        success_count = outcomes_count.get('success', total_llm_calls)  # Default all to success
-        success_rate = success_count / total_llm_calls if total_llm_calls > 0 else 1.0
+            total_llm_calls = len(cost_data)
+        success_count = outcomes_count.get('success', 0)
+        # Only report a meaningful rate when we have explicit outcome data
+        success_rate = success_count / total_llm_calls if total_llm_calls > 0 and outcomes_count else 0.0
 
         # Calculate average duration
         durations = [
@@ -515,7 +516,9 @@ class AnalyticsService:
             ConversationStat(
                 date=date,
                 count=len(conv_ids),
-                avg_messages=len(conv_ids),  # Simplified - could calculate actual message count
+                # Actual per-conversation message counts are not available from
+                # span data; default to 0 to avoid misleading values.
+                avg_messages=0,
             )
             for date, conv_ids in sorted(conv_by_date.items())
         ]

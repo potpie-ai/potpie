@@ -50,8 +50,8 @@ All endpoints require Bearer authentication; the user is derived from the token.
 Total tokens per day, grouped by project.
 
 **Parameters:**
-- `start_date` (query, required): Start date YYYY-MM-DD
-- `end_date` (query, required): End date YYYY-MM-DD
+- `start_date` (query, optional): Start date YYYY-MM-DD. Defaults to 30 days before end_date.
+- `end_date` (query, optional): End date YYYY-MM-DD. Defaults to today.
 
 **Authentication:** Required (Bearer token)
 
@@ -60,8 +60,8 @@ Total tokens per day, grouped by project.
 Aggregated analytics (costs, runs, conversations) for the authenticated user.
 
 **Parameters:**
-- `start_date` (query, required): Start date YYYY-MM-DD
-- `end_date` (query, required): End date YYYY-MM-DD
+- `start_date` (query, optional): Start date YYYY-MM-DD. Defaults to 30 days before end_date.
+- `end_date` (query, optional): End date YYYY-MM-DD. Defaults to today.
 
 **Authentication:** Required (Bearer token)
 
@@ -78,6 +78,7 @@ Aggregated analytics (costs, runs, conversations) for the authenticated user.
   "summary": {
     "total_cost": 12.45,
     "total_llm_calls": 156,
+    "total_tokens": 245000,
     "avg_duration_ms": 2340.5,
     "success_rate": 0.94
   },
@@ -112,8 +113,8 @@ Aggregated analytics (costs, runs, conversations) for the authenticated user.
 Raw Logfire span data (useful for debugging or custom analysis).
 
 **Parameters:**
-- `start_date` (query, required): Start date YYYY-MM-DD
-- `end_date` (query, required): End date YYYY-MM-DD
+- `start_date` (query, optional): Start date YYYY-MM-DD. Defaults to 30 days before end_date.
+- `end_date` (query, optional): End date YYYY-MM-DD. Defaults to today.
 - `limit` (query, optional): Max number of spans (default: 100, max: 1000)
 
 **Authentication:** Required (Bearer token)

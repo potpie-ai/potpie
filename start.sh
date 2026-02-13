@@ -1,7 +1,11 @@
 #!/bin/bash
 set -e
 
-source .env
+if [ -f .env ]; then
+    source .env
+else
+    echo "Warning: .env file not found — continuing with existing environment"
+fi
 
 # Set up Service Account Credentials
 export GOOGLE_APPLICATION_CREDENTIALS="./service-account.json"
@@ -39,6 +43,9 @@ if ! uv sync; then
   exit 1
 fi
 
+# Activate the venv created by `uv sync` so subsequent commands use the right Python
+source .venv/bin/activate
+
 # Install gVisor (optional, for command isolation)
 echo "Installing gVisor (optional, for command isolation)..."
 if python scripts/install_gvisor.py 2>/dev/null; then
@@ -73,14 +80,7 @@ if [[ "$OSTYPE" == "darwin"* ]] || [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == 
   fi
 fi
 
-# Apply database migrations within the uv-managed environment
-
-uv venv
-
-source .venv/bin/activate
-
-uv sync
-
+# Apply database migrations
 alembic upgrade heads
 
 echo "Starting momentum application..."

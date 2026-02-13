@@ -100,6 +100,7 @@ FastAPI automatically generates interactive docs:
   "summary": {
     "total_cost": 12.45,
     "total_llm_calls": 156,
+    "total_tokens": 245000,
     "avg_duration_ms": 2340.5,
     "success_rate": 0.94
   },
@@ -156,8 +157,8 @@ const pieData = {
     value={`$${analytics.summary.total_cost.toFixed(2)}`}
   />
   <StatCard 
-    title="Agent Runs"
-    value={analytics.summary.total_agent_runs}
+    title="LLM Calls"
+    value={analytics.summary.total_llm_calls}
   />
   <StatCard 
     title="Success Rate"
@@ -195,7 +196,7 @@ Then restart your server.
 
 **This is normal if:**
 - The user has no activity in the time period
-- The user_id doesn't match what's in Logfire
+- The authenticated user doesn't match what's in Logfire
 - You haven't generated any traces yet
 
 **To verify:**

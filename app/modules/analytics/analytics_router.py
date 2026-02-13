@@ -90,7 +90,7 @@ class AnalyticsAPI:
         description="Returns total tokens per day, grouped by project, for the "
         "authenticated user within a custom date range.",
     )
-    async def get_tokens_by_day(
+    def get_tokens_by_day(
         start_date: Optional[date] = _START_DATE_QUERY,
         end_date: Optional[date] = _END_DATE_QUERY,
         user=Depends(AuthService.check_auth),
@@ -135,16 +135,14 @@ class AnalyticsAPI:
         "from Logfire, including LLM costs, agent runs, and conversation "
         "statistics within a custom date range.",
     )
-    async def get_user_analytics(
+    def get_user_analytics(
         start_date: Optional[date] = _START_DATE_QUERY,
         end_date: Optional[date] = _END_DATE_QUERY,
         user=Depends(AuthService.check_auth),
     ):
         _validate_date_range(start_date, end_date)
         user_id = user.get("user_id")
-        logger.info(
-            f"User {user_id} requesting analytics ({start_date} to {end_date})"
-        )
+        logger.info("Requesting analytics (%s to %s)", start_date, end_date)
 
         try:
             service = AnalyticsService()
@@ -184,7 +182,7 @@ class AnalyticsAPI:
         description="Retrieve raw Logfire span data for the authenticated user "
         "within a custom date range. Useful for debugging or custom analysis.",
     )
-    async def get_raw_spans(
+    def get_raw_spans(
         start_date: Optional[date] = _START_DATE_QUERY,
         end_date: Optional[date] = _END_DATE_QUERY,
         limit: int = Query(
@@ -198,8 +196,7 @@ class AnalyticsAPI:
         _validate_date_range(start_date, end_date)
         user_id = user.get("user_id")
         logger.info(
-            f"User {user_id} requesting raw spans "
-            f"({start_date} to {end_date}, limit {limit})"
+            "Requesting raw spans (%s to %s, limit %s)", start_date, end_date, limit
         )
 
         try:
@@ -240,7 +237,7 @@ class AnalyticsAPI:
         description="Returns the raw Logfire API response (column- and row-oriented) "
         "for a minimal query. Use to inspect exact keys and structure.",
     )
-    async def get_debug_raw(
+    def get_debug_raw(
         start_date: Optional[date] = _START_DATE_QUERY,
         end_date: Optional[date] = _END_DATE_QUERY,
         user=Depends(AuthService.check_auth),
