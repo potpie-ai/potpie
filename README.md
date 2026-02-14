@@ -131,7 +131,7 @@ To stop all services:
 ./scripts/stop.sh
 ```
 
-#### Now Setup Potpie.ai Frontend
+#### Now set up Potpie.ai Frontend
 
 ```bash
 cd potpie-ui
