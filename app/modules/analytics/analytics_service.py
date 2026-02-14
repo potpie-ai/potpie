@@ -1,6 +1,7 @@
 """Service for querying Logfire analytics data."""
 
 import os
+import re
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional
@@ -19,9 +20,19 @@ from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+# Pattern for valid identifiers passed into SQL queries (Firebase UIDs,
+# UUIDs, etc.).  Rejects anything that could be used for SQL injection.
+_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_\-:.@]+$")
+
 
 class AnalyticsService:
-    """Service for querying and aggregating Logfire data."""
+    """Service for querying and aggregating Logfire data.
+
+    All user-supplied values are validated against a strict allowlist
+    pattern before being interpolated into SQL queries.  The Logfire
+    ``LogfireQueryClient`` does not support parameterized queries, so
+    input validation is used as the primary defence against injection.
+    """
 
     def __init__(self):
         """Initialize with Logfire read token from environment."""
@@ -30,9 +41,17 @@ class AnalyticsService:
             logger.warning("LOGFIRE_READ_TOKEN not found in environment")
 
     @staticmethod
-    def _escape_sql_string(value: str) -> str:
-        """Escape single quotes for safe SQL string literal."""
-        return value.replace("'", "''")
+    def _validate_identifier(value: str, name: str = "value") -> str:
+        """Validate that *value* matches a safe identifier pattern.
+
+        Raises ``ValueError`` if the value contains characters outside the
+        allowlist ``[A-Za-z0-9_\\-:.@]``.
+        """
+        if not value or not _SAFE_ID_RE.match(value):
+            raise ValueError(
+                f"Invalid {name}: contains disallowed characters"
+            )
+        return value
 
     @staticmethod
     def _extract_rows(result) -> list:
@@ -60,8 +79,9 @@ class AnalyticsService:
         if not self.read_token:
             raise ValueError("LOGFIRE_READ_TOKEN not configured")
 
+        safe_uid = self._validate_identifier(user_id, "user_id")
         sd, ed, start_dt, _ = self._resolve_date_range(start_date, end_date)
-        user_id_escaped = self._escape_sql_string(user_id)
+
         query = f"""
         SELECT
             start_timestamp,
@@ -71,7 +91,7 @@ class AnalyticsService:
             attributes->>'gen_ai.usage.output_tokens' as output_tokens,
             attributes->>'openinference.span.kind' as span_kind
         FROM records
-        WHERE attributes->>'user_id' = '{user_id_escaped}'
+        WHERE attributes->>'user_id' = '{safe_uid}'
           AND start_timestamp >= '{sd.isoformat()}'
           AND start_timestamp <= '{ed.isoformat()}T23:59:59Z'
         LIMIT 20
@@ -162,8 +182,8 @@ class AnalyticsService:
         if not self.read_token:
             raise ValueError("LOGFIRE_READ_TOKEN not configured")
 
+        safe_uid = self._validate_identifier(user_id, "user_id")
         sd, ed, start_dt, end_dt = self._resolve_date_range(start_date, end_date)
-        user_id_escaped = self._escape_sql_string(user_id)
 
         query = f"""
         SELECT
@@ -174,7 +194,7 @@ class AnalyticsService:
                 + COALESCE((attributes->>'gen_ai.usage.output_tokens')::numeric, 0)
             ) AS total_tokens
         FROM records
-        WHERE attributes->>'user_id' = '{user_id_escaped}'
+        WHERE attributes->>'user_id' = '{safe_uid}'
           AND start_timestamp >= '{sd.isoformat()}'
           AND start_timestamp <= '{ed.isoformat()}T23:59:59Z'
           AND attributes->>'openinference.span.kind' = 'LLM'
@@ -197,8 +217,6 @@ class AnalyticsService:
         rows = self._extract_rows(raw)
         result = []
         for row in rows or []:
-            if not isinstance(row, dict):
-                continue
             day_val = row.get("day")
             if day_val is not None and hasattr(day_val, "isoformat"):
                 day_str = day_val.isoformat()[:10]
@@ -236,12 +254,14 @@ class AnalyticsService:
 
         logger.info("Fetching analytics from %s to %s (%s days)", sd, ed, days)
 
+        safe_uid = self._validate_identifier(user_id, "user_id")
+
         # Query Logfire for different data types
         with LogfireQueryClient(read_token=self.read_token) as client:
-            cost_data = self._get_cost_data(client, user_id, start_dt, sd, ed)
-            agent_data = self._get_agent_data(client, user_id, start_dt, sd, ed)
+            cost_data = self._get_cost_data(client, safe_uid, start_dt, sd, ed)
+            agent_data = self._get_agent_data(client, safe_uid, start_dt, sd, ed)
             conversation_data = self._get_conversation_data(
-                client, user_id, start_dt, sd, ed
+                client, safe_uid, start_dt, sd, ed
             )
 
         return self._aggregate_analytics(
@@ -262,10 +282,12 @@ class AnalyticsService:
         start_date: date,
         end_date: date,
     ) -> List[Dict]:
-        """Query LLM usage data from LLM spans within a date range."""
-        user_id_escaped = self._escape_sql_string(user_id)
+        """Query LLM usage data from LLM spans within a date range.
+
+        ``user_id`` must already be validated via ``_validate_identifier``.
+        """
         query = f"""
-        SELECT 
+        SELECT
             start_timestamp,
             attributes->>'gen_ai.usage.input_tokens' as input_tokens,
             attributes->>'gen_ai.usage.output_tokens' as output_tokens,
@@ -273,9 +295,9 @@ class AnalyticsService:
             attributes->>'outcome' as outcome,
             span_name
         FROM records
-        WHERE 
+        WHERE
             attributes->>'openinference.span.kind' = 'LLM'
-            AND attributes->>'user_id' = '{user_id_escaped}'
+            AND attributes->>'user_id' = '{user_id}'
             AND start_timestamp >= '{start_date.isoformat()}'
             AND start_timestamp <= '{end_date.isoformat()}T23:59:59Z'
         ORDER BY start_timestamp DESC
@@ -324,10 +346,12 @@ class AnalyticsService:
         start_date: date,
         end_date: date,
     ) -> List[Dict]:
-        """Query agent/LLM execution data within a date range."""
-        user_id_escaped = self._escape_sql_string(user_id)
+        """Query agent/LLM execution data within a date range.
+
+        ``user_id`` must already be validated via ``_validate_identifier``.
+        """
         query = f"""
-        SELECT 
+        SELECT
             start_timestamp,
             attributes->>'agent_id' as agent_id,
             attributes->>'run_id' as run_id,
@@ -335,8 +359,8 @@ class AnalyticsService:
             span_name,
             duration_ms
         FROM records
-        WHERE 
-            attributes->>'user_id' = '{user_id_escaped}'
+        WHERE
+            attributes->>'user_id' = '{user_id}'
             AND start_timestamp >= '{start_date.isoformat()}'
             AND start_timestamp <= '{end_date.isoformat()}T23:59:59Z'
         ORDER BY start_timestamp DESC
@@ -378,16 +402,18 @@ class AnalyticsService:
         start_date: date,
         end_date: date,
     ) -> List[Dict]:
-        """Query conversation statistics within a date range."""
-        user_id_escaped = self._escape_sql_string(user_id)
+        """Query conversation statistics within a date range.
+
+        ``user_id`` must already be validated via ``_validate_identifier``.
+        """
         query = f"""
-        SELECT 
+        SELECT
             start_timestamp,
             attributes->>'conversation_id' as conversation_id,
             span_name
         FROM records
-        WHERE 
-            attributes->>'user_id' = '{user_id_escaped}'
+        WHERE
+            attributes->>'user_id' = '{user_id}'
             AND attributes->>'conversation_id' IS NOT NULL
             AND start_timestamp >= '{start_date.isoformat()}'
             AND start_timestamp <= '{end_date.isoformat()}T23:59:59Z'
@@ -464,8 +490,9 @@ class AnalyticsService:
                 daily_costs_map[date_key]["tokens"] += input_tokens + output_tokens
                 daily_costs_map[date_key]["run_count"] += 1
 
-                # Track outcomes – value may be None even when key exists
-                outcome = record.get('outcome') or 'success'
+                # Track outcomes – value may be None even when key exists.
+                # Use 'unknown' for missing data so we don't inflate success metrics.
+                outcome = record.get('outcome') or 'unknown'
                 outcomes_count[str(outcome)] += 1
             except (ValueError, TypeError) as e:
                 logger.debug(f"Skipping invalid cost record: {e}")
@@ -539,7 +566,7 @@ class AnalyticsService:
                 success_rate=round(success_rate, 4),
             ),
             daily_costs=daily_costs,
-            agent_runs_by_outcome=dict(outcomes_count) if outcomes_count else {"success": total_llm_calls},
+            agent_runs_by_outcome=dict(outcomes_count) if outcomes_count else {"unknown": total_llm_calls},
             conversation_stats=conversation_stats,
         )
 
@@ -565,21 +592,23 @@ class AnalyticsService:
         if not self.read_token:
             raise ValueError("LOGFIRE_READ_TOKEN not configured")
 
+        safe_uid = self._validate_identifier(user_id, "user_id")
         sd, ed, start_dt, _ = self._resolve_date_range(start_date, end_date)
-        user_id_escaped = self._escape_sql_string(user_id)
+        capped_limit = min(limit, 10000)
+
         query = f"""
-        SELECT 
+        SELECT
             start_timestamp,
             span_name,
             duration_ms,
             attributes
         FROM records
-        WHERE 
-            attributes->>'user_id' = '{user_id_escaped}'
+        WHERE
+            attributes->>'user_id' = '{safe_uid}'
             AND start_timestamp >= '{sd.isoformat()}'
             AND start_timestamp <= '{ed.isoformat()}T23:59:59Z'
         ORDER BY start_timestamp DESC
-        LIMIT {min(limit, 10000)}
+        LIMIT {capped_limit}
         """
 
         with LogfireQueryClient(read_token=self.read_token) as client:
@@ -587,10 +616,10 @@ class AnalyticsService:
                 raw = client.query_json_rows(
                     sql=query,
                     min_timestamp=start_dt,
-                    limit=limit,
+                    limit=capped_limit,
                 )
                 rows = self._extract_rows(raw)
                 return [RawSpan(**row) for row in rows]
             except Exception as e:
-                logger.error(f"Error querying raw spans: {e}")
+                logger.error("Error querying raw spans: %s", e)
                 return []
