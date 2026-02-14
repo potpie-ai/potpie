@@ -65,6 +65,8 @@ echo "============================================"
 echo ""
 
 # Save to file (no token printed to stdout)
+umask 077
+
 cat > my_token.txt << EOF
 USER_ID=$USER_ID
 EMAIL=$EMAIL_FROM_RESPONSE
