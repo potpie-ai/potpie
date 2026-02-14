@@ -44,6 +44,21 @@ class MediaService:
     # Add minimum dimension threshold to avoid over-compression of small images
     MIN_DIMENSION_FOR_RESIZE = 1024  # Only resize if larger than this
 
+    # MIME type to safe file extension (for storage path only)
+    MIME_TO_EXTENSION = {
+        "image/jpeg": "jpg",
+        "image/jpg": "jpg",
+        "image/png": "png",
+        "image/webp": "webp",
+        "image/gif": "gif",
+        "application/pdf": "pdf",
+        "text/plain": "txt",
+        "text/csv": "csv",
+        "application/json": "json",
+        "application/octet-stream": "bin",
+    }
+    MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB for non-image files
+
     def __init__(self, db: Session):
         self.db = db
         self.is_multimodal_enabled = config_provider.get_is_multimodal_enabled()
@@ -94,6 +109,14 @@ class MediaService:
         if not self.is_multimodal_enabled:
             raise MediaServiceError("Multimodal functionality is disabled")
 
+    def _require_cloud_storage(self, operation: str = "this operation"):
+        """Raise clear error when LOCAL storage is configured (not implemented)."""
+        if self.storage_provider == StorageProvider.LOCAL:
+            raise MediaServiceError(
+                "Local storage provider is not supported for file uploads or storage operations. "
+                "Please configure S3 or GCS in the object storage descriptor."
+            )
+
     def is_multimodal_available(self) -> bool:
         """Check if multimodal functionality is available"""
         return self.is_multimodal_enabled
@@ -108,23 +131,26 @@ class MediaService:
         """Upload and process an image file"""
         self._check_multimodal_enabled()
         try:
-            # Read file data
-            if isinstance(file, UploadFile):
+            # Read file data (accept bytes or any file-like with .read(), e.g. Starlette/FastAPI UploadFile)
+            if isinstance(file, bytes):
+                file_data = file
+            else:
                 file_data = await file.read()
-                if not file_name:
+                if not file_name and getattr(file, "filename", None):
                     file_name = file.filename or "unknown"
-                if not mime_type:
+                if not mime_type and getattr(file, "content_type", None):
                     mime_type = file.content_type or "application/octet-stream"
-                # Validate that we actually got bytes
                 if not isinstance(file_data, bytes):
                     raise MediaServiceError(
                         f"Expected bytes from file.read(), got {type(file_data)}"
                     )
-            else:
-                file_data = file
-                # Validate that file_data is bytes
-                if not isinstance(file_data, bytes):
-                    raise MediaServiceError(f"Expected bytes, got {type(file_data)}")
+
+            # Reject empty files
+            if not file_data or len(file_data) == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="File is empty",
+                )
 
             # Validate the image
             logger.debug(
@@ -141,14 +167,10 @@ class MediaService:
                 file_data, mime_type
             )
 
-            # Generate storage path
-            storage_path = self._generate_storage_path(attachment_id, file_name)
+            # Generate storage path from MIME (allowlist) to avoid unsafe client extension
+            storage_path = self._generate_storage_path(attachment_id, mime_type)
 
-            # Upload to GCS
-            # await self._upload_to_gcs(storage_path, processed_image_data, mime_type)
-            await self._upload_to_cloud(storage_path, processed_image_data, mime_type)
-
-            # Create database record
+            # Create database record first so we never leave orphan objects in storage
             attachment = MessageAttachment(
                 id=attachment_id,
                 message_id=message_id,
@@ -163,6 +185,16 @@ class MediaService:
 
             self.db.add(attachment)
             self.db.commit()
+
+            try:
+                await self._upload_to_cloud(
+                    storage_path, processed_image_data, mime_type
+                )
+            except Exception:
+                # Roll back DB so we don't have a record pointing to missing storage
+                self.db.delete(attachment)
+                self.db.commit()
+                raise
 
             logger.info(
                 f"Successfully uploaded image {attachment_id} to {storage_path}"
@@ -182,6 +214,85 @@ class MediaService:
             if isinstance(e, (MediaServiceError, HTTPException)):
                 raise
             raise MediaServiceError(f"Failed to upload image: {str(e)}")
+
+    async def upload_file(
+        self,
+        file: Union[UploadFile, bytes],
+        file_name: str,
+        mime_type: str,
+        message_id: Optional[str] = None,
+    ) -> AttachmentUploadResponse:
+        """Upload any file (non-image) without image validation. Stored as DOCUMENT."""
+        self._check_multimodal_enabled()
+        try:
+            if isinstance(file, bytes):
+                file_data = file
+            else:
+                file_data = await file.read()
+                if not file_name and getattr(file, "filename", None):
+                    file_name = file.filename or "unknown"
+                if not mime_type and getattr(file, "content_type", None):
+                    mime_type = file.content_type or "application/octet-stream"
+                if not isinstance(file_data, bytes):
+                    raise MediaServiceError(
+                        f"Expected bytes from file.read(), got {type(file_data)}"
+                    )
+
+            if not file_data or len(file_data) == 0:
+                raise HTTPException(status_code=400, detail="File is empty")
+
+            if len(file_data) > self.MAX_FILE_SIZE:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File size exceeds maximum allowed ({self.MAX_FILE_SIZE} bytes)",
+                )
+
+            attachment_id = str(uuid7())
+            storage_path = self._generate_storage_path(
+                attachment_id, mime_type or "application/octet-stream", file_name
+            )
+
+            attachment = MessageAttachment(
+                id=attachment_id,
+                message_id=message_id,
+                attachment_type=AttachmentType.DOCUMENT,
+                file_name=file_name,
+                file_size=len(file_data),
+                mime_type=mime_type or "application/octet-stream",
+                storage_path=storage_path,
+                storage_provider=self.storage_provider,
+                file_metadata=None,
+            )
+
+            self.db.add(attachment)
+            self.db.commit()
+
+            try:
+                await self._upload_to_cloud(
+                    storage_path, file_data, mime_type or "application/octet-stream"
+                )
+            except Exception:
+                self.db.delete(attachment)
+                self.db.commit()
+                raise
+
+            logger.info(
+                f"Successfully uploaded file {attachment_id} to {storage_path}"
+            )
+            return AttachmentUploadResponse(
+                id=attachment_id,
+                attachment_type=AttachmentType.DOCUMENT,
+                file_name=file_name,
+                mime_type=mime_type or "application/octet-stream",
+                file_size=len(file_data),
+            )
+
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Error uploading file: {str(e)}")
+            if isinstance(e, (MediaServiceError, HTTPException)):
+                raise
+            raise MediaServiceError(f"Failed to upload file: {str(e)}")
 
     def _validate_image(self, file_data: bytes, mime_type: str) -> None:
         """Validate image file"""
@@ -283,28 +394,31 @@ class MediaService:
             logger.error(f"Error processing image: {str(e)}")
             raise MediaServiceError(f"Failed to process image: {str(e)}")
 
-    def _generate_storage_path(self, attachment_id: str, file_name: str) -> str:
-        """Generate a unique storage path for the file"""
-        # Extract file extension
-        file_extension = ""
-        if "." in file_name:
-            file_extension = file_name.split(".")[-1].lower()
-
-        # Create path: attachments/year/month/attachment_id.extension
+    def _generate_storage_path(
+        self, attachment_id: str, mime_type: str, file_name: Optional[str] = None
+    ) -> str:
+        """Generate a unique storage path. Uses MIME allowlist, else extension from file_name, else 'bin'."""
         from datetime import datetime
 
+        file_extension = self.MIME_TO_EXTENSION.get(
+            (mime_type or "").lower().split(";")[0].strip(), ""
+        )
+        if not file_extension and file_name and "." in file_name:
+            ext = file_name.rsplit(".", 1)[-1].lower()
+            if ext.isalnum() and len(ext) <= 6:
+                file_extension = ext
+        if not file_extension:
+            file_extension = "bin"
+
         now = datetime.utcnow()
-        path = f"attachments/{now.year:04d}/{now.month:02d}/{attachment_id}"
-
-        if file_extension:
-            path += f".{file_extension}"
-
+        path = f"attachments/{now.year:04d}/{now.month:02d}/{attachment_id}.{file_extension}"
         return path
 
     async def _upload_to_cloud(
         self, storage_path: str, file_data: bytes, mime_type: str
     ) -> None:
         """Upload file to the configured object storage bucket via boto3."""
+        self._require_cloud_storage("upload")
         if not self.s3_client or not self.bucket_name:
             raise MediaServiceError("Object storage client not initialized for upload")
 
@@ -345,6 +459,7 @@ class MediaService:
             if not attachment:
                 raise HTTPException(status_code=404, detail="Attachment not found")
 
+            self._require_cloud_storage("download")
             if not self.s3_client or not self.bucket_name:
                 raise MediaServiceError(
                     "Object storage client not initialized for download"
@@ -379,6 +494,7 @@ class MediaService:
             if not attachment:
                 raise HTTPException(status_code=404, detail="Attachment not found")
 
+            self._require_cloud_storage("signed URL")
             if not self.s3_client or not self.bucket_name:
                 raise MediaServiceError(
                     "Object storage client not initialized for signed URL"
@@ -409,6 +525,7 @@ class MediaService:
                 return False
 
             try:
+                self._require_cloud_storage("delete")
                 if not self.s3_client or not self.bucket_name:
                     raise MediaServiceError(
                         "Object storage client not initialized for delete"
@@ -452,34 +569,41 @@ class MediaService:
     ) -> None:
         """Update message to link with uploaded attachments"""
         try:
-            # Update attachments with message_id
-            if attachment_ids:
-                # Update attachments with message_id
-                (
-                    self.db.query(MessageAttachment)
-                    .filter(
-                        MessageAttachment.id.in_(attachment_ids),
-                        MessageAttachment.message_id.is_(None),
-                    )
-                    .update(
-                        {MessageAttachment.message_id: message_id},
-                        synchronize_session=False,
-                    )
+            from app.modules.conversations.message.message_model import Message
+
+            if not attachment_ids:
+                return
+
+            # Validate message exists before linking
+            message = (
+                self.db.query(Message).filter(Message.id == message_id).first()
+            )
+            if not message:
+                raise MediaServiceError(
+                    f"Cannot link attachments: message {message_id} not found"
                 )
 
-                # Update message has_attachments flag
-                from app.modules.conversations.message.message_model import Message
-
-                message = (
-                    self.db.query(Message).filter(Message.id == message_id).first()
+            # Update only attachments that are still unlinked
+            updated_count = (
+                self.db.query(MessageAttachment)
+                .filter(
+                    MessageAttachment.id.in_(attachment_ids),
+                    MessageAttachment.message_id.is_(None),
                 )
-                if message:
-                    message.has_attachments = True
-
-                self.db.commit()
-                logger.info(
-                    f"Updated message {message_id} with {len(attachment_ids)} attachments"
+                .update(
+                    {MessageAttachment.message_id: message_id},
+                    synchronize_session=False,
                 )
+            )
+
+            # Set has_attachments only if at least one attachment was linked
+            if updated_count > 0:
+                message.has_attachments = True
+
+            self.db.commit()
+            logger.info(
+                f"Updated message {message_id} with {updated_count} attachments"
+            )
 
         except Exception as e:
             self.db.rollback()

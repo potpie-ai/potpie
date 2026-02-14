@@ -21,6 +21,19 @@ from app.modules.utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 
+def _safe_content_disposition_filename(name: str) -> str:
+    """Sanitize filename for Content-Disposition to prevent header injection."""
+    if not name or not name.strip():
+        return "attachment"
+    # Remove control chars, newlines, and double quotes; keep safe printable chars
+    safe = "".join(
+        c
+        for c in name
+        if c.isprintable() and c not in '"\\\r\n\t'
+    ).strip()
+    return safe[:255] if safe else "attachment"
+
+
 class MediaController:
     def __init__(self, db: Session, user_id: str, user_email: str):
         self.db = db
@@ -73,6 +86,36 @@ class MediaController:
             logger.error(f"Unexpected error uploading image: {str(e)}")
             raise HTTPException(status_code=500, detail="Failed to upload image")
 
+    async def upload_file_any(
+        self, file: UploadFile, message_id: Optional[str] = None
+    ) -> AttachmentUploadResponse:
+        """Upload any file: images are validated and processed; other files stored as document."""
+        self._check_multimodal_enabled()
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No file provided")
+        file_name = file.filename
+        mime_type = file.content_type or "application/octet-stream"
+        is_image = mime_type.startswith("image/") and mime_type in getattr(
+            self.media_service, "ALLOWED_IMAGE_TYPES", {}
+        )
+        try:
+            if is_image:
+                return await self.upload_image(file, message_id)
+            return await self.media_service.upload_file(
+                file=file,
+                file_name=file_name,
+                mime_type=mime_type,
+                message_id=message_id,
+            )
+        except MediaServiceError as e:
+            logger.error(f"Media service error: {str(e)}")
+            raise HTTPException(status_code=500, detail=str(e))
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error uploading file: {str(e)}")
+            raise HTTPException(status_code=500, detail="Failed to upload file")
+
     async def get_attachment_access_url(
         self, attachment_id: str, expiration_minutes: int = 60
     ) -> AttachmentAccessResponse:
@@ -83,13 +126,17 @@ class MediaController:
             if not attachment:
                 raise HTTPException(status_code=404, detail="Attachment not found")
 
-            # Check if user has access to the message/conversation containing this attachment
-            if attachment.message_id:
-                access_granted = await self._check_attachment_access(
-                    attachment.message_id
+            # Orphan attachments (not linked to a message) are not accessible
+            if not attachment.message_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Attachment is not linked to a message and cannot be accessed",
                 )
-                if not access_granted:
-                    raise HTTPException(status_code=403, detail="Access denied")
+            access_granted = await self._check_attachment_access(
+                attachment.message_id
+            )
+            if not access_granted:
+                raise HTTPException(status_code=403, detail="Access denied")
 
             # Generate signed URL
             signed_url = await self.media_service.generate_signed_url(
@@ -115,13 +162,17 @@ class MediaController:
             if not attachment:
                 raise HTTPException(status_code=404, detail="Attachment not found")
 
-            # Check if user has access to the message/conversation containing this attachment
-            if attachment.message_id:
-                access_granted = await self._check_attachment_access(
-                    attachment.message_id
+            # Orphan attachments (not linked to a message) are not accessible
+            if not attachment.message_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Attachment is not linked to a message and cannot be accessed",
                 )
-                if not access_granted:
-                    raise HTTPException(status_code=403, detail="Access denied")
+            access_granted = await self._check_attachment_access(
+                attachment.message_id
+            )
+            if not access_granted:
+                raise HTTPException(status_code=403, detail="Access denied")
 
             # Get the file data from storage
             file_data = await self.media_service.get_attachment_data(attachment_id)
@@ -129,9 +180,12 @@ class MediaController:
             # Create streaming response
             io.BytesIO(file_data)
 
-            # Set appropriate headers
+            # Set appropriate headers (sanitize filename to prevent header injection)
+            safe_filename = _safe_content_disposition_filename(
+                attachment.file_name
+            )
             headers = {
-                "Content-Disposition": f'inline; filename="{attachment.file_name}"',
+                "Content-Disposition": f'inline; filename="{safe_filename}"',
                 "Content-Type": attachment.mime_type,
                 "Content-Length": str(len(file_data)),
             }
@@ -153,13 +207,17 @@ class MediaController:
             if not attachment:
                 raise HTTPException(status_code=404, detail="Attachment not found")
 
-            # Check access permissions
-            if attachment.message_id:
-                access_granted = await self._check_attachment_access(
-                    attachment.message_id
+            # Orphan attachments (not linked to a message) are not accessible
+            if not attachment.message_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Attachment is not linked to a message and cannot be accessed",
                 )
-                if not access_granted:
-                    raise HTTPException(status_code=403, detail="Access denied")
+            access_granted = await self._check_attachment_access(
+                attachment.message_id
+            )
+            if not access_granted:
+                raise HTTPException(status_code=403, detail="Access denied")
 
             return AttachmentInfo(
                 id=attachment.id,
@@ -185,13 +243,17 @@ class MediaController:
             if not attachment:
                 raise HTTPException(status_code=404, detail="Attachment not found")
 
-            # Check if user has permission to delete (must be message owner or have write access)
-            if attachment.message_id:
-                access_granted = await self._check_attachment_access(
-                    attachment.message_id, require_write=True
+            # Orphan attachments (not linked to a message) cannot be deleted via API
+            if not attachment.message_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Attachment is not linked to a message and cannot be accessed",
                 )
-                if not access_granted:
-                    raise HTTPException(status_code=403, detail="Access denied")
+            access_granted = await self._check_attachment_access(
+                attachment.message_id, require_write=True
+            )
+            if not access_granted:
+                raise HTTPException(status_code=403, detail="Access denied")
 
             success = await self.media_service.delete_attachment(attachment_id)
             if success:
@@ -262,13 +324,17 @@ class MediaController:
             if not attachment:
                 raise HTTPException(status_code=404, detail="Attachment not found")
 
-            # Check access permissions
-            if attachment.message_id:
-                access_granted = await self._check_attachment_access(
-                    attachment.message_id
+            # Orphan attachments (not linked to a message) are not accessible
+            if not attachment.message_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Attachment is not linked to a message and cannot be accessed",
                 )
-                if not access_granted:
-                    raise HTTPException(status_code=403, detail="Access denied")
+            access_granted = await self._check_attachment_access(
+                attachment.message_id
+            )
+            if not access_granted:
+                raise HTTPException(status_code=403, detail="Access denied")
 
             # Test multimodal functionality
             result = await self.media_service.test_multimodal_functionality(
