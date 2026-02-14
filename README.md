@@ -1,5 +1,5 @@
 
-<p align="center">
+<p align="center" style="padding: 80px 0;">
   <a href="https://potpie.ai?utm_source=github">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="./assets/logo_dark.svg" />
@@ -70,9 +70,10 @@ To see how to Contribute, visit [Contributing Guide](./contributing.md)
    defaultUsername=defaultuser
 
    # AI / LLM Configuration
-   {PROVIDER}_API_KEY=sk-proj-your-key    # e.g. OPENAI_API_KEY, ANTHROPIC_API_KEY
-   INFERENCE_MODEL=ollama_chat/qwen2.5-coder:7b
-   CHAT_MODEL=ollama_chat/qwen2.5-coder:7b
+   LLM_PROVIDER=openai                    # openai | ollama | anthropic | openrouter
+   OPENAI_API_KEY=sk-proj-your-key
+   CHAT_MODEL=gpt-4o
+   INFERENCE_MODEL=gpt-4o-mini
 
    # Database
    POSTGRES_SERVER=postgresql://postgres:mysecretpassword@localhost:5432/momentum
@@ -91,6 +92,8 @@ To see how to Contribute, visit [Contributing Guide](./contributing.md)
    ```
 
    > **`CHAT_MODEL`** and **`INFERENCE_MODEL`** are used for agent reasoning and knowledge graph generation respectively. Model names follow the `provider/model_name` format as expected by [LiteLLM](https://docs.litellm.ai/docs/providers).
+
+   > **💡 Using Ollama instead?** Set `LLM_PROVIDER=ollama` and use `CHAT_MODEL=ollama_chat/qwen2.5-coder:7b` and `INFERENCE_MODEL=ollama_chat/qwen2.5-coder:7b`.
 
    See `.env.template` for the full list of optional configuration (logging, feature flags, object storage, email, analytics, etc.).
 
