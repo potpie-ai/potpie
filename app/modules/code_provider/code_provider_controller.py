@@ -1,6 +1,6 @@
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import os
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
@@ -15,6 +15,9 @@ except ImportError:
     GithubException = None
     BadCredentialsException = None
 
+# Maximum search query length to prevent DoS attacks
+MAX_SEARCH_QUERY_LENGTH = 200
+
 
 class CodeProviderController:
     """
@@ -27,20 +30,98 @@ class CodeProviderController:
         self.code_provider_service = CodeProviderService(db)
         self.branch_cache = BranchCache()
 
-    def _filter_branches(self, branches: list, search_query: str = None) -> list:
+    @staticmethod
+    def _normalize_search_query(search: Optional[str]) -> Optional[str]:
+        """
+        Normalize and validate search query.
+        
+        Args:
+            search: Raw search query string (can be None, empty string, or whitespace-only)
+            
+        Returns:
+            Normalized lowercase search query, or None if invalid/empty
+            
+        Raises:
+            HTTPException: If search query is too long (DoS protection)
+        """
+        if not search:
+            return None
+        
+        # Strip whitespace
+        search = search.strip()
+        
+        # Return None if empty after stripping
+        if not search:
+            return None
+        
+        # Validate length to prevent DoS attacks
+        if len(search) > MAX_SEARCH_QUERY_LENGTH:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Search query too long. Maximum length is {MAX_SEARCH_QUERY_LENGTH} characters."
+            )
+        
+        # Normalize to lowercase for case-insensitive matching
+        return search.lower()
+
+    def _filter_branches(self, branches: list, search_query: Optional[str] = None) -> list:
         """
         Filter branches by search query (case-insensitive).
 
         Args:
-            branches: List of branch names
-            search_query: Optional search query to filter branches
+            branches: List of branch names (strings or dicts with 'name' key)
+            search_query: Optional normalized search query to filter branches
 
         Returns:
             Filtered list of branches
         """
-        if not search_query:
-            return branches
-        return [branch for branch in branches if search_query in branch.lower()]
+        if not search_query or not branches:
+            return branches or []
+        
+        filtered = []
+        for branch in branches:
+            # Handle both string branches and dict branches
+            if isinstance(branch, str):
+                branch_name = branch.lower()
+            elif isinstance(branch, dict):
+                branch_name = branch.get("name", "").lower()
+            else:
+                continue
+            
+            if search_query in branch_name:
+                filtered.append(branch)
+        
+        return filtered
+
+    def _filter_repositories(self, repositories: list, search_query: Optional[str] = None) -> list:
+        """
+        Filter repositories by search query (case-insensitive).
+        Searches in both full_name and name fields.
+
+        Args:
+            repositories: List of repository dictionaries with 'full_name' and/or 'name' keys
+            search_query: Optional normalized search query to filter repositories
+
+        Returns:
+            Filtered list of repositories
+        """
+        if not search_query or not repositories:
+            return repositories or []
+        
+        filtered = []
+        for repo in repositories:
+            if not isinstance(repo, dict):
+                continue
+            
+            # Check both full_name and name fields
+            full_name = repo.get("full_name", "").lower()
+            name = repo.get("name", "").lower()
+            
+            # Match if search query appears in either field
+            if search_query in full_name or search_query in name:
+                filtered.append(repo)
+        
+        return filtered
 
     def _paginate_branches(
         self, branches: list, limit: int = None, offset: int = 0
@@ -91,8 +172,8 @@ class CodeProviderController:
 
         logger = setup_logger(__name__)
 
-        # Normalize search query
-        search_query = search.strip().lower() if search and search.strip() else None
+        # Normalize and validate search query
+        search_query = self._normalize_search_query(search)
 
         # Check cache first for all branches (without search filter)
         cached_branches = self.branch_cache.get_branches(repo_name, search_query=None)
@@ -102,7 +183,7 @@ class CodeProviderController:
             filtered_branches = self._filter_branches(cached_branches, search_query)
             if search_query:
                 logger.info(
-                    f"Filtered to {len(filtered_branches)} branches matching '{search}'"
+                    f"Filtered to {len(filtered_branches)} branches matching '{search_query}'"
                 )
 
             return self._paginate_branches(filtered_branches, limit, offset)
@@ -121,7 +202,7 @@ class CodeProviderController:
             filtered_branches = self._filter_branches(all_branches, search_query)
             if search_query:
                 logger.info(
-                    f"Filtered to {len(filtered_branches)} branches matching '{search}'"
+                    f"Filtered to {len(filtered_branches)} branches matching '{search_query}'"
                 )
 
             return self._paginate_branches(filtered_branches, limit, offset)
@@ -185,7 +266,7 @@ class CodeProviderController:
                     )
                     if search_query:
                         logger.info(
-                            f"Filtered to {len(filtered_branches)} branches matching '{search}'"
+                            f"Filtered to {len(filtered_branches)} branches matching '{search_query}'"
                         )
 
                     return self._paginate_branches(filtered_branches, limit, offset)
@@ -224,7 +305,7 @@ class CodeProviderController:
                         )
                         if search_query:
                             logger.info(
-                                f"Filtered to {len(filtered_branches)} branches matching '{search}'"
+                                f"Filtered to {len(filtered_branches)} branches matching '{search_query}'"
                             )
 
                         return self._paginate_branches(filtered_branches, limit, offset)
@@ -250,15 +331,28 @@ class CodeProviderController:
                 detail=f"Repository {repo_name} not found or error fetching branches: {str(e)}",
             )
 
-    async def get_user_repos(self, user: Dict[str, Any]) -> Dict[str, Any]:
+    async def get_user_repos(self, user: Dict[str, Any], search: str = None) -> Dict[str, Any]:
         """
         Get user repositories using the configured provider.
 
         When the provider is GitHub and GitHub App credentials are configured,
         use the GitHub App pathway to include installations/repos linked via the app.
         Otherwise, fall back to the generic provider listing (e.g., GitBucket).
+
+        Args:
+            user: User dictionary containing user_id
+            search: Optional search query to filter repositories by name
+
+        Returns:
+            Dictionary containing filtered repositories
         """
         try:
+            from app.modules.utils.logger import setup_logger
+            logger = setup_logger(__name__)
+
+            # Normalize and validate search query
+            search_query = self._normalize_search_query(search)
+
             provider_type = os.getenv("CODE_PROVIDER", "github").lower()
 
             if (
@@ -267,11 +361,22 @@ class CodeProviderController:
                 and config_provider.get_github_key()
             ):
                 github_service = GithubService(self.db)
-                return await github_service.get_combined_user_repos(user["user_id"])
+                result = await github_service.get_combined_user_repos(user["user_id"])
+            else:
+                provider = CodeProviderFactory.create_provider()
+                repositories = provider.list_user_repositories()
+                result = {"repositories": repositories}
 
-            provider = CodeProviderFactory.create_provider()
-            repositories = provider.list_user_repositories()
-            return {"repositories": repositories}
+            # Apply search filter if provided
+            if search_query:
+                original_count = len(result.get("repositories", []))
+                result["repositories"] = self._filter_repositories(result.get("repositories", []), search_query)
+                logger.info(
+                    f"Filtered to {len(result['repositories'])} repositories matching '{search_query}' "
+                    f"(from {original_count} total)"
+                )
+
+            return result
 
         except Exception as e:
             raise HTTPException(
