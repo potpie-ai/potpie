@@ -31,7 +31,7 @@ async def get_user_repos(
     # Remove duplicates while preserving order
     seen = set()
     deduped_repos = []
-    for repo in reversed(user_repo_list.get("repositories", [])):
+    for repo in user_repo_list.get("repositories", []):
         if not isinstance(repo, dict):
             continue
         # Create tuple of values to use as hash key

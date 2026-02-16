@@ -151,7 +151,7 @@ class CodeProviderController:
             return {"branches": branches}
 
     async def get_branch_list(
-        self, repo_name: str, limit: int = None, offset: int = 0, search: str = None
+        self, repo_name: str, limit: Optional[int] = None, offset: int = 0, search: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Get branch list for a repository using the configured provider.
@@ -331,7 +331,7 @@ class CodeProviderController:
                 detail=f"Repository {repo_name} not found or error fetching branches: {str(e)}",
             )
 
-    async def get_user_repos(self, user: Dict[str, Any], search: str = None) -> Dict[str, Any]:
+    async def get_user_repos(self, user: Dict[str, Any], search: Optional[str] = None) -> Dict[str, Any]:
         """
         Get user repositories using the configured provider.
 
