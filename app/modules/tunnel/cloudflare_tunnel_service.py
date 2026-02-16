@@ -93,8 +93,9 @@ class CloudflareTunnelService:
 
                     # Ensure ingress is configured if domain is available
                     if self.has_domain():
+                        subdomain = f"tunnel-{user_id[:8]}"
                         ingress_configured = await self._configure_tunnel_ingress(
-                            client, tunnel_id
+                            client, tunnel_id, subdomain
                         )
                         if not ingress_configured:
                             logger.warning(
@@ -139,8 +140,9 @@ class CloudflareTunnelService:
                 # Configure ingress if domain is available
                 ingress_configured = False
                 if self.has_domain():
+                    subdomain = f"tunnel-{user_id[:8]}"
                     ingress_configured = await self._configure_tunnel_ingress(
-                        client, tunnel_id
+                        client, tunnel_id, subdomain
                     )
                     if not ingress_configured:
                         logger.warning(
@@ -263,26 +265,45 @@ class CloudflareTunnelService:
             return None
 
     async def _configure_tunnel_ingress(
-        self, client: httpx.AsyncClient, tunnel_id: str
+        self,
+        client: httpx.AsyncClient,
+        tunnel_id: str,
+        subdomain: Optional[str] = None,
     ) -> bool:
         """
         Configure ingress rules for the tunnel.
 
-        This sets up routing so traffic to the tunnel URL is forwarded to localhost:3001.
-        Requires CLOUDFLARE_TUNNEL_DOMAIN to be set.
+        This sets up routing so traffic to the tunnel hostname is forwarded to localhost.
+        Requires CLOUDFLARE_TUNNEL_DOMAIN to be set. Uses hostname so the extension
+        gets a stable URL and uses the named tunnel instead of quick tunnel.
         """
         if not self.has_domain():
             return False
 
         try:
-            # Configure ingress: route all traffic to localhost:3001
-            # The extension will update this dynamically when LocalServer port changes
-            config = {
-                "ingress": [
-                    {"service": "http://localhost:3001"},
+            # Build ingress: hostname rule so named tunnel has a public URL
+            hostname = (
+                f"{subdomain}.{CLOUDFLARE_TUNNEL_DOMAIN}"
+                if subdomain
+                else None
+            )
+            if hostname:
+                ingress = [
+                    {
+                        "hostname": hostname,
+                        "service": "http://localhost:3001",
+                    },
                     {"service": "http_status:404"},  # Catch-all for unmatched routes
                 ]
-            }
+                logger.info(
+                    f"[CloudflareTunnel] Configuring ingress with hostname: {hostname}"
+                )
+            else:
+                ingress = [
+                    {"service": "http://localhost:3001"},
+                    {"service": "http_status:404"},
+                ]
+            config = {"ingress": ingress}
 
             response = await client.put(
                 f"{CLOUDFLARE_API_BASE}/accounts/{self.account_id}/cfd_tunnel/{tunnel_id}/configurations",

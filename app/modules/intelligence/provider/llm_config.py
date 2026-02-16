@@ -245,6 +245,21 @@ MODEL_CONFIG_MAP = {
         "base_url": "https://openrouter.ai/api/v1",
         "api_version": None,
     },
+    # MiniMax (via OpenRouter)
+    "openrouter/minimax/minimax-m2.5": {
+        "provider": "minimax",
+        "context_window": 196608,
+        "auth_provider": "openrouter",
+        "default_params": {"temperature": 0.3, "max_tokens": 8000},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": False,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_version": None,
+    },
 }
 
 

@@ -137,8 +137,8 @@ def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
                         command if len(command) <= 80 else command[:77] + "..."
                     )
                     mode_text = f" ({mode} mode)" if mode == "async" else ""
-                    return f"Executing terminal command: {display_cmd}{mode_text}"
-            return "Executing terminal command"
+                    return f"run: {display_cmd}{mode_text}"
+            return "running command"
         case "read_todos":
             return "Reading todo list"
         case "write_todos":
@@ -615,7 +615,7 @@ def get_tool_response_message(
                     return f"Terminal command started: {display_cmd}{mode_text}"
                 if exit_code is not None:
                     status = "completed" if success else "failed"
-                    return f"Terminal command {status}: {display_cmd} (exit {exit_code}){mode_text}"
+                    return f"cmd: {parsed_cmd}"
                 return f"Terminal command executed: {display_cmd}{mode_text}"
             if command:
                 display_cmd = command if len(command) <= 60 else command[:57] + "..."
@@ -1009,8 +1009,8 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
                 dir_info = f" in directory '{working_dir}'" if working_dir else ""
                 mode_info = f" (mode: {mode})" if mode == "async" else ""
                 timeout_info = f" (timeout: {timeout}ms)" if timeout else ""
-                return f"-> executing terminal command: {command}{dir_info}{mode_info}{timeout_info}\n"
-            return "-> executing terminal command\n"
+                return f"-> run: {command}{dir_info}{mode_info}{timeout_info}\n"
+            return "-> executing command\n"
         case "add_todo":
             content = args.get("content", "")
             return f"-> adding todo: '{content[:60]}{'...' if len(content) > 60 else ''}'\n"

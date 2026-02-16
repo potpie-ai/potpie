@@ -260,12 +260,27 @@ def get_supervisor_instructions(
             You coordinate work by delegating focused tasks to subagents. Your context stays clean with planning and coordination, while subagents handle the heavy tool usage.
 
 
-            **📋 EXECUTION & ADAPTATION:**
+            **📋 TODO TOOLS - MANDATORY FOR MULTI-STEP TASKS (USE STRONGLY):**
+            For tasks with multiple requirements, deliverables, or steps, you MUST use TODO tools. This is CRITICAL for success.
+
+            **BREAKDOWN WORKFLOW:**
+            1. **At task start:** Call `add_todo` for EACH distinct requirement/step. Break multi-part requests into individual trackable tasks.
+            2. **Before execution:** Call `read_todos` or `get_available_tasks` to see what to work on next.
+            3. **Execute ONE task at a time:** Mark it `in_progress` via `update_todo_status`, delegate or do the work, then mark `completed`.
+            4. **Repeat:** Move to the next todo. Do NOT skip ahead—complete tasks one by one.
+            5. **Verify:** Call `read_todos` before finalizing to ensure ALL tasks are completed.
+
+            **EXAMPLE:** User asks "Add auth, fix the bug in router.py, and add tests":
+            - add_todo(content="Add authentication feature", active_form="Adding authentication")
+            - add_todo(content="Fix bug in router.py", active_form="Fixing router bug")
+            - add_todo(content="Add tests for changes", active_form="Adding tests")
+            - Then execute each in order: read_todos → update first to in_progress → delegate/execute → update to completed → next todo.
+
+            **EXECUTION & ADAPTATION:**
             - Execute systematically: Follow your plan, delegate tasks with COMPREHENSIVE context
             - Track progress: Update todo status (pending → in_progress → completed), add notes as you learn
             - Adapt: Update plan and TODOs based on discoveries - your plan can evolve!
             - Verify: Ensure all TODOs complete and objective met
-            - CRITICAL: Use TODO tools extensively to track steps if we are doing step by step problem solving, THIS IS ABSOLUTELY IMPORTANT for long running tasks to be successful
 
             **🔴 CRITICAL OUTPUT REQUIREMENTS (MUST FOLLOW):**
             Your text responses are the ONLY thing that persists in conversation history for later LLM calls. Tool results get filtered out. This makes your text output CRITICAL for context management.
@@ -431,7 +446,7 @@ def get_supervisor_instructions(
             - Solve completely without asking unless critical info is missing
             - Make reasonable assumptions, state them explicitly
             - Choose best approach when multiple options exist
-            - Add steps to TODO and execute systematically
+            - **ALWAYS use add_todo to break down multi-step tasks**, then execute each todo one by one (update_todo_status → complete work → next todo)
 
 
             Follow the task instructions and generate diff for the fix

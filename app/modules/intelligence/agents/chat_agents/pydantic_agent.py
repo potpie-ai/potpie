@@ -47,6 +47,9 @@ from pydantic_ai.messages import (
 from app.modules.intelligence.agents.chat_agents.multi_agent.utils.message_history_utils import (
     _history_strings_to_model_messages,
 )
+from app.modules.intelligence.agents.chat_agents.multi_agent.utils.tool_utils import (
+    wrap_structured_tools,
+)
 from pydantic_ai.exceptions import ModelRetry, AgentRunError, UserError
 from langchain_core.tools import StructuredTool
 
@@ -132,16 +135,12 @@ class PydanticRagAgent(ChatAgent):
             "supports_tool_parallelism", True
         )
 
+        # Use wrap_structured_tools to pass args_schema for tools (e.g. add_requirements)
+        # so the LLM receives correct parameter definitions and doesn't guess/hallucinate args.
+        wrapped_tools = wrap_structured_tools(self.tools)
         agent_kwargs = {
             "model": self.llm_provider.get_pydantic_model(),
-            "tools": [
-                Tool(
-                    name=tool.name,
-                    description=tool.description,
-                    function=handle_exception(tool.func),  # type: ignore
-                )
-                for tool in self.tools
-            ],
+            "tools": wrapped_tools,
             "mcp_servers": mcp_toolsets,
             "instructions": f"""
 # Agent Execution Guidelines

@@ -465,6 +465,14 @@ AVAILABLE_MODELS = [
         is_chat_model=True,
         is_inference_model=True,
     ),
+    AvailableModelOption(
+        id="openrouter/minimax/minimax-m2.5",
+        name="MiniMax M2.5",
+        description="SOTA model for coding and productivity, strong on SWE-Bench and BrowseComp",
+        provider="minimax",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
 ]
 
 # Extract unique platform providers from the available models
