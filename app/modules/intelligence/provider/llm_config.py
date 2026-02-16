@@ -211,6 +211,33 @@ MODEL_CONFIG_MAP = {
         "base_url": "https://openrouter.ai/api/v1",
         "api_version": None,
     },
+    # Forge Models (OpenAI-compatible router via TensorBlock)
+    "forge/OpenAI/gpt-4o-mini": {
+        "provider": "openai",
+        "auth_provider": "forge",
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": True,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": "https://api.forge.tensorblock.co/v1",
+        "api_version": None,
+    },
+    "forge/OpenAI/gpt-4o": {
+        "provider": "openai",
+        "auth_provider": "forge",
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": True,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": "https://api.forge.tensorblock.co/v1",
+        "api_version": None,
+    },
 }
 
 
@@ -301,6 +328,7 @@ def get_config_for_model(model_string: str) -> Dict[str, Any]:
         "openrouter",
         "azure",
         "ollama",
+        "forge",
     }
     return {
         "provider": provider,
