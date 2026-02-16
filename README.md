@@ -1,10 +1,10 @@
 
-<p align="center" style="padding: 80px 0;">
+<p align="center">
   <a href="https://potpie.ai?utm_source=github">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="./assets/logo_dark.svg" />
+      <source media="(prefers-color-scheme: dark)" srcset="./assets/readme_logo_dark.svg" />
       <source media="(prefers-color-scheme: light)" srcset="./assets/logo_light.svg" />
-      <img src="./assets/logo_light.svg" width="318px" alt="Potpie AI logo" />
+      <img src="./assets/logo_light.svg"  alt="Potpie AI logo" />
     </picture>
   </a>
 </p>
@@ -16,27 +16,17 @@
 
 
 <p align="center">
-<img width="700" alt="Potpie Dashboard" src="https://github.com/user-attachments/assets/efa6b8ba-447b-474c-a62e-2c65940085ee" />
+<img width="700" alt="Potpie Dashboard" src="./assets/home_page.png" />
 </p>
 
 <p align="center">
+  <a href="https://docs.potpie.ai"><img src="https://img.shields.io/badge/Docs-Read-blue?logo=readthedocs&logoColor=white" alt="Docs"></a>
   <a href="https://github.com/potpie-ai/potpie/blob/main/LICENSE"><img src="https://img.shields.io/github/license/potpie-ai/potpie" alt="Apache 2.0"></a>
   <a href="https://github.com/potpie-ai/potpie"><img src="https://img.shields.io/github/stars/potpie-ai/potpie" alt="GitHub Stars"></a>
   <a href="https://discord.gg/ryk5CMD5v6"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
   <a href="https://marketplace.visualstudio.com/items?itemName=PotpieAI.potpie-vscode-extension"><img src="https://custom-icon-badges.demolab.com/badge/VSCode-Extension-0078d7.svg?logo=vsc&logoColor=white" alt="VSCode Extension"></a>
 </p>
 
-## Documentation
-
-For full documentation, visit [docs.potpie.ai](https://docs.potpie.ai)
-
-To see how to Contribute, visit [Contributing Guide](./contributing.md)
-
-## Community & Support
-
-- [GitHub Issues](https://github.com/potpie-ai/potpie/issues). Best for: bugs and errors you encounter using Potpie.
-- [Discord](https://discord.gg/ryk5CMD5v6). Best for: sharing your projects and hanging out with the community.
-- [Email Support](https://potpie.ai). Best for: problems with your setup or infrastructure.
 
 ## Quick Start
 
@@ -135,13 +125,12 @@ To stop all services:
 
 ```bash
 cd potpie-ui
-```
-```bash
+
 cp .env.template .env
-```
-```bash
+
 pnpm build && pnpm start
 ```
+
 
 ## GitHub Authentication
 
@@ -195,23 +184,23 @@ Read more in our [documentation](https://docs.potpie.ai/open-source/agents/creat
 
 ## Use Cases
 
-- **Onboarding** — Help developers new to a codebase understand and get up to speed quickly. Ask it how to set up a new project, how to run the tests, etc.
+- **Onboarding** : Help developers new to a codebase understand and get up to speed quickly. Ask it how to set up a new project, how to run the tests, etc.
 
   > We tried to onboard ourselves with Potpie to the [**AgentOps**](https://github.com/AgentOps-AI/AgentOps) codebase and it worked like a charm: Video [here](https://youtu.be/_mPixNDn2r8).
 
-- **Codebase Understanding** — Answer questions about any library you're integrating, explain functions, features, and architecture.
+- **Codebase Understanding** : Answer questions about any library you're integrating, explain functions, features, and architecture.
 
   > We used the Q&A agent to understand the underlying working of a feature of the [**CrewAI**](https://github.com/CrewAIInc/CrewAI) codebase that was not documented in official docs: Video [here](https://www.linkedin.com/posts/dhirenmathur_what-do-you-do-when-youre-stuck-and-even-activity-7256704603977613312-8X8G).
 
-- **Low Level Design** — Get detailed implementation plans for new features or improvements before writing code.
+- **Low Level Design** : Get detailed implementation plans for new features or improvements before writing code.
 
   > We fed an open issue from the [**Portkey-AI/Gateway**](https://github.com/Portkey-AI/Gateway) project to this agent to generate a low level design for it: Video [here](https://www.linkedin.com/posts/dhirenmathur_potpie-ai-agents-vs-llms-i-am-extremely-activity-7255607456448286720-roOC).
 
-- **Reviewing Code Changes** — Understand the functional impact of changes and compute the blast radius of modifications.
+- **Reviewing Code Changes** : Understand the functional impact of changes and compute the blast radius of modifications.
 
-- **Debugging** — Get step-by-step debugging guidance based on stacktraces and codebase context.
+- **Debugging** : Get step-by-step debugging guidance based on stacktraces and codebase context.
 
-- **Testing** — Generate contextually aware unit and integration test plans and test code that understand your codebase's structure and purpose.
+- **Testing** : Generate contextually aware unit and integration test plans and test code that understand your codebase's structure and purpose.
 
 ## Extensions & Integrations
 
@@ -219,17 +208,17 @@ Read more in our [documentation](https://docs.potpie.ai/open-source/agents/creat
 
 Bring the power of Potpie's AI agents directly into your development environment.
 
-- **Direct Integration** — Access all Potpie agents without leaving your editor
-- **Quick Setup** — Install directly from the [VSCode Marketplace](https://marketplace.visualstudio.com/items?itemName=PotpieAI.potpie-vscode-extension)
-- **Seamless Workflow** — Ask questions, get explanations, and implement suggestions right where you code
+- **Direct Integration** : Access all Potpie agents without leaving your editor
+- **Quick Setup** : Install directly from the [VSCode Marketplace](https://marketplace.visualstudio.com/items?itemName=PotpieAI.potpie-vscode-extension)
+- **Seamless Workflow** : Ask questions, get explanations, and implement suggestions right where you code
 
 ### Slack Integration
 
 Bring your custom AI agents directly into your team's communication hub.
 
-- **Team Collaboration** — Access all Potpie agents where your team already communicates
-- **Effortless Setup** — Install and configure in under 2 minutes. [Docs](https://docs.potpie.ai/extensions/slack)
-- **Contextual Assistance** — Get answers, code solutions, and project insights directly in Slack
+- **Team Collaboration** : Access all Potpie agents where your team already communicates
+- **Effortless Setup** : Install and configure in under 2 minutes. [Docs](https://docs.potpie.ai/extensions/slack)
+- **Contextual Assistance** : Get answers, code solutions, and project insights directly in Slack
 
 👉 Install the Potpie Slack App: [Here](https://slack.potpie.ai/slack/install)
 
@@ -240,6 +229,12 @@ Access Potpie Agents through an API key for CI/CD workflows and automation. See 
 ### Tool Integration
 
 Edit or add tools in `app/modules/intelligence/tools` and initialize them in `app/modules/intelligence/tools/tool_service.py`.
+
+## Community & Support
+
+- [GitHub Issues](https://github.com/potpie-ai/potpie/issues). Best for: bugs and errors you encounter using Potpie.
+- [Discord](https://discord.gg/ryk5CMD5v6). Best for: sharing your projects and hanging out with the community.
+- [Email Support](https://potpie.ai). Best for: problems with your setup or infrastructure.
 
 
 See [Contributing Guide](./contributing.md) for more details.
