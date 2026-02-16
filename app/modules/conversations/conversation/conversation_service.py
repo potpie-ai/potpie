@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 from datetime import datetime, timezone
-from typing import AsyncGenerator, List, Optional, Dict, Union
+from typing import AsyncGenerator, Callable, List, Optional, Dict, Union
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -49,6 +49,7 @@ from app.modules.media.media_service import MediaService
 from app.modules.conversations.session.session_service import SessionService
 from app.modules.conversations.utils.redis_streaming import RedisStreamManager
 from app.celery.celery_app import celery_app
+from app.modules.conversations.exceptions import GenerationCancelled
 from .conversation_store import ConversationStore, StoreError
 from ..message.message_store import MessageStore
 
@@ -566,6 +567,8 @@ class ConversationService:
         user_id: str,
         stream: bool = True,
         local_mode: bool = False,
+        run_id: Optional[str] = None,
+        check_cancelled: Optional[Callable[[], bool]] = None,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         try:
             logger.info(
@@ -644,6 +647,8 @@ class ConversationService:
                         message.attachment_ids,
                         local_mode=local_mode,
                         tunnel_url=message.tunnel_url,
+                        run_id=run_id,
+                        check_cancelled=check_cancelled,
                     ):
                         yield chunk
                 else:
@@ -657,6 +662,8 @@ class ConversationService:
                         message.attachment_ids,
                         local_mode=local_mode,
                         tunnel_url=message.tunnel_url,
+                        run_id=run_id,
+                        check_cancelled=check_cancelled,
                     ):
                         full_message += chunk.message
                         all_citations = all_citations + chunk.citations
@@ -819,6 +826,8 @@ class ConversationService:
         node_ids: Optional[List[str]] = None,
         attachment_ids: List[str] = [],
         local_mode: bool = False,
+        run_id: Optional[str] = None,
+        check_cancelled: Optional[Callable[[], bool]] = None,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         """Background version of regenerate_last_message for Celery task execution"""
         try:
@@ -862,9 +871,13 @@ class ConversationService:
                 attachment_ids,
                 tunnel_url=None,
                 local_mode=local_mode,
+                run_id=run_id,
+                check_cancelled=check_cancelled,
             ):
                 yield chunk
 
+        except GenerationCancelled:
+            raise
         except (AccessTypeReadError, MessageNotFoundError):
             logger.exception(
                 f"Background regeneration error for {conversation_id}",
@@ -931,6 +944,8 @@ class ConversationService:
         attachment_ids: Optional[List[str]] = None,
         local_mode: bool = False,
         tunnel_url: Optional[str] = None,
+        run_id: Optional[str] = None,
+        check_cancelled: Optional[Callable[[], bool]] = None,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         logger.info(
             f"[_generate_and_stream_ai_response] tunnel_url={tunnel_url}, "
@@ -1004,26 +1019,30 @@ class ConversationService:
             capped_history = validated_history[-msg_cap:]
 
             if type == "CUSTOM_AGENT":
+                custom_ctx = ChatContext(
+                    project_id=str(project_id),
+                    project_name=project_name,
+                    curr_agent_id=str(agent_id),
+                    history=capped_history,
+                    node_ids=[node.node_id for node in node_ids],
+                    query=query,
+                    project_status=project_status,
+                    conversation_id=conversation_id,
+                    user_id=user_id,  # Set user_id for tunnel routing
+                    local_mode=local_mode,
+                    repository=project_info.get("repo_name") if project_info else project_name,
+                    branch=project_info.get("branch_name") if project_info else None,
+                )
+                custom_ctx.check_cancelled = check_cancelled
                 res = (
                     await self.agent_service.custom_agent_service.execute_agent_runtime(
                         user_id,
-                        ChatContext(
-                            project_id=str(project_id),
-                            project_name=project_name,
-                            curr_agent_id=str(agent_id),
-                            history=capped_history,
-                            node_ids=[node.node_id for node in node_ids],
-                            query=query,
-                            project_status=project_status,
-                            conversation_id=conversation_id,
-                            user_id=user_id,  # Set user_id for tunnel routing
-                            local_mode=local_mode,
-                            repository=project_info.get("repo_name") if project_info else project_name,
-                            branch=project_info.get("branch_name") if project_info else None,
-                        ),
+                        custom_ctx,
                     )
                 )
                 async for chunk in res:
+                    if check_cancelled and check_cancelled():
+                        raise GenerationCancelled()
                     self.history_manager.add_message_chunk(
                         conversation_id,
                         chunk.response,
@@ -1061,10 +1080,13 @@ class ConversationService:
                     repository=project_info.get("repo_name") if project_info else project_name,
                     branch=project_info.get("branch_name") if project_info else None,
                 )
+                chat_context.check_cancelled = check_cancelled
 
                 res = self.agent_service.execute_stream(chat_context)
 
                 async for chunk in res:
+                    if check_cancelled and check_cancelled():
+                        raise GenerationCancelled()
                     self.history_manager.add_message_chunk(
                         conversation_id,
                         chunk.response,
@@ -1086,6 +1108,8 @@ class ConversationService:
             logger.info(
                 f"Generated and streamed AI response for conversation {conversation.id} for user {user_id} using agent {agent_id}"
             )
+        except GenerationCancelled:
+            raise
         except Exception as e:
             logger.exception(
                 f"Failed to generate and stream AI response for conversation {conversation.id}",

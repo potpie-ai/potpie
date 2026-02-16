@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
 
 
@@ -82,6 +82,8 @@ class ChatContext(BaseModel):
     )
     # Context images from recent conversation history
     context_images: Optional[Dict[str, Dict[str, Union[str, int]]]] = None
+    # Optional callback for cooperative cancellation (stop API). Set by Celery task.
+    check_cancelled: Optional[Callable[[], bool]] = Field(default=None, exclude=True)
 
     def is_inferring(self) -> bool:
         """Check if the project is still in INFERRING state (AI enrichment in progress)"""

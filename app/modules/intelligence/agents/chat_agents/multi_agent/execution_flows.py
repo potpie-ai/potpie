@@ -11,6 +11,7 @@ from .utils.message_history_utils import (
     prepare_multimodal_message_history,
 )
 from .utils.multimodal_utils import create_multimodal_user_content
+from app.modules.conversations.exceptions import GenerationCancelled
 from app.modules.intelligence.agents.chat_agent import ChatContext, ChatAgentResponse
 from app.modules.utils.logger import setup_logger
 
@@ -344,6 +345,8 @@ class StreamingExecutionFlow:
                         # Clear the reference when done
                         self.current_supervisor_run_ref["run"] = None
 
+        except GenerationCancelled:
+            raise
         except Exception as e:
             error_str = str(e)
             # Check if this is a tool retry error from pydantic-ai
@@ -444,6 +447,8 @@ class MultimodalStreamingExecutionFlow:
                     # Clear the reference when done
                     self.current_supervisor_run_ref["run"] = None
 
+        except GenerationCancelled:
+            raise
         except Exception as e:
             logger.error(
                 f"Error in multimodal multi-agent stream: {str(e)}", exc_info=True

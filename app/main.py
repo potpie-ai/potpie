@@ -5,8 +5,11 @@ import subprocess
 # This must be set before sentence-transformers or any HuggingFace tokenizers are used
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
-import sentry_sdk
+# Load .env before any app imports so modules that read env at import time (e.g. tunnel service) see it
 from dotenv import load_dotenv
+load_dotenv(override=True)
+
+import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -47,7 +50,6 @@ logger = setup_logger(__name__)
 
 class MainApp:
     def __init__(self):
-        load_dotenv(override=True)
         if (
             os.getenv("isDevelopmentMode") == "enabled"
             and os.getenv("ENV") != "development"

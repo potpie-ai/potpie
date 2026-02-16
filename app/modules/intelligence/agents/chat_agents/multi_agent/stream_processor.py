@@ -22,6 +22,7 @@ from .utils.delegation_utils import (
 )
 from .utils.tool_utils import create_tool_call_response, create_tool_result_response
 from .utils.tool_call_stream_manager import ToolCallStreamManager
+from app.modules.conversations.exceptions import GenerationCancelled
 from app.modules.intelligence.agents.chat_agent import (
     ChatAgentResponse,
     ToolCallResponse,
@@ -216,6 +217,10 @@ class StreamProcessor:
         }
 
         async for node in run:
+            # Cooperative cancellation: exit if user hit stop
+            check = getattr(current_context, "check_cancelled", None)
+            if callable(check) and check():
+                raise GenerationCancelled()
             # Determine node type for logging
             is_model_request = Agent.is_model_request_node(node)
             is_call_tools = Agent.is_call_tools_node(node)
@@ -259,6 +264,9 @@ class StreamProcessor:
                             request_stream, context
                         ):
                             chunk_count += 1
+                            check = getattr(current_context, "check_cancelled", None)
+                            if callable(check) and check():
+                                raise GenerationCancelled()
                             yield chunk
                         logger.info(
                             f"[{context}] Finished model request stream: yielded {chunk_count} chunks"
@@ -436,6 +444,10 @@ class StreamProcessor:
                 )
 
                 while True:
+                    # Cooperative cancellation: exit if user hit stop
+                    check = getattr(current_context, "check_cancelled", None)
+                    if callable(check) and check():
+                        raise GenerationCancelled()
                     # Drain delegation output queues and yield any available subagent chunks
                     for queue_key in list(output_queues.keys()):
                         if queue_key in drained_streams:

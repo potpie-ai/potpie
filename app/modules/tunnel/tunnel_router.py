@@ -49,12 +49,31 @@ class TunnelRegisterResponse(BaseModel):
     message: str
     tunnel_url: str
     conversation_id: Optional[str] = None
+    prefer_named_tunnel: Optional[bool] = Field(
+        default=None,
+        description="When True, server has named tunnel configured; extension should prefer POST /tunnels/provision and re-register with that URL.",
+    )
+
+
+class TunnelCapabilitiesResponse(BaseModel):
+    named_tunnel_available: bool = Field(
+        description="When True, extension should call POST /tunnels/provision first and use that tunnel instead of quick tunnel.",
+    )
 
 
 class TunnelStatusResponse(BaseModel):
     connected: bool
     tunnel_url: Optional[str] = None
     conversation_id: Optional[str] = None
+
+
+class TunnelProvisionRequest(BaseModel):
+    local_port: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=65535,
+        description="Port the extension will use with cloudflared: --url http://localhost:PORT. Ingress is configured to this port so traffic reaches your local server. If omitted, server uses CLOUDFLARE_TUNNEL_INGRESS_PORT or 3001.",
+    )
 
 
 class TunnelProvisionResponse(BaseModel):
@@ -74,6 +93,7 @@ class TunnelProvisionResponse(BaseModel):
     description="Provision a named Cloudflare tunnel for the user. Returns token for cloudflared.",
 )
 async def provision_tunnel(
+    body: Optional[TunnelProvisionRequest] = None,
     user=Depends(AuthService.check_auth),
     _db: Session = Depends(get_db),
 ):
@@ -85,10 +105,20 @@ async def provision_tunnel(
     - Auto-reconnection support
     - Better uptime (99%+)
 
-    The returned tunnel_token should be used with:
-    cloudflared tunnel run --token <TOKEN> --url http://localhost:<PORT>
+    Pass local_port (e.g. 8013) so ingress forwards to the same port you use with:
+    cloudflared tunnel run --token <TOKEN> --url http://localhost:<local_port>
+    If omitted, port from the user's last tunnel registration (stored in Redis) is used.
     """
     user_id = user["user_id"]
+    local_port = body.local_port if body else None
+    if local_port is None:
+        tunnel_service = get_tunnel_service()
+        info = tunnel_service.get_tunnel_info(user_id=user_id)
+        if info and isinstance(info.get("local_port"), int):
+            local_port = info["local_port"]
+            logger.info(
+                f"[Tunnel] Using local_port={local_port} from last tunnel registration for user_id={user_id}"
+            )
     cf_service = get_cloudflare_tunnel_service()
 
     if not cf_service.is_configured():
@@ -100,7 +130,7 @@ async def provision_tunnel(
             detail="Named tunnels not configured on server. Please use quick tunnel instead.",
         )
 
-    result = await cf_service.provision_tunnel_for_user(user_id)
+    result = await cf_service.provision_tunnel_for_user(user_id, local_port=local_port)
     if not result:
         logger.error(f"[Tunnel] Failed to provision named tunnel for user {user_id}")
         raise HTTPException(
@@ -112,6 +142,20 @@ async def provision_tunnel(
         f"[Tunnel] Provisioned named tunnel for user {user_id}: {result['tunnel_name']}"
     )
     return TunnelProvisionResponse(**result)
+
+
+@router.get(
+    "/tunnels/capabilities",
+    response_model=TunnelCapabilitiesResponse,
+    description="Check if named tunnel is available. Extension should call this before starting a tunnel and prefer POST /tunnels/provision when true.",
+)
+async def tunnel_capabilities(
+    user=Depends(AuthService.check_auth),
+):
+    """Return whether the server can provision a named tunnel (so the extension can avoid quick tunnel)."""
+    cf_service = get_cloudflare_tunnel_service()
+    named_available = cf_service.is_configured() and cf_service.has_domain()
+    return TunnelCapabilitiesResponse(named_tunnel_available=named_available)
 
 
 @router.post(
@@ -128,11 +172,12 @@ async def register_tunnel(
     user_id = req.user_id or user["user_id"]
     tunnel_service = get_tunnel_service()
 
+    # Tunnel type is determined by the extension: quick = trycloudflare.com, named = our domain (e.g. potpie.ai)
+    tunnel_type = "quick" if "trycloudflare.com" in req.tunnel_url else "named"
     logger.info(
-        f"[TunnelRouter] 📝 Registration request: user_id={user_id}, "
+        f"[TunnelRouter] 📝 Registration request: type={tunnel_type}, user_id={user_id}, "
         f"conversation_id={req.conversation_id}, tunnel_url={req.tunnel_url}, "
-        f"local_port={req.local_port}, repository={req.repository}, branch={req.branch}, "
-        f"request_user_id={req.user_id}, auth_user_id={user['user_id']}"
+        f"local_port={req.local_port}, repository={req.repository}, branch={req.branch}"
     )
 
     # In development, allow http://localhost or http://127.0.0.1 (no cloudflared)
@@ -182,17 +227,25 @@ async def register_tunnel(
         )
     else:
         logger.info(
-            f"[TunnelRouter] ✅ Registration verified: user_id={user_id}, "
+            f"[TunnelRouter] ✅ Registration verified: type={tunnel_type}, user_id={user_id}, "
             f"conversation_id={req.conversation_id}, tunnel_url={req.tunnel_url}"
         )
 
-    logger.info(
-        f"[TunnelRouter] Registered tunnel for user_id={user_id} conversation_id={req.conversation_id}: {req.tunnel_url}"
-    )
+    # Hint extension to use named tunnel when it registered a quick tunnel but server has named tunnel configured
+    prefer_named = False
+    if tunnel_type == "quick":
+        cf_service = get_cloudflare_tunnel_service()
+        if cf_service.is_configured() and cf_service.has_domain():
+            prefer_named = True
+            logger.info(
+                f"[TunnelRouter] Server has named tunnel configured; response includes prefer_named_tunnel=true so extension can switch via POST /tunnels/provision"
+            )
+
     return TunnelRegisterResponse(
         message="Tunnel registered",
         tunnel_url=req.tunnel_url,
         conversation_id=req.conversation_id,
+        prefer_named_tunnel=prefer_named if prefer_named else None,
     )
 
 

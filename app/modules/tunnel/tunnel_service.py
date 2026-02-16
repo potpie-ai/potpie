@@ -20,6 +20,10 @@ logger = setup_logger(__name__)
 TUNNEL_KEY_PREFIX = "tunnel_connection"
 TUNNEL_TTL_SECONDS = 60 * 60  # 1 hour expiry (refreshed on each registration)
 
+# In-process lookup cache: avoid hitting Redis on every get_tunnel_url when the same
+# lookup is repeated (e.g. multiple tools in one message). Entries expire after this many seconds.
+TUNNEL_LOOKUP_CACHE_TTL = 60  # seconds
+
 # Health check settings
 TUNNEL_HEALTH_TIMEOUT = 5.0  # seconds
 
@@ -70,6 +74,23 @@ class TunnelService:
             )
             self.redis_client = None
             self._in_memory_tunnels: Dict[str, str] = {}
+
+        # In-process cache for get_tunnel_url lookups: (cache_key -> (tunnel_url, expiry_ts))
+        # Avoids blocking Redis on every tool call when the same user/conv is resolved repeatedly.
+        self._lookup_cache: Dict[str, tuple[str, float]] = {}
+
+    def _lookup_cache_key(
+        self,
+        user_id: str,
+        conversation_id: Optional[str],
+        repository: Optional[str],
+        branch: Optional[str],
+    ) -> str:
+        """Stable key for the in-process lookup cache."""
+        c = conversation_id or ""
+        r = (repository or "").strip()
+        b = (branch or "").strip()
+        return f"{user_id}:{c}:{r}:{b}"
 
     def _get_conversation_key(self, conversation_id: str) -> str:
         """Generate Redis key for conversation-level tunnel"""
@@ -131,7 +152,8 @@ class TunnelService:
         """
         try:
             current_time = str(int(time.time()))
-            # Build tunnel data with last_seen for tracking activity
+            # Build tunnel data with last_seen for tracking activity.
+            # local_port is stored every time so provision can use it for ingress when not sent in the request.
             tunnel_data = {
                 "tunnel_url": tunnel_url,
                 "user_id": user_id,
@@ -139,7 +161,7 @@ class TunnelService:
                 "registered_at": current_time,
                 "last_seen": current_time,
             }
-            if local_port:
+            if local_port is not None:
                 tunnel_data["local_port"] = local_port
             if repository:
                 tunnel_data["repository"] = repository
@@ -154,6 +176,11 @@ class TunnelService:
                 f"local_port={local_port}, repository={repository}, branch={branch}, "
                 f"redis_available={self.redis_client is not None}"
             )
+
+            # Invalidate in-process lookup cache for this user so next get_tunnel_url sees new URL from Redis
+            to_drop = [k for k in self._lookup_cache if k.startswith(f"{user_id}:")]
+            for k in to_drop:
+                del self._lookup_cache[k]
 
             # Workspace-level: one active tunnel per (user, repository, branch)
             if repository and branch:
@@ -184,8 +211,10 @@ class TunnelService:
                         f"[TunnelService] ✅ Registered conversation-level tunnel: {conversation_key}"
                     )
 
+            # type=quick (trycloudflare.com) vs named (e.g. potpie.ai) is chosen by the client; we only store the URL
+            tunnel_type = "quick" if "trycloudflare.com" in tunnel_url else "named"
             logger.info(
-                f"[TunnelService] Registered tunnel for user {user_id}, conversation {conversation_id}, "
+                f"[TunnelService] Stored tunnel type={tunnel_type} for user={user_id}, conversation={conversation_id}, "
                 f"repo={repository}, branch={branch}: {tunnel_url}"
             )
             return True
@@ -259,13 +288,25 @@ class TunnelService:
 
             # If tunnel_url is provided directly, use it (highest priority)
             if tunnel_url:
-                logger.info(
-                    f"[TunnelService] ✅ Using tunnel_url from request: {tunnel_url}"
+                logger.debug(
+                    f"[TunnelService] Using tunnel_url from request: {tunnel_url}"
                 )
                 return tunnel_url
 
-            logger.info(
-                f"[TunnelService] 🔍 Looking up tunnel for user={user_id}, conversation={conversation_id}, "
+            # In-process cache: avoid Redis round-trip when same lookup repeats (e.g. multiple tools per message)
+            cache_key = self._lookup_cache_key(user_id, conversation_id, repository, branch)
+            now = time.time()
+            if cache_key in self._lookup_cache:
+                cached_url, expiry = self._lookup_cache[cache_key]
+                if now < expiry:
+                    logger.debug(
+                        f"[TunnelService] Using cached tunnel URL for {user_id}"
+                    )
+                    return cached_url
+                del self._lookup_cache[cache_key]
+
+            logger.debug(
+                f"[TunnelService] Looking up tunnel for user={user_id}, conversation={conversation_id}, "
                 f"repository={repository}, branch={branch}"
             )
 
@@ -277,14 +318,19 @@ class TunnelService:
                 )
                 tunnel_data = self._get_tunnel_data(workspace_key)
                 if tunnel_data:
-                    tunnel_url = tunnel_data.get("tunnel_url")
-                    logger.info(
-                        f"[TunnelService] ✅ Found workspace-level tunnel for {repository}@{branch}: {tunnel_url}"
+                    resolved = tunnel_data.get("tunnel_url")
+                    if resolved:
+                        self._lookup_cache[cache_key] = (
+                            resolved,
+                            time.time() + TUNNEL_LOOKUP_CACHE_TTL,
+                        )
+                    logger.debug(
+                        f"[TunnelService] Found workspace-level tunnel for {repository}@{branch}"
                     )
-                    return tunnel_url
+                    return resolved
                 else:
-                    logger.info(
-                        f"[TunnelService] ❌ No workspace-level tunnel for {repository}@{branch}"
+                    logger.debug(
+                        f"[TunnelService] No workspace-level tunnel for {repository}@{branch}"
                     )
 
             # Try conversation-level (if conversation_id provided)
@@ -295,26 +341,36 @@ class TunnelService:
                 )
                 tunnel_data = self._get_tunnel_data(conversation_key)
                 if tunnel_data:
-                    tunnel_url = tunnel_data.get("tunnel_url")
-                    logger.info(
-                        f"[TunnelService] ✅ Found conversation-level tunnel: {tunnel_url}"
+                    resolved = tunnel_data.get("tunnel_url")
+                    if resolved:
+                        self._lookup_cache[cache_key] = (
+                            resolved,
+                            time.time() + TUNNEL_LOOKUP_CACHE_TTL,
+                        )
+                    logger.debug(
+                        f"[TunnelService] Found conversation-level tunnel"
                     )
-                    return tunnel_url
+                    return resolved
                 else:
-                    logger.info(
-                        f"[TunnelService] ❌ No conversation-level tunnel found"
+                    logger.debug(
+                        f"[TunnelService] No conversation-level tunnel found"
                     )
 
             # Fall back to user-level tunnel
             user_key = self._get_user_key(user_id)
-            logger.info(f"[TunnelService] Checking user-level key: {user_key}")
+            logger.debug(f"[TunnelService] Checking user-level key: {user_key}")
             tunnel_data = self._get_tunnel_data(user_key)
             if tunnel_data:
-                tunnel_url = tunnel_data.get("tunnel_url")
-                logger.info(f"[TunnelService] ✅ Found user-level tunnel: {tunnel_url}")
-                return tunnel_url
+                resolved = tunnel_data.get("tunnel_url")
+                if resolved:
+                    self._lookup_cache[cache_key] = (
+                        resolved,
+                        time.time() + TUNNEL_LOOKUP_CACHE_TTL,
+                    )
+                logger.debug(f"[TunnelService] Found user-level tunnel")
+                return resolved
             else:
-                logger.info(f"[TunnelService] ❌ No user-level tunnel found either")
+                logger.debug(f"[TunnelService] No user-level tunnel found")
 
             return None
         except Exception as e:

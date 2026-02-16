@@ -12,17 +12,15 @@ from typing import Optional, Dict, Any
 import httpx
 from loguru import logger
 
-# Cloudflare API credentials (set in environment)
-CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID")
-CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN")
+# Cloudflare API base (constant)
 CLOUDFLARE_API_BASE = "https://api.cloudflare.com/client/v4"
-
-# Optional: Domain for named tunnel ingress (e.g., "example.com")
-# If not set, named tunnels will use quick tunnel fallback
-CLOUDFLARE_TUNNEL_DOMAIN = os.getenv("CLOUDFLARE_TUNNEL_DOMAIN")
 
 # Tunnel naming convention
 TUNNEL_NAME_PREFIX = "potpie-user"
+
+# Default local port for ingress (must match the port extension runs cloudflared with: --url http://localhost:PORT)
+# Overridable via CLOUDFLARE_TUNNEL_INGRESS_PORT or by passing local_port in provision request.
+DEFAULT_INGRESS_PORT = 3001
 
 
 class CloudflareTunnelService:
@@ -37,8 +35,10 @@ class CloudflareTunnelService:
     """
 
     def __init__(self):
-        self.account_id = CLOUDFLARE_ACCOUNT_ID
-        self.api_token = CLOUDFLARE_API_TOKEN
+        # Read env at instantiation so we always see current values (e.g. after load_dotenv)
+        self.account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID") or None
+        self.api_token = os.getenv("CLOUDFLARE_API_TOKEN") or None
+        self.tunnel_domain = (os.getenv("CLOUDFLARE_TUNNEL_DOMAIN") or "").strip() or None
         self.headers = {
             "Authorization": f"Bearer {self.api_token}",
             "Content-Type": "application/json",
@@ -56,14 +56,26 @@ class CloudflareTunnelService:
 
     def has_domain(self) -> bool:
         """Check if a domain is configured for ingress."""
-        return bool(CLOUDFLARE_TUNNEL_DOMAIN)
+        return bool(self.tunnel_domain)
 
-    async def provision_tunnel_for_user(self, user_id: str) -> Optional[Dict[str, Any]]:
+    def _ingress_port(self, local_port: Optional[int] = None) -> int:
+        """Resolve local port for ingress: request > env > default."""
+        if local_port is not None and 1 <= local_port <= 65535:
+            return local_port
+        env_port = os.getenv("CLOUDFLARE_TUNNEL_INGRESS_PORT", "").strip()
+        if env_port and env_port.isdigit():
+            return int(env_port)
+        return DEFAULT_INGRESS_PORT
+
+    async def provision_tunnel_for_user(
+        self, user_id: str, local_port: Optional[int] = None
+    ) -> Optional[Dict[str, Any]]:
         """
         Create or get existing named tunnel for a user.
 
         Args:
             user_id: The user's unique identifier
+            local_port: Optional port the extension will use (--url http://localhost:PORT). Ingress will use this so cloudflared forwards to the correct port.
 
         Returns:
             {
@@ -91,20 +103,30 @@ class CloudflareTunnelService:
                     )
                     tunnel_id = existing["id"]
 
-                    # Ensure ingress is configured if domain is available
+                    # Ensure ingress is configured if domain is available; use our result
+                    # so we don't rely on a possibly stale config GET in _get_tunnel_credentials
+                    known_ingress = False
+                    known_tunnel_url = None
                     if self.has_domain():
                         subdomain = f"tunnel-{user_id[:8]}"
-                        ingress_configured = await self._configure_tunnel_ingress(
-                            client, tunnel_id, subdomain
+                        port = self._ingress_port(local_port)
+                        known_ingress = await self._configure_tunnel_ingress(
+                            client, tunnel_id, subdomain, local_port=port
                         )
-                        if not ingress_configured:
+                        if not known_ingress:
                             logger.warning(
                                 f"[CloudflareTunnel] Failed to configure ingress for existing tunnel {tunnel_id}"
                             )
+                        else:
+                            known_tunnel_url = f"https://{subdomain}.{self.tunnel_domain}"
 
-                    return await self._get_tunnel_credentials(
+                    credentials = await self._get_tunnel_credentials(
                         client, tunnel_id, tunnel_name
                     )
+                    if credentials and known_ingress and known_tunnel_url:
+                        credentials["ingress_configured"] = True
+                        credentials["tunnel_url"] = known_tunnel_url
+                    return credentials
 
                 # Create new tunnel
                 # For remotely-managed tunnels, we use config_src: "cloudflare" and configure ingress via API
@@ -141,8 +163,9 @@ class CloudflareTunnelService:
                 ingress_configured = False
                 if self.has_domain():
                     subdomain = f"tunnel-{user_id[:8]}"
+                    port = self._ingress_port(local_port)
                     ingress_configured = await self._configure_tunnel_ingress(
-                        client, tunnel_id, subdomain
+                        client, tunnel_id, subdomain, local_port=port
                     )
                     if not ingress_configured:
                         logger.warning(
@@ -159,7 +182,7 @@ class CloudflareTunnelService:
                         # Use domain-based URL if ingress is configured
                         subdomain = f"tunnel-{user_id[:8]}"
                         credentials["tunnel_url"] = (
-                            f"https://{subdomain}.{CLOUDFLARE_TUNNEL_DOMAIN}"
+                            f"https://{subdomain}.{self.tunnel_domain}"
                         )
 
                 return credentials
@@ -269,21 +292,25 @@ class CloudflareTunnelService:
         client: httpx.AsyncClient,
         tunnel_id: str,
         subdomain: Optional[str] = None,
+        local_port: Optional[int] = None,
     ) -> bool:
         """
         Configure ingress rules for the tunnel.
 
-        This sets up routing so traffic to the tunnel hostname is forwarded to localhost.
-        Requires CLOUDFLARE_TUNNEL_DOMAIN to be set. Uses hostname so the extension
-        gets a stable URL and uses the named tunnel instead of quick tunnel.
+        This sets up routing so traffic to the tunnel hostname is forwarded to localhost:PORT.
+        The port must match what the extension uses with cloudflared: --url http://localhost:PORT.
+        Requires CLOUDFLARE_TUNNEL_DOMAIN to be set.
         """
         if not self.has_domain():
             return False
 
+        port = local_port if local_port is not None else self._ingress_port(None)
+        service_url = f"http://localhost:{port}"
+
         try:
             # Build ingress: hostname rule so named tunnel has a public URL
             hostname = (
-                f"{subdomain}.{CLOUDFLARE_TUNNEL_DOMAIN}"
+                f"{subdomain}.{self.tunnel_domain}"
                 if subdomain
                 else None
             )
@@ -291,16 +318,16 @@ class CloudflareTunnelService:
                 ingress = [
                     {
                         "hostname": hostname,
-                        "service": "http://localhost:3001",
+                        "service": service_url,
                     },
                     {"service": "http_status:404"},  # Catch-all for unmatched routes
                 ]
                 logger.info(
-                    f"[CloudflareTunnel] Configuring ingress with hostname: {hostname}"
+                    f"[CloudflareTunnel] Configuring ingress with hostname: {hostname}, service: {service_url}"
                 )
             else:
                 ingress = [
-                    {"service": "http://localhost:3001"},
+                    {"service": service_url},
                     {"service": "http_status:404"},
                 ]
             config = {"ingress": ingress}
@@ -427,7 +454,7 @@ class CloudflareTunnelService:
                             )
                             subdomain = f"tunnel-{user_part}"
                             tunnel_url = (
-                                f"https://{subdomain}.{CLOUDFLARE_TUNNEL_DOMAIN}"
+                                f"https://{subdomain}.{self.tunnel_domain}"
                             )
                             logger.info(
                                 f"[CloudflareTunnel] Constructed URL from domain: {tunnel_url}"
@@ -539,13 +566,6 @@ class CloudflareTunnelService:
             return False
 
 
-# Singleton instance
-_cloudflare_service: Optional[CloudflareTunnelService] = None
-
-
 def get_cloudflare_tunnel_service() -> CloudflareTunnelService:
-    """Get the singleton CloudflareTunnelService instance."""
-    global _cloudflare_service
-    if _cloudflare_service is None:
-        _cloudflare_service = CloudflareTunnelService()
-    return _cloudflare_service
+    """Return a CloudflareTunnelService that reads env at call time (no singleton)."""
+    return CloudflareTunnelService()
