@@ -79,6 +79,9 @@ from app.modules.intelligence.tools.jira_tools import (
     get_jira_project_users_tool,
     link_jira_issues_tool,
 )
+from app.modules.intelligence.tools.impact_analysis.impact_trace_tool import (
+    get_impact_trace_analysis_tool,
+)
 from app.modules.intelligence.tools.confluence_tools import (
     get_confluence_spaces_tool,
     get_confluence_page_tool,
@@ -188,6 +191,9 @@ class ToolService:
             ),
             "fetch_file": fetch_file_tool(self.db, self.user_id),
             "analyze_code_structure": universal_analyze_code_tool(
+                self.db, self.user_id
+            ),
+            "impact_trace_analysis": get_impact_trace_analysis_tool(
                 self.db, self.user_id
             ),
         }

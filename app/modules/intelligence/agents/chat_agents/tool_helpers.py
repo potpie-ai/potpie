@@ -60,6 +60,8 @@ def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
             return "Searching the web"
         case "analyze_code_structure":
             return "Analyzing code structure"
+        case "impact_trace_analysis":
+            return "Running deterministic impact trace analysis"
         case "bash_command":
             if args:
                 command = args.get("command", "")
@@ -305,6 +307,17 @@ def get_tool_response_message(
             if file_path:
                 return f"Code structure analyzed successfully: {file_path}"
             return "Code structure analyzed successfully"
+        case "impact_trace_analysis":
+            changed_file = args.get("changed_file") if args else None
+            function_name = args.get("function_name") if args else None
+            if changed_file and function_name:
+                return (
+                    "Impact trace analysis completed: "
+                    f"{changed_file}:{function_name}"
+                )
+            if changed_file:
+                return f"Impact trace analysis completed: {changed_file}"
+            return "Impact trace analysis completed"
         case "WebSearchTool":
             query = args.get("query") if args else None
             if query:
@@ -602,6 +615,21 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             return f"fetching contents for file {args.get('file_path')}"
         case "analyze_code_structure":
             return f"Analyzing file - {args.get('file_path')}\n"
+        case "impact_trace_analysis":
+            changed_file = args.get("changed_file")
+            function_name = args.get("function_name")
+            strict_mode = args.get("strict_mode", True)
+            if changed_file and function_name:
+                return (
+                    "-> tracing impact for "
+                    f"{changed_file}:{function_name} (strict_mode={strict_mode})\n"
+                )
+            if changed_file:
+                return (
+                    "-> tracing impact for "
+                    f"{changed_file} (file-scoped, strict_mode={strict_mode})\n"
+                )
+            return "-> tracing impact using provided context\n"
         case "WebSearchTool":
             return f"-> searching the web for {args.get('query')}\n"
         case "bash_command":
@@ -924,6 +952,21 @@ description:
                         return f"""
 {[ f''' {element.get("type")}: {element.get("name")} ''' for element in elements]}
 """
+            return ""
+        case "impact_trace_analysis":
+            if isinstance(content, Dict):
+                tests = content.get("recommended_tests") or []
+                test_ids_flat = [
+                    tid for t in tests for tid in t.get("test_ids", [])
+                ]
+                ambiguities = content.get("ambiguities") or []
+                blocked = content.get("blocked_by_scope") or []
+                return (
+                    f"recommended_tests={len(tests)}, "
+                    f"test_ids={len(test_ids_flat)}, "
+                    f"ambiguities={len(ambiguities)}, "
+                    f"blocked_by_scope={len(blocked)}"
+                )
             return ""
         case "WebSearchTool":
             if isinstance(content, Dict):

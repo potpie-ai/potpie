@@ -27,6 +27,7 @@ from .chat_agents.system_agents import (
     blast_radius_agent,
     code_gen_agent,
     debug_agent,
+    impact_analysis_agent,
     integration_test_agent,
     low_level_design_agent,
     qna_agent,
@@ -77,6 +78,17 @@ class AgentsService:
                 name="Codebase Q&A Agent",
                 description="An agent specialized in answering questions about the codebase using the knowledge graph and code analysis tools.",
                 agent=qna_agent.QnAAgent(llm_provider, tools_provider, prompt_provider),
+            ),
+            "impact_analysis_agent": AgentWithInfo(
+                id="impact_analysis_agent",
+                name="Conversational Impact Analysis Agent",
+                description=(
+                    "An agent specialized in deterministic impact analysis for a changed "
+                    "file/function pair, returning evidence-backed test recommendations."
+                ),
+                agent=impact_analysis_agent.ImpactAnalysisAgent(
+                    llm_provider, tools_provider, prompt_provider
+                ),
             ),
         }
 
