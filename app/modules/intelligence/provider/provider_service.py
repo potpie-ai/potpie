@@ -457,6 +457,22 @@ AVAILABLE_MODELS = [
         is_chat_model=True,
         is_inference_model=True,
     ),
+    AvailableModelOption(
+        id="forge/OpenAI/gpt-4o-mini",
+        name="Forge GPT-4o Mini",
+        description="GPT-4o Mini via Forge (200+ models with a single API key)",
+        provider="forge",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
+    AvailableModelOption(
+        id="forge/OpenAI/gpt-4o",
+        name="Forge GPT-4o",
+        description="GPT-4o via Forge (200+ models with a single API key)",
+        provider="forge",
+        is_chat_model=True,
+        is_inference_model=False,
+    ),
 ]
 
 # Extract unique platform providers from the available models
@@ -688,6 +704,11 @@ class ProviderService:
             api_key = os.environ.get("LLM_API_KEY", api_key)
 
         params = config.get_llm_params(api_key)
+
+        # For Forge, rewrite model prefix for litellm routing:
+        # forge/OpenAI/gpt-4o-mini → openai/OpenAI/gpt-4o-mini
+        if config.auth_provider == "forge" and params["model"].startswith("forge/"):
+            params["model"] = "openai/" + params["model"][len("forge/") :]
 
         if config.base_url:
             base_url = config.base_url
@@ -1324,7 +1345,7 @@ class ProviderService:
         if config.api_version:
             provider_kwargs["api_version"] = config.api_version
 
-        openai_like_providers = {"openai", "openrouter", "azure", "ollama"}
+        openai_like_providers = {"openai", "openrouter", "azure", "ollama", "forge"}
         if config.auth_provider in openai_like_providers:
             if config.auth_provider == "ollama":
                 base_url_root = (
