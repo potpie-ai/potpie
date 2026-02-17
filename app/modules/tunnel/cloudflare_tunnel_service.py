@@ -15,12 +15,24 @@ from loguru import logger
 # Cloudflare API base (constant)
 CLOUDFLARE_API_BASE = "https://api.cloudflare.com/client/v4"
 
+# Tunnel config: only .../configurations exists in the Cloudflare API (PUT updates tunnel ingress).
+# There is no .../config endpoint in client v4; the official SDK uses "configurations".
+CFD_TUNNEL_CONFIG_PATH = "configurations"
+
+# Zero Trust Networks: create hostname route so it appears in dashboard "Hostname routes".
+# POST accounts/{account_id}/networks/hostname_routes (optional; tunnel ingress already routes traffic).
+NETWORKS_HOSTNAME_ROUTES_PATH = "networks/hostname_routes"
+
 # Tunnel naming convention
 TUNNEL_NAME_PREFIX = "potpie-user"
+WORKSPACE_TUNNEL_NAME_PREFIX = "potpie-ws"
 
 # Default local port for ingress (must match the port extension runs cloudflared with: --url http://localhost:PORT)
 # Overridable via CLOUDFLARE_TUNNEL_INGRESS_PORT or by passing local_port in provision request.
 DEFAULT_INGRESS_PORT = 3001
+
+# When set, workspace tunnel URL is https://{workspace_id}.{TUNNEL_WILDCARD_DOMAIN}; must match router so ingress hostname is registered.
+TUNNEL_WILDCARD_DOMAIN_ENV = "TUNNEL_WILDCARD_DOMAIN"
 
 
 class CloudflareTunnelService:
@@ -66,6 +78,129 @@ class CloudflareTunnelService:
         if env_port and env_port.isdigit():
             return int(env_port)
         return DEFAULT_INGRESS_PORT
+
+    def _workspace_tunnel_public_hostname(
+        self, workspace_id: str, tunnel_id: str
+    ) -> str:
+        """Hostname we return in tunnel_url; must be registered in tunnel config so Cloudflare routes to this tunnel."""
+        wildcard = (os.getenv(TUNNEL_WILDCARD_DOMAIN_ENV) or "").strip() or None
+        if wildcard:
+            return f"{workspace_id}.{wildcard}"
+        return f"{tunnel_id}.cfargotunnel.com"
+
+    async def provision_workspace_tunnel(
+        self, workspace_id: str, local_port: Optional[int] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Create a workspace-scoped tunnel: potpie-ws-{workspace_id}.
+        Router Service proxies to https://{tunnel_id}.cfargotunnel.com. The tunnel's
+        ingress is set to origin http://127.0.0.1:<local_port> via Cloudflare API so
+        token-based (remotely-managed) runs work; without this, tunnel URL would 404.
+
+        Returns:
+            {"tunnel_id": "uuid", "tunnel_name": "potpie-ws-...", "tunnel_token": "eyJ..."}
+            or None on failure
+        """
+        if not self.is_configured():
+            logger.error("[CloudflareTunnel] Not configured, cannot provision workspace tunnel")
+            return None
+        tunnel_name = f"{WORKSPACE_TUNNEL_NAME_PREFIX}-{workspace_id}"
+        try:
+            async with httpx.AsyncClient() as client:
+                existing = await self._find_tunnel_by_name(
+                    client, tunnel_name, allow_ingress_fallback=False
+                )
+                if existing:
+                    tunnel_id = existing["id"]
+                    hostname = self._workspace_tunnel_public_hostname(
+                        workspace_id, tunnel_id
+                    )
+                    await self._configure_tunnel_ingress_public_hostname(
+                        client, tunnel_id, hostname, local_port
+                    )
+                    credentials = await self._get_tunnel_credentials(
+                        client, tunnel_id, tunnel_name
+                    )
+                    if credentials:
+                        return {
+                            "tunnel_id": tunnel_id,
+                            "tunnel_name": tunnel_name,
+                            "tunnel_token": credentials["tunnel_token"],
+                        }
+                response = await client.post(
+                    f"{CLOUDFLARE_API_BASE}/accounts/{self.account_id}/cfd_tunnel",
+                    headers=self.headers,
+                    json={
+                        "name": tunnel_name,
+                        "config_src": "cloudflare",
+                    },
+                    timeout=30.0,
+                )
+                if response.status_code == 409:
+                    # Another request created it; re-fetch by name and return credentials (idempotent)
+                    logger.info(
+                        f"[CloudflareTunnel] Tunnel already exists (409), re-fetching: {tunnel_name}"
+                    )
+                    existing = await self._find_tunnel_by_name(
+                        client, tunnel_name, allow_ingress_fallback=False
+                    )
+                    if existing:
+                        tunnel_id = existing["id"]
+                        hostname = self._workspace_tunnel_public_hostname(
+                            workspace_id, tunnel_id
+                        )
+                        await self._configure_tunnel_ingress_public_hostname(
+                            client, tunnel_id, hostname, local_port
+                        )
+                        credentials = await self._get_tunnel_credentials(
+                            client, tunnel_id, tunnel_name
+                        )
+                        if credentials:
+                            return {
+                                "tunnel_id": tunnel_id,
+                                "tunnel_name": tunnel_name,
+                                "tunnel_token": credentials["tunnel_token"],
+                            }
+                    logger.error(
+                        f"[CloudflareTunnel] 409 but could not re-fetch tunnel: {tunnel_name}"
+                    )
+                    return None
+                if response.status_code != 200:
+                    logger.error(
+                        f"[CloudflareTunnel] Failed to create workspace tunnel: {response.status_code} - {response.text}"
+                    )
+                    return None
+                data = response.json()
+                if not data.get("success"):
+                    logger.error(f"[CloudflareTunnel] API error: {data.get('errors')}")
+                    return None
+                tunnel = data["result"]
+                tunnel_id = tunnel["id"]
+                logger.info(
+                    f"[CloudflareTunnel] Created workspace tunnel: {tunnel_name} ({tunnel_id})"
+                )
+                hostname = self._workspace_tunnel_public_hostname(
+                    workspace_id, tunnel_id
+                )
+                await self._configure_tunnel_ingress_public_hostname(
+                    client, tunnel_id, hostname, local_port
+                )
+                credentials = await self._get_tunnel_credentials(
+                    client, tunnel_id, tunnel_name
+                )
+                if not credentials:
+                    return None
+                return {
+                    "tunnel_id": tunnel_id,
+                    "tunnel_name": tunnel_name,
+                    "tunnel_token": credentials["tunnel_token"],
+                }
+        except httpx.TimeoutException:
+            logger.error("[CloudflareTunnel] Timeout while provisioning workspace tunnel")
+            return None
+        except Exception as e:
+            logger.error(f"[CloudflareTunnel] Error provisioning workspace tunnel: {e}")
+            return None
 
     async def provision_tunnel_for_user(
         self, user_id: str, local_port: Optional[int] = None
@@ -195,9 +330,18 @@ class CloudflareTunnelService:
             return None
 
     async def _find_tunnel_by_name(
-        self, client: httpx.AsyncClient, name: str
+        self,
+        client: httpx.AsyncClient,
+        name: str,
+        *,
+        allow_ingress_fallback: bool = True,
     ) -> Optional[Dict]:
-        """Find existing tunnel by name (case-insensitive, partial match)."""
+        """
+        Find existing tunnel by name (exact, then case-insensitive partial match).
+        If allow_ingress_fallback is True and no name match, returns first tunnel with
+        ingress (for legacy user-level flow). Set to False for workspace tunnels so we
+        only reuse potpie-ws-{id} or create new, never return a different tunnel.
+        """
         try:
             # First try exact match
             response = await client.get(
@@ -247,7 +391,12 @@ class CloudflareTunnelService:
                         )
                         return tunnel
 
-                # If still no match, return first tunnel with ingress configured (fallback)
+                # If still no match and fallback allowed, return first tunnel with ingress (legacy user-level only)
+                if not allow_ingress_fallback:
+                    logger.debug(
+                        f"[CloudflareTunnel] No name match for {name}; not using ingress fallback (workspace tunnel)"
+                    )
+                    return None
                 logger.warning(
                     f"[CloudflareTunnel] No name match found, checking for tunnels with ingress..."
                 )
@@ -287,6 +436,192 @@ class CloudflareTunnelService:
             logger.error(f"[CloudflareTunnel] Error finding tunnel: {e}")
             return None
 
+    async def _put_tunnel_config(
+        self,
+        client: httpx.AsyncClient,
+        tunnel_id: str,
+        config: Dict[str, Any],
+    ) -> tuple[bool, Optional[str]]:
+        """
+        PUT tunnel config (ingress) via the only Cloudflare API endpoint:
+        PUT .../cfd_tunnel/{tunnel_id}/configurations. This sets the tunnel's
+        ingress (public hostnames + origin). Returns (success, error_message).
+        """
+        body = {"config": config}
+        url = f"{CLOUDFLARE_API_BASE}/accounts/{self.account_id}/cfd_tunnel/{tunnel_id}/{CFD_TUNNEL_CONFIG_PATH}"
+        try:
+            response = await client.put(
+                url,
+                headers=self.headers,
+                json=body,
+                timeout=30.0,
+            )
+            if response.status_code != 200:
+                return False, f"{response.status_code} {response.text}"
+            data = response.json()
+            if not data.get("success"):
+                return False, str(data.get("errors", "unknown"))
+            logger.info(
+                f"[CloudflareTunnel] PUT {CFD_TUNNEL_CONFIG_PATH} succeeded for tunnel {tunnel_id}"
+            )
+            return True, None
+        except Exception as e:
+            return False, str(e)
+
+    async def _configure_tunnel_ingress_origin_only(
+        self,
+        client: httpx.AsyncClient,
+        tunnel_id: str,
+        local_port: Optional[int] = None,
+    ) -> bool:
+        """
+        Configure tunnel ingress to origin only (no custom hostname).
+        Used for workspace tunnels: traffic to https://{tunnel_id}.cfargotunnel.com
+        is forwarded to http://127.0.0.1:<local_port>. Required for token-based
+        (remotely-managed) tunnels so the edge has a route; without this, tunnel URL returns 404.
+        """
+        port = self._ingress_port(local_port)
+        service_url = f"http://127.0.0.1:{port}"
+        try:
+            ingress = [
+                {"service": service_url},
+                {"service": "http_status:404"},
+            ]
+            config = {"ingress": ingress}
+            ok, err = await self._put_tunnel_config(client, tunnel_id, config)
+            if not ok:
+                logger.error(
+                    f"[CloudflareTunnel] Failed to configure origin-only ingress: {err}"
+                )
+                return False
+            logger.info(
+                f"[CloudflareTunnel] ✅ Configured origin-only ingress for tunnel {tunnel_id} -> {service_url}"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"[CloudflareTunnel] Error configuring origin-only ingress: {e}")
+            return False
+
+    async def _configure_tunnel_ingress_public_hostname(
+        self,
+        client: httpx.AsyncClient,
+        tunnel_id: str,
+        hostname: str,
+        local_port: Optional[int] = None,
+        *,
+        also_register_cfargotunnel: bool = True,
+    ) -> bool:
+        """
+        Configure tunnel ingress with a public hostname (Put Tunnel Configuration).
+        This populates "Hostname routes" / "Public Hostname" in the Cloudflare dashboard
+        so the tunnel_url we return actually routes traffic. Required for token-based
+        (remotely-managed) tunnels: without this, the connector can register but the
+        hostname has no route and requests 404.
+
+        When using the wildcard router, the backend proxies to https://{tunnel_id}.cfargotunnel.com
+        (Host is that), so we must also register that hostname in ingress; otherwise the request
+        hits the catch-all and returns 404.
+        Ingress: rule(s) for hostname and optionally tunnel_id.cfargotunnel.com, then catch-all http_status:404.
+        """
+        port = self._ingress_port(local_port)
+        service_url = f"http://127.0.0.1:{port}"
+        cfargotunnel_host = f"{tunnel_id}.cfargotunnel.com"
+        try:
+            ingress_rules = []
+            if hostname and hostname != cfargotunnel_host:
+                ingress_rules.append({"hostname": hostname, "service": service_url})
+            if also_register_cfargotunnel:
+                ingress_rules.append({"hostname": cfargotunnel_host, "service": service_url})
+            ingress = ingress_rules + [{"service": "http_status:404"}]
+            config = {"ingress": ingress}
+            ok, err = await self._put_tunnel_config(client, tunnel_id, config)
+            if not ok:
+                logger.error(
+                    f"[CloudflareTunnel] Failed to configure ingress with hostname: {err}"
+                )
+                return False
+            # Optionally create Zero Trust Networks hostname route so it shows in dashboard "Hostname routes".
+            if hostname and hostname != cfargotunnel_host:
+                await self._create_network_hostname_route(
+                    client, hostname, tunnel_id, service_url
+                )
+            logger.info(
+                f"[CloudflareTunnel] ✅ Configured ingress for tunnel {tunnel_id} -> {service_url} (hostnames: {[r.get('hostname') for r in ingress_rules]})"
+            )
+            return True
+        except Exception as e:
+            logger.error(
+                f"[CloudflareTunnel] Error configuring ingress with hostname: {e}"
+            )
+            return False
+
+    async def _create_network_hostname_route(
+        self,
+        client: httpx.AsyncClient,
+        hostname: str,
+        tunnel_id: str,
+        service_url: str,
+    ) -> bool:
+        """
+        Create a Zero Trust Networks hostname route so the hostname appears in
+        the dashboard under Networks → Hostname routes. Optional: tunnel ingress
+        (PUT configurations) already routes traffic; this may affect dashboard visibility.
+        Non-fatal on failure.
+        """
+        url = f"{CLOUDFLARE_API_BASE}/accounts/{self.account_id}/{NETWORKS_HOSTNAME_ROUTES_PATH}"
+        body = {"hostname": hostname, "tunnel_id": tunnel_id, "service": service_url}
+        try:
+            response = await client.post(
+                url,
+                headers=self.headers,
+                json=body,
+                timeout=15.0,
+            )
+            if response.status_code in (200, 201):
+                data = response.json()
+                if data.get("success"):
+                    logger.info(
+                        f"[CloudflareTunnel] ✅ Created network hostname route: {hostname}"
+                    )
+                    return True
+            # Log so we can adjust path/body if dashboard still doesn't show hostname routes
+            logger.info(
+                f"[CloudflareTunnel] Create hostname route {response.status_code}: {response.text[:300]}"
+            )
+        except Exception as e:
+            logger.debug(f"[CloudflareTunnel] Create hostname route error: {e}")
+        return False
+
+    async def ensure_tunnel_ingress(
+        self,
+        tunnel_id: str,
+        workspace_id: str,
+        local_port: Optional[int] = None,
+    ) -> bool:
+        """
+        Public helper: re-apply ingress + hostname route for an existing workspace tunnel.
+        Called on every register so the hostname is always configured even if
+        provision ran before the hostname-route code was added.
+        """
+        hostname = self._workspace_tunnel_public_hostname(workspace_id, tunnel_id)
+        try:
+            async with httpx.AsyncClient() as client:
+                ok = await self._configure_tunnel_ingress_public_hostname(
+                    client, tunnel_id, hostname, local_port
+                )
+                if ok:
+                    logger.info(
+                        f"[CloudflareTunnel] ensure_tunnel_ingress: ingress set for {tunnel_id} hostname={hostname}"
+                    )
+                else:
+                    logger.warning(
+                        f"[CloudflareTunnel] ensure_tunnel_ingress: failed to set ingress for {tunnel_id}"
+                    )
+                return ok
+        except Exception as e:
+            logger.error(f"[CloudflareTunnel] ensure_tunnel_ingress error: {e}")
+            return False
+
     async def _configure_tunnel_ingress(
         self,
         client: httpx.AsyncClient,
@@ -299,9 +634,10 @@ class CloudflareTunnelService:
 
         This sets up routing so traffic to the tunnel hostname is forwarded to localhost:PORT.
         The port must match what the extension uses with cloudflared: --url http://localhost:PORT.
-        Requires CLOUDFLARE_TUNNEL_DOMAIN to be set.
+        When subdomain is None, only origin (catch-all) is set; when subdomain is set,
+        requires CLOUDFLARE_TUNNEL_DOMAIN.
         """
-        if not self.has_domain():
+        if subdomain is not None and not self.has_domain():
             return False
 
         port = local_port if local_port is not None else self._ingress_port(None)
@@ -331,27 +667,10 @@ class CloudflareTunnelService:
                     {"service": "http_status:404"},
                 ]
             config = {"ingress": ingress}
-
-            response = await client.put(
-                f"{CLOUDFLARE_API_BASE}/accounts/{self.account_id}/cfd_tunnel/{tunnel_id}/configurations",
-                headers=self.headers,
-                json={"config": config},
-                timeout=30.0,
-            )
-
-            if response.status_code != 200:
-                logger.error(
-                    f"[CloudflareTunnel] Failed to configure ingress: {response.status_code} - {response.text}"
-                )
+            ok, err = await self._put_tunnel_config(client, tunnel_id, config)
+            if not ok:
+                logger.error(f"[CloudflareTunnel] Failed to configure ingress: {err}")
                 return False
-
-            data = response.json()
-            if not data.get("success"):
-                logger.error(
-                    f"[CloudflareTunnel] Ingress config error: {data.get('errors')}"
-                )
-                return False
-
             logger.info(
                 f"[CloudflareTunnel] ✅ Configured ingress for tunnel {tunnel_id}"
             )

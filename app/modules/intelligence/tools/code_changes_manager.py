@@ -2855,12 +2855,7 @@ def _route_to_local_server(
 
                                     tunnel_service = get_tunnel_service()
 
-                                    # Get user-level tunnel URL before unregistering
-                                    user_level_tunnel = tunnel_service.get_tunnel_url(
-                                        user_id, None
-                                    )
-
-                                    # Unregister conversation-specific tunnel
+                                    # Unregister conversation-specific tunnel (workspace-only; no user-level)
                                     if conversation_id:
                                         tunnel_service.unregister_tunnel(
                                             user_id, conversation_id
@@ -2868,94 +2863,6 @@ def _route_to_local_server(
                                         logger.info(
                                             f"[Tunnel Routing] ✅ Invalidated stale conversation tunnel for user {user_id}"
                                         )
-
-                                    # If user-level tunnel is the same stale URL, invalidate it too
-                                    if user_level_tunnel:
-                                        # Extract base URL from tunnel_url for comparison
-                                        stale_base_url = (
-                                            tunnel_url.split("/api/")[0]
-                                            if "/api/" in tunnel_url
-                                            else tunnel_url
-                                        )
-                                        if (
-                                            user_level_tunnel == stale_base_url
-                                            or stale_base_url.startswith(
-                                                user_level_tunnel
-                                            )
-                                        ):
-                                            # User-level tunnel is also stale - invalidate it
-                                            tunnel_service.unregister_tunnel(
-                                                user_id, None
-                                            )  # Unregister user-level
-                                            logger.warning(
-                                                f"[Tunnel Routing] ⚠️ User-level tunnel is also stale ({user_level_tunnel}). "
-                                                f"Invalidated all tunnels. Extension should restart cloudflared."
-                                            )
-                                        else:
-                                            # User-level tunnel is different, try it as fallback
-                                            logger.info(
-                                                f"[Tunnel Routing] 🔄 Retrying {operation} with user-level tunnel: {user_level_tunnel}"
-                                            )
-
-                                            # Retry with user-level tunnel
-                                            retry_endpoint = endpoint_map.get(operation)
-                                            if retry_endpoint:
-                                                retry_url = f"{user_level_tunnel}{retry_endpoint}"
-                                                try:
-                                                    if operation in [
-                                                        "get_file",
-                                                        "show_updated_file",
-                                                    ]:
-                                                        # GET request with file path as query parameter
-                                                        file_path = data.get(
-                                                            "file_path", ""
-                                                        )
-                                                        retry_url_with_params = f"{retry_url}?path={url_quote(file_path)}"
-                                                        retry_response = client.get(
-                                                            retry_url_with_params
-                                                        )
-                                                    else:
-                                                        retry_response = client.post(
-                                                            retry_url, json=request_data
-                                                        )
-
-                                                    if (
-                                                        retry_response.status_code
-                                                        == 200
-                                                    ):
-                                                        result = retry_response.json()
-                                                        logger.info(
-                                                            f"[Tunnel Routing] ✅ User-level fallback succeeded for {operation}"
-                                                        )
-                                                        # Return success message (simplified), including diff when present
-                                                        file_path = data.get(
-                                                            "file_path", "file"
-                                                        )
-                                                        response_msg = f"✅ Applied {operation.replace('_', ' ')} to '{file_path}' locally (via user-level tunnel)"
-                                                        return _append_diff(
-                                                            response_msg, result
-                                                        )
-                                                    elif retry_response.status_code in [
-                                                        502,
-                                                        503,
-                                                        504,
-                                                        530,
-                                                    ]:
-                                                        # User-level tunnel is also stale
-                                                        tunnel_service.unregister_tunnel(
-                                                            user_id, None
-                                                        )
-                                                        logger.warning(
-                                                            f"[Tunnel Routing] ⚠️ User-level tunnel also stale. Invalidated all tunnels."
-                                                        )
-                                                    else:
-                                                        logger.warning(
-                                                            f"[Tunnel Routing] ❌ User-level fallback failed: {retry_response.status_code}"
-                                                        )
-                                                except Exception as retry_e:
-                                                    logger.warning(
-                                                        f"[Tunnel Routing] ❌ User-level fallback error: {retry_e}"
-                                                    )
                                 except Exception as e:
                                     logger.error(
                                         f"[Tunnel Routing] Failed to invalidate tunnel: {e}"
@@ -3190,16 +3097,8 @@ def _should_route_to_local_server() -> bool:
 
         tunnel_service = get_tunnel_service()
 
-        # Try conversation-specific first
+        # Resolve tunnel (workspace/conversation only; no user-level)
         tunnel_url = tunnel_service.get_tunnel_url(user_id, conversation_id)
-
-        # If not found, try user-level tunnel
-        if not tunnel_url:
-            tunnel_url = tunnel_service.get_tunnel_url(user_id, None)
-            if tunnel_url:
-                logger.info(
-                    f"[Tunnel Routing] Found user-level tunnel (no conversation-specific): {tunnel_url}"
-                )
 
         if tunnel_url:
             logger.info(

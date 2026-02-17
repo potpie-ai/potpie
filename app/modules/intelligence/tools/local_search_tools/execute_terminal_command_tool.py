@@ -93,11 +93,20 @@ def execute_terminal_command_tool(input_data: ExecuteTerminalCommandInput) -> st
         # Format and return result
         return format_terminal_result(result)
 
-    # Handle different error types with specific messages
+    # Handle different error types with specific messages (lazy import to avoid circular import with code_changes_manager)
     from app.modules.tunnel.tunnel_service import get_tunnel_service
+    from app.modules.intelligence.tools.code_changes_manager import (
+        _get_repository,
+        _get_branch,
+    )
 
     tunnel_service = get_tunnel_service()
-    tunnel_url = tunnel_service.get_tunnel_url(user_id, conversation_id)
+    tunnel_url = tunnel_service.get_tunnel_url(
+        user_id,
+        conversation_id,
+        repository=_get_repository(),
+        branch=_get_branch(),
+    )
 
     if error_type == "tunnel_unreachable" or (
         tunnel_url and error_type in ["timeout", "connection_error"]
