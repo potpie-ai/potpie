@@ -62,8 +62,8 @@
    # AI / LLM Configuration
    LLM_PROVIDER=openai                    # openai | ollama | anthropic | openrouter
    OPENAI_API_KEY=sk-proj-your-key
-   CHAT_MODEL=gpt-4o
-   INFERENCE_MODEL=gpt-4o-mini
+   CHAT_MODEL=gpt-5o
+   INFERENCE_MODEL=gpt-5o-mini
 
    # Database
    POSTGRES_SERVER=postgresql://postgres:mysecretpassword@localhost:5432/momentum
@@ -158,13 +158,9 @@ CODE_PROVIDER_TOKEN=your-token
 
 Potpie offers a suite of specialized codebase agents for automating and optimizing key aspects of software development:
 
-- **Debugging Agent**: Automatically analyzes stacktraces and provides debugging steps specific to your codebase. [Docs](https://docs.potpie.ai/agents/debugging-agent)
-- **Codebase Q&A Agent**: Answers questions about your codebase and explains functions, features, and architecture. [Docs](https://docs.potpie.ai/agents/qna-agent)
-- **Code Changes Agent**: Analyzes code changes, identifies affected APIs, and suggests improvements before merging. [Docs](https://docs.potpie.ai/agents/code-changes-agent)
 - **Integration Test Agent**: Generates integration test plans and code for flows to ensure components work together properly. [Docs](https://docs.potpie.ai/agents/integration-test-agent)
 - **Unit Test Agent**: Automatically creates unit test plan and code for individual functions to enhance test coverage. [Docs](https://docs.potpie.ai/agents/unit-test-agent)
 - **LLD Agent**: Creates a low level design for implementing a new feature by providing functional requirements to this agent. [Docs](https://docs.potpie.ai/agents/introduction)
-- **Code Generation Agent**: Generates code for new features, refactors existing code, and suggests optimizations. [Docs](https://docs.potpie.ai/agents/introduction)
 
 ### Custom Agents
 
