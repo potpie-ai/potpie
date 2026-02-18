@@ -1,8 +1,8 @@
 """
 Execute Terminal Command Tool
 
-Execute shell commands on the user's local machine via LocalServer tunnel.
-Supports both sync and async execution modes.
+Execute shell commands on the user's local machine via the VS Code extension
+(Socket.IO workspace connection). Supports both sync and async execution modes.
 """
 
 from typing import Optional
@@ -35,7 +35,7 @@ class ExecuteTerminalCommandInput(BaseModel):
 
 
 def execute_terminal_command_tool(input_data: ExecuteTerminalCommandInput) -> str:
-    """Execute a shell command on the user's local machine via LocalServer tunnel.
+    """Execute a shell command on the user's local machine via the VS Code extension (Socket.IO).
 
     This tool executes commands directly on the user's local machine through the VS Code extension.
     Commands run within the workspace directory with security restrictions.
@@ -67,7 +67,7 @@ def execute_terminal_command_tool(input_data: ExecuteTerminalCommandInput) -> st
 
     user_id, conversation_id = get_context_vars()
 
-    # Route to LocalServer via tunnel
+    # Route to LocalServer via workspace socket (Socket.IO)
     result, error_type = route_terminal_command(
         command=input_data.command,
         working_directory=input_data.working_directory,
@@ -78,7 +78,7 @@ def execute_terminal_command_tool(input_data: ExecuteTerminalCommandInput) -> st
     )
 
     if result:
-        logger.info("✅ [execute_terminal_command] Executed via LocalServer tunnel")
+        logger.info("✅ [execute_terminal_command] Executed via workspace socket (Socket.IO)")
 
         # For async mode, return session info
         if input_data.mode == "async" and result.get("session_id"):
@@ -101,75 +101,78 @@ def execute_terminal_command_tool(input_data: ExecuteTerminalCommandInput) -> st
     )
 
     tunnel_service = get_tunnel_service()
-    tunnel_url = tunnel_service.get_tunnel_url(
-        user_id,
-        conversation_id,
-        repository=_get_repository(),
-        branch=_get_branch(),
+    tunnel_url = (
+        tunnel_service.get_tunnel_url(
+            user_id,
+            conversation_id,
+            repository=_get_repository(),
+            branch=_get_branch(),
+        )
+        if user_id
+        else None
     )
 
     if error_type == "tunnel_unreachable" or (
         tunnel_url and error_type in ["timeout", "connection_error"]
     ):
-        # Tunnel URL exists but request failed
+        # Workspace socket was registered but request failed
         logger.warning(
-            f"⚠️ [execute_terminal_command] Tunnel URL registered ({tunnel_url}) but not reachable (error: {error_type})"
+            f"⚠️ [execute_terminal_command] Workspace socket registered ({tunnel_url}) but not reachable (error: {error_type})"
         )
         return (
-            f"❌ **Tunnel connection error**\n\n"
-            f"The tunnel URL is registered (`{tunnel_url}`) but the connection is not reachable.\n\n"
+            f"❌ **Workspace socket connection error**\n\n"
+            f"The extension is registered (`{tunnel_url}`) but the request failed.\n\n"
             f"**Possible causes:**\n"
-            f"- The `cloudflared` process is not running on your local machine\n"
-            f"- The tunnel connection was interrupted or expired\n"
+            f"- The extension Socket.IO connection was interrupted or disconnected\n"
             f"- Network connectivity issues\n"
             f"- Temporary connection timeout\n\n"
             f"**To fix:**\n"
-            f"1. Ensure the VS Code extension is running\n"
-            f"2. Check that `cloudflared` is installed and running locally\n"
+            f"1. Ensure the VS Code extension is running and connected\n"
+            f"2. Check the extension shows a connected status\n"
             f"3. Try the command again - this may be a transient connection issue\n"
-            f"4. The extension should automatically recreate the tunnel if needed\n"
+            f"4. The extension should automatically reconnect if needed\n"
             f"5. If the issue persists, check the VS Code extension logs\n\n"
-            f"**Note:** The tunnel may be temporarily unavailable. The extension will automatically reconnect."
+            f"**Note:** The workspace socket may be temporarily unavailable. The extension will automatically reconnect."
         )
     elif error_type == "tunnel_expired":
-        # Tunnel was expired and has been cleaned up
-        logger.warning("⚠️ [execute_terminal_command] Tunnel expired and was cleaned up")
+        # Workspace registration was expired and cleaned up
+        logger.warning("⚠️ [execute_terminal_command] Workspace socket registration expired and was cleaned up")
         return (
-            f"❌ **Tunnel expired**\n\n"
-            f"The tunnel connection has expired and has been automatically cleaned up.\n\n"
+            f"❌ **Workspace socket registration expired**\n\n"
+            f"The extension registration has expired and has been cleaned up.\n\n"
             f"**To fix:**\n"
-            f"1. The VS Code extension should automatically register a new tunnel\n"
+            f"1. The VS Code extension should automatically re-register\n"
             f"2. Try the command again in a few seconds\n"
             f"3. If the issue persists, check the VS Code extension logs\n"
             f"4. Ensure the extension is running and connected"
         )
     elif error_type == "no_tunnel" or error_type == "no_user_id":
-        # No tunnel registered at all
+        # No workspace socket available: no user_id, or no workspace_id (repo not in context), or socket not registered
         logger.warning(
-            f"⚠️ [execute_terminal_command] LocalServer not available (error: {error_type})"
+            f"⚠️ [execute_terminal_command] Workspace socket not available (error: {error_type})"
         )
         return (
-            "❌ Terminal command requires LocalServer connection (tunnel) for local execution.\n\n"
+            "❌ Terminal command requires the VS Code extension (Socket.IO workspace connection) for local execution.\n\n"
             "**Local execution (required):**\n"
-            "- Runs directly on your local machine via VS Code extension\n"
-            "- Requires active tunnel connection\n"
+            "- Runs on your machine via the VS Code extension over a Socket.IO connection\n"
+            "- Requires the conversation to have a linked project/repo and the extension to be connected\n"
             "- Commands are validated for security\n\n"
             "**To fix:**\n"
-            "1. Ensure the VS Code extension is installed and running\n"
-            "2. The extension should automatically establish the tunnel when you start a conversation\n"
-            "3. If no tunnel is created, check the extension logs for errors\n"
-            "4. Ensure `cloudflared` is installed on your local machine (the extension should handle this)\n"
-            "5. Try restarting the VS Code extension or reloading the window"
+            "1. Ensure the VS Code extension is installed and connected (Socket.IO to this backend)\n"
+            "2. Start the conversation from a project/workspace so the backend knows which repo (workspace_id) to use\n"
+            "3. If the extension is connected but this still appears, check that the extension has registered the workspace (register_workspace after auth)\n"
+            "4. Check the extension logs for connection/registration errors\n"
+            "5. Try reloading the VS Code window"
         )
     else:
         # Unknown error
         logger.warning(f"⚠️ [execute_terminal_command] Unknown error: {error_type}")
         return (
             f"❌ **Terminal command failed**\n\n"
-            f"An error occurred while executing the command via the tunnel.\n\n"
+            f"An error occurred while executing the command via the workspace socket.\n\n"
             f"**Error type:** {error_type}\n\n"
             f"**To fix:**\n"
             f"1. Try the command again - this may be a transient issue\n"
             f"2. Check the VS Code extension logs for more details\n"
-            f"3. Ensure the extension is running and the tunnel is active"
+            f"3. Ensure the extension is connected and the workspace is registered"
         )

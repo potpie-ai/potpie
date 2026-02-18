@@ -2356,7 +2356,7 @@ def _get_branch() -> Optional[str]:
 def _extract_error_message(error_text: str, status_code: int) -> str:
     """Extract a meaningful error message from response text.
 
-    Handles HTML error pages (like Cloudflare errors) and JSON error responses.
+    Handles HTML error pages and JSON error responses.
 
     Args:
         error_text: The raw response text
@@ -2368,18 +2368,16 @@ def _extract_error_message(error_text: str, status_code: int) -> str:
     if not error_text:
         return f"HTTP {status_code} error (no response body)"
 
-    # Check if it's HTML (like Cloudflare error pages)
+    # Check if it's HTML (e.g. upstream error pages)
     if error_text.strip().startswith(
         "<!DOCTYPE html>"
     ) or error_text.strip().startswith("<html"):
         # Try to extract meaningful information from HTML error pages
         import re
 
-        # Look for Cloudflare tunnel errors
-        if "Cloudflare Tunnel error" in error_text:
-            if status_code == 530:
-                return "Cloudflare Tunnel error (530): Tunnel is unavailable or cannot be resolved. Please check that cloudflared is running."
-            return f"Cloudflare Tunnel error ({status_code}): Tunnel connection failed"
+        # Look for tunnel/connection errors
+        if status_code == 530 or ("tunnel" in error_text.lower() and "error" in error_text.lower()):
+            return "Tunnel/connection error: extension connection unavailable. Please ensure the VS Code extension is running and connected."
 
         # Look for error titles or messages in HTML
         title_match = re.search(
@@ -2527,8 +2525,7 @@ def _route_to_local_server(
             logger.warning(f"Unknown operation for tunnel routing: {operation}")
             return None
 
-        # Smart routing: Use cloudflared tunnel by default (including in dev).
-        # Only use direct localhost when VSCODE_LOCAL_TUNNEL_SERVER is explicitly set (avoids hairpin when desired).
+        # Smart routing: Use Socket.IO tunnel by default. Only use direct localhost when VSCODE_LOCAL_TUNNEL_SERVER is set (dev).
         try:
             import os
 
@@ -2564,7 +2561,7 @@ def _route_to_local_server(
                     )
                     url = f"{tunnel_url}{endpoint}"
             else:
-                # Use registered cloudflared tunnel (dev or prod; or FORCE_TUNNEL)
+                # Use registered tunnel (Socket or FORCE_TUNNEL)
                 if force_tunnel:
                     logger.info(
                         f"[Tunnel Routing] 🔧 FORCE_TUNNEL enabled, using tunnel URL: {tunnel_url}{endpoint}"
@@ -2834,11 +2831,10 @@ def _route_to_local_server(
                             error_text = response.text
                             status_code = response.status_code
 
-                            # Detect Cloudflare tunnel errors (stale tunnel)
+                            # Detect tunnel/connection errors
                             is_tunnel_error = (
                                 status_code in [502, 503, 504, 530]
-                                or "Cloudflare Tunnel error" in error_text
-                                or "cloudflared" in error_text.lower()
+                                or ("tunnel" in error_text.lower() and "error" in error_text.lower())
                             )
 
                             if is_tunnel_error:

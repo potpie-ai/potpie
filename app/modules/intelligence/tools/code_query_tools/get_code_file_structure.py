@@ -144,11 +144,10 @@ class GetCodeFileStructureTool:
                     status_code = response.status_code
                     error_text = response.text
 
-                    # Detect Cloudflare tunnel errors (stale tunnel)
+                    # Detect tunnel/connection errors
                     is_tunnel_error = (
                         status_code in [502, 503, 504, 530]
-                        or "Cloudflare Tunnel error" in error_text
-                        or "cloudflared" in error_text.lower()
+                        or ("tunnel" in error_text.lower() and "error" in error_text.lower())
                     )
 
                     if is_tunnel_error:

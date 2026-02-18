@@ -31,7 +31,6 @@ from app.modules.key_management.secret_manager import router as secret_manager_r
 from app.modules.media.media_router import router as media_router
 from app.modules.integrations.integrations_router import router as integrations_router
 from app.modules.tunnel.tunnel_router import router as tunnel_router
-from app.modules.tunnel.router_proxy import WildcardTunnelRouterMiddleware
 from app.modules.knowledge_graph.knowledge_graph_router import router as knowledge_graph_router
 from app.modules.parsing.graph_construction.parsing_router import (
     router as parsing_router,
@@ -64,7 +63,7 @@ class MainApp:
         self.app = FastAPI()
         self.setup_cors()
         self.setup_logging_middleware()
-        self.setup_wildcard_tunnel_router()
+        self.setup_socket_io()
         self.include_routers()
 
     def setup_sentry(self):
@@ -134,13 +133,14 @@ class MainApp:
         self.app.add_middleware(LoggingContextMiddleware)
         logger.info("Logging context middleware configured")
 
-    def setup_wildcard_tunnel_router(self):
-        """
-        When TUNNEL_WILDCARD_ENABLED and Host is *.{TUNNEL_WILDCARD_DOMAIN},
-        proxy to workspace tunnel (https://{tunnel_id}.cfargotunnel.com).
-        """
-        self.app.add_middleware(WildcardTunnelRouterMiddleware)
-        logger.info("Wildcard tunnel router middleware configured")
+    def setup_socket_io(self):
+        """Mount Socket.IO ASGI app at /ws for workspace tunnel."""
+        from app.modules.tunnel.socket_auth_middleware import SocketAuthMiddleware
+        from app.modules.tunnel.socket_server import socket_asgi
+
+        self.app.add_middleware(SocketAuthMiddleware)
+        self.app.mount("/ws", socket_asgi)
+        logger.info("Socket.IO workspace tunnel mounted at /ws (auth from query/header supported)")
 
     def setup_data(self):
         if os.getenv("isDevelopmentMode") == "enabled":

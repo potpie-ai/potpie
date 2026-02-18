@@ -1030,7 +1030,9 @@ class ConversationService:
                     conversation_id=conversation_id,
                     user_id=user_id,  # Set user_id for tunnel routing
                     local_mode=local_mode,
-                    repository=project_info.get("repo_name") if project_info else project_name,
+                    repository=(
+                        project_info.get("project_name") if project_info else project_name
+                    ),
                     branch=project_info.get("branch_name") if project_info else None,
                 )
                 custom_ctx.check_cancelled = check_cancelled
@@ -1077,7 +1079,9 @@ class ConversationService:
                     user_id=user_id,  # Set user_id for tunnel routing
                     tunnel_url=tunnel_url,  # Tunnel URL from request (takes priority)
                     local_mode=local_mode,
-                    repository=project_info.get("repo_name") if project_info else project_name,
+                    repository=(
+                        project_info.get("project_name") if project_info else project_name
+                    ),
                     branch=project_info.get("branch_name") if project_info else None,
                 )
                 chat_context.check_cancelled = check_cancelled

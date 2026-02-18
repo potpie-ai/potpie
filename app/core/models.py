@@ -23,3 +23,4 @@ from app.modules.auth.auth_provider_model import (  # noqa
     OrganizationSSOConfig,
     AuthAuditLog,
 )
+# WorkspaceTunnel is stored in Redis (see tunnel_service.get/set_workspace_tunnel_record)

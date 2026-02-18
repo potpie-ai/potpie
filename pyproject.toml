@@ -55,6 +55,7 @@ dependencies = [
     "pyasn1>=0.6.2",
     "python-multipart>=0.0.22",
     "redis>=7.0.1",
+    "python-socketio>=5.11.0",
     "requests>=2.32.5",
     "resend>=2.19.0",
     "scikit-learn>=1.7.2",
