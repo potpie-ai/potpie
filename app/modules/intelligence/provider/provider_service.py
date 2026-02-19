@@ -332,7 +332,7 @@ AVAILABLE_MODELS = [
     AvailableModelOption(
         id="openai/gpt-5.2",
         name="GPT-5.2",
-        description="OpenAI's latest model for complex tasks with large context",
+        description="OpenAI's latest frontier model with adaptive reasoning and strong agentic performance",
         provider="openai",
         is_chat_model=True,
         is_inference_model=False,
@@ -340,7 +340,7 @@ AVAILABLE_MODELS = [
     AvailableModelOption(
         id="openai/gpt-5.1",
         name="GPT-5.1",
-        description="OpenAI's previous flagship model",
+        description="OpenAI's flagship model with strong general reasoning and instruction following",
         provider="openai",
         is_chat_model=True,
         is_inference_model=False,
@@ -348,7 +348,7 @@ AVAILABLE_MODELS = [
     AvailableModelOption(
         id="openai/gpt-5-mini",
         name="GPT-5 Mini",
-        description="Smaller model for fast, lightweight tasks",
+        description="Lightweight GPT-5 variant for fast, cost-efficient tasks",
         provider="openai",
         is_chat_model=False,
         is_inference_model=True,
@@ -356,7 +356,7 @@ AVAILABLE_MODELS = [
     AvailableModelOption(
         id="anthropic/claude-sonnet-4-6",
         name="Claude Sonnet 4.6",
-        description="Latest Claude Sonnet model",
+        description="Anthropic's latest Sonnet with strong coding, agents, and computer use capabilities",
         provider="anthropic",
         is_chat_model=True,
         is_inference_model=True,
@@ -364,7 +364,7 @@ AVAILABLE_MODELS = [
     AvailableModelOption(
         id="anthropic/claude-sonnet-4-5-20250929",
         name="Claude Sonnet 4.5",
-        description="Best model for complex agents and coding",
+        description="Optimized for agentic workflows and coding with improved tool orchestration",
         provider="anthropic",
         is_chat_model=True,
         is_inference_model=False,
@@ -372,7 +372,7 @@ AVAILABLE_MODELS = [
     AvailableModelOption(
         id="anthropic/claude-haiku-4-5-20251001",
         name="Claude Haiku 4.5",
-        description="Faster, even surpasses Claude Sonnet 4 at certain tasks",
+        description="Anthropic's fastest model with extended thinking at low latency and cost",
         provider="anthropic",
         is_chat_model=True,
         is_inference_model=True,
@@ -380,7 +380,7 @@ AVAILABLE_MODELS = [
     AvailableModelOption(
         id="anthropic/claude-opus-4-5-20251101",
         name="Claude Opus 4.5",
-        description="Latest Claude Opus tier for maximum reasoning depth",
+        description="Anthropic's most capable model for complex reasoning and long-horizon tasks",
         provider="anthropic",
         is_chat_model=True,
         is_inference_model=False,
@@ -388,7 +388,7 @@ AVAILABLE_MODELS = [
     AvailableModelOption(
         id="openrouter/deepseek/deepseek-v3.2-20251201",
         name="DeepSeek V3.2",
-        description="DeepSeek's latest V3 chat model",
+        description="Efficient chat model with strong coding and reasoning via sparse attention",
         provider="deepseek",
         is_chat_model=True,
         is_inference_model=True,
@@ -396,7 +396,7 @@ AVAILABLE_MODELS = [
     AvailableModelOption(
         id="openrouter/deepseek/deepseek-r1-0528",
         name="DeepSeek R1-0528",
-        description="DeepSeek's latest reasoning model",
+        description="Open-source reasoning model with transparent chain-of-thought and strong problem solving",
         provider="deepseek",
         is_chat_model=True,
         is_inference_model=True,
@@ -404,7 +404,7 @@ AVAILABLE_MODELS = [
     AvailableModelOption(
         id="openrouter/google/gemini-2.5-pro-preview",
         name="Gemini 2.5 Pro",
-        description="Google's pro Gemini model",
+        description="Google's advanced model for reasoning, coding, and math with extended thinking",
         provider="gemini",
         is_chat_model=True,
         is_inference_model=True,
@@ -412,7 +412,7 @@ AVAILABLE_MODELS = [
     AvailableModelOption(
         id="openrouter/google/gemini-3-pro-preview",
         name="Gemini 3 Pro Preview",
-        description="Latest Gemini 3 Pro capabilities",
+        description="Google's flagship multimodal model with 1M-token context for complex reasoning tasks",
         provider="gemini",
         is_chat_model=True,
         is_inference_model=True,
@@ -420,7 +420,7 @@ AVAILABLE_MODELS = [
     AvailableModelOption(
         id="openrouter/google/gemini-3-flash-preview",
         name="Gemini 3 Flash Preview",
-        description="Google's Gemini 3 Flash model optimized for speed",
+        description="Fast thinking model for agentic workflows, chat, and coding with efficient reasoning",
         provider="gemini",
         is_chat_model=True,
         is_inference_model=True,
@@ -428,7 +428,7 @@ AVAILABLE_MODELS = [
     AvailableModelOption(
         id="openrouter/z-ai/glm-5",
         name="Z AI GLM-5",
-        description="Z AI's latest GLM model",
+        description="Z.ai's flagship model for systems design and long-horizon agentic tasks",
         provider="zai",
         is_chat_model=True,
         is_inference_model=True,
@@ -436,7 +436,7 @@ AVAILABLE_MODELS = [
     AvailableModelOption(
         id="openrouter/z-ai/glm-4.7",
         name="Z AI GLM 4.7",
-        description="Latest Z AI model",
+        description="Strong programming and multi-step reasoning for complex agent execution",
         provider="zai",
         is_chat_model=True,
         is_inference_model=True,
@@ -444,7 +444,7 @@ AVAILABLE_MODELS = [
     AvailableModelOption(
         id="openrouter/moonshotai/kimi-k2.5",
         name="Kimi K2.5 (Moonshot)",
-        description="Moonshot AI Kimi K2.5",
+        description="Multimodal model with strong visual coding and agentic tool-calling capabilities",
         provider="moonshot",
         is_chat_model=True,
         is_inference_model=True,
@@ -452,7 +452,7 @@ AVAILABLE_MODELS = [
     AvailableModelOption(
         id="openrouter/minimax/minimax-m2.5",
         name="MiniMax M2.5",
-        description="SOTA model for coding and productivity, strong on SWE-Bench and BrowseComp",
+        description="Productivity-focused model strong on coding, office tasks, and document generation",
         provider="minimax",
         is_chat_model=True,
         is_inference_model=True,

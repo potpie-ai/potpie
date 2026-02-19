@@ -108,7 +108,7 @@ MODEL_CONFIG_MAP = {
         "provider": "deepseek",
         "context_window": 128000,
         "auth_provider": "openrouter",
-        "default_params": {"temperature": 0.3, "max_tokens": 8000},
+        "default_params": {"temperature": 0.3},
         "capabilities": {
             "supports_pydantic": True,
             "supports_streaming": True,
@@ -122,7 +122,7 @@ MODEL_CONFIG_MAP = {
         "provider": "deepseek",
         "context_window": 128000,
         "auth_provider": "openrouter",
-        "default_params": {"temperature": 0.3, "max_tokens": 8000},
+        "default_params": {"temperature": 0.3},
         "capabilities": {
             "supports_pydantic": True,
             "supports_streaming": True,
@@ -209,7 +209,7 @@ MODEL_CONFIG_MAP = {
         "provider": "moonshot",
         "context_window": 128000,
         "auth_provider": "openrouter",
-        "default_params": {"temperature": 0.3, "max_tokens": 8000},
+        "default_params": {"temperature": 0.3},
         "capabilities": {
             "supports_pydantic": True,
             "supports_streaming": True,
@@ -224,7 +224,7 @@ MODEL_CONFIG_MAP = {
         "provider": "minimax",
         "context_window": 196608,
         "auth_provider": "openrouter",
-        "default_params": {"temperature": 0.3, "max_tokens": 8000},
+        "default_params": {"temperature": 0.3},
         "capabilities": {
             "supports_pydantic": True,
             "supports_streaming": True,
