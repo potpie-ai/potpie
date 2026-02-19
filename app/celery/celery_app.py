@@ -1,17 +1,20 @@
-import os
 import asyncio
+import os
 
 # Set TOKENIZERS_PARALLELISM before any tokenizer imports to prevent fork warnings
 # This must be set before sentence-transformers or any HuggingFace tokenizers are used
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 from urllib.parse import urlparse, urlunparse
 
-from celery import Celery
-from celery.signals import worker_process_shutdown, worker_process_init
 from dotenv import load_dotenv
 
 from app.core.models import *  # noqa #This will import and initialize all models
+from app.modules.intelligence.tracing.logfire_tracer import (
+    initialize_logfire_tracing,
+)
 from app.modules.utils.logger import configure_logging, setup_logger
+from celery import Celery
+from celery.signals import worker_process_init, worker_process_shutdown
 
 # Load environment variables from a .env file if present
 load_dotenv()
@@ -128,23 +131,7 @@ def configure_celery(queue_prefix: str):
 
 configure_celery(queue_name)
 
-
-def setup_logfire_tracing():
-    """Initialize Logfire tracing for LLM monitoring in Celery workers."""
-    try:
-        from app.modules.intelligence.tracing.logfire_tracer import (
-            initialize_logfire_tracing,
-        )
-
-        initialize_logfire_tracing()
-    except Exception as e:
-        logger.warning(
-            "Logfire tracing initialization failed in Celery worker (non-fatal)",
-            error=str(e),
-        )
-
-
-setup_logfire_tracing()
+initialize_logfire_tracing()
 
 
 def configure_litellm_for_celery():
@@ -365,8 +352,9 @@ def log_worker_memory_config(sender, **kwargs):
     This helps debug memory-related issues like SIGKILL.
     """
     try:
-        import psutil
         import os as os_module
+
+        import psutil
 
         process = psutil.Process()
         memory_info = process.memory_info()

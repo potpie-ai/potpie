@@ -1,7 +1,5 @@
 import asyncio
-import json
 import os
-import shutil
 import time
 import traceback
 from asyncio import create_task
@@ -191,10 +189,13 @@ class ParsingService:
                     repo_path=repo_details.repo_path,
                     project_id=project_id,
                 )
-                repo, owner, auth, repo_manager_path = (
-                    await self.parse_helper.clone_or_copy_repository(
-                        repo_details_converted, user_id
-                    )
+                (
+                    repo,
+                    owner,
+                    auth,
+                    repo_manager_path,
+                ) = await self.parse_helper.clone_or_copy_repository(
+                    repo_details_converted, user_id
                 )
                 logger.info(
                     "ParsingService: clone_or_copy_repository completed",
@@ -224,7 +225,7 @@ class ParsingService:
                         repo,
                         repo_details.branch_name,
                         auth,
-                        repo,
+                        repo_details,
                         user_id,
                         str(project_id),
                         commit_id=repo_details.commit_id,
@@ -271,7 +272,7 @@ class ParsingService:
                         )
 
                 logger.info(
-                    f"ParsingService: About to analyze directory",
+                    "ParsingService: About to analyze directory",
                     extra={
                         "extracted_dir": extracted_dir,
                         "repo_manager_path": repo_manager_path,
@@ -417,7 +418,7 @@ class ParsingService:
                 # Step 1: Graph Generation
                 graph_gen_start = time.time()
                 logger.info(
-                    f"[PARSING] Step 1/3: Graph generation",
+                    "[PARSING] Step 1/3: Graph generation",
                     project_id=project_id,
                 )
                 neo4j_config = self._get_neo4j_config()
@@ -445,7 +446,7 @@ class ParsingService:
                 # Step 2: Inference
                 inference_start = time.time()
                 logger.info(
-                    f"[PARSING] Step 2/3: Running inference",
+                    "[PARSING] Step 2/3: Running inference",
                     project_id=project_id,
                 )
                 cache_stats = await self.inference_service.run_inference(
@@ -530,7 +531,7 @@ class ParsingService:
                 if service is not None:
                     service.close()
                 logger.info(
-                    f"[PARSING] Cleaned up graph service",
+                    "[PARSING] Cleaned up graph service",
                     project_id=project_id,
                 )
                 self.inference_service.log_graph_stats(project_id)

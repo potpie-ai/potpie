@@ -284,7 +284,7 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
       ```
    3. Tracing is automatically initialized when Potpie starts. View traces at https://logfire.pydantic.dev
 
-   **Note:** Set `LOGFIRE_ENABLED=false` in your `.env` to disable tracing.
+   **Note:** Set `LOGFIRE_SEND_TO_CLOUD=false` in your `.env` to disable sending traces to Logfire cloud.
 
 3. **Stop Potpie**
 

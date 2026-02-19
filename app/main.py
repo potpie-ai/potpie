@@ -7,6 +7,7 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 # Load .env before any app imports so modules that read env at import time (e.g. tunnel service) see it
 from dotenv import load_dotenv
+
 load_dotenv(override=True)
 
 import sentry_sdk
@@ -22,21 +23,26 @@ from app.modules.code_provider.github.github_router import router as github_rout
 from app.modules.conversations.conversations_router import (
     router as conversations_router,
 )
+from app.modules.integrations.integrations_router import router as integrations_router
 from app.modules.intelligence.agents.agents_router import router as agent_router
 from app.modules.intelligence.prompts.prompt_router import router as prompt_router
 from app.modules.intelligence.prompts.system_prompt_setup import SystemPromptSetup
 from app.modules.intelligence.provider.provider_router import router as provider_router
 from app.modules.intelligence.tools.tool_router import router as tool_router
+from app.modules.intelligence.tracing.logfire_tracer import (
+    initialize_logfire_tracing,
+)
 from app.modules.key_management.secret_manager import router as secret_manager_router
+from app.modules.knowledge_graph.knowledge_graph_router import (
+    router as knowledge_graph_router,
+)
 from app.modules.media.media_router import router as media_router
-from app.modules.integrations.integrations_router import router as integrations_router
-from app.modules.tunnel.tunnel_router import router as tunnel_router
-from app.modules.knowledge_graph.knowledge_graph_router import router as knowledge_graph_router
 from app.modules.parsing.graph_construction.parsing_router import (
     router as parsing_router,
 )
 from app.modules.projects.projects_router import router as projects_router
 from app.modules.search.search_router import router as search_router
+from app.modules.tunnel.tunnel_router import router as tunnel_router
 from app.modules.usage.usage_router import router as usage_router
 from app.modules.users.user_router import router as user_router
 from app.modules.users.user_service import UserService
@@ -59,7 +65,7 @@ class MainApp:
             )
             exit(1)
         self.setup_sentry()
-        self.setup_logfire_tracing()
+        self.setup_tracing()
         self.app = FastAPI()
         self.setup_cors()
         self.setup_logging_middleware()
@@ -91,17 +97,8 @@ class MainApp:
                     "Sentry initialization failed (non-fatal but should be investigated)"
                 )
 
-    def setup_logfire_tracing(self):
-        try:
-            from app.modules.intelligence.tracing.logfire_tracer import (
-                initialize_logfire_tracing,
-            )
-
-            initialize_logfire_tracing()
-        except Exception:
-            logger.exception(
-                "Logfire tracing initialization failed (non-fatal but should be investigated)"
-            )
+    def setup_tracing(self):
+        initialize_logfire_tracing()
 
     def setup_cors(self):
         # Get allowed origins from environment variable, default to localhost:3000 for development
@@ -140,7 +137,9 @@ class MainApp:
 
         self.app.add_middleware(SocketAuthMiddleware)
         self.app.mount("/ws", socket_asgi)
-        logger.info("Socket.IO workspace tunnel mounted at /ws (auth from query/header supported)")
+        logger.info(
+            "Socket.IO workspace tunnel mounted at /ws (auth from query/header supported)"
+        )
 
     def setup_data(self):
         if os.getenv("isDevelopmentMode") == "enabled":
