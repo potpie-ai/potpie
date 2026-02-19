@@ -51,6 +51,19 @@ MODEL_CONFIG_MAP = {
         "api_version": None,
     },
     # Anthropic Models (Claude 3.5/4 ~200k)
+    "anthropic/claude-sonnet-4-6": {
+        "provider": "anthropic",
+        "context_window": 200000,
+        "default_params": {"temperature": 0.3, "max_tokens": 8000},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": True,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": None,
+        "api_version": None,
+    },
     "anthropic/claude-haiku-4-5-20251001": {
         "provider": "anthropic",
         "context_window": 200000,
@@ -77,58 +90,6 @@ MODEL_CONFIG_MAP = {
         "base_url": None,
         "api_version": None,
     },
-    "anthropic/claude-sonnet-4-20250514": {
-        "provider": "anthropic",
-        "context_window": 200000,
-        "default_params": {"temperature": 0.3, "max_tokens": 8000},
-        "capabilities": {
-            "supports_pydantic": True,
-            "supports_streaming": True,
-            "supports_vision": True,
-            "supports_tool_parallelism": True,
-        },
-        "base_url": None,
-        "api_version": None,
-    },
-    "anthropic/claude-opus-4-1-20250805": {
-        "provider": "anthropic",
-        "context_window": 200000,
-        "default_params": {"temperature": 0.3, "max_tokens": 8000},
-        "capabilities": {
-            "supports_pydantic": True,
-            "supports_streaming": True,
-            "supports_vision": True,
-            "supports_tool_parallelism": True,
-        },
-        "base_url": None,
-        "api_version": None,
-    },
-    "anthropic/claude-3-7-sonnet-20250219": {
-        "provider": "anthropic",
-        "context_window": 200000,
-        "default_params": {"temperature": 0.3, "max_tokens": 8000},
-        "capabilities": {
-            "supports_pydantic": True,
-            "supports_streaming": True,
-            "supports_vision": True,
-            "supports_tool_parallelism": True,
-        },
-        "base_url": None,
-        "api_version": None,
-    },
-    "anthropic/claude-3-5-haiku-20241022": {
-        "provider": "anthropic",
-        "context_window": 200000,
-        "default_params": {"temperature": 0.2, "max_tokens": 8000},
-        "capabilities": {
-            "supports_pydantic": True,
-            "supports_streaming": True,
-            "supports_vision": True,
-            "supports_tool_parallelism": True,
-        },
-        "base_url": None,
-        "api_version": None,
-    },
     "anthropic/claude-opus-4-5-20251101": {
         "provider": "anthropic",
         "context_window": 200000,
@@ -143,9 +104,9 @@ MODEL_CONFIG_MAP = {
         "api_version": None,
     },
     # DeepSeek Models
-    "openrouter/deepseek/deepseek-chat-v3-0324": {
+    "openrouter/deepseek/deepseek-v3.2-20251201": {
         "provider": "deepseek",
-        "context_window": 64000,
+        "context_window": 128000,
         "auth_provider": "openrouter",
         "default_params": {"temperature": 0.3, "max_tokens": 8000},
         "capabilities": {
@@ -157,12 +118,11 @@ MODEL_CONFIG_MAP = {
         "base_url": "https://openrouter.ai/api/v1",
         "api_version": None,
     },
-    # Meta-Llama Models
-    "openrouter/meta-llama/llama-3.3-70b-instruct": {
-        "provider": "meta-llama",
+    "openrouter/deepseek/deepseek-r1-0528": {
+        "provider": "deepseek",
         "context_window": 128000,
         "auth_provider": "openrouter",
-        "default_params": {"temperature": 0.3},
+        "default_params": {"temperature": 0.3, "max_tokens": 8000},
         "capabilities": {
             "supports_pydantic": True,
             "supports_streaming": True,
@@ -173,20 +133,6 @@ MODEL_CONFIG_MAP = {
         "api_version": None,
     },
     # Gemini Models
-    "openrouter/google/gemini-2.0-flash-001": {
-        "provider": "gemini",
-        "context_window": 1048576,
-        "auth_provider": "openrouter",
-        "default_params": {"temperature": 0.3},
-        "capabilities": {
-            "supports_pydantic": True,
-            "supports_streaming": True,
-            "supports_vision": True,
-            "supports_tool_parallelism": True,
-        },
-        "base_url": "https://openrouter.ai/api/v1",
-        "api_version": None,
-    },
     "openrouter/google/gemini-2.5-pro-preview": {
         "provider": "gemini",
         "context_window": 1048576,
@@ -215,7 +161,35 @@ MODEL_CONFIG_MAP = {
         "base_url": "https://openrouter.ai/api/v1",
         "api_version": None,
     },
+    "openrouter/google/gemini-3-flash-preview": {
+        "provider": "gemini",
+        "context_window": 1048576,
+        "auth_provider": "openrouter",
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": True,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_version": None,
+    },
     # Z-AI / GLM Models
+    "openrouter/z-ai/glm-5": {
+        "provider": "zai",
+        "context_window": 128000,
+        "auth_provider": "openrouter",
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": True,
+            "supports_tool_parallelism": False,
+        },
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_version": None,
+    },
     "openrouter/z-ai/glm-4.7": {
         "provider": "zai",
         "context_window": 128000,
