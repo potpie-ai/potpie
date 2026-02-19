@@ -59,11 +59,14 @@ class GithubService:
         self.is_development_mode = config_provider.get_is_development_mode()
 
     def get_github_repo_details(self, repo_name: str) -> Tuple[Github, Dict, str]:
-        private_key = (
-            "-----BEGIN RSA PRIVATE KEY-----\n"
-            + config_provider.get_github_key()
-            + "\n-----END RSA PRIVATE KEY-----\n"
-        )
+        raw_key = config_provider.get_github_key()
+        if not raw_key.startswith("-----BEGIN"):
+            raw_key = (
+                "-----BEGIN RSA PRIVATE KEY-----\n"
+                + raw_key
+                + "\n-----END RSA PRIVATE KEY-----\n"
+            )
+        private_key = raw_key
         app_id = os.environ["GITHUB_APP_ID"]
         auth = AppAuth(app_id=app_id, private_key=private_key)
         jwt = auth.create_jwt()
@@ -76,6 +79,13 @@ class GithubService:
             "X-GitHub-Api-Version": "2022-11-28",
         }
         response = requests.get(url, headers=headers)
+        if response.status_code == 401:
+            detail = (
+                f"Failed to get installation for {repo_name}: GitHub returned 401 (JWT could not be decoded). "
+                "Check GITHUB_APP_ID and GITHUB_PRIVATE_KEY: use the correct PEM for this App; "
+                "if the key is in .env as one line, use literal \\n for newlines."
+            )
+            raise HTTPException(status_code=400, detail=detail)
         if response.status_code != 200:
             raise HTTPException(
                 status_code=400, detail=f"Failed to get installation ID for {repo_name}"
@@ -367,14 +377,16 @@ class GithubService:
             user_orgs = user_github.get_user().get_orgs()
             org_logins = [org.login.lower() for org in user_orgs]
 
-            private_key = (
-                "-----BEGIN RSA PRIVATE KEY-----\n"
-                + config_provider.get_github_key()
-                + "\n-----END RSA PRIVATE KEY-----\n"
-            )
+            raw_key = config_provider.get_github_key()
+            if not raw_key.startswith("-----BEGIN"):
+                raw_key = (
+                    "-----BEGIN RSA PRIVATE KEY-----\n"
+                    + raw_key
+                    + "\n-----END RSA PRIVATE KEY-----\n"
+                )
             app_id = os.environ["GITHUB_APP_ID"]
 
-            auth = AppAuth(app_id=app_id, private_key=private_key)
+            auth = AppAuth(app_id=app_id, private_key=raw_key)
             jwt = auth.create_jwt()
 
             all_installations = []
