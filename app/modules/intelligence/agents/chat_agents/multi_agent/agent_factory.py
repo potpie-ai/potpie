@@ -698,7 +698,8 @@ Subagents DON'T get your history. Provide comprehensive context:
         separate toolset, to avoid name conflicts with MCP servers that may also expose read_todos.
 
         Note: In local mode, code changes tools are filtered by CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL
-        (show_diff, export_changes, show_updated_file) so the extension handles diff/export/display.
+        (clear_file_from_changes, clear_all_changes, show_diff, export_changes, show_updated_file)
+        so the extension handles diff/export/display and clear behavior.
         """
         # Import tools here to avoid circular imports
         from app.modules.intelligence.tools.code_changes_manager import (

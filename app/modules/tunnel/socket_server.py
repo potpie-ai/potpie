@@ -28,7 +28,7 @@ logger = setup_logger(__name__)
 
 WORKSPACE_SOCKET_KEY_PREFIX = "workspace:socket:"
 SOCKET_WORKSPACE_KEY_PREFIX = "socket:workspace:"
-WORKSPACE_SOCKET_TTL = int(os.getenv("WORKSPACE_SOCKET_TTL", "300"))
+WORKSPACE_SOCKET_TTL = int(os.getenv("WORKSPACE_SOCKET_TTL", "600"))
 RPC_RESPONSE_CHANNEL_PREFIX = "rpc:resp:"
 AUTH_SID_KEY_PREFIX = "auth:sid:"
 AUTH_TIMEOUT_SECS = int(os.getenv("SOCKET_AUTH_TIMEOUT_SECS", "15"))
@@ -120,7 +120,12 @@ _async_redis: Optional[aioredis.Redis] = None
 async def _get_async_redis() -> Optional[aioredis.Redis]:
     global _async_redis
     if _async_redis is not None:
-        return _async_redis
+        try:
+            await _async_redis.ping()  # type: ignore[misc]
+            return _async_redis
+        except Exception:
+            # Cached client is broken — drop it and reconnect below
+            _async_redis = None
     if not redis_url:
         return None
     try:
@@ -129,6 +134,7 @@ async def _get_async_redis() -> Optional[aioredis.Redis]:
         return _async_redis
     except Exception as e:
         logger.warning("[SocketServer] Async Redis unavailable: %s", e)
+        _async_redis = None
         return None
 
 
@@ -380,7 +386,7 @@ async def register_workspace(sid: str, data: dict):
 
 @sio.event(namespace=WORKSPACE_NAMESPACE)
 async def heartbeat(sid: str, data: dict):
-    """Refresh TTL for workspace_id and for auth:sid so the connection stays authenticated."""
+    """Refresh TTL for workspace_id, reverse map, and auth:sid so the connection stays authenticated."""
     if not await _require_auth(sid):
         return
     try:
@@ -391,8 +397,11 @@ async def heartbeat(sid: str, data: dict):
     redis_client = await _get_async_redis()
     if not redis_client:
         return
+    # Refresh both forward and reverse maps so neither expires while the other lives
     key = _workspace_socket_key(payload.workspace_id)
+    rev_key = _socket_workspace_key(sid)
     await redis_client.expire(key, WORKSPACE_SOCKET_TTL)
+    await redis_client.expire(rev_key, WORKSPACE_SOCKET_TTL)
 
 
 @sio.event(namespace=WORKSPACE_NAMESPACE)
@@ -417,7 +426,13 @@ async def tool_response(sid: str, data: dict):
 
 @sio.event(namespace=WORKSPACE_NAMESPACE)
 async def disconnect(sid: str, _reason: Optional[str] = None):
-    """Remove auth state and workspace_id -> sid mapping using reverse map socket:workspace:{sid} for O(1) cleanup."""
+    """Remove auth state and workspace_id -> sid mapping on disconnect.
+
+    Guard: only delete the forward map (workspace:socket:WID) when it still points to
+    THIS sid. If a newer connection has already re-registered the same workspace_id
+    with a different sid, we must leave the forward map intact so the new session
+    continues to work.
+    """
     _cancel_auth_timeout(sid)
     await _clear_authenticated(sid)
     redis_client = await _get_async_redis()
@@ -426,6 +441,16 @@ async def disconnect(sid: str, _reason: Optional[str] = None):
     rev_key = _socket_workspace_key(sid)
     workspace_id = await redis_client.get(rev_key)
     if workspace_id:
-        await redis_client.delete(_workspace_socket_key(workspace_id))
+        fwd_key = _workspace_socket_key(workspace_id)
+        # Only remove the forward pointer when it still names this sid
+        current_sid = await redis_client.get(fwd_key)
+        if current_sid == sid:
+            await redis_client.delete(fwd_key)
+            logger.info("[SocketServer] Unregistered workspace_id=%s on disconnect (sid=%s)", workspace_id, sid)
+        else:
+            logger.info(
+                "[SocketServer] Skipped forward-map cleanup for workspace_id=%s on disconnect (sid=%s) "
+                "— already replaced by sid=%s",
+                workspace_id, sid, current_sid,
+            )
         await redis_client.delete(rev_key)
-        logger.info("[SocketServer] Unregistered workspace_id=%s on disconnect", workspace_id)

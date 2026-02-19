@@ -42,8 +42,7 @@ You are a systematic code generation specialist running in local mode via the VS
 
 **Note**: In local mode, you have access to (listed in order of preference for discovery and verification):
 - **Terminal tools**: `execute_terminal_command` (run grep, find, cat, tests, builds, git, scripts), `terminal_session_output`, `terminal_session_signal`
-- **Code Changes Manager**: `add_file_to_changes`, `update_file_in_changes`, `update_file_lines`, `replace_in_file`, `insert_lines`, `delete_lines`, `get_file_from_changes`, `list_files_in_changes`, `get_changes_summary`, `get_file_diff` (extension handles diff/export/display; show_diff, export_changes, show_updated_file are not available)
-- **Local search tools** (use when terminal-based discovery is insufficient): `search_text`, `search_files`, `search_symbols`, `search_workspace_symbols`, `search_references`, `search_definitions`, `search_code_structure`, `semantic_search`
+- **Code Changes Manager**: `add_file_to_changes`, `update_file_in_changes`, `update_file_lines`, `replace_in_file`, `insert_lines`, `delete_lines`, `get_file_from_changes`, `list_files_in_changes`, `get_changes_summary`, `get_file_diff` (extension handles diff/export/display/clear; clear_file_from_changes, clear_all_changes, show_diff, export_changes, show_updated_file are not available)
 - **Web tools**: `web_search_tool`, `webpage_extractor`
 - **Task management**: TODO and requirements tools
 
@@ -360,7 +359,6 @@ When asked to write tests:
    execute_terminal_command(command="find . -name '*.test.ts' -not -path './.git/*'")
    execute_terminal_command(command="grep -rn 'describe\\|it\\|test(' . --include='*.ts' -l")
    ```
-   Use search_files/search_text only when you need semantic or symbol-level matching.
 
 2. **Understand testing framework** used in the project:
    - Look at existing test files for patterns
@@ -399,7 +397,6 @@ When asked to write tests:
 - For line-based operations: get current content from terminal first, then use get_file_from_changes (with_line_numbers=true) for the change buffer if needed before applying edits
 - Verify changes after EACH operation (refetch or check via terminal)
 - Use get_file_diff at the end to display changes (extension handles diff display)
-- Use word_boundary=True in replace_in_file for safe pattern replacements
 - Check line stats (lines_changed/added/deleted) in responses to confirm operations succeeded
 
 **DON'T ❌**
@@ -432,10 +429,12 @@ When asked to write tests:
    - Lines are 1-indexed
    - **CRITICAL**: Fetch with `get_file_from_changes` with_line_numbers=true BEFORE; always provide project_id
 
-4. **`replace_in_file`** - Replace text patterns using regex
-   - Use for search-and-replace operations
-   - Supports regex capturing groups
-   - Use `word_boundary=True` for safe pattern replacements (avoids partial matches)
+4. **`replace_in_file`** - Replace an exact literal string (str_replace)
+   - Provide `old_str`: the exact text to find (must be unique in the file — include 3-5 lines of context)
+   - Provide `new_str`: the replacement text
+   - No regex — plain literal match; no escaping needed
+   - Returns an error if `old_str` is not found or matches more than once, so the agent can self-correct
+   - Read the file first (`execute_terminal_command cat` or `get_file_from_changes`) to copy exact text including indentation
 
 5. **`insert_lines`** - Insert content at a specific line
    - Use to add new code at a specific location
@@ -628,7 +627,7 @@ Before finalizing, check:
 ### Tool Usage Best Practices
 
 **General tool usage:**
-- **Prefer terminal for discovery** in local mode: grep/rg for text, find/glob for files, cat/head to read; then use semantic/symbol search when needed
+- **Prefer terminal for discovery** in local mode: grep/rg for text, find/glob for files, cat/head to read; 
 - Start broad, then narrow; use multiple tools to build complete picture
 - Verify findings with multiple sources when possible
 - Gather ALL required context before generating code
@@ -636,13 +635,11 @@ Before finalizing, check:
 
 **Search workflow:**
 1. Use the terminal for grep and glob: run `grep -rn` or `rg` for text, `find` or shell globs for files; use `cat`/`head` to read. Terminal is the main tool for discovery in local mode.
-2. Use semantic/symbol search tools (`semantic_search`, `search_symbols`, `search_references`) when you need meaning or references beyond raw text.
-3. Combine terminal output with search results to build a complete picture.
 
 **Code Changes Manager workflow:**
 1. Provide project_id from conversation context
 2. Fetch file with line numbers: `get_file_from_changes` with `with_line_numbers=true` BEFORE line operations
-3. Make targeted changes: `update_file_lines`, `insert_lines`, `replace_in_file`, etc. (use word_boundary for replace_in_file)
+3. Make targeted changes: `update_file_lines`, `insert_lines`, `replace_in_file` (exact literal match — read file first, copy exact text for old_str), etc.
 4. Verify after EACH operation: `get_file_from_changes` again; check line stats in response
 5. NEVER assume line numbers after insert/delete—refetch before subsequent line operations
 6. Repeat for all files; use `get_changes_summary` to review
@@ -692,10 +689,9 @@ Before finalizing, check:
 
 1. **Analyze**: Multi-file feature implementation - needs new modules, database changes, API endpoints
 
-2. **Navigate** (terminal first, then search tools):
+2. **Navigate** (terminal first):
    - Use terminal: `execute_terminal_command(command="grep -rn 'auth\\|login\\|user' app/")`, `execute_terminal_command(command="find . -name '*.py' -path './app/*'")`
-   - Use `semantic_search` with "authentication", "user", "login" when you need semantic matching
-   - Use `search_symbols` to find existing user-related code; use `search_references` for related code
+
 
 3. **Check existing tests** (use terminal):
    ```
@@ -738,13 +734,8 @@ Before finalizing, check:
    execute_terminal_command(command="find . -name 'test_*.py' -o -name '*.test.ts' | head -20")
    execute_terminal_command(command="grep -rn 'describe\\|it\\|test(' . --include='*.ts' -l | head -10")
    ```
-   Use search_files/search_text if you need semantic or symbol-level matching.
 
 2. **Find the code to test**:
-   ```
-   search_symbols(file_path="src/services/UserService.ts")
-   search_references(file_path="src/services/UserService.ts", line=10, character=10)
-   ```
 
 3. **Write tests using Code Changes Manager**:
    - Use `add_file_to_changes` to create new test file
@@ -897,7 +888,7 @@ class CodeGenAgent(ChatAgent):
                 exclude_embedding_tools=exclude_embedding_tools,
             )
 
-        # In local mode, exclude show_diff, export_changes, show_updated_file (registry path already filters; this is defense-in-depth)
+        # In local mode, exclude clear_file_from_changes, clear_all_changes, show_diff, export_changes, show_updated_file (registry path already filters; this is defense-in-depth)
         if local_mode:
             tools = [
                 t for t in tools if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL
@@ -1244,7 +1235,7 @@ When the task involves replacing or renaming something across multiple files:
 - Fetch files with get_file_from_changes (with_line_numbers=true) BEFORE line-based operations
 - Verify changes after EACH operation by refetching the file
 - Use show_diff at the END to display all changes to the user
-- Use word_boundary=True in replace_in_file for safe pattern replacements
+- For `replace_in_file`: read the file first, copy exact text (including indentation) into old_str to ensure a unique match
 - Check line stats (lines_changed/added/deleted) in responses to confirm operations succeeded
 
 **DON'T ❌**
@@ -1275,10 +1266,12 @@ When the task involves replacing or renaming something across multiple files:
    - **CRITICAL**: Fetch with `get_file_from_changes` with_line_numbers=true BEFORE; always provide project_id
    - Verify after; check line stats in response
 
-4. **`replace_in_file`** - Replace text patterns using regex
-   - Use for search-and-replace operations
-   - Supports regex capturing groups
-   - Use `word_boundary=True` for safe pattern replacements (avoids partial matches)
+4. **`replace_in_file`** - Replace an exact literal string (str_replace)
+   - Provide `old_str`: the exact text to find (must be unique in the file — include 3-5 lines of context)
+   - Provide `new_str`: the replacement text
+   - No regex — plain literal match; no escaping needed
+   - Returns an error if `old_str` is not found or matches more than once, so the agent can self-correct
+   - Read the file first to copy exact text including indentation
 
 5. **`insert_lines`** - Insert content at a specific line
    - Use to add new code at a specific location
@@ -1421,7 +1414,7 @@ I'll now use the Code Changes Manager to implement these changes...
 **Code Changes Manager workflow:**
 1. Provide project_id from conversation context
 2. Fetch file with line numbers: `get_file_from_changes` with `with_line_numbers=true` BEFORE line operations
-3. Make targeted changes: `update_file_lines`, `insert_lines`, `replace_in_file`, etc. (use word_boundary for replace_in_file)
+3. Make targeted changes: `update_file_lines`, `insert_lines`, `replace_in_file` (exact literal match — read file first, copy exact text for old_str), etc.
 4. Verify after EACH operation: `get_file_from_changes` again; check line stats in response
 5. NEVER assume line numbers after insert/delete—refetch before subsequent line operations
 6. Repeat for all files; use `get_changes_summary` to review

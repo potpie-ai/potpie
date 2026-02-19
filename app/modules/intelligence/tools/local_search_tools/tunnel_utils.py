@@ -7,6 +7,7 @@ WorkspaceSocketService.execute_tool_call_with_fallback (Socket.IO RPC).
 
 import json
 import os
+import time
 from typing import Dict, Any, List, Optional
 import httpx
 from app.modules.utils.logger import setup_logger
@@ -15,6 +16,10 @@ logger = setup_logger(__name__)
 
 # Prefix for socket-backed tunnel URL (get_tunnel_url returns this when socket is online)
 SOCKET_TUNNEL_PREFIX = "socket://"
+
+# Retry settings for transient socket failures (e.g. brief disconnect / Redis blip)
+_SOCKET_MAX_RETRIES = int(os.getenv("SOCKET_MAX_RETRIES", "2"))
+_SOCKET_RETRY_DELAY_SECS = float(os.getenv("SOCKET_RETRY_DELAY_SECS", "1.0"))
 
 
 def _execute_via_socket(
@@ -27,27 +32,50 @@ def _execute_via_socket(
     branch: Optional[str] = None,
     timeout: float = 120.0,
 ) -> Optional[Dict[str, Any]]:
-    """Execute a tool call via Socket.IO. Returns unwrapped result dict or None."""
+    """Execute a tool call via Socket.IO with simple retry on transient failures.
+
+    Returns the unwrapped result dict on success, or None if all attempts fail.
+    """
     from app.modules.tunnel.tunnel_service import get_tunnel_service, TunnelConnectionError
-    try:
-        out = get_tunnel_service().execute_tool_call_with_fallback(
-            user_id=user_id,
-            conversation_id=conversation_id,
-            endpoint=endpoint,
-            payload=payload,
-            tunnel_url=tunnel_url,
-            repository=repository,
-            branch=branch,
-            timeout=timeout,
-        )
-    except TunnelConnectionError:
-        return None
-    # Socket tool_response shape: { success, result?, error? }
-    if isinstance(out, dict) and "success" in out:
-        if out.get("success") and "result" in out:
-            return out["result"]
-        return None
-    return out
+
+    last_error: Optional[str] = None
+    for attempt in range(1, _SOCKET_MAX_RETRIES + 2):  # +2: initial attempt + retries
+        try:
+            out = get_tunnel_service().execute_tool_call_with_fallback(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                endpoint=endpoint,
+                payload=payload,
+                tunnel_url=tunnel_url,
+                repository=repository,
+                branch=branch,
+                timeout=timeout,
+            )
+            # Socket tool_response shape: { success, result?, error? }
+            if isinstance(out, dict) and "success" in out:
+                if out.get("success") and "result" in out:
+                    return out["result"]
+                return None
+            return out
+        except TunnelConnectionError as exc:
+            last_error = exc.last_error or str(exc)
+            if attempt <= _SOCKET_MAX_RETRIES:
+                delay = _SOCKET_RETRY_DELAY_SECS * attempt
+                logger.warning(
+                    "[_execute_via_socket] Attempt %d/%d failed (%s) — retrying in %.1fs",
+                    attempt,
+                    _SOCKET_MAX_RETRIES + 1,
+                    last_error,
+                    delay,
+                )
+                time.sleep(delay)
+            else:
+                logger.warning(
+                    "[_execute_via_socket] All %d attempts failed (last: %s)",
+                    _SOCKET_MAX_RETRIES + 1,
+                    last_error,
+                )
+    return None
 
 
 def _curl_equivalent_terminal_execute(

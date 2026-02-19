@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
+import redis
 import redis.asyncio as aioredis
 
 from app.core.config_provider import ConfigProvider
@@ -50,10 +51,33 @@ class WorkspaceSocketService:
         config = ConfigProvider()
         self._redis_url = config.get_redis_url()
         self._async_redis: Optional[aioredis.Redis] = None
+        # Reusable sync Redis pool for is_workspace_online — avoids creating a new
+        # connection on every status check (which was the previous behaviour).
+        self._sync_redis: Optional[redis.Redis] = None
+
+    def _get_sync_redis(self) -> Optional[redis.Redis]:
+        """Return a cached sync Redis client (connection-pooled)."""
+        if self._sync_redis is not None:
+            return self._sync_redis
+        if not self._redis_url:
+            return None
+        try:
+            client = redis.from_url(self._redis_url, decode_responses=True)
+            client.ping()
+            self._sync_redis = client
+            return self._sync_redis
+        except Exception as e:
+            logger.warning("[WorkspaceSocketService] Sync Redis unavailable: %s", e)
+            return None
 
     async def _get_redis(self) -> Optional[aioredis.Redis]:
         if self._async_redis is not None:
-            return self._async_redis
+            try:
+                await self._async_redis.ping()
+                return self._async_redis
+            except Exception:
+                # Cached client is broken — drop it and reconnect below
+                self._async_redis = None
         if not self._redis_url:
             return None
         try:
@@ -62,6 +86,7 @@ class WorkspaceSocketService:
             return self._async_redis
         except Exception as e:
             logger.warning("[WorkspaceSocketService] Async Redis unavailable: %s", e)
+            self._async_redis = None
             return None
 
     async def _get_socket_id(self, workspace_id: str) -> Optional[str]:
@@ -75,14 +100,16 @@ class WorkspaceSocketService:
 
     def is_workspace_online(self, workspace_id: str) -> bool:
         """Synchronous check: is there a socket registered for this workspace_id?"""
-        if not self._redis_url:
+        sync_redis = self._get_sync_redis()
+        if not sync_redis:
             return False
         try:
-            import redis
-            sync_redis = redis.from_url(self._redis_url, decode_responses=True)
             key = _workspace_socket_key(workspace_id)
             return sync_redis.exists(key) > 0
-        except Exception:
+        except Exception as e:
+            logger.warning("[WorkspaceSocketService] Redis error in is_workspace_online: %s", e)
+            # Invalidate cached client so next call re-connects
+            self._sync_redis = None
             return False
 
     async def execute_tool_call(
@@ -121,6 +148,11 @@ class WorkspaceSocketService:
             "payload": payload,
             "timeout": timeout,
         }
+
+        # Subscribe BEFORE emitting so we never miss a fast response.
+        pubsub = redis_client.pubsub()
+        await pubsub.subscribe(channel)
+
         try:
             await sio.emit(
                 "tool_call",
@@ -129,6 +161,8 @@ class WorkspaceSocketService:
                 namespace=WORKSPACE_NAMESPACE,
             )
         except Exception as e:
+            await pubsub.unsubscribe(channel)
+            await pubsub.close()
             from app.modules.tunnel.tunnel_service import TunnelConnectionError
             logger.warning("[WorkspaceSocketService] emit failed: %s", e)
             raise TunnelConnectionError(
@@ -137,8 +171,6 @@ class WorkspaceSocketService:
             )
 
         async def _wait_one_response():
-            pubsub = redis_client.pubsub()
-            await pubsub.subscribe(channel)
             try:
                 async for message in pubsub.listen():
                     if message["type"] != "message":
@@ -174,18 +206,8 @@ class WorkspaceSocketService:
         payload: Dict[str, Any],
         timeout: float,
     ) -> Dict[str, Any]:
-        """Wrapper that applies asyncio.wait_for for timeout."""
-        try:
-            return await asyncio.wait_for(
-                self.execute_tool_call(workspace_id, endpoint, payload, timeout),
-                timeout=timeout + 2.0,
-            )
-        except asyncio.TimeoutError:
-            from app.modules.tunnel.tunnel_service import TunnelConnectionError
-            raise TunnelConnectionError(
-                f"Tool call timed out for workspace_id={workspace_id}",
-                last_error="timeout",
-            )
+        """Delegate to execute_tool_call; timeout is already enforced there."""
+        return await self.execute_tool_call(workspace_id, endpoint, payload, timeout)
 
     def execute_tool_call_sync(
         self,

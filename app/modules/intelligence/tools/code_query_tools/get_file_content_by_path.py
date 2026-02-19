@@ -160,15 +160,22 @@ class FetchFileTool:
         start_line: Optional[int] = None,
         end_line: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Try to fetch file from LocalServer via tunnel (local-first approach)"""
+        """Try to fetch file from LocalServer via tunnel or Socket.IO (local-first approach)"""
         try:
-            # Import here to avoid circular imports
             from app.modules.tunnel.tunnel_service import get_tunnel_service
             from app.modules.intelligence.tools.local_search_tools.tunnel_utils import (
                 get_context_vars,
+                _execute_via_socket,
+                SOCKET_TUNNEL_PREFIX,
+            )
+            from app.modules.intelligence.tools.code_changes_manager import (
+                _get_repository,
+                _get_branch,
             )
 
             user_id, conversation_id = get_context_vars()
+            repository = _get_repository()
+            branch = _get_branch()
 
             if not user_id or not conversation_id:
                 logger.debug(
@@ -177,7 +184,9 @@ class FetchFileTool:
                 return None
 
             tunnel_service = get_tunnel_service()
-            tunnel_url = tunnel_service.get_tunnel_url(user_id, conversation_id)
+            tunnel_url = tunnel_service.get_tunnel_url(
+                user_id, conversation_id, repository=repository, branch=branch
+            )
 
             logger.info(
                 f"[fetch_file] 🔍 Tunnel lookup result: tunnel_url={tunnel_url}"
@@ -189,7 +198,37 @@ class FetchFileTool:
                 )
                 return None
 
-            # Build URL for LocalServer's /api/files/read endpoint
+            # Socket path: use Socket.IO RPC
+            if tunnel_url.startswith(SOCKET_TUNNEL_PREFIX):
+                logger.info(f"[fetch_file] 🚀 Routing to LocalServer via Socket.IO")
+                out = _execute_via_socket(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    endpoint="/api/files/read",
+                    payload={"path": file_path},
+                    tunnel_url=tunnel_url,
+                    repository=repository,
+                    branch=branch,
+                    timeout=30.0,
+                )
+                if not isinstance(out, dict) or not out.get("success"):
+                    return None
+                content = out.get("content", "")
+                if start_line is not None or end_line is not None:
+                    lines = content.split("\n")
+                    start_idx = (start_line - 1) if start_line else 0
+                    end_idx = end_line if end_line else len(lines)
+                    content = "\n".join(lines[start_idx:end_idx])
+                if with_line_numbers:
+                    starting_line = start_line or 1
+                    content = self.with_line_numbers(content, True, starting_line)
+                content = truncate_response(content)
+                logger.info(
+                    f"[fetch_file] ✅ LocalServer returned file content via Socket.IO"
+                )
+                return {"success": True, "content": content, "source": "local"}
+
+            # HTTP path
             url = f"{tunnel_url}/api/files/read"
             url_with_params = f"{url}?path={url_quote(file_path)}"
 
@@ -238,9 +277,8 @@ class FetchFileTool:
                     error_text = response.text
 
                     # Detect tunnel/connection errors
-                    is_tunnel_error = (
-                        status_code in [502, 503, 504, 530]
-                        or ("tunnel" in error_text.lower() and "error" in error_text.lower())
+                    is_tunnel_error = status_code in [502, 503, 504, 530] or (
+                        "tunnel" in error_text.lower() and "error" in error_text.lower()
                     )
 
                     if is_tunnel_error:
@@ -363,7 +401,6 @@ class FetchFileTool:
                             f"Possible solutions:\n"
                             f"- If working locally: Ensure the VS Code extension is connected and the file exists in your workspace\n"
                             f"- If expecting from GitHub: Push your changes or verify the file path is correct\n"
-                            f"- The file might be in a different location - try searching with search_files or search_text tools"
                         ),
                         "content": None,
                     }

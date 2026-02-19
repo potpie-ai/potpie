@@ -81,14 +81,22 @@ class GetCodeFileStructureTool:
         return "\n".join(_format_node(structure))
 
     def _try_local_server(self, path: Optional[str] = None) -> Optional[str]:
-        """Try to fetch directory structure from LocalServer via tunnel (local-first approach)"""
+        """Try to fetch directory structure from LocalServer via tunnel or Socket.IO (local-first approach)"""
         try:
             from app.modules.tunnel.tunnel_service import get_tunnel_service
             from app.modules.intelligence.tools.local_search_tools.tunnel_utils import (
                 get_context_vars,
+                _execute_via_socket,
+                SOCKET_TUNNEL_PREFIX,
+            )
+            from app.modules.intelligence.tools.code_changes_manager import (
+                _get_repository,
+                _get_branch,
             )
 
             user_id, conversation_id = get_context_vars()
+            repository = _get_repository()
+            branch = _get_branch()
 
             if not user_id or not conversation_id:
                 logger.debug(
@@ -97,7 +105,9 @@ class GetCodeFileStructureTool:
                 return None
 
             tunnel_service = get_tunnel_service()
-            tunnel_url = tunnel_service.get_tunnel_url(user_id, conversation_id)
+            tunnel_url = tunnel_service.get_tunnel_url(
+                user_id, conversation_id, repository=repository, branch=branch
+            )
 
             if not tunnel_url:
                 logger.debug(
@@ -105,7 +115,30 @@ class GetCodeFileStructureTool:
                 )
                 return None
 
-            # Build URL for LocalServer's /api/files/structure endpoint
+            # Socket path: use Socket.IO RPC
+            if tunnel_url.startswith(SOCKET_TUNNEL_PREFIX):
+                logger.info("[get_code_file_structure] 🚀 Routing to LocalServer via Socket.IO")
+                payload = {"path": path} if path else {}
+                out = _execute_via_socket(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    endpoint="/api/files/structure",
+                    payload=payload,
+                    tunnel_url=tunnel_url,
+                    repository=repository,
+                    branch=branch,
+                    timeout=30.0,
+                )
+                if not isinstance(out, dict) or not out.get("success"):
+                    return None
+                structure_obj = out.get("structure", {})
+                if structure_obj:
+                    structure = self._format_tree_structure(structure_obj)
+                    logger.info("[get_code_file_structure] ✅ LocalServer returned directory structure via Socket.IO")
+                    return structure
+                return None
+
+            # HTTP path
             url = f"{tunnel_url}/api/files/structure"
             if path:
                 url_with_params = f"{url}?path={url_quote(path)}"

@@ -1185,26 +1185,25 @@ class CodeChangesManager:
     def replace_in_file(
         self,
         file_path: str,
-        pattern: str,
-        replacement: str,
-        count: int = 0,
+        old_str: str,
+        new_str: str,
         description: Optional[str] = None,
-        case_sensitive: bool = False,
-        word_boundary: bool = False,
         project_id: Optional[str] = None,
         db: Optional[Session] = None,
     ) -> Dict[str, Any]:
         """
-        Replace pattern matches in a file using regex
+        Replace an exact literal string in a file (str_replace semantics).
+
+        Finds old_str using plain string matching (no regex). Enforces uniqueness:
+        - 0 matches → error with hint to check whitespace/indentation
+        - 2+ matches → error asking for more surrounding context
+        - exactly 1 match → replaces and saves
 
         Args:
             file_path: Path to the file
-            pattern: Regex pattern to search for
-            replacement: Replacement string (supports \\1, \\2, etc. for groups)
-            count: Maximum number of replacements (0 = all)
+            old_str: Exact literal text to find (must be unique in file)
+            new_str: Replacement text
             description: Optional description of the change
-            case_sensitive: Whether pattern matching is case-sensitive
-            word_boundary: If True, wrap pattern with word boundaries (\\b) to match whole words only
             project_id: Optional project ID to fetch file content from repository
             db: Optional database session for repository access
 
@@ -1212,95 +1211,73 @@ class CodeChangesManager:
             Dict with success status and replacement information
         """
         logger.info(
-            f"CodeChangesManager.replace_in_file: Replacing pattern '{pattern}' in '{file_path}' "
-            f"(count={count}, case_sensitive={case_sensitive}, word_boundary={word_boundary}, project_id={project_id}, db={'provided' if db else 'None'})"
+            f"CodeChangesManager.replace_in_file: str_replace in '{file_path}' "
+            f"(old_str len={len(old_str)}, project_id={project_id}, db={'provided' if db else 'None'})"
         )
         try:
             current_content = self._get_current_content(
                 file_path, project_id=project_id, db=db
             )
 
-            # Apply word boundary if requested
-            actual_pattern = pattern
-            if word_boundary:
-                # Wrap pattern with word boundaries to match whole words only
-                actual_pattern = r"\b" + pattern + r"\b"
-                logger.debug(
-                    f"CodeChangesManager.replace_in_file: Applied word boundary, pattern is now: '{actual_pattern}'"
-                )
+            count = current_content.count(old_str)
 
-            # Compile regex pattern
-            flags = 0 if case_sensitive else re.IGNORECASE
-            try:
-                regex = re.compile(actual_pattern, flags)
-            except re.error as e:
-                return {"success": False, "error": f"Invalid regex pattern: {str(e)}"}
-
-            # Find all matches first (for reporting)
-            matches = list(regex.finditer(current_content))
-            if not matches:
+            if count == 0:
+                # Give a helpful preview of what was searched
+                preview = old_str[:120].replace("\n", "↵")
                 return {
                     "success": False,
-                    "error": f"Pattern '{pattern}' not found in file",
+                    "error": (
+                        f"old_str not found in '{file_path}'.\n"
+                        f"Searched for: {preview!r}\n"
+                        "Check that indentation, whitespace, and line endings match exactly. "
+                        "Use get_file_from_changes or search_bash to read the file first."
+                    ),
                 }
 
-            # Perform replacement
-            if count == 0:
-                # Replace all
-                new_content = regex.sub(replacement, current_content)
-                replace_count = len(matches)
-            else:
-                # Replace first N matches
-                new_content = regex.sub(replacement, current_content, count=count)
-                replace_count = min(count, len(matches))
+            if count > 1:
+                preview = old_str[:120].replace("\n", "↵")
+                return {
+                    "success": False,
+                    "error": (
+                        f"old_str matches {count} times in '{file_path}' — ambiguous replacement.\n"
+                        f"Searched for: {preview!r}\n"
+                        "Add more surrounding lines to old_str to make it unique."
+                    ),
+                }
 
-            # Apply the update
-            # Pass current_content as original_content if file is not in changes yet
-            # (this preserves the original file content for diff generation)
-            change_desc = (
-                description
-                or f"Replaced '{pattern}' with '{replacement}' ({replace_count} occurrences)"
-            )
-            original_content = (
-                current_content if file_path not in self.changes else None
-            )
+            # Exactly one match — safe to replace
+            new_content = current_content.replace(old_str, new_str, 1)
+
+            # Find line number of the match for reporting
+            match_pos = current_content.index(old_str)
+            match_line = current_content[:match_pos].count("\n") + 1
+
+            change_desc = description or f"str_replace in '{file_path}' at line ~{match_line}"
+            original_content = current_content if file_path not in self.changes else None
             update_success = self._apply_update(
                 file_path, new_content, change_desc, original_content=original_content
             )
             if not update_success:
                 return {
                     "success": False,
-                    "error": f"Cannot replace in file '{file_path}': file is marked for deletion. Use delete_file to unmark deletion first, or clear the file from changes.",
+                    "error": (
+                        f"Cannot replace in file '{file_path}': file is marked for deletion. "
+                        "Use delete_file to unmark deletion first, or clear the file from changes."
+                    ),
                 }
 
-            # Get match locations for reporting
-            match_locations = []
-            for match in matches[:replace_count]:
-                # Calculate line number
-                line_num = current_content[: match.start()].count("\n") + 1
-                match_locations.append(
-                    {
-                        "line": line_num,
-                        "match": match.group(0)[:100],  # First 100 chars
-                        "position": match.start(),
-                    }
-                )
-
             logger.info(
-                f"CodeChangesManager.replace_in_file: Successfully replaced {replace_count} occurrence(s) of pattern '{pattern}' in '{file_path}'"
+                f"CodeChangesManager.replace_in_file: Successfully replaced 1 occurrence in '{file_path}' at line {match_line}"
             )
             return {
                 "success": True,
                 "file_path": file_path,
-                "pattern": pattern,
-                "replacement": replacement,
-                "replacements_made": replace_count,
-                "total_matches": len(matches),
-                "match_locations": match_locations,
+                "match_line": match_line,
+                "replacements_made": 1,
             }
         except Exception as e:
             logger.exception(
-                "CodeChangesManager.replace_in_file: Error replacing pattern",
+                "CodeChangesManager.replace_in_file: Error replacing text",
                 file_path=file_path,
             )
             return {"success": False, "error": str(e)}
@@ -2525,531 +2502,382 @@ def _route_to_local_server(
             logger.warning(f"Unknown operation for tunnel routing: {operation}")
             return None
 
-        # Smart routing: Use Socket.IO tunnel by default. Only use direct localhost when VSCODE_LOCAL_TUNNEL_SERVER is set (dev).
-        try:
-            import os
-
-            # Allow forcing tunnel usage via FORCE_TUNNEL env var (for testing)
-            force_tunnel = os.getenv("FORCE_TUNNEL", "").lower() in ["true", "1", "yes"]
-
-            from app.modules.tunnel.tunnel_service import (
-                _get_local_tunnel_server_url,
-            )
-
-            direct_url = _get_local_tunnel_server_url()
-            # Only use direct localhost when explicitly set; otherwise use registered tunnel (dev or prod)
-            if not force_tunnel and direct_url:
-                # Quick connectivity check - try to reach localhost before using it
-                try:
-                    test_client = httpx.Client(timeout=2.0)
-                    health_check = test_client.get(f"{direct_url}/health")
-                    test_client.close()
-                    if health_check.status_code == 200:
-                        logger.info(
-                            f"[Tunnel Routing] 🏠 VSCODE_LOCAL_TUNNEL_SERVER set, using direct connection: {direct_url} "
-                            f"(bypassing tunnel {tunnel_url})"
-                        )
-                        url = f"{direct_url}{endpoint}"
-                    else:
-                        logger.warning(
-                            f"[Tunnel Routing] ⚠️ LocalServer not responding on {direct_url}, falling back to tunnel"
-                        )
-                        url = f"{tunnel_url}{endpoint}"
-                except Exception as e:
-                    logger.warning(
-                        f"[Tunnel Routing] ⚠️ Cannot reach LocalServer on {direct_url}: {e}, using tunnel instead"
-                    )
-                    url = f"{tunnel_url}{endpoint}"
-            else:
-                # Use registered tunnel (Socket or FORCE_TUNNEL)
-                if force_tunnel:
-                    logger.info(
-                        f"[Tunnel Routing] 🔧 FORCE_TUNNEL enabled, using tunnel URL: {tunnel_url}{endpoint}"
-                    )
-                else:
-                    logger.info(
-                        f"[Tunnel Routing] 🌐 Using tunnel URL: {tunnel_url}{endpoint}"
-                    )
-                url = f"{tunnel_url}{endpoint}"
-        except Exception as e:
-            logger.warning(
-                f"[Tunnel Routing] Error in smart routing, falling back to tunnel URL: {e}"
-            )
-            url = f"{tunnel_url}{endpoint}"
-
         # Prepare request data
         request_data = {
             **data,
             "conversation_id": conversation_id,
         }
 
-        # Make request to LocalServer (url already set by smart routing above)
-        logger.info(f"[Tunnel Routing] 🚀 Routing {operation} to LocalServer: {url}")
-        logger.debug(f"[Tunnel Routing] Request data: {request_data}")
-
-        # Use longer timeout for tunnel requests (production) vs direct localhost
-        # Tunnel requests can be slower due to network latency
-        # Define timeout outside try block so it's accessible in exception handler
-        is_tunnel_request = url.startswith("https://") or (
-            url.startswith("http://") and "localhost" not in url
-        )
-        request_timeout = (
-            120.0 if is_tunnel_request else 30.0
-        )  # 2 minutes for tunnel, 30s for localhost
-
-        logger.debug(
-            f"[Tunnel Routing] Using timeout: {request_timeout}s (tunnel={is_tunnel_request})"
+        route_result: Optional[Dict[str, Any]] = None
+        # Socket path: tunnel_url is socket://{workspace_id}; use Socket.IO RPC instead of HTTP
+        from app.modules.intelligence.tools.local_search_tools.tunnel_utils import (
+            SOCKET_TUNNEL_PREFIX,
+            _execute_via_socket,
         )
 
-        with httpx.Client(timeout=request_timeout) as client:
+        if tunnel_url and tunnel_url.startswith(SOCKET_TUNNEL_PREFIX):
+            logger.info(
+                f"[Tunnel Routing] 🚀 Routing {operation} to LocalServer via Socket.IO (timeout=120s)"
+            )
+            route_result = _execute_via_socket(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                endpoint=endpoint,
+                payload=request_data,
+                tunnel_url=tunnel_url,
+                repository=repository,
+                branch=branch,
+                timeout=120.0,
+            )
+            if route_result is None:
+                return None
+        else:
+            # HTTP path: Smart routing (direct localhost when VSCODE_LOCAL_TUNNEL_SERVER set, else tunnel URL)
             try:
-                result: Dict[str, Any] = {}
-                # Read operations use GET, write operations use POST
-                if operation in ["get_file", "show_updated_file"]:
-                    # GET request with file path as query parameter
-                    file_path = data.get("file_path") or data.get("path", "")
-                    if not file_path:
-                        logger.warning(
-                            f"[Tunnel Routing] No file_path provided for {operation}"
-                        )
-                        return None
-                    url_with_params = f"{url}?path={url_quote(file_path)}"
-                    response = client.get(url_with_params)
-                else:
-                    # POST request for write operations
-                    response = client.post(
-                        url,
-                        json=request_data,
-                        headers={"Content-Type": "application/json"},
-                    )
+                import os
 
-                if response.status_code == 200:
-                    result = response.json()
-                    logger.info(
-                        f"[Tunnel Routing] ✅ LocalServer {operation} succeeded: {result}"
-                    )
+                force_tunnel = os.getenv("FORCE_TUNNEL", "").lower() in ["true", "1", "yes"]
+                from app.modules.tunnel.tunnel_service import (
+                    _get_local_tunnel_server_url,
+                )
 
-                    # Format response based on operation type
-                    file_path = data.get("file_path") or data.get("path", "file")
-
-                    if operation == "replace_in_file":
-                        replacements_made = result.get("replacements_made", 0)
-                        total_matches = result.get("total_matches", replacements_made)
-                        pattern = data.get("pattern", "pattern")
-
-                        # Enrich result with diff and line stats if LocalServer didn't return them
-                        if not result.get("diff") or (
-                            result.get("lines_changed") is None
-                            and result.get("lines_added") is None
-                            and result.get("lines_deleted") is None
-                        ):
-                            try:
-                                manager = _get_code_changes_manager()
-                                file_data = manager.get_file(file_path)
-                                before = (
-                                    (file_data.get("content") or "")
-                                    if file_data
-                                    else None
-                                )
-                                after = _fetch_file_content_from_local_server(file_path)
-                                if before is not None and after is not None:
-                                    if not result.get("diff"):
-                                        result["diff"] = manager._create_unified_diff(
-                                            before,
-                                            after,
-                                            file_path,
-                                            file_path,
-                                            3,
-                                        )
-                                    if (
-                                        result.get("lines_changed") is None
-                                        and result.get("lines_added") is None
-                                        and result.get("lines_deleted") is None
-                                    ):
-                                        old_lines = len(before.splitlines())
-                                        new_lines = len(after.splitlines())
-                                        result["lines_added"] = max(
-                                            0, new_lines - old_lines
-                                        )
-                                        result["lines_deleted"] = max(
-                                            0, old_lines - new_lines
-                                        )
-                            except Exception as e:
-                                logger.debug(
-                                    f"[Tunnel Routing] Could not enrich replace_in_file diff: {e}"
-                                )
-
-                        response_msg = (
-                            f"✅ Replaced pattern '{pattern}' in '{file_path}'\n\n"
-                            + f"Made {replacements_made} replacement(s) out of {total_matches} match(es)"
-                        )
-                        if result.get("auto_fixed"):
-                            response_msg += "\n\n✅ Auto-fixed formatting issues"
-                        if result.get("errors"):
-                            response_msg += (
-                                f"\n⚠️ Validation errors: {len(result['errors'])}"
+                direct_url = _get_local_tunnel_server_url()
+                if not force_tunnel and direct_url:
+                    try:
+                        test_client = httpx.Client(timeout=2.0)
+                        health_check = test_client.get(f"{direct_url}/health")
+                        test_client.close()
+                        if health_check.status_code == 200:
+                            logger.info(
+                                f"[Tunnel Routing] 🏠 VSCODE_LOCAL_TUNNEL_SERVER set, using direct connection: {direct_url} "
+                                f"(bypassing tunnel {tunnel_url})"
                             )
-                        return _append_diff(response_msg, result)
-                    elif operation == "update_file_lines":
-                        # Format update_file_lines success response
-                        start_line = data.get("start_line", 0)
-                        end_line = data.get("end_line", start_line)
-                        has_errors = result.get("errors") or result.get(
-                            "auto_fix_failed"
-                        )
-                        if has_errors:
-                            response_msg = (
-                                f"⚠️ Updated lines {start_line}-{end_line} in '{file_path}' locally, "
-                                f"but linter reported issues (change may be partial or reverted).\n\n"
-                            )
+                            url = f"{direct_url}{endpoint}"
                         else:
-                            response_msg = (
-                                f"✅ Updated lines {start_line}-{end_line} in '{file_path}' locally\n\n"
-                                + "Changes applied successfully in your IDE."
-                            )
-                        if result.get("auto_fixed"):
-                            response_msg += "\n\n✅ Auto-fixed formatting issues"
-                        if result.get("errors"):
-                            response_msg += (
-                                f"\n⚠️ Validation errors: {len(result['errors'])}"
-                            )
-                        return _append_diff(response_msg, result)
-                    elif operation == "add_file":
-                        # Format add_file success response
-                        response_msg = f"✅ Created file '{file_path}' locally\n\nChanges applied successfully in your IDE."
-                        if result.get("auto_fixed"):
-                            response_msg += "\n\n✅ Auto-fixed formatting issues"
-                        if result.get("errors"):
-                            response_msg += (
-                                f"\n⚠️ Validation errors: {len(result['errors'])}"
-                            )
-                        return _append_diff(response_msg, result)
-                    elif operation == "update_file":
-                        # Format update_file success response
-                        response_msg = f"✅ Updated file '{file_path}' locally\n\nChanges applied successfully in your IDE."
-                        if result.get("auto_fixed"):
-                            response_msg += "\n\n✅ Auto-fixed formatting issues"
-                        if result.get("errors"):
-                            response_msg += (
-                                f"\n⚠️ Validation errors: {len(result['errors'])}"
-                            )
-                        return _append_diff(response_msg, result)
-                    elif operation == "insert_lines":
-                        # Format insert_lines success response
-                        line_number = data.get("line_number", 0)
-                        position = (
-                            "after" if data.get("insert_after", True) else "before"
-                        )
-                        has_errors = result.get("errors") or result.get(
-                            "auto_fix_failed"
-                        )
-                        if has_errors:
-                            response_msg = (
-                                f"⚠️ Inserted lines {position} line {line_number} in '{file_path}' locally, "
-                                f"but linter reported issues (change may be partial or reverted).\n\n"
-                            )
-                        else:
-                            response_msg = (
-                                f"✅ Inserted lines {position} line {line_number} in '{file_path}' locally\n\n"
-                                + "Changes applied successfully in your IDE."
-                            )
-                        if result.get("auto_fixed"):
-                            response_msg += "\n\n✅ Auto-fixed formatting issues"
-                        if result.get("errors"):
-                            response_msg += (
-                                f"\n⚠️ Validation errors: {len(result['errors'])}"
-                            )
-                        return _append_diff(response_msg, result)
-                    elif operation == "delete_lines":
-                        # Format delete_lines success response
-                        start_line = data.get("start_line", 0)
-                        end_line = data.get("end_line", start_line)
-                        response_msg = (
-                            f"✅ Deleted lines {start_line}-{end_line} from '{file_path}' locally\n\n"
-                            + "Changes applied successfully in your IDE."
-                        )
-                        return _append_diff(response_msg, result)
-                    elif operation == "delete_file":
-                        # Format delete_file success response
-                        response_msg = (
-                            f"✅ Deleted file '{file_path}' locally\n\n"
-                            + "File removed successfully from your IDE."
-                        )
-                        return _append_diff(response_msg, result)
-                    elif operation == "revert_file":
-                        # Format revert_file success response (LocalServer POST /api/files/revert)
-                        target = data.get("target", "saved")
-                        target_label = (
-                            "last saved version" if target == "saved" else "git HEAD"
-                        )
-                        response_msg = (
-                            f"✅ Reverted file '{file_path}' to {target_label}\n\n"
-                            + "Content applied in your IDE."
-                        )
-                        if result.get("auto_fixed"):
-                            response_msg += "\n\n✅ Auto-fixed formatting issues"
-                        if result.get("errors"):
-                            response_msg += (
-                                f"\n⚠️ Validation errors: {len(result['errors'])}"
-                            )
-                        return _append_diff(response_msg, result)
-                    elif operation in ["get_file", "show_updated_file"]:
-                        # Format read operation response
-                        content = result.get("content", "")
-                        line_count = result.get("line_count", 0)
-                        change_emoji = {"add": "➕", "update": "✏️", "delete": "🗑️"}
-
-                        if operation == "get_file":
-                            # Format similar to get_file_tool
-                            result_msg = f"📄 **{file_path}**\n\n"
-                            result_msg += f"**Current Lines:** {line_count}\n"
-                            result_msg += f"**Current Size:** {len(content)} chars\n"
-                            content_preview = content[:500]
-                            result_msg += f"\n**Content preview (first 500 chars):**\n```\n{content_preview}\n```\n"
-                            if len(content) > 500:
-                                result_msg += (
-                                    f"\n... ({len(content) - 500} more characters)\n"
-                                )
-                            return result_msg
-                        else:  # show_updated_file
-                            # Format similar to show_updated_file_tool
-                            result_msg = (
-                                f"\n\n---\n\n## 📝 **Updated File: {file_path}**\n\n"
-                            )
-                            result_msg += f"```\n{content}\n```\n\n"
-                            result_msg += "---\n\n"
-                            return result_msg
-
-                    else:
-                        # Handle unknown operations (in 200 case) or non-200 responses
-                        if response.status_code == 200:
-                            # Generic success message for other operations
-                            response_msg = f"✅ Applied {operation.replace('_', ' ')} to '{file_path}' locally"
-                            return _append_diff(response_msg, result)
-                        else:
-                            # Extract meaningful error message from response (non-200 status)
-                            error_text = response.text
-                            status_code = response.status_code
-
-                            # Detect tunnel/connection errors
-                            is_tunnel_error = (
-                                status_code in [502, 503, 504, 530]
-                                or ("tunnel" in error_text.lower() and "error" in error_text.lower())
-                            )
-
-                            if is_tunnel_error:
-                                logger.warning(
-                                    f"[Tunnel Routing] ❌ Stale tunnel detected ({status_code}): {url}. "
-                                    f"Invalidating all tunnels for this user."
-                                )
-
-                                # Invalidate all stale tunnel URLs for this user
-                                try:
-                                    from app.modules.tunnel.tunnel_service import (
-                                        get_tunnel_service,
-                                    )
-
-                                    tunnel_service = get_tunnel_service()
-
-                                    # Unregister conversation-specific tunnel (workspace-only; no user-level)
-                                    if conversation_id:
-                                        tunnel_service.unregister_tunnel(
-                                            user_id, conversation_id
-                                        )
-                                        logger.info(
-                                            f"[Tunnel Routing] ✅ Invalidated stale conversation tunnel for user {user_id}"
-                                        )
-                                except Exception as e:
-                                    logger.error(
-                                        f"[Tunnel Routing] Failed to invalidate tunnel: {e}"
-                                    )
-
-                                # Return None to allow fallback to cloud execution
-                                logger.info(
-                                    f"[Tunnel Routing] ⬇️ Falling back to cloud execution for {operation}"
-                                )
-                                return None
-
                             logger.warning(
-                                f"[Tunnel Routing] ❌ LocalServer {operation} failed ({status_code}): {error_text[:200]}"
+                                f"[Tunnel Routing] ⚠️ LocalServer not responding on {direct_url}, falling back to tunnel"
                             )
-
-                            # Handle specific error codes
-                            if response.status_code == 409:
-                                # File already exists - provide helpful guidance
-                                file_path = data.get("file_path", "file")
-                                if operation == "add_file":
-                                    return (
-                                        f"❌ Cannot create file '{file_path}': File already exists locally.\n\n"
-                                        f"**Recommendation**: Use `update_file_in_changes` or `update_file_lines` to modify the existing file instead of `add_file_to_changes`.\n\n"
-                                        f"**Action**: If you intended to replace the file, use `update_file_in_changes` with the new content."
-                                    )
-                                else:
-                                    return f"❌ Operation failed: File '{file_path}' already exists (409). Please use update operation instead."
-
-                            # If pre-validation failed, return a helpful error message to the agent
-                            if response.status_code == 400:
-                                try:
-                                    error_data = response.json()
-                                    if (
-                                        error_data.get("error")
-                                        == "pre_validation_failed"
-                                    ):
-                                        errors = error_data.get("errors", [])
-                                        error_count = len(errors)
-                                        file_path = data.get("file_path", "file")
-
-                                        # Analyze error types for more specific guidance
-                                        bracket_errors = [
-                                            e
-                                            for e in errors
-                                            if e.get("rule") == "bracket-matching"
-                                        ]
-                                        quote_errors = [
-                                            e
-                                            for e in errors
-                                            if e.get("rule") == "quote-matching"
-                                        ]
-
-                                        # Create a helpful error message for the agent based on operation type
-                                        if operation in [
-                                            "update_file_lines",
-                                            "insert_lines",
-                                            "add_file",
-                                            "update_file",
-                                        ]:
-                                            operation_name = operation.replace("_", " ")
-
-                                            # Operation-specific context
-                                            if operation == "add_file":
-                                                context_msg = "creating a new file"
-                                                action_tool = "`add_file_to_changes`"
-                                            elif operation == "update_file":
-                                                context_msg = (
-                                                    "replacing the entire file"
-                                                )
-                                                action_tool = "`update_file_in_changes`"
-                                            elif operation == "insert_lines":
-                                                context_msg = "inserting new lines"
-                                                action_tool = "`insert_lines`"
-                                            else:  # update_file_lines
-                                                context_msg = "updating specific lines"
-                                                action_tool = "`update_file_lines`"
-
-                                            error_msg = f"❌ Pre-validation failed for '{file_path}': {error_count} syntax error(s) detected in the generated code.\n\n"
-                                            if bracket_errors:
-                                                error_msg += f"- {len(bracket_errors)} unmatched bracket(s): Ensure all parentheses, braces, and brackets are properly closed.\n"
-                                            if quote_errors:
-                                                error_msg += f"- {len(quote_errors)} unclosed quote(s): Ensure all string quotes (single, double, template literals) are properly closed.\n"
-
-                                            error_msg += (
-                                                f"\n**Root Cause**: The code you generated has syntax errors while {context_msg}. This usually happens when:\n"
-                                                f"- Code snippets are incomplete or truncated\n"
-                                                f"- Quotes or brackets are not properly matched\n"
-                                                f"- The generated code doesn't match the file's syntax structure\n"
-                                                f"- Missing closing brackets, quotes, or parentheses\n\n"
-                                            )
-
-                                            if operation in [
-                                                "update_file_lines",
-                                                "insert_lines",
-                                            ]:
-                                                error_msg += (
-                                                    f"**Recommendation**:\n"
-                                                    f"1. Use `get_file_from_changes` (with_line_numbers=true) to see the exact context around the lines you're {context_msg}\n"
-                                                    f"2. Review the existing code structure, indentation, and syntax patterns\n"
-                                                    f"3. Generate complete, syntactically correct code that matches the surrounding context\n"
-                                                    f"4. Ensure all brackets, quotes, and parentheses are properly closed\n"
-                                                    f"5. If {context_msg} a partial section, make sure the code integrates correctly with surrounding lines\n\n"
-                                                    f"**Action**: Fix the syntax errors in your generated code and retry with {action_tool}."
-                                                )
-                                            else:  # add_file or update_file
-                                                error_msg += (
-                                                    f"**Recommendation**:\n"
-                                                    f"1. Review the file structure and ensure it's a complete, valid file\n"
-                                                    f"2. Check that all imports, classes, functions, and code blocks are properly closed\n"
-                                                    f"3. Ensure all brackets, quotes, and parentheses are properly matched\n"
-                                                    f"4. Verify the file follows the correct syntax for its language\n"
-                                                    f"5. If creating a new file, ensure it has all required components (imports, main code, etc.)\n\n"
-                                                    f"**Action**: Fix the syntax errors in your generated code and retry with {action_tool}."
-                                                )
-                                        else:  # replace_in_file
-                                            error_msg = (
-                                                f"❌ Pre-validation failed for '{file_path}': {error_count} syntax error(s) detected.\n\n"
-                                                f"The replacement would break code syntax (e.g., unclosed quotes, broken string literals).\n\n"
-                                                f"**Recommendation**: Instead of using `replace_in_file` with a simple pattern, use `update_file_lines` "
-                                                f"to make targeted changes that respect code structure, or use `get_file_from_changes` first to see the "
-                                                f"exact context and make more precise replacements.\n\n"
-                                                f"Common issues:\n"
-                                                f"- Replacing text inside string literals breaks quotes\n"
-                                                f"- Replacing text in template literals breaks syntax\n"
-                                                f"- Pattern matches unintended locations\n\n"
-                                                f"**Action**: Fetch the file with `get_file_from_changes` (with_line_numbers=true), review the context, "
-                                                f"and use `update_file_lines` or a more specific `replace_in_file` pattern that avoids string literals."
-                                            )
-                                        return error_msg
-                                    # 400 with auto_fix_failed or success=False: LocalServer didn't apply edit (e.g. linter errors)
-                                    # Return a helpful message with diff/errors so agent can fix; do NOT return None
-                                    if (
-                                        error_data.get("auto_fix_failed")
-                                        or error_data.get("success") is False
-                                    ):
-                                        file_path = data.get("file_path", "file")
-                                        errors = error_data.get("errors", [])
-                                        op_label = operation.replace("_", " ")
-                                        msg = (
-                                            f"⚠️ LocalServer reported issues for '{file_path}' ({op_label}). "
-                                            f"The change may not have been applied.\n\n"
-                                        )
-                                        if errors:
-                                            msg += f"**Validation errors ({len(errors)}):**\n"
-                                            for err in errors[:10]:
-                                                line = err.get("line", "")
-                                                col = err.get("column", "")
-                                                m = err.get("message", str(err))
-                                                msg += f"- Line {line}:{col}: {m}\n"
-                                            if len(errors) > 10:
-                                                msg += (
-                                                    f"... and {len(errors) - 10} more\n"
-                                                )
-                                        msg = _append_diff(msg, error_data)
-                                        return msg
-                                except Exception:
-                                    pass  # If JSON parsing fails, fall through to None
-
-                            return None  # Fall back to CodeChangesManager
-
-            except Exception as e:
-                # Handle specific httpx exceptions if available
-                error_type = type(e).__name__
-                if "Timeout" in error_type or "timeout" in str(e).lower():
-                    logger.error(
-                        f"[Tunnel Routing] ⏱️ Timeout routing {operation} to LocalServer after {request_timeout}s: {e}. "
-                        f"URL: {url}. This may indicate the tunnel is not connected or LocalServer is not responding."
-                    )
-                elif "Connect" in error_type or "connection" in str(e).lower():
-                    logger.warning(
-                        f"[Tunnel Routing] 🔌 Connection error routing {operation} to LocalServer: {e}"
-                    )
-                else:
-                    # For HTTP errors, try to extract meaningful message
-                    if hasattr(e, "response") and e.response:
-                        error_message = _extract_error_message(
-                            e.response.text if hasattr(e.response, "text") else str(e),
-                            (
-                                e.response.status_code
-                                if hasattr(e.response, "status_code")
-                                else 0
-                            ),
-                        )
+                            url = f"{tunnel_url}{endpoint}"
+                    except Exception as e:
                         logger.warning(
-                            f"[Tunnel Routing] ❌ HTTP error routing {operation} to LocalServer: {error_message}"
+                            f"[Tunnel Routing] ⚠️ Cannot reach LocalServer on {direct_url}: {e}, using tunnel instead"
+                        )
+                        url = f"{tunnel_url}{endpoint}"
+                else:
+                    if force_tunnel:
+                        logger.info(
+                            f"[Tunnel Routing] 🔧 FORCE_TUNNEL enabled, using tunnel URL: {tunnel_url}{endpoint}"
                         )
                     else:
-                        logger.warning(
-                            f"[Tunnel Routing] ❌ Error routing {operation} to LocalServer: {e}"
+                        logger.info(
+                            f"[Tunnel Routing] 🌐 Using tunnel URL: {tunnel_url}{endpoint}"
                         )
-                return None  # Fall back to CodeChangesManager
+                    url = f"{tunnel_url}{endpoint}"
+            except Exception as e:
+                logger.warning(
+                    f"[Tunnel Routing] Error in smart routing, falling back to tunnel URL: {e}"
+                )
+                url = f"{tunnel_url}{endpoint}"
+
+            logger.info(f"[Tunnel Routing] 🚀 Routing {operation} to LocalServer: {url}")
+            logger.debug(f"[Tunnel Routing] Request data: {request_data}")
+
+            is_tunnel_request = url.startswith("https://") or (
+                url.startswith("http://") and "localhost" not in url
+            )
+            request_timeout = (
+                120.0 if is_tunnel_request else 30.0
+            )  # 2 minutes for tunnel, 30s for localhost
+            logger.debug(
+                f"[Tunnel Routing] Using timeout: {request_timeout}s (tunnel={is_tunnel_request})"
+            )
+
+            with httpx.Client(timeout=request_timeout) as client:
+                try:
+                    result: Dict[str, Any] = {}
+                    # Read operations use GET, write operations use POST
+                    if operation in ["get_file", "show_updated_file"]:
+                        # GET request with file path as query parameter
+                        file_path = data.get("file_path") or data.get("path", "")
+                        if not file_path:
+                            logger.warning(
+                                f"[Tunnel Routing] No file_path provided for {operation}"
+                            )
+                            return None
+                        url_with_params = f"{url}?path={url_quote(file_path)}"
+                        response = client.get(url_with_params)
+                    else:
+                        # POST request for write operations
+                        response = client.post(
+                            url,
+                            json=request_data,
+                            headers={"Content-Type": "application/json"},
+                        )
+
+                    if response.status_code == 200:
+                        route_result = response.json()
+                        logger.info(
+                            f"[Tunnel Routing] ✅ LocalServer {operation} succeeded: {route_result}"
+                        )
+                    else:
+                        # Non-200: error handling and optional tunnel invalidation
+                        error_text = response.text
+                        status_code = response.status_code
+                        is_tunnel_error = (
+                            status_code in [502, 503, 504, 530]
+                            or ("tunnel" in error_text.lower() and "error" in error_text.lower())
+                        )
+                        if is_tunnel_error and conversation_id:
+                            try:
+                                from app.modules.tunnel.tunnel_service import get_tunnel_service
+                                get_tunnel_service().unregister_tunnel(user_id, conversation_id)
+                                logger.info(
+                                    f"[Tunnel Routing] ✅ Invalidated stale conversation tunnel for user {user_id}"
+                                )
+                            except Exception as e:
+                                logger.error(f"[Tunnel Routing] Failed to invalidate tunnel: {e}")
+                            logger.info(f"[Tunnel Routing] ⬇️ Falling back to cloud execution for {operation}")
+                            return None
+                        logger.warning(
+                            f"[Tunnel Routing] ❌ LocalServer {operation} failed ({status_code}): {error_text[:200]}"
+                        )
+                        if status_code == 409:
+                            file_path = data.get("file_path", "file")
+                            if operation == "add_file":
+                                return (
+                                    f"❌ Cannot create file '{file_path}': File already exists locally.\n\n"
+                                    f"**Recommendation**: Use `update_file_in_changes` or `update_file_lines` to modify the existing file instead of `add_file_to_changes`.\n\n"
+                                    f"**Action**: If you intended to replace the file, use `update_file_in_changes` with the new content."
+                                )
+                            return f"❌ Operation failed: File '{file_path}' already exists (409). Please use update operation instead."
+                        if status_code == 400:
+                            try:
+                                error_data = response.json()
+                                if error_data.get("error") == "pre_validation_failed":
+                                    errors = error_data.get("errors", [])
+                                    error_count = len(errors)
+                                    file_path = data.get("file_path", "file")
+                                    error_msg = (
+                                        f"❌ Pre-validation failed for '{file_path}': {error_count} syntax error(s) detected.\n\n"
+                                        f"Review the generated code for unmatched brackets, quotes, or incomplete snippets."
+                                    )
+                                    return error_msg
+                            except Exception:
+                                pass
+                        return None
+
+                except Exception as e:
+                    # Handle specific httpx exceptions if available
+                    error_type = type(e).__name__
+                    if "Timeout" in error_type or "timeout" in str(e).lower():
+                        logger.error(
+                            f"[Tunnel Routing] ⏱️ Timeout routing {operation} to LocalServer after {request_timeout}s: {e}. "
+                            f"URL: {url}. This may indicate the tunnel is not connected or LocalServer is not responding."
+                        )
+                    elif "Connect" in error_type or "connection" in str(e).lower():
+                        logger.warning(
+                            f"[Tunnel Routing] 🔌 Connection error routing {operation} to LocalServer: {e}"
+                        )
+                    else:
+                        resp = getattr(e, "response", None)
+                        if resp is not None:
+                            error_message = _extract_error_message(
+                                getattr(resp, "text", str(e)),
+                                getattr(resp, "status_code", 0),
+                            )
+                            logger.warning(
+                                f"[Tunnel Routing] ❌ HTTP error routing {operation} to LocalServer: {error_message}"
+                            )
+                        else:
+                            logger.warning(
+                                f"[Tunnel Routing] ❌ Error routing {operation} to LocalServer: {e}"
+                            )
+                    return None  # Fall back to CodeChangesManager
+
+        if route_result:
+            result = route_result
+            file_path = data.get("file_path") or data.get("path", "file")
+
+            if operation == "replace_in_file":
+                replacements_made = result.get("replacements_made", 0)
+                total_matches = result.get("total_matches", replacements_made)
+                pattern = data.get("pattern", "pattern")
+
+                # Enrich result with diff and line stats if LocalServer didn't return them
+                if not result.get("diff") or (
+                    result.get("lines_changed") is None
+                    and result.get("lines_added") is None
+                    and result.get("lines_deleted") is None
+                ):
+                    try:
+                        manager = _get_code_changes_manager()
+                        file_data = manager.get_file(file_path)
+                        before = (
+                            (file_data.get("content") or "")
+                            if file_data
+                            else None
+                        )
+                        after = _fetch_file_content_from_local_server(file_path)
+                        if before is not None and after is not None:
+                            if not result.get("diff"):
+                                result["diff"] = manager._create_unified_diff(
+                                    before,
+                                    after,
+                                    file_path,
+                                    file_path,
+                                    3,
+                                )
+                            if (
+                                result.get("lines_changed") is None
+                                and result.get("lines_added") is None
+                                and result.get("lines_deleted") is None
+                            ):
+                                old_lines = len(before.splitlines())
+                                new_lines = len(after.splitlines())
+                                result["lines_added"] = max(
+                                    0, new_lines - old_lines
+                                )
+                                result["lines_deleted"] = max(
+                                    0, old_lines - new_lines
+                                )
+                    except Exception as e:
+                        logger.debug(
+                            f"[Tunnel Routing] Could not enrich replace_in_file diff: {e}"
+                        )
+
+                response_msg = (
+                    f"✅ Replaced pattern '{pattern}' in '{file_path}'\n\n"
+                    + f"Made {replacements_made} replacement(s) out of {total_matches} match(es)"
+                )
+                if result.get("auto_fixed"):
+                    response_msg += "\n\n✅ Auto-fixed formatting issues"
+                if result.get("errors"):
+                    response_msg += (
+                        f"\n⚠️ Validation errors: {len(result['errors'])}"
+                    )
+                return _append_diff(response_msg, result)
+            elif operation == "update_file_lines":
+                start_line = data.get("start_line", 0)
+                end_line = data.get("end_line", start_line)
+                has_errors = result.get("errors") or result.get(
+                    "auto_fix_failed"
+                )
+                if has_errors:
+                    response_msg = (
+                        f"⚠️ Updated lines {start_line}-{end_line} in '{file_path}' locally, "
+                        f"but linter reported issues (change may be partial or reverted).\n\n"
+                    )
+                else:
+                    response_msg = (
+                        f"✅ Updated lines {start_line}-{end_line} in '{file_path}' locally\n\n"
+                        + "Changes applied successfully in your IDE."
+                    )
+                if result.get("auto_fixed"):
+                    response_msg += "\n\n✅ Auto-fixed formatting issues"
+                if result.get("errors"):
+                    response_msg += (
+                        f"\n⚠️ Validation errors: {len(result['errors'])}"
+                    )
+                return _append_diff(response_msg, result)
+            elif operation == "add_file":
+                response_msg = f"✅ Created file '{file_path}' locally\n\nChanges applied successfully in your IDE."
+                if result.get("auto_fixed"):
+                    response_msg += "\n\n✅ Auto-fixed formatting issues"
+                if result.get("errors"):
+                    response_msg += (
+                        f"\n⚠️ Validation errors: {len(result['errors'])}"
+                    )
+                return _append_diff(response_msg, result)
+            elif operation == "update_file":
+                response_msg = f"✅ Updated file '{file_path}' locally\n\nChanges applied successfully in your IDE."
+                if result.get("auto_fixed"):
+                    response_msg += "\n\n✅ Auto-fixed formatting issues"
+                if result.get("errors"):
+                    response_msg += (
+                        f"\n⚠️ Validation errors: {len(result['errors'])}"
+                    )
+                return _append_diff(response_msg, result)
+            elif operation == "insert_lines":
+                line_number = data.get("line_number", 0)
+                position = (
+                    "after" if data.get("insert_after", True) else "before"
+                )
+                has_errors = result.get("errors") or result.get(
+                    "auto_fix_failed"
+                )
+                if has_errors:
+                    response_msg = (
+                        f"⚠️ Inserted lines {position} line {line_number} in '{file_path}' locally, "
+                        f"but linter reported issues (change may be partial or reverted).\n\n"
+                    )
+                else:
+                    response_msg = (
+                        f"✅ Inserted lines {position} line {line_number} in '{file_path}' locally\n\n"
+                        + "Changes applied successfully in your IDE."
+                    )
+                if result.get("auto_fixed"):
+                    response_msg += "\n\n✅ Auto-fixed formatting issues"
+                if result.get("errors"):
+                    response_msg += (
+                        f"\n⚠️ Validation errors: {len(result['errors'])}"
+                    )
+                return _append_diff(response_msg, result)
+            elif operation == "delete_lines":
+                start_line = data.get("start_line", 0)
+                end_line = data.get("end_line", start_line)
+                response_msg = (
+                    f"✅ Deleted lines {start_line}-{end_line} from '{file_path}' locally\n\n"
+                    + "Changes applied successfully in your IDE."
+                )
+                return _append_diff(response_msg, result)
+            elif operation == "delete_file":
+                response_msg = (
+                    f"✅ Deleted file '{file_path}' locally\n\n"
+                    + "File removed successfully from your IDE."
+                )
+                return _append_diff(response_msg, result)
+            elif operation == "revert_file":
+                target = data.get("target", "saved")
+                target_label = (
+                    "last saved version" if target == "saved" else "git HEAD"
+                )
+                response_msg = (
+                    f"✅ Reverted file '{file_path}' to {target_label}\n\n"
+                    + "Content applied in your IDE."
+                )
+                if result.get("auto_fixed"):
+                    response_msg += "\n\n✅ Auto-fixed formatting issues"
+                if result.get("errors"):
+                    response_msg += (
+                        f"\n⚠️ Validation errors: {len(result['errors'])}"
+                    )
+                return _append_diff(response_msg, result)
+            elif operation in ["get_file", "show_updated_file"]:
+                content = result.get("content", "")
+                line_count = result.get("line_count", 0)
+
+                if operation == "get_file":
+                    result_msg = f"📄 **{file_path}**\n\n"
+                    result_msg += f"**Current Lines:** {line_count}\n"
+                    result_msg += f"**Current Size:** {len(content)} chars\n"
+                    content_preview = content[:500]
+                    result_msg += f"\n**Content preview (first 500 chars):**\n```\n{content_preview}\n```\n"
+                    if len(content) > 500:
+                        result_msg += (
+                            f"\n... ({len(content) - 500} more characters)\n"
+                        )
+                    return result_msg
+                else:  # show_updated_file
+                    result_msg = (
+                        f"\n\n---\n\n## 📝 **Updated File: {file_path}**\n\n"
+                    )
+                    result_msg += f"```\n{content}\n```\n\n"
+                    result_msg += "---\n\n"
+                    return result_msg
+
+            else:
+                response_msg = f"✅ Applied {operation.replace('_', ' ')} to '{file_path}' locally"
+                return _append_diff(response_msg, result)
 
     except Exception as e:
         # Outer exception handler for non-httpx errors
@@ -3072,6 +2900,8 @@ def _should_route_to_local_server() -> bool:
     agent_id = _get_agent_id()
     user_id = _get_user_id()
     conversation_id = _get_conversation_id()
+    repository = _get_repository()
+    branch = _get_branch()
 
     logger.info(
         f"[Tunnel Routing] Checking routing: agent_id={agent_id}, user_id={user_id}, conversation_id={conversation_id}"
@@ -3093,8 +2923,13 @@ def _should_route_to_local_server() -> bool:
 
         tunnel_service = get_tunnel_service()
 
-        # Resolve tunnel (workspace/conversation only; no user-level)
-        tunnel_url = tunnel_service.get_tunnel_url(user_id, conversation_id)
+        # Resolve tunnel by workspace (repository) or conversation
+        tunnel_url = tunnel_service.get_tunnel_url(
+            user_id,
+            conversation_id,
+            repository=repository,
+            branch=branch,
+        )
 
         if tunnel_url:
             logger.info(
@@ -3124,13 +2959,21 @@ def _get_local_server_base_url_for_files() -> Optional[str]:
 
         user_id = _get_user_id()
         conversation_id = _get_conversation_id()
+        repository = _get_repository()
+        branch = _get_branch()
         if not user_id:
             return None
         tunnel_service = get_tunnel_service()
-        tunnel_url = tunnel_service.get_tunnel_url(user_id, conversation_id)
+        tunnel_url = tunnel_service.get_tunnel_url(
+            user_id, conversation_id, repository=repository, branch=branch
+        )
         if not tunnel_url:
-            tunnel_url = tunnel_service.get_tunnel_url(user_id, None)
+            tunnel_url = tunnel_service.get_tunnel_url(user_id, None, repository=repository, branch=branch)
         if not tunnel_url:
+            return None
+        # Socket URL cannot be used as HTTP base; callers use this for httpx
+        from app.modules.intelligence.tools.local_search_tools.tunnel_utils import SOCKET_TUNNEL_PREFIX
+        if tunnel_url.startswith(SOCKET_TUNNEL_PREFIX):
             return None
 
         force_tunnel = os.getenv("FORCE_TUNNEL", "").lower() in ["true", "1", "yes"]
@@ -3165,9 +3008,41 @@ def _get_local_server_base_url_for_files() -> Optional[str]:
 
 
 def _fetch_file_content_from_local_server(file_path: str) -> Optional[str]:
-    """Fetch current file content from LocalServer via tunnel. Used to sync Redis after line-based local writes."""
+    """Fetch current file content from LocalServer via tunnel or Socket.IO. Used to sync Redis after line-based local writes."""
     base = _get_local_server_base_url_for_files()
     if not base:
+        # Try socket path when no HTTP base (e.g. Socket.IO tunnel)
+        try:
+            from app.modules.tunnel.tunnel_service import get_tunnel_service
+            from app.modules.intelligence.tools.local_search_tools.tunnel_utils import (
+                _execute_via_socket,
+                SOCKET_TUNNEL_PREFIX,
+            )
+            user_id = _get_user_id()
+            conversation_id = _get_conversation_id()
+            repository = _get_repository()
+            branch = _get_branch()
+            if not user_id:
+                return None
+            tunnel_service = get_tunnel_service()
+            tunnel_url = tunnel_service.get_tunnel_url(
+                user_id, conversation_id, repository=repository, branch=branch
+            )
+            if tunnel_url and tunnel_url.startswith(SOCKET_TUNNEL_PREFIX):
+                out = _execute_via_socket(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    endpoint="/api/files/read",
+                    payload={"path": file_path},
+                    tunnel_url=tunnel_url,
+                    repository=repository,
+                    branch=branch,
+                    timeout=15.0,
+                )
+                if isinstance(out, dict) and out.get("content") is not None:
+                    return out.get("content", "")
+        except Exception as e:
+            logger.debug(f"Failed to fetch file via socket: {e}")
         return None
     try:
         import httpx
@@ -3585,26 +3460,18 @@ class UpdateFileLinesInput(BaseModel):
 
 class ReplaceInFileInput(BaseModel):
     file_path: str = Field(description="Path to the file to update")
-    pattern: str = Field(
-        description="Regex pattern to search for (supports capturing groups with \\1, \\2, etc. in replacement)"
+    old_str: str = Field(
+        description=(
+            "The exact literal text to find and replace. Must match character-for-character "
+            "including indentation and whitespace. Include enough surrounding lines to make it "
+            "unique in the file (typically 3-5 lines). Do NOT use regex — this is plain text matching."
+        )
     )
-    replacement: str = Field(
-        description="Replacement string (use \\1, \\2, etc. for captured groups)"
-    )
-    count: int = Field(
-        default=0,
-        description="Maximum number of replacements (0 = replace all occurrences)",
+    new_str: str = Field(
+        description="The replacement text. Must preserve correct indentation."
     )
     description: Optional[str] = Field(
         default=None, description="Optional description of the change"
-    )
-    case_sensitive: bool = Field(
-        default=False, description="Whether pattern matching is case-sensitive"
-    )
-    word_boundary: bool = Field(
-        default=False,
-        description="If True, wrap pattern with word boundaries (\\b) to match whole words only. "
-        "Useful to prevent matching partial strings within words (e.g., 'test function' won't match 'another_test function').",
     )
     project_id: Optional[str] = Field(
         default=None,
@@ -4142,9 +4009,9 @@ def update_file_lines_tool(input_data: UpdateFileLinesInput) -> str:
 
 
 def replace_in_file_tool(input_data: ReplaceInFileInput) -> str:
-    """Replace pattern matches in a file using regex"""
+    """Replace an exact literal string in a file (str_replace semantics)."""
     logger.info(
-        f"Tool replace_in_file_tool: Replacing pattern '{input_data.pattern}' in '{input_data.file_path}' "
+        f"🔧 [Tool Call] replace_in_file_tool: str_replace in '{input_data.file_path}' "
         f"(project_id={input_data.project_id})"
     )
 
@@ -4153,22 +4020,17 @@ def replace_in_file_tool(input_data: ReplaceInFileInput) -> str:
         "replace_in_file",
         {
             "file_path": input_data.file_path,
-            "pattern": input_data.pattern,
-            "replacement": input_data.replacement,
-            "count": input_data.count,
-            "case_sensitive": input_data.case_sensitive,
-            "word_boundary": input_data.word_boundary,
+            "old_str": input_data.old_str,
+            "new_str": input_data.new_str,
             "description": input_data.description,
         },
         input_data.file_path,
     )
 
     if local_result is not None:
-        # Local execution was attempted - return result (success or error)
         return local_result
 
     # No tunnel available - use cloud CodeChangesManager (for web UI users)
-
     try:
         manager = _get_code_changes_manager()
         db = None
@@ -4182,32 +4044,17 @@ def replace_in_file_tool(input_data: ReplaceInFileInput) -> str:
             logger.debug("Tool replace_in_file_tool: Database session obtained")
         result = manager.replace_in_file(
             file_path=input_data.file_path,
-            pattern=input_data.pattern,
-            replacement=input_data.replacement,
-            count=input_data.count,
+            old_str=input_data.old_str,
+            new_str=input_data.new_str,
             description=input_data.description,
-            case_sensitive=input_data.case_sensitive,
-            word_boundary=input_data.word_boundary,
             project_id=input_data.project_id,
             db=db,
         )
 
         if result.get("success"):
-            locations_str = "\n".join(
-                [
-                    f"  Line {loc['line']}: {loc['match']}"
-                    for loc in result["match_locations"][:5]
-                ]
-            )
-            if len(result["match_locations"]) > 5:
-                locations_str += (
-                    f"\n  ... and {len(result['match_locations']) - 5} more"
-                )
-
             msg = (
-                f"✅ Replaced pattern '{input_data.pattern}' in '{input_data.file_path}'\n\n"
-                + f"Made {result['replacements_made']} replacement(s) out of {result['total_matches']} match(es)\n\n"
-                + f"Match locations:\n{locations_str}"
+                f"✅ str_replace applied in '{input_data.file_path}' "
+                f"(match at line ~{result['match_line']})"
             )
             # Append diff and line stats from manager (cloud path has no LocalServer)
             file_data = manager.get_file(input_data.file_path)
@@ -4240,12 +4087,11 @@ def replace_in_file_tool(input_data: ReplaceInFileInput) -> str:
                     pass
             return msg
         else:
-            return f"❌ Error replacing pattern: {result.get('error', 'Unknown error')}"
+            return f"❌ str_replace failed: {result.get('error', 'Unknown error')}"
     except Exception:
         logger.exception(
             "Tool replace_in_file_tool: Error replacing in file",
             file_path=input_data.file_path,
-            pattern=input_data.pattern,
         )
         return "❌ Error replacing in file"
 
@@ -5004,6 +4850,8 @@ class SimpleTool:
 # Tools to exclude when local_mode=True (VS Code extension). Extension handles diff/export/display itself.
 CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL: frozenset[str] = frozenset(
     {
+        "clear_file_from_changes",
+        "clear_all_changes",
         "show_diff",  # Extension shows diffs
         "export_changes",  # Extension applies changes directly
         "show_updated_file",  # Extension shows file content in editor

@@ -187,9 +187,9 @@ def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
         case "replace_in_file":
             file_path = _get_file_path()
             return (
-                f"Replacing pattern in: {file_path}"
+                f"Replacing text in: {file_path}"
                 if file_path
-                else "Replacing pattern in file"
+                else "Replacing text in file"
             )
         case "insert_lines":
             file_path = _get_file_path()
@@ -694,11 +694,12 @@ def get_tool_response_message(
         case "replace_in_file":
             file_path = args.get("file_path") if args else None
             if file_path:
-                pattern = args.get("pattern") if args else None
-                if pattern:
-                    return f"Pattern replacement completed successfully: {file_path} (pattern: {pattern[:50]})"
-                return f"Pattern replacement completed successfully: {file_path}"
-            return "Pattern replacement completed successfully"
+                old_str = args.get("old_str") if args else None
+                if old_str:
+                    preview = old_str[:50].replace("\n", "↵")
+                    return f"Text replacement completed successfully: {file_path} (replaced: {preview!r})"
+                return f"Text replacement completed successfully: {file_path}"
+            return "Text replacement completed successfully"
         case "insert_lines":
             file_path = args.get("file_path") if args else None
             if file_path:
@@ -1065,8 +1066,9 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             return f"-> updating lines {line_range} in file: {file_path}\n"
         case "replace_in_file":
             file_path = args.get("file_path", "")
-            pattern = args.get("pattern", "")
-            return f"-> replacing pattern '{pattern}' in file: {file_path}\n"
+            old_str = args.get("old_str", "")
+            preview = old_str[:40].replace("\n", "↵") if old_str else ""
+            return f"-> replacing text in file: {file_path} (old_str: {preview!r})\n"
         case "insert_lines":
             file_path = args.get("file_path", "")
             line_number = args.get("line_number", "")

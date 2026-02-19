@@ -269,10 +269,6 @@ GENERAL_PURPOSE_TOOLS: List[str] = [
 # Todo/requirement tools are included here so we have a single source; do not also pass
 # create_todo_management_toolset() as a toolset or we get "read_todos" name conflicts with MCP.
 SUPERVISOR_TOOLS: List[str] = [
-    "search_text",
-    "search_files",
-    "semantic_search",
-    "search_code_structure",
     "fetch_file",
     "get_code_file_structure",
     "web_search_tool",
@@ -294,15 +290,6 @@ SUPERVISOR_TOOLS: List[str] = [
 EXECUTE_TOOLS: List[str] = [
     "webpage_extractor",
     "web_search_tool",
-    "search_text",
-    "search_files",
-    "search_symbols",
-    "search_workspace_symbols",
-    "search_references",
-    "search_definitions",
-    "search_code_structure",
-    "search_bash",
-    "semantic_search",
     "ask_knowledge_graph_queries",
     "execute_terminal_command",
     "terminal_session_output",
@@ -341,9 +328,6 @@ EXECUTE_EXCLUDE_IN_LOCAL: List[str] = ["show_diff"]
 
 # Explore: minimal read-only set (for future use)
 EXPLORE_TOOLS: List[str] = [
-    "search_text",
-    "search_files",
-    "semantic_search",
     "get_code_file_structure",
     "fetch_file",
 ]
