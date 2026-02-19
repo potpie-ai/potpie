@@ -221,6 +221,16 @@ class CodeProviderFactory:
                 f"GitHub App not installed on repository {repo_name}. "
                 f"This is expected for public repos or repos where the app isn't installed."
             )
+        elif response.status_code == 401:
+            # JWT invalid: wrong/expired key, or malformed GITHUB_PRIVATE_KEY (e.g. newlines)
+            hint = (
+                " GitHub returned 'A JSON web token could not be decoded'. "
+                "Check GITHUB_APP_ID and GITHUB_PRIVATE_KEY: use the correct private key PEM for this App, "
+                "and if the key is in .env as one line, use literal \\n for newlines (or paste with real newlines)."
+            )
+            raise Exception(
+                f"Failed to get installation for {repo_name}: 401 {hint} Raw: {response.text}"
+            )
         elif response.status_code != 200:
             raise Exception(
                 f"Failed to get installation ID for {repo_name}: "

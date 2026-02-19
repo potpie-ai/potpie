@@ -20,15 +20,15 @@ router = APIRouter()
 class MediaAPI:
     @staticmethod
     @router.post("/media/upload", response_model=AttachmentUploadResponse)
-    async def upload_image(
-        file: UploadFile = File(..., description="Image file to upload"),
+    async def upload_file(
+        file: UploadFile = File(..., description="File to upload (any type; images are processed, others stored as document)"),
         message_id: Optional[str] = Query(
             None, description="Optional message ID to link attachment"
         ),
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
-        """Upload an image file with multimodal feature flag check"""
+        """Upload a file (any type). Images are validated and processed; other files stored as document."""
 
         # Check if multimodal functionality is enabled
         if not config_provider.get_is_multimodal_enabled():
@@ -37,7 +37,7 @@ class MediaAPI:
                 detail={
                     "error": "Multimodal functionality is currently disabled",
                     "code": "MULTIMODAL_DISABLED",
-                    "message": "Image upload is not available in this deployment configuration",
+                    "message": "File upload is not available in this deployment configuration",
                 },
             )
 
@@ -45,7 +45,7 @@ class MediaAPI:
         user_email = user["email"]
 
         controller = MediaController(db, user_id, user_email)
-        return await controller.upload_image(file, message_id)
+        return await controller.upload_file_any(file, message_id)
 
     @staticmethod
     @router.get(
