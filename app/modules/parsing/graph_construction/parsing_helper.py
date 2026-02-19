@@ -144,8 +144,8 @@ class ParseHelper:
                         # If we can't verify, but commit_id was specified, be cautious
                         if repo_details.commit_id:
                             logger.warning(
-                                f"ParsingHelper: Cannot verify commit_id, but it was specified. "
-                                f"Will attempt to use existing worktree."
+                                "ParsingHelper: Cannot verify commit_id, but it was specified. "
+                                "Will attempt to use existing worktree."
                             )
 
                 if cached_repo_path and os.path.exists(cached_repo_path):
@@ -186,7 +186,7 @@ class ParseHelper:
                         # Not a git repo - might be old tarball-based cache
                         # Fall back to GitHub API for metadata
                         logger.info(
-                            f"Cached path is not a git repo, getting GitHub API object"
+                            "Cached path is not a git repo, getting GitHub API object"
                         )
                         try:
                             github, github_repo = self.github_service.get_repo(
@@ -215,7 +215,7 @@ class ParseHelper:
 
                 # Repo not in RepoManager - clone directly to RepoManager instead of .projects
                 logger.info(
-                    f"ParsingHelper: Repo not found in RepoManager, cloning directly to .repos"
+                    "ParsingHelper: Repo not found in RepoManager, cloning directly to .repos"
                 )
 
                 try:
@@ -898,7 +898,17 @@ class ParseHelper:
             f"repo_details type: {type(repo_details).__name__}, repo_manager_path: {repo_manager_path}"
         )
 
-        if isinstance(repo, Repo):
+        if repo_manager_path:
+            # RepoManager-cached remote repo - DON'T set repo_path (it's a cached remote, not true local)
+            repo_path = None
+            if hasattr(repo_details, "repo_name"):
+                full_name = repo_details.repo_name
+            else:
+                full_name = repo.full_name if hasattr(repo, "full_name") else None
+            logger.info(
+                f"ParsingHelper: Detected RepoManager-cached remote repository {full_name}"
+            )
+        elif isinstance(repo, Repo):
             # Local repository - use full path from Repo object
             repo_path = repo.working_tree_dir
             full_name = repo_path.split("/")[

@@ -1,38 +1,9 @@
-"""
-Logfire Tracing Integration for LLM Monitoring
-
-This module sets up Pydantic Logfire tracing for monitoring:
-- Pydantic AI agent operations (agent runs, delegations, structured outputs)
-- LLM API calls (via LiteLLM - Anthropic, OpenAI, etc.)
-- Token usage and costs
-- Multi-agent delegations (supervisor → subagents)
-- Tool calls and results
-- Performance metrics and latency
-
-CRITICAL SETUP ORDER:
-1. Call initialize_logfire_tracing() at application startup (in main.py)
-2. This configures Logfire and instruments Pydantic AI BEFORE any agents are created
-3. Create agents with instrument=True to enable tracing
-
-Usage:
-    from app.modules.intelligence.tracing.logfire_tracer import initialize_logfire_tracing
-
-    # Initialize once at application startup (BEFORE creating any agents)
-    initialize_logfire_tracing()
-
-    # Then create agents with instrument=True
-    agent = Agent(model=..., tools=..., instrument=True)
-
-What gets traced:
-    - Pydantic AI: Agent.run(), Agent.run_sync(), agent.iter(), structured outputs, retries
-    - LiteLLM: completion(), acompletion(), streaming calls
-    - Multi-agent system: All supervisor and subagent interactions
-    - Tool calls: Function calls and results
-    - Tokens: Usage and cost tracking
-"""
+"""Logfire Tracing Integration for LLM Monitoring"""
 
 import os
 from typing import Any, Dict, Optional
+
+import logfire
 
 from app.modules.utils.logger import setup_logger
 
@@ -64,17 +35,16 @@ def initialize_logfire_tracing(
         bool: True if initialization successful, False otherwise
 
     Environment Variables:
-        LOGFIRE_ENABLED: Set to "false" to disable Logfire tracing (default: "true")
+        LOGFIRE_SEND_TO_CLOUD: Set to "false" to disable sending traces to Logfire cloud (default: "true")
         LOGFIRE_TOKEN: API token for Logfire (required for cloud tracing)
         LOGFIRE_PROJECT_NAME: Project name in Logfire UI (optional)
         ENV: Environment identifier - used as "environment" attribute in traces (default: "local")
     """
     global _LOGFIRE_INITIALIZED
 
-    # Check if Logfire is disabled
-    if os.getenv("LOGFIRE_ENABLED", "true").lower() == "false":
-        logger.info("Logfire tracing is disabled via LOGFIRE_ENABLED=false")
-        return False
+    # Check if cloud sending is disabled via env var
+    if os.getenv("LOGFIRE_SEND_TO_CLOUD", "true").lower() == "false":
+        send_to_logfire = False
 
     # Check if already initialized
     if _LOGFIRE_INITIALIZED:
@@ -82,57 +52,37 @@ def initialize_logfire_tracing(
         return True
 
     try:
-        import logfire
+        config_kwargs: Dict[str, Any] = {}
 
-        # Build configuration
-        config_kwargs: Dict[str, Any] = {
-            "send_to_logfire": send_to_logfire,
-        }
-
-        # Token: parameter takes precedence over env var
         token = token or os.getenv("LOGFIRE_TOKEN")
         if token:
             config_kwargs["token"] = token
+            config_kwargs["send_to_logfire"] = send_to_logfire
+        else:
+            config_kwargs["send_to_logfire"] = False
 
-        # Environment
         env = environment or os.getenv("ENV", "local")
         config_kwargs["environment"] = env
 
-        # Project name (optional)
-        project = project_name or os.getenv("LOGFIRE_PROJECT_NAME")
-        if project:
-            config_kwargs["project_name"] = project
-
+        project = project_name or os.getenv("LOGFIRE_PROJECT_NAME", "potpie")
         logger.debug(
             "Initializing Logfire tracing",
-            project=project or "default",
+            project=project,
             environment=env,
             send_to_logfire=send_to_logfire,
         )
-
-        # Configure Logfire
         logfire.configure(**config_kwargs)
 
         logfire.instrument_pydantic_ai()
-        logger.info("✅ Instrumented Pydantic AI for Logfire tracing")
+        logger.info("Instrumented Pydantic AI for Logfire tracing")
 
         logfire.instrument_litellm()
-        logger.info("✅ Instrumented LiteLLM for Logfire tracing")
+        logger.info("Instrumented LiteLLM for Logfire tracing")
 
         _LOGFIRE_INITIALIZED = True
 
-        logger.info(
-            "Logfire tracing initialized successfully. View traces at: https://logfire.pydantic.dev"
-        )
+        logger.info("Logfire tracing initialized successfully.")
         return True
-
-    except ImportError as e:
-        logger.warning(
-            "Logfire tracing not available (missing dependencies). "
-            "Install with: pip install logfire",
-            error=str(e),
-        )
-        return False
 
     except Exception as e:
         logger.warning(
