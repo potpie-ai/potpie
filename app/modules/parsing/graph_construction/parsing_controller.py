@@ -339,27 +339,40 @@ class ParsingController:
 
     @staticmethod
     async def fetch_parsing_status(
-        project_id: str, db: AsyncSession, user: Dict[str, Any]
+        project_id: str, db: Session, user: Dict[str, Any]
     ):
         try:
-            project_query = (
-                select(Project.status)
-                .join(
-                    Conversation, Conversation.project_ids.any(Project.id), isouter=True
-                )
-                .where(
-                    Project.id == project_id,
-                    or_(
-                        Project.user_id == user["user_id"],
-                        Conversation.visibility == Visibility.PUBLIC,
-                        Conversation.shared_with_emails.any(user["email"]),
-                    ),
-                )
-                .limit(1)  # Since we only need one result
-            )
+            from app.core.database import SessionLocal
 
-            result = db.execute(project_query)
-            project_status = result.scalars().first()
+            user_id = user["user_id"]
+            user_email = user.get("email", "")
+
+            def _query_status():
+                db_local = SessionLocal()
+                try:
+                    project_query = (
+                        select(Project.status)
+                        .join(
+                            Conversation,
+                            Conversation.project_ids.any(Project.id),
+                            isouter=True,
+                        )
+                        .where(
+                            Project.id == project_id,
+                            or_(
+                                Project.user_id == user_id,
+                                Conversation.visibility == Visibility.PUBLIC,
+                                Conversation.shared_with_emails.any(user_email),
+                            ),
+                        )
+                        .limit(1)
+                    )
+                    result = db_local.execute(project_query)
+                    return result.scalars().first()
+                finally:
+                    db_local.close()
+
+            project_status = await asyncio.to_thread(_query_status)
 
             if not project_status:
                 raise HTTPException(

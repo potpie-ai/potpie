@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import shutil
@@ -1914,11 +1915,6 @@ class ParseHelper:
             return False
 
         try:
-            logger.info(
-                f"check_commit_status: Branch-based parse - getting repo info for {repo_name}"
-            )
-            _github, repo = self.github_service.get_repo(repo_name)
-
             # If current_commit_id is None, we should reparse
             if current_commit_id is None:
                 logger.info(
@@ -1926,12 +1922,18 @@ class ParseHelper:
                 )
                 return False
 
-            # Get the latest commit from the branch
+            # Run blocking GitHub API (get_repo, get_branch) in thread pool to avoid blocking the event loop
+            def _fetch_latest_commit_sync() -> Optional[str]:
+                _github, repo = self.github_service.get_repo(repo_name)
+                branch = repo.get_branch(branch_name)
+                return branch.commit.sha
+
             logger.info(
-                f"check_commit_status: Getting latest commit from branch {branch_name}"
+                f"check_commit_status: Branch-based parse - getting repo info for {repo_name}"
             )
-            branch = repo.get_branch(branch_name)
-            latest_commit_id = branch.commit.sha
+            latest_commit_id = await asyncio.to_thread(
+                _fetch_latest_commit_sync
+            )
 
             # Compare current commit with latest commit
             is_up_to_date = current_commit_id == latest_commit_id

@@ -26,7 +26,9 @@ def process_parsing(
     with log_context(project_id=project_id, user_id=user_id):
         logger.info("Task received: Starting parsing process")
         try:
-            parsing_service = ParsingService(self.db, user_id)
+            parsing_service = ParsingService(
+                self.db, user_id, raise_library_exceptions=True
+            )
 
             async def run_parsing():
                 import time
