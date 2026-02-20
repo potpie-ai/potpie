@@ -197,10 +197,23 @@ class ProviderWrapper:
         Note: get_repo doesn't use local copies since it needs to fetch repository metadata
         from the provider API. Local copies are used for file content and structure operations.
         """
+        logger.info(f"ProviderWrapper: get_repo called for {repo_name}")
+        logger.info(
+            f"ProviderWrapper: About to create provider with fallback for {repo_name}"
+        )
         provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
+        logger.info(
+            f"ProviderWrapper: Provider created successfully, type: {type(provider).__name__}"
+        )
 
         try:
+            logger.info(
+                f"ProviderWrapper: About to call provider.get_repository for {repo_name}"
+            )
             repo_info = provider.get_repository(repo_name)
+            logger.info(
+                f"ProviderWrapper: provider.get_repository completed for {repo_name}"
+            )
         except Exception as e:
             # Check if this is a 401 error (bad credentials)
             is_401_error = (
@@ -229,8 +242,18 @@ class ProviderWrapper:
                 raise
 
         if isinstance(provider, GitHubProvider):
+            logger.info(
+                f"ProviderWrapper: GitHubProvider detected, ensuring authentication for {repo_name}"
+            )
             provider._ensure_authenticated()
-            return (provider.client, provider.client.get_repo(repo_name))
+            logger.info(
+                f"ProviderWrapper: About to call provider.client.get_repo for {repo_name}"
+            )
+            github_repo = provider.client.get_repo(repo_name)
+            logger.info(
+                f"ProviderWrapper: provider.client.get_repo completed for {repo_name}"
+            )
+            return (provider.client, github_repo)
 
         # Return the provider client and mock repo
         # Use the interface method to get client (respects abstraction)
@@ -253,9 +276,33 @@ class ProviderWrapper:
         When RepoManager is enabled, checks for local copies in .repos first.
         If a local copy exists, uses it instead of making API calls.
 
+        Tunnel provider is checked first if available (for local workspace access).
+
         If a configured token is invalid (401), falls back to unauthenticated access
         for GitHub public repos as a last resort.
         """
+        # Check if tunnel provider is available first
+        from app.modules.code_provider.provider_factory import CodeProviderFactory
+
+        tunnel_provider = CodeProviderFactory.create_tunnel_provider()
+        if tunnel_provider:
+            try:
+                if tunnel_provider.check_repository_access(repo_name):
+                    logger.info(
+                        f"Using UserLocalTunnelProvider for file {file_path} (tunnel available)"
+                    )
+                    return tunnel_provider.get_file_content(
+                        repo_name=repo_name,
+                        file_path=file_path,
+                        ref=branch_name if not commit_id else commit_id,
+                        start_line=start_line,
+                        end_line=end_line,
+                    )
+            except Exception as e:
+                logger.debug(
+                    f"Tunnel provider failed: {e}, falling back to other providers"
+                )
+
         provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
         # Wrap provider to use local copies if available
         provider = self._wrap_provider_if_needed(provider)
@@ -340,6 +387,34 @@ class ProviderWrapper:
                 if project.get("branch_name")
                 else project.get("commit_id")
             )
+
+            # Check if tunnel provider is available (highest priority for local access)
+            # This should be checked before local filesystem access
+            from app.modules.code_provider.provider_factory import CodeProviderFactory
+
+            tunnel_provider = CodeProviderFactory.create_tunnel_provider()
+            if tunnel_provider:
+                try:
+                    if tunnel_provider.check_repository_access(repo_name):
+                        logger.info(
+                            f"Using UserLocalTunnelProvider for project {project_id} (tunnel available)"
+                        )
+                        structure = tunnel_provider.get_repository_structure(
+                            repo_name=repo_name, path=path or "", ref=ref, max_depth=4
+                        )
+                        # Tunnel provider returns list with structure string, extract it
+                        if (
+                            structure
+                            and isinstance(structure, list)
+                            and len(structure) > 0
+                        ):
+                            structure_str = structure[0].get("structure", "")
+                            if structure_str:
+                                return structure_str
+                except Exception as e:
+                    logger.debug(
+                        f"Tunnel provider failed: {e}, falling back to other providers"
+                    )
 
             # Auto-detect local paths (absolute paths, starting with ~, or valid directory)
             is_local_path = (

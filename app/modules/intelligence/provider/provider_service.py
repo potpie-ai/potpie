@@ -457,6 +457,22 @@ AVAILABLE_MODELS = [
         is_chat_model=True,
         is_inference_model=True,
     ),
+    AvailableModelOption(
+        id="openrouter/moonshotai/kimi-k2.5",
+        name="Kimi K2.5 (Moonshot)",
+        description="Moonshot AI Kimi K2.5",
+        provider="moonshot",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
+    AvailableModelOption(
+        id="openrouter/minimax/minimax-m2.5",
+        name="MiniMax M2.5",
+        description="SOTA model for coding and productivity, strong on SWE-Bench and BrowseComp",
+        provider="minimax",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
 ]
 
 # Extract unique platform providers from the available models
@@ -1286,6 +1302,14 @@ class ProviderService:
             )
 
         return is_vision
+
+    def get_chat_provider_config(self) -> LLMProviderConfig:
+        """Return the provider config for the current chat model.
+
+        Used by the agent factory to decide thinking/reasoning model_settings
+        (Anthropic vs OpenRouter and provider type).
+        """
+        return self._build_config_for_model_identifier(self.chat_config.model)
 
     def get_pydantic_model(
         self, provider: str | None = None, model: str | None = None

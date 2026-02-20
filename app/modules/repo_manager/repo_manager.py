@@ -108,11 +108,7 @@ class RepoManager(IRepoManager):
             self.volume_limit_bytes = 100 * 1024 * 1024 * 1024
 
         logger.info(
-            "RepoManager initialized with base path %s, metadata path %s, volume limit %d bytes (%.2f GB)",
-            self.repos_base_path,
-            self.metadata_base_path,
-            self.volume_limit_bytes,
-            self.volume_limit_bytes / (1024**3),
+            f"RepoManager initialized with base path {self.repos_base_path}, metadata path {self.metadata_base_path}, volume limit {self.volume_limit_bytes:,} bytes ({self.volume_limit_bytes / (1024**3):.2f} GB)"
         )
 
     # ========== VALIDATION & SECURITY ==========

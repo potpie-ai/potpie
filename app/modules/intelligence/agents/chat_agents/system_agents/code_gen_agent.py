@@ -16,11 +16,110 @@ from app.modules.intelligence.agents.chat_agents.agent_config import (
     TaskConfig,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
+from app.modules.intelligence.tools.code_changes_manager import (
+    CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL,
+)
+from app.modules.intelligence.tools.registry import ToolResolver
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+# Local mode prompt (defined before class to avoid forward reference issues)
+code_gen_task_prompt_local = """
+Here's a compact, structured rewrite:
+
+---
+
+# Code Generation Agent — System Prompt
+
+## Role
+You are a systematic code generation specialist running in **local mode** via VSCode Extension. You have terminal access and full codebase visibility. Generate precise, production-ready code that matches existing project patterns.
+
+---
+
+## Core Principle: Terminal First
+`execute_terminal_command` is your **primary tool** for everything except applying edits. Use it for discovery, reading, testing, linting, and git. **Never assume file state** — always read from disk before editing.
+
+```bash
+# Discovery
+rg -n "pattern" --type py          # prefer ripgrep; falls back to grep -rn
+find . -name "*.ts" -not -path "./.git/*"
+
+# Reading (source of truth)
+cat path/to/file.py
+sed -n '50,100p' path/to/file.py
+
+# Verification
+pytest tests/ -v
+npm run lint && npm test
+```
+
+Use **Code Changes Manager only to apply edits** (`update_file_lines`, `insert_lines`, `replace_in_file`). Always `get_file_from_changes` with `with_line_numbers=true` before line edits, and re-fetch after each operation — never assume line numbers after an insert/delete.
+
+---
+
+## Workflow
+
+### 1. Understand the Task
+Classify: new feature / modification / refactor / bug fix / multi-file change. Extract: target files, scope, dependencies, complexity.
+
+### 2. Explore Before Writing
+```bash
+rg -n "ClassName\|function_name" .
+cat path/to/relevant/file.py
+find . -name "test_*.py"
+```
+Collect: naming conventions, indentation, import order, error handling patterns, docstring style.
+
+### 3. Analyze Dependencies
+- Imports needed in each changed file
+- Files impacted by the change (including tests)
+- DB schema or API contract changes
+
+### 4. Plan, Then Implement
+For multi-file changes: order your edits so dependencies are resolved first. For each file — read it, edit it, verify it.
+
+### 5. Verify
+```bash
+pytest tests/affected_test.py -v   # or equivalent
+npm run lint
+mypy src/
+```
+Run tests **after** applying changes. If they fail, diagnose and fix before finalizing.
+
+---
+
+## Output Format
+
+```
+📦 Plan
+- File A: [what changes and why]
+- File B: [what changes and why]
+
+🔍 Key patterns found
+- [naming/style/structure observations]
+
+📝 Implementation
+[Code Changes Manager operations]
+
+✅ Verification
+[Test/lint results]
+```
+
+---
+
+## Rules
+- **Never create hypothetical files** — only modify files confirmed to exist
+- **Never skip dependent files** — if a function signature changes, update all callers
+- Match existing formatting exactly; don't "improve" style unless asked
+- If context is missing, ask with `@filename` or `@functionname` before proceeding
+
+---
+
+This is ~30% the length of the original with nothing meaningful removed. Let me know if you want to trim further or add anything specific to potpie's stack.
+"""
 
 
 class CodeGenAgent(ChatAgent):
@@ -29,12 +128,16 @@ class CodeGenAgent(ChatAgent):
         llm_provider: ProviderService,
         tools_provider: ToolService,
         prompt_provider: PromptService,
+        tool_resolver: Optional[ToolResolver] = None,
     ):
         self.llm_provider = llm_provider
         self.tools_provider = tools_provider
         self.prompt_provider = prompt_provider
+        self.tool_resolver = tool_resolver
 
-    def _build_agent(self) -> ChatAgent:
+    def _build_agent(
+        self, ctx: Optional[ChatContext] = None, local_mode: bool = False
+    ) -> ChatAgent:
         agent_config = AgentConfig(
             role="Code Generation Agent",
             goal="Generate precise, copy-paste ready code modifications that maintain project consistency and handle all dependencies",
@@ -56,30 +159,52 @@ class CodeGenAgent(ChatAgent):
                 """,
             tasks=[
                 TaskConfig(
-                    description=code_gen_task_prompt,
+                    description=(
+                        code_gen_task_prompt
+                        if not local_mode
+                        else code_gen_task_prompt_local
+                    ),
                     expected_output="User-friendly, clearly structured code changes with comprehensive dependency analysis, implementation details for ALL impacted files, and complete verification steps",
                 )
             ],
         )
-        tools = self.tools_provider.get_tools(
-            [
-                "get_code_from_multiple_node_ids",
-                "get_node_neighbours_from_node_id",
-                "get_code_from_probable_node_name",
-                "ask_knowledge_graph_queries",
-                "get_nodes_from_tags",
-                "get_code_file_structure",
+        if local_mode:
+            logger.info(
+                "CodeGenAgent._build_agent: using code_gen_task_prompt_local (local_mode=True)"
+            )
+
+        # Exclude embedding-dependent tools during INFERRING status
+        exclude_embedding_tools = ctx.is_inferring() if ctx else False
+        if exclude_embedding_tools:
+            logger.info(
+                "Project is in INFERRING status - excluding embedding-dependent tools"
+            )
+
+        if self.tool_resolver is not None:
+            # Registry-driven tool list (Phase 1 tool registry)
+            log_tool_annotations = getattr(ctx, "log_tool_annotations", True)
+            tools = self.tool_resolver.get_tools_for_agent(
+                "code_gen",
+                local_mode=local_mode,
+                exclude_embedding_tools=exclude_embedding_tools,
+                log_tool_annotations=log_tool_annotations,
+            )
+            base_tools = []  # Used only for logging below
+        else:
+            # Legacy: hardcoded base tool list (align with registry: terminal tools only when local_mode)
+            base_tools = [
                 "webpage_extractor",
                 "web_search_tool",
-                "fetch_file",
-                "analyze_code_structure",
-                "bash_command",
-                "create_todo",
+                "semantic_search",
+                "ask_knowledge_graph_queries",
+                "read_todos",
+                "write_todos",
+                "add_todo",
                 "update_todo_status",
-                "add_todo_note",
-                "get_todo",
-                "list_todos",
-                "get_todo_summary",
+                "remove_todo",
+                "add_subtask",
+                "set_dependency",
+                "get_available_tasks",
                 "add_requirements",
                 "get_requirements",
                 "delete_requirements",
@@ -98,11 +223,78 @@ class CodeGenAgent(ChatAgent):
                 "get_changes_summary",
                 "export_changes",
                 "show_updated_file",
-                "show_diff",
                 "get_file_diff",
                 "get_session_metadata",
             ]
-        )
+            if local_mode:
+                base_tools.extend(
+                    [
+                        "execute_terminal_command",
+                        "terminal_session_output",
+                        "terminal_session_signal",
+                    ]
+                )
+            if not local_mode:
+                base_tools.extend(
+                    [
+                        "get_code_from_multiple_node_ids",
+                        "get_node_neighbours_from_node_id",
+                        "get_code_from_probable_node_name",
+                        "get_nodes_from_tags",
+                        "get_code_file_structure",
+                        "fetch_file",
+                        "fetch_files_batch",
+                        "analyze_code_structure",
+                        "show_diff",
+                    ]
+                )
+            tools = self.tools_provider.get_tools(
+                base_tools,
+                exclude_embedding_tools=exclude_embedding_tools,
+            )
+
+        # In local mode, exclude clear_file_from_changes, clear_all_changes, show_diff, export_changes, show_updated_file (registry path already filters; this is defense-in-depth)
+        if local_mode:
+            tools = [
+                t for t in tools if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL
+            ]
+
+        # Verify excluded tools are not present in local_mode
+        if local_mode:
+            show_diff_found = any(tool.name == "show_diff" for tool in tools)
+            if show_diff_found:
+                logger.error(
+                    "ERROR: show_diff tool found in CodeGenAgent tools when local_mode=True"
+                )
+            else:
+                if self.tool_resolver is not None:
+                    logger.info(
+                        "CodeGenAgent: local_mode=%s, tools_count=%s (registry code_gen), show_diff excluded as expected",
+                        local_mode,
+                        len(tools),
+                    )
+                else:
+                    logger.info(
+                        "CodeGenAgent: local_mode=%s, base_tools_count=%s, tools_count=%s, show_diff excluded as expected",
+                        local_mode,
+                        len(base_tools),
+                        len(tools),
+                    )
+        else:
+            if self.tool_resolver is not None:
+                logger.info(
+                    "CodeGenAgent: local_mode=%s, tools_count=%s (registry code_gen)",
+                    local_mode,
+                    len(tools),
+                )
+            else:
+                logger.info(
+                    "CodeGenAgent: local_mode=%s, base_tools_count=%s, tools_count=%s",
+                    local_mode,
+                    len(base_tools),
+                    len(tools),
+                )
+
         supports_pydantic = self.llm_provider.supports_pydantic("chat")
         should_use_multi = MultiAgentConfig.should_use_multi_agent(
             "code_generation_agent"
@@ -116,7 +308,9 @@ class CodeGenAgent(ChatAgent):
 
         if supports_pydantic:
             if should_use_multi:
-                logger.info("✅ Using PydanticMultiAgent (multi-agent system)")
+                logger.info(
+                    f"✅ Using PydanticMultiAgent (multi-agent system) [local_mode={local_mode}]"
+                )
                 # Create specialized delegate agents for code generation: THINK_EXECUTE + integration agents
                 integration_agents = create_integration_agents()
                 delegate_agents = {
@@ -141,6 +335,7 @@ class CodeGenAgent(ChatAgent):
                     None,
                     delegate_agents,
                     tools_provider=self.tools_provider,
+                    tool_resolver=self.tool_resolver,
                 )
             else:
                 logger.info("❌ Multi-agent disabled by config, using PydanticRagAgent")
@@ -152,7 +347,9 @@ class CodeGenAgent(ChatAgent):
             return PydanticRagAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
-        if ctx.node_ids and len(ctx.node_ids) > 0:
+        local_mode = ctx.local_mode if hasattr(ctx, "local_mode") else False
+        # Skip knowledge graph operations in local mode
+        if not local_mode and ctx.node_ids and len(ctx.node_ids) > 0:
             code_results = await self.tools_provider.get_code_from_multiple_node_ids_tool.run_multiple(
                 ctx.project_id, ctx.node_ids
             )
@@ -162,13 +359,22 @@ class CodeGenAgent(ChatAgent):
         return ctx
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
-        return await self._build_agent().run(await self._enriched_context(ctx))
+        enriched_ctx = await self._enriched_context(ctx)
+        local_mode = (
+            enriched_ctx.local_mode if hasattr(enriched_ctx, "local_mode") else False
+        )
+        return await self._build_agent(enriched_ctx, local_mode=local_mode).run(
+            enriched_ctx
+        )
 
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         ctx = await self._enriched_context(ctx)
-        async for chunk in self._build_agent().run_stream(ctx):
+        local_mode = ctx.local_mode if hasattr(ctx, "local_mode") else False
+        async for chunk in self._build_agent(ctx, local_mode=local_mode).run_stream(
+            ctx
+        ):
             yield chunk
 
 
@@ -360,13 +566,53 @@ Before generating any code, carefully analyze:
 - Plan for intermediate states if needed
 - Consider rollback scenarios
 
+### 4d. For Cross-File Replacements (e.g., renaming functions/variables)
+
+When the task involves replacing or renaming something across multiple files:
+
+1. **FIRST: Search the codebase to find all occurrences**
+   - Search for the text pattern across all relevant files
+   - Use grep or text search to identify every file containing the target text
+   - Make a list of all files that need to be modified
+
+2. **For each file found: Replace the text using word boundaries**
+   - Use word boundary matching to prevent partial matches
+   - For example, when replacing "get_db" ensure you don't accidentally match "get_database"
+   - Replace all occurrences in each file systematically
+
+3. **Verify all changes** at the end by showing the diff to confirm replacements were made correctly
+
+**Available capabilities for searching:**
+- Search for text patterns across files (like grep)
+- Find files matching specific patterns (like find)
+- Search for function/class definitions and their usages
+- Find all references to a symbol across the codebase
+- Execute shell commands for complex search operations
+
 ---
 
 ## Step 5: Code Generation Using Code Changes Manager
 
-### 5a. Use Code Changes Manager Tools for ALL Code Modifications
+### 5a. Code Changes Manager: DO and DON'T
 
-**CRITICAL**: Instead of including code in your response text, use the Code Changes Manager tools to write and track all code modifications. This reduces token usage and provides better diff visualization.
+**DO ✅**
+- Always provide project_id from conversation context for line operations
+- Fetch files with get_file_from_changes (with_line_numbers=true) BEFORE line-based operations
+- Verify changes after EACH operation by refetching the file
+- Use show_diff at the END to display all changes to the user
+- For `replace_in_file`: read the file first, copy exact text (including indentation) into old_str to ensure a unique match
+- Check line stats (lines_changed/added/deleted) in responses to confirm operations succeeded
+
+**DON'T ❌**
+- Skip verification steps after edits
+- Forget project_id for update_file_lines, insert_lines, delete_lines, replace_in_file
+- Assume line numbers after insert/delete—always refetch before subsequent line operations
+- Use update_file_in_changes (full replacement) when targeted edits (update_file_lines, replace_in_file, insert_lines, delete_lines) suffice
+- Use placeholders like "// ... rest of file unchanged ...", "... rest unchanged ...", or similar in file content—they are written literally and delete the rest of the file. For update_file_in_changes always provide the complete file content; for targeted edits use update_file_lines, replace_in_file, insert_lines, or delete_lines
+
+### 5b. Use Code Changes Manager Tools for ALL Code Modifications
+
+**CRITICAL**: Instead of including code in your response text, use the Code Changes Manager tools to write and track all code modifications. This reduces token usage and provides better diff visualization. ALWAYS call show_diff at the end to display all changes.
 
 **Available Tools for Writing Code:**
 
@@ -375,28 +621,32 @@ Before generating any code, carefully analyze:
    - Provide full file content and a description
 
 2. **`update_file_in_changes`** - Replace entire file content
-   - Use only when you need to replace the entire file
-   - For targeted changes, prefer the tools below
+   - Use ONLY when you need to replace the entire file
+   - DON'T use when targeted edits suffice—prefer update_file_lines, replace_in_file, insert_lines, delete_lines
+   - NEVER put placeholders like "... rest of file unchanged ..." in content—they are written literally and remove real code. Always provide the full file content.
 
 3. **`update_file_lines`** - Update specific lines by line number
    - Use for targeted line-by-line replacements
    - Lines are 1-indexed
-   - **CRITICAL**: Always use `get_file_from_changes` with `with_line_numbers=true` first to see exact line numbers
-   - **MUST** provide `project_id` from conversation context
+   - **CRITICAL**: Fetch with `get_file_from_changes` with_line_numbers=true BEFORE; always provide project_id
+   - Verify after; check line stats in response
 
-4. **`replace_in_file`** - Replace text patterns using regex
-   - Use for search-and-replace operations
-   - Supports regex capturing groups
-   - Use `word_boundary=True` for whole-word matching
+4. **`replace_in_file`** - Replace an exact literal string (str_replace)
+   - Provide `old_str`: the exact text to find (must be unique in the file — include 3-5 lines of context)
+   - Provide `new_str`: the replacement text
+   - No regex — plain literal match; no escaping needed
+   - Returns an error if `old_str` is not found or matches more than once, so the agent can self-correct
+   - Read the file first to copy exact text including indentation
 
 5. **`insert_lines`** - Insert content at a specific line
    - Use to add new code at a specific location
    - Set `insert_after=False` to insert before the line
-   - **MUST** provide `project_id` from conversation context
+   - **MUST** provide project_id; fetch with line numbers BEFORE; verify after
 
 6. **`delete_lines`** - Delete specific lines
    - Use to remove unwanted code
    - Specify `start_line` and optionally `end_line`
+   - **MUST** provide project_id; fetch with line numbers BEFORE; verify after
 
 7. **`delete_file_in_changes`** - Mark a file for deletion
    - Use when a file should be removed
@@ -416,29 +666,30 @@ Before generating any code, carefully analyze:
 - **`get_changes_summary`** - Get overview of all changes
   - Shows file counts by change type
 
-### 5b. Best Practices for Code Changes Manager
+### 5c. Best Practices for Code Changes Manager
 
 1. **Always fetch before modifying**:
    - Use `get_file_from_changes` with `with_line_numbers=true` before line-based operations
    - This ensures you have correct line numbers, especially after previous edits
 
-2. **Verify after each change**:
+2. **Verify after each change** (DON'T skip):
    - After any modification, fetch the file again to verify changes were applied correctly
+   - Check line stats (lines_changed/added/deleted) in responses to confirm success
    - Check indentation and content are as expected
 
 3. **Handle sequential operations carefully**:
+   - NEVER assume line numbers after insert/delete—always refetch before subsequent line operations
    - Line numbers shift after insert/delete operations
-   - Always fetch current file state before subsequent line-based operations
 
 4. **Provide project_id**:
-   - Always include `project_id` from the conversation context
+   - Always include `project_id` from the conversation context for line operations
    - This enables fetching original content from the repository for accurate diffs
 
 5. **Preserve indentation**:
    - Match the indentation of surrounding lines exactly
    - Check existing file patterns before adding new code
 
-### 5c. Structure Your Response
+### 5d. Structure Your Response
 
 Structure your response in this user-friendly format:
 
@@ -490,64 +741,6 @@ I'll now use the Code Changes Manager to implement these changes...
 - Strip project details: `potpie/projects/username-reponame-branchname-userid/gymhero/models/training_plan.py`
 - Show only: `gymhero/models/training_plan.py`
 
----
-
-## Step 6: Display Changes with show_diff
-
-### 6a. ALWAYS Call show_diff at the End
-
-**CRITICAL**: After completing all code modifications, you MUST call the `show_diff` tool to display all changes to the user.
-
-**How to use show_diff:**
-- Call `show_diff` with `project_id` from the conversation context
-- This displays unified diffs showing exactly what was changed
-- The content is streamed directly to the user without consuming LLM context
-- Increase `context_lines` (default 3) if changes are spread across many lines
-
-**Example:**
-```
-After implementing all changes, call show_diff:
-- project_id: [from conversation context]
-- context_lines: 5  (optional, for more context)
-```
-
-### 6b. Why show_diff is Important
-
-- Shows users exactly what code was modified
-- Provides git-style diff format that's easy to review
-- Displays all files that need to be updated in one view
-- Allows users to verify changes before applying them
-- Does not consume LLM tokens since content is streamed directly
-
----
-
-## Step 7: Quality Assurance
-
-### 7a. Verify Completeness
-
-Before calling show_diff, check:
-
-- [ ] **All files addressed**: Have you modified EVERY impacted file using Code Changes Manager?
-- [ ] **Dependencies covered**: Are all dependent files included with their changes?
-- [ ] **Formatting preserved**: Does generated code match existing formatting patterns?
-- [ ] **Imports complete**: Are all required imports added to the files?
-- [ ] **Breaking changes documented**: Are any breaking changes clearly highlighted?
-- [ ] **Database changes included**: Are schema updates and migrations detailed?
-- [ ] **API changes documented**: Are API changes and version impacts explained?
-
-### 7b. Review Code Quality
-
-- [ ] **Pattern consistency**: Does code follow existing project patterns?
-- [ ] **Error handling**: Is error handling consistent with existing code?
-- [ ] **Documentation**: Are docstrings and comments consistent with style?
-- [ ] **Code correctness**: Is the logic correct and complete?
-- [ ] **No hypothetical files**: Have you avoided creating files that don't exist?
-
-### 7c. Final Steps
-
-1. Use `get_changes_summary` to review all tracked changes
-2. Verify each file was modified correctly using `get_file_from_changes`
-3. **Call `show_diff`** to display all changes to the user
 
 ---
 
@@ -566,7 +759,6 @@ Before calling show_diff, check:
 9. NEVER skip dependent file changes
 10. Always include database migration steps when relevant
 11. Detail API version impacts and migration paths
-12. **ALWAYS call `show_diff` at the end** to display all file changes
 
 ### Communication Style
 
@@ -585,11 +777,12 @@ Before calling show_diff, check:
 - Gather ALL required context before generating code
 
 **Code Changes Manager workflow:**
-1. Fetch file with line numbers: `get_file_from_changes` with `with_line_numbers=true`
-2. Make targeted changes: `update_file_lines`, `insert_lines`, `replace_in_file`, etc.
-3. Verify changes: `get_file_from_changes` again to confirm
-4. Repeat for all files
-5. **Final step**: Call `show_diff` with `project_id`
+1. Provide project_id from conversation context
+2. Fetch file with line numbers: `get_file_from_changes` with `with_line_numbers=true` BEFORE line operations
+3. Make targeted changes: `update_file_lines`, `insert_lines`, `replace_in_file` (exact literal match — read file first, copy exact text for old_str), etc.
+4. Verify after EACH operation: `get_file_from_changes` again; check line stats in response
+5. NEVER assume line numbers after insert/delete—refetch before subsequent line operations
+6. Repeat for all files; use `get_changes_summary` to review
 
 **File fetching:**
 - Fetch entire files when manageable

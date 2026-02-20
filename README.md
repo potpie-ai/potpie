@@ -148,11 +148,99 @@ Set `GITHUB_AUTH_MODE` to `app`, `pat`, or `none` to select the method.
 
 For self-hosted Git servers (e.g., GitBucket, GitLab, etc.), configure:
 
-```bash
-CODE_PROVIDER=github         # github | gitlab | gitbucket
-CODE_PROVIDER_BASE_URL=http://your-git-server.com/api/v3
-CODE_PROVIDER_TOKEN=your-token
-```
+      ```bash
+      uv sync
+      ```
+
+      This will create a `.venv` directory and install all dependencies from `pyproject.toml`
+
+#### GitHub Authentication Setup
+
+Potpie supports multiple authentication methods for accessing GitHub repositories:
+
+##### For GitHub.com Repositories:
+
+**Option 1: GitHub App (Recommended for Production)**
+  - Create a GitHub App in your organization
+  - Set environment variables:
+    ```bash
+    GITHUB_APP_ID=your-app-id
+    GITHUB_PRIVATE_KEY=your-private-key
+    ```
+
+**Option 2: Personal Access Token (PAT) Pool**
+  - Create one or more GitHub PATs with `repo` scope
+  - Set environment variable (comma-separated for multiple tokens):
+    ```bash
+    GH_TOKEN_LIST=ghp_token1,ghp_token2,ghp_token3
+    ```
+  - Potpie will randomly select from the pool for load balancing
+  - **Rate Limit**: 5,000 requests/hour per token (authenticated)
+
+**Option 3: Unauthenticated Access (Public Repos Only)**
+  - No configuration needed
+  - Automatically used as fallback for public repositories
+  - **Rate Limit**: 60 requests/hour per IP (very limited)
+
+##### For Self-Hosted Git Servers (GitBucket, GitLab, etc.):
+
+      Set the following environment variables:
+      ```bash
+      # Options: github, gitlab, gitbucket
+      CODE_PROVIDER=github
+      CODE_PROVIDER_BASE_URL=http://your-git-server.com/api/v3
+      CODE_PROVIDER_TOKEN=your-token
+      ```
+
+**Important**: `GH_TOKEN_LIST` tokens are always used for GitHub.com, regardless of `CODE_PROVIDER_BASE_URL`.
+
+2. **Start Potpie**
+
+   To start all Potpie services:
+
+   ```bash
+   chmod +x scripts/start.sh
+   ./scripts/start.sh
+   ```
+
+   This will:
+   - Start required Docker services
+   - Wait for PostgreSQL to be ready
+   - Apply database migrations
+   - Start the FastAPI application
+   - Start the Celery worker
+
+**Optional: Logfire Tracing Setup**
+
+   To monitor LLM traces and agent operations with Pydantic Logfire:
+
+   1. Get a Logfire token from https://logfire.pydantic.dev
+   2. Add it to your `.env` file:
+      ```bash
+      LOGFIRE_TOKEN=your_token_here
+      ```
+   3. Tracing is automatically initialized when Potpie starts. View traces at https://logfire.pydantic.dev
+
+   **Note:** Set `LOGFIRE_SEND_TO_CLOUD=false` in your `.env` to disable sending traces to Logfire cloud.
+
+3. **Stop Potpie**
+
+   To stop all Potpie services:
+
+   ```bash
+   ./scripts/stop.sh
+   ```
+
+   **Windows**
+
+   ```powershell
+   ./stop.ps1
+   ```
+
+   This will gracefully stop:
+   - The FastAPI application
+   - The Celery worker
+   - All Docker Compose services
 
 ## 🤖 Potpie's Prebuilt Agents
 

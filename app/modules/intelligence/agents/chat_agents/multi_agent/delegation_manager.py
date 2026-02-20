@@ -395,13 +395,15 @@ class DelegationManager:
                                 f"(agent_type={agent_type.value}, chunk_count={chunk_count + 1})"
                             )
                     except StopAsyncIteration:
-                        # Stream completed normally
+                        # Stream completed normally (or with yielded error from subagent)
                         elapsed = asyncio.get_event_loop().time() - stream_start_time
                         logger.info(
                             f"[SUBAGENT STREAM] Stream completed normally after {elapsed:.1f}s "
                             f"(agent_type={agent_type.value}, cache_key={cache_key}, "
                             f"chunk_count={chunk_count})"
                         )
+                        # Signal end of stream so consumer and drain loop can finish
+                        await stream_queue.put(None)
                         break
                     except asyncio.TimeoutError:
                         time_since_last_chunk = (
@@ -462,22 +464,7 @@ class DelegationManager:
                         # Mark that we received an error
                         subagent_error_occurred = True
 
-                    # Log chunk response for debugging
-                    # NOTE: We only stream text responses, not tool calls from subagents
-                    if chunk.response:
-                        # Log full text content for debugging (truncate if very long)
-                        text_preview = (
-                            chunk.response[:1000]
-                            if len(chunk.response) > 1000
-                            else chunk.response
-                        )
-                        log_level = "warning" if is_error_chunk else "info"
-                        getattr(logger, log_level)(
-                            f"[SUBAGENT STREAM] Chunk #{chunk_count} received (agent_type={agent_type.value}, "
-                            f"call_id={call_id}, length={len(chunk.response)} chars, error={is_error_chunk}):\n"
-                            f"--- TEXT START ---\n{text_preview}{'... [truncated]' if len(chunk.response) > 1000 else ''}\n"
-                            f"--- TEXT END ---"
-                        )
+                    # Per-chunk text logging disabled at INFO to reduce noise; use DEBUG to trace
 
                     # Publish to Redis stream if call_id is provided
                     # Only publish text content, not tool calls

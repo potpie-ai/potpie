@@ -20,13 +20,15 @@ pipeline {
                     // Determine environment based on branch
                     def branch = env.GIT_BRANCH
 
-                    if (branch == "origin/dir-restruct") {
+                    /*if (branch == "origin/dir-restruct") {
                         env.ENVIRONMENT = 'dir-restruct'
                     } else if (branch == "origin/main"){
                         env.ENVIORNMENT = 'main'
                     } else {
                         error("Unknown branch: ${branch}. This pipeline only supports main and staging branches.")
-                    }
+                    }*/
+
+                    env.ENVIORNMENT = branch;
 
                     checkout scm
                     // Capture the short Git commit hash to use as the image tag
@@ -123,7 +125,7 @@ pipeline {
 
                     if (!imageDeploySucceeded) {
                         echo 'Rolling back to previous revision...'
-                        sh 'kubectl rollout undo deployment/mom-api-deployment -n ${params.namespace}'
+                        sh "kubectl rollout undo deployment/mom-api-deployment -n ${params.namespace}"
                     }
                 }
             }

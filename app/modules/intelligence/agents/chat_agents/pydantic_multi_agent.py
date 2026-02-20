@@ -1,7 +1,7 @@
 """Refactored PydanticMultiAgent using modular components"""
 
 import re
-from typing import List, AsyncGenerator, Dict, Optional, Any
+from typing import List, AsyncGenerator, Dict, Optional, Any, TYPE_CHECKING
 from langchain_core.tools import StructuredTool
 
 from pydantic_ai import Agent
@@ -17,6 +17,9 @@ from ..chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 # Import new modular components
 from .multi_agent.utils.delegation_utils import AgentType
 from .multi_agent.agent_factory import AgentFactory, create_default_delegate_agents
+
+if TYPE_CHECKING:
+    from app.modules.intelligence.tools.registry.resolver import ToolResolver
 from .multi_agent.delegation_manager import DelegationManager
 from .multi_agent.delegation_streamer import DelegationStreamer
 from .multi_agent.stream_processor import StreamProcessor
@@ -54,16 +57,21 @@ class PydanticMultiAgent(ChatAgent):
         mcp_servers: List[dict] | None = None,
         delegate_agents: Optional[Dict[AgentType, AgentConfig]] = None,
         tools_provider: Optional[ToolService] = None,
+        tool_resolver: Optional["ToolResolver"] = None,
     ):
-        """Initialize the multi-agent system with configuration and tools
+        """Initialize the multi-agent system with configuration and tools.
 
         Args:
             llm_provider: The LLM provider service
             config: Agent configuration
-            tools: List of tools to use
+            tools: List of tools to use (kept for backward compatibility; when tool_resolver
+                   is set, AgentFactory builds supervisor/delegate/integration sets from registry)
             mcp_servers: Optional MCP servers configuration
             delegate_agents: Optional delegate agent configurations
             tools_provider: Optional ToolService for integration agents to get their tools directly
+            tool_resolver: Optional ToolResolver for registry-driven tool sets (Phase 2).
+                          When set, supervisor gets curated "supervisor" set, delegate gets
+                          "execute" set, integration agents get integration_* allow-lists.
         """
         self.tasks = config.tasks
         self.max_iter = config.max_iter
@@ -72,6 +80,7 @@ class PydanticMultiAgent(ChatAgent):
         self.config = config
         self.mcp_servers = mcp_servers or []
         self.tools_provider = tools_provider
+        self.tool_resolver = tool_resolver
 
         # Clean tool names (no spaces for pydantic agents)
         for i, tool in enumerate(tools):
@@ -105,6 +114,7 @@ class PydanticMultiAgent(ChatAgent):
             history_processor=self._history_processor,
             create_delegation_function=delegation_manager.create_delegation_function,
             tools_provider=tools_provider,
+            tool_resolver=tool_resolver,
         )
 
         # Now update delegation_manager with real create_delegate_agent
@@ -181,15 +191,30 @@ class PydanticMultiAgent(ChatAgent):
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
         """Main execution flow with multi-agent coordination"""
+        local_mode = ctx.local_mode if hasattr(ctx, "local_mode") else False
         logger.info(
-            f"Running pydantic multi-agent system {'with multimodal support' if ctx.has_images() else ''}"
+            f"Running pydantic multi-agent system [local_mode={local_mode}]"
+            + (" with multimodal support" if ctx.has_images() else "")
         )
 
-        # Store context for delegation functions
+        # Store context for delegation functions (same ctx used when creating delegate agents)
         self._current_context = ctx
 
-        # Initialize managers with conversation_id for persistence across messages
-        init_managers(conversation_id=ctx.conversation_id)
+        # Initialize managers before any agent runs: CodeChangesManager (persistence + local_mode for show_diff),
+        # todo/requirement managers. local_mode is True only for VS Code extension; it controls tool list and show_diff behavior.
+        logger.info(
+            f"🔄 [PydanticMultiAgent] ctx.tunnel_url={ctx.tunnel_url}, ctx.user_id={ctx.user_id}, "
+            f"ctx.conversation_id={ctx.conversation_id}"
+        )
+        init_managers(
+            conversation_id=ctx.conversation_id,
+            agent_id=ctx.curr_agent_id,
+            user_id=ctx.user_id,
+            tunnel_url=ctx.tunnel_url,
+            local_mode=local_mode,
+            repository=getattr(ctx, "repository", None),
+            branch=getattr(ctx, "branch", None),
+        )
 
         # Check if we have images and if the model supports vision
         if ctx.has_images() and self.llm_provider.is_vision_model():
@@ -209,15 +234,29 @@ class PydanticMultiAgent(ChatAgent):
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         """Stream multi-agent response with delegation support"""
+        local_mode = ctx.local_mode if hasattr(ctx, "local_mode") else False
         logger.info(
-            f"Running pydantic multi-agent stream {'with multimodal support' if ctx.has_images() else ''}"
+            f"Running pydantic multi-agent stream [local_mode={local_mode}]"
+            + (" with multimodal support" if ctx.has_images() else "")
         )
 
-        # Store context for delegation functions
+        # Store context for delegation functions (same ctx used when creating delegate agents)
         self._current_context = ctx
 
-        # Initialize managers with conversation_id for persistence across messages
-        init_managers(conversation_id=ctx.conversation_id)
+        # Initialize managers before any agent runs (same as run()); local_mode controls tool list and show_diff behavior.
+        logger.info(
+            f"🔄 [PydanticMultiAgent] ctx.tunnel_url={ctx.tunnel_url}, ctx.user_id={ctx.user_id}, "
+            f"ctx.conversation_id={ctx.conversation_id}"
+        )
+        init_managers(
+            conversation_id=ctx.conversation_id,
+            agent_id=ctx.curr_agent_id,
+            user_id=ctx.user_id,
+            tunnel_url=ctx.tunnel_url,
+            local_mode=local_mode,
+            repository=getattr(ctx, "repository", None),
+            branch=getattr(ctx, "branch", None),
+        )
 
         # Check if we have images and if the model supports vision
         if ctx.has_images() and self.llm_provider.is_vision_model():

@@ -18,15 +18,48 @@ import difflib
 import time
 import threading
 import redis
+from urllib.parse import quote as url_quote
 from contextvars import ContextVar
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Union, Callable, TypeVar
+from typing import Dict, List, Literal, Optional, Any, Union, Callable, TypeVar
 from enum import Enum
 from dataclasses import dataclass, asdict
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from app.modules.utils.logger import setup_logger
 from app.core.config_provider import ConfigProvider
+
+# Import search tools from modularized location
+from app.modules.intelligence.tools.local_search_tools import (
+    SearchSymbolsInput,
+    search_symbols_tool,
+    SearchWorkspaceSymbolsInput,
+    search_workspace_symbols_tool,
+    SearchReferencesInput,
+    search_references_tool,
+    SearchDefinitionsInput,
+    search_definitions_tool,
+    SearchFilesInput,
+    search_files_tool,
+    SearchTextInput,
+    search_text_tool,
+    SearchCodeStructureInput,
+    search_code_structure_tool,
+    SearchBashInput,
+    search_bash_tool,
+    SearchSemanticInput,
+    search_semantic_tool,
+)
+from app.modules.intelligence.tools.local_search_tools.execute_terminal_command_tool import (
+    ExecuteTerminalCommandInput,
+    execute_terminal_command_tool,
+)
+from app.modules.intelligence.tools.local_search_tools.terminal_session_tools import (
+    TerminalSessionOutputInput,
+    terminal_session_output_tool,
+    TerminalSessionSignalInput,
+    terminal_session_signal_tool,
+)
 
 logger = setup_logger(__name__)
 
@@ -863,6 +896,7 @@ class CodeChangesManager:
         preserve_previous: bool = True,
         preserve_change_type: bool = True,
         original_content: Optional[str] = None,
+        override_previous_content: Optional[str] = None,
     ) -> bool:
         """Internal method to apply a content update
 
@@ -873,11 +907,12 @@ class CodeChangesManager:
             preserve_previous: Whether to preserve previous_content when updating existing changes
             preserve_change_type: Whether to preserve ADD change type for new files
             original_content: Original content before any modifications (used when creating new FileChange)
+            override_previous_content: When provided (e.g. local mode fetch-before-edit), use as previous_content
         """
         logger.debug(
-            f"CodeChangesManager._apply_update: Applying update to '{file_path}' (preserve_previous={preserve_previous}, preserve_change_type={preserve_change_type}, original_content={'provided' if original_content is not None else 'None'})"
+            f"CodeChangesManager._apply_update: Applying update to '{file_path}' (preserve_previous={preserve_previous}, preserve_change_type={preserve_change_type}, original_content={'provided' if original_content is not None else 'None'}, override_previous={'provided' if override_previous_content is not None else 'None'})"
         )
-        previous_content = None
+        previous_content = override_previous_content
         if file_path in self.changes:
             existing = self.changes[file_path]
 
@@ -889,9 +924,13 @@ class CodeChangesManager:
                 )
                 return False
 
-            if preserve_previous and existing.previous_content:
+            if (
+                previous_content is None
+                and preserve_previous
+                and existing.previous_content
+            ):
                 previous_content = existing.previous_content
-            elif preserve_previous:
+            elif previous_content is None and preserve_previous:
                 previous_content = existing.content
 
             # Preserve original change type if it was ADD (for new files)
@@ -918,16 +957,20 @@ class CodeChangesManager:
             self._persist_change()
         else:
             # New file in changes (not yet committed)
-            # Use original_content as previous_content if provided (this is the original file content before any modifications)
+            # Use override_previous_content or original_content as previous_content if provided
             # Default to UPDATE, but caller should use add_file() for new files
             change = FileChange(
                 file_path=file_path,
                 change_type=ChangeType.UPDATE,
                 content=new_content,
                 previous_content=(
-                    original_content
-                    if original_content is not None
-                    else previous_content
+                    override_previous_content
+                    if override_previous_content is not None
+                    else (
+                        original_content
+                        if original_content is not None
+                        else previous_content
+                    )
                 ),
                 description=description,
             )
@@ -945,12 +988,23 @@ class CodeChangesManager:
         content: str,
         description: Optional[str] = None,
         preserve_previous: bool = True,
+        previous_content: Optional[str] = None,
     ) -> bool:
-        """Update an existing file with full content"""
+        """Update an existing file with full content.
+
+        When previous_content is provided (e.g. from local mode fetch-before-edit),
+        it is used as the baseline for diff tracking instead of existing change content.
+        """
         logger.info(
             f"CodeChangesManager.update_file: Updating file '{file_path}' with full content (content length: {len(content)} chars)"
         )
-        result = self._apply_update(file_path, content, description, preserve_previous)
+        result = self._apply_update(
+            file_path,
+            content,
+            description,
+            preserve_previous,
+            override_previous_content=previous_content,
+        )
         if not result:
             logger.warning(
                 f"CodeChangesManager.update_file: Failed to update file '{file_path}' - file may be marked for deletion"
@@ -972,12 +1026,18 @@ class CodeChangesManager:
         db: Optional[Session] = None,
     ) -> Dict[str, Any]:
         """
-        Update specific lines in a file (1-indexed)
+        Update specific lines in a file (1-indexed).
+
+        When end_line is omitted or None, only the single line at start_line is
+        updated (single-line replace). When end_line is provided, the range
+        [start_line, end_line] inclusive is replaced with new_content.
 
         Args:
             file_path: Path to the file
             start_line: Starting line number (1-indexed, inclusive)
-            end_line: Ending line number (1-indexed, inclusive). If None, only start_line is replaced
+            end_line: Ending line number (1-indexed, inclusive). If None or omitted,
+                only the single line at start_line is replaced (single-line update).
+                When provided, replaces the range from start_line through end_line.
             new_content: Content to replace the lines with
             description: Optional description of the change
 
@@ -1125,26 +1185,25 @@ class CodeChangesManager:
     def replace_in_file(
         self,
         file_path: str,
-        pattern: str,
-        replacement: str,
-        count: int = 0,
+        old_str: str,
+        new_str: str,
         description: Optional[str] = None,
-        case_sensitive: bool = False,
-        word_boundary: bool = False,
         project_id: Optional[str] = None,
         db: Optional[Session] = None,
     ) -> Dict[str, Any]:
         """
-        Replace pattern matches in a file using regex
+        Replace an exact literal string in a file (str_replace semantics).
+
+        Finds old_str using plain string matching (no regex). Enforces uniqueness:
+        - 0 matches → error with hint to check whitespace/indentation
+        - 2+ matches → error asking for more surrounding context
+        - exactly 1 match → replaces and saves
 
         Args:
             file_path: Path to the file
-            pattern: Regex pattern to search for
-            replacement: Replacement string (supports \\1, \\2, etc. for groups)
-            count: Maximum number of replacements (0 = all)
+            old_str: Exact literal text to find (must be unique in file)
+            new_str: Replacement text
             description: Optional description of the change
-            case_sensitive: Whether pattern matching is case-sensitive
-            word_boundary: If True, wrap pattern with word boundaries (\\b) to match whole words only
             project_id: Optional project ID to fetch file content from repository
             db: Optional database session for repository access
 
@@ -1152,95 +1211,73 @@ class CodeChangesManager:
             Dict with success status and replacement information
         """
         logger.info(
-            f"CodeChangesManager.replace_in_file: Replacing pattern '{pattern}' in '{file_path}' "
-            f"(count={count}, case_sensitive={case_sensitive}, word_boundary={word_boundary}, project_id={project_id}, db={'provided' if db else 'None'})"
+            f"CodeChangesManager.replace_in_file: str_replace in '{file_path}' "
+            f"(old_str len={len(old_str)}, project_id={project_id}, db={'provided' if db else 'None'})"
         )
         try:
             current_content = self._get_current_content(
                 file_path, project_id=project_id, db=db
             )
 
-            # Apply word boundary if requested
-            actual_pattern = pattern
-            if word_boundary:
-                # Wrap pattern with word boundaries to match whole words only
-                actual_pattern = r"\b" + pattern + r"\b"
-                logger.debug(
-                    f"CodeChangesManager.replace_in_file: Applied word boundary, pattern is now: '{actual_pattern}'"
-                )
+            count = current_content.count(old_str)
 
-            # Compile regex pattern
-            flags = 0 if case_sensitive else re.IGNORECASE
-            try:
-                regex = re.compile(actual_pattern, flags)
-            except re.error as e:
-                return {"success": False, "error": f"Invalid regex pattern: {str(e)}"}
-
-            # Find all matches first (for reporting)
-            matches = list(regex.finditer(current_content))
-            if not matches:
+            if count == 0:
+                # Give a helpful preview of what was searched
+                preview = old_str[:120].replace("\n", "↵")
                 return {
                     "success": False,
-                    "error": f"Pattern '{pattern}' not found in file",
+                    "error": (
+                        f"old_str not found in '{file_path}'.\n"
+                        f"Searched for: {preview!r}\n"
+                        "Check that indentation, whitespace, and line endings match exactly. "
+                        "Use get_file_from_changes or search_bash to read the file first."
+                    ),
                 }
 
-            # Perform replacement
-            if count == 0:
-                # Replace all
-                new_content = regex.sub(replacement, current_content)
-                replace_count = len(matches)
-            else:
-                # Replace first N matches
-                new_content = regex.sub(replacement, current_content, count=count)
-                replace_count = min(count, len(matches))
+            if count > 1:
+                preview = old_str[:120].replace("\n", "↵")
+                return {
+                    "success": False,
+                    "error": (
+                        f"old_str matches {count} times in '{file_path}' — ambiguous replacement.\n"
+                        f"Searched for: {preview!r}\n"
+                        "Add more surrounding lines to old_str to make it unique."
+                    ),
+                }
 
-            # Apply the update
-            # Pass current_content as original_content if file is not in changes yet
-            # (this preserves the original file content for diff generation)
-            change_desc = (
-                description
-                or f"Replaced '{pattern}' with '{replacement}' ({replace_count} occurrences)"
-            )
-            original_content = (
-                current_content if file_path not in self.changes else None
-            )
+            # Exactly one match — safe to replace
+            new_content = current_content.replace(old_str, new_str, 1)
+
+            # Find line number of the match for reporting
+            match_pos = current_content.index(old_str)
+            match_line = current_content[:match_pos].count("\n") + 1
+
+            change_desc = description or f"str_replace in '{file_path}' at line ~{match_line}"
+            original_content = current_content if file_path not in self.changes else None
             update_success = self._apply_update(
                 file_path, new_content, change_desc, original_content=original_content
             )
             if not update_success:
                 return {
                     "success": False,
-                    "error": f"Cannot replace in file '{file_path}': file is marked for deletion. Use delete_file to unmark deletion first, or clear the file from changes.",
+                    "error": (
+                        f"Cannot replace in file '{file_path}': file is marked for deletion. "
+                        "Use delete_file to unmark deletion first, or clear the file from changes."
+                    ),
                 }
 
-            # Get match locations for reporting
-            match_locations = []
-            for match in matches[:replace_count]:
-                # Calculate line number
-                line_num = current_content[: match.start()].count("\n") + 1
-                match_locations.append(
-                    {
-                        "line": line_num,
-                        "match": match.group(0)[:100],  # First 100 chars
-                        "position": match.start(),
-                    }
-                )
-
             logger.info(
-                f"CodeChangesManager.replace_in_file: Successfully replaced {replace_count} occurrence(s) of pattern '{pattern}' in '{file_path}'"
+                f"CodeChangesManager.replace_in_file: Successfully replaced 1 occurrence in '{file_path}' at line {match_line}"
             )
             return {
                 "success": True,
                 "file_path": file_path,
-                "pattern": pattern,
-                "replacement": replacement,
-                "replacements_made": replace_count,
-                "total_matches": len(matches),
-                "match_locations": match_locations,
+                "match_line": match_line,
+                "replacements_made": 1,
             }
         except Exception as e:
             logger.exception(
-                "CodeChangesManager.replace_in_file: Error replacing pattern",
+                "CodeChangesManager.replace_in_file: Error replacing text",
                 file_path=file_path,
             )
             return {"success": False, "error": str(e)}
@@ -2186,6 +2223,23 @@ _conversation_id_ctx: ContextVar[Optional[str]] = ContextVar(
     "_conversation_id_ctx", default=None
 )
 
+# Context variable for agent_id/agent_type - used to determine routing
+_agent_id_ctx: ContextVar[Optional[str]] = ContextVar("_agent_id_ctx", default=None)
+
+# Context variable for user_id - used for tunnel routing
+_user_id_ctx: ContextVar[Optional[str]] = ContextVar("_user_id_ctx", default=None)
+
+# Context variable for tunnel_url - used for tunnel routing (takes priority over stored state)
+_tunnel_url_ctx: ContextVar[Optional[str]] = ContextVar("_tunnel_url_ctx", default=None)
+
+# Context variable for local_mode - only True for requests from VS Code extension; when True, show_diff refuses to execute (extension handles diff)
+_local_mode_ctx: ContextVar[bool] = ContextVar("_local_mode_ctx", default=False)
+
+# Context variable for repository (e.g. owner/repo) - used for tunnel lookup by workspace
+_repository_ctx: ContextVar[Optional[str]] = ContextVar("_repository_ctx", default=None)
+# Context variable for branch - used for tunnel lookup by workspace
+_branch_ctx: ContextVar[Optional[str]] = ContextVar("_branch_ctx", default=None)
+
 
 def _set_conversation_id(conversation_id: Optional[str]) -> None:
     """Set the conversation_id for the current execution context.
@@ -2200,6 +2254,1002 @@ def _set_conversation_id(conversation_id: Optional[str]) -> None:
 def _get_conversation_id() -> Optional[str]:
     """Get the conversation_id for the current execution context."""
     return _conversation_id_ctx.get()
+
+
+def _set_agent_id(agent_id: Optional[str]) -> None:
+    """Set the agent_id for the current execution context.
+
+    This is used to determine if file operations should be routed to LocalServer.
+    """
+    _agent_id_ctx.set(agent_id)
+    logger.info(f"CodeChangesManager: Set agent_id to {agent_id}")
+
+
+def _get_agent_id() -> Optional[str]:
+    """Get the agent_id for the current execution context."""
+    return _agent_id_ctx.get()
+
+
+def _set_user_id(user_id: Optional[str]) -> None:
+    """Set the user_id for the current execution context.
+
+    This is used for tunnel routing.
+    """
+    _user_id_ctx.set(user_id)
+
+
+def _get_user_id() -> Optional[str]:
+    """Get the user_id for the current execution context."""
+    return _user_id_ctx.get()
+
+
+def _set_tunnel_url(tunnel_url: Optional[str]) -> None:
+    """Set the tunnel_url for the current execution context.
+
+    This is used for tunnel routing to LocalServer (takes priority over stored state).
+    """
+    _tunnel_url_ctx.set(tunnel_url)
+    # Always log this at INFO level for debugging
+    logger.info(
+        f"CodeChangesManager: _set_tunnel_url called with tunnel_url={tunnel_url}"
+    )
+
+
+def _get_tunnel_url() -> Optional[str]:
+    """Get the tunnel_url for the current execution context."""
+    return _tunnel_url_ctx.get()
+
+
+def _set_local_mode(local_mode: bool) -> None:
+    """Set local_mode for the current execution context (VS Code extension only). When True, show_diff refuses to execute."""
+    _local_mode_ctx.set(local_mode)
+
+
+def _get_local_mode() -> bool:
+    """Get local_mode for the current execution context."""
+    return _local_mode_ctx.get()
+
+
+def _set_repository(repository: Optional[str]) -> None:
+    """Set the repository (e.g. owner/repo) for the current execution context. Used for tunnel lookup by workspace."""
+    _repository_ctx.set(repository)
+
+
+def _get_repository() -> Optional[str]:
+    """Get the repository for the current execution context."""
+    return _repository_ctx.get()
+
+
+def _set_branch(branch: Optional[str]) -> None:
+    """Set the branch for the current execution context. Used for tunnel lookup by workspace."""
+    _branch_ctx.set(branch)
+
+
+def _get_branch() -> Optional[str]:
+    """Get the branch for the current execution context."""
+    return _branch_ctx.get()
+
+
+def _extract_error_message(error_text: str, status_code: int) -> str:
+    """Extract a meaningful error message from response text.
+
+    Handles HTML error pages and JSON error responses.
+
+    Args:
+        error_text: The raw response text
+        status_code: HTTP status code
+
+    Returns:
+        A concise error message
+    """
+    if not error_text:
+        return f"HTTP {status_code} error (no response body)"
+
+    # Check if it's HTML (e.g. upstream error pages)
+    if error_text.strip().startswith(
+        "<!DOCTYPE html>"
+    ) or error_text.strip().startswith("<html"):
+        # Try to extract meaningful information from HTML error pages
+        import re
+
+        # Look for tunnel/connection errors
+        if status_code == 530 or ("tunnel" in error_text.lower() and "error" in error_text.lower()):
+            return "Tunnel/connection error: extension connection unavailable. Please ensure the VS Code extension is running and connected."
+
+        # Look for error titles or messages in HTML
+        title_match = re.search(
+            r"<title>(.*?)</title>", error_text, re.IGNORECASE | re.DOTALL
+        )
+        if title_match:
+            title = title_match.group(1).strip()
+            # Clean up the title
+            title = re.sub(r"\s+", " ", title)
+            return f"HTTP {status_code}: {title[:200]}"  # Limit length
+
+        # Look for error messages in common HTML error page patterns
+        error_match = re.search(
+            r"<h[12][^>]*>(.*?)</h[12]>", error_text, re.IGNORECASE | re.DOTALL
+        )
+        if error_match:
+            error_msg = error_match.group(1).strip()
+            error_msg = re.sub(r"<[^>]+>", "", error_msg)  # Remove HTML tags
+            error_msg = re.sub(r"\s+", " ", error_msg)
+            return f"HTTP {status_code}: {error_msg[:200]}"
+
+        return f"HTTP {status_code} error (HTML response received)"
+
+    # Try to parse as JSON
+    try:
+        import json
+
+        error_json = json.loads(error_text)
+        if isinstance(error_json, dict):
+            # Look for common error message fields
+            for key in ["error", "message", "detail", "msg"]:
+                if key in error_json:
+                    return f"HTTP {status_code}: {str(error_json[key])[:200]}"
+            return f"HTTP {status_code}: {str(error_json)[:200]}"
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # If it's plain text, return it (but limit length)
+    if len(error_text) > 500:
+        return f"HTTP {status_code}: {error_text[:200]}... (truncated)"
+    return f"HTTP {status_code}: {error_text}"
+
+
+def _route_to_local_server(
+    operation: str,
+    data: Dict[str, Any],
+) -> Optional[str]:
+    """Route file operation to LocalServer via tunnel (sync version).
+
+    Returns:
+        Result string if successful, None if should fall back to CodeChangesManager
+    """
+
+    def _append_line_stats(msg: str, res: Dict[str, Any]) -> str:
+        """Append line-change stats from LocalServer so the agent can verify edits."""
+        lines_changed = res.get("lines_changed")
+        lines_added = res.get("lines_added")
+        lines_deleted = res.get("lines_deleted")
+        if (
+            lines_changed is not None
+            or lines_added is not None
+            or lines_deleted is not None
+        ):
+            parts = []
+            if lines_changed is not None:
+                parts.append(f"lines_changed={lines_changed}")
+            if lines_added is not None:
+                parts.append(f"lines_added={lines_added}")
+            if lines_deleted is not None:
+                parts.append(f"lines_deleted={lines_deleted}")
+            msg += "\n\n**Line stats:** " + ", ".join(parts)
+            # Warn when many lines were deleted—often indicates placeholder like "... rest of file unchanged ..." was used
+            lines_deleted_val = lines_deleted if lines_deleted is not None else 0
+            if lines_deleted_val > 15:
+                msg += (
+                    f"\n\n⚠️ **Many lines were deleted ({lines_deleted_val} lines).** "
+                    "Double-check with get_file_from_changes that the file content is correct. "
+                    "Do NOT use placeholders like '... rest of file unchanged ...' in content—they are written literally and remove real code. "
+                    "If this was unintended, use revert_file then re-apply with full content or targeted edits."
+                )
+            msg += (
+                "\n\nIf these numbers don't match what you intended (e.g. you expected to delete lines but lines_deleted=0), "
+                "use get_file_from_changes to verify the file and fix with revert_file or a corrected edit."
+            )
+        return msg
+
+    def _append_diff(msg: str, res: Dict[str, Any]) -> str:
+        """Append tunnel line stats and diff to response so agent can review/fix changes."""
+        msg = _append_line_stats(msg, res)
+        raw_diff = res.get("diff")
+        diff = (
+            raw_diff.strip()
+            if isinstance(raw_diff, str)
+            else (str(raw_diff).strip() if raw_diff is not None else "")
+        )
+        if diff:
+            msg += "\n\n**Diff (uncommitted changes):**\n```diff\n" + diff + "\n```"
+        return msg
+
+    try:
+        from app.modules.tunnel.tunnel_service import get_tunnel_service
+        import httpx
+
+        user_id = _get_user_id()
+        conversation_id = _get_conversation_id()
+        repository = _get_repository()
+        branch = _get_branch()
+
+        if not user_id:
+            logger.debug("No user_id in context, skipping tunnel routing")
+            return None
+
+        tunnel_service = get_tunnel_service()
+        # Resolve tunnel by workspace (repo + branch) when available; else conversation then user
+        tunnel_url = tunnel_service.get_tunnel_url(
+            user_id,
+            conversation_id,
+            tunnel_url=_get_tunnel_url(),
+            repository=repository,
+            branch=branch,
+        )
+
+        if not tunnel_url:
+            logger.debug(
+                f"No tunnel available for user {user_id}, using CodeChangesManager"
+            )
+            return None
+
+        # Map operation to LocalServer endpoint (must be defined before smart routing)
+        endpoint_map = {
+            "add_file": "/api/files/create",
+            "update_file": "/api/files/update",
+            "update_file_lines": "/api/files/update-lines",
+            "insert_lines": "/api/files/insert-lines",
+            "delete_lines": "/api/files/delete-lines",
+            "delete_file": "/api/files/delete",
+            "replace_in_file": "/api/files/replace",
+            "get_file": "/api/files/read",
+            "show_updated_file": "/api/files/read",
+            "revert_file": "/api/files/revert",
+        }
+
+        endpoint = endpoint_map.get(operation)
+        if not endpoint:
+            logger.warning(f"Unknown operation for tunnel routing: {operation}")
+            return None
+
+        # Prepare request data
+        request_data = {
+            **data,
+            "conversation_id": conversation_id,
+        }
+
+        route_result: Optional[Dict[str, Any]] = None
+        # Socket path: tunnel_url is socket://{workspace_id}; use Socket.IO RPC instead of HTTP
+        from app.modules.intelligence.tools.local_search_tools.tunnel_utils import (
+            SOCKET_TUNNEL_PREFIX,
+            _execute_via_socket,
+        )
+
+        if tunnel_url and tunnel_url.startswith(SOCKET_TUNNEL_PREFIX):
+            logger.info(
+                f"[Tunnel Routing] 🚀 Routing {operation} to LocalServer via Socket.IO (timeout=120s)"
+            )
+            route_result = _execute_via_socket(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                endpoint=endpoint,
+                payload=request_data,
+                tunnel_url=tunnel_url,
+                repository=repository,
+                branch=branch,
+                timeout=120.0,
+            )
+            if route_result is None:
+                return None
+        else:
+            # HTTP path: Smart routing (direct localhost when VSCODE_LOCAL_TUNNEL_SERVER set, else tunnel URL)
+            try:
+                import os
+
+                force_tunnel = os.getenv("FORCE_TUNNEL", "").lower() in ["true", "1", "yes"]
+                from app.modules.tunnel.tunnel_service import (
+                    _get_local_tunnel_server_url,
+                )
+
+                direct_url = _get_local_tunnel_server_url()
+                if not force_tunnel and direct_url:
+                    try:
+                        test_client = httpx.Client(timeout=2.0)
+                        health_check = test_client.get(f"{direct_url}/health")
+                        test_client.close()
+                        if health_check.status_code == 200:
+                            logger.info(
+                                f"[Tunnel Routing] 🏠 VSCODE_LOCAL_TUNNEL_SERVER set, using direct connection: {direct_url} "
+                                f"(bypassing tunnel {tunnel_url})"
+                            )
+                            url = f"{direct_url}{endpoint}"
+                        else:
+                            logger.warning(
+                                f"[Tunnel Routing] ⚠️ LocalServer not responding on {direct_url}, falling back to tunnel"
+                            )
+                            url = f"{tunnel_url}{endpoint}"
+                    except Exception as e:
+                        logger.warning(
+                            f"[Tunnel Routing] ⚠️ Cannot reach LocalServer on {direct_url}: {e}, using tunnel instead"
+                        )
+                        url = f"{tunnel_url}{endpoint}"
+                else:
+                    if force_tunnel:
+                        logger.info(
+                            f"[Tunnel Routing] 🔧 FORCE_TUNNEL enabled, using tunnel URL: {tunnel_url}{endpoint}"
+                        )
+                    else:
+                        logger.info(
+                            f"[Tunnel Routing] 🌐 Using tunnel URL: {tunnel_url}{endpoint}"
+                        )
+                    url = f"{tunnel_url}{endpoint}"
+            except Exception as e:
+                logger.warning(
+                    f"[Tunnel Routing] Error in smart routing, falling back to tunnel URL: {e}"
+                )
+                url = f"{tunnel_url}{endpoint}"
+
+            logger.info(f"[Tunnel Routing] 🚀 Routing {operation} to LocalServer: {url}")
+            logger.debug(f"[Tunnel Routing] Request data: {request_data}")
+
+            is_tunnel_request = url.startswith("https://") or (
+                url.startswith("http://") and "localhost" not in url
+            )
+            request_timeout = (
+                120.0 if is_tunnel_request else 30.0
+            )  # 2 minutes for tunnel, 30s for localhost
+            logger.debug(
+                f"[Tunnel Routing] Using timeout: {request_timeout}s (tunnel={is_tunnel_request})"
+            )
+
+            with httpx.Client(timeout=request_timeout) as client:
+                try:
+                    result: Dict[str, Any] = {}
+                    # Read operations use GET, write operations use POST
+                    if operation in ["get_file", "show_updated_file"]:
+                        # GET request with file path as query parameter
+                        file_path = data.get("file_path") or data.get("path", "")
+                        if not file_path:
+                            logger.warning(
+                                f"[Tunnel Routing] No file_path provided for {operation}"
+                            )
+                            return None
+                        url_with_params = f"{url}?path={url_quote(file_path)}"
+                        response = client.get(url_with_params)
+                    else:
+                        # POST request for write operations
+                        response = client.post(
+                            url,
+                            json=request_data,
+                            headers={"Content-Type": "application/json"},
+                        )
+
+                    if response.status_code == 200:
+                        route_result = response.json()
+                        logger.info(
+                            f"[Tunnel Routing] ✅ LocalServer {operation} succeeded: {route_result}"
+                        )
+                    else:
+                        # Non-200: error handling and optional tunnel invalidation
+                        error_text = response.text
+                        status_code = response.status_code
+                        is_tunnel_error = (
+                            status_code in [502, 503, 504, 530]
+                            or ("tunnel" in error_text.lower() and "error" in error_text.lower())
+                        )
+                        if is_tunnel_error and conversation_id:
+                            try:
+                                from app.modules.tunnel.tunnel_service import get_tunnel_service
+                                get_tunnel_service().unregister_tunnel(user_id, conversation_id)
+                                logger.info(
+                                    f"[Tunnel Routing] ✅ Invalidated stale conversation tunnel for user {user_id}"
+                                )
+                            except Exception as e:
+                                logger.error(f"[Tunnel Routing] Failed to invalidate tunnel: {e}")
+                            logger.info(f"[Tunnel Routing] ⬇️ Falling back to cloud execution for {operation}")
+                            return None
+                        logger.warning(
+                            f"[Tunnel Routing] ❌ LocalServer {operation} failed ({status_code}): {error_text[:200]}"
+                        )
+                        if status_code == 409:
+                            file_path = data.get("file_path", "file")
+                            if operation == "add_file":
+                                return (
+                                    f"❌ Cannot create file '{file_path}': File already exists locally.\n\n"
+                                    f"**Recommendation**: Use `update_file_in_changes` or `update_file_lines` to modify the existing file instead of `add_file_to_changes`.\n\n"
+                                    f"**Action**: If you intended to replace the file, use `update_file_in_changes` with the new content."
+                                )
+                            return f"❌ Operation failed: File '{file_path}' already exists (409). Please use update operation instead."
+                        if status_code == 400:
+                            try:
+                                error_data = response.json()
+                                if error_data.get("error") == "pre_validation_failed":
+                                    errors = error_data.get("errors", [])
+                                    error_count = len(errors)
+                                    file_path = data.get("file_path", "file")
+                                    error_msg = (
+                                        f"❌ Pre-validation failed for '{file_path}': {error_count} syntax error(s) detected.\n\n"
+                                        f"Review the generated code for unmatched brackets, quotes, or incomplete snippets."
+                                    )
+                                    return error_msg
+                            except Exception:
+                                pass
+                        return None
+
+                except Exception as e:
+                    # Handle specific httpx exceptions if available
+                    error_type = type(e).__name__
+                    if "Timeout" in error_type or "timeout" in str(e).lower():
+                        logger.error(
+                            f"[Tunnel Routing] ⏱️ Timeout routing {operation} to LocalServer after {request_timeout}s: {e}. "
+                            f"URL: {url}. This may indicate the tunnel is not connected or LocalServer is not responding."
+                        )
+                    elif "Connect" in error_type or "connection" in str(e).lower():
+                        logger.warning(
+                            f"[Tunnel Routing] 🔌 Connection error routing {operation} to LocalServer: {e}"
+                        )
+                    else:
+                        resp = getattr(e, "response", None)
+                        if resp is not None:
+                            error_message = _extract_error_message(
+                                getattr(resp, "text", str(e)),
+                                getattr(resp, "status_code", 0),
+                            )
+                            logger.warning(
+                                f"[Tunnel Routing] ❌ HTTP error routing {operation} to LocalServer: {error_message}"
+                            )
+                        else:
+                            logger.warning(
+                                f"[Tunnel Routing] ❌ Error routing {operation} to LocalServer: {e}"
+                            )
+                    return None  # Fall back to CodeChangesManager
+
+        if route_result:
+            result = route_result
+            file_path = data.get("file_path") or data.get("path", "file")
+
+            if operation == "replace_in_file":
+                replacements_made = result.get("replacements_made", 0)
+                total_matches = result.get("total_matches", replacements_made)
+                pattern = data.get("pattern", "pattern")
+
+                # Enrich result with diff and line stats if LocalServer didn't return them
+                if not result.get("diff") or (
+                    result.get("lines_changed") is None
+                    and result.get("lines_added") is None
+                    and result.get("lines_deleted") is None
+                ):
+                    try:
+                        manager = _get_code_changes_manager()
+                        file_data = manager.get_file(file_path)
+                        before = (
+                            (file_data.get("content") or "")
+                            if file_data
+                            else None
+                        )
+                        after = _fetch_file_content_from_local_server(file_path)
+                        if before is not None and after is not None:
+                            if not result.get("diff"):
+                                result["diff"] = manager._create_unified_diff(
+                                    before,
+                                    after,
+                                    file_path,
+                                    file_path,
+                                    3,
+                                )
+                            if (
+                                result.get("lines_changed") is None
+                                and result.get("lines_added") is None
+                                and result.get("lines_deleted") is None
+                            ):
+                                old_lines = len(before.splitlines())
+                                new_lines = len(after.splitlines())
+                                result["lines_added"] = max(
+                                    0, new_lines - old_lines
+                                )
+                                result["lines_deleted"] = max(
+                                    0, old_lines - new_lines
+                                )
+                    except Exception as e:
+                        logger.debug(
+                            f"[Tunnel Routing] Could not enrich replace_in_file diff: {e}"
+                        )
+
+                response_msg = (
+                    f"✅ Replaced pattern '{pattern}' in '{file_path}'\n\n"
+                    + f"Made {replacements_made} replacement(s) out of {total_matches} match(es)"
+                )
+                if result.get("auto_fixed"):
+                    response_msg += "\n\n✅ Auto-fixed formatting issues"
+                if result.get("errors"):
+                    response_msg += (
+                        f"\n⚠️ Validation errors: {len(result['errors'])}"
+                    )
+                return _append_diff(response_msg, result)
+            elif operation == "update_file_lines":
+                start_line = data.get("start_line", 0)
+                end_line = data.get("end_line", start_line)
+                has_errors = result.get("errors") or result.get(
+                    "auto_fix_failed"
+                )
+                if has_errors:
+                    response_msg = (
+                        f"⚠️ Updated lines {start_line}-{end_line} in '{file_path}' locally, "
+                        f"but linter reported issues (change may be partial or reverted).\n\n"
+                    )
+                else:
+                    response_msg = (
+                        f"✅ Updated lines {start_line}-{end_line} in '{file_path}' locally\n\n"
+                        + "Changes applied successfully in your IDE."
+                    )
+                if result.get("auto_fixed"):
+                    response_msg += "\n\n✅ Auto-fixed formatting issues"
+                if result.get("errors"):
+                    response_msg += (
+                        f"\n⚠️ Validation errors: {len(result['errors'])}"
+                    )
+                return _append_diff(response_msg, result)
+            elif operation == "add_file":
+                response_msg = f"✅ Created file '{file_path}' locally\n\nChanges applied successfully in your IDE."
+                if result.get("auto_fixed"):
+                    response_msg += "\n\n✅ Auto-fixed formatting issues"
+                if result.get("errors"):
+                    response_msg += (
+                        f"\n⚠️ Validation errors: {len(result['errors'])}"
+                    )
+                return _append_diff(response_msg, result)
+            elif operation == "update_file":
+                response_msg = f"✅ Updated file '{file_path}' locally\n\nChanges applied successfully in your IDE."
+                if result.get("auto_fixed"):
+                    response_msg += "\n\n✅ Auto-fixed formatting issues"
+                if result.get("errors"):
+                    response_msg += (
+                        f"\n⚠️ Validation errors: {len(result['errors'])}"
+                    )
+                return _append_diff(response_msg, result)
+            elif operation == "insert_lines":
+                line_number = data.get("line_number", 0)
+                position = (
+                    "after" if data.get("insert_after", True) else "before"
+                )
+                has_errors = result.get("errors") or result.get(
+                    "auto_fix_failed"
+                )
+                if has_errors:
+                    response_msg = (
+                        f"⚠️ Inserted lines {position} line {line_number} in '{file_path}' locally, "
+                        f"but linter reported issues (change may be partial or reverted).\n\n"
+                    )
+                else:
+                    response_msg = (
+                        f"✅ Inserted lines {position} line {line_number} in '{file_path}' locally\n\n"
+                        + "Changes applied successfully in your IDE."
+                    )
+                if result.get("auto_fixed"):
+                    response_msg += "\n\n✅ Auto-fixed formatting issues"
+                if result.get("errors"):
+                    response_msg += (
+                        f"\n⚠️ Validation errors: {len(result['errors'])}"
+                    )
+                return _append_diff(response_msg, result)
+            elif operation == "delete_lines":
+                start_line = data.get("start_line", 0)
+                end_line = data.get("end_line", start_line)
+                response_msg = (
+                    f"✅ Deleted lines {start_line}-{end_line} from '{file_path}' locally\n\n"
+                    + "Changes applied successfully in your IDE."
+                )
+                return _append_diff(response_msg, result)
+            elif operation == "delete_file":
+                response_msg = (
+                    f"✅ Deleted file '{file_path}' locally\n\n"
+                    + "File removed successfully from your IDE."
+                )
+                return _append_diff(response_msg, result)
+            elif operation == "revert_file":
+                target = data.get("target", "saved")
+                target_label = (
+                    "last saved version" if target == "saved" else "git HEAD"
+                )
+                response_msg = (
+                    f"✅ Reverted file '{file_path}' to {target_label}\n\n"
+                    + "Content applied in your IDE."
+                )
+                if result.get("auto_fixed"):
+                    response_msg += "\n\n✅ Auto-fixed formatting issues"
+                if result.get("errors"):
+                    response_msg += (
+                        f"\n⚠️ Validation errors: {len(result['errors'])}"
+                    )
+                return _append_diff(response_msg, result)
+            elif operation in ["get_file", "show_updated_file"]:
+                content = result.get("content", "")
+                line_count = result.get("line_count", 0)
+
+                if operation == "get_file":
+                    result_msg = f"📄 **{file_path}**\n\n"
+                    result_msg += f"**Current Lines:** {line_count}\n"
+                    result_msg += f"**Current Size:** {len(content)} chars\n"
+                    content_preview = content[:500]
+                    result_msg += f"\n**Content preview (first 500 chars):**\n```\n{content_preview}\n```\n"
+                    if len(content) > 500:
+                        result_msg += (
+                            f"\n... ({len(content) - 500} more characters)\n"
+                        )
+                    return result_msg
+                else:  # show_updated_file
+                    result_msg = (
+                        f"\n\n---\n\n## 📝 **Updated File: {file_path}**\n\n"
+                    )
+                    result_msg += f"```\n{content}\n```\n\n"
+                    result_msg += "---\n\n"
+                    return result_msg
+
+            else:
+                response_msg = f"✅ Applied {operation.replace('_', ' ')} to '{file_path}' locally"
+                return _append_diff(response_msg, result)
+
+    except Exception as e:
+        # Outer exception handler for non-httpx errors
+        logger.warning(
+            f"[Tunnel Routing] Unexpected error in _route_to_local_server: {e}"
+        )
+        return None
+
+
+def _should_route_to_local_server() -> bool:
+    """Check if file operations should be routed to LocalServer.
+
+    Returns True if:
+    - Agent ID is "code", "code_generation_agent", or "codebase_qna_agent" (when tunnel is available)
+    - Tunnel is available for the user
+
+    Note: "code_generation_agent" is used for the "code" agent type in the extension
+    since it has all the file editing tools. We route it to tunnel for local-first execution.
+    """
+    agent_id = _get_agent_id()
+    user_id = _get_user_id()
+    conversation_id = _get_conversation_id()
+    repository = _get_repository()
+    branch = _get_branch()
+
+    logger.info(
+        f"[Tunnel Routing] Checking routing: agent_id={agent_id}, user_id={user_id}, conversation_id={conversation_id}"
+    )
+
+    # Route these agents to tunnel when available for local-first code changes
+    if agent_id not in ["code", "code_generation_agent", "codebase_qna_agent"]:
+        logger.debug(
+            f"[Tunnel Routing] Agent {agent_id} not eligible for tunnel routing"
+        )
+        return False
+
+    try:
+        from app.modules.tunnel.tunnel_service import get_tunnel_service
+
+        if not user_id:
+            logger.debug("[Tunnel Routing] No user_id in context")
+            return False
+
+        tunnel_service = get_tunnel_service()
+
+        # Resolve tunnel by workspace (repository) or conversation
+        tunnel_url = tunnel_service.get_tunnel_url(
+            user_id,
+            conversation_id,
+            repository=repository,
+            branch=branch,
+        )
+
+        if tunnel_url:
+            logger.info(
+                f"[Tunnel Routing] ✅ Routing to LocalServer via tunnel: {tunnel_url}"
+            )
+        else:
+            # Debug: Check what tunnels exist
+            logger.warning(
+                f"[Tunnel Routing] ❌ No tunnel available for user {user_id}, conversation {conversation_id}. "
+                f"Agent: {agent_id}. Check if tunnel was registered."
+            )
+
+        return tunnel_url is not None
+    except Exception as e:
+        logger.exception(f"[Tunnel Routing] Error checking tunnel: {e}")
+        return False
+
+
+def _get_local_server_base_url_for_files() -> Optional[str]:
+    """Return the base URL for LocalServer file API (direct or tunnel).
+    Used when recording local changes in Redis after a successful local write.
+    """
+    try:
+        from app.modules.tunnel.tunnel_service import get_tunnel_service
+        import httpx
+        import os
+
+        user_id = _get_user_id()
+        conversation_id = _get_conversation_id()
+        repository = _get_repository()
+        branch = _get_branch()
+        if not user_id:
+            return None
+        tunnel_service = get_tunnel_service()
+        tunnel_url = tunnel_service.get_tunnel_url(
+            user_id, conversation_id, repository=repository, branch=branch
+        )
+        if not tunnel_url:
+            tunnel_url = tunnel_service.get_tunnel_url(user_id, None, repository=repository, branch=branch)
+        if not tunnel_url:
+            return None
+        # Socket URL cannot be used as HTTP base; callers use this for httpx
+        from app.modules.intelligence.tools.local_search_tools.tunnel_utils import SOCKET_TUNNEL_PREFIX
+        if tunnel_url.startswith(SOCKET_TUNNEL_PREFIX):
+            return None
+
+        force_tunnel = os.getenv("FORCE_TUNNEL", "").lower() in ["true", "1", "yes"]
+        base_url = os.getenv("BASE_URL", "").lower()
+        environment = os.getenv("ENVIRONMENT", "").lower()
+        is_local_backend = not force_tunnel and (
+            "localhost" in base_url
+            or "127.0.0.1" in base_url
+            or environment in ["local", "dev", "development"]
+            or not base_url
+        )
+        if is_local_backend and not force_tunnel:
+            tunnel_data = tunnel_service._get_tunnel_data(
+                tunnel_service._get_tunnel_key(user_id, conversation_id)
+            )
+            local_port = 3001
+            if tunnel_data and tunnel_data.get("local_port"):
+                local_port = int(tunnel_data["local_port"])
+            direct_url = f"http://localhost:{local_port}"
+            try:
+                test_client = httpx.Client(timeout=2.0)
+                health_check = test_client.get(f"{direct_url}/health")
+                test_client.close()
+                if health_check.status_code == 200:
+                    return direct_url
+            except Exception:
+                pass
+        return tunnel_url
+    except Exception as e:
+        logger.debug(f"Failed to get LocalServer base URL for files: {e}")
+        return None
+
+
+def _fetch_file_content_from_local_server(file_path: str) -> Optional[str]:
+    """Fetch current file content from LocalServer via tunnel or Socket.IO. Used to sync Redis after line-based local writes."""
+    base = _get_local_server_base_url_for_files()
+    if not base:
+        # Try socket path when no HTTP base (e.g. Socket.IO tunnel)
+        try:
+            from app.modules.tunnel.tunnel_service import get_tunnel_service
+            from app.modules.intelligence.tools.local_search_tools.tunnel_utils import (
+                _execute_via_socket,
+                SOCKET_TUNNEL_PREFIX,
+            )
+            user_id = _get_user_id()
+            conversation_id = _get_conversation_id()
+            repository = _get_repository()
+            branch = _get_branch()
+            if not user_id:
+                return None
+            tunnel_service = get_tunnel_service()
+            tunnel_url = tunnel_service.get_tunnel_url(
+                user_id, conversation_id, repository=repository, branch=branch
+            )
+            if tunnel_url and tunnel_url.startswith(SOCKET_TUNNEL_PREFIX):
+                out = _execute_via_socket(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    endpoint="/api/files/read",
+                    payload={"path": file_path},
+                    tunnel_url=tunnel_url,
+                    repository=repository,
+                    branch=branch,
+                    timeout=15.0,
+                )
+                if isinstance(out, dict) and out.get("content") is not None:
+                    return out.get("content", "")
+        except Exception as e:
+            logger.debug(f"Failed to fetch file via socket: {e}")
+        return None
+    try:
+        import httpx
+
+        url = f"{base}/api/files/read?path={url_quote(file_path)}"
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(url)
+            if response.status_code == 200:
+                return response.json().get("content", "")
+    except Exception as e:
+        logger.debug(f"Failed to fetch file content via LocalServer: {e}")
+    return None
+
+
+def _sync_file_from_local_server_to_redis(file_path: str) -> bool:
+    """When in local mode, sync a single file's content from LocalServer to Redis so manager state matches local.
+
+    Call this before reading from the manager (get_file, get_file_diff) so diffs and content are accurate.
+    Only updates Redis if the file is already tracked in the manager (so we don't add untracked files).
+    Returns True if content was synced, False otherwise.
+    """
+    if not _should_route_to_local_server():
+        return False
+    content = _fetch_file_content_from_local_server(file_path)
+    if content is None:
+        return False
+    try:
+        manager = _get_code_changes_manager()
+        if file_path not in manager.changes:
+            return False
+        change = manager.changes[file_path]
+        if change.change_type == ChangeType.DELETE:
+            return False
+        manager.update_file(
+            file_path=file_path,
+            content=content,
+            description=change.description or "Synced from local",
+            preserve_previous=True,
+        )
+        logger.debug(
+            f"CodeChangesManager: Synced file from LocalServer to Redis: {file_path}"
+        )
+        return True
+    except Exception as e:
+        logger.debug(
+            f"CodeChangesManager: Failed to sync file from LocalServer to Redis: {e}"
+        )
+        return False
+
+
+def _fetch_repo_file_content_for_diff(
+    project_id: str, file_path: str, db: Session
+) -> Optional[str]:
+    """Fetch file content from the project repository for diff base. Returns None on failure."""
+    try:
+        from app.modules.code_provider.code_provider_service import CodeProviderService
+        from app.modules.code_provider.git_safe import (
+            safe_git_operation,
+            GitOperationError,
+        )
+        from app.modules.projects.projects_model import Project
+
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            return None
+        cp_service = CodeProviderService(db)
+
+        def _fetch():
+            return cp_service.get_file_content(
+                repo_name=project.repo_name,
+                file_path=file_path,
+                branch_name=project.branch_name,
+                start_line=None,
+                end_line=None,
+                project_id=project_id,
+                commit_id=project.commit_id,
+            )
+
+        try:
+            return safe_git_operation(
+                _fetch,
+                max_retries=1,
+                timeout=20.0,
+                max_total_timeout=25.0,
+                operation_name=f"get_file_diff_repo_content({file_path})",
+            )
+        except GitOperationError:
+            return None
+    except Exception as e:
+        logger.debug(f"CodeChangesManager: Failed to fetch repo content for diff: {e}")
+        return None
+
+
+def _record_local_change_in_redis(
+    operation: str,
+    data: Dict[str, Any],
+    previous_content_for_update: Optional[str] = None,
+) -> None:
+    """After a successful local write via tunnel, record the change in Redis so get_summary/get_file show it."""
+    try:
+        manager = _get_code_changes_manager()
+        file_path = data.get("file_path") or ""
+        if not file_path:
+            return
+        if operation == "add_file":
+            manager.add_file(
+                file_path=file_path,
+                content=data.get("content", ""),
+                description=data.get("description"),
+            )
+        elif operation == "update_file":
+            manager.update_file(
+                file_path=file_path,
+                content=data.get("content", ""),
+                description=data.get("description"),
+                previous_content=previous_content_for_update,
+            )
+        elif operation == "delete_file":
+            manager.delete_file(
+                file_path=file_path,
+                description=data.get("description"),
+            )
+        elif operation in (
+            "update_file_lines",
+            "insert_lines",
+            "delete_lines",
+            "replace_in_file",
+        ):
+            content = _fetch_file_content_from_local_server(file_path)
+            if content is not None:
+                manager.update_file(
+                    file_path=file_path,
+                    content=content,
+                    description=data.get("description"),
+                )
+        elif operation == "revert_file":
+            # Revert applied in IDE; sync Redis with reverted content
+            content = _fetch_file_content_from_local_server(file_path)
+            if content is not None:
+                manager.update_file(
+                    file_path=file_path,
+                    content=content,
+                    description=data.get("description"),
+                )
+        logger.info(
+            f"CodeChangesManager: Recorded local change in Redis for {operation} '{file_path}'"
+        )
+    except Exception as e:
+        logger.warning(
+            f"CodeChangesManager: Failed to record local change in Redis: {e}"
+        )
+
+
+def _execute_local_write(operation: str, data: Dict[str, Any], file_path: str) -> str:
+    """Execute a write operation locally with local-first semantics.
+
+    For write operations (add, update, delete, replace, insert), we REQUIRE local execution
+    when the user has a VS Code extension connected (tunnel available).
+
+    Returns:
+        - Success message if local execution succeeded
+        - Error message if local execution failed (does NOT fall back to cloud)
+        - None if no tunnel available (caller can decide to use cloud or not)
+    """
+    should_route = _should_route_to_local_server()
+
+    if not should_route:
+        # No tunnel available - user is not using VS Code extension
+        # Return None to allow cloud fallback (for web UI users)
+        logger.info(f"[Local-First] No tunnel for {operation}, allowing cloud fallback")
+        return None
+
+    # User has tunnel = using VS Code extension = expects LOCAL changes
+    logger.info(f"[Local-First] 🏠 Executing {operation} locally (local-first mode)")
+
+    # Fetch-before-edit for update_file: get current content from local so we can track diffs accurately
+    previous_content_for_update: Optional[str] = None
+    if operation == "update_file":
+        previous_content_for_update = _fetch_file_content_from_local_server(file_path)
+        if previous_content_for_update is not None:
+            logger.debug(
+                f"[Local-First] Fetched current content from local before update_file ({len(previous_content_for_update)} chars) for accurate diff"
+            )
+
+    result = _route_to_local_server(operation, data)
+
+    if result:
+        # Local execution succeeded - also store change in Redis so get_summary/get_file show it
+        _record_local_change_in_redis(
+            operation, data, previous_content_for_update=previous_content_for_update
+        )
+        return result
+
+    # Local execution FAILED but user expected local
+    # Do NOT fall back to cloud - return an error so agent can retry or inform user
+    logger.warning(f"[Local-First] ❌ Local {operation} failed for '{file_path}'")
+
+    return (
+        f"❌ **Local execution failed** for '{file_path}'\n\n"
+        f"Your VS Code extension tunnel appears to be disconnected or stale.\n\n"
+        f"**What to do:**\n"
+        f"1. Check if VS Code extension is running\n"
+        f"2. Check the Output panel in VS Code for tunnel status\n"
+        f"3. Reload the VS Code window if needed (Cmd/Ctrl+Shift+P → 'Reload Window')\n"
+        f"4. Retry this operation\n\n"
+        f"**Note:** Changes are made directly in your local IDE, not in the cloud."
+    )
 
 
 def _get_code_changes_manager() -> CodeChangesManager:
@@ -2231,7 +3281,15 @@ def _get_code_changes_manager() -> CodeChangesManager:
     return manager
 
 
-def _init_code_changes_manager(conversation_id: Optional[str] = None) -> None:
+def _init_code_changes_manager(
+    conversation_id: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    tunnel_url: Optional[str] = None,
+    local_mode: bool = False,
+    repository: Optional[str] = None,
+    branch: Optional[str] = None,
+) -> None:
     """Initialize the code changes manager for a new agent run.
 
     This loads existing changes from Redis for the conversation (if any exist)
@@ -2240,8 +3298,26 @@ def _init_code_changes_manager(conversation_id: Optional[str] = None) -> None:
     Args:
         conversation_id: The conversation ID to use for Redis key. If None,
                         uses a random session_id (backward compatible, no persistence).
+        agent_id: The agent ID to determine routing (e.g., "code" for LocalServer routing).
+        user_id: The user ID for tunnel routing.
+        tunnel_url: Optional tunnel URL from request (takes priority over stored state).
+        local_mode: True only for VS Code extension requests; when True, show_diff refuses to execute (extension handles diff).
+        repository: Optional repository (e.g. owner/repo) for tunnel lookup by workspace.
+        branch: Optional branch for tunnel lookup by workspace.
     """
+    logger.info(
+        f"CodeChangesManager: _init_code_changes_manager called with "
+        f"conversation_id={conversation_id}, agent_id={agent_id}, "
+        f"user_id={user_id}, tunnel_url={tunnel_url}, local_mode={local_mode}, "
+        f"repository={repository}, branch={branch}"
+    )
+    _set_local_mode(local_mode)
     _set_conversation_id(conversation_id)
+    _set_agent_id(agent_id)
+    _set_user_id(user_id)
+    _set_tunnel_url(tunnel_url)
+    _set_repository(repository)
+    _set_branch(branch)
 
     old_manager = _code_changes_manager_ctx.get()
     old_session = old_manager.session_id if old_manager else None
@@ -2304,6 +3380,23 @@ class DeleteFileInput(BaseModel):
     )
 
 
+class RevertFileInput(BaseModel):
+    file_path: str = Field(
+        description="Path to the file to revert (workspace-relative, e.g. 'src/main.py')"
+    )
+    target: Optional[Literal["saved", "HEAD"]] = Field(
+        default="saved",
+        description=(
+            "Revert target: 'saved' = restore from disk (last saved, discard unsaved); "
+            "'HEAD' = restore from git HEAD (committed version), then save."
+        ),
+    )
+    description: Optional[str] = Field(
+        default=None,
+        description="Optional description of the revert (e.g. reason)",
+    )
+
+
 class GetFileInput(BaseModel):
     file_path: str = Field(description="Path to the file to retrieve")
 
@@ -2352,7 +3445,7 @@ class UpdateFileLinesInput(BaseModel):
     start_line: int = Field(description="Starting line number (1-indexed, inclusive)")
     end_line: Optional[int] = Field(
         default=None,
-        description="Ending line number (1-indexed, inclusive). If None, only start_line is replaced",
+        description="Ending line number (1-indexed, inclusive). Omit or set to null to update only the single line at start_line; when provided, replaces the range from start_line through end_line.",
     )
     new_content: str = Field(description="Content to replace the lines with")
     description: Optional[str] = Field(
@@ -2367,26 +3460,18 @@ class UpdateFileLinesInput(BaseModel):
 
 class ReplaceInFileInput(BaseModel):
     file_path: str = Field(description="Path to the file to update")
-    pattern: str = Field(
-        description="Regex pattern to search for (supports capturing groups with \\1, \\2, etc. in replacement)"
+    old_str: str = Field(
+        description=(
+            "The exact literal text to find and replace. Must match character-for-character "
+            "including indentation and whitespace. Include enough surrounding lines to make it "
+            "unique in the file (typically 3-5 lines). Do NOT use regex — this is plain text matching."
+        )
     )
-    replacement: str = Field(
-        description="Replacement string (use \\1, \\2, etc. for captured groups)"
-    )
-    count: int = Field(
-        default=0,
-        description="Maximum number of replacements (0 = replace all occurrences)",
+    new_str: str = Field(
+        description="The replacement text. Must preserve correct indentation."
     )
     description: Optional[str] = Field(
         default=None, description="Optional description of the change"
-    )
-    case_sensitive: bool = Field(
-        default=False, description="Whether pattern matching is case-sensitive"
-    )
-    word_boundary: bool = Field(
-        default=False,
-        description="If True, wrap pattern with word boundaries (\\b) to match whole words only. "
-        "Useful to prevent matching partial strings within words (e.g., 'test function' won't match 'another_test function').",
     )
     project_id: Optional[str] = Field(
         default=None,
@@ -2459,7 +3544,24 @@ def _wrap_tool(func, input_model):
 # Tool functions
 def add_file_tool(input_data: AddFileInput) -> str:
     """Add a new file to the code changes manager"""
-    logger.info(f"Tool add_file_tool: Adding file '{input_data.file_path}'")
+    logger.info(f"🔧 [Tool Call] add_file_tool: Adding file '{input_data.file_path}'")
+
+    # LOCAL-FIRST: Try local execution first
+    local_result = _execute_local_write(
+        "add_file",
+        {
+            "file_path": input_data.file_path,
+            "content": input_data.content,
+            "description": input_data.description,
+        },
+        input_data.file_path,
+    )
+
+    if local_result is not None:
+        # Local execution was attempted - return result (success or error)
+        return local_result
+
+    # No tunnel available - use cloud CodeChangesManager (for web UI users)
     try:
         manager = _get_code_changes_manager()
         success = manager.add_file(
@@ -2470,7 +3572,7 @@ def add_file_tool(input_data: AddFileInput) -> str:
 
         if success:
             summary = manager.get_summary()
-            return f"✅ Added file '{input_data.file_path}'\n\nTotal files in changes: {summary['total_files']}"
+            return f"✅ Added file '{input_data.file_path}' (cloud)\n\nTotal files in changes: {summary['total_files']}"
         else:
             return f"❌ File '{input_data.file_path}' already exists in changes. Use update_file to modify it."
     except Exception:
@@ -2482,7 +3584,26 @@ def add_file_tool(input_data: AddFileInput) -> str:
 
 def update_file_tool(input_data: UpdateFileInput) -> str:
     """Update a file in the code changes manager"""
-    logger.info(f"Tool update_file_tool: Updating file '{input_data.file_path}'")
+    logger.info(
+        f"🔧 [Tool Call] update_file_tool: Updating file '{input_data.file_path}'"
+    )
+
+    # LOCAL-FIRST: Try local execution first
+    local_result = _execute_local_write(
+        "update_file",
+        {
+            "file_path": input_data.file_path,
+            "content": input_data.content,
+            "description": input_data.description,
+        },
+        input_data.file_path,
+    )
+
+    if local_result is not None:
+        # Local execution was attempted - return result (success or error)
+        return local_result
+
+    # No tunnel available - use cloud CodeChangesManager (for web UI users)
     try:
         manager = _get_code_changes_manager()
         success = manager.update_file(
@@ -2494,7 +3615,7 @@ def update_file_tool(input_data: UpdateFileInput) -> str:
 
         if success:
             summary = manager.get_summary()
-            return f"✅ Updated file '{input_data.file_path}'\n\nTotal files in changes: {summary['total_files']}"
+            return f"✅ Updated file '{input_data.file_path}' (cloud)\n\nTotal files in changes: {summary['total_files']}"
         else:
             return f"❌ Error updating file '{input_data.file_path}'"
     except Exception:
@@ -2504,11 +3625,54 @@ def update_file_tool(input_data: UpdateFileInput) -> str:
         return "❌ Error updating file"
 
 
-def delete_file_tool(input_data: DeleteFileInput) -> str:
-    """Mark a file for deletion in the code changes manager"""
+def revert_file_tool(input_data: RevertFileInput) -> str:
+    """Revert a file to last saved or git HEAD (local mode only).
+
+    Only available when connected via the VS Code extension (LocalServer).
+    Restore from disk (saved) or from git HEAD; content is applied in the IDE.
+    """
     logger.info(
-        f"Tool delete_file_tool: Marking file '{input_data.file_path}' for deletion"
+        f"🔧 [Tool Call] revert_file_tool: Reverting '{input_data.file_path}' to {input_data.target or 'saved'}"
     )
+
+    # Local-only: revert is implemented by LocalServer (POST /api/files/revert)
+    data = {
+        "path": input_data.file_path,
+        "file_path": input_data.file_path,
+        "target": input_data.target or "saved",
+        "description": input_data.description,
+    }
+    local_result = _execute_local_write("revert_file", data, input_data.file_path)
+
+    if local_result is not None:
+        return local_result
+
+    return (
+        "❌ **Revert is only available in local mode.**\n\n"
+        "Connect via the VS Code extension (Potpie) so the agent can revert files "
+        "to the last saved version or to git HEAD directly in your IDE."
+    )
+
+
+def delete_file_tool(input_data: DeleteFileInput) -> str:
+    """Delete a file locally or mark for deletion in cloud"""
+    logger.info(f"Tool delete_file_tool: Deleting file '{input_data.file_path}'")
+
+    # LOCAL-FIRST: Try local execution first
+    local_result = _execute_local_write(
+        "delete_file",
+        {
+            "file_path": input_data.file_path,
+            "description": input_data.description,
+        },
+        input_data.file_path,
+    )
+
+    if local_result is not None:
+        # Local execution was attempted - return result (success or error)
+        return local_result
+
+    # No tunnel available - use cloud CodeChangesManager (for web UI users)
     try:
         manager = _get_code_changes_manager()
         success = manager.delete_file(
@@ -2519,7 +3683,7 @@ def delete_file_tool(input_data: DeleteFileInput) -> str:
 
         if success:
             summary = manager.get_summary()
-            return f"✅ Marked file '{input_data.file_path}' for deletion\n\nTotal files in changes: {summary['total_files']}"
+            return f"✅ Marked file '{input_data.file_path}' for deletion (cloud)\n\nTotal files in changes: {summary['total_files']}"
         else:
             return f"❌ Error deleting file '{input_data.file_path}'"
     except Exception:
@@ -2532,6 +3696,22 @@ def delete_file_tool(input_data: DeleteFileInput) -> str:
 def get_file_tool(input_data: GetFileInput) -> str:
     """Get comprehensive change information and metadata for a specific file"""
     logger.info(f"Tool get_file_tool: Retrieving file '{input_data.file_path}'")
+
+    # Check if we should route to LocalServer
+    if _should_route_to_local_server():
+        logger.info(f"🔧 [Tool Call] Routing get_file_tool to LocalServer")
+        result = _route_to_local_server(
+            "get_file",
+            {
+                "file_path": input_data.file_path,
+            },
+        )
+        if result:
+            return result
+        # LocalServer returned nothing (e.g. file not in workspace) - sync from local so fallback has fresh state
+        _sync_file_from_local_server_to_redis(input_data.file_path)
+
+    # Fall back to CodeChangesManager (or use manager after syncing from local)
     try:
         manager = _get_code_changes_manager()
         file_data = manager.get_file(input_data.file_path)
@@ -2756,9 +3936,29 @@ def get_changes_summary_tool() -> str:
 def update_file_lines_tool(input_data: UpdateFileLinesInput) -> str:
     """Update specific lines in a file using line numbers"""
     logger.info(
-        f"Tool update_file_lines_tool: Updating lines {input_data.start_line}-{input_data.end_line or input_data.start_line} "
+        f"🔧 [Tool Call] update_file_lines_tool: Updating lines {input_data.start_line}-{input_data.end_line or input_data.start_line} "
         f"in '{input_data.file_path}' (project_id={input_data.project_id})"
     )
+
+    # LOCAL-FIRST: Try local execution first
+    local_result = _execute_local_write(
+        "update_file_lines",
+        {
+            "file_path": input_data.file_path,
+            "start_line": input_data.start_line,
+            "end_line": input_data.end_line,
+            "new_content": input_data.new_content,
+            "description": input_data.description,
+            "project_id": input_data.project_id,
+        },
+        input_data.file_path,
+    )
+
+    if local_result is not None:
+        # Local execution was attempted - return result (success or error)
+        return local_result
+
+    # No tunnel available - use cloud CodeChangesManager (for web UI users)
     try:
         manager = _get_code_changes_manager()
         db = None
@@ -2809,11 +4009,28 @@ def update_file_lines_tool(input_data: UpdateFileLinesInput) -> str:
 
 
 def replace_in_file_tool(input_data: ReplaceInFileInput) -> str:
-    """Replace pattern matches in a file using regex"""
+    """Replace an exact literal string in a file (str_replace semantics)."""
     logger.info(
-        f"Tool replace_in_file_tool: Replacing pattern '{input_data.pattern}' in '{input_data.file_path}' "
+        f"🔧 [Tool Call] replace_in_file_tool: str_replace in '{input_data.file_path}' "
         f"(project_id={input_data.project_id})"
     )
+
+    # LOCAL-FIRST: Try local execution first
+    local_result = _execute_local_write(
+        "replace_in_file",
+        {
+            "file_path": input_data.file_path,
+            "old_str": input_data.old_str,
+            "new_str": input_data.new_str,
+            "description": input_data.description,
+        },
+        input_data.file_path,
+    )
+
+    if local_result is not None:
+        return local_result
+
+    # No tunnel available - use cloud CodeChangesManager (for web UI users)
     try:
         manager = _get_code_changes_manager()
         db = None
@@ -2827,40 +4044,54 @@ def replace_in_file_tool(input_data: ReplaceInFileInput) -> str:
             logger.debug("Tool replace_in_file_tool: Database session obtained")
         result = manager.replace_in_file(
             file_path=input_data.file_path,
-            pattern=input_data.pattern,
-            replacement=input_data.replacement,
-            count=input_data.count,
+            old_str=input_data.old_str,
+            new_str=input_data.new_str,
             description=input_data.description,
-            case_sensitive=input_data.case_sensitive,
-            word_boundary=input_data.word_boundary,
             project_id=input_data.project_id,
             db=db,
         )
 
         if result.get("success"):
-            locations_str = "\n".join(
-                [
-                    f"  Line {loc['line']}: {loc['match']}"
-                    for loc in result["match_locations"][:5]
-                ]
+            msg = (
+                f"✅ str_replace applied in '{input_data.file_path}' "
+                f"(match at line ~{result['match_line']})"
             )
-            if len(result["match_locations"]) > 5:
-                locations_str += (
-                    f"\n  ... and {len(result['match_locations']) - 5} more"
-                )
-
-            return (
-                f"✅ Replaced pattern '{input_data.pattern}' in '{input_data.file_path}'\n\n"
-                + f"Made {result['replacements_made']} replacement(s) out of {result['total_matches']} match(es)\n\n"
-                + f"Match locations:\n{locations_str}"
-            )
+            # Append diff and line stats from manager (cloud path has no LocalServer)
+            file_data = manager.get_file(input_data.file_path)
+            if (
+                file_data
+                and file_data.get("previous_content")
+                and file_data.get("content")
+            ):
+                try:
+                    diff = manager._create_unified_diff(
+                        file_data["previous_content"],
+                        file_data["content"],
+                        input_data.file_path,
+                        input_data.file_path,
+                        3,
+                    )
+                    if diff:
+                        msg += (
+                            "\n\n**Diff (uncommitted changes):**\n```diff\n"
+                            + diff
+                            + "\n```"
+                        )
+                    old_lines = len(file_data["previous_content"].splitlines())
+                    new_lines = len(file_data["content"].splitlines())
+                    msg += (
+                        f"\n\n**Line stats:** lines_added={max(0, new_lines - old_lines)}, "
+                        f"lines_deleted={max(0, old_lines - new_lines)}"
+                    )
+                except Exception:
+                    pass
+            return msg
         else:
-            return f"❌ Error replacing pattern: {result.get('error', 'Unknown error')}"
+            return f"❌ str_replace failed: {result.get('error', 'Unknown error')}"
     except Exception:
         logger.exception(
             "Tool replace_in_file_tool: Error replacing in file",
             file_path=input_data.file_path,
-            pattern=input_data.pattern,
         )
         return "❌ Error replacing in file"
 
@@ -2869,9 +4100,29 @@ def insert_lines_tool(input_data: InsertLinesInput) -> str:
     """Insert content at a specific line in a file"""
     position = "after" if input_data.insert_after else "before"
     logger.info(
-        f"Tool insert_lines_tool: Inserting lines {position} line {input_data.line_number} "
+        f"🔧 [Tool Call] insert_lines_tool: Inserting lines {position} line {input_data.line_number} "
         f"in '{input_data.file_path}' (project_id={input_data.project_id})"
     )
+
+    # LOCAL-FIRST: Try local execution first
+    local_result = _execute_local_write(
+        "insert_lines",
+        {
+            "file_path": input_data.file_path,
+            "line_number": input_data.line_number,
+            "content": input_data.content,
+            "description": input_data.description,
+            "insert_after": input_data.insert_after,
+            "project_id": input_data.project_id,
+        },
+        input_data.file_path,
+    )
+
+    if local_result is not None:
+        # Local execution was attempted - return result (success or error)
+        return local_result
+
+    # No tunnel available - use cloud CodeChangesManager (for web UI users)
     try:
         manager = _get_code_changes_manager()
         db = None
@@ -2927,6 +4178,25 @@ def delete_lines_tool(input_data: DeleteLinesInput) -> str:
         f"Tool delete_lines_tool: Deleting lines {input_data.start_line}-{input_data.end_line or input_data.start_line} "
         f"from '{input_data.file_path}' (project_id={input_data.project_id})"
     )
+
+    # LOCAL-FIRST: Try local execution first
+    local_result = _execute_local_write(
+        "delete_lines",
+        {
+            "file_path": input_data.file_path,
+            "start_line": input_data.start_line,
+            "end_line": input_data.end_line,
+            "description": input_data.description,
+            "project_id": input_data.project_id,
+        },
+        input_data.file_path,
+    )
+
+    if local_result is not None:
+        # Local execution was attempted - return result (success or error)
+        return local_result
+
+    # No tunnel available - use cloud CodeChangesManager (for web UI users)
     try:
         manager = _get_code_changes_manager()
         db = None
@@ -2967,8 +4237,41 @@ def delete_lines_tool(input_data: DeleteLinesInput) -> str:
 class ShowUpdatedFileInput(BaseModel):
     file_paths: Optional[List[str]] = Field(
         default=None,
-        description="Optional list of file paths to show. If not provided, shows all updated files.",
+        description=(
+            "List of file paths to display. Must be an array/list of strings, not a JSON string. "
+            "Examples: ['src/main.py'] or ['file1.py', 'file2.py']. "
+            "If not provided (null/empty), shows ALL changed files. "
+            "If a single file path string is provided, it will be automatically converted to a list."
+        ),
     )
+
+    @field_validator("file_paths", mode="before")
+    @classmethod
+    def coerce_file_paths_to_list(cls, v):
+        """Coerce JSON string to list if a string is accidentally passed.
+
+        This handles cases where the LLM passes a JSON string like '["file.py"]'
+        instead of an actual list. The validator parses the JSON string into a list.
+        """
+        if v is None:
+            return None
+        if isinstance(v, str):
+            # Try to parse as JSON if it looks like a JSON array
+            v_stripped = v.strip()
+            if v_stripped.startswith("[") and v_stripped.endswith("]"):
+                try:
+                    parsed = json.loads(v)
+                    if isinstance(parsed, list):
+                        return parsed
+                except (json.JSONDecodeError, ValueError):
+                    # If JSON parsing fails, treat as single file path
+                    pass
+            # If not a JSON array, treat as single file path
+            return [v]
+        if isinstance(v, list):
+            return v
+        # For any other type, try to convert to list
+        return [str(v)]
 
 
 class ShowDiffInput(BaseModel):
@@ -2991,11 +4294,31 @@ def show_updated_file_tool(input_data: ShowUpdatedFileInput) -> str:
     Display the complete updated content of one or more files. This tool streams the full file content
     directly into the agent response without going through the LLM, allowing users to see
     the complete edited files. Use this when the user asks to see the updated file content.
-    If no file_paths are provided, shows all changed files.
+
+    Args:
+        input_data: ShowUpdatedFileInput with optional file_paths list
+            - file_paths: List of file paths (e.g., ['src/main.py', 'src/utils.py'])
+            - If file_paths is None or empty, shows ALL changed files
+            - If a single file path string is provided, it will be converted to a list
     """
     logger.info(
         f"Tool show_updated_file_tool: Showing updated content for '{input_data.file_paths or 'all files'}'"
     )
+
+    # Check if we should route to LocalServer (for single file)
+    if input_data.file_paths and len(input_data.file_paths) == 1:
+        if _should_route_to_local_server():
+            logger.info(f"🔧 [Tool Call] Routing show_updated_file_tool to LocalServer")
+            result = _route_to_local_server(
+                "show_updated_file",
+                {
+                    "file_path": input_data.file_paths[0],
+                },
+            )
+            if result:
+                return result
+
+    # Fall back to CodeChangesManager
     try:
         manager = _get_code_changes_manager()
         summary = manager.get_summary()
@@ -3069,6 +4392,12 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
     to show all the code changes you've made. The content is automatically shown to the user
     without consuming LLM context.
     """
+    if _get_local_mode():
+        return (
+            "❌ **show_diff is not available in local mode.** "
+            "The VSCode Extension handles diff display directly. Use get_file_diff per file to verify changes."
+        )
+
     logger.info(
         f"Tool show_diff_tool: Displaying diff(s) (file_path: {input_data.file_path}, context_lines: {input_data.context_lines}, project_id: {input_data.project_id})"
     )
@@ -3277,8 +4606,56 @@ def get_file_diff_tool(input_data: GetFileDiffInput) -> str:
         f"Tool get_file_diff_tool: Getting diff for '{input_data.file_path}' (context_lines: {input_data.context_lines}, project_id: {input_data.project_id})"
     )
     try:
+        # In local mode, sync file from LocalServer to Redis so diff reflects current local content
+        if _should_route_to_local_server():
+            _sync_file_from_local_server_to_redis(input_data.file_path)
         manager = _get_code_changes_manager()
         file_data = manager.get_file(input_data.file_path)
+
+        # Local mode: if file is not in the manager, fetch from LocalServer and build diff directly
+        if not file_data and _should_route_to_local_server():
+            local_content = _fetch_file_content_from_local_server(input_data.file_path)
+            if local_content is None:
+                return (
+                    f"❌ Could not read '{input_data.file_path}' from local workspace. "
+                    "The file may not exist or the VS Code extension tunnel may be disconnected."
+                )
+            db = None
+            if input_data.project_id:
+                from app.core.database import get_db
+
+                db = next(get_db())
+            old_content = ""
+            if input_data.project_id and db:
+                repo_content = _fetch_repo_file_content_for_diff(
+                    input_data.project_id, input_data.file_path, db
+                )
+                if repo_content is not None:
+                    old_content = repo_content
+            if old_content:
+                diff_content = manager._create_unified_diff(
+                    old_content,
+                    local_content,
+                    input_data.file_path,
+                    input_data.file_path,
+                    input_data.context_lines,
+                )
+            else:
+                diff_content = manager._create_unified_diff(
+                    "",
+                    local_content,
+                    "/dev/null",
+                    input_data.file_path,
+                    input_data.context_lines,
+                )
+            result = (
+                f"📝 **Diff for {input_data.file_path}** (✏️ local file vs repo)\n\n"
+                f"**Source:** Local workspace (file not in session changes)\n\n"
+                "```diff\n"
+            )
+            result += diff_content
+            result += "\n```\n"
+            return result
 
         if not file_data:
             return f"❌ File '{input_data.file_path}' not found in changes"
@@ -3470,55 +4847,89 @@ class SimpleTool:
         self.args_schema = args_schema
 
 
+# Tools to exclude when local_mode=True (VS Code extension). Extension handles diff/export/display itself.
+CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL: frozenset[str] = frozenset(
+    {
+        "clear_file_from_changes",
+        "clear_all_changes",
+        "show_diff",  # Extension shows diffs
+        "export_changes",  # Extension applies changes directly
+        "show_updated_file",  # Extension shows file content in editor
+    }
+)
+
+# Tools to exclude when local_mode=False (web). Terminal tools require LocalServer tunnel (VS Code only).
+CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL: frozenset[str] = frozenset(
+    {
+        "execute_terminal_command",
+        "terminal_session_output",
+        "terminal_session_signal",
+    }
+)
+
+
 def create_code_changes_management_tools() -> List[SimpleTool]:
     """Create all code changes management tools"""
 
     tools = [
         SimpleTool(
             name="add_file_to_changes",
-            description="Add a new file to the code changes manager. Use this to track new files you're creating instead of including full code in your response. This reduces token usage in conversation history.",
+            description="Add a new file to the code changes manager. Use this to track new files you're creating instead of including full code in your response. This reduces token usage in conversation history. When using the VS Code extension, the response includes lines_changed, lines_added, lines_deleted; if these don't match what you intended, use get_file_from_changes to verify and fix.",
             func=add_file_tool,
             args_schema=AddFileInput,
         ),
         SimpleTool(
             name="update_file_in_changes",
-            description="Update an existing file in the code changes manager with full content. Use this only when you need to replace the entire file. For targeted changes, prefer update_file_lines, replace_in_file, insert_lines, or delete_lines.",
+            description="Update an existing file with full content. Use ONLY when you need to replace the entire file. NEVER put placeholders like '... rest of file unchanged ...' or '// ... rest unchanged ...' in content—they are written literally and delete the rest of the file; always provide the complete file content. DON'T use when targeted edits suffice—prefer update_file_lines, replace_in_file, insert_lines, or delete_lines. When using the VS Code extension, check lines_changed/added/deleted in the response; if they don't match your intent (e.g. many lines deleted unexpectedly), use get_file_from_changes to verify and fix or revert_file then re-apply.",
             func=update_file_tool,
             args_schema=UpdateFileInput,
         ),
         SimpleTool(
             name="update_file_lines",
-            description="Update specific lines in a file using line numbers. Use this for targeted line-by-line replacements. Lines are 1-indexed. Specify start_line and optionally end_line to replace a range. CRITICAL: You MUST preserve proper indentation - match the indentation of surrounding lines exactly. BEST PRACTICES: (1) Always fetch the file with line numbers first (get_file_from_changes with_line_numbers=true) to see exact indentation and current line numbers. (2) After updating, verify changes by fetching the updated lines to ensure indentation and content are correct. (3) For sequential operations: If you've performed insert_lines or delete_lines on this file, the line numbers have shifted - always fetch the current file state before using update_file_lines to get correct line numbers. (4) You MUST provide project_id from the conversation context to access existing file content from the repository.",
+            description="Update specific lines using line numbers (1-indexed). end_line is optional: omit or set to null to replace only the single line at start_line; provide end_line to replace the range start_line through end_line. DO: (1) Always provide project_id from conversation context. (2) Fetch file with get_file_from_changes with_line_numbers=true BEFORE this operation. (3) Verify changes after by refetching; check lines_changed/added/deleted in response to confirm success. (4) After insert/delete on same file, NEVER assume line numbers—refetch first. Match indentation of surrounding lines exactly. Check line stats in response to confirm the operation succeeded.",
             func=update_file_lines_tool,
             args_schema=UpdateFileLinesInput,
         ),
         SimpleTool(
             name="replace_in_file",
-            description="Replace pattern matches in a file using regex. Use this to replace text patterns throughout a file. Supports regex capturing groups (\\1, \\2, etc.) in replacement. Set count=0 to replace all occurrences. Use word_boundary=True to match whole words only (prevents matching partial strings within words). BEST PRACTICES: (1) After replacing, verify changes by fetching the file (get_file_from_changes) to confirm replacements were applied correctly. (2) For sequential operations: Always provide project_id from conversation context for proper content retrieval, especially when performing multiple operations on the same file. (3) Use word_boundary=True when you want to match whole words/phrases and avoid partial matches within variable or function names.",
+            description="Replace pattern matches using regex. Use word_boundary=True for safe replacements (prevents partial matches—e.g. replacing 'get_db' won't match 'get_database'). Supports capturing groups (\\1, \\2). Set count=0 for all occurrences. DO: (1) Provide project_id from conversation context. (2) Verify after with get_file_from_changes; check line stats in response. DON'T skip verification. When using the VS Code extension, if lines_changed/added/deleted don't match intent, use get_file_from_changes to verify and fix.",
             func=replace_in_file_tool,
             args_schema=ReplaceInFileInput,
         ),
         SimpleTool(
             name="insert_lines",
-            description="Insert content at a specific line number in a file. Use this to add new code at a specific location. Lines are 1-indexed. Set insert_after=False to insert before the specified line. CRITICAL: You MUST preserve proper indentation - match the indentation level of the line you're inserting after/before, or maintain consistent indentation for the code block you're adding. BEST PRACTICES: (1) Always fetch the file with line numbers first (get_file_from_changes with_line_numbers=true) to see exact indentation and current line numbers. (2) After inserting, verify changes by fetching the inserted lines in context to ensure indentation and placement are correct. (3) For sequential operations: If you've performed insert_lines or delete_lines on this file, line numbers have shifted - always fetch the current file state before subsequent operations. (4) You MUST provide project_id from the conversation context to access existing file content from the repository.",
+            description="Insert content at a specific line (1-indexed). Set insert_after=False to insert before. DO: (1) Always provide project_id from conversation context. (2) Fetch file with get_file_from_changes with_line_numbers=true BEFORE this operation. (3) Verify after by refetching; check lines_added in response to confirm success. (4) After insert/delete on same file, NEVER assume line numbers—refetch first. Match indentation of surrounding lines exactly.",
             func=insert_lines_tool,
             args_schema=InsertLinesInput,
         ),
         SimpleTool(
             name="delete_lines",
-            description="Delete specific lines from a file using line numbers. Use this to remove unwanted code. Lines are 1-indexed. Specify start_line and optionally end_line to delete a range. BEST PRACTICES: (1) Always fetch the file with line numbers first (get_file_from_changes with_line_numbers=true) to get correct line numbers, especially after previous insert/delete operations. (2) After deleting, verify changes by fetching the file to confirm lines were removed correctly. (3) For sequential operations: Line numbers shift after deletions - always fetch current file state before subsequent line-based operations. (4) Provide project_id from conversation context for proper content retrieval, especially when performing sequential operations on the same file.",
+            description="Delete specific lines (1-indexed). Specify start_line and optionally end_line. DO: (1) Always provide project_id from conversation context. (2) Fetch file with get_file_from_changes with_line_numbers=true BEFORE this operation. (3) Verify after by refetching; check lines_deleted in response to confirm success. (4) After insert/delete on same file, NEVER assume line numbers—refetch first. DON'T skip verification. If lines_deleted doesn't match your range, use get_file_from_changes to verify and fix.",
             func=delete_lines_tool,
             args_schema=DeleteLinesInput,
         ),
         SimpleTool(
             name="delete_file_in_changes",
-            description="Mark a file for deletion in the code changes manager. File content is preserved by default so you can reference it later.",
+            description="Mark a file for deletion in the code changes manager. File content is preserved by default so you can reference it later. When using the VS Code extension, the response includes lines_changed, lines_added, lines_deleted (lines_deleted = file line count before delete); if the file wasn't removed as expected, use get_file_from_changes to verify.",
             func=delete_file_tool,
             args_schema=DeleteFileInput,
         ),
         SimpleTool(
+            name="revert_file",
+            description=(
+                "Revert a file to last saved or git HEAD (local mode only). "
+                "Use when connected via the VS Code extension. "
+                "target='saved' (default): restore from disk (discard unsaved changes). "
+                "target='HEAD': restore from git HEAD (committed version), then save. "
+                "Content is applied directly in the IDE. "
+                "When using the extension, the response includes lines_changed, lines_added, lines_deleted; use these to confirm the revert applied correctly."
+            ),
+            func=revert_file_tool,
+            args_schema=RevertFileInput,
+        ),
+        SimpleTool(
             name="get_file_from_changes",
-            description="Get change information and content for a specific file from the code changes manager. BEST PRACTICES: (1) Use with_line_numbers=true before line-based operations (update_file_lines, insert_lines, delete_lines) to see exact line numbers and indentation. (2) Use after editing operations to verify changes were applied correctly. (3) Essential for sequential operations - fetch current state between operations to get correct line numbers after insertions/deletions.",
+            description="Get file content from the code changes manager. REQUIRED before any line-based operation (update_file_lines, insert_lines, delete_lines)—use with_line_numbers=true to see exact line numbers. Use after EACH edit to verify changes. Check line stats (lines_changed/added/deleted) in tool responses to confirm operations succeeded. After insert/delete, refetch before subsequent line operations—never assume line numbers. DON'T skip verification steps.",
             func=get_file_tool,
             args_schema=GetFileInput,
         ),
@@ -3560,19 +4971,30 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
         ),
         SimpleTool(
             name="show_updated_file",
-            description="Display the complete updated content of one or more files. This tool streams the full file content directly into the agent response without going through the LLM, allowing users to see the complete edited files. If no file_paths provided, shows ALL changed files. Use when the user asks to see updated files OR to showcase the final result of files you just edited. The content is automatically shown to the user without consuming LLM context.",
+            description=(
+                "Display the complete updated content of one or more files. This tool streams the full file content "
+                "directly into the agent response without going through the LLM, allowing users to see the complete edited files. "
+                "\n\n"
+                "**Parameters:**\n"
+                "- file_paths (optional): Array/list of file paths to show. Examples: ['src/main.py'] or ['file1.py', 'file2.py']. "
+                "MUST be a list/array, not a JSON string. If omitted or empty, shows ALL changed files.\n\n"
+                "**When to use:**\n"
+                "- When the user asks to see updated files\n"
+                "- To showcase the final result of files you just edited\n"
+                "- The content is automatically shown to the user without consuming LLM context"
+            ),
             func=show_updated_file_tool,
             args_schema=ShowUpdatedFileInput,
         ),
         SimpleTool(
             name="show_diff",
-            description="Display unified diffs showing changes between managed code and the actual codebase. This tool streams the formatted diffs directly into the agent response without going through the LLM, allowing users to see exactly what was changed. Use this at the end of your response to show all the code changes you've made. The content is automatically shown to the user without consuming LLM context. BEST PRACTICES: (1) Use project_id to fetch original content from repository for accurate diffs against the branch. (2) When changes are spread across many lines, increase context_lines parameter (default 3) to show more surrounding context in the diff.",
+            description="Display unified diffs of all changes. Use at the END of your response to show all code changes. Always provide project_id from conversation context for accurate diffs against the branch. Increase context_lines (default 3) when changes are spread across many lines. Streams directly to user without consuming LLM context. REQUIRED: Call this after completing all modifications to display the full diff.",
             func=show_diff_tool,
             args_schema=ShowDiffInput,
         ),
         SimpleTool(
             name="get_file_diff",
-            description="Get the diff for a specific file against the repository branch. Shows what has changed in this file compared to the original repository version. BEST PRACTICES: (1) Use project_id from conversation context to get accurate diffs against the branch. (2) When changes are spread across many lines, increase context_lines parameter (default 3) to show more surrounding context in the diff.",
+            description="Get diff for a specific file against the repository branch. Always provide project_id from conversation context. Increase context_lines (default 3) when changes span many lines. Use to verify what changed in a single file.",
             func=get_file_diff_tool,
             args_schema=GetFileDiffInput,
         ),
@@ -3581,6 +5003,80 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
             description="Get comprehensive metadata about all code changes in the current session. Shows complete state of all files being managed, including timestamps, descriptions, change types, and line counts. Use this to review your session progress and understand what files have been modified. This is your session state - all your work is tracked here.",
             func=get_comprehensive_metadata_tool,
             args_schema=GetComprehensiveMetadataInput,
+        ),
+        # Search tools - route to LocalServer for fast local search
+        # SimpleTool(
+        #     name="search_symbols",
+        #     description="Search for symbols (functions, classes, variables, etc.) in a specific file using LocalServer. Returns all symbols found in the file with their types, locations, and details. Use this to understand the structure of a file.",
+        #     func=search_symbols_tool,
+        #     args_schema=SearchSymbolsInput,
+        # ),
+        # SimpleTool(
+        #     name="search_workspace_symbols",
+        #     description="Search for symbols across the entire workspace using LocalServer. Finds all symbols matching a query (function names, class names, etc.) across all files. Use this to find where a symbol is defined or used.",
+        #     func=search_workspace_symbols_tool,
+        #     args_schema=SearchWorkspaceSymbolsInput,
+        # ),
+        # SimpleTool(
+        #     name="search_references",
+        #     description="Find all references to a symbol at a specific location using LocalServer. Use this to find where a function, class, or variable is used throughout the codebase. Requires file_path, line, and character position.",
+        #     func=search_references_tool,
+        #     args_schema=SearchReferencesInput,
+        # ),
+        # SimpleTool(
+        #     name="search_definitions",
+        #     description="Find the definition of a symbol at a specific location using LocalServer. Use this to jump to where a function, class, or variable is defined. Requires file_path, line, and character position.",
+        #     func=search_definitions_tool,
+        #     args_schema=SearchDefinitionsInput,
+        # ),
+        # SimpleTool(
+        #     name="search_files",
+        #     description="Search for files in the workspace using glob patterns. Use this to find files matching a pattern (e.g., '**/*.ts', 'src/**/*.py'). Returns file paths that match the pattern.",
+        #     func=search_files_tool,
+        #     args_schema=SearchFilesInput,
+        # ),
+        # SimpleTool(
+        #     name="search_text",
+        #     description="Search for text patterns across files using LocalServer (grep-like functionality). Supports regex patterns and case-sensitive search. Use this to find where specific text appears in the codebase.",
+        #     func=search_text_tool,
+        #     args_schema=SearchTextInput,
+        # ),
+        # SimpleTool(
+        #     name="search_code_structure",
+        #     description="Search for code structure (classes, functions, methods, etc.) using LocalServer. Can search in a specific file or across the workspace. Can filter by symbol kind (class, function, method, variable, etc.).",
+        #     func=search_code_structure_tool,
+        #     args_schema=SearchCodeStructureInput,
+        # ),
+        # SimpleTool(
+        #     name="search_bash",
+        #     description="Execute bash commands locally via LocalServer (grep, find, awk, etc.). This tool allows you to run read-only bash commands directly on the local workspace. Use this for fast text search with grep, file finding with find, or text processing with awk/sed. Commands are executed in the workspace directory with security restrictions. Allowed: grep, find, awk, sed, cat, head, tail, ls, wc, sort, uniq, etc. Blocked: rm, mv, cp, chmod, git, sudo, and any write operations.",
+        #     func=search_bash_tool,
+        #     args_schema=SearchBashInput,
+        # ),
+        # SimpleTool(
+        #     name="semantic_search",
+        #     description="Search codebase using semantic understanding via knowledge graph embeddings. This tool uses natural language queries to find code that semantically matches your intent, even if it doesn't contain exact keywords. Perfect for finding code by meaning rather than exact text. Examples: 'authentication code' finds login, auth, token validation; 'error handling' finds try-catch, error handlers; 'database queries' finds SQL, ORM calls. Results are ranked by semantic similarity. Requires the project to be parsed and knowledge graph to be available. Works via LocalServer when tunnel is active, falls back to direct backend call.",
+        #     func=search_semantic_tool,
+        #     args_schema=SearchSemanticInput,
+        # ),
+        # Terminal command tools - execute commands on local machine via tunnel
+        SimpleTool(
+            name="execute_terminal_command",
+            description="Execute a shell command on the user's local machine via LocalServer tunnel. Use for running tests, builds, scripts, git commands, npm/pip commands, etc. Commands run directly on the local machine within the workspace directory with security restrictions. Supports both sync (immediate results) and async (long-running) modes. Commands are validated - dangerous commands are blocked by default. Examples: 'npm test', 'git status', 'python script.py', 'npm run dev' (async mode).",
+            func=execute_terminal_command_tool,
+            args_schema=ExecuteTerminalCommandInput,
+        ),
+        SimpleTool(
+            name="terminal_session_output",
+            description="Get output from an async terminal session. Use this to poll for output from a long-running command that was started with execute_terminal_command in async mode. Returns incremental output from the specified offset, allowing you to stream output from long-running processes. Use the returned offset for subsequent calls to get new output.",
+            func=terminal_session_output_tool,
+            args_schema=TerminalSessionOutputInput,
+        ),
+        SimpleTool(
+            name="terminal_session_signal",
+            description="Send a signal to a terminal session (e.g., SIGINT to stop a process). Use this to control long-running processes started in async mode. Common signals: SIGINT (Ctrl+C, default), SIGTERM (graceful shutdown), SIGKILL (force kill). Example: Stop a dev server by sending SIGINT to its session.",
+            func=terminal_session_signal_tool,
+            args_schema=TerminalSessionSignalInput,
         ),
     ]
 

@@ -561,7 +561,9 @@ class DelegationStreamer:
         """Stream model request with per-event timeout."""
 
         try:
-            # Timeout for entering the stream context
+            # Timeout for entering the stream context.
+            # In Celery prefork workers, BaseException (e.g. SystemExit) can be raised
+            # here (e.g. under debugpy); we log it for diagnostics then re-raise.
             try:
                 stream_ctx = node.stream(run.ctx)
                 request_stream = await asyncio.wait_for(
@@ -571,6 +573,25 @@ class DelegationStreamer:
                 logger.error(f"[SUBAGENT] Node #{node_count}: timeout entering stream")
                 yield ChatAgentResponse(
                     response="\n*Model request timeout*\n",
+                    tool_calls=[],
+                    citations=[],
+                )
+                return
+            except (
+                BaseException
+            ) as be:  # CancelledError, SystemExit, KeyboardInterrupt, etc.
+                # Yield error and return instead of raising so the subagent stream completes
+                # normally; delegate_function then gets a result and the supervisor stream
+                # is not left waiting (avoids "stream iteration cancelled" / _next_node errors).
+                logger.warning(
+                    "[SUBAGENT] Subagent model_request raised %s (exitcode=%s). "
+                    "Yielding error and completing stream so delegation can finish.",
+                    type(be).__name__,
+                    getattr(be, "code", None),
+                    exc_info=True,
+                )
+                yield ChatAgentResponse(
+                    response="\n*Subagent model request was interrupted or failed. Please try again.*\n",
                     tool_calls=[],
                     citations=[],
                 )

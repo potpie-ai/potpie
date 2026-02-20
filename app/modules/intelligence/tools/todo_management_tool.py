@@ -1,475 +1,383 @@
 """
-Todo Management Tool for Supervisor Agent State Management
+Todo management using pydantic-ai-todo.
 
-This tool allows the supervisor agent to create, update, and track todo items
-for long-running tasks, providing state management across multiple delegations.
+Uses https://github.com/vstorm-co/pydantic-ai-todo for task planning and tracking:
+read_todos, write_todos, add_todo, update_todo_status, remove_todo, and with
+enable_subtasks: add_subtask, set_dependency, get_available_tasks.
 """
 
-import uuid
 from contextvars import ContextVar
-from datetime import datetime
-from typing import Dict, List, Optional, Any
-from enum import Enum
-from dataclasses import dataclass, asdict
+from typing import Any, Annotated, List, Optional
 
-# Removed langchain_core dependency - using simple tool structure instead
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, WithJsonSchema
 
-
-class TodoStatus(str, Enum):
-    """Status of a todo item"""
-
-    PENDING = "pending"
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
-    CANCELLED = "cancelled"
-    BLOCKED = "blocked"
+from pydantic_ai_todo import (
+    TodoStorage,
+    create_todo_toolset,
+)
+from pydantic_ai_todo.types import Todo, TodoItem
 
 
-@dataclass
-class TodoItem:
-    """A todo item with metadata"""
-
-    id: str
-    title: str
-    description: str
-    status: TodoStatus
-    created_at: str
-    updated_at: str
-    assigned_agent: Optional[str] = None
-    priority: str = "medium"  # low, medium, high, critical
-    dependencies: List[str] = None  # List of todo IDs this depends on
-    notes: List[str] = None  # Progress notes
-
-    def __post_init__(self):
-        if self.dependencies is None:
-            self.dependencies = []
-        if self.notes is None:
-            self.notes = []
-
-
-class TodoManager:
-    """Manages todo items for the supervisor agent"""
-
-    def __init__(self):
-        self.todos: Dict[str, TodoItem] = {}
-        self.session_id = str(uuid.uuid4())[:8]
-
-    def create_todo(
-        self,
-        title: str,
-        description: str,
-        priority: str = "medium",
-        assigned_agent: Optional[str] = None,
-        dependencies: Optional[List[str]] = None,
-    ) -> str:
-        """Create a new todo item"""
-        todo_id = str(uuid.uuid4())[:8]
-        now = datetime.now().isoformat()
-
-        todo = TodoItem(
-            id=todo_id,
-            title=title,
-            description=description,
-            status=TodoStatus.PENDING,
-            created_at=now,
-            updated_at=now,
-            assigned_agent=assigned_agent,
-            priority=priority,
-            dependencies=dependencies or [],
-        )
-
-        self.todos[todo_id] = todo
-        return todo_id
-
-    def update_todo_status(
-        self, todo_id: str, status: TodoStatus, note: Optional[str] = None
-    ) -> bool:
-        """Update the status of a todo item"""
-        if todo_id not in self.todos:
-            return False
-
-        self.todos[todo_id].status = status
-        self.todos[todo_id].updated_at = datetime.now().isoformat()
-
-        if note:
-            self.todos[todo_id].notes.append(f"{datetime.now().isoformat()}: {note}")
-
-        return True
-
-    def add_note(self, todo_id: str, note: str) -> bool:
-        """Add a progress note to a todo item"""
-        if todo_id not in self.todos:
-            return False
-
-        self.todos[todo_id].notes.append(f"{datetime.now().isoformat()}: {note}")
-        self.todos[todo_id].updated_at = datetime.now().isoformat()
-        return True
-
-    def get_todo(self, todo_id: str) -> Optional[Dict[str, Any]]:
-        """Get a specific todo item"""
-        if todo_id not in self.todos:
-            return None
-        return asdict(self.todos[todo_id])
-
-    def list_todos(
-        self, status_filter: Optional[TodoStatus] = None
-    ) -> List[Dict[str, Any]]:
-        """List all todos, optionally filtered by status"""
-        todos = list(self.todos.values())
-
-        if status_filter:
-            todos = [t for t in todos if t.status == status_filter]
-
-        # Sort by priority and creation time
-        priority_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-        todos.sort(key=lambda x: (priority_order.get(x.priority, 2), x.created_at))
-
-        return [asdict(todo) for todo in todos]
-
-    def get_summary(self) -> Dict[str, Any]:
-        """Get a summary of all todos"""
-        status_counts = {}
-        for status in TodoStatus:
-            status_counts[status.value] = len(
-                [t for t in self.todos.values() if t.status == status]
-            )
-
-        return {
-            "session_id": self.session_id,
-            "total_todos": len(self.todos),
-            "status_counts": status_counts,
-            "pending_todos": [
-                asdict(t) for t in self.todos.values() if t.status == TodoStatus.PENDING
-            ],
-            "in_progress_todos": [
-                asdict(t)
-                for t in self.todos.values()
-                if t.status == TodoStatus.IN_PROGRESS
-            ],
-            "completed_todos": [
-                asdict(t)
-                for t in self.todos.values()
-                if t.status == TodoStatus.COMPLETED
-            ],
-        }
-
-
-# Context variable for todo manager - provides isolation per execution context
-# This ensures parallel agent runs have separate, isolated state
-_todo_manager_ctx: ContextVar[Optional[TodoManager]] = ContextVar(
-    "_todo_manager_ctx", default=None
+# Context variable for todo storage - provides isolation per execution context
+_todo_storage_ctx: ContextVar[Optional[TodoStorage]] = ContextVar(
+    "_todo_storage_ctx", default=None
 )
 
 
-def _get_todo_manager() -> TodoManager:
-    """Get the current todo manager for this execution context, creating a new one if needed.
-
-    Uses ContextVar to ensure each async execution context (agent run) has its own isolated instance.
-    This allows parallel agent runs to have separate state without interference.
-    """
-    manager = _todo_manager_ctx.get()
-    if manager is None:
-        manager = TodoManager()
-        _todo_manager_ctx.set(manager)
-    return manager
+def get_todo_storage() -> TodoStorage:
+    """Get the current todo storage for this execution context, creating one if needed."""
+    storage = _todo_storage_ctx.get()
+    if storage is None:
+        storage = TodoStorage()
+        _todo_storage_ctx.set(storage)
+    return storage
 
 
 def _reset_todo_manager() -> None:
-    """Reset the todo manager for a new agent run - creates a completely fresh instance in this execution context.
+    """Reset the todo list for a new agent run (clear all todos in current context)."""
+    get_todo_storage().todos.clear()
 
-    This ensures each agent run starts with a clean state, isolated from other parallel runs.
+
+def create_todo_management_toolset():
+    """Create a pydantic-ai-todo toolset for use with Agent(toolsets=[...]).
+
+    Uses the current context storage so that init_managers (which clears storage)
+    keeps the same storage instance and the cached supervisor agent's toolset
+    continues to work with cleared state.
     """
-    new_manager = TodoManager()
-    _todo_manager_ctx.set(new_manager)
+    return create_todo_toolset(
+        storage=get_todo_storage(),
+        enable_subtasks=True,
+    )
+
+
+# --- Sync wrappers for ToolService (same behavior as library's sync toolset) ---
+
+
+def _get_todo_by_id(todo_id: str) -> Optional[Todo]:
+    storage = get_todo_storage()
+    for todo in storage.todos:
+        if todo.id == todo_id:
+            return todo
+    return None
+
+
+def _get_status_icon(status: str) -> str:
+    icons = {
+        "pending": "[ ]",
+        "in_progress": "[*]",
+        "completed": "[x]",
+        "blocked": "[!]",
+    }
+    return icons.get(status, "[ ]")
+
+
+def _is_blocked(todo: Todo) -> bool:
+    for dep_id in todo.depends_on:
+        dep = _get_todo_by_id(dep_id)
+        if dep and dep.status != "completed":
+            return True
+    return False
 
 
 def _format_current_todo_list() -> str:
-    """Helper function to format the current todo list for display"""
-    todo_manager = _get_todo_manager()
-    current_todos = todo_manager.list_todos()
-
-    result = "📋 **Current Todo List:**\n"
-    if not current_todos:
-        result += "No todos remaining.\n"
-    else:
-        status_emoji = {
-            "pending": "⏳",
-            "in_progress": "🔄",
-            "completed": "✅",
-            "cancelled": "❌",
-            "blocked": "🚫",
-        }
-        priority_emoji = {"critical": "🔥", "high": "⚡", "medium": "📝", "low": "💤"}
-
-        for todo in current_todos:
-            emoji = status_emoji.get(todo["status"], "📝")
-            p_emoji = priority_emoji.get(todo["priority"], "📝")
-            result += f"{emoji} {p_emoji} **{todo['title']}** (ID: {todo['id']}) - {todo['status']}\n"
-
-    return result
+    """Format the current todo list for display (used by tool_helpers for streaming)."""
+    storage = get_todo_storage()
+    if not storage.todos:
+        return "📋 **Current Todo List:**\nNo todos remaining.\n"
+    lines = ["📋 **Current Todo List:**"]
+    for i, todo in enumerate(storage.todos, 1):
+        icon = _get_status_icon(todo.status)
+        lines.append(f"{i}. {icon} **{todo.content}** (ID: {todo.id}) - {todo.status}")
+    return "\n".join(lines) + "\n"
 
 
-# Pydantic models for tool inputs
-class CreateTodoInput(BaseModel):
-    title: str = Field(description="Short title for the todo item")
-    description: str = Field(description="Detailed description of the task")
-    priority: str = Field(
-        default="medium", description="Priority level: low, medium, high, critical"
+# Pydantic input models for tool arguments (ToolService tools use these)
+class AddTodoInput(BaseModel):
+    content: str = Field(description="The task description in imperative form")
+    active_form: str = Field(
+        description="Present continuous form shown during execution (e.g., 'Implementing feature X')"
     )
-    assigned_agent: Optional[str] = Field(
-        default=None,
-        description="Agent type this task will be delegated to (e.g., 'think_execute')",
-    )
-    dependencies: Optional[List[str]] = Field(
-        default=None,
-        description="List of todo IDs (strings) that must be completed before this task. Must be an array/list, not a string. Example: ['abc123', 'def456'] or [] for no dependencies. Leave as null/empty if no dependencies.",
-    )
-
-    @field_validator("dependencies", mode="before")
-    @classmethod
-    def coerce_dependencies_to_list(cls, v):
-        """Coerce string to list if a string is accidentally passed"""
-        if v is None:
-            return None
-        if isinstance(v, str):
-            # If a string is passed, treat it as a single-item list
-            # This handles cases where the model passes a string instead of a list
-            return [v]
-        if isinstance(v, list):
-            return v
-        # For any other type, try to convert to list
-        return [str(v)]
 
 
 class UpdateTodoStatusInput(BaseModel):
-    todo_id: str = Field(description="ID of the todo item to update")
+    todo_id: str = Field(description="ID of the todo to update")
     status: str = Field(
-        description="New status: pending, in_progress, completed, cancelled, blocked"
-    )
-    note: Optional[str] = Field(default=None, description="Optional progress note")
-
-
-class AddTodoNoteInput(BaseModel):
-    todo_id: str = Field(description="ID of the todo item")
-    note: str = Field(description="Progress note to add")
-
-
-class GetTodoInput(BaseModel):
-    todo_id: str = Field(description="ID of the todo item to retrieve")
-
-
-class ListTodosInput(BaseModel):
-    status_filter: Optional[str] = Field(
-        default=None,
-        description="Filter by status: pending, in_progress, completed, cancelled, blocked",
+        description="New status: pending, in_progress, completed, or blocked"
     )
 
 
-def create_todo_tool(input_data: CreateTodoInput) -> str:
-    """Create a new todo item for task tracking"""
-    try:
-        todo_manager = _get_todo_manager()
-        todo_id = todo_manager.create_todo(
-            title=input_data.title,
-            description=input_data.description,
-            priority=input_data.priority,
-            assigned_agent=input_data.assigned_agent,
-            dependencies=input_data.dependencies,
-        )
-
-        result = f"✅ Created todo item '{input_data.title}' with ID: {todo_id}\n\n"
-        result += _format_current_todo_list()
-        return result
-    except Exception as e:
-        return f"❌ Error creating todo: {str(e)}"
+class RemoveTodoInput(BaseModel):
+    todo_id: str = Field(description="ID of the todo to remove")
 
 
-def update_todo_status_tool(input_data: UpdateTodoStatusInput) -> str:
-    """Update the status of a todo item"""
-    try:
-        # Validate status
-        try:
-            status = TodoStatus(input_data.status.lower())
-        except ValueError:
-            return f"❌ Invalid status '{input_data.status}'. Valid statuses: {', '.join([s.value for s in TodoStatus])}"
-
-        todo_manager = _get_todo_manager()
-        success = todo_manager.update_todo_status(
-            todo_id=input_data.todo_id, status=status, note=input_data.note
-        )
-
-        if success:
-            status_emoji = {
-                TodoStatus.PENDING: "⏳",
-                TodoStatus.IN_PROGRESS: "🔄",
-                TodoStatus.COMPLETED: "✅",
-                TodoStatus.CANCELLED: "❌",
-                TodoStatus.BLOCKED: "🚫",
-            }
-            emoji = status_emoji.get(status, "📝")
-
-            result = f"{emoji} Updated todo {input_data.todo_id} to status: {status.value}\n\n"
-            result += _format_current_todo_list()
-            return result
-        else:
-            return f"❌ Todo item {input_data.todo_id} not found"
-    except Exception as e:
-        return f"❌ Error updating todo: {str(e)}"
+class AddSubtaskInput(BaseModel):
+    parent_id: str = Field(description="ID of the parent todo")
+    content: str = Field(description="The subtask description in imperative form")
+    active_form: str = Field(
+        description="Present continuous form (e.g., 'Implementing sub-step')"
+    )
 
 
-def add_todo_note_tool(input_data: AddTodoNoteInput) -> str:
-    """Add a progress note to a todo item"""
-    try:
-        todo_manager = _get_todo_manager()
-        success = todo_manager.add_note(input_data.todo_id, input_data.note)
-
-        if success:
-            result = f"📝 Added note to todo {input_data.todo_id}\n\n"
-            result += _format_current_todo_list()
-            return result
-        else:
-            return f"❌ Todo item {input_data.todo_id} not found"
-    except Exception as e:
-        return f"❌ Error adding note: {str(e)}"
+class SetDependencyInput(BaseModel):
+    todo_id: str = Field(description="ID of the todo that depends on another")
+    depends_on_id: str = Field(
+        description="ID of the todo that must be completed first"
+    )
 
 
-def get_todo_tool(input_data: GetTodoInput) -> str:
-    """Get details of a specific todo item"""
-    try:
-        todo_manager = _get_todo_manager()
-        todo = todo_manager.get_todo(input_data.todo_id)
-
-        if todo:
-            status_emoji = {
-                "pending": "⏳",
-                "in_progress": "🔄",
-                "completed": "✅",
-                "cancelled": "❌",
-                "blocked": "🚫",
-            }
-            emoji = status_emoji.get(todo["status"], "📝")
-
-            result = f"{emoji} **{todo['title']}** (ID: {todo['id']})\n"
-            result += f"Status: {todo['status']}\n"
-            result += f"Priority: {todo['priority']}\n"
-            result += f"Description: {todo['description']}\n"
-
-            if todo["assigned_agent"]:
-                result += f"Assigned to: {todo['assigned_agent']}\n"
-
-            if todo["dependencies"]:
-                result += f"Dependencies: {', '.join(todo['dependencies'])}\n"
-
-            if todo["notes"]:
-                result += "Notes:\n"
-                for note in todo["notes"][-3:]:  # Show last 3 notes
-                    result += f"  - {note}\n"
-
-            return result
-        else:
-            return f"❌ Todo item {input_data.todo_id} not found"
-    except Exception as e:
-        return f"❌ Error retrieving todo: {str(e)}"
+class ReadTodosInput(BaseModel):
+    hierarchical: bool = Field(
+        default=False,
+        description="If True, display todos as a tree with subtasks indented",
+    )
 
 
-def list_todos_tool(input_data: ListTodosInput) -> str:
-    """List all todo items, optionally filtered by status"""
-    try:
-        status_filter = None
-        if input_data.status_filter:
-            try:
-                status_filter = TodoStatus(input_data.status_filter.lower())
-            except ValueError:
-                return f"❌ Invalid status filter '{input_data.status_filter}'. Valid statuses: {', '.join([s.value for s in TodoStatus])}"
+# Inline JSON schema for write_todos items so APIs that don't resolve $ref get an
+# explicit "type": "object" at items (required by e.g. OpenAI-compatible function calling).
+_WRITE_TODOS_ITEMS_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "id": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": None},
+        "content": {
+            "type": "string",
+            "description": "The task description in imperative form (e.g., 'Implement feature X')",
+        },
+        "status": {
+            "type": "string",
+            "enum": ["pending", "in_progress", "completed", "blocked"],
+            "description": "Task status: pending, in_progress, completed, or blocked",
+        },
+        "active_form": {
+            "type": "string",
+            "description": "Present continuous form during execution (e.g., 'Implementing feature X')",
+        },
+        "parent_id": {
+            "anyOf": [{"type": "string"}, {"type": "null"}],
+            "default": None,
+            "description": "ID of parent todo for subtask hierarchy. None for root tasks.",
+        },
+        "depends_on": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "List of todo IDs that must be completed before this task.",
+        },
+    },
+    "required": ["content", "status", "active_form"],
+}
 
-        todo_manager = _get_todo_manager()
-        todos = todo_manager.list_todos(status_filter)
 
-        if not todos:
-            filter_text = (
-                f" with status '{status_filter.value}'" if status_filter else ""
+class WriteTodosInput(BaseModel):
+    """Input for bulk write_todos. Replaces the entire list with the given items."""
+
+    todos: Annotated[
+        List[TodoItem],
+        Field(
+            description="List of todo items (each with content, status, active_form; optional id, parent_id, depends_on)"
+        ),
+        WithJsonSchema({"type": "array", "items": _WRITE_TODOS_ITEMS_JSON_SCHEMA}),
+    ]
+
+
+def read_todos_tool(hierarchical: bool = False) -> str:
+    """List all tasks (supports hierarchical view)."""
+    storage = get_todo_storage()
+    if not storage.todos:
+        return "No todos in the list. Use write_todos or add_todo to create tasks."
+    if hierarchical:
+        return _format_hierarchical(storage.todos)
+    lines = ["Current todos:"]
+    for i, todo in enumerate(storage.todos, 1):
+        icon = _get_status_icon(todo.status)
+        lines.append(f"{i}. {icon} [{todo.id}] {todo.content}")
+        if todo.parent_id:
+            lines.append(f" (subtask of: {todo.parent_id})")
+        if todo.depends_on:
+            lines.append(f" (depends on: {', '.join(todo.depends_on)})")
+    counts = {"pending": 0, "in_progress": 0, "completed": 0, "blocked": 0}
+    for todo in storage.todos:
+        counts[todo.status] = counts.get(todo.status, 0) + 1
+    summary = f"{counts['completed']} completed"
+    if counts.get("blocked", 0) > 0:
+        summary += f", {counts['blocked']} blocked"
+    summary += f", {counts['in_progress']} in progress, {counts['pending']} pending"
+    return "\n".join(lines) + f"\n\nSummary: {summary}"
+
+
+def _format_hierarchical(todos: List[Todo]) -> str:
+    children_map: dict[Optional[str], List[Todo]] = {None: []}
+    for todo in todos:
+        pid = todo.parent_id
+        if pid not in children_map:
+            children_map[pid] = []
+        children_map[pid].append(todo)
+    lines = ["Current todos (hierarchical view):"]
+    counter = [0]
+
+    def render(parent_id: Optional[str], depth: int) -> None:
+        for todo in children_map.get(parent_id, []):
+            counter[0] += 1
+            icon = _get_status_icon(todo.status)
+            lines.append(
+                " " * depth + f"{counter[0]}. {icon} [{todo.id}] {todo.content}"
             )
-            return f"📋 No todo items found{filter_text}"
+            if todo.depends_on:
+                lines.append(" " * depth + f" depends on: {', '.join(todo.depends_on)}")
+            render(todo.id, depth + 1)
 
-        result = f"📋 **Todo List** ({len(todos)} items)\n\n"
+    render(None, 0)
+    return "\n".join(lines)
 
-        status_emoji = {
-            "pending": "⏳",
-            "in_progress": "🔄",
-            "completed": "✅",
-            "cancelled": "❌",
-            "blocked": "🚫",
+
+def write_todos_tool(todos: List[Any]) -> str:
+    """Bulk write/update tasks."""
+    storage = get_todo_storage()
+    new_todos = []
+    for t in todos:
+        if isinstance(t, dict):
+            t = TodoItem(**t)
+        elif not isinstance(t, TodoItem):
+            t = TodoItem(**dict(t))
+        kwargs: dict[str, Any] = {
+            "content": t.content,
+            "status": t.status,
+            "active_form": t.active_form,
         }
-
-        for todo in todos:
-            emoji = status_emoji.get(todo["status"], "📝")
-            priority_emoji = {
-                "critical": "🔥",
-                "high": "⚡",
-                "medium": "📝",
-                "low": "💤",
-            }
-            p_emoji = priority_emoji.get(todo["priority"], "📝")
-
-            result += f"{emoji} {p_emoji} **{todo['title']}** (ID: {todo['id']})\n"
-            result += f"   Status: {todo['status']} | Priority: {todo['priority']}\n"
-
-            if todo["assigned_agent"]:
-                result += f"   Assigned: {todo['assigned_agent']}\n"
-
-            result += f"   {todo['description'][:100]}{'...' if len(todo['description']) > 100 else ''}\n\n"
-
-        return result
-    except Exception as e:
-        return f"❌ Error listing todos: {str(e)}"
+        if t.id is not None:
+            kwargs["id"] = t.id
+        kwargs["parent_id"] = t.parent_id
+        kwargs["depends_on"] = t.depends_on or []
+        new_todos.append(Todo(**kwargs))
+    storage.todos = new_todos
+    counts = {"pending": 0, "in_progress": 0, "completed": 0, "blocked": 0}
+    for todo in storage.todos:
+        counts[todo.status] = counts.get(todo.status, 0) + 1
+    parts = [f"{counts['completed']} completed"]
+    if counts.get("blocked", 0) > 0:
+        parts.append(f"{counts['blocked']} blocked")
+    parts.append(f"{counts['in_progress']} in progress")
+    parts.append(f"{counts['pending']} pending")
+    return f"Updated {len(todos)} todos: {', '.join(parts)}"
 
 
-def get_todo_summary_tool() -> str:
-    """Get a summary of all todo items"""
-    try:
-        todo_manager = _get_todo_manager()
-        summary = todo_manager.get_summary()
-
-        result = f"📊 **Todo Summary** (Session: {summary['session_id']})\n\n"
-        result += f"Total todos: {summary['total_todos']}\n\n"
-
-        status_emoji = {
-            "pending": "⏳",
-            "in_progress": "🔄",
-            "completed": "✅",
-            "cancelled": "❌",
-            "blocked": "🚫",
-        }
-
-        result += "**Status Breakdown:**\n"
-        for status, count in summary["status_counts"].items():
-            emoji = status_emoji.get(status, "📝")
-            result += f"{emoji} {status.title()}: {count}\n"
-
-        # Show active todos
-        if summary["in_progress_todos"]:
-            result += f"\n**🔄 Currently In Progress ({len(summary['in_progress_todos'])}):**\n"
-            for todo in summary["in_progress_todos"]:
-                result += f"- {todo['title']} (ID: {todo['id']})\n"
-
-        if summary["pending_todos"]:
-            result += f"\n**⏳ Pending ({len(summary['pending_todos'])}):**\n"
-            for todo in summary["pending_todos"][:5]:  # Show first 5
-                result += f"- {todo['title']} (ID: {todo['id']})\n"
-            if len(summary["pending_todos"]) > 5:
-                result += f"... and {len(summary['pending_todos']) - 5} more\n"
-
-        return result
-    except Exception as e:
-        return f"❌ Error getting summary: {str(e)}"
+def add_todo_tool(content: str, active_form: str) -> str:
+    """Add a single task."""
+    storage = get_todo_storage()
+    new_todo = Todo(
+        content=content,
+        status="pending",
+        active_form=active_form,
+    )
+    storage.todos = [*storage.todos, new_todo]
+    result = f"Added todo '{content}' with ID: {new_todo.id}\n\n"
+    result += _format_current_todo_list()
+    return result
 
 
-# Create the structured tools
+def update_todo_status_tool(todo_id: str, status: str) -> str:
+    """Update task status by ID."""
+    valid = {"pending", "in_progress", "completed", "blocked"}
+    if status not in valid:
+        return f"Invalid status '{status}'. Must be one of: {', '.join(sorted(valid))}"
+    for todo in get_todo_storage().todos:
+        if todo.id == todo_id:
+            if status == "in_progress" and _is_blocked(todo):
+                return f"Cannot start '{todo.content}' - it has incomplete dependencies"
+            todo.status = status  # type: ignore[assignment]
+            result = f"Updated todo '{todo.content}' status to '{status}'\n\n"
+            result += _format_current_todo_list()
+            return result
+    return f"Todo with ID '{todo_id}' not found"
+
+
+def remove_todo_tool(todo_id: str) -> str:
+    """Delete task by ID."""
+    storage = get_todo_storage()
+    for i, todo in enumerate(storage.todos):
+        if todo.id == todo_id:
+            removed = storage.todos.pop(i)
+            return f"Removed todo '{removed.content}' (ID: {todo_id})"
+    return f"Todo with ID '{todo_id}' not found"
+
+
+def add_subtask_tool(parent_id: str, content: str, active_form: str) -> str:
+    """Create child task."""
+    parent = _get_todo_by_id(parent_id)
+    if not parent:
+        return f"Parent todo with ID '{parent_id}' not found"
+    new_todo = Todo(
+        content=content,
+        status="pending",
+        active_form=active_form,
+        parent_id=parent_id,
+    )
+    get_todo_storage().todos = [*get_todo_storage().todos, new_todo]
+    return f"Added subtask '{content}' with ID: {new_todo.id} (parent: {parent_id})"
+
+
+def _has_cycle(todo_id: str, depends_on_id: str) -> bool:
+    visited: set[str] = set()
+
+    def visit(current_id: str) -> bool:
+        if current_id == todo_id:
+            return True
+        if current_id in visited:
+            return False
+        visited.add(current_id)
+        todo = _get_todo_by_id(current_id)
+        if todo:
+            for dep_id in todo.depends_on:
+                if visit(dep_id):
+                    return True
+        return False
+
+    return visit(depends_on_id)
+
+
+def set_dependency_tool(todo_id: str, depends_on_id: str) -> str:
+    """Link tasks with dependency."""
+    todo = _get_todo_by_id(todo_id)
+    if not todo:
+        return f"Todo with ID '{todo_id}' not found"
+    dependency = _get_todo_by_id(depends_on_id)
+    if not dependency:
+        return f"Dependency todo with ID '{depends_on_id}' not found"
+    if todo_id == depends_on_id:
+        return "A todo cannot depend on itself"
+    if _has_cycle(todo_id, depends_on_id):
+        return "Cannot add dependency: would create a cycle"
+    if depends_on_id in todo.depends_on:
+        return "Dependency already exists"
+    todo.depends_on = [*todo.depends_on, depends_on_id]
+    if dependency.status != "completed" and todo.status not in ("completed", "blocked"):
+        todo.status = "blocked"  # type: ignore[assignment]
+        return (
+            f"Added dependency: '{todo.content}' now depends on '{dependency.content}'. "
+            "Task automatically blocked."
+        )
+    return f"Added dependency: '{todo.content}' now depends on '{dependency.content}'"
+
+
+def get_available_tasks_tool() -> str:
+    """List tasks ready to work on (no incomplete dependencies)."""
+    storage = get_todo_storage()
+    available = [
+        t
+        for t in storage.todos
+        if t.status not in ("completed", "blocked") and not _is_blocked(t)
+    ]
+    if not available:
+        return "No available tasks. All tasks are either completed or blocked."
+    lines = ["Available tasks (no blocking dependencies):"]
+    for i, todo in enumerate(available, 1):
+        icon = _get_status_icon(todo.status)
+        lines.append(f"{i}. {icon} [{todo.id}] {todo.content}")
+    return "\n".join(lines)
+
+
+# SimpleTool for ToolService compatibility (name, description, func, args_schema)
 class SimpleTool:
-    """Simple tool wrapper that mimics StructuredTool interface"""
-
-    def __init__(self, name: str, description: str, func, args_schema):
+    def __init__(self, name: str, description: str, func, args_schema=None):
         self.name = name
         self.description = description
         self.func = func
@@ -477,45 +385,58 @@ class SimpleTool:
 
 
 def create_todo_management_tools() -> List[SimpleTool]:
-    """Create all todo management tools"""
+    """Create todo tools for ToolService (by-name lookup) and delegate agents.
 
-    tools = [
+    Tool names match pydantic-ai-todo: read_todos, write_todos, add_todo,
+    update_todo_status, remove_todo, add_subtask, set_dependency, get_available_tasks.
+    """
+    return [
         SimpleTool(
-            name="create_todo",
-            description="Create a new todo item for task tracking. Use this to break down complex requests into manageable tasks. IMPORTANT: The 'dependencies' parameter must be a list/array of todo IDs (strings), not a single string. Use [] for no dependencies or ['todo_id1', 'todo_id2'] for multiple dependencies.",
-            func=create_todo_tool,
-            args_schema=CreateTodoInput,
+            name="read_todos",
+            description="Read the current todo list. Use to check status before deciding what to work on next. Set hierarchical=True for tree view with subtasks.",
+            func=read_todos_tool,
+            args_schema=ReadTodosInput,
+        ),
+        SimpleTool(
+            name="write_todos",
+            description="Bulk write/update the todo list. Replaces the entire list with the given items (each with content, status, active_form; optional id, parent_id, depends_on).",
+            func=write_todos_tool,
+            args_schema=WriteTodosInput,
+        ),
+        SimpleTool(
+            name="add_todo",
+            description="Add a single new todo item. Use to add a task without replacing existing todos. Returns the new todo's ID.",
+            func=add_todo_tool,
+            args_schema=AddTodoInput,
         ),
         SimpleTool(
             name="update_todo_status",
-            description="Update the status of a todo item (pending, in_progress, completed, cancelled, blocked). Use this to track progress.",
+            description="Update an existing todo's status by ID. Status: pending, in_progress, completed, or blocked.",
             func=update_todo_status_tool,
             args_schema=UpdateTodoStatusInput,
         ),
         SimpleTool(
-            name="add_todo_note",
-            description="Add a progress note to a todo item. Use this to record findings, issues, or updates.",
-            func=add_todo_note_tool,
-            args_schema=AddTodoNoteInput,
+            name="remove_todo",
+            description="Remove a todo from the list by ID.",
+            func=remove_todo_tool,
+            args_schema=RemoveTodoInput,
         ),
         SimpleTool(
-            name="get_todo",
-            description="Get detailed information about a specific todo item.",
-            func=get_todo_tool,
-            args_schema=GetTodoInput,
+            name="add_subtask",
+            description="Add a subtask to an existing todo. The subtask is linked to its parent via parent_id.",
+            func=add_subtask_tool,
+            args_schema=AddSubtaskInput,
         ),
         SimpleTool(
-            name="list_todos",
-            description="List all todo items, optionally filtered by status. Use this to see current task state.",
-            func=list_todos_tool,
-            args_schema=ListTodosInput,
+            name="set_dependency",
+            description="Set a dependency: one task depends on another (must be completed first). Prevents cycles.",
+            func=set_dependency_tool,
+            args_schema=SetDependencyInput,
         ),
         SimpleTool(
-            name="get_todo_summary",
-            description="Get a summary overview of all todo items and their status. Use this to understand overall progress.",
-            func=get_todo_summary_tool,
+            name="get_available_tasks",
+            description="Get tasks that can be worked on now (no incomplete dependencies). Blocked tasks are excluded.",
+            func=get_available_tasks_tool,
             args_schema=None,
         ),
     ]
-
-    return tools

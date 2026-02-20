@@ -35,6 +35,7 @@ dependencies = [
     "loguru>=0.7.3",
     "neo4j>=5.28.2",
     "networkx>=3.4.2",
+    "newrelic>=11.2.0",
     "nltk>=3.9.2",
     "openai>=2.7.1",
     "pathspec>=0.12.1",
@@ -44,6 +45,7 @@ dependencies = [
     "protobuf>=6.33.5",
     "psycopg-binary>=3.2.12",
     "pydantic-ai>=1.11.1",
+    "pydantic-ai-todo>=0.1.6",
     "pydantic[email]>=2.12.4",
     "pygithub>=2.8.1",
     "pygments>=2.19.2",
@@ -53,6 +55,7 @@ dependencies = [
     "pyasn1>=0.6.2",
     "python-multipart>=0.0.22",
     "redis>=7.0.1",
+    "python-socketio>=5.11.0",
     "requests>=2.32.5",
     "resend>=2.19.0",
     "scikit-learn>=1.7.2",
@@ -87,7 +90,7 @@ include = ["potpie*", "app*"]
 
 [tool.bandit]
 exclude_dirs = ["tests", "app/alembic"]
-skips = ["B101", "B601"]  # Skip assert_used and shell injection warnings
+skips = ["B101", "B601"]                # Skip assert_used and shell injection warnings
 
 [tool.ruff]
 exclude = ["tests", "app/alembic"]

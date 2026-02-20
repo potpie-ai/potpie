@@ -25,6 +25,7 @@ class ProviderType(str, Enum):
     GITLAB = "gitlab"
     BITBUCKET = "bitbucket"
     LOCAL = "local"
+    USER_LOCAL_TUNNEL = "user_local_tunnel"
 
 
 class CodeProviderFactory:
@@ -210,13 +211,25 @@ class CodeProviderFactory:
             "Authorization": f"Bearer {jwt}",
             "X-GitHub-Api-Version": "2022-11-28",
         }
+        logger.info(f"ProviderFactory: About to make GitHub API request to get installation ID for {repo_name}")
         response = requests.get(url, headers=headers, timeout=60)
+        logger.info(f"ProviderFactory: GitHub API request completed with status {response.status_code} for {repo_name}")
 
         if response.status_code == 404:
             # App not installed on this repository (likely public repo or no access)
             raise ValueError(
                 f"GitHub App not installed on repository {repo_name}. "
                 f"This is expected for public repos or repos where the app isn't installed."
+            )
+        elif response.status_code == 401:
+            # JWT invalid: wrong/expired key, or malformed GITHUB_PRIVATE_KEY (e.g. newlines)
+            hint = (
+                " GitHub returned 'A JSON web token could not be decoded'. "
+                "Check GITHUB_APP_ID and GITHUB_PRIVATE_KEY: use the correct private key PEM for this App, "
+                "and if the key is in .env as one line, use literal \\n for newlines (or paste with real newlines)."
+            )
+            raise Exception(
+                f"Failed to get installation for {repo_name}: 401 {hint} Raw: {response.text}"
             )
         elif response.status_code != 200:
             raise Exception(
@@ -243,6 +256,61 @@ class CodeProviderFactory:
         return CodeProviderFactory.create_provider()
 
     @staticmethod
+    def create_tunnel_provider(
+        user_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
+    ) -> Optional[ICodeProvider]:
+        """
+        Create tunnel provider if tunnel is available.
+
+        Args:
+            user_id: User ID for tunnel lookup
+            conversation_id: Conversation ID for tunnel lookup
+
+        Returns:
+            UserLocalTunnelProvider instance if tunnel is available, None otherwise
+        """
+        try:
+            from app.modules.code_provider.user_local_tunnel.user_local_tunnel_provider import (
+                UserLocalTunnelProvider,
+            )
+            from app.modules.tunnel.tunnel_service import get_tunnel_service
+
+            # If user_id not provided, try to get from context
+            if not user_id:
+                try:
+                    from app.modules.intelligence.tools.local_search_tools.tunnel_utils import (
+                        get_context_vars,
+                    )
+
+                    user_id, conversation_id = get_context_vars()
+                except Exception:
+                    pass
+
+            if not user_id:
+                logger.debug("No user_id available for tunnel provider")
+                return None
+
+            tunnel_service = get_tunnel_service()
+            tunnel_url = tunnel_service.get_tunnel_url(user_id, conversation_id)
+
+            if not tunnel_url:
+                logger.debug(f"No tunnel available for user {user_id}")
+                return None
+
+            logger.info(
+                f"Creating UserLocalTunnelProvider for user {user_id} via tunnel {tunnel_url}"
+            )
+            return UserLocalTunnelProvider(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                tunnel_url=tunnel_url,
+            )
+        except Exception as e:
+            logger.debug(f"Failed to create tunnel provider: {e}")
+            return None
+
+    @staticmethod
     def create_provider_with_fallback(repo_name: str) -> ICodeProvider:
         """
         Create provider with comprehensive authentication fallback strategy.
@@ -267,6 +335,20 @@ class CodeProviderFactory:
         Raises:
             ValueError: If no authentication method is available
         """
+        logger.info(f"ProviderFactory: create_provider_with_fallback called for {repo_name}")
+        
+        # Check if tunnel provider is available (highest priority for local access)
+        # This should be checked before local filesystem access
+        tunnel_provider = CodeProviderFactory.create_tunnel_provider()
+        if tunnel_provider:
+            # Verify tunnel is working by checking access
+            try:
+                if tunnel_provider.check_repository_access(repo_name):
+                    logger.info("Using UserLocalTunnelProvider (tunnel available and accessible)")
+                    return tunnel_provider
+            except Exception as e:
+                logger.debug(f"Tunnel provider check failed: {e}, falling back to other providers")
+        
         # Handle local repositories without authentication
         local_repo_path = CodeProviderFactory._resolve_local_repo_path(repo_name)
         if local_repo_path:
@@ -310,7 +392,10 @@ class CodeProviderFactory:
                 "GitHub App is configured, trying App auth first", repo_name=repo_name
             )
             try:
-                return CodeProviderFactory.create_github_app_provider(repo_name)
+                logger.info(f"ProviderFactory: About to call create_github_app_provider for {repo_name}")
+                provider = CodeProviderFactory.create_github_app_provider(repo_name)
+                logger.info(f"ProviderFactory: create_github_app_provider completed for {repo_name}")
+                return provider
             except Exception as e:
                 # Check if this is an expected failure (app not installed on repo)
                 error_msg = str(e)

@@ -20,6 +20,10 @@ from app.modules.intelligence.agents.custom_agents.custom_agents_service import 
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
+from app.modules.intelligence.tools.registry import (
+    ToolResolver,
+    build_registry_from_tool_service,
+)
 from app.modules.utils.logger import setup_logger
 
 from .chat_agent import AgentWithInfo, ChatContext
@@ -55,12 +59,22 @@ class AgentsService:
         self.project_path = str(Path(os.getenv("PROJECT_PATH", "projects/")).absolute())
         self.db = db
         self.prompt_service = PromptService(db)
+        self.llm_provider = llm_provider
+        self.tools_provider = tools_provider
+        # Phase 1 tool registry: build registry and resolver for registry-driven agents
+        self._tool_resolver: ToolResolver | None = None
+        try:
+            registry = build_registry_from_tool_service(tools_provider, strict=False)
+            self._tool_resolver = ToolResolver(registry, tools_provider)
+        except Exception as e:
+            logger.warning(
+                "Tool registry build failed; agents will use legacy tool lists: %s",
+                e,
+            )
         self.system_agents = self._system_agents(
             llm_provider, prompt_provider, tools_provider
         )
         self.supervisor_agent = SupervisorAgent(llm_provider, self.system_agents)
-        self.llm_provider = llm_provider
-        self.tools_provider = tools_provider
         self.custom_agent_service = CustomAgentService(
             self.db, llm_provider, tools_provider
         )
@@ -126,6 +140,7 @@ class AgentsService:
                     llm_provider,
                     tools_provider,
                     prompt_provider,
+                    tool_resolver=self._tool_resolver,
                 ),
             ),
             "general_purpose_agent": AgentWithInfo(
@@ -136,6 +151,7 @@ class AgentsService:
                     llm_provider,
                     tools_provider,
                     prompt_provider,
+                    tool_resolver=self._tool_resolver,
                 ),
             ),
             "sweb_debug_agent": AgentWithInfo(

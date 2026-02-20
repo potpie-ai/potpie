@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
 
 
@@ -59,14 +59,35 @@ class ChatContext(BaseModel):
     node_ids: Optional[List[str]] = None
     additional_context: str = ""
     query: str
+    # Project parsing status - used to conditionally enable/disable tools
+    project_status: Optional[str] = None
     user_id: Optional[str] = None
     conversation_id: Optional[str] = None  # For persisting state across messages
+    tunnel_url: Optional[str] = (
+        None  # Tunnel URL from extension (takes priority over stored state)
+    )
+    local_mode: bool = (
+        False  # Flag to indicate if running in local mode (VSCode Extension)
+    )
+    # Workspace identity for tunnel lookup: one active tunnel per (user, repository, branch)
+    repository: Optional[str] = None  # e.g. owner/repo
+    branch: Optional[str] = None
+    # Phase 3: when True, agent receives search_tools/describe_tool/execute_tool instead of full tool list
+    use_tool_search_flow: bool = False
+    # Phase 4: when True, tool calls log behavioral annotations for audits (default True)
+    log_tool_annotations: bool = True
     # Multimodal support - images attached to the current message
     image_attachments: Optional[Dict[str, Dict[str, Union[str, int]]]] = (
         None  # attachment_id -> {base64, mime_type, file_size, etc}
     )
     # Context images from recent conversation history
     context_images: Optional[Dict[str, Dict[str, Union[str, int]]]] = None
+    # Optional callback for cooperative cancellation (stop API). Set by Celery task.
+    check_cancelled: Optional[Callable[[], bool]] = Field(default=None, exclude=True)
+
+    def is_inferring(self) -> bool:
+        """Check if the project is still in INFERRING state (AI enrichment in progress)"""
+        return self.project_status == "inferring"
 
     def has_images(self) -> bool:
         """Check if this context contains any images"""

@@ -214,6 +214,13 @@ class ParsingController:
             if project:
                 project_id = project.id
 
+                # If project is already inferring, return current state (don't re-submit parse)
+                if project.status == ProjectStatusEnum.INFERRING.value:
+                    logger.info(
+                        f"Project {project_id} already in inferring state. Returning current state."
+                    )
+                    return {"project_id": project_id, "status": project.status}
+
                 # Check if this project is already parsed for the requested commit
                 # Only check commit status if commit_id is provided
                 if repo_details.commit_id:

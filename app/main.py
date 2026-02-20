@@ -5,8 +5,12 @@ import subprocess
 # This must be set before sentence-transformers or any HuggingFace tokenizers are used
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
-import sentry_sdk
+# Load .env before any app imports so modules that read env at import time (e.g. tunnel service) see it
 from dotenv import load_dotenv
+
+load_dotenv(override=True)
+
+import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -19,19 +23,26 @@ from app.modules.code_provider.github.github_router import router as github_rout
 from app.modules.conversations.conversations_router import (
     router as conversations_router,
 )
+from app.modules.integrations.integrations_router import router as integrations_router
 from app.modules.intelligence.agents.agents_router import router as agent_router
 from app.modules.intelligence.prompts.prompt_router import router as prompt_router
 from app.modules.intelligence.prompts.system_prompt_setup import SystemPromptSetup
 from app.modules.intelligence.provider.provider_router import router as provider_router
 from app.modules.intelligence.tools.tool_router import router as tool_router
+from app.modules.intelligence.tracing.logfire_tracer import (
+    initialize_logfire_tracing,
+)
 from app.modules.key_management.secret_manager import router as secret_manager_router
+from app.modules.knowledge_graph.knowledge_graph_router import (
+    router as knowledge_graph_router,
+)
 from app.modules.media.media_router import router as media_router
-from app.modules.integrations.integrations_router import router as integrations_router
 from app.modules.parsing.graph_construction.parsing_router import (
     router as parsing_router,
 )
 from app.modules.projects.projects_router import router as projects_router
 from app.modules.search.search_router import router as search_router
+from app.modules.tunnel.tunnel_router import router as tunnel_router
 from app.modules.usage.usage_router import router as usage_router
 from app.modules.users.user_router import router as user_router
 from app.modules.users.user_service import UserService
@@ -45,7 +56,6 @@ logger = setup_logger(__name__)
 
 class MainApp:
     def __init__(self):
-        load_dotenv(override=True)
         if (
             os.getenv("isDevelopmentMode") == "enabled"
             and os.getenv("ENV") != "development"
@@ -55,10 +65,11 @@ class MainApp:
             )
             exit(1)
         self.setup_sentry()
-        self.setup_logfire_tracing()
+        self.setup_tracing()
         self.app = FastAPI()
         self.setup_cors()
         self.setup_logging_middleware()
+        self.setup_socket_io()
         self.include_routers()
 
     def setup_sentry(self):
@@ -86,17 +97,8 @@ class MainApp:
                     "Sentry initialization failed (non-fatal but should be investigated)"
                 )
 
-    def setup_logfire_tracing(self):
-        try:
-            from app.modules.intelligence.tracing.logfire_tracer import (
-                initialize_logfire_tracing,
-            )
-
-            initialize_logfire_tracing()
-        except Exception:
-            logger.exception(
-                "Logfire tracing initialization failed (non-fatal but should be investigated)"
-            )
+    def setup_tracing(self):
+        initialize_logfire_tracing()
 
     def setup_cors(self):
         # Get allowed origins from environment variable, default to localhost:3000 for development
@@ -128,6 +130,17 @@ class MainApp:
         self.app.add_middleware(LoggingContextMiddleware)
         logger.info("Logging context middleware configured")
 
+    def setup_socket_io(self):
+        """Mount Socket.IO ASGI app at /ws for workspace tunnel."""
+        from app.modules.tunnel.socket_auth_middleware import SocketAuthMiddleware
+        from app.modules.tunnel.socket_server import socket_asgi
+
+        self.app.add_middleware(SocketAuthMiddleware)
+        self.app.mount("/ws", socket_asgi)
+        logger.info(
+            "Socket.IO workspace tunnel mounted at /ws (auth from query/header supported)"
+        )
+
     def setup_data(self):
         if os.getenv("isDevelopmentMode") == "enabled":
             logger.info("Development mode enabled. Skipping Firebase setup.")
@@ -151,6 +164,7 @@ class MainApp:
         self.app.include_router(
             conversations_router, prefix="/api/v1", tags=["Conversations"]
         )
+        self.app.include_router(tunnel_router, prefix="/api/v1", tags=["Tunnel"])
         self.app.include_router(prompt_router, prefix="/api/v1", tags=["Prompts"])
         self.app.include_router(projects_router, prefix="/api/v1", tags=["Projects"])
         self.app.include_router(search_router, prefix="/api/v1", tags=["Search"])
@@ -168,6 +182,9 @@ class MainApp:
         self.app.include_router(media_router, prefix="/api/v1", tags=["Media"])
         self.app.include_router(
             integrations_router, prefix="/api/v1", tags=["Integrations"]
+        )
+        self.app.include_router(
+            knowledge_graph_router, prefix="/api/v1", tags=["Knowledge Graph"]
         )
 
     def add_health_check(self):

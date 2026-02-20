@@ -1,14 +1,19 @@
 """Message history utility functions for multi-agent system"""
 
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Set
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
     TextPart,
     ToolCallPart,
+    UserPromptPart,
 )
-from typing import Set
+
+from app.modules.intelligence.agents.chat_agents.token_utils import count_tokens
+from app.modules.intelligence.agents.context_config import (
+    get_history_token_budget,
+)
 
 
 def _is_llm_response_with_text(msg: ModelMessage) -> bool:
@@ -70,6 +75,40 @@ from app.modules.intelligence.agents.chat_agent import ChatContext
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+
+def _history_strings_to_model_messages(
+    history_list: List[str],
+) -> List[ModelMessage]:
+    """Convert history strings (e.g. 'human: ...' / 'ai: ...') to proper ModelMessage list.
+
+    Conversation history is built in conversation_service as f'{msg.type}: {msg.content}'
+    (LangChain HumanMessage.type is 'human', AIMessage.type is 'ai'). We must preserve
+    user vs assistant roles so the LLM receives correct system / user / assistant mapping:
+    - System = agent instructions (handled by PydanticAI).
+    - User messages = ModelRequest with UserPromptPart.
+    - Assistant messages = ModelResponse with TextPart.
+    """
+    result: List[ModelMessage] = []
+    for raw in history_list:
+        s = str(raw).strip()
+        if not s:
+            continue
+        # Support "human: ...", "HUMAN: ...", "ai: ...", "AI_GENERATED: ..."
+        lower = s.lower()
+        if lower.startswith("human:"):
+            content = s[6:].strip()  # len("human:") = 6
+            if content:
+                result.append(ModelRequest(parts=[UserPromptPart(content=content)]))
+        elif lower.startswith("ai_generated:") or lower.startswith("ai:"):
+            prefix_len = 12 if lower.startswith("ai_generated:") else 3
+            content = s[prefix_len:].strip()
+            if content:
+                result.append(ModelResponse(parts=[TextPart(content=content)]))
+        else:
+            # Legacy or unknown format: treat as assistant to avoid mislabeling user content
+            result.append(ModelResponse(parts=[TextPart(content=s)]))
+    return result
 
 
 def _remove_duplicate_tool_results(messages: List[ModelMessage]) -> List[ModelMessage]:
@@ -335,18 +374,49 @@ def validate_and_fix_message_history(
     return messages
 
 
+def _trim_history_to_token_budget(
+    history: List[str],
+    token_budget: int,
+    model_name: Optional[str] = None,
+) -> List[str]:
+    """Trim history from the start until total tokens <= token_budget; keep the tail."""
+    if not history:
+        return []
+    if token_budget <= 0:
+        return []  # No budget => no history (avoids returning full history by mistake)
+    total = 0
+    start_index = len(history)
+    for i in range(len(history) - 1, -1, -1):
+        total += count_tokens(str(history[i]), model_name)
+        if total > token_budget:
+            start_index = i + 1
+            break
+        start_index = i
+    return history[start_index:]
+
+
 async def prepare_multimodal_message_history(
     ctx: ChatContext,
     history_processor: Any,
+    token_budget: Optional[int] = None,
+    model_name: Optional[str] = None,
 ) -> List[ModelMessage]:
     """Prepare message history with multimodal support.
 
     CRITICAL: This method now prioritizes using compressed message history from previous runs.
     It retrieves compressed messages from the history processor's internal storage.
-    Otherwise, it falls back to rebuilding from ctx.history (text strings).
+    Otherwise, it falls back to rebuilding from ctx.history (text strings), trimmed by
+    token budget when provided (Phase 2: token-based limits).
 
-    This ensures that compression benefits are preserved across multiple agent runs within
-    the same execution context.
+    Args:
+        ctx: Chat context with history list (strings).
+        history_processor: History processor (may expose .processor for compressed lookup).
+        token_budget: Max tokens for history when building from ctx.history. When None,
+                      uses get_history_token_budget(None).
+        model_name: Optional model for token counting and model-aware budget.
+
+    Returns:
+        List of ModelMessage for the agent.
     """
     # Try to get compressed history from the history processor
     # The processor stores compressed messages keyed by run_id from RunContext
@@ -367,28 +437,44 @@ async def prepare_multimodal_message_history(
                 # Validate the compressed history before using it
                 return validate_and_fix_message_history(compressed_history)
 
-    # Fallback: rebuild from ctx.history if no compressed history available
-    history_messages = []
-
-    # Limit history to prevent token bloat (max 8 messages or ~50k tokens estimated)
-    # This prevents "prompt too long" errors and reduces chance of duplicate tool_result issues
-    max_history_messages = 8
-    limited_history = (
-        ctx.history[-max_history_messages:]
-        if len(ctx.history) > max_history_messages
-        else ctx.history
-    )
-
-    if len(ctx.history) > max_history_messages:
-        logger.warning(
-            f"Message history truncated from {len(ctx.history)} to {len(limited_history)} messages "
-            f"to prevent token limit issues"
+    # Phase 3: conversation-scoped persisted compressed history (cross-request)
+    if ctx.conversation_id:
+        from app.modules.intelligence.agents.context_config import (
+            use_persisted_compressed_history,
+        )
+        from app.modules.intelligence.agents.chat_agents.compressed_history_store import (
+            get_compressed_history_store,
         )
 
-    for msg in limited_history:
-        # For now, keep history as text-only to avoid token bloat
-        # Images are only added to the current query
-        history_messages.append(ModelResponse([TextPart(content=str(msg))]))
+        if use_persisted_compressed_history():
+            store = get_compressed_history_store()
+            if store:
+                stored = store.get(ctx.conversation_id, user_id=ctx.user_id)
+                if stored:
+                    logger.info(
+                        "Using persisted compressed history for conversation_id=%s",
+                        ctx.conversation_id,
+                    )
+                    return validate_and_fix_message_history(stored)
+
+    # Fallback: rebuild from ctx.history with token-based trimming (Phase 2)
+    budget = (
+        token_budget
+        if token_budget is not None
+        else get_history_token_budget(model_name)
+    )
+    history_list = ctx.history if ctx.history is not None else []
+    limited_history = _trim_history_to_token_budget(history_list, budget, model_name)
+
+    if len(limited_history) < len(history_list):
+        logger.warning(
+            "Message history trimmed from %s to %s messages (token budget %s)",
+            len(history_list),
+            len(limited_history),
+            budget,
+        )
+
+    history_messages = _history_strings_to_model_messages(limited_history)
 
     # Validate and fix message history to ensure tool calls/results are paired
     history_messages = validate_and_fix_message_history(history_messages)

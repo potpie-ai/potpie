@@ -73,7 +73,16 @@ class ConfigProvider:
         return self.neo4j_config
 
     def get_github_key(self):
-        return self.github_key
+        """Return GitHub App private key, with literal \\n converted to newlines.
+
+        When GITHUB_PRIVATE_KEY is set in .env or deployment config, newlines are
+        often stored as the two characters \\n. GitHub's JWT auth requires a valid
+        PEM key; without real newlines the JWT is invalid and API returns 401
+        'A JSON web token could not be decoded'.
+        """
+        if not self.github_key:
+            return self.github_key
+        return self.github_key.replace("\\n", "\n").strip()
 
     def is_github_configured(self):
         """Check if GitHub credentials are configured."""

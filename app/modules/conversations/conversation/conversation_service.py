@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 from datetime import datetime, timezone
-from typing import AsyncGenerator, List, Optional, Dict, Union
+from typing import AsyncGenerator, Callable, List, Optional, Dict, Union
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -33,6 +33,11 @@ from app.modules.intelligence.agents.custom_agents.custom_agents_service import 
 )
 from app.modules.intelligence.agents.agents_service import AgentsService
 from app.modules.intelligence.agents.chat_agent import ChatContext
+from app.modules.intelligence.agents.context_config import (
+    ESTIMATED_TOKENS_PER_MESSAGE,
+    HISTORY_MESSAGE_CAP,
+    get_history_token_budget,
+)
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.projects.projects_service import ProjectService
@@ -44,6 +49,7 @@ from app.modules.media.media_service import MediaService
 from app.modules.conversations.session.session_service import SessionService
 from app.modules.conversations.utils.redis_streaming import RedisStreamManager
 from app.celery.celery_app import celery_app
+from app.modules.conversations.exceptions import GenerationCancelled
 from .conversation_store import ConversationStore, StoreError
 from ..message.message_store import MessageStore
 
@@ -560,6 +566,9 @@ class ConversationService:
         message_type: MessageType,
         user_id: str,
         stream: bool = True,
+        local_mode: bool = False,
+        run_id: Optional[str] = None,
+        check_cancelled: Optional[Callable[[], bool]] = None,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         try:
             logger.info(
@@ -625,6 +634,10 @@ class ConversationService:
                 if project_id_str:
                     await self._ensure_repo_in_repo_manager(project_id_str, user_id)
 
+                logger.info(
+                    f"[store_message] message.tunnel_url={message.tunnel_url}, "
+                    f"conversation_id={conversation_id}, user_id={user_id}"
+                )
                 if stream:
                     async for chunk in self._generate_and_stream_ai_response(
                         message.content,
@@ -632,6 +645,10 @@ class ConversationService:
                         user_id,
                         message.node_ids,
                         message.attachment_ids,
+                        local_mode=local_mode,
+                        tunnel_url=message.tunnel_url,
+                        run_id=run_id,
+                        check_cancelled=check_cancelled,
                     ):
                         yield chunk
                 else:
@@ -643,6 +660,10 @@ class ConversationService:
                         user_id,
                         message.node_ids,
                         message.attachment_ids,
+                        local_mode=local_mode,
+                        tunnel_url=message.tunnel_url,
+                        run_id=run_id,
+                        check_cancelled=check_cancelled,
                     ):
                         full_message += chunk.message
                         all_citations = all_citations + chunk.citations
@@ -703,6 +724,7 @@ class ConversationService:
         user_id: str,
         node_ids: List[NodeContext] = [],
         stream: bool = True,
+        local_mode: bool = False,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         try:
             access_level = await self.check_conversation_access(
@@ -759,6 +781,8 @@ class ConversationService:
                     user_id,
                     node_ids,
                     attachment_ids,
+                    local_mode=local_mode,
+                    tunnel_url=None,
                 ):
                     yield chunk
             else:
@@ -771,6 +795,8 @@ class ConversationService:
                     user_id,
                     node_ids,
                     attachment_ids,
+                    local_mode=local_mode,
+                    tunnel_url=None,
                 ):
                     full_message += chunk.message
                     all_citations = all_citations + chunk.citations
@@ -799,6 +825,9 @@ class ConversationService:
         conversation_id: str,
         node_ids: Optional[List[str]] = None,
         attachment_ids: List[str] = [],
+        local_mode: bool = False,
+        run_id: Optional[str] = None,
+        check_cancelled: Optional[Callable[[], bool]] = None,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         """Background version of regenerate_last_message for Celery task execution"""
         try:
@@ -840,9 +869,15 @@ class ConversationService:
                 self.user_id,
                 node_contexts,
                 attachment_ids,
+                tunnel_url=None,
+                local_mode=local_mode,
+                run_id=run_id,
+                check_cancelled=check_cancelled,
             ):
                 yield chunk
 
+        except GenerationCancelled:
+            raise
         except (AccessTypeReadError, MessageNotFoundError):
             logger.exception(
                 f"Background regeneration error for {conversation_id}",
@@ -907,7 +942,15 @@ class ConversationService:
         user_id: str,
         node_ids: List[NodeContext],
         attachment_ids: Optional[List[str]] = None,
+        local_mode: bool = False,
+        tunnel_url: Optional[str] = None,
+        run_id: Optional[str] = None,
+        check_cancelled: Optional[Callable[[], bool]] = None,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
+        logger.info(
+            f"[_generate_and_stream_ai_response] tunnel_url={tunnel_url}, "
+            f"conversation_id={conversation_id}, user_id={user_id}, local_mode={local_mode}"
+        )
         conversation = await self.conversation_store.get_by_id(conversation_id)
         if not conversation:
             raise ConversationNotFoundError(
@@ -936,6 +979,14 @@ class ConversationService:
                 project_ids=[project_id]
             )
 
+            # Get project status to conditionally enable/disable tools
+            project_info = await self.project_service.get_project_from_db_by_id(
+                int(project_id)
+                if isinstance(project_id, str) and project_id.isdigit()
+                else project_id
+            )
+            project_status = project_info.get("status") if project_info else None
+
             # Prepare multimodal context - use current message attachments if available
             image_attachments = None
             if attachment_ids:
@@ -957,22 +1008,43 @@ class ConversationService:
                     f"Multimodal context: {len(image_attachments) if image_attachments else 0} current images, {len(context_images) if context_images else 0} context images"
                 )
 
+            # Single history cap for all agent types (Phase 2: token- and model-aware limits)
+            token_budget = get_history_token_budget(None)
+            msg_cap = min(
+                HISTORY_MESSAGE_CAP,
+                max(8, token_budget // ESTIMATED_TOKENS_PER_MESSAGE),
+            )
+            # Ensure we never pass empty history due to HISTORY_MESSAGE_CAP=0 or misconfig
+            msg_cap = max(1, msg_cap)
+            capped_history = validated_history[-msg_cap:]
+
             if type == "CUSTOM_AGENT":
+                custom_ctx = ChatContext(
+                    project_id=str(project_id),
+                    project_name=project_name,
+                    curr_agent_id=str(agent_id),
+                    history=capped_history,
+                    node_ids=[node.node_id for node in node_ids],
+                    query=query,
+                    project_status=project_status,
+                    conversation_id=conversation_id,
+                    user_id=user_id,  # Set user_id for tunnel routing
+                    local_mode=local_mode,
+                    repository=(
+                        project_info.get("project_name") if project_info else project_name
+                    ),
+                    branch=project_info.get("branch_name") if project_info else None,
+                )
+                custom_ctx.check_cancelled = check_cancelled
                 res = (
                     await self.agent_service.custom_agent_service.execute_agent_runtime(
                         user_id,
-                        ChatContext(
-                            project_id=str(project_id),
-                            project_name=project_name,
-                            curr_agent_id=str(agent_id),
-                            history=validated_history[-12:],
-                            node_ids=[node.node_id for node in node_ids],
-                            query=query,
-                            conversation_id=conversation_id,
-                        ),
+                        custom_ctx,
                     )
                 )
                 async for chunk in res:
+                    if check_cancelled and check_cancelled():
+                        raise GenerationCancelled()
                     self.history_manager.add_message_chunk(
                         conversation_id,
                         chunk.response,
@@ -997,17 +1069,28 @@ class ConversationService:
                     project_id=str(project_id),
                     project_name=project_name,
                     curr_agent_id=str(agent_id),
-                    history=validated_history[-8:],
+                    history=capped_history,
                     node_ids=nodes,
                     query=query,
+                    project_status=project_status,
                     image_attachments=image_attachments,
                     context_images=context_images,
                     conversation_id=conversation_id,
+                    user_id=user_id,  # Set user_id for tunnel routing
+                    tunnel_url=tunnel_url,  # Tunnel URL from request (takes priority)
+                    local_mode=local_mode,
+                    repository=(
+                        project_info.get("project_name") if project_info else project_name
+                    ),
+                    branch=project_info.get("branch_name") if project_info else None,
                 )
+                chat_context.check_cancelled = check_cancelled
 
                 res = self.agent_service.execute_stream(chat_context)
 
                 async for chunk in res:
+                    if check_cancelled and check_cancelled():
+                        raise GenerationCancelled()
                     self.history_manager.add_message_chunk(
                         conversation_id,
                         chunk.response,
@@ -1029,6 +1112,8 @@ class ConversationService:
             logger.info(
                 f"Generated and streamed AI response for conversation {conversation.id} for user {user_id} using agent {agent_id}"
             )
+        except GenerationCancelled:
+            raise
         except Exception as e:
             logger.exception(
                 f"Failed to generate and stream AI response for conversation {conversation.id}",
@@ -1051,7 +1136,7 @@ class ConversationService:
         """Background version for Celery tasks - reuses existing streaming logic"""
 
         async for chunk in self._generate_and_stream_ai_response(
-            query, conversation_id, user_id, node_ids, attachment_ids
+            query, conversation_id, user_id, node_ids, attachment_ids, tunnel_url=None
         ):
             yield chunk
 
@@ -1172,6 +1257,23 @@ class ConversationService:
             if deleted_conversation == 0:
                 raise ConversationNotFoundError(
                     f"Conversation with id {conversation_id} not found"
+                )
+
+            # Phase 3: clear persisted compressed history for this conversation
+            try:
+                from app.modules.intelligence.agents.chat_agents.compressed_history_store import (
+                    get_compressed_history_store,
+                )
+
+                store = get_compressed_history_store()
+                if store:
+                    store.delete(conversation_id, user_id=user_id)
+            except Exception as e:
+                logger.warning(
+                    "Failed to delete compressed history for conversation %s: %s",
+                    conversation_id,
+                    e,
+                    exc_info=False,
                 )
 
             PostHogClient().send_event(
@@ -1404,31 +1506,77 @@ class ConversationService:
                 f"Found active session {run_id} for conversation {conversation_id}"
             )
 
-        # Set cancellation flag in Redis for background task to check
-        self.redis_manager.set_cancellation(conversation_id, run_id)
-
-        # Retrieve and revoke the Celery task
+        # Retrieve task_id before any mutation so we know whether we will revoke (and thus need to save from stream).
         task_id = self.redis_manager.get_task_id(conversation_id, run_id)
+        logger.info(
+            f"Stop generation: conversation_id={conversation_id}, run_id={run_id}, task_id={task_id or 'none'}"
+        )
 
+        # Snapshot the stream before revoke so we have a consistent read (worker may be killed mid-write after revoke).
+        snapshot = self.redis_manager.get_stream_snapshot(conversation_id, run_id)
+        content_len = len(snapshot.get("content") or "")
+        citations_count = len(snapshot.get("citations") or [])
+        tool_calls_count = len(snapshot.get("tool_calls") or [])
+        chunk_count = snapshot.get("chunk_count", 0)
+        logger.info(
+            f"Stream snapshot: conversation_id={conversation_id}, run_id={run_id}, "
+            f"content_len={content_len}, citations={citations_count}, tool_calls={tool_calls_count}, chunk_count={chunk_count}"
+        )
+
+        # Set cancellation flag and revoke the Celery task so it stops producing chunks.
+        self.redis_manager.set_cancellation(conversation_id, run_id)
         if task_id:
             try:
-                # Revoke the task - this works for both queued and running tasks:
-                # - For queued tasks: Prevents them from starting execution
-                # - For running tasks: Sends SIGTERM to terminate them
-                # terminate=True ensures both cases are handled
                 self.celery_app.control.revoke(
                     task_id, terminate=True, signal="SIGTERM"
                 )
                 logger.info(
-                    f"Revoked Celery task {task_id} for {conversation_id}:{run_id} (works for both queued and running tasks)"
+                    f"Revoked Celery task {task_id} for {conversation_id}:{run_id}"
                 )
             except Exception as e:
                 logger.warning(f"Failed to revoke Celery task {task_id}: {str(e)}")
-                # Continue anyway - cancellation flag is set
         else:
             logger.info(
-                f"No task ID found for {conversation_id}:{run_id} - task may have already completed or been revoked"
+                f"No task ID for {conversation_id}:{run_id} - already completed or revoked"
             )
+
+        # Only save from stream when we revoked (worker did not flush). Persist content or tool-only placeholder.
+        saved_partial = False
+        saved_message_id = None
+        if task_id:
+            try:
+                has_content = bool((snapshot.get("content") or "").strip())
+                has_tool_calls = bool(snapshot.get("tool_calls"))
+                if has_content:
+                    content_to_save = (snapshot.get("content") or "").strip()
+                elif has_tool_calls:
+                    content_to_save = "(Generation stopped — tools were running.)"
+                else:
+                    content_to_save = ""
+                if content_to_save:
+                    saved_message_id = self.history_manager.save_partial_ai_message(
+                        conversation_id,
+                        content=content_to_save,
+                        citations=snapshot.get("citations"),
+                    )
+                    saved_partial = saved_message_id is not None
+                    if saved_partial:
+                        logger.info(
+                            f"Saved partial response for {conversation_id}:{run_id}, message_id={saved_message_id}"
+                        )
+                    else:
+                        logger.info(
+                            f"Save partial skipped for {conversation_id}:{run_id} (save_partial_ai_message returned None)"
+                        )
+                else:
+                    logger.info(
+                        f"Save partial skipped for {conversation_id}:{run_id}: no content and no tool_calls"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to save partial response on stop for {conversation_id}:{run_id}: {e}",
+                    exc_info=True,
+                )
 
         # Always clear the session - publish end event and update status
         # This ensures clients know the session is stopped and prevents stale sessions
@@ -1445,6 +1593,8 @@ class ConversationService:
         return {
             "status": "success",
             "message": "Cancellation signal sent and task revoked",
+            "saved_partial": saved_partial,
+            "message_id": saved_message_id,
         }
 
     async def rename_conversation(

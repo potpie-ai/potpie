@@ -1,7 +1,7 @@
 import json
 from typing import Any, AsyncGenerator, List, Optional, Union, Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -103,7 +103,7 @@ class ConversationAPI:
 
     @staticmethod
     @router.get(
-        "/conversations/{conversation_id}/info/",
+        "/conversations/{conversation_id}/info",
         response_model=ConversationInfoResponse,
     )
     async def get_conversation_info(
@@ -129,7 +129,7 @@ class ConversationAPI:
 
     @staticmethod
     @router.get(
-        "/conversations/{conversation_id}/messages/",
+        "/conversations/{conversation_id}/messages",
         response_model=List[MessageResponse],
     )
     async def get_conversation_messages(
@@ -158,11 +158,13 @@ class ConversationAPI:
             raise
 
     @staticmethod
-    @router.post("/conversations/{conversation_id}/message/")
+    @router.post("/conversations/{conversation_id}/message")
     async def post_message(
         conversation_id: str,
+        http_request: Request,
         content: str = Form(...),
         node_ids: Optional[str] = Form(None),
+        tunnel_url: Optional[str] = Form(None, description="Tunnel URL from VS Code extension for local server routing"),
         images: Optional[List[UploadFile]] = File(None),
         stream: bool = Query(True, description="Whether to stream the response"),
         session_id: Optional[str] = Query(
@@ -176,6 +178,10 @@ class ConversationAPI:
         async_db: AsyncSession = Depends(get_async_db),
         user=Depends(AuthService.check_auth),
     ):
+        # Check User-Agent header for local mode (same as regenerate_last_message)
+        user_agent = http_request.headers.get("user-agent", "")
+        local_mode = user_agent == "Potpie-VSCode-Extension/1.0.1"
+
         # Validate message content
         if content == "" or content is None or content.isspace():
             raise HTTPException(
@@ -249,6 +255,11 @@ class ConversationAPI:
                 content=content,
                 node_ids=parsed_node_ids,
                 attachment_ids=attachment_ids if attachment_ids else None,
+                tunnel_url=tunnel_url,
+            )
+            
+            logger.info(
+                f"[post_message] tunnel_url={tunnel_url}, conversation_id={conversation_id}, user_id={user_id}"
             )
 
             controller = ConversationController(db, async_db, user_id, user_email)
@@ -283,13 +294,16 @@ class ConversationAPI:
                 node_ids=node_ids_list,
                 attachment_ids=attachment_ids or [],
                 cursor=cursor,
+                local_mode=local_mode,
+                tunnel_url=tunnel_url,
             )
 
     @staticmethod
-    @router.post("/conversations/{conversation_id}/regenerate/")
+    @router.post("/conversations/{conversation_id}/regenerate")
     async def regenerate_last_message(
         conversation_id: str,
         request: RegenerateRequest,
+        http_request: Request,
         stream: bool = Query(True, description="Whether to stream the response"),
         session_id: Optional[str] = Query(
             None, description="Session ID for reconnection"
@@ -305,6 +319,10 @@ class ConversationAPI:
         async_db: AsyncSession = Depends(get_async_db),
         user=Depends(AuthService.check_auth),
     ):
+        # Check User-Agent header for local mode (same as post_message)
+        user_agent = http_request.headers.get("user-agent", "")
+        local_mode = user_agent == "Potpie-VSCode-Extension/1.0.1"
+
         user_id = user["user_id"]
         checked = await UsageService.check_usage_limit(user_id)
         if not checked:
@@ -318,7 +336,7 @@ class ConversationAPI:
             # Fallback to existing direct execution for non-streaming or explicit direct mode
             controller = ConversationController(db, async_db, user_id, user_email)
             message_stream = controller.regenerate_last_message(
-                conversation_id, request.node_ids, stream
+                conversation_id, request.node_ids, stream, local_mode=local_mode
             )
             if stream:
                 return StreamingResponse(
@@ -390,6 +408,7 @@ class ConversationAPI:
             user_id=user_id,
             node_ids=request.node_ids or [],
             attachment_ids=attachment_ids,
+            local_mode=local_mode,
         )
 
         # Store the Celery task ID for later revocation
@@ -417,7 +436,7 @@ class ConversationAPI:
         )
 
     @staticmethod
-    @router.delete("/conversations/{conversation_id}/", response_model=dict)
+    @router.delete("/conversations/{conversation_id}", response_model=dict)
     async def delete_conversation(
         conversation_id: str,
         db: Session = Depends(get_db),
@@ -430,7 +449,7 @@ class ConversationAPI:
         return await controller.delete_conversation(conversation_id)
 
     @staticmethod
-    @router.post("/conversations/{conversation_id}/stop/", response_model=dict)
+    @router.post("/conversations/{conversation_id}/stop", response_model=dict)
     async def stop_generation(
         conversation_id: str,
         session_id: Optional[str] = Query(None, description="Session ID to stop"),
@@ -444,7 +463,7 @@ class ConversationAPI:
         return await controller.stop_generation(conversation_id, session_id)
 
     @staticmethod
-    @router.patch("/conversations/{conversation_id}/rename/", response_model=dict)
+    @router.patch("/conversations/{conversation_id}/rename", response_model=dict)
     async def rename_conversation(
         conversation_id: str,
         request: RenameConversationRequest,
@@ -619,3 +638,101 @@ async def remove_access(
         return {"message": "Access removed successfully"}
     except ShareChatServiceError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/conversations/{conversation_id}/code-changes/sync")
+async def sync_code_change_from_local(
+    conversation_id: str,
+    change: dict,
+    user=Depends(AuthService.check_auth),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Receive code changes that were applied locally and sync to CodeChangesManager.
+    
+    This endpoint is called by the LocalServer after successfully applying a file change
+    to the local IDE. The change is then synced to CodeChangesManager in the backend
+    for persistence and agent context.
+    
+    Request body should contain:
+    - file_path: str
+    - change_type: str (add, update, delete)
+    - content: str (new content)
+    - previous_content: Optional[str] (original content before change)
+    - description: Optional[str]
+    """
+    from app.modules.intelligence.tools.code_changes_manager import (
+        _get_code_changes_manager,
+        _set_conversation_id,
+        _get_conversation_id,
+    )
+    
+    user_id = user["user_id"]
+    
+    try:
+        # Set conversation_id in context for CodeChangesManager
+        _set_conversation_id(conversation_id)
+        
+        # Get CodeChangesManager for this conversation
+        manager = _get_code_changes_manager()
+        
+        # Sync the change based on change_type
+        change_type = change.get("change_type")
+        file_path = change.get("file_path")
+        
+        if not file_path:
+            raise HTTPException(status_code=400, detail="file_path is required")
+        
+        if change_type == "add":
+            success = manager.add_file(
+                file_path=file_path,
+                content=change.get("content", ""),
+                description=change.get("description"),
+            )
+        elif change_type == "update":
+            success = manager.update_file(
+                file_path=file_path,
+                content=change.get("content", ""),
+                description=change.get("description"),
+                preserve_previous=True,
+            )
+            # If previous_content is provided, update it manually
+            if "previous_content" in change and success:
+                file_change = manager._changes_cache.get(file_path)
+                if file_change:
+                    file_change.previous_content = change["previous_content"]
+                    manager._persist_change()
+        elif change_type == "delete":
+            success = manager.delete_file(
+                file_path=file_path,
+                description=change.get("description"),
+                preserve_content=False,
+            )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid change_type: {change_type}. Must be 'add', 'update', or 'delete'"
+            )
+        
+        if success:
+            logger.info(
+                f"Synced {change_type} change for '{file_path}' in conversation {conversation_id}"
+            )
+            return {
+                "message": f"Change synced successfully",
+                "conversation_id": conversation_id,
+                "file_path": file_path,
+                "change_type": change_type,
+            }
+        else:
+            raise HTTPException(
+                status_code=500, detail=f"Failed to sync {change_type} change for '{file_path}'"
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            f"Error syncing code change from local: {e}",
+            conversation_id=conversation_id,
+            file_path=change.get("file_path"),
+        )
+        raise HTTPException(status_code=500, detail=f"Error syncing change: {str(e)}")
