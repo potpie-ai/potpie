@@ -69,7 +69,11 @@ class ParseHelper:
         return total_size
 
     async def clone_or_copy_repository(
-        self, repo_details: RepoDetails, user_id: str
+        self,
+        repo_details: RepoDetails,
+        user_id: str,
+        *,
+        auth_token: Optional[str] = None,
     ) -> Tuple[Any, Optional[str], Any, Optional[str]]:
         """
         Clone or copy repository, using RepoManager as primary source when enabled.
@@ -252,6 +256,7 @@ class ParseHelper:
                         commit_id=repo_details.commit_id,
                         user_id=user_id,
                         auth=auth,
+                        auth_token=auth_token,
                     )
 
                     if repo_manager_path:
@@ -862,6 +867,94 @@ class ParseHelper:
                 f"Failed to download and extract repository: {e}"
             ) from e
 
+    def _ensure_clean_worktree(
+        self,
+        repo_name: str,
+        ref: str,
+        auth_token: Optional[str],
+        user_id: Optional[str],
+        is_commit: bool = False,
+    ) -> str:
+        """
+        Ensure a clean worktree exists by aggressively cleaning up any stale/corrupt worktrees.
+        This method should NEVER fail - it tries multiple cleanup strategies and creates fresh.
+
+        Args:
+            repo_name: Repository name (owner/repo)
+            ref: Branch name or commit SHA
+            auth_token: Optional authentication token for cloning
+            user_id: User ID for tracking
+            is_commit: Whether ref is a commit SHA
+
+        Returns:
+            Path to the clean worktree directory
+
+        Raises:
+            HTTPException: Only if all recovery strategies fail
+        """
+        import subprocess
+
+        bare_repo_path = self.repo_manager._get_bare_repo_path(repo_name)
+        worktree_path = self.repo_manager._get_worktree_path(repo_name, ref)
+
+        logger.info(f"_ensure_clean_worktree: Ensuring clean worktree for {repo_name}@{ref}")
+
+        # Strategy 1: Prune stale git worktree registrations
+        if os.path.exists(bare_repo_path):
+            try:
+                result = subprocess.run(
+                    ["git", "-C", str(bare_repo_path), "worktree", "prune"],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if result.returncode == 0:
+                    logger.info(f"Pruned stale worktrees for {repo_name}")
+            except Exception as e:
+                logger.debug(f"Git worktree prune failed (non-critical): {e}")
+
+        # Strategy 2: Remove worktree directory if it exists (corrupt or empty)
+        if os.path.exists(worktree_path):
+            logger.info(f"Removing existing worktree directory: {worktree_path}")
+            shutil.rmtree(worktree_path, ignore_errors=True)
+
+        # Strategy 3: Try to unregister from git (ignore all errors)
+        if os.path.exists(bare_repo_path):
+            try:
+                # Try force remove first
+                subprocess.run(
+                    [
+                        "git", "-C", str(bare_repo_path),
+                        "worktree", "remove", "--force",
+                        str(worktree_path)
+                    ],
+                    capture_output=True,
+                    timeout=30,
+                )
+                logger.info(f"Force-removed worktree registration for {repo_name}@{ref}")
+            except Exception:
+                pass  # Ignore errors, prune already cleaned stale entries
+
+        # Strategy 4: Create fresh worktree with exists_ok=True
+        try:
+            logger.info(f"Creating fresh worktree for {repo_name}@{ref}")
+            new_path = self.repo_manager.create_worktree(
+                repo_name=repo_name,
+                ref=ref,
+                auth_token=auth_token,
+                is_commit=is_commit,
+                user_id=user_id,
+                exists_ok=True,  # Should succeed now that we've cleaned up
+            )
+            logger.info(f"Successfully created clean worktree at {new_path}")
+            return str(new_path)
+        except Exception as e:
+            logger.error(f"Failed to create worktree even after cleanup: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create worktree for {repo_name}@{ref}: {str(e)}",
+            )
+
     async def setup_project_directory(
         self,
         repo,
@@ -874,6 +967,7 @@ class ParseHelper:
         repo_manager_path: Optional[
             str
         ] = None,  # New: path from RepoManager if available
+        auth_token: Optional[str] = None,  # User's GitHub OAuth token for cloning
     ):
         """
         Set up the project directory for parsing.
@@ -992,74 +1086,167 @@ class ParseHelper:
             if file_count == 0:
                 logger.error(
                     f"RepoManager path {repo_manager_path} exists but contains no source files. "
-                    "This might be a worktree issue. Falling back to normal flow."
+                    "This might be a worktree issue. Will recreate using bulletproof method."
                 )
-                # Don't use RepoManager path, fall through to normal flow below
-            else:
-                logger.info(
-                    f"RepoManager path validated: found {file_count} files (checked first 10+)"
-                )
-                extracted_dir = repo_manager_path
-
-                # Get commit SHA from RepoManager metadata or from git
-                latest_commit_sha = commit_id
-                if not latest_commit_sha:
-                    try:
-                        # Try to get from RepoManager metadata
-                        if self.repo_manager:
-                            repo_info = self.repo_manager.get_repo_info(
-                                repo_name=normalized_full_name,
-                                branch=branch,
-                                commit_id=commit_id,
-                                user_id=user_id,
-                            )
-                            if repo_info and repo_info.get("commit_id"):
-                                latest_commit_sha = repo_info["commit_id"]
-
-                        # Fallback: try to get from git
-                        if not latest_commit_sha:
-                            try:
-                                git_repo = Repo(repo_manager_path)
-                                latest_commit_sha = git_repo.head.commit.hexsha
-                            except Exception:
-                                # Last resort: get from GitHub API if repo is not a local git repo
-                                if hasattr(repo, "get_branch"):
-                                    branch_details = repo.get_branch(branch)
-                                    latest_commit_sha = branch_details.commit.sha
-                    except Exception as e:
-                        logger.warning(f"Could not determine commit SHA: {e}")
-                        latest_commit_sha = commit_id or "unknown"
-
-                # Skip the tarball download - repo is already in RepoManager
-                # Skip _copy_repo_to_repo_manager since we cloned directly there
-
-                # Extract metadata from repo for project update
+                # Use bulletproof helper to clean up and recreate worktree
                 try:
-                    if repo is None:
-                        # No repo object available (cached without API access)
-                        repo_metadata = {}
-                    elif isinstance(repo, Repo):
-                        repo_metadata = ParseHelper.extract_local_repo_metadata(repo)
-                    else:
-                        repo_metadata = ParseHelper.extract_remote_repo_metadata(repo)
+                    repo_manager_path = self._ensure_clean_worktree(
+                        repo_name=normalized_full_name,
+                        ref=commit_id if commit_id else (branch if branch else "main"),
+                        auth_token=auth_token,
+                        user_id=user_id,
+                        is_commit=bool(commit_id),
+                    )
+                    # Validate the new worktree has files
+                    new_file_count = sum(
+                        1 for _, _, files in os.walk(repo_manager_path)
+                        for f in files if not f.startswith(".")
+                    )
+                    if new_file_count == 0:
+                        raise HTTPException(
+                            status_code=500,
+                            detail="Recreated worktree still empty - possible bare repo corruption",
+                        )
+                    logger.info(
+                        f"Successfully recreated worktree at {repo_manager_path} with {new_file_count} files"
+                    )
+                except HTTPException:
+                    raise
                 except Exception as e:
-                    logger.warning(f"Could not extract repo metadata: {e}")
+                    logger.error(f"Failed to recreate worktree: {e}")
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to recreate worktree: {str(e)}",
+                    )
+
+            # At this point we have a valid worktree (either originally valid or recreated)
+            logger.info(
+                f"RepoManager path validated: using {repo_manager_path}"
+            )
+            extracted_dir = repo_manager_path
+
+            # Get commit SHA from RepoManager metadata or from git
+            latest_commit_sha = commit_id
+            if not latest_commit_sha:
+                try:
+                    # Try to get from RepoManager metadata
+                    if self.repo_manager:
+                        repo_info = self.repo_manager.get_repo_info(
+                            repo_name=normalized_full_name,
+                            branch=branch,
+                            commit_id=commit_id,
+                            user_id=user_id,
+                        )
+                        if repo_info and repo_info.get("commit_id"):
+                            latest_commit_sha = repo_info["commit_id"]
+
+                    # Fallback: try to get from git
+                    if not latest_commit_sha:
+                        try:
+                            git_repo = Repo(repo_manager_path)
+                            latest_commit_sha = git_repo.head.commit.hexsha
+                        except Exception:
+                            # Last resort: get from GitHub API if repo is not a local git repo
+                            if hasattr(repo, "get_branch"):
+                                branch_details = repo.get_branch(branch)
+                                latest_commit_sha = branch_details.commit.sha
+                except Exception as e:
+                    logger.warning(f"Could not determine commit SHA: {e}")
+                    latest_commit_sha = commit_id or "unknown"
+
+            # Extract metadata from repo for project update
+            try:
+                if repo is None:
+                    # No repo object available (cached without API access)
                     repo_metadata = {}
+                elif isinstance(repo, Repo):
+                    repo_metadata = ParseHelper.extract_local_repo_metadata(repo)
+                else:
+                    repo_metadata = ParseHelper.extract_remote_repo_metadata(repo)
+            except Exception as e:
+                logger.warning(f"Could not extract repo metadata: {e}")
+                repo_metadata = {}
 
-                repo_metadata["error_message"] = None
-                project_metadata = json.dumps(repo_metadata).encode("utf-8")
-                ProjectService.update_project(
-                    self.db,
-                    project_id,
-                    properties=project_metadata,
-                    commit_id=latest_commit_sha,
-                    status=ProjectStatusEnum.CLONED.value,
-                )
+            repo_metadata["error_message"] = None
+            project_metadata = json.dumps(repo_metadata).encode("utf-8")
+            ProjectService.update_project(
+                self.db,
+                project_id,
+                properties=project_metadata,
+                commit_id=latest_commit_sha,
+                status=ProjectStatusEnum.CLONED.value,
+            )
 
-                logger.info(
-                    f"ParsingHelper: Project directory setup complete using RepoManager path: {extracted_dir}"
+            logger.info(
+                f"ParsingHelper: Project directory setup complete using RepoManager path: {extracted_dir}"
+            )
+            return extracted_dir, project_id
+
+        # RepoManager path was set but path missing - try to recreate worktree if bare repo exists
+        if repo_manager_path and not os.path.exists(repo_manager_path):
+            # Extract repo name from repo_details or use the stored full_name
+            repo_name_for_recreate = None
+            if hasattr(repo_details, "repo_name"):
+                repo_name_for_recreate = repo_details.repo_name
+            elif 'full_name' in locals():
+                repo_name_for_recreate = full_name
+
+            if repo_name_for_recreate:
+                # Check if bare repo exists - if so, we can recreate just the worktree
+                bare_repo_path = self.repo_manager._get_bare_repo_path(repo_name_for_recreate)
+                if os.path.exists(bare_repo_path):
+                    logger.info(
+                        f"RepoManager worktree missing at {repo_manager_path} but bare repo exists. "
+                        f"Using bulletproof recreation for {repo_name_for_recreate}..."
+                    )
+                    try:
+                        ref = commit_id if commit_id else (branch if branch else "main")
+                        is_commit = bool(commit_id)
+                        # Use bulletproof helper to ensure clean worktree creation
+                        new_worktree_path = self._ensure_clean_worktree(
+                            repo_name=repo_name_for_recreate,
+                            ref=ref,
+                            auth_token=auth_token,
+                            user_id=user_id,
+                            is_commit=is_commit,
+                        )
+                        logger.info(
+                            f"Successfully recreated worktree at {new_worktree_path}"
+                        )
+                        repo_manager_path = str(new_worktree_path)
+                        # Continue with the updated path - will be used below
+                    except HTTPException:
+                        raise
+                    except Exception as e:
+                        logger.error(f"Failed to recreate worktree: {e}")
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Failed to recreate worktree: {str(e)}",
+                        )
+                else:
+                    # Bare repo also missing - need full re-clone
+                    logger.error(
+                        f"RepoManager path {repo_manager_path} is missing and bare repo not found at {bare_repo_path}. "
+                        "Full re-clone required."
+                    )
+                    raise HTTPException(
+                        status_code=500,
+                        detail=(
+                            "Repository cache path is missing and bare repo not found. "
+                            "Please trigger a new parse to re-clone the repository."
+                        ),
+                    )
+            else:
+                logger.error(
+                    f"RepoManager path {repo_manager_path} is missing and cannot determine repo name for recreation."
                 )
-                return extracted_dir, project_id
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        "Repository cache path is missing and cannot recreate worktree. "
+                        "Please trigger a new parse to re-clone the repository."
+                    ),
+                )
 
         if isinstance(repo_details, Repo):
             extracted_dir = repo_details.working_tree_dir
@@ -1084,42 +1271,18 @@ class ParseHelper:
             finally:
                 os.chdir(current_dir)  # Restore the original working directory
         else:
-            try:
-                if commit_id:
-                    # For GitHub API, we need to download tarball for specific commit
-                    extracted_dir = await self.download_and_extract_tarball(
-                        repo,
-                        commit_id,
-                        str(Path(os.getenv("PROJECT_PATH", "projects/")).absolute()),
-                        auth,
-                        repo_details,
-                        user_id,
-                    )
-                    latest_commit_sha = commit_id
-                else:
-                    extracted_dir = await self.download_and_extract_tarball(
-                        repo,
-                        branch,
-                        str(Path(os.getenv("PROJECT_PATH", "projects/")).absolute()),
-                        auth,
-                        repo_details,
-                        user_id,
-                    )
-                    # Use repo.get_branch() instead of repo_details.get_branch()
-                    # repo is the MockRepo object (or PyGithub Repository) with get_branch method
-                    # repo_details can be ParsingRequest in dev mode, which doesn't have get_branch
-                    branch_details = repo.get_branch(branch)
-                    latest_commit_sha = branch_details.commit.sha
-            except ParsingFailedError as e:
-                logger.exception("Failed to download repository")
-                raise HTTPException(
-                    status_code=500, detail=f"Repository download failed: {e}"
-                ) from e
-            except Exception as e:
-                logger.exception("Unexpected error during repository download")
-                raise HTTPException(
-                    status_code=500, detail=f"Repository download failed: {e}"
-                ) from e
+            # Worktree-only mode: If we reach here, worktree creation failed
+            logger.error(
+                "Worktree creation failed and tarball fallback is disabled. "
+                "Only RepoManager worktrees are supported."
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Failed to create worktree for repository parsing. "
+                    "Please check RepoManager status and try again."
+                ),
+            )
 
         # Use repo instead of repo_details for metadata extraction
         # repo is always the MockRepo (remote) or Repo (local) object with required methods
@@ -1241,6 +1404,8 @@ class ParseHelper:
         commit_id: Optional[str],
         user_id: str,
         auth: Any,
+        *,
+        auth_token: Optional[str] = None,
     ) -> Optional[str]:
         """
         Add repository to RepoManager using git clone/worktree.
@@ -1249,6 +1414,8 @@ class ParseHelper:
         for the requested branch/commit (very fast - no download needed).
 
         If the base repo doesn't exist, clones it first then creates worktree.
+        When auth_token (user's GitHub OAuth token) is provided, uses
+        RepoManager.prepare_for_parsing() so the token is used for cloning.
 
         Args:
             github_repo: PyGithub Repository object
@@ -1257,6 +1424,7 @@ class ParseHelper:
             commit_id: Commit SHA (optional)
             user_id: User ID
             auth: Authentication object for GitHub API
+            auth_token: Optional user GitHub OAuth token for cloning private repos
 
         Returns:
             Path to the repository worktree in .repos, or None if failed
@@ -1391,6 +1559,27 @@ class ParseHelper:
                 f"ParsingHelper: Base repo not found, cloning {repo_name} to {base_repo_path}"
             )
 
+            # When user's GitHub OAuth token is available, use RepoManager.prepare_for_parsing
+            # so the token is used for cloning (prioritized over environment tokens).
+            if auth_token:
+                try:
+                    worktree_path_str = self.repo_manager.prepare_for_parsing(
+                        repo_name,
+                        ref,
+                        auth_token=auth_token,
+                        user_id=user_id,
+                        is_commit=bool(commit_id),
+                    )
+                    if worktree_path_str:
+                        logger.info(
+                            f"ParsingHelper: Cloned {repo_name} via prepare_for_parsing with user token"
+                        )
+                        return worktree_path_str
+                except Exception as e:
+                    logger.warning(
+                        f"ParsingHelper: prepare_for_parsing with user token failed for {repo_name}: {e}. Falling back to clone with API auth."
+                    )
+
             # Build clone URL with authentication
             clone_url = await self._build_clone_url(github_repo, auth)
 
@@ -1424,12 +1613,11 @@ class ParseHelper:
             )
 
             if not worktree_path_str:
-                # Worktree creation failed, but base repo is cloned
-                # Use base repo path as fallback
-                logger.warning(
-                    f"Worktree creation failed, using base repo at {base_repo_path}"
+                # Worktree creation failed - don't return bare repo (not usable for parsing)
+                logger.error(
+                    f"Worktree creation failed for {repo_name}. Bare repo exists but cannot be used for parsing."
                 )
-                worktree_path_str = str(base_repo_path)
+                return None
 
             # Always get actual commit SHA from worktree to ensure accuracy
             actual_commit_id = None
