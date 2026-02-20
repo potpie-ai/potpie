@@ -196,14 +196,25 @@ class ParsingService:
                     github_service = GithubService(self.db)
                     user_token = github_service.get_github_oauth_token(user_id)
                     if user_token:
-                        logger.info("Using user's GitHub OAuth token for cloning (token: found)")
-                    else:
                         logger.info(
-                            f"No user GitHub OAuth token found for user {user_id}, will fallback to environment tokens"
+                            "Using user's GitHub OAuth token for cloning",
+                            user_id=user_id,
+                            repo_name=repo_details.repo_name,
+                            token_prefix=user_token[:8] if len(user_token) > 8 else "short",
+                        )
+                    else:
+                        logger.warning(
+                            "No user GitHub OAuth token found - will use environment tokens",
+                            user_id=user_id,
+                            repo_name=repo_details.repo_name,
+                            reason="User may not have linked GitHub account or token expired",
                         )
                 except Exception as e:
-                    logger.warning(
-                        f"Failed to fetch user GitHub token for user {user_id}: {e}. Falling back to environment tokens."
+                    logger.exception(
+                        "Failed to fetch user GitHub token - falling back to environment tokens",
+                        user_id=user_id,
+                        repo_name=repo_details.repo_name,
+                        error=str(e),
                     )
                 (
                     repo,

@@ -868,7 +868,7 @@ class ParseHelper:
                 f"Failed to download and extract repository: {e}"
             ) from e
 
-    def _ensure_clean_worktree(
+    async def _ensure_clean_worktree(
         self,
         repo_name: str,
         ref: str,
@@ -895,20 +895,38 @@ class ParseHelper:
         """
         
 
-        bare_repo_path = self.repo_manager.repos_base_path / repo_name / ".bare"
+        # Support both bare repo (.bare) and regular repo (.git) structures
+        repo_base_path = self.repo_manager.repos_base_path / repo_name
+        bare_repo_path = repo_base_path / ".bare"
+        regular_git_path = repo_base_path / ".git"
+
+        # Determine which git directory to use
+        if bare_repo_path.exists():
+            git_dir = bare_repo_path
+            is_bare = True
+            logger.info(f"Using bare repo at {bare_repo_path} for worktree operations")
+        elif regular_git_path.exists():
+            git_dir = repo_base_path  # Regular repo uses root as git working dir
+            is_bare = False
+            logger.info(f"Using regular repo at {repo_base_path} for worktree operations (legacy)")
+        else:
+            git_dir = None
+            is_bare = False
+            logger.warning(f"No git repo found at {repo_base_path} (neither .bare nor .git)")
+
         worktree_path_result = self.repo_manager.get_worktree_path(repo_name, ref)
         if worktree_path_result:
             worktree_path = worktree_path_result
         else:
             worktree_path = self.repo_manager.repos_base_path / repo_name / "worktrees" / ref.replace("/", "_").replace("\\", "_")
 
-        logger.info(f"_ensure_clean_worktree: Ensuring clean worktree for {repo_name}@{ref}")
+        logger.info(f"_ensure_clean_worktree: Ensuring clean worktree for {repo_name}@{ref} (is_bare={is_bare})")
 
         # Strategy 1: Prune stale git worktree registrations
-        if os.path.exists(bare_repo_path):
+        if git_dir and os.path.exists(git_dir):
             try:
                 result = subprocess.run(
-                    ["git", "-C", str(bare_repo_path), "worktree", "prune"],
+                    ["git", "-C", str(git_dir), "worktree", "prune"],
                     capture_output=True,
                     text=True,
                     timeout=30,
@@ -919,12 +937,12 @@ class ParseHelper:
                 logger.debug(f"Git worktree prune failed (non-critical): {e}")
 
         # Strategy 2: Try to unregister from git first (while directory still exists)
-        if os.path.exists(bare_repo_path):
+        if git_dir and os.path.exists(git_dir):
             try:
                 # Try force remove first
                 subprocess.run(
                     [
-                        "git", "-C", str(bare_repo_path),
+                        "git", "-C", str(git_dir),
                         "worktree", "remove", "--force",
                         str(worktree_path)
                     ],
@@ -942,17 +960,39 @@ class ParseHelper:
 
         # Strategy 4: Create fresh worktree with exists_ok=True
         try:
-            logger.info(f"Creating fresh worktree for {repo_name}@{ref}")
-            new_path = self.repo_manager.create_worktree(
-                repo_name=repo_name,
-                ref=ref,
-                auth_token=auth_token,
-                is_commit=is_commit,
-                user_id=user_id,
-                exists_ok=True,  # Should succeed now that we've cleaned up
-            )
-            logger.info(f"Successfully created clean worktree at {new_path}")
-            return str(new_path)
+            logger.info(f"Creating fresh worktree for {repo_name}@{ref} (is_bare={is_bare})")
+
+            if is_bare:
+                # Use RepoManager for bare repos
+                new_path = self.repo_manager.create_worktree(
+                    repo_name=repo_name,
+                    ref=ref,
+                    auth_token=auth_token,
+                    is_commit=is_commit,
+                    user_id=user_id,
+                    exists_ok=True,
+                )
+                logger.info(f"Successfully created worktree via RepoManager at {new_path}")
+                return str(new_path)
+            else:
+                # For regular repos (legacy), create worktree directly
+                logger.info(f"Using legacy worktree creation for regular repo at {git_dir}")
+                regular_repo = Repo(str(git_dir))
+                worktree_path_str = await self._create_git_worktree(
+                    base_repo=regular_repo,
+                    worktree_path=worktree_path,
+                    ref=ref,
+                    is_commit=is_commit,
+                )
+                if worktree_path_str:
+                    logger.info(f"Successfully created worktree at {worktree_path_str}")
+                    return worktree_path_str
+                else:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to create worktree for regular repo {repo_name}@{ref}",
+                    )
+
         except Exception as e:
             logger.error(f"Failed to create worktree even after cleanup: {e}")
             raise HTTPException(
@@ -1095,7 +1135,7 @@ class ParseHelper:
                 )
                 # Use bulletproof helper to clean up and recreate worktree
                 try:
-                    repo_manager_path = self._ensure_clean_worktree(
+                    repo_manager_path = await self._ensure_clean_worktree(
                         repo_name=normalized_full_name,
                         ref=commit_id if commit_id else (branch if branch else "main"),
                         auth_token=auth_token,
@@ -1208,7 +1248,7 @@ class ParseHelper:
                         ref = commit_id if commit_id else (branch if branch else "main")
                         is_commit = bool(commit_id)
                         # Use bulletproof helper to ensure clean worktree creation
-                        new_worktree_path = self._ensure_clean_worktree(
+                        new_worktree_path = await self._ensure_clean_worktree(
                             repo_name=repo_name_for_recreate,
                             ref=ref,
                             auth_token=auth_token,
@@ -1613,6 +1653,12 @@ class ParseHelper:
 
             # When user's GitHub OAuth token is available, use RepoManager.prepare_for_parsing
             # so the token is used for cloning (prioritized over environment tokens).
+            logger.info(
+                f"ParsingHelper: Deciding clone strategy for {repo_name}",
+                has_user_auth_token=bool(auth_token),
+                repo_name=repo_name,
+                ref=ref,
+            )
             if auth_token:
                 try:
                     worktree_path_str = self.repo_manager.prepare_for_parsing(
@@ -1631,6 +1677,10 @@ class ParseHelper:
                     logger.warning(
                         f"ParsingHelper: prepare_for_parsing with user token failed for {repo_name}: {e}. Falling back to clone with API auth."
                     )
+            else:
+                logger.warning(
+                    f"ParsingHelper: No user auth token available for {repo_name}, using environment token with direct bare clone"
+                )
 
             # Build clone URL with authentication
             clone_url = await self._build_clone_url(github_repo, auth)
@@ -1639,26 +1689,39 @@ class ParseHelper:
                 logger.error(f"Could not build clone URL for {repo_name}")
                 return None
 
-            # Create parent directory
-            base_repo_path.parent.mkdir(parents=True, exist_ok=True)
+            # Clone as BARE repository to match RepoManager architecture
+            # This ensures worktrees can be created properly
+            bare_repo_path = self.repo_manager._get_bare_repo_path(repo_name)
+            bare_repo_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Clone the repository
-            logger.info(f"ParsingHelper: Cloning {repo_name} (this may take a moment)")
+            logger.info(
+                f"ParsingHelper: Cloning {repo_name} as bare repo to {bare_repo_path} "
+                f"(no user auth token available, using environment token)"
+            )
             try:
-                base_repo = Repo.clone_from(
+                # Clone as bare repository
+                Repo.clone_from(
                     clone_url,
-                    str(base_repo_path),
-                    branch=branch or github_repo.default_branch,
-                    depth=None,  # Full clone to support worktrees
+                    str(bare_repo_path),
+                    bare=True,
+                    mirror=True,  # Mirror for full fidelity
                 )
-                logger.info(f"ParsingHelper: Successfully cloned {repo_name}")
+                logger.info(f"ParsingHelper: Successfully cloned {repo_name} as bare repo")
+
+                # Configure the bare repo to fetch all refs
+                bare_repo = Repo(str(bare_repo_path))
+                if bare_repo.remotes:
+                    origin = bare_repo.remotes.origin
+                    origin.fetch()
+                    logger.info(f"ParsingHelper: Fetched all refs for {repo_name}")
+
             except Exception as e:
-                logger.exception(f"Failed to clone {repo_name}: {e}")
+                logger.exception(f"Failed to clone {repo_name} as bare repo: {e}")
                 return None
 
-            # Now create worktree for the specific ref
-            worktree_path_str = await self._create_git_worktree(
-                base_repo=base_repo,
+            # Now create worktree for the specific ref from the bare repo
+            worktree_path_str = await self._create_git_worktree_from_bare(
+                bare_repo_path=bare_repo_path,
                 worktree_path=worktree_path,
                 ref=ref,
                 is_commit=commit_id is not None,
@@ -1829,6 +1892,87 @@ class ParseHelper:
 
         except Exception as e:
             logger.exception(f"Failed to create worktree at {worktree_path}: {e}")
+            return None
+
+    async def _create_git_worktree_from_bare(
+        self,
+        bare_repo_path: Path,
+        worktree_path: Path,
+        ref: str,
+        is_commit: bool,
+    ) -> Optional[str]:
+        """
+        Create a git worktree from a bare repository for the specified ref.
+
+        Args:
+            bare_repo_path: Path to the bare git repository
+            worktree_path: Path where worktree should be created
+            ref: Branch name or commit SHA
+            is_commit: True if ref is a commit SHA, False if it's a branch
+
+        Returns:
+            Path to the worktree, or None if creation failed
+        """
+        try:
+            # Open the bare repository
+            bare_repo = Repo(str(bare_repo_path))
+
+            # Remove existing worktree if it exists
+            if worktree_path.exists():
+                logger.info(
+                    f"Removing existing worktree directory: {worktree_path}"
+                )
+                shutil.rmtree(worktree_path, ignore_errors=True)
+                # Also remove from git's worktree registry
+                try:
+                    bare_repo.git.worktree("prune")
+                except Exception:
+                    pass
+
+            # Create worktree directory parent
+            worktree_path.parent.mkdir(parents=True, exist_ok=True)
+
+            if is_commit:
+                # For specific commit, use detached HEAD
+                logger.info(
+                    f"Creating worktree for commit {ref} at {worktree_path}"
+                )
+                bare_repo.git.worktree("add", "--detach", str(worktree_path), ref)
+            else:
+                # For branch, try to track it
+                logger.info(
+                    f"Creating worktree for branch {ref} at {worktree_path}"
+                )
+                try:
+                    bare_repo.git.worktree("add", str(worktree_path), ref)
+                except GitCommandError:
+                    # Branch might not exist locally, try with remote tracking
+                    try:
+                        bare_repo.git.worktree(
+                            "add",
+                            "--track",
+                            "-b",
+                            ref,
+                            str(worktree_path),
+                            f"origin/{ref}",
+                        )
+                    except GitCommandError:
+                        # Last resort: detached HEAD at origin/branch
+                        logger.warning(
+                            f"Could not create tracking worktree for {ref}, "
+                            f"using detached HEAD at origin/{ref}"
+                        )
+                        bare_repo.git.worktree(
+                            "add", "--detach", str(worktree_path), f"origin/{ref}"
+                        )
+
+            logger.info(f"Created git worktree from bare repo at {worktree_path}")
+            return str(worktree_path)
+
+        except Exception as e:
+            logger.exception(
+                f"Failed to create worktree from bare repo at {worktree_path}: {e}"
+            )
             return None
 
     def _initialize_base_repo(self, base_repo_path: Path, extracted_dir: str) -> Repo:
