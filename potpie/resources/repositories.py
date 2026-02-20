@@ -49,9 +49,11 @@ class RepositoriesResource(BaseResource):
         """Get RepoManager instance if enabled."""
         if self._repo_manager is not None:
             return self._repo_manager
-        enabled = (
-            os.getenv("REPO_MANAGER_ENABLED", "false").lower()
-            in ("true", "1", "yes", "y")
+        enabled = os.getenv("REPO_MANAGER_ENABLED", "false").lower() in (
+            "true",
+            "1",
+            "yes",
+            "y",
         )
         if not enabled:
             return None
@@ -102,9 +104,8 @@ class RepositoriesResource(BaseResource):
                 return resolved
 
         # Try path for this ref (might be worktree path)
-        is_commit = (
-            len(ref) >= 7
-            and all(c in "0123456789abcdefABCDEF" for c in ref[:7])
+        is_commit = len(ref) >= 7 and all(
+            c in "0123456789abcdefABCDEF" for c in ref[:7]
         )
         branch = None if is_commit else ref
         commit_id = ref if is_commit else None
@@ -161,8 +162,7 @@ class RepositoriesResource(BaseResource):
                             )
                         except GitCommandError as e:
                             logger.warning(
-                                "[RepositoriesResource] Failed to clean worktree: %s",
-                                e
+                                "[RepositoriesResource] Failed to clean worktree: %s", e
                             )
                         return str(worktree_path)
                 except Exception:
@@ -175,17 +175,14 @@ class RepositoriesResource(BaseResource):
 
         worktrees_dir.mkdir(parents=True, exist_ok=True)
 
-        is_commit = (
-            len(ref) >= 7
-            and all(c in "0123456789abcdefABCDEF" for c in ref[:7])
+        is_commit = len(ref) >= 7 and all(
+            c in "0123456789abcdefABCDEF" for c in ref[:7]
         )
 
         try:
             base_repo = Repo(base_path)
             if is_commit:
-                base_repo.git.worktree(
-                    "add", str(worktree_path), ref, "--detach"
-                )
+                base_repo.git.worktree("add", str(worktree_path), ref, "--detach")
             else:
                 try:
                     base_repo.git.worktree("add", str(worktree_path), ref)
@@ -215,9 +212,7 @@ class RepositoriesResource(BaseResource):
             return str(worktree_path)
 
         except GitCommandError as e:
-            raise PotpieError(
-                f"Failed to create worktree for {ref}: {e}"
-            ) from e
+            raise PotpieError(f"Failed to create worktree for {ref}: {e}") from e
 
     async def create_worktree(
         self,
@@ -269,9 +264,8 @@ class RepositoriesResource(BaseResource):
                 # Update last accessed for eviction tracking
                 rm = self._get_repo_manager()
                 if rm:
-                    is_commit = (
-                        len(ref) >= 7
-                        and all(c in "0123456789abcdefABCDEF" for c in ref[:7])
+                    is_commit = len(ref) >= 7 and all(
+                        c in "0123456789abcdefABCDEF" for c in ref[:7]
                     )
                     rm.update_last_accessed(
                         repo_name,
