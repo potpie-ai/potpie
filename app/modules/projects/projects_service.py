@@ -347,10 +347,12 @@ class ProjectService:
     async def get_repo_and_branch_name(self, project_id: int):
         project = ProjectService.get_project_by_id(self.db, project_id)
         if project:
+            # directory was dropped from projects table in migration 20240823164559
+            directory = getattr(project, "directory", None)
             return (
                 project.repo_name,
                 project.branch_name,
-                project.directory,
+                directory,
                 project.repo_path,
             )
         else:

@@ -238,6 +238,10 @@ class ParsingService:
 
                 # Ensure extracted_dir is a string
                 if extracted_dir is None:
+                    if self._raise_library_exceptions:
+                        raise ParsingServiceError(
+                            "Failed to set up project directory"
+                        )
                     raise HTTPException(
                         status_code=500, detail="Failed to set up project directory"
                     )

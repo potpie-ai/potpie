@@ -1,7 +1,9 @@
+import asyncio
+import os
+from typing import Any, Dict, List, Optional
+
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from typing import Dict, Any, Optional
-import os
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.code_provider.provider_factory import CodeProviderFactory
@@ -150,65 +152,31 @@ class CodeProviderController:
         else:
             return {"branches": branches}
 
-    async def get_branch_list(
-        self, repo_name: str, limit: Optional[int] = None, offset: int = 0, search: Optional[str] = None
-    ) -> Dict[str, Any]:
+    def _fetch_branches_from_provider_sync(self, repo_name: str) -> List[Any]:
         """
-        Get branch list for a repository using the configured provider.
-        Uses fallback authentication (PAT-first, then GitHub App) for private repos.
-        Caches all fetched branches in Redis for future requests.
-        Returns paginated results if limit is specified.
-
-        Args:
-            repo_name: Repository name (e.g., "owner/repo")
-            limit: Optional limit on number of branches to return
-            offset: Number of branches to skip (default: 0)
-            search: Optional search query to filter branches by name
-
-        Returns:
-            Dictionary containing branch information with pagination metadata
+        Sync helper: fetch all branches from provider with fallbacks (PAT, unauthenticated, GitHub App).
+        Runs in thread pool to avoid blocking the event loop on slow GitHub API.
         """
         from app.modules.utils.logger import setup_logger
 
         logger = setup_logger(__name__)
+        provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
+        all_branches = provider.list_branches(repo_name)
+        self.branch_cache.cache_all_branches(repo_name, all_branches, ttl=3600)
+        logger.info(f"Cached {len(all_branches)} branches for {repo_name}")
+        return all_branches
 
-        # Normalize and validate search query
-        search_query = self._normalize_search_query(search)
+    def _fetch_branches_with_fallbacks_sync(self, repo_name: str) -> List[Any]:
+        """
+        Sync helper: fetch branches with full fallback chain (PAT -> unauthenticated -> GitHub App).
+        Used from asyncio.to_thread to avoid blocking the event loop.
+        """
+        from app.modules.utils.logger import setup_logger
 
-        # Check cache first for all branches (without search filter)
-        cached_branches = self.branch_cache.get_branches(repo_name, search_query=None)
-        if cached_branches is not None:
-            logger.info(f"Found {len(cached_branches)} cached branches for {repo_name}")
-
-            filtered_branches = self._filter_branches(cached_branches, search_query)
-            if search_query:
-                logger.info(
-                    f"Filtered to {len(filtered_branches)} branches matching '{search_query}'"
-                )
-
-            return self._paginate_branches(filtered_branches, limit, offset)
-
+        logger = setup_logger(__name__)
         try:
-            # Use fallback provider that tries PAT first, then GitHub App for private repos
-            provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
-
-            # Use the provider's list_branches method - this fetches ALL branches
-            all_branches = provider.list_branches(repo_name)
-
-            # Cache all branches in Redis
-            self.branch_cache.cache_all_branches(repo_name, all_branches, ttl=3600)
-            logger.info(f"Cached {len(all_branches)} branches for {repo_name}")
-
-            filtered_branches = self._filter_branches(all_branches, search_query)
-            if search_query:
-                logger.info(
-                    f"Filtered to {len(filtered_branches)} branches matching '{search_query}'"
-                )
-
-            return self._paginate_branches(filtered_branches, limit, offset)
-
+            return self._fetch_branches_from_provider_sync(repo_name)
         except Exception as e:
-            # Check if this is a 404 (not found), 401 (bad credentials), or 403 (forbidden)
             is_404_error = (
                 (GithubException and isinstance(e, GithubException) and e.status == 404)
                 or "404" in str(e)
@@ -217,25 +185,13 @@ class CodeProviderController:
             )
             is_401_error = (
                 (BadCredentialsException and isinstance(e, BadCredentialsException))
-                or (
-                    GithubException
-                    and isinstance(e, GithubException)
-                    and e.status == 401
-                )
+                or (GithubException and isinstance(e, GithubException) and e.status == 401)
                 or "401" in str(e)
                 or "Bad credentials" in str(e)
                 or (hasattr(e, "status") and e.status == 401)
             )
-            is_403_error = (
-                (GithubException and isinstance(e, GithubException) and e.status == 403)
-                or "403" in str(e)
-                or (hasattr(e, "status") and e.status == 403)
-            )
-
             provider_type = os.getenv("CODE_PROVIDER", "github").lower()
 
-            # If this is a GitHub repo and PAT failed with 404 or 401, try unauthenticated access for public repos
-            # 401 can happen when token is invalid/expired, but repo might still be public
             if provider_type == "github" and (is_404_error or is_401_error):
                 error_type = "401 (Bad credentials)" if is_401_error else "404"
                 logger.info(
@@ -243,89 +199,67 @@ class CodeProviderController:
                     "trying unauthenticated access for public repo"
                 )
                 try:
-                    from app.modules.code_provider.github.github_provider import (
-                        GitHubProvider,
-                    )
+                    from app.modules.code_provider.github.github_provider import GitHubProvider
 
                     provider = GitHubProvider()
                     provider.set_unauthenticated_client()
                     all_branches = provider.list_branches(repo_name)
-                    logger.info(
-                        f"Successfully accessed {repo_name} without authentication"
-                    )
-                    # Cache all branches in Redis
-                    self.branch_cache.cache_all_branches(
-                        repo_name, all_branches, ttl=3600
-                    )
-                    logger.info(
-                        f"Cached {len(all_branches)} branches for {repo_name} (unauthenticated)"
-                    )
-
-                    filtered_branches = self._filter_branches(
-                        all_branches, search_query
-                    )
-                    if search_query:
-                        logger.info(
-                            f"Filtered to {len(filtered_branches)} branches matching '{search_query}'"
-                        )
-
-                    return self._paginate_branches(filtered_branches, limit, offset)
+                    self.branch_cache.cache_all_branches(repo_name, all_branches, ttl=3600)
+                    logger.info(f"Cached {len(all_branches)} branches for {repo_name} (unauthenticated)")
+                    return all_branches
                 except Exception as unauth_error:
-                    logger.warning(
-                        f"Unauthenticated access also failed for {repo_name}: {unauth_error}"
-                    )
-                    # Continue to try GitHub App below
+                    logger.warning(f"Unauthenticated access also failed for {repo_name}: {unauth_error}")
 
-            # If GitHub App is configured, try it as fallback
-            if provider_type == "github":
-                app_id = os.getenv("GITHUB_APP_ID")
-                private_key = config_provider.get_github_key()
-                if app_id and private_key:
-                    try:
-                        logger.info(
-                            f"Retrying branch fetch for {repo_name} with GitHub App auth"
-                        )
-                        provider = CodeProviderFactory.create_github_app_provider(
-                            repo_name
-                        )
-                        all_branches = provider.list_branches(repo_name)
-                        logger.info(
-                            f"Successfully fetched {len(all_branches)} branches for {repo_name} using GitHub App auth"
-                        )
-                        # Cache all branches in Redis
-                        self.branch_cache.cache_all_branches(
-                            repo_name, all_branches, ttl=3600
-                        )
-                        logger.info(
-                            f"Cached {len(all_branches)} branches for {repo_name} (GitHub App)"
-                        )
+            if provider_type == "github" and os.getenv("GITHUB_APP_ID") and config_provider.get_github_key():
+                try:
+                    logger.info(f"Retrying branch fetch for {repo_name} with GitHub App auth")
+                    provider = CodeProviderFactory.create_github_app_provider(repo_name)
+                    all_branches = provider.list_branches(repo_name)
+                    self.branch_cache.cache_all_branches(repo_name, all_branches, ttl=3600)
+                    logger.info(f"Cached {len(all_branches)} branches for {repo_name} (GitHub App)")
+                    return all_branches
+                except Exception as app_error:
+                    logger.warning(f"GitHub App auth also failed for {repo_name}: {str(app_error)}")
 
-                        filtered_branches = self._filter_branches(
-                            all_branches, search_query
-                        )
-                        if search_query:
-                            logger.info(
-                                f"Filtered to {len(filtered_branches)} branches matching '{search_query}'"
-                            )
-
-                        return self._paginate_branches(filtered_branches, limit, offset)
-                    except Exception as app_error:
-                        logger.warning(
-                            f"GitHub App auth also failed for {repo_name}: {str(app_error)}"
-                        )
-                else:
-                    logger.debug(
-                        "GitHub App credentials not configured, skipping App auth retry"
-                    )
-
-            # Log the error appropriately
-            if is_404_error or is_401_error or is_403_error:
+            if is_404_error or is_401_error or (hasattr(e, "status") and getattr(e, "status", None) == 403):
                 logger.info(f"Authentication failed for {repo_name}: {str(e)}")
             else:
-                logger.error(
-                    f"Error fetching branches for {repo_name}: {str(e)}", exc_info=True
-                )
+                logger.error(f"Error fetching branches for {repo_name}: {str(e)}", exc_info=True)
+            raise
 
+    async def get_branch_list(
+        self, repo_name: str, limit: Optional[int] = None, offset: int = 0, search: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get branch list for a repository using the configured provider.
+        Uses fallback authentication (PAT-first, then GitHub App) for private repos.
+        Caches all fetched branches in Redis for future requests.
+        Returns paginated results if limit is specified.
+        GitHub API calls run in a thread pool to avoid blocking the event loop.
+        """
+        from app.modules.utils.logger import setup_logger
+
+        logger = setup_logger(__name__)
+        search_query = self._normalize_search_query(search)
+
+        # Fast path: check cache (sync Redis read is brief; consider moving to thread if needed)
+        cached_branches = self.branch_cache.get_branches(repo_name, search_query=None)
+        if cached_branches is not None:
+            logger.info(f"Found {len(cached_branches)} cached branches for {repo_name}")
+            filtered_branches = self._filter_branches(cached_branches, search_query)
+            if search_query:
+                logger.info(f"Filtered to {len(filtered_branches)} branches matching '{search_query}'")
+            return self._paginate_branches(filtered_branches, limit, offset)
+
+        try:
+            all_branches = await asyncio.to_thread(
+                self._fetch_branches_with_fallbacks_sync, repo_name
+            )
+            filtered_branches = self._filter_branches(all_branches, search_query)
+            if search_query:
+                logger.info(f"Filtered to {len(filtered_branches)} branches matching '{search_query}'")
+            return self._paginate_branches(filtered_branches, limit, offset)
+        except Exception as e:
             raise HTTPException(
                 status_code=404,
                 detail=f"Repository {repo_name} not found or error fetching branches: {str(e)}",
@@ -363,8 +297,11 @@ class CodeProviderController:
                 github_service = GithubService(self.db)
                 result = await github_service.get_combined_user_repos(user["user_id"])
             else:
-                provider = CodeProviderFactory.create_provider()
-                repositories = provider.list_user_repositories()
+                def _list_repos_sync():
+                    provider = CodeProviderFactory.create_provider()
+                    return provider.list_user_repositories()
+
+                repositories = await asyncio.to_thread(_list_repos_sync)
                 result = {"repositories": repositories}
 
             # Apply search filter if provided
@@ -383,25 +320,18 @@ class CodeProviderController:
                 status_code=500, detail=f"Error fetching user repositories: {str(e)}"
             )
 
+    def _check_public_repo_sync(self, repo_name: str) -> bool:
+        """Sync helper: try to access repo via provider. Runs in thread to avoid blocking."""
+        provider = CodeProviderFactory.create_provider()
+        provider.get_repository(repo_name)
+        return True
+
     async def check_public_repo(self, repo_name: str) -> bool:
         """
         Check if a repository is public using the configured provider.
-
-        Args:
-            repo_name: Repository name (e.g., "owner/repo")
-
-        Returns:
-            Boolean indicating if repository is public
+        GitHub API call runs in a thread pool to avoid blocking the event loop.
         """
         try:
-            # Get the configured provider (this will auto-authenticate if credentials are available)
-            provider = CodeProviderFactory.create_provider()
-
-            # Try to access the repository - if successful, it's accessible
-            # This is a simple check; more sophisticated logic could be added
-            provider.get_repository(repo_name)
-            return True
-
+            return await asyncio.to_thread(self._check_public_repo_sync, repo_name)
         except Exception:
-            # If we can't access it, assume it's private or doesn't exist
             return False

@@ -339,7 +339,7 @@ class ParsingController:
 
     @staticmethod
     async def fetch_parsing_status(
-        project_id: str, db: AsyncSession, user: Dict[str, Any]
+        project_id: str, db: Session, user: Dict[str, Any]
     ):
         try:
             project_query = (
@@ -352,10 +352,10 @@ class ParsingController:
                     or_(
                         Project.user_id == user["user_id"],
                         Conversation.visibility == Visibility.PUBLIC,
-                        Conversation.shared_with_emails.any(user["email"]),
+                        Conversation.shared_with_emails.any(user.get("email", "")),
                     ),
                 )
-                .limit(1)  # Since we only need one result
+                .limit(1)
             )
 
             result = db.execute(project_query)
