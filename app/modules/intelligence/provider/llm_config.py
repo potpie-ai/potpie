@@ -77,20 +77,7 @@ MODEL_CONFIG_MAP = {
         "base_url": None,
         "api_version": None,
     },
-    "anthropic/claude-sonnet-4-5-20250929": {
-        "provider": "anthropic",
-        "context_window": 200000,
-        "default_params": {"temperature": 0.3, "max_tokens": 8000},
-        "capabilities": {
-            "supports_pydantic": True,
-            "supports_streaming": True,
-            "supports_vision": True,
-            "supports_tool_parallelism": True,
-        },
-        "base_url": None,
-        "api_version": None,
-    },
-    "anthropic/claude-opus-4-5-20251101": {
+    "anthropic/claude-opus-4-6": {
         "provider": "anthropic",
         "context_window": 200000,
         "default_params": {"temperature": 0.3, "max_tokens": 8000},
@@ -162,6 +149,20 @@ MODEL_CONFIG_MAP = {
         "api_version": None,
     },
     "openrouter/google/gemini-3-flash-preview": {
+        "provider": "gemini",
+        "context_window": 1048576,
+        "auth_provider": "openrouter",
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": True,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_version": None,
+    },
+    "openrouter/google/gemini-3.1-pro-preview": {
         "provider": "gemini",
         "context_window": 1048576,
         "auth_provider": "openrouter",

@@ -359,14 +359,6 @@ AVAILABLE_MODELS = [
         description="Anthropic's latest Sonnet with strong coding, agents, and computer use capabilities",
         provider="anthropic",
         is_chat_model=True,
-        is_inference_model=True,
-    ),
-    AvailableModelOption(
-        id="anthropic/claude-sonnet-4-5-20250929",
-        name="Claude Sonnet 4.5",
-        description="Optimized for agentic workflows and coding with improved tool orchestration",
-        provider="anthropic",
-        is_chat_model=True,
         is_inference_model=False,
     ),
     AvailableModelOption(
@@ -378,8 +370,8 @@ AVAILABLE_MODELS = [
         is_inference_model=True,
     ),
     AvailableModelOption(
-        id="anthropic/claude-opus-4-5-20251101",
-        name="Claude Opus 4.5",
+        id="anthropic/claude-opus-4-6",
+        name="Claude Opus 4.6",
         description="Anthropic's most capable model for complex reasoning and long-horizon tasks",
         provider="anthropic",
         is_chat_model=True,
@@ -424,6 +416,14 @@ AVAILABLE_MODELS = [
         provider="gemini",
         is_chat_model=True,
         is_inference_model=True,
+    ),
+    AvailableModelOption(
+        id="openrouter/google/gemini-3.1-pro-preview",
+        name="Gemini 3.1 Pro Preview",
+        description="Google's latest Gemini 3.1 flagship model with enhanced reasoning and multimodal capabilities",
+        provider="gemini",
+        is_chat_model=True,
+        is_inference_model=False,
     ),
     AvailableModelOption(
         id="openrouter/z-ai/glm-5",
