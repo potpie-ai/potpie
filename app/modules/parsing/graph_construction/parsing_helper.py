@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import uuid
+import subprocess
 from typing import Any, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
 from pathlib import Path
@@ -892,10 +893,14 @@ class ParseHelper:
         Raises:
             HTTPException: Only if all recovery strategies fail
         """
-        import subprocess
+        
 
-        bare_repo_path = self.repo_manager._get_bare_repo_path(repo_name)
-        worktree_path = self.repo_manager._get_worktree_path(repo_name, ref)
+        bare_repo_path = self.repo_manager.repos_base_path / repo_name / ".bare"
+        worktree_path_result = self.repo_manager.get_worktree_path(repo_name, ref)
+        if worktree_path_result:
+            worktree_path = worktree_path_result
+        else:
+            worktree_path = self.repo_manager.repos_base_path / repo_name / "worktrees" / ref.replace("/", "_").replace("\\", "_")
 
         logger.info(f"_ensure_clean_worktree: Ensuring clean worktree for {repo_name}@{ref}")
 
@@ -913,12 +918,7 @@ class ParseHelper:
             except Exception as e:
                 logger.debug(f"Git worktree prune failed (non-critical): {e}")
 
-        # Strategy 2: Remove worktree directory if it exists (corrupt or empty)
-        if os.path.exists(worktree_path):
-            logger.info(f"Removing existing worktree directory: {worktree_path}")
-            shutil.rmtree(worktree_path, ignore_errors=True)
-
-        # Strategy 3: Try to unregister from git (ignore all errors)
+        # Strategy 2: Try to unregister from git first (while directory still exists)
         if os.path.exists(bare_repo_path):
             try:
                 # Try force remove first
@@ -934,6 +934,11 @@ class ParseHelper:
                 logger.info(f"Force-removed worktree registration for {repo_name}@{ref}")
             except Exception:
                 pass  # Ignore errors, prune already cleaned stale entries
+
+        # Strategy 3: Remove worktree directory if it still exists (corrupt or empty)
+        if os.path.exists(worktree_path):
+            logger.info(f"Removing existing worktree directory: {worktree_path}")
+            shutil.rmtree(worktree_path, ignore_errors=True)
 
         # Strategy 4: Create fresh worktree with exists_ok=True
         try:
@@ -953,7 +958,7 @@ class ParseHelper:
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to create worktree for {repo_name}@{ref}: {str(e)}",
-            )
+            ) from e
 
     async def setup_project_directory(
         self,
@@ -1214,7 +1219,54 @@ class ParseHelper:
                             f"Successfully recreated worktree at {new_worktree_path}"
                         )
                         repo_manager_path = str(new_worktree_path)
-                        # Continue with the updated path - will be used below
+
+                        # Persist project metadata after worktree recreation (same as "path exists" branch)
+                        latest_commit_sha = commit_id
+                        if not latest_commit_sha:
+                            try:
+                                if self.repo_manager:
+                                    repo_info = self.repo_manager.get_repo_info(
+                                        repo_name=normalized_full_name,
+                                        branch=branch,
+                                        commit_id=commit_id,
+                                        user_id=user_id,
+                                    )
+                                    if repo_info and repo_info.get("commit_id"):
+                                        latest_commit_sha = repo_info["commit_id"]
+                                if not latest_commit_sha:
+                                    try:
+                                        git_repo = Repo(repo_manager_path)
+                                        latest_commit_sha = git_repo.head.commit.hexsha
+                                    except Exception:
+                                        if hasattr(repo, "get_branch"):
+                                            branch_details = repo.get_branch(branch)
+                                            latest_commit_sha = branch_details.commit.sha
+                            except Exception as e:
+                                logger.warning(f"Could not determine commit SHA: {e}")
+                            latest_commit_sha = latest_commit_sha or commit_id or "unknown"
+                        try:
+                            if repo is None:
+                                repo_metadata = {}
+                            elif isinstance(repo, Repo):
+                                repo_metadata = ParseHelper.extract_local_repo_metadata(repo)
+                            else:
+                                repo_metadata = ParseHelper.extract_remote_repo_metadata(repo)
+                        except Exception as e:
+                            logger.warning(f"Could not extract repo metadata: {e}")
+                            repo_metadata = {}
+                        repo_metadata["error_message"] = None
+                        project_metadata = json.dumps(repo_metadata).encode("utf-8")
+                        ProjectService.update_project(
+                            self.db,
+                            project_id,
+                            properties=project_metadata,
+                            commit_id=latest_commit_sha,
+                            status=ProjectStatusEnum.CLONED.value,
+                        )
+                        logger.info(
+                            f"ParsingHelper: Project directory setup complete using recreated worktree: {repo_manager_path}"
+                        )
+                        return repo_manager_path, project_id
                     except HTTPException:
                         raise
                     except Exception as e:
@@ -1737,6 +1789,13 @@ class ParseHelper:
                     base_repo.git.worktree("remove", str(worktree_path), force=True)
                 except Exception:
                     shutil.rmtree(worktree_path, ignore_errors=True)
+                    # Clean up stale worktree references after manual deletion
+                    # Per git docs: manual deletion without 'git worktree remove'
+                    # leaves administrative files that need pruning
+                    try:
+                        base_repo.git.worktree("prune")
+                    except Exception:
+                        pass  # Non-critical, continue with worktree creation
 
             # Create worktree directory parent
             worktree_path.parent.mkdir(parents=True, exist_ok=True)

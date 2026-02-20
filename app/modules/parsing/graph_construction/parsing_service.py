@@ -196,9 +196,7 @@ class ParsingService:
                     github_service = GithubService(self.db)
                     user_token = github_service.get_github_oauth_token(user_id)
                     if user_token:
-                        logger.info(
-                            f"Using user's GitHub OAuth token for cloning (token: {user_token[:8]}...)"
-                        )
+                        logger.info("Using user's GitHub OAuth token for cloning (token: found)")
                     else:
                         logger.info(
                             f"No user GitHub OAuth token found for user {user_id}, will fallback to environment tokens"
@@ -209,7 +207,7 @@ class ParsingService:
                     )
                 (
                     repo,
-                    owner,
+                    _owner,
                     auth,
                     repo_manager_path,
                 ) = await self.parse_helper.clone_or_copy_repository(
