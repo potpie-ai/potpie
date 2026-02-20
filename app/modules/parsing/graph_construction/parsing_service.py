@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
+from app.modules.code_provider.github.github_service import GithubService
 from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.parsing.graph_construction.parsing_helper import (
     ParseHelper,
@@ -189,13 +190,28 @@ class ParsingService:
                     repo_path=repo_details.repo_path,
                     project_id=project_id,
                 )
+                # Fetch user's GitHub OAuth token from user_auth_providers table
+                user_token = None
+                try:
+                    github_service = GithubService(self.db)
+                    user_token = github_service.get_github_oauth_token(user_id)
+                    if user_token:
+                        logger.info("Using user's GitHub OAuth token for cloning (token: found)")
+                    else:
+                        logger.info(
+                            f"No user GitHub OAuth token found for user {user_id}, will fallback to environment tokens"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to fetch user GitHub token for user {user_id}: {e}. Falling back to environment tokens."
+                    )
                 (
                     repo,
-                    owner,
+                    _owner,
                     auth,
                     repo_manager_path,
                 ) = await self.parse_helper.clone_or_copy_repository(
-                    repo_details_converted, user_id
+                    repo_details_converted, user_id, auth_token=user_token
                 )
                 logger.info(
                     "ParsingService: clone_or_copy_repository completed",
@@ -216,6 +232,7 @@ class ParsingService:
                         str(project_id),
                         commit_id=repo_details.commit_id,
                         repo_manager_path=repo_manager_path,
+                        auth_token=user_token,
                     )
                 else:
                     (
@@ -230,6 +247,7 @@ class ParsingService:
                         str(project_id),
                         commit_id=repo_details.commit_id,
                         repo_manager_path=repo_manager_path,
+                        auth_token=user_token,
                     )
 
                 # setup_project_directory returns str | None, but project_id is int
