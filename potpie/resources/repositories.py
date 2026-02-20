@@ -31,9 +31,9 @@ CODEGEN_WORKTREE_PREFIX = "codegen_"
 class RepositoriesResource(BaseResource):
     """Access repository worktrees for codegen and workflows.
 
-    When REPO_MANAGER_ENABLED=true, uses RepoManager as the worktree creation
-    source: if the repo is already registered (e.g. from parsing), creates
-    a new isolated worktree from the base path. Avoids re-cloning.
+    Uses RepoManager as the worktree creation source: if the repo is already
+    registered (e.g. from parsing), creates a new isolated worktree from the
+    base path. Avoids re-cloning.
     """
 
     def __init__(
@@ -46,15 +46,9 @@ class RepositoriesResource(BaseResource):
         self._repo_manager = None
 
     def _get_repo_manager(self):
-        """Get RepoManager instance if enabled."""
+        """Get RepoManager instance (worktree-only mode, always enabled)."""
         if self._repo_manager is not None:
             return self._repo_manager
-        enabled = (
-            os.getenv("REPO_MANAGER_ENABLED", "false").lower()
-            in ("true", "1", "yes", "y")
-        )
-        if not enabled:
-            return None
         try:
             from app.modules.repo_manager import RepoManager
 
@@ -290,6 +284,5 @@ class RepositoriesResource(BaseResource):
         # Fallback: RepoManager doesn't have the repo
         raise PotpieError(
             f"Repository {repo_name}@{ref} not found in RepoManager. "
-            "Ensure REPO_MANAGER_ENABLED=true and the project has been parsed "
-            "so the repository is available locally."
+            "Ensure the project has been parsed so the repository is available locally."
         )

@@ -113,17 +113,13 @@ class ConversationService:
         self.redis_manager = redis_manager or RedisStreamManager()
         self.celery_app = celery_app
 
-        # Initialize repo manager if enabled
+        # Initialize repo manager (worktree-only mode, always enabled)
         self.repo_manager = None
         try:
-            repo_manager_enabled = (
-                os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
-            )
-            if repo_manager_enabled:
-                from app.modules.repo_manager import RepoManager
+            from app.modules.repo_manager import RepoManager
 
-                self.repo_manager = RepoManager()
-                logger.info("ConversationService: RepoManager initialized")
+            self.repo_manager = RepoManager()
+            logger.info("ConversationService: RepoManager initialized")
         except Exception as e:
             logger.warning(
                 f"ConversationService: Failed to initialize RepoManager: {e}"

@@ -148,25 +148,21 @@ class ProviderWrapper:
     authentication, which handles the complete fallback chain (GitHub App → PAT → Unauthenticated).
     No additional fallback logic should be added here - let exceptions propagate to callers.
 
-    When RepoManager is enabled, wraps providers with RepoManagerCodeProviderWrapper
-    to use local repository copies from .repos when available.
+    Wraps providers with RepoManagerCodeProviderWrapper to use local repository copies
+    from .repos when available.
     """
 
     def __init__(self, sql_db=None):
         # Don't create provider here - create it per-request with proper auth
         self.sql_db = sql_db
 
-        # Initialize repo manager if enabled
+        # Initialize repo manager
         self.repo_manager = None
         try:
-            repo_manager_enabled = (
-                os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
-            )
-            if repo_manager_enabled:
-                from app.modules.repo_manager import RepoManager
+            from app.modules.repo_manager import RepoManager
 
-                self.repo_manager = RepoManager()
-                logger.info("ProviderWrapper: RepoManager initialized")
+            self.repo_manager = RepoManager()
+            logger.info("ProviderWrapper: RepoManager initialized")
         except Exception as e:
             logger.warning(f"ProviderWrapper: Failed to initialize RepoManager: {e}")
 

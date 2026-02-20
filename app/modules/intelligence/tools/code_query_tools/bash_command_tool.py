@@ -522,15 +522,11 @@ class BashCommandTool:
         self.user_id = user_id
         self.project_service = ProjectService(sql_db)
 
-        # Initialize repo manager if enabled
+        # Initialize repo manager (worktree-only mode, always enabled)
         self.repo_manager = None
         try:
-            repo_manager_enabled = (
-                os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
-            )
-            if repo_manager_enabled:
-                self.repo_manager = RepoManager()
-                logger.info("BashCommandTool: RepoManager initialized")
+            self.repo_manager = RepoManager()
+            logger.info("BashCommandTool: RepoManager initialized")
         except Exception as e:
             logger.warning(f"BashCommandTool: Failed to initialize RepoManager: {e}")
 
@@ -855,13 +851,8 @@ def bash_command_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]
     """
     Create bash command tool if repo manager is enabled.
 
-    Returns None if repo manager is not enabled.
+    Returns None if repo manager initialization failed.
     """
-    repo_manager_enabled = os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
-    if not repo_manager_enabled:
-        logger.debug("BashCommandTool not created: REPO_MANAGER_ENABLED is false")
-        return None
-
     tool_instance = BashCommandTool(sql_db, user_id)
     if not tool_instance.repo_manager:
         logger.debug("BashCommandTool not created: RepoManager initialization failed")
