@@ -207,14 +207,6 @@ class ProjectResource(BaseResource):
         finally:
             session.close()
 
-    async def list(self, user_id: str) -> List[ProjectInfo]:
-        """List all projects for a user.
-
-        Args:
-            user_id: User ID whose projects to list
-
-        Returns:
-            List of ProjectInfo objects
     async def list(self, user_id: str) -> List[str]:
         """List all project IDs for a user.
 
@@ -231,6 +223,7 @@ class ProjectResource(BaseResource):
 
         except ProjectError:
             raise
+
     async def delete(self, project_id: str) -> None:
         """Delete a project and its associated data.
 
