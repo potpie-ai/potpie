@@ -386,10 +386,12 @@ class ProjectService:
             try:
                 project = ProjectService.get_project_by_id(db, project_id)
                 if project:
+                    # directory was dropped from projects table in migration 20240823164559
+                    directory = getattr(project, "directory", None)
                     return (
                         project.repo_name,
                         project.branch_name,
-                        project.directory,
+                        directory,
                         project.repo_path,
                     )
                 return None
