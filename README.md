@@ -249,8 +249,6 @@ Potpie offers a suite of specialized codebase agents for automating and optimizi
 - **Debugging Agent**: Automatically analyzes stacktraces and provides debugging steps specific to your codebase. [Docs](https://docs.potpie.ai/agents/debugging-agent)
 - **Codebase Q&A Agent**: Answers questions about your codebase and explains functions, features, and architecture. [Docs](https://docs.potpie.ai/agents/qna-agent)
 - **Code Changes Agent**: Analyzes code changes, identifies affected APIs, and suggests improvements before merging. [Docs](https://docs.potpie.ai/agents/code-changes-agent)
-- **Integration Test Agent**: Generates integration test plans and code for flows to ensure components work together properly. [Docs](https://docs.potpie.ai/agents/integration-test-agent)
-- **Unit Test Agent**: Automatically creates unit test plan and code for individual functions to enhance test coverage. [Docs](https://docs.potpie.ai/agents/unit-test-agent)
 - **LLD Agent**: Creates a low level design for implementing a new feature by providing functional requirements to this agent. [Docs](https://docs.potpie.ai/agents/introduction)
 - **Code Generation Agent**: Generates code for new features, refactors existing code, and suggests optimizations. [Docs](https://docs.potpie.ai/agents/introduction)
 
@@ -287,8 +285,6 @@ Read more in our [documentation](https://docs.potpie.ai/open-source/agents/creat
 - **Reviewing Code Changes** : Understand the functional impact of changes and compute the blast radius of modifications.
 
 - **Debugging** : Get step-by-step debugging guidance based on stacktraces and codebase context.
-
-- **Testing** : Generate contextually aware unit and integration test plans and test code that understand your codebase's structure and purpose.
 
 ## Extensions & Integrations
 

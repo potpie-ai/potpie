@@ -25,11 +25,6 @@ class MultiAgentConfig:
         == "true",
         "codebase_qna_agent": os.getenv("QNA_MULTI_AGENT", "true").lower() == "true",
         "debugging_agent": os.getenv("DEBUG_MULTI_AGENT", "true").lower() == "true",
-        "unit_test_agent": os.getenv("UNIT_TEST_MULTI_AGENT", "true").lower() == "true",
-        "integration_test_agent": os.getenv(
-            "INTEGRATION_TEST_MULTI_AGENT", "true"
-        ).lower()
-        == "true",
         "LLD_agent": os.getenv("LLD_MULTI_AGENT", "true").lower() == "true",
         "code_changes_agent": os.getenv("CODE_CHANGES_MULTI_AGENT", "true").lower()
         == "true",
@@ -103,8 +98,6 @@ GENERAL_PURPOSE_MULTI_AGENT=true
 CODE_GEN_MULTI_AGENT=true
 QNA_MULTI_AGENT=true
 DEBUG_MULTI_AGENT=true
-UNIT_TEST_MULTI_AGENT=true
-INTEGRATION_TEST_MULTI_AGENT=true
 LLD_MULTI_AGENT=true
 CODE_CHANGES_MULTI_AGENT=true
 

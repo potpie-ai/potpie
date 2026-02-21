@@ -31,10 +31,8 @@ from .chat_agents.system_agents import (
     blast_radius_agent,
     code_gen_agent,
     debug_agent,
-    integration_test_agent,
     low_level_design_agent,
     qna_agent,
-    unit_test_agent,
 )
 
 logger = setup_logger(__name__)
@@ -97,22 +95,6 @@ class AgentsService:
                 name="Debugging with Knowledge Graph Agent",
                 description="An agent specialized in debugging using knowledge graphs.",
                 agent=debug_agent.DebugAgent(
-                    llm_provider, tools_provider, prompt_provider
-                ),
-            ),
-            "unit_test_agent": AgentWithInfo(
-                id="unit_test_agent",
-                name="Unit Test Agent",
-                description="An agent specialized in generating unit tests for code snippets for given function names",
-                agent=unit_test_agent.UnitTestAgent(
-                    llm_provider, tools_provider, prompt_provider
-                ),
-            ),
-            "integration_test_agent": AgentWithInfo(
-                id="integration_test_agent",
-                name="Integration Test Agent",
-                description="An agent specialized in generating integration tests for code snippets from the knowledge graph based on given function names of entry points. Works best with Py, JS, TS",
-                agent=integration_test_agent.IntegrationTestAgent(
                     llm_provider, tools_provider, prompt_provider
                 ),
             ),
