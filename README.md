@@ -12,11 +12,12 @@
 
 # Potpie
 
-[Potpie](https://potpie.ai) is an open-source platform that creates AI agents specialized in your codebase. Build a comprehensive knowledge graph of your code and let agents handle everything from debugging to feature development.
+[Potpie](https://potpie.ai) turns your entire codebase into a **knowledge graph** - a structural index of every file, class, and function, capturing all their relationships and what each part of the code does in context of everything else. AI agents built on this graph can reason about your code with the precision of someone who wrote it.
 
 
 <p align="center">
-<img width="700" alt="Potpie Dashboard" src="./assets/home_page.png" />
+<img width="700" alt="Potpie Dashboard" src="./assets/dashboard.gif" />
+
 </p>
 
 <p align="center">
@@ -121,7 +122,7 @@ To stop all services:
 ./scripts/stop.sh
 ```
 
-#### Now set up Potpie.ai Frontend
+#### Now set up Potpie Frontend
 
 ```bash
 cd potpie-ui
@@ -132,7 +133,30 @@ pnpm build && pnpm start
 ```
 
 
+---
+
+## How it works?
+
+Potpie builds a **knowledge graph** of your repository using Neo4j, then routes your prompts to specialized AI agents that understand your actual code — not just generic patterns.
+
+**Architecture**
+
+<p align="center">
+  <img src="./assets/architecture.svg" alt="Potpie Architecture" width="900"/>
+</p>
+
+- [**FastAPI**](https://fastapi.tiangolo.com/) serves as the API layer — all requests enter through `localhost:8001` with CORS, Logfire tracing, and optional Sentry error tracking.
+- [**Firebase Auth**](https://firebase.google.com/docs/auth) handles production authentication. In development mode a dummy user is created locally — no Firebase needed.
+- [**Celery Worker**](https://docs.celeryq.dev/) with [Redis](https://redis.io/) as the broker handles async repo parsing — cloning, AST extraction, and knowledge graph construction run entirely in the background.
+- [**Conversation Service**](https://docs.potpie.ai/conversations) manages chat sessions and agent memory across multi-turn interactions.
+- [**Agent Router**](https://docs.potpie.ai/agents/introduction) dispatches prompts to the correct pre-built or custom agent based on intent.
+- [**Tool Service**](https://docs.potpie.ai/tools) exposes callable functions to agents — code search, file fetch, knowledge graph queries, web tools, and more.
+- [**Neo4j Knowledge Graph**](https://neo4j.com/) stores your codebase as a property graph — functions, classes, files, imports, and call relationships — the backbone of every agent's context.
+- [**PostgreSQL**](https://www.postgresql.org/) stores users, projects, conversations, and message history.
+
+
 ## GitHub Authentication
+
 
 | Method | Configuration | Best For |
 |--------|--------------|----------|
@@ -148,11 +172,11 @@ Set `GITHUB_AUTH_MODE` to `app`, `pat`, or `none` to select the method.
 
 For self-hosted Git servers (e.g., GitBucket, GitLab, etc.), configure:
 
-      ```bash
+      
       uv sync
-      ```
+    
 
-      This will create a `.venv` directory and install all dependencies from `pyproject.toml`
+This will create a `.venv` directory and install all dependencies from `pyproject.toml`
 
 #### GitHub Authentication Setup
 
@@ -185,12 +209,12 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
 ##### For Self-Hosted Git Servers (GitBucket, GitLab, etc.):
 
       Set the following environment variables:
-      ```bash
-      # Options: github, gitlab, gitbucket
-      CODE_PROVIDER=github
+      
+    
+      CODE_PROVIDER=github   # Options: github, gitlab, gitbucket
       CODE_PROVIDER_BASE_URL=http://your-git-server.com/api/v3
       CODE_PROVIDER_TOKEN=your-token
-      ```
+    
 
 **Important**: `GH_TOKEN_LIST` tokens are always used for GitHub.com, regardless of `CODE_PROVIDER_BASE_URL`.
 
@@ -246,13 +270,9 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
 
 Potpie offers a suite of specialized codebase agents for automating and optimizing key aspects of software development:
 
-- **Debugging Agent**: Automatically analyzes stacktraces and provides debugging steps specific to your codebase. [Docs](https://docs.potpie.ai/agents/debugging-agent)
-- **Codebase Q&A Agent**: Answers questions about your codebase and explains functions, features, and architecture. [Docs](https://docs.potpie.ai/agents/qna-agent)
-- **Code Changes Agent**: Analyzes code changes, identifies affected APIs, and suggests improvements before merging. [Docs](https://docs.potpie.ai/agents/code-changes-agent)
 - **Integration Test Agent**: Generates integration test plans and code for flows to ensure components work together properly. [Docs](https://docs.potpie.ai/agents/integration-test-agent)
 - **Unit Test Agent**: Automatically creates unit test plan and code for individual functions to enhance test coverage. [Docs](https://docs.potpie.ai/agents/unit-test-agent)
 - **LLD Agent**: Creates a low level design for implementing a new feature by providing functional requirements to this agent. [Docs](https://docs.potpie.ai/agents/introduction)
-- **Code Generation Agent**: Generates code for new features, refactors existing code, and suggests optimizations. [Docs](https://docs.potpie.ai/agents/introduction)
 
 ### Custom Agents
 
@@ -270,53 +290,102 @@ curl -X POST "http://localhost:8001/api/v1/custom-agents/agents/auto" \
 
 Read more in our [documentation](https://docs.potpie.ai/open-source/agents/create-agent-from-prompt).
 
+
+
 ## Use Cases
 
-- **Onboarding** : Help developers new to a codebase understand and get up to speed quickly. Ask it how to set up a new project, how to run the tests, etc.
+<table>
+  <tr>
+    <td valign="top" width="50%">
+      <h3>Onboarding</h3>
+      <p>Get new developers productive in hours, not weeks. Potpie maps your architecture, entry points, and setup flows so anyone can hit the ground running.</p>
+    </td>
+    <td valign="top" width="50%">
+      <h3>Codebase Q&amp;A</h3>
+      <p>Ask anything about your codebase — functions, data flows, design decisions. Get precise answers grounded in your actual code, not guesses.</p>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <h3>Debugging</h3>
+      <p>Paste a stacktrace. Get a root-cause analysis and step-by-step fix path pinpointed to your code — not generic troubleshooting advice.</p>
+    </td>
+    <td valign="top">
+      <h3>Code Review</h3>
+      <p>Before you merge, understand the blast radius of your changes. Potpie surfaces affected APIs, downstream impacts, and potential regressions.</p>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <h3>Test Generation</h3>
+      <p>Generate unit and integration tests that understand your code structure — not boilerplate. Covers edge cases your manual tests would miss.</p>
+    </td>
+    <td valign="top">
+      <h3>Feature Planning</h3>
+      <p>Turn a requirement or open issue into a low-level implementation plan — with component breakdown, API surface, and suggested code structure.</p>
+    </td>
+  </tr>
+</table>
 
-  > We tried to onboard ourselves with Potpie to the [**AgentOps**](https://github.com/AgentOps-AI/AgentOps) codebase and it worked like a charm: Video [here](https://youtu.be/_mPixNDn2r8).
+<p align="center">
+  <a href="https://docs.potpie.ai/usecases">
+    <img src="https://img.shields.io/badge/Explore%20All%20Use%20Cases-Docs-22c55e?style=for-the-badge" alt="Explore All Use Cases"/>
+  </a>
+</p>
 
-- **Codebase Understanding** : Answer questions about any library you're integrating, explain functions, features, and architecture.
+## Extensions &amp; Integrations
 
-  > We used the Q&A agent to understand the underlying working of a feature of the [**CrewAI**](https://github.com/CrewAIInc/CrewAI) codebase that was not documented in official docs: Video [here](https://www.linkedin.com/posts/dhirenmathur_what-do-you-do-when-youre-stuck-and-even-activity-7256704603977613312-8X8G).
+<table>
+  <tr>
+    <td valign="top">
+      <h3>VSCode Extension</h3>
+      <p>Use Potpie's AI agents directly inside your editor — no tab switching, no copy-pasting. Ask questions, get explanations, and ship code without leaving VSCode.</p>
+      <ul>
+        <li>Agents understand your open repo instantly</li>
+        <li>Works with any codebase — local or remote</li>
+      </ul>
+      <a href="https://marketplace.visualstudio.com/items?itemName=PotpieAI.potpie-vscode-extension">
+        <img src="https://img.shields.io/badge/Install-VSCode%20Extension-0078d7?style=for-the-badge&logo=visualstudiocode&logoColor=white" alt="Install VSCode Extension"/>
+      </a>
+    </td>
+  </tr>
+  <tr><td><hr/></td></tr>
+  <tr>
+    <td valign="top">
+      <h3>Slack Integration</h3>
+      <p>Bring Potpie into your team's Slack workspace. Debug code, answer codebase questions, and get project insights — all in threads your team already uses.</p>
+      <ul>
+        <li>Set up in under 2 minutes</li>
+        <li>Works with your custom configured agents</li>
+      </ul>
+      <a href="https://slack.potpie.ai/slack/install">
+        <img src="https://img.shields.io/badge/Add%20to-Slack-4A154B?style=for-the-badge&logo=slack&logoColor=white" alt="Add to Slack"/>
+      </a>
+      &nbsp;
+      <a href="https://docs.potpie.ai/extensions/slack">
+        <img src="https://img.shields.io/badge/Setup-Guide-22c55e?style=for-the-badge" alt="Setup Guide"/>
+      </a>
+    </td>
+  </tr>
+  <tr><td><hr/></td></tr>
+  <tr>
+    <td valign="top">
+      <h3>API Access</h3>
+      <p>Integrate Potpie into CI/CD pipelines and automation workflows via API key. Trigger agents programmatically to fit your existing DevOps setup.</p>
+      <a href="https://docs.potpie.ai/agents/api-access">
+        <img src="https://img.shields.io/badge/View-API%20Docs-22c55e?style=for-the-badge" alt="API Docs"/>
+      </a>
+    </td>
+  </tr>
+  <tr><td><hr/></td></tr>
+  <tr>
+    <td valign="top">
+      <h3>Custom Tool Integration</h3>
+      <p>Extend Potpie's capabilities by building and registering your own tools. Add files to <code>app/modules/intelligence/tools/</code> and register them in <code>tool_service.py</code>.</p>
+    </td>
+  </tr>
+</table>
 
-- **Low Level Design** : Get detailed implementation plans for new features or improvements before writing code.
-
-  > We fed an open issue from the [**Portkey-AI/Gateway**](https://github.com/Portkey-AI/Gateway) project to this agent to generate a low level design for it: Video [here](https://www.linkedin.com/posts/dhirenmathur_potpie-ai-agents-vs-llms-i-am-extremely-activity-7255607456448286720-roOC).
-
-- **Reviewing Code Changes** : Understand the functional impact of changes and compute the blast radius of modifications.
-
-- **Debugging** : Get step-by-step debugging guidance based on stacktraces and codebase context.
-
-- **Testing** : Generate contextually aware unit and integration test plans and test code that understand your codebase's structure and purpose.
-
-## Extensions & Integrations
-
-### VSCode Extension
-
-Bring the power of Potpie's AI agents directly into your development environment.
-
-- **Direct Integration** : Access all Potpie agents without leaving your editor
-- **Quick Setup** : Install directly from the [VSCode Marketplace](https://marketplace.visualstudio.com/items?itemName=PotpieAI.potpie-vscode-extension)
-- **Seamless Workflow** : Ask questions, get explanations, and implement suggestions right where you code
-
-### Slack Integration
-
-Bring your custom AI agents directly into your team's communication hub.
-
-- **Team Collaboration** : Access all Potpie agents where your team already communicates
-- **Effortless Setup** : Install and configure in under 2 minutes. [Docs](https://docs.potpie.ai/extensions/slack)
-- **Contextual Assistance** : Get answers, code solutions, and project insights directly in Slack
-
-👉 Install the Potpie Slack App: [Here](https://slack.potpie.ai/slack/install)
-
-### API Access
-
-Access Potpie Agents through an API key for CI/CD workflows and automation. See the [API documentation](https://docs.potpie.ai/agents/api-access).
-
-### Tool Integration
-
-Edit or add tools in `app/modules/intelligence/tools` and initialize them in `app/modules/intelligence/tools/tool_service.py`.
 
 ## Community & Support
 
@@ -325,7 +394,7 @@ Edit or add tools in `app/modules/intelligence/tools` and initialize them in `ap
 - [Email Support](https://potpie.ai). Best for: problems with your setup or infrastructure.
 
 
-See [Contributing Guide](./contributing.md) for more details.
+See the [Contributing Guide](https://github.com/potpie-ai/potpie/blob/main/.github/CONTRIBUTING.md) for more details.
 
 ## License
 
@@ -335,4 +404,8 @@ This project is licensed under the Apache 2.0 License — see the [LICENSE](LICE
 
 Thanks for spending your time helping build Potpie. Keep rocking 🥂
 
-<img src="https://contributors-img.web.app/image?repo=potpie-ai/potpie" alt="Contributors"/>
+Want to contribute? Read the [Contributing Guide](https://github.com/potpie-ai/potpie/blob/main/.github/CONTRIBUTING.md) to get started.
+
+<a href="https://github.com/potpie-ai/potpie/graphs/contributors">
+  <img src="https://contributors-img.web.app/image?repo=potpie-ai/potpie" alt="Contributors"/>
+</a>
