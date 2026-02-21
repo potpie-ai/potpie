@@ -3,7 +3,7 @@
   <a href="https://potpie.ai?utm_source=github">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="./assets/readme_logo_dark.svg" />
-      <source media="(prefers-color-scheme: light)" srcset="./assets/logo_light.svg" />
+      <source media="(prefers-color-scheme: light)" srcset="./assets/readme_logo_light.svg" />
       <img src="./assets/logo_light.svg"  alt="Potpie AI logo" />
     </picture>
   </a>
@@ -12,7 +12,7 @@
 
 # Potpie
 
-[Potpie](https://potpie.ai) turns your entire codebase into a **knowledge graph** - a structural index of every file, class, and function, capturing all their relationships and what each part of the code does in context of everything else. AI agents built on this graph can reason about your code with the precision of someone who wrote it.
+[Potpie](https://potpie.ai) turns your entire codebase into a **knowledge graph** - a structural index of every file, class, and function, capturing all their relationships and what each part of the code does in context of everything else. AI agents built on this graph can reason about your code with the precision of someone who wrote it - from debugging to feature development.
 
 
 <p align="center">
@@ -137,7 +137,7 @@ pnpm build && pnpm start
 
 ## How it works?
 
-Potpie builds a **knowledge graph** of your repository using Neo4j, then routes your prompts to specialized AI agents that understand your actual code — not just generic patterns.
+Potpie parses your repository into a **knowledge graph** stored in Neo4j - capturing every file, function, class, and the relationships between them. Agents read directly from this graph to answer questions and complete tasks grounded in your actual code.
 
 **Architecture**
 
@@ -186,12 +186,7 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
 
 **Option 1: GitHub App (Recommended for Production)**
   - Create a GitHub App in your organization
-architecture. [Docs](https://docs.potpie.ai/agents/qna-agent)
-- **Code Changes Agent**: Analyzes code changes, identifies affected APIs, and suggests improvements before merging. [Docs](https://docs.potpie.ai/agents/code-changes-agent)
-- **Integration Test Agent**: Generates integration test plans and code for flows to ensure components work together properly. [Docs](https://docs.potpie.ai/agents/integration-test-agent)
-- **Unit Test Agent**: Automatically creates unit test plan and code for individual functions to enhance test coverage. [Docs](https://docs.potpie.ai/agents/unit-test-agent)
-- **LLD Agent**: Creates a low level design for implementing a new feature by providing functional requirements to this agent. [Docs](https://docs.potpie.ai/agents/introduction)
-- **Code Generation Agent**: Generates code for new features, refactors existing code, and suggests optimizations. [Docs](https://docs.potpie.ai/agents/introduction)  - Set environment variables:
+  - Set environment variables:
     ```bash
     GITHUB_APP_ID=your-app-id
     GITHUB_PRIVATE_KEY=your-private-key
@@ -216,7 +211,7 @@ architecture. [Docs](https://docs.potpie.ai/agents/qna-agent)
       Set the following environment variables:
       
     
-      CODE_PROVIDER=github   # Options: github, gitlab, gitbucket
+      CODE_PROVIDER=github   # Options: github, gitbucket
       CODE_PROVIDER_BASE_URL=http://your-git-server.com/api/v3
       CODE_PROVIDER_TOKEN=your-token
     
@@ -275,13 +270,11 @@ architecture. [Docs](https://docs.potpie.ai/agents/qna-agent)
 
 Potpie offers a suite of specialized codebase agents for automating and optimizing key aspects of software development:
 
-- **Debugging Agent**: Automatically analyzes stacktraces and provides debugging steps specific to your codebase. [Docs](https://docs.potpie.ai/agents/debugging-agent)
-- **Codebase Q&A Agent**: Answers questions about your codebase and explains functions, features, and 
 <table>
   <tr>
     <td valign="top" width="50%">
       <h3>Debugging Agent</h3>
-      <p>Automatically analyzes stacktraces and provides step-by-step debugging guidance specific to your codebase — not generic advice.</p>
+      <p>Automatically analyzes stacktraces and provides step-by-step debugging guidance specific to your codebase - not generic advice.</p>
       <a href="https://docs.potpie.ai/agents/debugging-agent"><img src="https://img.shields.io/badge/Learn%20More-Docs-22c55e?style=flat-square" alt="Docs"/></a>
     </td>
     <td valign="top" width="50%">
