@@ -50,89 +50,37 @@ MODEL_CONFIG_MAP = {
         "base_url": None,
         "api_version": None,
     },
-    # Anthropic Models (Claude 3.5/4 ~200k)
+    # Anthropic Models (Claude 4.5+)
+    "anthropic/claude-opus-4.5-20251101": {
+        "provider": "anthropic",
+        "context_window": 200000,
+        "default_params": {"temperature": 0.3, "max_tokens": 8000},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": True,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": None,
+        "api_version": None,
+    },
+    "anthropic/claude-sonnet-4.5-20250929": {
+        "provider": "anthropic",
+        "context_window": 200000,
+        "default_params": {"temperature": 0.3, "max_tokens": 8000},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": True,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": None,
+        "api_version": None,
+    },
     "anthropic/claude-haiku-4-5-20251001": {
         "provider": "anthropic",
         "context_window": 200000,
         "default_params": {"temperature": 0.2, "max_tokens": 8000},
-        "capabilities": {
-            "supports_pydantic": True,
-            "supports_streaming": True,
-            "supports_vision": True,
-            "supports_tool_parallelism": True,
-        },
-        "base_url": None,
-        "api_version": None,
-    },
-    "anthropic/claude-sonnet-4-5-20250929": {
-        "provider": "anthropic",
-        "context_window": 200000,
-        "default_params": {"temperature": 0.3, "max_tokens": 8000},
-        "capabilities": {
-            "supports_pydantic": True,
-            "supports_streaming": True,
-            "supports_vision": True,
-            "supports_tool_parallelism": True,
-        },
-        "base_url": None,
-        "api_version": None,
-    },
-    "anthropic/claude-sonnet-4-20250514": {
-        "provider": "anthropic",
-        "context_window": 200000,
-        "default_params": {"temperature": 0.3, "max_tokens": 8000},
-        "capabilities": {
-            "supports_pydantic": True,
-            "supports_streaming": True,
-            "supports_vision": True,
-            "supports_tool_parallelism": True,
-        },
-        "base_url": None,
-        "api_version": None,
-    },
-    "anthropic/claude-opus-4-1-20250805": {
-        "provider": "anthropic",
-        "context_window": 200000,
-        "default_params": {"temperature": 0.3, "max_tokens": 8000},
-        "capabilities": {
-            "supports_pydantic": True,
-            "supports_streaming": True,
-            "supports_vision": True,
-            "supports_tool_parallelism": True,
-        },
-        "base_url": None,
-        "api_version": None,
-    },
-    "anthropic/claude-3-7-sonnet-20250219": {
-        "provider": "anthropic",
-        "context_window": 200000,
-        "default_params": {"temperature": 0.3, "max_tokens": 8000},
-        "capabilities": {
-            "supports_pydantic": True,
-            "supports_streaming": True,
-            "supports_vision": True,
-            "supports_tool_parallelism": True,
-        },
-        "base_url": None,
-        "api_version": None,
-    },
-    "anthropic/claude-3-5-haiku-20241022": {
-        "provider": "anthropic",
-        "context_window": 200000,
-        "default_params": {"temperature": 0.2, "max_tokens": 8000},
-        "capabilities": {
-            "supports_pydantic": True,
-            "supports_streaming": True,
-            "supports_vision": True,
-            "supports_tool_parallelism": True,
-        },
-        "base_url": None,
-        "api_version": None,
-    },
-    "anthropic/claude-opus-4-5-20251101": {
-        "provider": "anthropic",
-        "context_window": 200000,
-        "default_params": {"temperature": 0.3, "max_tokens": 8000},
         "capabilities": {
             "supports_pydantic": True,
             "supports_streaming": True,
@@ -172,7 +120,7 @@ MODEL_CONFIG_MAP = {
         "base_url": "https://openrouter.ai/api/v1",
         "api_version": None,
     },
-    # Gemini Models
+    # Gemini Models (via OpenRouter)
     "openrouter/google/gemini-2.0-flash-001": {
         "provider": "gemini",
         "context_window": 1048576,
@@ -201,7 +149,22 @@ MODEL_CONFIG_MAP = {
         "base_url": "https://openrouter.ai/api/v1",
         "api_version": None,
     },
-    "openrouter/google/gemini-3-pro-preview": {
+    # Gemini 3 Models (via OpenRouter) - Added Q2 2025
+    "openrouter/google/gemini-3.1-pro-preview": {
+        "provider": "gemini",
+        "context_window": 1048576,
+        "auth_provider": "openrouter",
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": True,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_version": None,
+    },
+    "openrouter/google/gemini-3-flash-preview": {
         "provider": "gemini",
         "context_window": 1048576,
         "auth_provider": "openrouter",
