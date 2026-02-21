@@ -1,97 +1,132 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 460" width="1000" height="460" font-family="'SF Mono', 'Fira Code', 'Consolas', monospace">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 500" width="1000" height="500" font-family="'SF Mono', 'Fira Code', 'Consolas', monospace">
 
-  <!--
-    5 columns (192px each, 20px side margin):
-    col1=116  /auth
-    col2=308  /conversations
-    col3=500  /parsing
-    col4=692  /agents
-    col5=884  /search
-  -->
-
-  <!-- ══ TOP BAR — FastAPI ══ -->
-  <rect x="20" y="20" width="960" height="66" rx="14" fill="#0d1117" stroke="#388bfd" stroke-width="1.5"/>
+  <!-- ═══════════════════════════════════════════════
+       TOP BAR — FastAPI Gateway  (spans all 7 cols)
+  ═══════════════════════════════════════════════ -->
+  <rect x="20" y="20" width="960" height="66" rx="14" fill="#0d1117"/>
   <text x="500" y="50" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff" letter-spacing="2">FASTAPI  ·  localhost:8001</text>
   <text x="500" y="68" text-anchor="middle" font-size="11" fill="#8b949e">gunicorn + uvicorn  ·  CORS middleware  ·  Logfire tracing  ·  Sentry</text>
 
-  <!-- V-lines: FastAPI → route pills -->
-  <line x1="116" y1="86" x2="116" y2="158" stroke="#30363d" stroke-width="1.2"/>
-  <line x1="308" y1="86" x2="308" y2="158" stroke="#30363d" stroke-width="1.2"/>
-  <line x1="500" y1="86" x2="500" y2="158" stroke="#30363d" stroke-width="1.2"/>
-  <line x1="692" y1="86" x2="692" y2="158" stroke="#30363d" stroke-width="1.2"/>
-  <line x1="884" y1="86" x2="884" y2="158" stroke="#30363d" stroke-width="1.2"/>
+  <!--
+    COLUMN CENTERS (7 cols across 1000px, 20px margin each side):
+    Left group  → PostgreSQL  :  col1=90   col2=226  col3=362
+    Right group → Neo4j       :  col4=498  col5=634  col6=770  col7=906
+  -->
 
-  <!-- ══ ROUTE PILLS  (y=158–202, h=44, rx=22 — pill shape matching the image) ══ -->
+  <!-- ── Vertical lines: gateway ↓ route pills ── -->
+  <line x1="90"  y1="86" x2="90"  y2="168" stroke="#d0d7de" stroke-width="1.2"/>
+  <line x1="226" y1="86" x2="226" y2="168" stroke="#d0d7de" stroke-width="1.2"/>
+  <line x1="362" y1="86" x2="362" y2="168" stroke="#d0d7de" stroke-width="1.2"/>
+  <line x1="498" y1="86" x2="498" y2="168" stroke="#d0d7de" stroke-width="1.2"/>
+  <line x1="634" y1="86" x2="634" y2="168" stroke="#d0d7de" stroke-width="1.2"/>
+  <line x1="770" y1="86" x2="770" y2="168" stroke="#d0d7de" stroke-width="1.2"/>
+  <line x1="906" y1="86" x2="906" y2="168" stroke="#d0d7de" stroke-width="1.2"/>
 
-  <!-- /auth — orange -->
-  <rect x="46"  y="158" width="140" height="62" rx="22" fill="#0d1117" stroke="#ffa657" stroke-width="1.5"/>
-  <text x="116" y="178" text-anchor="middle" font-size="12" font-weight="600" fill="#ffa657">/auth</text>
-  <line x1="58" y1="188" x2="174" y2="188" stroke="#ffa65730" stroke-width="0.7"/>
-  <text x="116" y="202" text-anchor="middle" font-size="9" fill="#6e7681">identity &amp; access</text>
+  <!-- ═══════════════════════════════════════════════
+       ROUTE PILLS   (pill width=106, centered on col)
+  ═══════════════════════════════════════════════ -->
+  <!-- LEFT: PostgreSQL group -->
+  <rect x="37"  y="168" width="106" height="28" rx="14" fill="#ffffff" stroke="#d0d7de" stroke-width="1.2"/>
+  <text x="90"  y="186" text-anchor="middle" font-size="11" fill="#24292f">/auth</text>
 
-  <!-- /conversations — purple -->
-  <rect x="238" y="158" width="140" height="62" rx="22" fill="#0d1117" stroke="#d2a8ff" stroke-width="1.5"/>
-  <text x="308" y="178" text-anchor="middle" font-size="11" font-weight="600" fill="#d2a8ff">/conversations</text>
-  <line x1="250" y1="188" x2="366" y2="188" stroke="#d2a8ff30" stroke-width="0.7"/>
-  <text x="308" y="202" text-anchor="middle" font-size="9" fill="#6e7681">chat sessions &amp; memory</text>
+  <rect x="173" y="168" width="106" height="28" rx="14" fill="#ffffff" stroke="#d0d7de" stroke-width="1.2"/>
+  <text x="226" y="186" text-anchor="middle" font-size="11" fill="#24292f">/conversations</text>
 
-  <!-- /parsing — blue -->
-  <rect x="430" y="158" width="140" height="62" rx="22" fill="#0d1117" stroke="#58a6ff" stroke-width="1.5"/>
-  <text x="500" y="178" text-anchor="middle" font-size="12" font-weight="600" fill="#58a6ff">/parsing</text>
-  <line x1="442" y1="188" x2="558" y2="188" stroke="#58a6ff30" stroke-width="0.7"/>
-  <text x="500" y="202" text-anchor="middle" font-size="9" fill="#6e7681">clone → AST → graph</text>
+  <rect x="309" y="168" width="106" height="28" rx="14" fill="#ffffff" stroke="#d0d7de" stroke-width="1.2"/>
+  <text x="362" y="186" text-anchor="middle" font-size="11" fill="#24292f">/projects</text>
 
-  <!-- /agents — green -->
-  <rect x="622" y="158" width="140" height="62" rx="22" fill="#0d1117" stroke="#3fb950" stroke-width="1.5"/>
-  <text x="692" y="178" text-anchor="middle" font-size="12" font-weight="600" fill="#3fb950">/agents</text>
-  <line x1="634" y1="188" x2="750" y2="188" stroke="#3fb95030" stroke-width="0.7"/>
-  <text x="692" y="202" text-anchor="middle" font-size="9" fill="#6e7681">pre-built &amp; custom</text>
+  <!-- RIGHT: Neo4j group -->
+  <rect x="445" y="168" width="106" height="28" rx="14" fill="#ffffff" stroke="#d0d7de" stroke-width="1.2"/>
+  <text x="498" y="186" text-anchor="middle" font-size="11" fill="#24292f">/parsing</text>
 
-  <!-- /search — sky blue -->
-  <rect x="814" y="158" width="140" height="62" rx="22" fill="#0d1117" stroke="#79c0ff" stroke-width="1.5"/>
-  <text x="884" y="178" text-anchor="middle" font-size="12" font-weight="600" fill="#79c0ff">/search</text>
-  <line x1="826" y1="188" x2="942" y2="188" stroke="#79c0ff30" stroke-width="0.7"/>
-  <text x="884" y="202" text-anchor="middle" font-size="9" fill="#6e7681">symbol + keyword lookup</text>
+  <rect x="581" y="168" width="106" height="28" rx="14" fill="#ffffff" stroke="#d0d7de" stroke-width="1.2"/>
+  <text x="634" y="186" text-anchor="middle" font-size="11" fill="#24292f">/agents</text>
 
-  <!-- ══ V-lines: pills → sub-boxes or direct to DB ══ -->
+  <rect x="717" y="168" width="106" height="28" rx="14" fill="#ffffff" stroke="#d0d7de" stroke-width="1.2"/>
+  <text x="770" y="186" text-anchor="middle" font-size="11" fill="#24292f">/tools</text>
 
-  <!-- /auth → Firebase sub-box -->
-  <line x1="116" y1="220" x2="116" y2="254" stroke="#30363d" stroke-width="1.2"/>
+  <rect x="853" y="168" width="106" height="28" rx="14" fill="#ffffff" stroke="#d0d7de" stroke-width="1.2"/>
+  <text x="906" y="186" text-anchor="middle" font-size="11" fill="#24292f">/search</text>
 
-  <!-- /parsing → Celery sub-box -->
-  <line x1="500" y1="220" x2="500" y2="254" stroke="#30363d" stroke-width="1.2"/>
+  <!-- ── Vertical lines: route pills ↓ service boxes ── -->
+  <line x1="90"  y1="196" x2="90"  y2="266" stroke="#d0d7de" stroke-width="1.2"/>
+  <line x1="226" y1="196" x2="226" y2="266" stroke="#d0d7de" stroke-width="1.2"/>
+  <line x1="362" y1="196" x2="362" y2="266" stroke="#d0d7de" stroke-width="1.2"/>
+  <line x1="498" y1="196" x2="498" y2="266" stroke="#d0d7de" stroke-width="1.2"/>
+  <line x1="634" y1="196" x2="634" y2="266" stroke="#d0d7de" stroke-width="1.2"/>
+  <line x1="770" y1="196" x2="770" y2="266" stroke="#d0d7de" stroke-width="1.2"/>
+  <line x1="906" y1="196" x2="906" y2="266" stroke="#d0d7de" stroke-width="1.2"/>
 
-  <!-- /conversations, /agents, /search → direct long line to DB -->
-  <line x1="308" y1="220" x2="308" y2="368" stroke="#30363d" stroke-width="1.2"/>
-  <line x1="692" y1="220" x2="692" y2="368" stroke="#30363d" stroke-width="1.2"/>
-  <line x1="884" y1="220" x2="884" y2="368" stroke="#30363d" stroke-width="1.2"/>
+  <!-- ═══════════════════════════════════════════════
+       SERVICE BOXES   (width=118, centered on col)
+  ═══════════════════════════════════════════════ -->
+  <!-- Firebase Auth -->
+  <rect x="31"  y="266" width="118" height="64" rx="10" fill="#0d1117"/>
+  <text x="90"  y="292" text-anchor="middle" font-size="11" font-weight="700" fill="#ffa657">Firebase</text>
+  <text x="90"  y="309" text-anchor="middle" font-size="10" fill="#8b949e">Auth</text>
+  <text x="90"  y="323" text-anchor="middle" font-size="9"  fill="#484f58">dev: dummy user</text>
 
-  <!-- ══ SUB-BOXES ══ -->
+  <!-- Conversation Service -->
+  <rect x="167" y="266" width="118" height="64" rx="10" fill="#0d1117"/>
+  <text x="226" y="292" text-anchor="middle" font-size="11" font-weight="700" fill="#d2a8ff">Conversation</text>
+  <text x="226" y="309" text-anchor="middle" font-size="10" fill="#8b949e">Service</text>
+  <text x="226" y="323" text-anchor="middle" font-size="9"  fill="#484f58">multi-turn memory</text>
 
-  <!-- Firebase Auth (col1=116) — orange -->
-  <rect x="55" y="254" width="122" height="54" rx="12" fill="#0d1117" stroke="#ffa657" stroke-width="1.5"/>
-  <text x="116" y="276" text-anchor="middle" font-size="11" font-weight="700" fill="#ffa657">Firebase</text>
-  <text x="116" y="294" text-anchor="middle" font-size="9"  fill="#8b949e">Auth provider</text>
-  <line x1="116" y1="308" x2="116" y2="368" stroke="#30363d" stroke-width="1.2"/>
+  <!-- Projects -->
+  <rect x="303" y="266" width="118" height="64" rx="10" fill="#0d1117"/>
+  <text x="362" y="292" text-anchor="middle" font-size="11" font-weight="700" fill="#e3b341">Projects</text>
+  <text x="362" y="309" text-anchor="middle" font-size="10" fill="#8b949e">Service</text>
+  <text x="362" y="323" text-anchor="middle" font-size="9"  fill="#484f58">repo management</text>
 
-  <!-- Celery Broker / Redis (col3=500) — red -->
-  <rect x="376" y="254" width="248" height="54" rx="12" fill="#0d1117" stroke="#ff7b72" stroke-width="1.5"/>
-  <text x="500" y="276" text-anchor="middle" font-size="11" font-weight="700" fill="#ff7b72">Celery Broker (Redis)</text>
-  <text x="500" y="294" text-anchor="middle" font-size="9"  fill="#8b949e">async task queue · background jobs</text>
-  <line x1="500" y1="308" x2="500" y2="368" stroke="#30363d" stroke-width="1.2"/>
+  <!-- Celery Worker (with Redis badge) -->
+  <rect x="439" y="266" width="118" height="64" rx="10" fill="#0d1117"/>
+  <text x="498" y="290" text-anchor="middle" font-size="11" font-weight="700" fill="#58a6ff">Celery</text>
+  <text x="498" y="307" text-anchor="middle" font-size="10" fill="#8b949e">Worker</text>
+  <!-- Redis badge -->
+  <rect x="455" y="316" width="86" height="16" rx="8" fill="#ff7b72" fill-opacity="0.15" stroke="#ff7b72" stroke-width="0.8"/>
+  <text x="498" y="328" text-anchor="middle" font-size="9" fill="#ff7b72">Redis broker</text>
 
-  <!-- ══ STORAGE LAYER outer container (pink dashed) ══ -->
-  <text x="22" y="362" font-size="9" fill="#f778ba" letter-spacing="1.5" font-weight="600">STORAGE LAYER</text>
-  <rect x="12" y="366" width="976" height="82" rx="16" fill="none" stroke="#f778ba" stroke-width="1.2" stroke-dasharray="5 3"/>
+  <!-- Agent Router -->
+  <rect x="575" y="266" width="118" height="64" rx="10" fill="#0d1117"/>
+  <text x="634" y="292" text-anchor="middle" font-size="11" font-weight="700" fill="#3fb950">Agent</text>
+  <text x="634" y="309" text-anchor="middle" font-size="10" fill="#8b949e">Router</text>
+  <text x="634" y="323" text-anchor="middle" font-size="9"  fill="#484f58">pre-built + custom</text>
 
-  <!-- PostgreSQL — covers /auth col (center=116) -->
-  <rect x="20" y="374" width="218" height="66" rx="13" fill="#0d1117" stroke="#388bfd" stroke-width="1.5"/>
-  <text x="129" y="404" text-anchor="middle" font-size="12" font-weight="700" fill="#ffffff" letter-spacing="1">POSTGRESQL</text>
-  <text x="129" y="422" text-anchor="middle" font-size="10" fill="#8b949e">Users · Auth · Sessions</text>
+  <!-- Tool Service -->
+  <rect x="711" y="266" width="118" height="64" rx="10" fill="#0d1117"/>
+  <text x="770" y="292" text-anchor="middle" font-size="11" font-weight="700" fill="#f78166">Tool</text>
+  <text x="770" y="309" text-anchor="middle" font-size="10" fill="#8b949e">Service</text>
+  <text x="770" y="323" text-anchor="middle" font-size="9"  fill="#484f58">code / graph / web</text>
 
-  <!-- Neo4j Knowledge Graph — covers cols 2–5 (centers: 308, 500, 692, 884) -->
-  <rect x="248" y="374" width="740" height="66" rx="13" fill="#0d1117" stroke="#3fb950" stroke-width="1.5"/>
-  <text x="618" y="404" text-anchor="middle" font-size="12" font-weight="700" fill="#ffffff" letter-spacing="1">NEO4J — KNOWLEDGE GRAPH</text>
-  <text x="618" y="422" text-anchor="middle" font-size="10" fill="#8b949e">Functions · Classes · Files · Imports · Call Relationships</text>
+  <!-- Search -->
+  <rect x="847" y="266" width="118" height="64" rx="10" fill="#0d1117"/>
+  <text x="906" y="292" text-anchor="middle" font-size="11" font-weight="700" fill="#79c0ff">Search</text>
+  <text x="906" y="309" text-anchor="middle" font-size="10" fill="#8b949e">Service</text>
+  <text x="906" y="323" text-anchor="middle" font-size="9"  fill="#484f58">codebase indexing</text>
+
+  <!-- ── Vertical lines: service boxes ↓ databases ── -->
+  <line x1="90"  y1="330" x2="90"  y2="400" stroke="#d0d7de" stroke-width="1.2"/>
+  <line x1="226" y1="330" x2="226" y2="400" stroke="#d0d7de" stroke-width="1.2"/>
+  <line x1="362" y1="330" x2="362" y2="400" stroke="#d0d7de" stroke-width="1.2"/>
+  <line x1="498" y1="330" x2="498" y2="400" stroke="#d0d7de" stroke-width="1.2"/>
+  <line x1="634" y1="330" x2="634" y2="400" stroke="#d0d7de" stroke-width="1.2"/>
+  <line x1="770" y1="330" x2="770" y2="400" stroke="#d0d7de" stroke-width="1.2"/>
+  <line x1="906" y1="330" x2="906" y2="400" stroke="#d0d7de" stroke-width="1.2"/>
+
+  <!-- ═══════════════════════════════════════════════
+       BOTTOM DATA STORES
+       PostgreSQL: cols 1-3  (x=20  → x=420)
+       Neo4j:      cols 4-7  (x=428 → x=980)
+  ═══════════════════════════════════════════════ -->
+
+  <!-- PostgreSQL (users · projects · conversations) -->
+  <rect x="20" y="400" width="406" height="64" rx="14" fill="#0d1117"/>
+  <text x="223" y="428" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff" letter-spacing="2">POSTGRESQL</text>
+  <text x="223" y="449" text-anchor="middle" font-size="11" fill="#8b949e">Users · Projects · Conversations · Messages</text>
+
+  <!-- Neo4j Knowledge Graph (parsing · agents · tools · search) -->
+  <rect x="434" y="400" width="546" height="64" rx="14" fill="#0d1117"/>
+  <text x="707" y="428" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff" letter-spacing="2">NEO4J KNOWLEDGE GRAPH</text>
+  <text x="707" y="449" text-anchor="middle" font-size="11" fill="#8b949e">Functions · Classes · Files · Imports · Call Relationships</text>
 
 </svg>

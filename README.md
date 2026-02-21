@@ -12,7 +12,7 @@
 
 # Potpie
 
-[Potpie](https://potpie.ai) turns your entire codebase into a **knowledge graph** - a structural index of every file, class, and function, capturing all their relationships and what each part of the code does in context of everything else. AI agents built on this graph can reason about your code with the precision of someone who wrote it - from debugging to feature development.
+[Potpie](https://potpie.ai) turns your entire codebase into a **knowledge graph** - a structural index of every file, class, and function, capturing all their relationships and what each part of the code does in context of everything else. AI agents built on this graph can reason about your code with the precision of someone who wrote it.
 
 
 <p align="center">
@@ -137,7 +137,7 @@ pnpm build && pnpm start
 
 ## How it works?
 
-Potpie parses your repository into a **knowledge graph** stored in Neo4j - capturing every file, function, class, and the relationships between them. Agents read directly from this graph to answer questions and complete tasks grounded in your actual code.
+Potpie builds a **knowledge graph** of your repository using Neo4j, then routes your prompts to specialized AI agents that understand your actual code — not just generic patterns.
 
 **Architecture**
 
@@ -145,13 +145,13 @@ Potpie parses your repository into a **knowledge graph** stored in Neo4j - captu
   <img src="./assets/architecture.svg" alt="Potpie Architecture" width="900"/>
 </p>
 
-- [**FastAPI**](https://fastapi.tiangolo.com/) serves as the API layer - all requests enter through `localhost:8001` with CORS, Logfire tracing, and optional Sentry error tracking.
-- [**Firebase Auth**](https://firebase.google.com/docs/auth) handles production authentication. In development mode a dummy user is created locally - no Firebase needed.
-- [**Celery Worker**](https://docs.celeryq.dev/) with [Redis](https://redis.io/) as the broker handles async repo parsing - cloning, AST extraction, and knowledge graph construction run entirely in the background.
+- [**FastAPI**](https://fastapi.tiangolo.com/) serves as the API layer — all requests enter through `localhost:8001` with CORS, Logfire tracing, and optional Sentry error tracking.
+- [**Firebase Auth**](https://firebase.google.com/docs/auth) handles production authentication. In development mode a dummy user is created locally — no Firebase needed.
+- [**Celery Worker**](https://docs.celeryq.dev/) with [Redis](https://redis.io/) as the broker handles async repo parsing — cloning, AST extraction, and knowledge graph construction run entirely in the background.
 - [**Conversation Service**](https://docs.potpie.ai/conversations) manages chat sessions and agent memory across multi-turn interactions.
 - [**Agent Router**](https://docs.potpie.ai/agents/introduction) dispatches prompts to the correct pre-built or custom agent based on intent.
-- [**Tool Service**](https://docs.potpie.ai/tools) exposes callable functions to agents - code search, file fetch, knowledge graph queries, web tools, and more.
-- [**Neo4j Knowledge Graph**](https://neo4j.com/) stores your codebase as a property graph - functions, classes, files, imports, and call relationships - the backbone of every agent's context.
+- [**Tool Service**](https://docs.potpie.ai/tools) exposes callable functions to agents — code search, file fetch, knowledge graph queries, web tools, and more.
+- [**Neo4j Knowledge Graph**](https://neo4j.com/) stores your codebase as a property graph — functions, classes, files, imports, and call relationships — the backbone of every agent's context.
 - [**PostgreSQL**](https://www.postgresql.org/) stores users, projects, conversations, and message history.
 
 
@@ -211,7 +211,7 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
       Set the following environment variables:
       
     
-      CODE_PROVIDER=github   # Options: github, gitbucket
+      CODE_PROVIDER=github   # Options: github, gitlab, gitbucket
       CODE_PROVIDER_BASE_URL=http://your-git-server.com/api/v3
       CODE_PROVIDER_TOKEN=your-token
     
@@ -270,29 +270,9 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
 
 Potpie offers a suite of specialized codebase agents for automating and optimizing key aspects of software development:
 
-<table>
-  <tr>
-    <td valign="top" width="50%">
-      <h3>Debugging Agent</h3>
-      <p>Automatically analyzes stacktraces and provides step-by-step debugging guidance specific to your codebase - not generic advice.</p>
-      <a href="https://docs.potpie.ai/agents/debugging-agent"><img src="https://img.shields.io/badge/Learn%20More-Docs-22c55e?style=flat-square" alt="Docs"/></a>
-    </td>
-    <td valign="top" width="50%">
-      <h3>Codebase Q&amp;A Agent</h3>
-      <p>Answers questions about your codebase and explains functions, features, and architecture from first principles.</p>
-      <a href="https://docs.potpie.ai/agents/codebase-qa-agent"><img src="https://img.shields.io/badge/Learn%20More-Docs-22c55e?style=flat-square" alt="Docs"/></a>
-    </td>
-  </tr>
-  <tr>
-    <td valign="top">
-      <h3>Code Generation Agent</h3>
-      <p>Generates code for new features, refactors existing code, and suggests optimizations grounded in your actual codebase.</p>
-      <a href="https://docs.potpie.ai/agents/code-generation-agent"><img src="https://img.shields.io/badge/Learn%20More-Docs-22c55e?style=flat-square" alt="Docs"/></a>
-    </td>
-    <td valign="top"></td>
-  </tr>
-</table>
-
+- **Integration Test Agent**: Generates integration test plans and code for flows to ensure components work together properly. [Docs](https://docs.potpie.ai/agents/integration-test-agent)
+- **Unit Test Agent**: Automatically creates unit test plan and code for individual functions to enhance test coverage. [Docs](https://docs.potpie.ai/agents/unit-test-agent)
+- **LLD Agent**: Creates a low level design for implementing a new feature by providing functional requirements to this agent. [Docs](https://docs.potpie.ai/agents/introduction)
 
 ### Custom Agents
 
@@ -322,13 +302,13 @@ Read more in our [documentation](https://docs.potpie.ai/open-source/agents/creat
     </td>
     <td valign="top" width="50%">
       <h3>Codebase Q&amp;A</h3>
-      <p>Ask anything about your codebase - functions, data flows, design decisions. Get precise answers grounded in your actual code, not guesses.</p>
+      <p>Ask anything about your codebase — functions, data flows, design decisions. Get precise answers grounded in your actual code, not guesses.</p>
     </td>
   </tr>
   <tr>
     <td valign="top">
       <h3>Debugging</h3>
-      <p>Paste a stacktrace. Get a root-cause analysis and step-by-step fix path pinpointed to your code - not generic troubleshooting advice.</p>
+      <p>Paste a stacktrace. Get a root-cause analysis and step-by-step fix path pinpointed to your code — not generic troubleshooting advice.</p>
     </td>
     <td valign="top">
       <h3>Code Review</h3>
@@ -338,11 +318,11 @@ Read more in our [documentation](https://docs.potpie.ai/open-source/agents/creat
   <tr>
     <td valign="top">
       <h3>Test Generation</h3>
-      <p>Generate unit and integration tests that understand your code structure - not boilerplate. Covers edge cases your manual tests would miss.</p>
+      <p>Generate unit and integration tests that understand your code structure — not boilerplate. Covers edge cases your manual tests would miss.</p>
     </td>
     <td valign="top">
       <h3>Feature Planning</h3>
-      <p>Turn a requirement or open issue into a low-level implementation plan - with component breakdown, API surface, and suggested code structure.</p>
+      <p>Turn a requirement or open issue into a low-level implementation plan — with component breakdown, API surface, and suggested code structure.</p>
     </td>
   </tr>
 </table>
@@ -359,10 +339,10 @@ Read more in our [documentation](https://docs.potpie.ai/open-source/agents/creat
   <tr>
     <td valign="top">
       <h3>VSCode Extension</h3>
-      <p>Use Potpie's AI agents directly inside your editor - no tab switching, no copy-pasting. Ask questions, get explanations, and ship code without leaving VSCode.</p>
+      <p>Use Potpie's AI agents directly inside your editor — no tab switching, no copy-pasting. Ask questions, get explanations, and ship code without leaving VSCode.</p>
       <ul>
         <li>Agents understand your open repo instantly</li>
-        <li>Works with any codebase - local or remote</li>
+        <li>Works with any codebase — local or remote</li>
       </ul>
       <a href="https://marketplace.visualstudio.com/items?itemName=PotpieAI.potpie-vscode-extension">
         <img src="https://img.shields.io/badge/Install-VSCode%20Extension-0078d7?style=for-the-badge&logo=visualstudiocode&logoColor=white" alt="Install VSCode Extension"/>
@@ -373,7 +353,7 @@ Read more in our [documentation](https://docs.potpie.ai/open-source/agents/creat
   <tr>
     <td valign="top">
       <h3>Slack Integration</h3>
-      <p>Bring Potpie into your team's Slack workspace. Debug code, answer codebase questions, and get project insights - all in threads your team already uses.</p>
+      <p>Bring Potpie into your team's Slack workspace. Debug code, answer codebase questions, and get project insights — all in threads your team already uses.</p>
       <ul>
         <li>Set up in under 2 minutes</li>
         <li>Works with your custom configured agents</li>
