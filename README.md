@@ -186,7 +186,12 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
 
 **Option 1: GitHub App (Recommended for Production)**
   - Create a GitHub App in your organization
-  - Set environment variables:
+architecture. [Docs](https://docs.potpie.ai/agents/qna-agent)
+- **Code Changes Agent**: Analyzes code changes, identifies affected APIs, and suggests improvements before merging. [Docs](https://docs.potpie.ai/agents/code-changes-agent)
+- **Integration Test Agent**: Generates integration test plans and code for flows to ensure components work together properly. [Docs](https://docs.potpie.ai/agents/integration-test-agent)
+- **Unit Test Agent**: Automatically creates unit test plan and code for individual functions to enhance test coverage. [Docs](https://docs.potpie.ai/agents/unit-test-agent)
+- **LLD Agent**: Creates a low level design for implementing a new feature by providing functional requirements to this agent. [Docs](https://docs.potpie.ai/agents/introduction)
+- **Code Generation Agent**: Generates code for new features, refactors existing code, and suggests optimizations. [Docs](https://docs.potpie.ai/agents/introduction)  - Set environment variables:
     ```bash
     GITHUB_APP_ID=your-app-id
     GITHUB_PRIVATE_KEY=your-private-key
@@ -270,9 +275,35 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
 
 Potpie offers a suite of specialized codebase agents for automating and optimizing key aspects of software development:
 
-- **Integration Test Agent**: Generates integration test plans and code for flows to ensure components work together properly. [Docs](https://docs.potpie.ai/agents/integration-test-agent)
-- **Unit Test Agent**: Automatically creates unit test plan and code for individual functions to enhance test coverage. [Docs](https://docs.potpie.ai/agents/unit-test-agent)
-- **LLD Agent**: Creates a low level design for implementing a new feature by providing functional requirements to this agent. [Docs](https://docs.potpie.ai/agents/introduction)
+- **Debugging Agent**: Automatically analyzes stacktraces and provides debugging steps specific to your codebase. [Docs](https://docs.potpie.ai/agents/debugging-agent)
+- **Codebase Q&A Agent**: Answers questions about your codebase and explains functions, features, and 
+<table>
+  <tr>
+    <td valign="top" width="50%">
+      <h3>Debugging Agent</h3>
+      <p>Automatically analyzes stacktraces and provides step-by-step debugging guidance specific to your codebase — not generic advice.</p>
+      <a href="https://docs.potpie.ai/agents/debugging-agent"><img src="https://img.shields.io/badge/Learn%20More-Docs-22c55e?style=flat-square" alt="Docs"/></a>
+    </td>
+    <td valign="top" width="50%">
+      <h3>Codebase Q&amp;A Agent</h3>
+      <p>Answers questions about your codebase and explains functions, features, and architecture from first principles.</p>
+      <a href="https://docs.potpie.ai/agents/codebase-qa-agent"><img src="https://img.shields.io/badge/Learn%20More-Docs-22c55e?style=flat-square" alt="Docs"/></a>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <h3>Code Changes Agent</h3>
+      <p>Analyzes code changes, identifies affected APIs, and suggests improvements before you merge — catching regressions early.</p>
+      <a href="https://docs.potpie.ai/agents/code-changes-agent"><img src="https://img.shields.io/badge/Learn%20More-Docs-22c55e?style=flat-square" alt="Docs"/></a>
+    </td>
+    <td valign="top">
+      <h3>Code Generation Agent</h3>
+      <p>Generates code for new features, refactors existing code, and suggests optimizations grounded in your actual codebase.</p>
+      <a href="https://docs.potpie.ai/agents/code-generation-agent"><img src="https://img.shields.io/badge/Learn%20More-Docs-22c55e?style=flat-square" alt="Docs"/></a>
+    </td>
+  </tr>
+</table>
+
 
 ### Custom Agents
 
