@@ -31,11 +31,17 @@ def execute_agent_background(
         logger.info("Starting background agent execution")
 
         # Set task status to indicate task has started
-        redis_manager.set_task_status(conversation_id, run_id, "running")
+        try:
+            redis_manager.set_task_status(conversation_id, run_id, "running")
+            logger.info("Task status set to running (Redis ok)")
+        except Exception as e:
+            logger.warning("Failed to set task status in Redis", error=str(e))
 
         try:
             # Execute agent with Redis publishing
             async def run_agent():
+                import asyncio
+
                 from app.modules.conversations.conversation.conversation_service import (
                     ConversationService,
                 )
@@ -49,20 +55,34 @@ def execute_agent_background(
                 )
                 from app.modules.conversations.message.message_store import MessageStore
 
+                logger.info("run_agent: coroutine started, acquiring async_db")
                 # Use BaseTask's context manager to get a fresh, non-pooled async session
                 # This avoids asyncpg Future binding issues across tasks sharing the same event loop
                 async with self.async_db() as async_db:
-                    # Get user email for service creation
+                    logger.info("run_agent: async_db acquired, resolving user (sync DB on main thread)")
+                    # Use a fresh sync session on the main thread only. We avoid run_in_executor
+                    # here because creating threads in a forked Celery worker can trigger
+                    # GitPython/libgit2 SIGSEGV in multiprocessing context.
                     from app.modules.users.user_model import User
+                    from app.core.database import SessionLocal
 
-                    user_service = UserService(self.db)
-                    user = user_service.get_user_by_uid(user_id)
+                    _db = SessionLocal()
+                    try:
+                        user = UserService(_db).get_user_by_uid(user_id)
+                    finally:
+                        _db.close()
 
                     # Debug: Direct query to verify user exists
                     if not user:
-                        direct_user = (
-                            self.db.query(User).filter(User.uid == user_id).first()
-                        )
+                        _db2 = SessionLocal()
+                        try:
+                            direct_user = (
+                                _db2.query(User)
+                                .filter(User.uid == user_id)
+                                .first()
+                            )
+                        finally:
+                            _db2.close()
                         if direct_user:
                             logger.warning(
                                 f"UserService.get_user_by_uid returned None but direct query found user: {direct_user.uid}, email: {direct_user.email}"
@@ -73,6 +93,7 @@ def execute_agent_background(
                                 f"User not found in database for user_id: {user_id}. Using empty string as fallback."
                             )
 
+                    logger.info("run_agent: user resolved, creating ConversationService")
                     conversation_store = ConversationStore(self.db, async_db)
                     message_store = MessageStore(self.db, async_db)
 
@@ -109,6 +130,7 @@ def execute_agent_background(
                     )
 
                     # Publish start event when actual processing begins
+                    logger.info("run_agent: publishing start event, calling store_message")
                     redis_manager.publish_event(
                         conversation_id,
                         run_id,
@@ -189,6 +211,7 @@ def execute_agent_background(
                     return True  # Indicate successful completion
 
             # Run the async agent execution on the worker's long-lived loop
+            logger.info("Entering run_async (agent coroutine)")
             completed = self.run_async(run_agent())
 
             # Only publish completion event if not cancelled
@@ -267,7 +290,11 @@ def execute_regenerate_background(
         logger.info("Starting background regenerate execution")
 
     # Set task status to indicate task has started
-    redis_manager.set_task_status(conversation_id, run_id, "running")
+    try:
+        redis_manager.set_task_status(conversation_id, run_id, "running")
+        logger.info("Regenerate task status set to running (Redis ok)")
+    except Exception as e:
+        logger.warning("Failed to set task status in Redis", error=str(e))
 
     try:
         # Execute regeneration with Redis publishing
@@ -283,11 +310,16 @@ def execute_regenerate_background(
             from app.modules.conversations.message.message_model import MessageType
 
             # Use BaseTask's context manager to get a fresh, non-pooled async session
-            # This avoids asyncpg Future binding issues across tasks sharing the same event loop
             async with self.async_db() as async_db:
-                # Get user email for service creation
-                user_service = UserService(self.db)
-                user = user_service.get_user_by_uid(user_id)
+                # Get user email for service creation (sync DB on main thread to avoid
+                # threads in forked worker — can trigger GitPython/libgit2 SIGSEGV).
+                from app.core.database import SessionLocal
+
+                _db = SessionLocal()
+                try:
+                    user = UserService(_db).get_user_by_uid(user_id)
+                finally:
+                    _db.close()
                 # Handle missing user or email gracefully
                 if not user:
                     logger.warning(
