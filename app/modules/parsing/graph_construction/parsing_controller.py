@@ -30,6 +30,7 @@ from app.modules.parsing.utils.repo_name_normalizer import normalize_repo_name
 from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
+from app.modules.repo_manager import RepoManager
 from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.logger import setup_logger
 from app.modules.utils.posthog_helper import PostHogClient
@@ -237,6 +238,51 @@ class ParsingController:
                         f"Project {project_id} already exists and is READY for commit {repo_details.commit_id or 'branch'}. "
                         "Returning existing project."
                     )
+                    # Ensure worktree exists in repo manager when enabled
+                    if os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true":
+                        repo_name = str(project.repo_name) if project.repo_name is not None else None
+                        branch = str(project.branch_name) if project.branch_name is not None else None
+                        commit_id_val = str(project.commit_id) if project.commit_id is not None else None
+                        repo_path = str(project.repo_path) if project.repo_path is not None else None
+                        if repo_name and not repo_path:
+                            ref = commit_id_val if commit_id_val else branch
+                            if ref:
+                                from app.modules.code_provider.github.github_service import GithubService  # noqa: PLC0415
+                                _repo_manager = RepoManager()
+                                try:
+                                    _auth_token = GithubService(db).get_github_oauth_token(user_id)
+                                except Exception:
+                                    _auth_token = None
+
+                                async def _ensure_worktree_bg(
+                                    _rm=_repo_manager,
+                                    _rn=repo_name,
+                                    _ref=ref,
+                                    _at=_auth_token,
+                                    _ic=bool(commit_id_val),
+                                    _uid=user_id,
+                                ):
+                                    try:
+                                        await asyncio.get_event_loop().run_in_executor(
+                                            None,
+                                            lambda: _rm.prepare_for_parsing(
+                                                _rn, _ref, auth_token=_at, is_commit=_ic, user_id=_uid
+                                            ),
+                                        )
+                                        logger.info(
+                                            "Background worktree ensured for READY project %s (%s@%s)",
+                                            project_id,
+                                            _rn,
+                                            _ref,
+                                        )
+                                    except Exception:
+                                        logger.warning(
+                                            "Background worktree failed for project %s",
+                                            project_id,
+                                            exc_info=True,
+                                        )
+
+                                asyncio.create_task(_ensure_worktree_bg())
                     return {"project_id": project_id, "status": project.status}
 
                 # If project exists but commit doesn't match or status is not READY, reparse

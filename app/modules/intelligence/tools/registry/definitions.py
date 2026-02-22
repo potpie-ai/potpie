@@ -6,7 +6,17 @@ from app.modules.intelligence.tools.registry.schema import AllowListDefinition
 
 # Tools that ToolService may omit when optional deps/config are missing (e.g. API keys).
 # Registry keeps them for allow-lists; do not warn "registry has names not in ToolService".
-OPTIONAL_TOOL_NAMES: FrozenSet[str] = frozenset({"webpage_extractor"})
+# Also includes tools gated on REPO_MANAGER_ENABLED (bash_command, apply_changes,
+# git_commit, git_push) which are absent from ToolService when the flag is off.
+OPTIONAL_TOOL_NAMES: FrozenSet[str] = frozenset(
+    {
+        "webpage_extractor",
+        "bash_command",
+        "apply_changes",
+        "git_commit",
+        "git_push",
+    }
+)
 
 
 # --- Tool metadata definitions (tier, category). Description filled at population from ToolService. ---
@@ -278,6 +288,7 @@ CODE_GEN_ADD_WHEN_NON_LOCAL: List[str] = [
     "fetch_files_batch",
     "analyze_code_structure",
     "show_diff",
+    "bash_command",
 ]
 CODE_GEN_EXCLUDE_IN_LOCAL: List[str] = ["show_diff"]
 
@@ -352,8 +363,14 @@ EXECUTE_ADD_WHEN_NON_LOCAL: List[str] = [
     "fetch_files_batch",
     "analyze_code_structure",
     "show_diff",
+    "bash_command",
 ]
 EXECUTE_EXCLUDE_IN_LOCAL: List[str] = ["show_diff"]
+
+# Supervisor non-local additions: repo-manager-backed tools not needed in local/VSCode mode
+SUPERVISOR_ADD_WHEN_NON_LOCAL: List[str] = [
+    "bash_command",
+]
 
 # Explore: minimal read-only set (for future use)
 EXPLORE_TOOLS: List[str] = [
@@ -414,7 +431,10 @@ ALLOW_LIST_DEFINITIONS: List[AllowListDefinition] = [
     ),
     # Phase 2: scoped sets for multi-agent
     AllowListDefinition(
-        name="supervisor", tool_names=SUPERVISOR_TOOLS, tier_filter=None
+        name="supervisor",
+        tool_names=SUPERVISOR_TOOLS,
+        add_when_non_local=SUPERVISOR_ADD_WHEN_NON_LOCAL,
+        tier_filter=None,
     ),
     AllowListDefinition(
         name="execute",

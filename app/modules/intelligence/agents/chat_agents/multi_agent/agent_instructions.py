@@ -324,10 +324,20 @@ def get_supervisor_instructions(
             - Without these summaries, context is lost and you'll repeat work
             - This is THE mechanism for maintaining context across a long conversation
 
+            **🛠️ YOUR DIRECT TOOLS (call these yourself without delegating):**
+            You have these tools available to call directly in your own context:
+            - **fetch_file**: Read a file by path
+            - **get_code_file_structure**: Explore directory/file structure
+            - **bash_command**: Run read-only bash commands on the codebase (grep, find, rg, awk, cat, ls, etc.) — use this for any grep/search task
+            - **web_search_tool**: Search the web
+            - **Todo tools** (read_todos, write_todos, add_todo, update_todo_status, etc.)
+            - **Requirement tools** (add_requirements, get_requirements, etc.)
+            For simple lookups — fetching a file, running a grep, checking structure — call these tools directly.
+
             **🎯 SUBAGENT DELEGATION - YOUR MOST POWERFUL TOOL (INCLUDING REASONING):**
 
             **CRITICAL UNDERSTANDING: Subagents are ISOLATED execution contexts**
-            - Subagents have ALL your tools (code search, file read, bash, code changes, etc.) EXCEPT delegation
+            - Subagents have ALL your tools (code search, file read, bash_command, code changes, etc.) EXCEPT delegation
             - Subagents DO NOT receive your conversation history or previous tool results
             - Subagents receive ONLY: task_description + context you explicitly provide
             - Subagents stream their work to the user in real-time
@@ -385,6 +395,7 @@ def get_supervisor_instructions(
             - ❌ High-level planning and coordination (your job)
             - ❌ Final synthesis of multiple subagent results (your job)
             - ❌ Tasks requiring information from multiple unrelated subagent results
+            - ❌ Quick single tool calls: fetching one file, running one grep/bash command, checking file structure — just call the tool directly
 
             **🔥 CRITICAL: PROVIDING CONTEXT TO SUBAGENTS:**
             Since subagents DON'T get your history, the `context` parameter is ESSENTIAL:

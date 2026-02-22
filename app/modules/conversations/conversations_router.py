@@ -83,6 +83,7 @@ class ConversationAPI:
     @router.post("/conversations", response_model=CreateConversationResponse)
     async def create_conversation(
         conversation: CreateConversationRequest,
+        request: Request,
         hidden: bool = Query(
             False, description="Whether to hide this conversation from the web UI"
         ),
@@ -90,6 +91,9 @@ class ConversationAPI:
         async_db: AsyncSession = Depends(get_async_db),
         user=Depends(AuthService.check_auth),
     ):
+        user_agent = request.headers.get("user-agent", "")
+        local_mode = user_agent == "Potpie-VSCode-Extension/1.0.1"
+
         user_id = user["user_id"]
         checked = await UsageService.check_usage_limit(user_id)
         if not checked:
@@ -99,7 +103,9 @@ class ConversationAPI:
             )
         user_email = user["email"]
         controller = ConversationController(db, async_db, user_id, user_email)
-        return await controller.create_conversation(conversation, hidden)
+        return await controller.create_conversation(
+            conversation, hidden, local_mode=local_mode
+        )
 
     @staticmethod
     @router.get(
