@@ -5,8 +5,13 @@ Applies code changes from CodeChangesManager (Redis) to the actual worktree file
 This bridges the gap between stored changes and the git repository.
 """
 
+import json
 import os
 from typing import Dict, Any, Optional, List
+
+import redis
+
+from app.core.config_provider import ConfigProvider
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from langchain_core.tools import StructuredTool
@@ -17,6 +22,42 @@ from app.modules.intelligence.tools.code_changes_manager import CodeChangesManag
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+# Redis key prefix and TTL for apply changes result (used by git_commit)
+APPLY_CHANGES_RESULT_KEY_PREFIX = "apply_changes_result"
+APPLY_CHANGES_RESULT_TTL_SECONDS = 60 * 60  # 1 hour
+
+
+def _store_apply_result(
+    conversation_id: str, project_id: str, files_applied: List[str], files_deleted: List[str]
+) -> None:
+    """Store apply changes result in Redis for git_commit to consume."""
+    try:
+        config = ConfigProvider()
+        client = redis.from_url(config.get_redis_url())
+        key = f"{APPLY_CHANGES_RESULT_KEY_PREFIX}:{conversation_id}:{project_id}"
+        data = json.dumps({"files_applied": files_applied, "files_deleted": files_deleted})
+        client.setex(key, APPLY_CHANGES_RESULT_TTL_SECONDS, data)
+    except Exception as e:
+        logger.warning(f"ApplyChangesTool: Failed to store apply result: {e}")
+
+
+def _get_apply_result(
+    conversation_id: str, project_id: str
+) -> Optional[Dict[str, List[str]]]:
+    """Fetch apply changes result from Redis (files_applied + files_deleted)."""
+    try:
+        config = ConfigProvider()
+        client = redis.from_url(config.get_redis_url())
+        key = f"{APPLY_CHANGES_RESULT_KEY_PREFIX}:{conversation_id}:{project_id}"
+        data = client.get(key)
+        if data:
+            raw = data.decode("utf-8") if isinstance(data, bytes) else data
+            return json.loads(raw)
+        return None
+    except Exception as e:
+        logger.warning(f"ApplyChangesTool: Failed to get apply result: {e}")
+        return None
 
 
 class ApplyChangesInput(BaseModel):
@@ -60,7 +101,8 @@ class ApplyChangesTool:
             Dictionary with:
             - success: bool indicating success
             - files_applied: List of files that were written
-            - files_skipped: List of files that were skipped (e.g., deleted files)
+            - files_deleted: List of files that were removed from the worktree
+            - files_skipped: List of files that were skipped (e.g., no content, path traversal)
             - error: Error message if failed
 
         Example:
@@ -150,6 +192,7 @@ class ApplyChangesTool:
                     "success": False,
                     "error": "Repo manager is not enabled. Apply changes requires a local worktree.",
                     "files_applied": [],
+                    "files_deleted": [],
                     "files_skipped": [],
                 }
 
@@ -169,6 +212,7 @@ class ApplyChangesTool:
                     "success": False,
                     "error": f"Worktree not found for project {project_id}. The repository must be parsed and available in the repo manager.",
                     "files_applied": [],
+                    "files_deleted": [],
                     "files_skipped": [],
                 }
 
@@ -179,10 +223,12 @@ class ApplyChangesTool:
             all_changes = changes_manager.changes
 
             if not all_changes:
+                _store_apply_result(conversation_id, project_id, [], [])
                 return {
                     "success": True,
                     "message": "No changes found to apply",
                     "files_applied": [],
+                    "files_deleted": [],
                     "files_skipped": [],
                 }
 
@@ -193,35 +239,63 @@ class ApplyChangesTool:
                         "success": False,
                         "error": f"File '{file_path}' not found in changes for conversation {conversation_id}",
                         "files_applied": [],
+                        "files_deleted": [],
                         "files_skipped": [],
                     }
                 files_to_apply = {file_path: all_changes[file_path]}
             else:
                 files_to_apply = all_changes
 
+            worktree_path_abs = os.path.abspath(worktree_path)
             files_applied: List[str] = []
+            files_deleted: List[str] = []
             files_skipped: List[str] = []
 
+            def _is_path_safe(fpath: str) -> tuple[bool, str]:
+                """Validate fpath is inside worktree (prevents path traversal)."""
+                full = os.path.abspath(os.path.join(worktree_path, fpath))
+                try:
+                    common = os.path.commonpath([worktree_path_abs, full])
+                    if common != worktree_path_abs:
+                        return False, f"{fpath} (path traversal)"
+                    return True, full
+                except ValueError:
+                    return False, f"{fpath} (path traversal)"
+
             for fpath, change in files_to_apply.items():
-                # Skip deleted files (they don't have content to write)
                 if change.change_type.value == "delete":
-                    files_skipped.append(f"{fpath} (deleted)")
+                    safe, path_or_reason = _is_path_safe(fpath)
+                    if not safe:
+                        logger.error(f"ApplyChangesTool: Path traversal blocked: {fpath}")
+                        files_skipped.append(path_or_reason)
+                        continue
+                    full_path = path_or_reason
+                    try:
+                        if os.path.exists(full_path):
+                            os.remove(full_path)
+                        files_deleted.append(fpath)
+                        logger.info(f"ApplyChangesTool: Deleted {fpath}")
+                    except Exception as e:
+                        logger.error(f"ApplyChangesTool: Failed to delete {fpath}: {e}")
+                        files_skipped.append(f"{fpath} (delete error: {str(e)})")
                     continue
 
                 if change.content is None:
                     files_skipped.append(f"{fpath} (no content)")
                     continue
 
-                # Construct full path in worktree
-                full_path = os.path.join(worktree_path, fpath)
+                safe, path_or_reason = _is_path_safe(fpath)
+                if not safe:
+                    logger.error(f"ApplyChangesTool: Path traversal blocked: {fpath}")
+                    files_skipped.append(path_or_reason)
+                    continue
+                full_path = path_or_reason
 
-                # Ensure parent directory exists
                 parent_dir = os.path.dirname(full_path)
                 if parent_dir and not os.path.exists(parent_dir):
                     os.makedirs(parent_dir, exist_ok=True)
                     logger.info(f"ApplyChangesTool: Created directory {parent_dir}")
 
-                # Write file content
                 try:
                     with open(full_path, "w", encoding="utf-8") as f:
                         f.write(change.content)
@@ -231,9 +305,20 @@ class ApplyChangesTool:
                     logger.error(f"ApplyChangesTool: Failed to write {fpath}: {e}")
                     files_skipped.append(f"{fpath} (write error: {str(e)})")
 
+            # Success when no write/delete/path-traversal failures occurred
+            failure_skips = [
+                s
+                for s in files_skipped
+                if "(write error" in s or "(delete error" in s or "(path traversal" in s
+            ]
+            success = len(failure_skips) == 0
+
+            _store_apply_result(conversation_id, project_id, files_applied, files_deleted)
+
             return {
-                "success": len(files_applied) > 0 or len(files_skipped) == 0,
+                "success": success,
                 "files_applied": files_applied,
+                "files_deleted": files_deleted,
                 "files_skipped": files_skipped,
                 "worktree_path": worktree_path,
             }
@@ -244,6 +329,7 @@ class ApplyChangesTool:
                 "success": False,
                 "error": str(e),
                 "files_applied": [],
+                "files_deleted": [],
                 "files_skipped": [],
             }
         except Exception as e:
@@ -252,6 +338,7 @@ class ApplyChangesTool:
                 "success": False,
                 "error": f"Unexpected error: {str(e)}",
                 "files_applied": [],
+                "files_deleted": [],
                 "files_skipped": [],
             }
 

@@ -15,6 +15,10 @@ from app.modules.repo_manager import RepoManager
 from app.modules.code_provider.git_safe import safe_git_repo_operation, GitOperationError
 from app.modules.utils.logger import setup_logger
 
+from app.modules.intelligence.tools.code_query_tools.apply_changes_tool import (
+    _get_apply_result,
+)
+
 logger = setup_logger(__name__)
 
 
@@ -25,9 +29,13 @@ class GitCommitInput(BaseModel):
     commit_message: str = Field(
         ..., description="Commit message describing the changes"
     )
+    conversation_id: Optional[str] = Field(
+        None,
+        description="Conversation ID from apply_changes. When provided with files=None, stages only files_applied + files_deleted from the last apply_changes run.",
+    )
     files: Optional[List[str]] = Field(
         None,
-        description="Optional list of specific files to commit. If not provided, commits all staged changes.",
+        description="Optional list of specific files to commit. If not provided, uses files from apply_changes when conversation_id is set; otherwise pass files explicitly (files_applied + files_deleted from apply_changes).",
     )
 
 
@@ -40,14 +48,17 @@ class GitCommitTool:
         that can then be pushed and used for a PR.
 
         The tool will:
-        1. Stage the specified files (or all changes if no files specified)
+        1. Stage the specified files (or files from apply_changes when conversation_id is provided)
         2. Create a git commit with the provided message
         3. Return the commit hash
+
+        Pass conversation_id when committing after apply_changes to stage only those files.
 
         Args:
             project_id: The repository project ID (UUID)
             commit_message: The commit message (should be descriptive)
-            files: Optional list of specific file paths to commit. If omitted, commits all changes.
+            conversation_id: Optional. When set with files=None, stages files_applied + files_deleted from apply_changes.
+            files: Optional list of specific file paths to commit. If omitted and conversation_id is set, uses apply_changes result.
 
         Returns:
             Dictionary with:
@@ -133,6 +144,7 @@ class GitCommitTool:
         self,
         project_id: str,
         commit_message: str,
+        conversation_id: Optional[str] = None,
         files: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Stage and commit changes in the worktree."""
@@ -168,26 +180,38 @@ class GitCommitTool:
                     "error": f"Worktree not found for project {project_id}. The repository must be parsed and available in the repo manager.",
                 }
 
+            # Resolve files to stage: explicit list, or from apply_changes when conversation_id provided
+            if files is not None:
+                files_to_stage = files
+            elif conversation_id:
+                apply_result = _get_apply_result(conversation_id, project_id)
+                if apply_result:
+                    files_to_stage = apply_result.get("files_applied", []) + apply_result.get("files_deleted", [])
+                else:
+                    return {
+                        "success": False,
+                        "error": "No apply_changes result found. Run apply_changes first, or pass 'files' explicitly.",
+                    }
+            else:
+                return {
+                    "success": False,
+                    "error": "Pass 'files' (files_applied + files_deleted from apply_changes) or 'conversation_id' to stage only intended changes.",
+                }
+
             logger.info(
                 f"GitCommitTool: Committing changes in {worktree_path} "
-                f"(files: {files if files else 'all'})"
+                f"(files: {len(files_to_stage)} paths)"
             )
 
             def _commit_operation(repo):
-                # Stage files
-                if files:
-                    # Stage specific files
-                    for file_path in files:
-                        full_path = os.path.join(worktree_path, file_path)
-                        if os.path.exists(full_path):
-                            repo.git.add(file_path)
-                        else:
-                            logger.warning(
-                                f"GitCommitTool: File not found for staging: {file_path}"
-                            )
-                else:
-                    # Stage all changes
-                    repo.git.add(".")
+                # Stage only the resolved files (add stages both new/modified and deleted)
+                for file_path in files_to_stage:
+                    full_path = os.path.join(worktree_path, file_path)
+                    if not os.path.exists(full_path):
+                        logger.warning(
+                            f"GitCommitTool: File not on disk (may be deleted): {file_path}"
+                        )
+                    repo.git.add(file_path)
 
                 # Check if there are changes to commit
                 diff = repo.git.diff("--cached", "--name-only")
@@ -243,13 +267,14 @@ class GitCommitTool:
         self,
         project_id: str,
         commit_message: str,
+        conversation_id: Optional[str] = None,
         files: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Async wrapper for _run."""
         import asyncio
 
         return await asyncio.to_thread(
-            self._run, project_id, commit_message, files
+            self._run, project_id, commit_message, conversation_id, files
         )
 
 
