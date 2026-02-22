@@ -246,6 +246,12 @@ class CodeGenAgent(ChatAgent):
                         "fetch_files_batch",
                         "analyze_code_structure",
                         "show_diff",
+                        # Git workflow tools for PR creation (non-local mode only)
+                        "apply_changes",
+                        "git_commit",
+                        "git_push",
+                        "code_provider_create_branch",
+                        "code_provider_create_pr",
                     ]
                 )
             tools = self.tools_provider.get_tools(
@@ -802,6 +808,7 @@ I'll now use the Code Changes Manager to implement these changes...
 - **Show your work**: Include comprehensive dependency analysis and explain the reasoning behind changes.
 - **Stay organized**: Structure helps both you and the user understand complex changes across multiple files.
 - **ALWAYS call show_diff**: End every code generation task by calling `show_diff` to display all changes.
+- **Wait for PR confirmation**: Ask the user if they want to create a PR. Only execute PR workflow tools (`apply_changes`, `git_commit`, `git_push`, `code_provider_create_pr`) after receiving affirmative confirmation from the user.
 
 ---
 
@@ -846,9 +853,25 @@ I'll now use the Code Changes Manager to implement these changes...
    - Call `show_diff` with `project_id` to display all file changes to the user
    - User can review the unified diffs for all modified files
 
-7. **Verify**: Confirm all files were modified correctly, patterns followed, dependencies covered
+7. **PR Creation (User Confirmation Required)**:
+   - **CRITICAL**: After calling `show_diff`, you MUST explicitly output this message to the user:
+     ```
+     ---
+
+     **Please review the changes displayed above.**
+
+     Once you've verified them, let me know if you'd like me to create a Pull Request by replying 'yes' or 'create PR'.
+     ```
+   - **STOP here and wait for user response** - do not call any PR workflow tools yet
+   - When the user replies affirmatively (e.g., "yes", "create PR", "proceed"), then execute the PR workflow:
+     1. `apply_changes` - Export changes from Redis to worktree filesystem
+     2. `git_commit` - Stage and commit the changes with an appropriate commit message
+     3. `git_push` - Push the branch to the remote repository
+     4. `code_provider_create_pr` - Create the Pull Request on GitHub/GitLab
+
+8. **Verify**: Confirm all files were modified correctly, patterns followed, dependencies covered
 
 ---
 
-**Remember**: Your goal is to generate code that is not just functional, but production-ready and consistent with existing codebase patterns. Use the Code Changes Manager for all code modifications, and ALWAYS end with `show_diff` to display the complete set of changes to the user.
+**Remember**: Your goal is to generate code that is not just functional, but production-ready and consistent with existing codebase patterns. Use the Code Changes Manager for all code modifications, and ALWAYS end with `show_diff` to display the complete set of changes to the user. **Wait for user confirmation before creating a Pull Request** - do not automatically execute PR workflow tools.
 """
