@@ -18,7 +18,7 @@ Single source of truth for tool metadata and agent–tool binding. Agents resolv
 
 - **Population**: `build_registry_from_tool_service(tool_service, strict=False)` builds a `ToolRegistry` from `definitions.py` and ToolService (descriptions, validation).
 - **Resolver**: `ToolResolver(registry, tools_provider).get_tools_for_agent(allow_list_id, local_mode=..., exclude_embedding_tools=...)` returns `List[StructuredTool]`.
-- **Agents**: CodeGenAgent and GeneralPurposeAgent accept optional `tool_resolver`; when set they use `get_tools_for_agent("code_gen")` / `get_tools_for_agent("general_purpose")` instead of hardcoded lists.
+- **Agents**: CodeGenAgent accepts an optional `tool_resolver`; when set it uses `get_tools_for_agent("code_gen")` instead of a hardcoded list.
 
 ## Adding tools / allow-lists
 
@@ -30,14 +30,14 @@ Single source of truth for tool metadata and agent–tool binding. Agents resolv
 
 - `schema.py`: ToolMetadata, ToolTier, ToolCategory, AllowListDefinition.
 - `registry.py`: ToolRegistry (register, resolve_allow_list, resolve_categories, get_metadata, all_primary_names).
-- `definitions.py`: TOOL_DEFINITIONS, ALLOW_LIST_DEFINITIONS (code_gen, general_purpose).
+- `definitions.py`: TOOL_DEFINITIONS, ALLOW_LIST_DEFINITIONS (code_gen).
 - `population.py`: build_registry_from_tool_service.
 - `resolver.py`: ToolResolver.get_tools_for_agent.
 - `exceptions.py`: RegistryError.
 
 ## Phase 2: Scoped tool sets (implemented)
 
-When `PydanticMultiAgent` is given a `tool_resolver` (CodeGenAgent and GeneralPurposeAgent pass it when available), it forwards it to `AgentFactory`. The factory then builds supervisor, delegate, and integration tool lists from registry allow-lists:
+When `PydanticMultiAgent` is given a `tool_resolver` (CodeGenAgent passes it when available), it forwards it to `AgentFactory`. The factory then builds supervisor, delegate, and integration tool lists from registry allow-lists:
 
 - **supervisor**: Curated set for coordination and light discovery (search, fetch, web). Supervisor delegates execution to THINK_EXECUTE; no terminal or full execution suite.
 - **execute**: Full execution set for THINK_EXECUTE delegate (code_gen minus todo/requirement); same capability as today, source is registry.
