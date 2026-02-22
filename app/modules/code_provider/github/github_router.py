@@ -13,8 +13,8 @@ router = APIRouter()
 @router.get("/github/user-repos")
 async def get_user_repos(
     search: str = Query(None, description="Search query to filter repositories"),
-    limit: int = Query(None, description="Number of repositories to return"),
-    offset: int = Query(0, description="Number of repositories to skip"),
+    limit: int | None = Query(None, ge=1, description="Number of repositories to return"),
+    offset: int = Query(0, ge=0, description="Number of repositories to skip"),
     user=Depends(AuthService.check_auth),
     db: Session = Depends(get_db),
 ):
@@ -81,8 +81,8 @@ async def get_user_repos(
 @router.get("/github/get-branch-list")
 async def get_branch_list(
     repo_name: str = Query(..., description="Repository name"),
-    limit: int = Query(None, description="Number of branches to return"),
-    offset: int = Query(0, description="Number of branches to skip"),
+    limit: int | None = Query(None, ge=1, description="Number of branches to return"),
+    offset: int = Query(0, ge=0, description="Number of branches to skip"),
     search: str = Query(None, description="Search query to filter branches"),
     user=Depends(AuthService.check_auth),
     db: Session = Depends(get_db),
