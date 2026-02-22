@@ -1030,6 +1030,26 @@ class GithubService:
                 return {"branches": [default_branch] + branch_list}
         except HTTPException as he:
             raise he
+        except GithubException as ge:
+            if ge.status in (401, 403):
+                logger.warning(
+                    f"Permission denied accessing branches for repo {repo_name}: {ge.data.get('message', str(ge))}"
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        f"Access denied: repository '{repo_name}' exists but you do not have "
+                        "permission to access its branches. Please ensure you have the required "
+                        "permissions or provide valid credentials."
+                    ),
+                )
+            logger.error(
+                f"GitHub API error fetching branches for repo {repo_name}: {str(ge)}", exc_info=True
+            )
+            raise HTTPException(
+                status_code=404,
+                detail=f"Repository not found or error fetching branches: {ge.data.get('message', str(ge))}",
+            )
         except Exception as e:
             logger.error(
                 f"Error fetching branches for repo {repo_name}: {str(e)}", exc_info=True
