@@ -145,13 +145,13 @@ Potpie parses your repository into a **knowledge graph** stored in Neo4j - captu
   <img src="./assets/architecture.svg" alt="Potpie Architecture" width="900"/>
 </p>
 
-- [**FastAPI**](https://fastapi.tiangolo.com/) serves as the API layer — all requests enter through `localhost:8001` with CORS, Logfire tracing, and optional Sentry error tracking.
-- [**Firebase Auth**](https://firebase.google.com/docs/auth) handles production authentication. In development mode a dummy user is created locally — no Firebase needed.
-- [**Celery Worker**](https://docs.celeryq.dev/) with [Redis](https://redis.io/) as the broker handles async repo parsing — cloning, AST extraction, and knowledge graph construction run entirely in the background.
+- [**FastAPI**](https://fastapi.tiangolo.com/) serves as the API layer - all requests enter through `localhost:8001` with CORS, Logfire tracing, and optional Sentry error tracking.
+- [**Firebase Auth**](https://firebase.google.com/docs/auth) handles production authentication. In development mode a dummy user is created locally - no Firebase needed.
+- [**Celery Worker**](https://docs.celeryq.dev/) with [Redis](https://redis.io/) as the broker handles async repo parsing - cloning, AST extraction, and knowledge graph construction run entirely in the background.
 - [**Conversation Service**](https://docs.potpie.ai/conversations) manages chat sessions and agent memory across multi-turn interactions.
 - [**Agent Router**](https://docs.potpie.ai/agents/introduction) dispatches prompts to the correct pre-built or custom agent based on intent.
-- [**Tool Service**](https://docs.potpie.ai/tools) exposes callable functions to agents — code search, file fetch, knowledge graph queries, web tools, and more.
-- [**Neo4j Knowledge Graph**](https://neo4j.com/) stores your codebase as a property graph — functions, classes, files, imports, and call relationships — the backbone of every agent's context.
+- [**Tool Service**](https://docs.potpie.ai/tools) exposes callable functions to agents - code search, file fetch, knowledge graph queries, web tools, and more.
+- [**Neo4j Knowledge Graph**](https://neo4j.com/) stores your codebase as a property graph - functions, classes, files, imports, and call relationships - the backbone of every agent's context.
 - [**PostgreSQL**](https://www.postgresql.org/) stores users, projects, conversations, and message history.
 
 
@@ -234,18 +234,18 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
    - Start the FastAPI application
    - Start the Celery worker
 
-**Optional: Logfire Tracing Setup**
+    **Optional: Logfire Tracing Setup**
 
-   To monitor LLM traces and agent operations with Pydantic Logfire:
+      To monitor LLM traces and agent operations with Pydantic Logfire:
 
-   1. Get a Logfire token from https://logfire.pydantic.dev
-   2. Add it to your `.env` file:
+      1. Get a Logfire token from https://logfire.pydantic.dev
+      2. Add it to your `.env` file:
       ```bash
       LOGFIRE_TOKEN=your_token_here
       ```
-   3. Tracing is automatically initialized when Potpie starts. View traces at https://logfire.pydantic.dev
+      3. Tracing is automatically initialized when Potpie starts. View traces at https://logfire.pydantic.dev
 
-   **Note:** Set `LOGFIRE_SEND_TO_CLOUD=false` in your `.env` to disable sending traces to Logfire cloud.
+      **Note:** Set `LOGFIRE_SEND_TO_CLOUD=false` in your `.env` to disable sending traces to Logfire cloud.
 
 3. **Stop Potpie**
 
@@ -285,15 +285,11 @@ Potpie offers a suite of specialized codebase agents for automating and optimizi
   </tr>
   <tr>
     <td valign="top">
-      <h3>Code Changes Agent</h3>
-      <p>Analyzes code changes, identifies affected APIs, and suggests improvements before you merge — catching regressions early.</p>
-      <a href="https://docs.potpie.ai/agents/code-changes-agent"><img src="https://img.shields.io/badge/Learn%20More-Docs-22c55e?style=flat-square" alt="Docs"/></a>
-    </td>
-    <td valign="top">
       <h3>Code Generation Agent</h3>
       <p>Generates code for new features, refactors existing code, and suggests optimizations grounded in your actual codebase.</p>
       <a href="https://docs.potpie.ai/agents/code-generation-agent"><img src="https://img.shields.io/badge/Learn%20More-Docs-22c55e?style=flat-square" alt="Docs"/></a>
     </td>
+    <td valign="top"></td>
   </tr>
 </table>
 
@@ -302,9 +298,9 @@ Potpie offers a suite of specialized codebase agents for automating and optimizi
 
 With Custom Agents, you can design personalized tools that handle repeatable tasks with precision. Define:
 
-- **System Instructions** — The agent's task, goal, and expected output
-- **Tasks** — Individual steps for job completion
-- **Tools** — Functions for querying the knowledge graph or retrieving code
+- **System Instructions** - The agent's task, goal, and expected output
+- **Tasks** - Individual steps for job completion
+- **Tools** - Functions for querying the knowledge graph or retrieving code
 
 ```bash
 curl -X POST "http://localhost:8001/api/v1/custom-agents/agents/auto" \
@@ -326,13 +322,13 @@ Read more in our [documentation](https://docs.potpie.ai/open-source/agents/creat
     </td>
     <td valign="top" width="50%">
       <h3>Codebase Q&amp;A</h3>
-      <p>Ask anything about your codebase — functions, data flows, design decisions. Get precise answers grounded in your actual code, not guesses.</p>
+      <p>Ask anything about your codebase - functions, data flows, design decisions. Get precise answers grounded in your actual code, not guesses.</p>
     </td>
   </tr>
   <tr>
     <td valign="top">
       <h3>Debugging</h3>
-      <p>Paste a stacktrace. Get a root-cause analysis and step-by-step fix path pinpointed to your code — not generic troubleshooting advice.</p>
+      <p>Paste a stacktrace. Get a root-cause analysis and step-by-step fix path pinpointed to your code - not generic troubleshooting advice.</p>
     </td>
     <td valign="top">
       <h3>Code Review</h3>
@@ -342,11 +338,11 @@ Read more in our [documentation](https://docs.potpie.ai/open-source/agents/creat
   <tr>
     <td valign="top">
       <h3>Test Generation</h3>
-      <p>Generate unit and integration tests that understand your code structure — not boilerplate. Covers edge cases your manual tests would miss.</p>
+      <p>Generate unit and integration tests that understand your code structure - not boilerplate. Covers edge cases your manual tests would miss.</p>
     </td>
     <td valign="top">
       <h3>Feature Planning</h3>
-      <p>Turn a requirement or open issue into a low-level implementation plan — with component breakdown, API surface, and suggested code structure.</p>
+      <p>Turn a requirement or open issue into a low-level implementation plan - with component breakdown, API surface, and suggested code structure.</p>
     </td>
   </tr>
 </table>
@@ -363,10 +359,10 @@ Read more in our [documentation](https://docs.potpie.ai/open-source/agents/creat
   <tr>
     <td valign="top">
       <h3>VSCode Extension</h3>
-      <p>Use Potpie's AI agents directly inside your editor — no tab switching, no copy-pasting. Ask questions, get explanations, and ship code without leaving VSCode.</p>
+      <p>Use Potpie's AI agents directly inside your editor - no tab switching, no copy-pasting. Ask questions, get explanations, and ship code without leaving VSCode.</p>
       <ul>
         <li>Agents understand your open repo instantly</li>
-        <li>Works with any codebase — local or remote</li>
+        <li>Works with any codebase - local or remote</li>
       </ul>
       <a href="https://marketplace.visualstudio.com/items?itemName=PotpieAI.potpie-vscode-extension">
         <img src="https://img.shields.io/badge/Install-VSCode%20Extension-0078d7?style=for-the-badge&logo=visualstudiocode&logoColor=white" alt="Install VSCode Extension"/>
@@ -377,7 +373,7 @@ Read more in our [documentation](https://docs.potpie.ai/open-source/agents/creat
   <tr>
     <td valign="top">
       <h3>Slack Integration</h3>
-      <p>Bring Potpie into your team's Slack workspace. Debug code, answer codebase questions, and get project insights — all in threads your team already uses.</p>
+      <p>Bring Potpie into your team's Slack workspace. Debug code, answer codebase questions, and get project insights - all in threads your team already uses.</p>
       <ul>
         <li>Set up in under 2 minutes</li>
         <li>Works with your custom configured agents</li>
@@ -422,7 +418,7 @@ See the [Contributing Guide](https://github.com/potpie-ai/potpie/blob/main/.gith
 
 ## License
 
-This project is licensed under the Apache 2.0 License — see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for details.
 
 ## Contributors
 
