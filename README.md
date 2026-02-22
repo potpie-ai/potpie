@@ -248,8 +248,6 @@ Potpie offers a suite of specialized codebase agents for automating and optimizi
 
 - **Debugging Agent**: Automatically analyzes stacktraces and provides debugging steps specific to your codebase. [Docs](https://docs.potpie.ai/agents/debugging-agent)
 - **Codebase Q&A Agent**: Answers questions about your codebase and explains functions, features, and architecture. [Docs](https://docs.potpie.ai/agents/qna-agent)
-- **Code Changes Agent**: Analyzes code changes, identifies affected APIs, and suggests improvements before merging. [Docs](https://docs.potpie.ai/agents/code-changes-agent)
-- **LLD Agent**: Creates a low level design for implementing a new feature by providing functional requirements to this agent. [Docs](https://docs.potpie.ai/agents/introduction)
 - **Code Generation Agent**: Generates code for new features, refactors existing code, and suggests optimizations. [Docs](https://docs.potpie.ai/agents/introduction)
 
 ### Custom Agents
@@ -277,12 +275,6 @@ Read more in our [documentation](https://docs.potpie.ai/open-source/agents/creat
 - **Codebase Understanding** : Answer questions about any library you're integrating, explain functions, features, and architecture.
 
   > We used the Q&A agent to understand the underlying working of a feature of the [**CrewAI**](https://github.com/CrewAIInc/CrewAI) codebase that was not documented in official docs: Video [here](https://www.linkedin.com/posts/dhirenmathur_what-do-you-do-when-youre-stuck-and-even-activity-7256704603977613312-8X8G).
-
-- **Low Level Design** : Get detailed implementation plans for new features or improvements before writing code.
-
-  > We fed an open issue from the [**Portkey-AI/Gateway**](https://github.com/Portkey-AI/Gateway) project to this agent to generate a low level design for it: Video [here](https://www.linkedin.com/posts/dhirenmathur_potpie-ai-agents-vs-llms-i-am-extremely-activity-7255607456448286720-roOC).
-
-- **Reviewing Code Changes** : Understand the functional impact of changes and compute the blast radius of modifications.
 
 - **Debugging** : Get step-by-step debugging guidance based on stacktraces and codebase context.
 

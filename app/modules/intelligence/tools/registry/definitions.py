@@ -258,11 +258,6 @@ CODE_GEN_ADD_WHEN_NON_LOCAL: List[str] = [
 ]
 CODE_GEN_EXCLUDE_IN_LOCAL: List[str] = ["show_diff"]
 
-GENERAL_PURPOSE_TOOLS: List[str] = [
-    "webpage_extractor",
-    "web_search_tool",
-]
-
 # --- Phase 2: Scoped tool sets for supervisor and subagents ---
 
 # Supervisor: coordination + light discovery + todo/requirement (no terminal, no full code edit suite).
@@ -372,11 +367,6 @@ ALLOW_LIST_DEFINITIONS: List[AllowListDefinition] = [
         tool_names=CODE_GEN_BASE_TOOLS,
         add_when_non_local=CODE_GEN_ADD_WHEN_NON_LOCAL,
         exclude_in_local=CODE_GEN_EXCLUDE_IN_LOCAL,
-        tier_filter=None,
-    ),
-    AllowListDefinition(
-        name="general_purpose",
-        tool_names=GENERAL_PURPOSE_TOOLS,
         tier_filter=None,
     ),
     # Phase 2: scoped sets for multi-agent

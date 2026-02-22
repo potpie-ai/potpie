@@ -17,19 +17,10 @@ class MultiAgentConfig:
 
     # Per-agent type multi-agent settings (default enabled)
     AGENT_MULTI_AGENT_SETTINGS = {
-        "general_purpose_agent": os.getenv(
-            "GENERAL_PURPOSE_MULTI_AGENT", "true"
-        ).lower()
-        == "true",
         "code_generation_agent": os.getenv("CODE_GEN_MULTI_AGENT", "true").lower()
         == "true",
         "codebase_qna_agent": os.getenv("QNA_MULTI_AGENT", "true").lower() == "true",
         "debugging_agent": os.getenv("DEBUG_MULTI_AGENT", "true").lower() == "true",
-        "LLD_agent": os.getenv("LLD_MULTI_AGENT", "true").lower() == "true",
-        "code_changes_agent": os.getenv("CODE_CHANGES_MULTI_AGENT", "true").lower()
-        == "true",
-        "sweb_debug_agent": os.getenv("SWEB_DEBUG_MULTI_AGENT", "true").lower()
-        == "true",
     }
 
     # Custom agent multi-agent setting (default enabled)
@@ -94,18 +85,14 @@ class MultiAgentConfig:
 ENABLE_MULTI_AGENT=true
 
 # Per-agent multi-agent settings (default: true for all)
-GENERAL_PURPOSE_MULTI_AGENT=true
 CODE_GEN_MULTI_AGENT=true
 QNA_MULTI_AGENT=true
 DEBUG_MULTI_AGENT=true
-LLD_MULTI_AGENT=true
-CODE_CHANGES_MULTI_AGENT=true
 
 # Custom agent multi-agent setting (default: true)
 CUSTOM_AGENT_MULTI_AGENT=true
 
 # To disable multi-agent mode, set to false:
 # ENABLE_MULTI_AGENT=false
-# GENERAL_PURPOSE_MULTI_AGENT=false
 # etc.
 """
