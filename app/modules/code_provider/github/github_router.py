@@ -13,8 +13,10 @@ router = APIRouter()
 @router.get("/github/user-repos")
 async def get_user_repos(
     search: str = Query(None, description="Search query to filter repositories"),
-    user=Depends(AuthService.check_auth), 
-    db: Session = Depends(get_db)
+    limit: int = Query(None, description="Number of repositories to return"),
+    offset: int = Query(0, description="Number of repositories to skip"),
+    user=Depends(AuthService.check_auth),
+    db: Session = Depends(get_db),
 ):
     controller = CodeProviderController(db)
     
@@ -58,11 +60,21 @@ async def get_user_repos(
             # Re-raise HTTP exceptions (e.g., query too long)
             raise
         except Exception as e:
-            # Log but don't fail - return unfiltered results if filtering fails
             from app.modules.utils.logger import setup_logger
             logger = setup_logger(__name__)
             logger.warning(f"Error filtering repositories: {str(e)}")
-    
+
+    # Paginate when limit is provided (same shape as get-branch-list)
+    repos = user_repo_list["repositories"]
+    if limit is not None:
+        total_count = len(repos)
+        paginated_repos = repos[offset : offset + limit]
+        has_next_page = (offset + limit) < total_count
+        return {
+            "repositories": paginated_repos,
+            "has_next_page": has_next_page,
+            "total_count": total_count,
+        }
     return user_repo_list
 
 
