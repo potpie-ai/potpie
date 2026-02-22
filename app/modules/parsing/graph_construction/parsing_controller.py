@@ -247,13 +247,26 @@ class ParsingController:
                     is_latest=is_latest,
                     status=project.status,
                 )
-                process_parsing.delay(
-                    repo_details.model_dump(),
-                    user_id,
-                    user_email,
-                    project_id,
-                    cleanup_graph,
-                )
+                try:
+                    task = process_parsing.delay(
+                        repo_details.model_dump(),
+                        user_id,
+                        user_email,
+                        project_id,
+                        cleanup_graph,
+                    )
+                    logger.info(
+                        "Parsing task submitted to Celery",
+                        task_id=task.id,
+                        project_id=project_id,
+                    )
+                except Exception as e:
+                    logger.exception(
+                        "Failed to submit parsing task to Celery",
+                        project_id=project_id,
+                        error=str(e),
+                    )
+                    raise
 
                 await project_manager.update_project_status(
                     project_id, ProjectStatusEnum.SUBMITTED
