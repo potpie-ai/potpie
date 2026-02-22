@@ -47,6 +47,15 @@ from app.modules.intelligence.tools.code_query_tools.get_file_content_by_path im
 from app.modules.intelligence.tools.code_query_tools.bash_command_tool import (
     bash_command_tool,
 )
+from app.modules.intelligence.tools.code_query_tools.apply_changes_tool import (
+    apply_changes_tool,
+)
+from app.modules.intelligence.tools.code_query_tools.git_commit_tool import (
+    git_commit_tool,
+)
+from app.modules.intelligence.tools.code_query_tools.git_push_tool import (
+    git_push_tool,
+)
 from app.modules.intelligence.tools.tool_schema import ToolInfo, ToolInfoWithParameters
 from app.modules.intelligence.tools.web_tools.code_provider_tool import (
     code_provider_tool,
@@ -241,6 +250,20 @@ class ToolService:
         bash_tool = bash_command_tool(self.db, self.user_id)
         if bash_tool:
             tools["bash_command"] = bash_tool
+
+        # Add git workflow tools if repo manager is enabled
+        apply_tool = apply_changes_tool(self.db, self.user_id)
+        if apply_tool:
+            tools["apply_changes"] = apply_tool
+
+        commit_tool = git_commit_tool(self.db, self.user_id)
+        if commit_tool:
+            tools["git_commit"] = commit_tool
+
+        push_tool = git_push_tool(self.db, self.user_id)
+        if push_tool:
+            tools["git_push"] = push_tool
+
         # Add todo management tools
         todo_tools = create_todo_management_tools()
         for tool in todo_tools:

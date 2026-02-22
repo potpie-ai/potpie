@@ -194,6 +194,25 @@ TOOL_DEFINITIONS: Dict[str, dict] = {
         "category": "integration_github",
         "aliases": ["github_update_branch"],
     },
+    # Git workflow tools (apply changes from Redis to worktree)
+    "apply_changes": {
+        "tier": "medium",
+        "category": "code_changes",
+        "short_description": "Apply changes from CodeChangesManager to the worktree filesystem.",
+        "destructive": True,
+    },
+    "git_commit": {
+        "tier": "medium",
+        "category": "code_changes",
+        "short_description": "Stage and commit changes in the repository worktree.",
+        "destructive": True,
+    },
+    "git_push": {
+        "tier": "medium",
+        "category": "code_changes",
+        "short_description": "Push the current branch to the remote repository.",
+        "destructive": True,
+    },
 }
 
 # --- Allow-lists ---
@@ -243,6 +262,10 @@ CODE_GEN_BASE_TOOLS: List[str] = [
     "get_file_diff",
     "revert_file",
     "get_session_metadata",
+    # Git workflow tools for PR creation
+    "apply_changes",
+    "git_commit",
+    "git_push",
 ]
 
 CODE_GEN_ADD_WHEN_NON_LOCAL: List[str] = [
@@ -312,6 +335,12 @@ EXECUTE_TOOLS: List[str] = [
     "get_file_diff",
     "revert_file",
     "get_session_metadata",
+    # Git workflow tools for PR creation
+    "apply_changes",
+    "git_commit",
+    "git_push",
+    "code_provider_create_branch",
+    "code_provider_create_pr",
 ]
 EXECUTE_ADD_WHEN_NON_LOCAL: List[str] = [
     "get_code_from_multiple_node_ids",
@@ -351,6 +380,10 @@ INTEGRATION_GITHUB_TOOLS: List[str] = [
     "code_provider_create_pr",
     "code_provider_add_pr_comments",
     "code_provider_update_file",
+    # Git workflow tools for PR creation from worktree
+    "apply_changes",
+    "git_commit",
+    "git_push",
 ]
 INTEGRATION_CONFLUENCE_TOOLS: List[str] = [
     "get_confluence_spaces",
