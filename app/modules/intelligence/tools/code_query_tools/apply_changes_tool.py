@@ -18,6 +18,7 @@ from langchain_core.tools import StructuredTool
 
 from app.modules.projects.projects_service import ProjectService
 from app.modules.repo_manager import RepoManager
+from app.modules.repo_manager.sync_helper import get_or_create_worktree_path
 from app.modules.intelligence.tools.code_changes_manager import CodeChangesManager
 from app.modules.utils.logger import setup_logger
 
@@ -29,14 +30,19 @@ APPLY_CHANGES_RESULT_TTL_SECONDS = 60 * 60  # 1 hour
 
 
 def _store_apply_result(
-    conversation_id: str, project_id: str, files_applied: List[str], files_deleted: List[str]
+    conversation_id: str,
+    project_id: str,
+    files_applied: List[str],
+    files_deleted: List[str],
 ) -> None:
     """Store apply changes result in Redis for git_commit to consume."""
     try:
         config = ConfigProvider()
         client = redis.from_url(config.get_redis_url())
         key = f"{APPLY_CHANGES_RESULT_KEY_PREFIX}:{conversation_id}:{project_id}"
-        data = json.dumps({"files_applied": files_applied, "files_deleted": files_deleted})
+        data = json.dumps(
+            {"files_applied": files_applied, "files_deleted": files_deleted}
+        )
         client.setex(key, APPLY_CHANGES_RESULT_TTL_SECONDS, data)
     except Exception as e:
         logger.warning(f"ApplyChangesTool: Failed to store apply result: {e}")
@@ -149,34 +155,10 @@ class ApplyChangesTool:
         commit_id: Optional[str],
         user_id: Optional[str],
     ) -> Optional[str]:
-        """Get the worktree path for the project."""
-        if not self.repo_manager:
-            return None
-
-        # Try to get worktree path with user_id for security
-        worktree_path = self.repo_manager.get_repo_path(
-            repo_name, branch=branch, commit_id=commit_id, user_id=user_id
+        """Get the worktree path, cloning via prepare_for_parsing if missing."""
+        return get_or_create_worktree_path(
+            self.repo_manager, repo_name, branch, commit_id, user_id, self.sql_db
         )
-        if worktree_path and os.path.exists(worktree_path):
-            return worktree_path
-
-        # Try with just commit_id (with user_id)
-        if commit_id:
-            worktree_path = self.repo_manager.get_repo_path(
-                repo_name, commit_id=commit_id, user_id=user_id
-            )
-            if worktree_path and os.path.exists(worktree_path):
-                return worktree_path
-
-        # Try with just branch (with user_id)
-        if branch:
-            worktree_path = self.repo_manager.get_repo_path(
-                repo_name, branch=branch, user_id=user_id
-            )
-            if worktree_path and os.path.exists(worktree_path):
-                return worktree_path
-
-        return None
 
     def _run(
         self,
@@ -266,7 +248,9 @@ class ApplyChangesTool:
                 if change.change_type.value == "delete":
                     safe, path_or_reason = _is_path_safe(fpath)
                     if not safe:
-                        logger.error(f"ApplyChangesTool: Path traversal blocked: {fpath}")
+                        logger.error(
+                            f"ApplyChangesTool: Path traversal blocked: {fpath}"
+                        )
                         files_skipped.append(path_or_reason)
                         continue
                     full_path = path_or_reason
@@ -313,7 +297,9 @@ class ApplyChangesTool:
             ]
             success = len(failure_skips) == 0
 
-            _store_apply_result(conversation_id, project_id, files_applied, files_deleted)
+            _store_apply_result(
+                conversation_id, project_id, files_applied, files_deleted
+            )
 
             return {
                 "success": success,

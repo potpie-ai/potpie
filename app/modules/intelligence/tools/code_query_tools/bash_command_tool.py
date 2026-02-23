@@ -15,6 +15,7 @@ from langchain_core.tools import StructuredTool
 
 from app.modules.projects.projects_service import ProjectService
 from app.modules.repo_manager import RepoManager
+from app.modules.repo_manager.sync_helper import get_or_create_worktree_path
 from app.modules.utils.gvisor_runner import run_command_isolated, CommandResult
 from app.modules.utils.logger import setup_logger
 
@@ -553,34 +554,10 @@ class BashCommandTool:
         commit_id: Optional[str],
         user_id: Optional[str],
     ) -> Optional[str]:
-        """Get the worktree path for the project."""
-        if not self.repo_manager:
-            return None
-
-        # Try to get worktree path with user_id for security
-        worktree_path = self.repo_manager.get_repo_path(
-            repo_name, branch=branch, commit_id=commit_id, user_id=user_id
+        """Get the worktree path, cloning via prepare_for_parsing if missing."""
+        return get_or_create_worktree_path(
+            self.repo_manager, repo_name, branch, commit_id, user_id, self.sql_db
         )
-        if worktree_path and os.path.exists(worktree_path):
-            return worktree_path
-
-        # Try with just commit_id (with user_id)
-        if commit_id:
-            worktree_path = self.repo_manager.get_repo_path(
-                repo_name, commit_id=commit_id, user_id=user_id
-            )
-            if worktree_path and os.path.exists(worktree_path):
-                return worktree_path
-
-        # Try with just branch (with user_id)
-        if branch:
-            worktree_path = self.repo_manager.get_repo_path(
-                repo_name, branch=branch, user_id=user_id
-            )
-            if worktree_path and os.path.exists(worktree_path):
-                return worktree_path
-
-        return None
 
     def _run(
         self,
