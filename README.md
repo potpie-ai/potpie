@@ -266,7 +266,7 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
    - The Celery worker
    - All Docker Compose services
 
-## 🤖 Potpie's Prebuilt Agents
+## Potpie's Prebuilt Agents
 
 Potpie offers a suite of specialized codebase agents for automating and optimizing key aspects of software development:
 
@@ -275,21 +275,25 @@ Potpie offers a suite of specialized codebase agents for automating and optimizi
     <td valign="top" width="50%">
       <h3>Debugging Agent</h3>
       <p>Automatically analyzes stacktraces and provides step-by-step debugging guidance specific to your codebase - not generic advice.</p>
-      <a href="https://docs.potpie.ai/agents/debugging-agent"><img src="https://img.shields.io/badge/Learn%20More-Docs-22c55e?style=flat-square" alt="Docs"/></a>
+      <a href="https://docs.potpie.ai/pre-built-agents/debugging-agent"><img src="https://img.shields.io/badge/Learn%20More-Docs-22c55e?style=flat-square" alt="Docs"/></a>
     </td>
     <td valign="top" width="50%">
       <h3>Codebase Q&amp;A Agent</h3>
       <p>Answers questions about your codebase and explains functions, features, and architecture from first principles.</p>
-      <a href="https://docs.potpie.ai/agents/codebase-qa-agent"><img src="https://img.shields.io/badge/Learn%20More-Docs-22c55e?style=flat-square" alt="Docs"/></a>
+      <a href="https://docs.potpie.ai/pre-built-agents/codebase-qna-agent"><img src="https://img.shields.io/badge/Learn%20More-Docs-22c55e?style=flat-square" alt="Docs"/></a>
     </td>
   </tr>
   <tr>
     <td valign="top">
       <h3>Code Generation Agent</h3>
       <p>Generates code for new features, refactors existing code, and suggests optimizations grounded in your actual codebase.</p>
-      <a href="https://docs.potpie.ai/agents/code-generation-agent"><img src="https://img.shields.io/badge/Learn%20More-Docs-22c55e?style=flat-square" alt="Docs"/></a>
+      <a href="https://docs.potpie.ai/pre-built-agents/codegen-agent"><img src="https://img.shields.io/badge/Learn%20More-Docs-22c55e?style=flat-square" alt="Docs"/></a>
     </td>
-    <td valign="top"></td>
+    <td valign="top">
+      <h3>Spec Agent</h3>
+      <p>Generates detailed software specifications, PRDs, and architecture documents grounded in your codebase.</p>
+      <a href="https://docs.potpie.ai/agents/specification-agent"><img src="https://img.shields.io/badge/Learn%20More-Docs-22c55e?style=flat-square" alt="Docs"/></a>
+    </td>
   </tr>
 </table>
 
