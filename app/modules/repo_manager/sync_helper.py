@@ -72,38 +72,171 @@ def get_or_create_worktree_path(
     ref = commit_id if commit_id else branch
     if not ref:
         logger.warning(
-            f"Cannot create worktree for {repo_name}: no ref (branch or commit_id)"
+            f"[Repomanager] Cannot create worktree for {repo_name}: no ref (branch or commit_id)",
+            repo_name=repo_name,
+            user_id=user_id,
         )
         return None
 
-    auth_token = None
+    # ============================================================================
+    # AUTHENTICATION CHAIN: GitHub App -> User OAuth -> Environment Tokens
+    # ============================================================================
+
+    # PRIORITY 1: Try GitHub App token if available
+    github_app_token = None
+    try:
+        from app.modules.code_provider.provider_factory import CodeProviderFactory
+
+        provider = CodeProviderFactory.create_github_app_provider(repo_name)
+        if provider and hasattr(provider, "client") and hasattr(provider.client, "_Github__requester"):
+            requester = provider.client._Github__requester
+            if hasattr(requester, "auth") and requester.auth:
+                github_app_token = requester.auth.token
+                logger.info(
+                    f"[Repomanager] SyncHelper: Got GitHub App token for {repo_name}",
+                    repo_name=repo_name,
+                    user_id=user_id,
+                    token_type="github_app",
+                )
+    except Exception as e:
+        logger.info(
+            f"[Repomanager] SyncHelper: GitHub App token not available for {repo_name}",
+            repo_name=repo_name,
+            user_id=user_id,
+            reason=str(e),
+        )
+
+    # PRIORITY 2: Get User OAuth token from DB
+    user_oauth_token = None
     if sql_db and user_id:
         try:
             from app.modules.code_provider.github.github_service import GithubService
 
-            auth_token = GithubService(sql_db).get_github_oauth_token(user_id)
+            user_oauth_token = GithubService(sql_db).get_github_oauth_token(user_id)
+            if user_oauth_token:
+                logger.info(
+                    f"[Repomanager] SyncHelper: Got user OAuth token for {repo_name}",
+                    repo_name=repo_name,
+                    user_id=user_id,
+                    token_type="user_oauth",
+                )
         except Exception as e:
-            logger.debug(f"Could not get GitHub OAuth token for {user_id}: {e}")
+            logger.info(
+                f"[Repomanager] SyncHelper: Could not get user OAuth token for {user_id}",
+                repo_name=repo_name,
+                user_id=user_id,
+                reason=str(e),
+            )
 
+    # Try authentication methods in priority order
+    last_error = None
+
+    # Try GitHub App token first
+    if github_app_token:
+        try:
+            logger.info(
+                f"[Repomanager] SyncHelper: Attempting Priority 1 - GitHub App token",
+                repo_name=repo_name,
+                user_id=user_id,
+                ref=ref,
+            )
+            worktree_path_str = repo_manager.prepare_for_parsing(
+                repo_name,
+                ref,
+                auth_token=github_app_token,
+                is_commit=bool(commit_id),
+                user_id=user_id,
+            )
+            if worktree_path_str and os.path.exists(worktree_path_str):
+                logger.info(
+                    f"[Repomanager] SyncHelper: SUCCESS with GitHub App token",
+                    repo_name=repo_name,
+                    user_id=user_id,
+                    ref=ref,
+                    worktree_path=worktree_path_str,
+                    method="github_app_token",
+                )
+                return worktree_path_str
+        except Exception as e:
+            last_error = e
+            logger.warning(
+                f"[Repomanager] SyncHelper: GitHub App token failed, trying next",
+                repo_name=repo_name,
+                user_id=user_id,
+                ref=ref,
+                error=str(e),
+            )
+
+    # Try User OAuth token second
+    if user_oauth_token:
+        try:
+            logger.info(
+                f"[Repomanager] SyncHelper: Attempting Priority 2 - User OAuth token",
+                repo_name=repo_name,
+                user_id=user_id,
+                ref=ref,
+            )
+            worktree_path_str = repo_manager.prepare_for_parsing(
+                repo_name,
+                ref,
+                auth_token=user_oauth_token,
+                is_commit=bool(commit_id),
+                user_id=user_id,
+            )
+            if worktree_path_str and os.path.exists(worktree_path_str):
+                logger.info(
+                    f"[Repomanager] SyncHelper: SUCCESS with User OAuth token",
+                    repo_name=repo_name,
+                    user_id=user_id,
+                    ref=ref,
+                    worktree_path=worktree_path_str,
+                    method="user_oauth_token",
+                )
+                return worktree_path_str
+        except Exception as e:
+            last_error = e
+            logger.warning(
+                f"[Repomanager] SyncHelper: User OAuth token failed, trying next",
+                repo_name=repo_name,
+                user_id=user_id,
+                ref=ref,
+                error=str(e),
+            )
+
+    # PRIORITY 3: Try environment token (will be fetched internally by prepare_for_parsing)
     try:
         logger.info(
-            f"Worktree for {repo_name}@{ref} not found, calling prepare_for_parsing"
+            f"[Repomanager] SyncHelper: Attempting Priority 3 - Environment token",
+            repo_name=repo_name,
+            user_id=user_id,
+            ref=ref,
         )
         worktree_path_str = repo_manager.prepare_for_parsing(
             repo_name,
             ref,
-            auth_token=auth_token,
+            auth_token=None,  # Will use environment token
             is_commit=bool(commit_id),
             user_id=user_id,
         )
         if worktree_path_str and os.path.exists(worktree_path_str):
             logger.info(
-                f"Created worktree for {repo_name}@{ref} at {worktree_path_str}"
+                f"[Repomanager] SyncHelper: SUCCESS with Environment token",
+                repo_name=repo_name,
+                user_id=user_id,
+                ref=ref,
+                worktree_path=worktree_path_str,
+                method="environment_token",
             )
             return worktree_path_str
     except Exception as e:
-        logger.warning(
-            f"prepare_for_parsing failed for {repo_name}@{ref}: {e}", exc_info=True
+        last_error = e
+        logger.error(
+            f"[Repomanager] SyncHelper: All authentication methods failed for {repo_name}@{ref}",
+            repo_name=repo_name,
+            user_id=user_id,
+            ref=ref,
+            error=str(e),
+            suggestion="Check GitHub App installation, user OAuth scopes, and environment tokens",
         )
 
     return None
@@ -139,7 +272,8 @@ def ensure_repo_registered(
 
         if not repo_name:
             logger.warning(
-                "Cannot ensure repo in repo manager: project_data has no project_name"
+                "[Repomanager] Cannot ensure repo: project_data has no project_name",
+                user_id=user_id,
             )
             return
 
@@ -147,8 +281,10 @@ def ensure_repo_registered(
         if repo_manager.is_repo_available(
             repo_name, branch=branch, commit_id=commit_id, user_id=user_id
         ):
-            logger.debug(
-                f"Repo {repo_name}@{commit_id or branch} already available in repo manager"
+            logger.info(
+                f"[Repomanager] Repo {repo_name}@{commit_id or branch} already available",
+                repo_name=repo_name,
+                user_id=user_id,
             )
             repo_manager.update_last_accessed(
                 repo_name, branch=branch, commit_id=commit_id, user_id=user_id
@@ -159,7 +295,11 @@ def ensure_repo_registered(
         try:
             expected_base_path = repo_manager._get_repo_local_path(repo_name)
         except Exception as e:
-            logger.warning(f"Failed to get repo local path for {repo_name}: {e}")
+            logger.warning(
+                f"[Repomanager] Failed to get repo local path for {repo_name}: {e}",
+                repo_name=repo_name,
+                user_id=user_id,
+            )
             return
 
         # Check for worktree path (where repos are actually stored)
@@ -181,12 +321,16 @@ def ensure_repo_registered(
                             metadata={"registered_from": registered_from},
                         )
                         logger.info(
-                            f"Registered existing worktree {repo_name}@{ref} in repo manager from {registered_from}"
+                            f"[Repomanager] Registered existing worktree {repo_name}@{ref} from {registered_from}",
+                            repo_name=repo_name,
+                            user_id=user_id,
                         )
                         return
                     except Exception as e:
                         logger.warning(
-                            f"Failed to register existing worktree {repo_name} in repo manager: {e}"
+                            f"[Repomanager] Failed to register existing worktree {repo_name}: {e}",
+                            repo_name=repo_name,
+                            user_id=user_id,
                         )
 
         # Check base repo path (for repos without worktrees)
@@ -203,12 +347,16 @@ def ensure_repo_registered(
                         metadata={"registered_from": registered_from},
                     )
                     logger.info(
-                        f"Registered existing base repo {repo_name} in repo manager from {registered_from}"
+                        f"[Repomanager] Registered existing base repo {repo_name} from {registered_from}",
+                        repo_name=repo_name,
+                        user_id=user_id,
                     )
                     return
                 except Exception as e:
                     logger.warning(
-                        f"Failed to register existing base repo {repo_name} in repo manager: {e}"
+                        f"[Repomanager] Failed to register existing base repo {repo_name}: {e}",
+                        repo_name=repo_name,
+                        user_id=user_id,
                     )
 
         # For local repos (repo_path), check if it's a different location
@@ -229,12 +377,16 @@ def ensure_repo_registered(
                         metadata={"registered_from": registered_from},
                     )
                     logger.info(
-                        f"Registered local repo {repo_name}@{commit_id or branch} in repo manager from {registered_from}"
+                        f"[Repomanager] Registered local repo {repo_name}@{commit_id or branch} from {registered_from}",
+                        repo_name=repo_name,
+                        user_id=user_id,
                     )
                     return
                 except Exception as e:
                     logger.warning(
-                        f"Failed to register local repo {repo_name} in repo manager: {e}"
+                        f"[Repomanager] Failed to register local repo {repo_name}: {e}",
+                        repo_name=repo_name,
+                        user_id=user_id,
                     )
 
         # If we get here, repo doesn't exist in repo manager's directory structure
@@ -247,16 +399,18 @@ def ensure_repo_registered(
             )
 
         logger.info(
-            f"Repo {repo_name}@{commit_id or branch} not found in repo manager. "
+            f"[Repomanager] Repo {repo_name}@{commit_id or branch} not found. "
             f"Project status: {project_data.get('status', 'N/A')}. "
-            f"Repo manager base path: {repo_manager.repos_base_path}. "
-            f"Expected base path: {expected_base_path} (exists: {expected_base_path.exists()}). "
-            f"Expected worktree path: {expected_worktree_info}. "
-            f"Project may need to be parsed first or repo manager may not be enabled during parsing."
+            f"Expected base: {expected_base_path} (exists: {expected_base_path.exists()}). "
+            f"Expected worktree: {expected_worktree_info}.",
+            repo_name=repo_name,
+            user_id=user_id,
         )
 
     except Exception as e:
         logger.warning(
-            f"Error in ensure_repo_registered: {e}",
+            f"[Repomanager] Error in ensure_repo_registered: {e}",
+            repo_name=repo_name,
+            user_id=user_id,
             exc_info=True,
         )
