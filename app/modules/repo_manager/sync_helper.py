@@ -3,9 +3,12 @@ Shared helper for ensuring repositories are registered in the repo manager.
 Used by parsing and conversation flows.
 """
 
+import asyncio
 import os
+import traceback
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
+from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -238,6 +241,23 @@ def get_or_create_worktree_path(
             error=str(e),
             suggestion="Check GitHub App installation, user OAuth scopes, and environment tokens",
         )
+
+        # Send email alert for final auth failure (run to completion like _clone_to_repo_manager)
+        try:
+            asyncio.run(
+                EmailHelper().send_parsing_failure_alert(
+                    repo_name=repo_name,
+                    branch_name=ref,
+                    error_message=f"All authentication methods failed: {str(e)}",
+                    auth_method="environment",
+                    failure_type="cloning_auth",
+                    user_id=user_id,
+                    project_id=None,
+                    stack_trace=traceback.format_exc(),
+                )
+            )
+        except Exception as email_err:
+            logger.exception(f"[Repomanager] Failed to send failure email: {email_err}")
 
     return None
 

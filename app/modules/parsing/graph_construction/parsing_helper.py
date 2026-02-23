@@ -19,6 +19,7 @@ from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
 from app.modules.parsing.utils.repo_name_normalizer import normalize_repo_name
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
+from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -71,9 +72,16 @@ class ParseHelper:
         user_id: str,
         *,
         auth_token: Optional[str] = None,
+        project_id: Optional[str] = None,
     ) -> Tuple[Any, Optional[str], Any, Optional[str]]:
         """
         Clone or copy repository, using RepoManager as primary source when enabled.
+
+        Args:
+            repo_details: Repository details
+            user_id: User ID
+            auth_token: Optional user GitHub OAuth token
+            project_id: Optional project ID for logging and alerts
 
         Returns:
             Tuple of (repo, owner, auth, repo_manager_path)
@@ -254,6 +262,7 @@ class ParseHelper:
                         user_id=user_id,
                         auth=auth,
                         auth_token=auth_token,
+                        project_id=project_id,
                     )
 
                     if repo_manager_path:
@@ -1494,6 +1503,7 @@ class ParseHelper:
         auth: Any,
         *,
         auth_token: Optional[str] = None,
+        project_id: Optional[str] = None,
     ) -> Optional[str]:
         """
         Add repository to RepoManager using git clone/worktree.
@@ -1513,6 +1523,7 @@ class ParseHelper:
             user_id: User ID
             auth: Authentication object for GitHub API
             auth_token: Optional user GitHub OAuth token for cloning private repos
+            project_id: Optional project ID for logging and alerts
 
         Returns:
             Path to the repository worktree in .repos, or None if failed
@@ -1871,6 +1882,24 @@ class ParseHelper:
                     reason=reason,
                     suggestion="All authentication methods exhausted. Check: 1) GitHub App installation, 2) User OAuth scopes, 3) Environment tokens",
                 )
+
+                # Send email alert for final auth failure
+                try:
+                    email_helper = EmailHelper()
+                    import traceback
+                    await email_helper.send_parsing_failure_alert(
+                        repo_name=repo_name,
+                        branch_name=ref,
+                        error_message=f"{reason}: {str(e)}",
+                        auth_method="environment",
+                        failure_type="cloning_auth",
+                        user_id=user_id,
+                        project_id=project_id,
+                        stack_trace=traceback.format_exc(),
+                    )
+                except Exception as email_err:
+                    logger.error(f"Failed to send failure email: {email_err}")
+
                 return None
 
             # Now create worktree for the specific ref from the bare repo
@@ -1884,8 +1913,28 @@ class ParseHelper:
             if not worktree_path_str:
                 # Worktree creation failed - don't return bare repo (not usable for parsing)
                 logger.error(
-                    f"Worktree creation failed for {repo_name}. Bare repo exists but cannot be used for parsing."
+                    f"[Repomanager] Worktree creation failed for {repo_name}. Bare repo exists but cannot be used for parsing.",
+                    user_id=user_id,
+                    repo_name=repo_name,
+                    ref=ref,
                 )
+
+                # Send email alert for worktree creation failure
+                try:
+                    email_helper = EmailHelper()
+                    await email_helper.send_parsing_failure_alert(
+                        repo_name=repo_name,
+                        branch_name=ref,
+                        error_message="Worktree creation failed after successful bare repo clone",
+                        auth_method="environment",
+                        failure_type="worktree_creation",
+                        user_id=user_id,
+                        project_id=project_id,
+                        stack_trace=None,
+                    )
+                except Exception as email_err:
+                    logger.error(f"Failed to send worktree failure email: {email_err}")
+
                 return None
 
             # Always get actual commit SHA from worktree to ensure accuracy

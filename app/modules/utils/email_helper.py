@@ -77,11 +77,120 @@ Co-Founder, Potpie 🥧</p>
         email = resend.Emails.send(params)
         return email
 
+    async def send_parsing_failure_alert(
+        self,
+        repo_name: str,
+        branch_name: str,
+        error_message: str,
+        auth_method: str,
+        failure_type: str = "cloning_auth",
+        user_id: str = None,
+        project_id: str = None,
+        stack_trace: str = None,
+    ):
+        """Send internal alert when parsing/cloning/worktree creation fails.
+
+        Sends to internal team addresses only (not users).
+
+        Args:
+            repo_name: Repository name that failed
+            branch_name: Branch name that failed
+            error_message: Error message/details
+            auth_method: Authentication method attempted (github_app/user_oauth/environment)
+            failure_type: Type of failure (cloning_auth/worktree_creation/bare_repo_clone)
+            user_id: Optional user ID
+            project_id: Optional project ID
+            stack_trace: Optional stack trace (will be truncated)
+        """
+        if not self.transaction_emails_enabled:
+            return
+
+        # Internal recipients from env (no PII in source)
+        internal_recipients = _get_internal_recipients()
+        if not internal_recipients:
+            logging.debug(
+                "EMAIL_INTERNAL_RECIPIENTS unset or invalid; skipping parsing failure alert"
+            )
+            return
+
+        # Format auth method for display
+        auth_method_display = {
+            "github_app": "GitHub App Installation Token",
+            "user_oauth": "User OAuth Token",
+            "environment": "Environment Token (GH_TOKEN_LIST)",
+        }.get(auth_method, auth_method)
+
+        # Format failure type for display
+        failure_type_display = {
+            "cloning_auth": "Authentication/Cloning Failure",
+            "worktree_creation": "Worktree Creation Failure",
+            "bare_repo_clone": "Bare Repository Clone Failure",
+        }.get(failure_type, failure_type)
+
+        # Build error details
+        details = f"""
+        <p><strong>Failure Type:</strong> {failure_type_display}</p>
+        <p><strong>Authentication Method:</strong> {auth_method_display}</p>
+        <p><strong>Error:</strong> {error_message}</p>
+        """
+        if user_id:
+            details += f"<p><strong>User ID:</strong> {user_id}</p>"
+        if project_id:
+            details += f"<p><strong>Project ID:</strong> {project_id}</p>"
+
+        # Add stack trace if available (truncate to ~2000 chars)
+        if stack_trace:
+            truncated_trace = stack_trace[:2000]
+            if len(stack_trace) > 2000:
+                truncated_trace += "\n\n[Stack trace truncated...]"
+            details += f"""
+            <p><strong>Stack Trace:</strong></p>
+            <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto;">{truncated_trace}</pre>
+            """
+
+        params = {
+            "from": f"Potpie Alerts <{self.from_address}>",
+            "to": internal_recipients,
+            "subject": f"🚨 [{failure_type_display}] Failed: {repo_name}",
+            "html": f"""
+<p><strong>ALERT:</strong> Repository processing has failed.</p>
+
+<p><strong>Repository:</strong> {repo_name}<br />
+<strong>Branch:</strong> {branch_name}</p>
+
+{details}
+
+<p>Please investigate the issue.</p>
+
+<p>— Potpie System</p>
+            """,
+        }
+
+        try:
+            email = resend.Emails.send(params)
+            return email
+        except Exception as e:
+            logging.error(f"Failed to send parsing failure alert: {e}")
+            return None
+
 
 def is_valid_email(email: str) -> bool:
     """Simple regex-based email validation."""
     pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
     return re.match(pattern, email) is not None
+
+
+def _get_internal_recipients() -> list[str]:
+    """Load internal alert recipients from EMAIL_INTERNAL_RECIPIENTS env var.
+
+    Parses comma-separated list, trims whitespace, lowercases and validates
+    each entry. Returns empty list if unset or if no valid emails found.
+    """
+    raw = os.environ.get("EMAIL_INTERNAL_RECIPIENTS", "").strip()
+    if not raw:
+        return []
+    entries = [e.strip() for e in raw.split(",") if e.strip()]
+    return [e.lower() for e in entries if is_valid_email(e)]
 
 
 # Comprehensive list of personal/free email domains

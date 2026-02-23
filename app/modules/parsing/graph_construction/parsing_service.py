@@ -259,7 +259,7 @@ class ParsingService:
                     auth,
                     repo_manager_path,
                 ) = await self.parse_helper.clone_or_copy_repository(
-                    repo_details_converted, user_id, auth_token=user_token
+                    repo_details_converted, user_id, auth_token=user_token, project_id=str(project_id)
                 )
                 logger.info(
                     "ParsingService: clone_or_copy_repository completed",
