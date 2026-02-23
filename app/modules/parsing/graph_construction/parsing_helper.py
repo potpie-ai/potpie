@@ -38,17 +38,13 @@ class ParseHelper:
         self.db = db_session
         self.github_service = CodeProviderService(db_session)
 
-        # Initialize repo manager if enabled
+        # Initialize repo manager - always enabled
         self.repo_manager = None
         try:
-            repo_manager_enabled = (
-                os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
-            )
-            if repo_manager_enabled:
-                from app.modules.repo_manager import RepoManager
+            from app.modules.repo_manager import RepoManager
 
-                self.repo_manager = RepoManager()
-                logger.info("RepoManager initialized in ParseHelper")
+            self.repo_manager = RepoManager()
+            logger.info("RepoManager initialized in ParseHelper")
         except Exception as e:
             logger.warning(f"Failed to initialize RepoManager: {e}")
 
@@ -1648,18 +1644,104 @@ class ParseHelper:
 
             # Base repo doesn't exist - need to clone it
             logger.info(
-                f"ParsingHelper: Base repo not found, cloning {repo_name} to {base_repo_path}"
-            )
-
-            # When user's GitHub OAuth token is available, use RepoManager.prepare_for_parsing
-            # so the token is used for cloning (prioritized over environment tokens).
-            logger.info(
-                f"ParsingHelper: Deciding clone strategy for {repo_name}",
-                has_user_auth_token=bool(auth_token),
+                f"[Repomanager] Base repo not found, starting authentication chain for {repo_name}",
+                user_id=user_id,
                 repo_name=repo_name,
                 ref=ref,
+                has_user_auth_token=bool(auth_token),
+                has_provider_auth=auth is not None,
             )
+
+            # ============================================================================
+            # AUTHENTICATION CHAIN: GitHub App -> User OAuth -> Environment Tokens
+            # ============================================================================
+            # Priority 1: GitHub App installation token (from auth object - ghs_* token)
+            # Priority 2: User's OAuth token from DB (gho_* token)
+            # Priority 3: Environment tokens (GH_TOKEN_LIST, CODE_PROVIDER_TOKEN)
+            # ============================================================================
+
+            worktree_path_str = None
+            last_error = None
+
+            # ---------------------------------------------------------------------------
+            # PRIORITY 1: GitHub App Installation Token (ghs_*)
+            # ---------------------------------------------------------------------------
+            # The auth object from github_service.get_repo() contains the GitHub App token
+            # when the app is installed on the repository. This has highest priority
+            # because it provides organization-level access.
+            if auth and hasattr(auth, "token") and auth.token:
+                token = auth.token
+                token_type = self._detect_token_type(token)
+
+                if token_type == "github_app":
+                    logger.info(
+                        f"[Repomanager] Attempting Priority 1: GitHub App token",
+                        user_id=user_id,
+                        repo_name=repo_name,
+                        ref=ref,
+                        token_type=token_type,
+                        token_prefix=token[:7] if token else None,
+                    )
+
+                    try:
+                        # Build authenticated URL with correct prefix for App tokens
+                        clone_url = await self._build_clone_url(
+                            github_repo, auth, user_id=user_id
+                        )
+
+                        if clone_url:
+                            worktree_path_str = self.repo_manager.prepare_for_parsing(
+                                repo_name,
+                                ref,
+                                auth_token=token,
+                                user_id=user_id,
+                                is_commit=bool(commit_id),
+                            )
+
+                            if worktree_path_str:
+                                logger.info(
+                                    f"[Repomanager] SUCCESS: Cloned with GitHub App token",
+                                    user_id=user_id,
+                                    repo_name=repo_name,
+                                    ref=ref,
+                                    worktree_path=worktree_path_str,
+                                    method="github_app_token",
+                                )
+                                return worktree_path_str
+                    except Exception as e:
+                        last_error = e
+                        logger.warning(
+                            f"[Repomanager] FAILED: GitHub App token failed, will try next method",
+                            user_id=user_id,
+                            repo_name=repo_name,
+                            ref=ref,
+                            error_type=type(e).__name__,
+                            error=str(e),
+                            reason="GitHub App may not be installed on this repository or token expired",
+                        )
+                else:
+                    logger.info(
+                        f"[Repomanager] Auth token is not GitHub App type, skipping Priority 1",
+                        user_id=user_id,
+                        repo_name=repo_name,
+                        token_type=token_type,
+                    )
+
+            # ---------------------------------------------------------------------------
+            # PRIORITY 2: User's OAuth Token from DB (gho_*)
+            # ---------------------------------------------------------------------------
             if auth_token:
+                token_type = self._detect_token_type(auth_token)
+
+                logger.info(
+                    f"[Repomanager] Attempting Priority 2: User OAuth token",
+                    user_id=user_id,
+                    repo_name=repo_name,
+                    ref=ref,
+                    token_type=token_type,
+                    token_prefix=auth_token[:7] if auth_token else None,
+                )
+
                 try:
                     worktree_path_str = self.repo_manager.prepare_for_parsing(
                         repo_name,
@@ -1668,25 +1750,63 @@ class ParseHelper:
                         user_id=user_id,
                         is_commit=bool(commit_id),
                     )
+
                     if worktree_path_str:
                         logger.info(
-                            f"ParsingHelper: Cloned {repo_name} via prepare_for_parsing with user token"
+                            f"[Repomanager] SUCCESS: Cloned with User OAuth token",
+                            user_id=user_id,
+                            repo_name=repo_name,
+                            ref=ref,
+                            worktree_path=worktree_path_str,
+                            method="user_oauth_token",
                         )
                         return worktree_path_str
                 except Exception as e:
-                    logger.warning(
-                        f"ParsingHelper: prepare_for_parsing with user token failed for {repo_name}: {e}. Falling back to clone with API auth."
-                    )
-            else:
-                logger.warning(
-                    f"ParsingHelper: No user auth token available for {repo_name}, using environment token with direct bare clone"
-                )
+                    last_error = e
+                    error_str = str(e).lower()
 
-            # Build clone URL with authentication
-            clone_url = await self._build_clone_url(github_repo, auth)
+                    # Determine specific failure reason
+                    if "403" in error_str or "forbidden" in error_str:
+                        reason = "User's OAuth token lacks access (may need org approval or repo access)"
+                    elif "401" in error_str or "unauthorized" in error_str:
+                        reason = "User's OAuth token is invalid or expired"
+                    elif "404" in error_str or "not found" in error_str:
+                        reason = "Repository not found or user lacks access"
+                    else:
+                        reason = f"Cloning failed with user token: {error_str[:100]}"
+
+                    logger.warning(
+                        f"[Repomanager] FAILED: User OAuth token failed, will try next method",
+                        user_id=user_id,
+                        repo_name=repo_name,
+                        ref=ref,
+                        error_type=type(e).__name__,
+                        error=str(e)[:200],
+                        reason=reason,
+                    )
+
+            # ---------------------------------------------------------------------------
+            # PRIORITY 3: Environment Tokens (GH_TOKEN_LIST, CODE_PROVIDER_TOKEN)
+            # ---------------------------------------------------------------------------
+            logger.info(
+                f"[Repomanager] Attempting Priority 3: Environment tokens",
+                user_id=user_id,
+                repo_name=repo_name,
+                ref=ref,
+                method="environment_token_fallback",
+            )
+
+            # Build clone URL with authentication (this will use environment tokens)
+            clone_url = await self._build_clone_url(github_repo, auth, user_id=user_id)
 
             if not clone_url:
-                logger.error(f"Could not build clone URL for {repo_name}")
+                logger.error(
+                    f"[Repomanager] FAILED: Could not build clone URL for {repo_name}",
+                    user_id=user_id,
+                    repo_name=repo_name,
+                    ref=ref,
+                    reason="No valid authentication method available",
+                )
                 return None
 
             # Clone as BARE repository to match RepoManager architecture
@@ -1695,9 +1815,13 @@ class ParseHelper:
             bare_repo_path.parent.mkdir(parents=True, exist_ok=True)
 
             logger.info(
-                f"ParsingHelper: Cloning {repo_name} as bare repo to {bare_repo_path} "
-                f"(no user auth token available, using environment token)"
+                f"[Repomanager] Cloning {repo_name} as bare repo to {bare_repo_path}",
+                user_id=user_id,
+                repo_name=repo_name,
+                ref=ref,
+                method="environment_token_bare_clone",
             )
+
             try:
                 # Clone as bare repository
                 Repo.clone_from(
@@ -1706,17 +1830,47 @@ class ParseHelper:
                     bare=True,
                     mirror=True,  # Mirror for full fidelity
                 )
-                logger.info(f"ParsingHelper: Successfully cloned {repo_name} as bare repo")
+                logger.info(
+                    f"[Repomanager] SUCCESS: Cloned {repo_name} as bare repo with environment token",
+                    user_id=user_id,
+                    repo_name=repo_name,
+                    ref=ref,
+                    bare_repo_path=str(bare_repo_path),
+                    method="environment_token",
+                )
 
                 # Configure the bare repo to fetch all refs
                 bare_repo = Repo(str(bare_repo_path))
                 if bare_repo.remotes:
                     origin = bare_repo.remotes.origin
                     origin.fetch()
-                    logger.info(f"ParsingHelper: Fetched all refs for {repo_name}")
+                    logger.info(
+                        f"[_clone_to_repo_manager] Fetched all refs for {repo_name}",
+                        user_id=user_id,
+                        repo_name=repo_name,
+                    )
 
             except Exception as e:
-                logger.exception(f"Failed to clone {repo_name} as bare repo: {e}")
+                error_str = str(e).lower()
+                if "403" in error_str or "forbidden" in error_str:
+                    reason = "Environment token lacks access to repository (check GH_TOKEN_LIST)"
+                elif "401" in error_str or "unauthorized" in error_str:
+                    reason = "Environment token is invalid or expired"
+                elif "404" in error_str or "not found" in error_str:
+                    reason = "Repository not found with environment token"
+                else:
+                    reason = f"Clone failed: {str(e)[:200]}"
+
+                logger.error(
+                    f"[Repomanager] FAILED: Environment token clone failed for {repo_name}",
+                    user_id=user_id,
+                    repo_name=repo_name,
+                    ref=ref,
+                    error_type=type(e).__name__,
+                    error=str(e)[:200],
+                    reason=reason,
+                    suggestion="All authentication methods exhausted. Check: 1) GitHub App installation, 2) User OAuth scopes, 3) Environment tokens",
+                )
                 return None
 
             # Now create worktree for the specific ref from the bare repo
@@ -1788,42 +1942,148 @@ class ParseHelper:
             logger.exception(f"Failed to add {repo_name} to RepoManager: {e}")
             return None
 
-    async def _build_clone_url(self, github_repo, auth: Any) -> Optional[str]:
-        """Build authenticated clone URL for the repository."""
+    @staticmethod
+    def _get_token_username_prefix(token: str) -> str:
+        """Get the correct username prefix for a GitHub token based on its type.
+
+        GitHub token types:
+        - ghs_*: GitHub App installation token (temporary) -> uses 'x-access-token'
+        - gho_*: OAuth token (user) -> uses 'oauth2'
+        - ghp_*: Personal Access Token -> uses 'oauth2' (or token directly)
+        - github_pat_*: Fine-grained PAT -> uses 'oauth2'
+
+        Args:
+            token: The GitHub token
+
+        Returns:
+            Username prefix for the token
+        """
+        if not token:
+            return "oauth2"
+
+        # GitHub App installation tokens (ghs_*) must use x-access-token
+        if token.startswith("ghs_"):
+            return "x-access-token"
+
+        # OAuth tokens (gho_*) and PATs use oauth2
+        return "oauth2"
+
+    @staticmethod
+    def _detect_token_type(token: str) -> str:
+        """Detect the type of GitHub token.
+
+        Args:
+            token: The GitHub token
+
+        Returns:
+            Token type: 'github_app', 'oauth', 'pat', 'fine_grained_pat', or 'unknown'
+        """
+        if not token:
+            return "unknown"
+
+        if token.startswith("ghs_"):
+            return "github_app"
+        elif token.startswith("gho_"):
+            return "oauth"
+        elif token.startswith("ghp_"):
+            return "pat"
+        elif token.startswith("github_pat_"):
+            return "fine_grained_pat"
+        else:
+            return "unknown"
+
+    async def _build_clone_url(
+        self,
+        github_repo,
+        auth: Any,
+        user_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """Build authenticated clone URL for the repository with proper token handling.
+
+        Args:
+            github_repo: PyGithub Repository object
+            auth: Authentication object or token string
+            user_id: User ID for logging context
+            project_id: Project ID for logging context
+
+        Returns:
+            Authenticated clone URL or original URL if no auth
+        """
         try:
             clone_url = github_repo.clone_url
+            repo_name = getattr(github_repo, "full_name", "unknown")
 
-            if auth:
-                # Insert token into URL for authentication
-                # Format: https://token@github.com/owner/repo.git
+            # Extract token from auth
+            token = None
+            token_source = "none"
+
+            if isinstance(auth, str):
+                token = auth
+                token_source = "string"
+            elif hasattr(auth, "token"):
+                token = auth.token
+                token_source = "auth_object"
+            elif hasattr(auth, "password"):
+                token = auth.password
+                token_source = "auth_password"
+
+            if token:
                 from urllib.parse import urlparse, urlunparse
 
                 parsed = urlparse(clone_url)
+                username_prefix = self._get_token_username_prefix(token)
 
-                # Get token from auth object
-                token = None
-                if hasattr(auth, "token"):
-                    token = auth.token
-                elif hasattr(auth, "password"):
-                    token = auth.password
+                # Log token type being used (without exposing the token)
+                token_type = "unknown"
+                if token.startswith("ghs_"):
+                    token_type = "github_app"
+                elif token.startswith("gho_"):
+                    token_type = "oauth"
+                elif token.startswith("ghp_"):
+                    token_type = "pat"
+                elif token.startswith("github_pat_"):
+                    token_type = "fine_grained_pat"
 
-                if token:
-                    # Reconstruct URL with token
-                    netloc_with_auth = f"{token}@{parsed.netloc}"
-                    clone_url = urlunparse(
-                        (
-                            parsed.scheme,
-                            netloc_with_auth,
-                            parsed.path,
-                            parsed.params,
-                            parsed.query,
-                            parsed.fragment,
-                        )
+                logger.info(
+                    f"[Repomanager] Building authenticated URL for {repo_name}",
+                    user_id=user_id,
+                    project_id=project_id,
+                    repo_name=repo_name,
+                    token_type=token_type,
+                    username_prefix=username_prefix,
+                    token_source=token_source,
+                )
+
+                # Reconstruct URL with proper username:token format
+                netloc_with_auth = f"{username_prefix}:{token}@{parsed.netloc}"
+                clone_url = urlunparse(
+                    (
+                        parsed.scheme,
+                        netloc_with_auth,
+                        parsed.path,
+                        parsed.params,
+                        parsed.query,
+                        parsed.fragment,
                     )
+                )
+            else:
+                logger.info(
+                    f"[_build_clone_url] No auth token provided, using unauthenticated URL for {repo_name}",
+                    user_id=user_id,
+                    project_id=project_id,
+                    repo_name=repo_name,
+                )
 
             return clone_url
         except Exception as e:
-            logger.warning(f"Failed to build clone URL: {e}")
+            logger.warning(
+                f"[_build_clone_url] Failed to build clone URL: {e}",
+                user_id=user_id,
+                project_id=project_id,
+                repo_name=getattr(github_repo, "full_name", "unknown"),
+                exc_info=True,
+            )
             return github_repo.clone_url if hasattr(github_repo, "clone_url") else None
 
     async def _create_git_worktree(

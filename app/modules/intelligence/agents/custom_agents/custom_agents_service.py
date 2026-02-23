@@ -744,9 +744,9 @@ class CustomAgentService:
             except json.JSONDecodeError:
                 # If that fails, try to find JSON content between curly braces
                 start_idx = response_text.find("{")
-                end_idx = response_text.rindex("}") + 1
-                if start_idx != -1 and end_idx != -1:
-                    json_content = response_text[start_idx:end_idx]
+                end_idx = response_text.rfind("}")
+                if start_idx != -1 and end_idx != -1 and end_idx >= start_idx:
+                    json_content = response_text[start_idx : end_idx + 1]
                     plan_dict = json.loads(json_content)
                 else:
                     raise ValueError("Could not find valid JSON content in response")

@@ -173,19 +173,87 @@ class RepoManager(IRepoManager):
 
         return None
 
-    def _build_authenticated_url(self, repo_url: str, auth_token: Optional[str]) -> str:
-        """Build authenticated URL with oauth2: prefix."""
+    @staticmethod
+    def _get_token_username_prefix(token: str) -> str:
+        """Get the correct username prefix for a GitHub token based on its type.
+
+        GitHub token types:
+        - ghs_*: GitHub App installation token -> uses 'x-access-token'
+        - gho_*: OAuth token (user) -> uses 'oauth2'
+        - ghp_*: Personal Access Token -> uses 'oauth2'
+        - github_pat_*: Fine-grained PAT -> uses 'oauth2'
+
+        Args:
+            token: The GitHub token
+
+        Returns:
+            Username prefix for the token
+        """
+        if not token:
+            return "oauth2"
+
+        # GitHub App installation tokens (ghs_*) must use x-access-token
+        if token.startswith("ghs_"):
+            return "x-access-token"
+
+        # OAuth tokens (gho_*) and PATs use oauth2
+        return "oauth2"
+
+    def _build_authenticated_url(
+        self,
+        repo_url: str,
+        auth_token: Optional[str],
+        repo_name: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> str:
+        """Build authenticated URL with correct username prefix based on token type.
+
+        Args:
+            repo_url: The repository URL to authenticate
+            auth_token: The authentication token
+            repo_name: Repository name for logging
+            user_id: User ID for logging context
+
+        Returns:
+            Authenticated URL with proper username:token@ format
+        """
         if not auth_token:
             return repo_url
 
         parsed = urlparse(repo_url)
 
-        if parsed.scheme in ("https", "http"):
-            netloc = f"oauth2:{auth_token}@{parsed.netloc}"
-            return parsed._replace(netloc=netloc).geturl()
-        else:
-            logger.warning(f"Unsupported URL scheme: {parsed.scheme}")
+        if parsed.scheme not in ("https", "http"):
+            logger.warning(
+                f"[Repomanager] Unsupported URL scheme: {parsed.scheme}",
+                repo_name=repo_name,
+                user_id=user_id,
+            )
             return repo_url
+
+        # Determine username prefix based on token type
+        username_prefix = self._get_token_username_prefix(auth_token)
+
+        # Log token type (without exposing token)
+        token_type = "unknown"
+        if auth_token.startswith("ghs_"):
+            token_type = "github_app"
+        elif auth_token.startswith("gho_"):
+            token_type = "oauth"
+        elif auth_token.startswith("ghp_"):
+            token_type = "pat"
+        elif auth_token.startswith("github_pat_"):
+            token_type = "fine_grained_pat"
+
+        logger.info(
+            "[Repomanager] Building authenticated URL",
+            repo_name=repo_name,
+            user_id=user_id,
+            token_type=token_type,
+            username_prefix=username_prefix,
+        )
+
+        netloc = f"{username_prefix}:{auth_token}@{parsed.netloc}"
+        return parsed._replace(netloc=netloc).geturl()
 
     # ========== PATH HELPERS ==========
 
@@ -621,7 +689,17 @@ class RepoManager(IRepoManager):
 
             fetch_remote = "origin"
             if auth_token and repo_url:
-                fetch_remote = self._build_authenticated_url(repo_url, auth_token)
+                # Get repo_name from bare_repo_path for logging
+                try:
+                    repo_name_for_log = bare_repo_path.parent.name
+                    if bare_repo_path.parents[1].name != ".repos":
+                        repo_name_for_log = f"{bare_repo_path.parents[1].name}/{repo_name_for_log}"
+                except Exception:
+                    repo_name_for_log = None
+
+                fetch_remote = self._build_authenticated_url(
+                    repo_url, auth_token, repo_name=repo_name_for_log
+                )
 
             result = subprocess.run(
                 ["git", "-C", str(bare_repo_path), "fetch", fetch_remote, "--", ref],
@@ -680,22 +758,47 @@ class RepoManager(IRepoManager):
         github_token = auth_token or self._get_github_token()
 
         if github_token:
+            # Determine token type for clearer logging
+            token_type = "unknown"
+            token_source = "environment"
+            if github_token.startswith("ghs_"):
+                token_type = "github_app"
+                token_source = "github_app"
+            elif github_token.startswith("gho_"):
+                token_type = "user_oauth"
+                token_source = "user_provided"
+            elif github_token.startswith("ghp_") or github_token.startswith("github_pat_"):
+                token_type = "pat"
+                token_source = "environment" if not auth_token else "user_provided"
+
             if auth_token:
-                # User token was passed and will be used
+                # Token was explicitly passed (from auth flow)
                 logger.info(
-                    f"Using user-provided GitHub token for cloning {repo_name} (token: {github_token[:8]}...)"
+                    f"Using {token_source} token for cloning {repo_name}",
+                    repo_name=repo_name,
+                    user_id=user_id,
+                    token_type=token_type,
+                    token_source=token_source,
+                    token_prefix=github_token[:8] if len(github_token) > 8 else "short",
                 )
             else:
                 # Environment token will be used
                 logger.info(
-                    f"Using environment GitHub token for cloning {repo_name} (token: {github_token[:8]}...)"
+                    f"Using environment token for cloning {repo_name}",
+                    repo_name=repo_name,
+                    user_id=user_id,
+                    token_type=token_type,
+                    token_source="environment",
+                    token_prefix=github_token[:8] if len(github_token) > 8 else "short",
                 )
         else:
             logger.warning(
                 f"No GitHub token available for cloning {repo_name}. Will attempt unauthenticated access (public repos only)."
             )
 
-        clone_url = self._build_authenticated_url(repo_url, github_token)
+        clone_url = self._build_authenticated_url(
+            repo_url, github_token, repo_name=repo_name, user_id=user_id
+        )
 
         if bare_repo_path.exists() and (bare_repo_path / "HEAD").exists():
             logger.info(f"Bare repo already exists: {repo_name}")
