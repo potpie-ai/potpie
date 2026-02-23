@@ -64,18 +64,16 @@ async def get_user_repos(
             logger = setup_logger(__name__)
             logger.warning(f"Error filtering repositories: {str(e)}")
 
-    # Paginate when limit is provided (same shape as get-branch-list)
+    # Pagination: offset applied regardless of limit; always return same structure
     repos = user_repo_list["repositories"]
-    if limit is not None:
-        total_count = len(repos)
-        paginated_repos = repos[offset : offset + limit]
-        has_next_page = (offset + limit) < total_count
-        return {
-            "repositories": paginated_repos,
-            "has_next_page": has_next_page,
-            "total_count": total_count,
-        }
-    return user_repo_list
+    total_count = len(repos)
+    paginated_repos = repos[offset : offset + limit] if limit is not None else repos[offset:]
+    has_next_page = (offset + (limit or total_count)) < total_count
+    return {
+        "repositories": paginated_repos,
+        "has_next_page": has_next_page,
+        "total_count": total_count,
+    }
 
 
 @router.get("/github/get-branch-list")
