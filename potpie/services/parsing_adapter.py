@@ -178,7 +178,7 @@ class LibraryParsingService:
             )
 
             repo, owner, auth = await parse_helper.clone_or_copy_repository(
-                repo_details, self.user_id
+                repo_details, self.user_id, project_id=project_id
             )
 
             if self._development_mode:
