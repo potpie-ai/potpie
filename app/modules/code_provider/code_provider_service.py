@@ -156,17 +156,13 @@ class ProviderWrapper:
         # Don't create provider here - create it per-request with proper auth
         self.sql_db = sql_db
 
-        # Initialize repo manager if enabled
+        # Initialize repo manager - always enabled
         self.repo_manager = None
         try:
-            repo_manager_enabled = (
-                os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
-            )
-            if repo_manager_enabled:
-                from app.modules.repo_manager import RepoManager
+            from app.modules.repo_manager import RepoManager
 
-                self.repo_manager = RepoManager()
-                logger.info("ProviderWrapper: RepoManager initialized")
+            self.repo_manager = RepoManager()
+            logger.info("ProviderWrapper: RepoManager initialized")
         except Exception as e:
             logger.warning(f"ProviderWrapper: Failed to initialize RepoManager: {e}")
 
