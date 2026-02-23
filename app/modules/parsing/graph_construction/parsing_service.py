@@ -148,6 +148,43 @@ class ParsingService:
                         await project_manager.update_project_status(
                             project_id, ProjectStatusEnum.READY
                         )
+                        # Ensure worktree exists in repo manager when enabled
+                        if self.repo_manager and os.getenv(
+                            "REPO_MANAGER_ENABLED", "false"
+                        ).lower() == "true":
+                            repo_name = existing_project.get("project_name")
+                            branch = existing_project.get("branch_name")
+                            commit_id_val = existing_project.get("commit_id")
+                            repo_path = existing_project.get("repo_path")
+                            if repo_name and not repo_path:
+                                ref = commit_id_val if commit_id_val else branch
+                                if ref:
+                                    try:
+                                        github_service = GithubService(self.db)
+                                        user_token = github_service.get_github_oauth_token(user_id)
+                                        loop = asyncio.get_event_loop()
+                                        await loop.run_in_executor(
+                                            None,
+                                            lambda: self.repo_manager.prepare_for_parsing(
+                                                repo_name,
+                                                ref,
+                                                auth_token=user_token,
+                                                is_commit=bool(commit_id_val),
+                                                user_id=user_id,
+                                            ),
+                                        )
+                                        logger.info(
+                                            "Ensured worktree for already-parsed project %s (%s@%s)",
+                                            project_id,
+                                            repo_name,
+                                            ref,
+                                        )
+                                    except Exception:
+                                        logger.warning(
+                                            "Failed to ensure worktree for project %s",
+                                            project_id,
+                                            exc_info=True,
+                                        )
                         return {
                             "message": "Project already parsed for requested commit",
                             "id": project_id,

@@ -246,6 +246,7 @@ class CodeGenAgent(ChatAgent):
                         "fetch_files_batch",
                         "analyze_code_structure",
                         "show_diff",
+                        "bash_command",
                         # Git workflow tools for PR creation (non-local mode only)
                         "apply_changes",
                         "git_commit",

@@ -41,6 +41,7 @@ from app.modules.intelligence.agents.context_config import (
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.projects.projects_service import ProjectService
+from app.modules.repo_manager.sync_helper import ensure_repo_registered
 from app.modules.users.user_service import UserService
 from app.modules.utils.posthog_helper import PostHogClient
 from app.modules.intelligence.prompts.prompt_service import PromptService
@@ -224,6 +225,7 @@ class ConversationService:
         conversation: CreateConversationRequest,
         user_id: str,
         hidden: bool = False,
+        local_mode: bool = False,
     ) -> tuple[str, str]:
         try:
             if not await self.agent_service.validate_agent_id(
@@ -284,6 +286,18 @@ class ConversationService:
                     logger.exception("Failed to fetch project structure", exc_info=exc)
 
             fetch_task.add_done_callback(_on_fetch_done)
+
+            # Ensure repo is registered and cloned in repo manager (skip in local/VSCode mode)
+            if not local_mode and self.repo_manager and conversation.project_ids:
+                project_id_str = str(conversation.project_ids[0])
+                # Fast path: register any existing local copy (5s timeout)
+                asyncio.create_task(
+                    self._ensure_repo_in_repo_manager(project_id_str, user_id)
+                )
+                # Slow path: clone the repo if it's missing entirely (no timeout — runs until done)
+                asyncio.create_task(
+                    self._clone_repo_if_missing(project_id_str, user_id)
+                )
 
             await self._add_system_message(conversation_id, project_name, user_id)
 
@@ -362,20 +376,17 @@ class ConversationService:
         """
         Synchronous version of _ensure_repo_in_repo_manager.
         Runs in a thread pool to avoid blocking the async event loop.
+        Delegates to shared ensure_repo_registered helper.
         """
-        # Double-check repo_manager is available (defensive check)
         if not self.repo_manager:
             return
 
         try:
-            # Get project details (use sync method)
-            # Note: project_id is Text in DB, but type hint says int - handle both
             try:
                 project = self.project_service.get_project_from_db_by_id_sync(
                     project_id
                 )  # type: ignore[arg-type]
             except (TypeError, ValueError):
-                # Try converting to int if it's a numeric string
                 try:
                     project = self.project_service.get_project_from_db_by_id_sync(
                         int(project_id)
@@ -392,148 +403,182 @@ class ConversationService:
                 )
                 return
 
-            repo_name = project.get("project_name")
-            branch = project.get("branch_name")
-            commit_id = project.get("commit_id")
-            repo_path = project.get("repo_path")  # For local repos
-
-            if not repo_name:
-                logger.warning(
-                    f"Cannot ensure repo in repo manager: project {project_id} has no repo_name"
-                )
-                return
-
-            # Check if repo is already available
-            if self.repo_manager.is_repo_available(
-                repo_name, branch=branch, commit_id=commit_id, user_id=user_id
-            ):
-                logger.debug(
-                    f"Repo {repo_name}@{commit_id or branch} already available in repo manager"
-                )
-                # Update last accessed time
-                self.repo_manager.update_last_accessed(
-                    repo_name, branch=branch, commit_id=commit_id, user_id=user_id
-                )
-                return
-
-            # Check if repo exists in repo manager's expected location but not registered
-            # Use repo manager's method to get expected path (respects REPOS_BASE_PATH)
-            # This ensures we're checking the correct location based on REPOS_BASE_PATH env var
-            try:
-                expected_base_path = self.repo_manager._get_repo_local_path(repo_name)
-            except Exception as e:
-                logger.warning(f"Failed to get repo local path for {repo_name}: {e}")
-                return
-
-            # Check for worktree path (where repos are actually stored)
-            ref = commit_id if commit_id else branch
-            if ref:
-                # Worktrees are stored in <base_path>/worktrees/<ref>
-                worktree_name = ref.replace("/", "_").replace("\\", "_")
-                expected_worktree_path = (
-                    expected_base_path / "worktrees" / worktree_name
-                )
-
-                # Check if worktree exists but not registered
-                if expected_worktree_path.exists() and expected_worktree_path.is_dir():
-                    # Check if it's a valid git repository
-                    git_dir = expected_worktree_path / ".git"
-                    if git_dir.exists():
-                        try:
-                            self.repo_manager.register_repo(
-                                repo_name=repo_name,
-                                local_path=str(expected_worktree_path),
-                                branch=branch,
-                                commit_id=commit_id,
-                                user_id=user_id,
-                                metadata={"registered_from": "conversation_message"},
-                            )
-                            logger.info(
-                                f"Registered existing worktree {repo_name}@{ref} in repo manager from conversation"
-                            )
-                            return
-                        except Exception as e:
-                            logger.warning(
-                                f"Failed to register existing worktree {repo_name} in repo manager: {e}"
-                            )
-
-            # Check base repo path (for repos without worktrees)
-            if expected_base_path.exists() and expected_base_path.is_dir():
-                git_dir = expected_base_path / ".git"
-                if git_dir.exists():
-                    try:
-                        self.repo_manager.register_repo(
-                            repo_name=repo_name,
-                            local_path=str(expected_base_path),
-                            branch=branch,
-                            commit_id=commit_id,
-                            user_id=user_id,
-                            metadata={"registered_from": "conversation_message"},
-                        )
-                        logger.info(
-                            f"Registered existing base repo {repo_name} in repo manager from conversation"
-                        )
-                        return
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to register existing base repo {repo_name} in repo manager: {e}"
-                        )
-
-            # For local repos (repo_path), check if it's a different location
-            if repo_path and os.path.exists(repo_path):
-                # Only register if it's not already in repo manager's base path
-                # (to avoid registering external paths)
-                if not str(repo_path).startswith(
-                    str(self.repo_manager.repos_base_path)
-                ):
-                    logger.debug(
-                        f"Repo {repo_name} has external path {repo_path}, not registering in repo manager. "
-                        f"Repo manager base path: {self.repo_manager.repos_base_path}"
-                    )
-                else:
-                    try:
-                        self.repo_manager.register_repo(
-                            repo_name=repo_name,
-                            local_path=repo_path,
-                            branch=branch,
-                            commit_id=commit_id,
-                            user_id=user_id,
-                            metadata={"registered_from": "conversation_message"},
-                        )
-                        logger.info(
-                            f"Registered local repo {repo_name}@{commit_id or branch} in repo manager from conversation"
-                        )
-                        return
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to register local repo {repo_name} in repo manager: {e}"
-                        )
-
-            # If we get here, repo doesn't exist in repo manager's directory structure
-            ref = commit_id if commit_id else branch
-            expected_worktree_info = "N/A"
-            if ref:
-                worktree_name = ref.replace("/", "_").replace("\\", "_")
-                expected_worktree_path = (
-                    expected_base_path / "worktrees" / worktree_name
-                )
-                expected_worktree_info = f"{expected_worktree_path} (exists: {expected_worktree_path.exists()})"
-
-            logger.info(
-                f"Repo {repo_name}@{commit_id or branch} not found in repo manager. "
-                f"Project status: {project.get('status')}. "
-                f"Repo manager base path: {self.repo_manager.repos_base_path}. "
-                f"Expected base path: {expected_base_path} (exists: {expected_base_path.exists()}). "
-                f"Expected worktree path: {expected_worktree_info}. "
-                f"Project may need to be parsed first or repo manager may not be enabled during parsing."
+            # Map project keys to expected format (project uses project_name, etc.)
+            project_data = {
+                "project_name": project.get("project_name"),
+                "branch_name": project.get("branch_name"),
+                "commit_id": project.get("commit_id"),
+                "repo_path": project.get("repo_path"),
+                "status": project.get("status"),
+            }
+            ensure_repo_registered(
+                project_data,
+                user_id,
+                self.repo_manager,
+                registered_from="conversation_message",
             )
-
         except Exception as e:
             logger.warning(
                 f"Error in _ensure_repo_in_repo_manager_sync for project {project_id}: {e}",
                 exc_info=True,
             )
-            # Don't fail the message if repo registration fails
+
+    def _needs_full_clone_sync(self, project_id: str) -> bool:
+        """
+        Returns True only when a full git clone is needed (bare repo not on disk yet).
+        When the bare repo already exists, prepare_for_parsing just creates a worktree
+        quickly — no loading message is needed in that case.
+        On any error or local repo, returns False so we never show a spurious message.
+        """
+        if not self.repo_manager:
+            return False
+        try:
+            try:
+                project = self.project_service.get_project_from_db_by_id_sync(project_id)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                try:
+                    project = self.project_service.get_project_from_db_by_id_sync(int(project_id))  # type: ignore[arg-type]
+                except (ValueError, TypeError):
+                    return False
+            if not project:
+                return False
+            repo_name = project.get("project_name")
+            repo_path = project.get("repo_path")
+            if not repo_name or repo_path:
+                return False  # local repo, always considered available
+            # Check if the bare repo directory exists on disk.
+            # If it does, worktree creation is fast — no loading message needed.
+            bare_repo_path = self.repo_manager._get_bare_repo_path(repo_name)  # noqa: SLF001
+            return not bare_repo_path.exists()
+        except Exception:
+            logger.warning(
+                f"Error checking bare repo for project {project_id}, assuming available",
+                exc_info=True,
+            )
+            return False
+
+    def _clone_repo_if_missing_sync(self, project_id: str, user_id: str) -> None:
+        """
+        Ensure the repo worktree exists in the repo manager.
+        Calls prepare_for_parsing if the repo is not yet registered or the worktree
+        is missing. Fast when the bare repo already exists (just adds the worktree);
+        slow only on the very first clone. Safe to call on every message.
+        """
+        if not self.repo_manager:
+            logger.info(f"[clone_sync] Skipping project {project_id}: no repo_manager")
+            return
+        try:
+            try:
+                project = self.project_service.get_project_from_db_by_id_sync(project_id)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                try:
+                    project = self.project_service.get_project_from_db_by_id_sync(int(project_id))  # type: ignore[arg-type]
+                except (ValueError, TypeError):
+                    logger.warning(f"[clone_sync] Cannot parse project_id={project_id}")
+                    return
+
+            if not project:
+                logger.warning(f"[clone_sync] Project {project_id} not found in DB")
+                return
+
+            repo_name = project.get("project_name")
+            branch = project.get("branch_name")
+            commit_id = project.get("commit_id")
+            repo_path = project.get("repo_path")
+
+            logger.info(
+                f"[clone_sync] project={project_id} repo_name={repo_name!r} "
+                f"branch={branch!r} commit_id={commit_id!r} repo_path={repo_path!r}"
+            )
+
+            if not repo_name:
+                logger.warning(f"[clone_sync] Skipping project {project_id}: no repo_name")
+                return
+            if repo_path:
+                logger.info(
+                    f"[clone_sync] Skipping project {project_id}: has local repo_path={repo_path!r}"
+                )
+                return
+
+            # Match the same ref priority used by get_file_content: commit_id first,
+            # then branch. This ensures the worktree key registered here is the same key
+            # that all code-provider tools use for their lookups.
+            ref = commit_id if commit_id else branch
+            is_commit_ref = bool(commit_id)
+
+            available = self.repo_manager.is_repo_available(
+                repo_name, branch=branch, commit_id=commit_id, user_id=user_id
+            )
+            logger.info(
+                f"[clone_sync] is_repo_available({repo_name!r}@{ref!r}) = {available}"
+            )
+            if available:
+                return  # already there
+
+            if not ref:
+                logger.warning(f"[clone_sync] Skipping {repo_name}: no ref (branch or commit_id)")
+                return
+
+            logger.info(
+                f"[clone_sync] Calling prepare_for_parsing for {repo_name}@{ref} "
+                f"(is_commit={is_commit_ref})"
+            )
+            from app.modules.code_provider.github.github_service import GithubService
+
+            user_token = GithubService(self.db).get_github_oauth_token(user_id)
+
+            # Try with user token first; fall back to env-var token (GH_TOKEN / GITHUB_TOKEN)
+            # if the user token is missing or returns a permission error — matching the
+            # same retry strategy used in parsing_helper.
+            for attempt, token in enumerate([user_token, None]):
+                if attempt == 1 and token == user_token:
+                    break  # no point retrying with the same (None) token
+                try:
+                    self.repo_manager.prepare_for_parsing(
+                        repo_name,
+                        ref,
+                        auth_token=token,
+                        is_commit=is_commit_ref,
+                        user_id=user_id,
+                    )
+                    logger.info(
+                        f"[clone_sync] Worktree ready: {repo_name}@{ref} "
+                        f"(attempt {attempt + 1}, token={'user' if token else 'env'})"
+                    )
+                    break
+                except Exception as e:
+                    if attempt == 0 and token is not None:
+                        logger.warning(
+                            f"[clone_sync] User-token clone failed for {repo_name}@{ref}: {e}. "
+                            "Retrying with env token.",
+                        )
+                    else:
+                        logger.warning(
+                            f"[clone_sync] prepare_for_parsing failed for {repo_name}@{ref}: {e}",
+                            exc_info=True,
+                        )
+        except Exception as e:
+            logger.warning(
+                f"[clone_sync] Unexpected error for project {project_id}: {e}",
+                exc_info=True,
+            )
+
+    async def _clone_repo_if_missing(self, project_id: str, user_id: str) -> None:
+        """
+        Fire-and-forget background clone. Runs in a thread so it never blocks the
+        event loop, with no timeout — the clone runs until it completes or fails.
+        """
+        if not self.repo_manager:
+            return
+        try:
+            await asyncio.get_event_loop().run_in_executor(
+                None, self._clone_repo_if_missing_sync, project_id, user_id
+            )
+        except Exception as e:
+            logger.warning(
+                f"_clone_repo_if_missing error for project {project_id}: {e}",
+                exc_info=True,
+            )
 
     async def _add_system_message(
         self, conversation_id: str, project_name: str, user_id: str
@@ -628,10 +673,39 @@ class ConversationService:
                         "No project associated with this conversation"
                     )
 
-                # Ensure repo is registered in repo manager
+                # Ensure repo is registered in repo manager (skip in local/VSCode mode)
                 # Convert project_id to string if needed (it might be a Column object)
                 project_id_str = str(project_id) if project_id else None
-                if project_id_str:
+                if project_id_str and not local_mode and self.repo_manager:
+                    logger.info(
+                        f"[store_message] Checking/creating worktree for project {project_id_str}"
+                    )
+                    # Only show loading message when a full clone is needed (bare repo missing).
+                    # When the bare repo already exists, worktree creation is fast — no message.
+                    needs_clone = await asyncio.get_event_loop().run_in_executor(
+                        None, self._needs_full_clone_sync, project_id_str
+                    )
+                    logger.info(
+                        f"[store_message] needs_full_clone={needs_clone} for project {project_id_str}"
+                    )
+                    if needs_clone and stream:
+                        yield ChatMessageResponse(
+                            message="⏳ Setting up repository workspace, please wait...",
+                            citations=[],
+                            tool_calls=[],
+                        )
+                    # Always run synchronously: creates bare repo + worktree if missing,
+                    # or returns quickly if everything already exists.
+                    await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        self._clone_repo_if_missing_sync,
+                        project_id_str,
+                        user_id,
+                    )
+                elif project_id_str and not local_mode:
+                    logger.info(
+                        f"[store_message] No repo_manager, skipping worktree setup for project {project_id_str}"
+                    )
                     await self._ensure_repo_in_repo_manager(project_id_str, user_id)
 
                 logger.info(
@@ -1031,7 +1105,9 @@ class ConversationService:
                     user_id=user_id,  # Set user_id for tunnel routing
                     local_mode=local_mode,
                     repository=(
-                        project_info.get("project_name") if project_info else project_name
+                        project_info.get("project_name")
+                        if project_info
+                        else project_name
                     ),
                     branch=project_info.get("branch_name") if project_info else None,
                 )
@@ -1080,7 +1156,9 @@ class ConversationService:
                     tunnel_url=tunnel_url,  # Tunnel URL from request (takes priority)
                     local_mode=local_mode,
                     repository=(
-                        project_info.get("project_name") if project_info else project_name
+                        project_info.get("project_name")
+                        if project_info
+                        else project_name
                     ),
                     branch=project_info.get("branch_name") if project_info else None,
                 )

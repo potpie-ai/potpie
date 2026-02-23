@@ -377,11 +377,13 @@ class ProviderWrapper:
                 f"Retrieved repository {'path' if repo_path else 'name'} '{repo_name}' for project_id '{project_id}'"
             )
 
-            # Extract branch_name or commit_id from project for ref parameter
+            # Use the same ref priority as get_file_content: commit_id first, then
+            # branch_name. Worktrees are registered under commit_id by default, so this
+            # ensures the lookup key here matches the key used by all other tools.
             ref = (
-                project.get("branch_name")
-                if project.get("branch_name")
-                else project.get("commit_id")
+                project.get("commit_id")
+                if project.get("commit_id")
+                else project.get("branch_name")
             )
 
             # Check if tunnel provider is available (highest priority for local access)

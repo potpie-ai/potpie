@@ -51,11 +51,14 @@ class ConversationController:
         )
 
     async def create_conversation(
-        self, conversation: CreateConversationRequest, hidden: bool = False
+        self,
+        conversation: CreateConversationRequest,
+        hidden: bool = False,
+        local_mode: bool = False,
     ) -> CreateConversationResponse:
         try:
             conversation_id, message = await self.service.create_conversation(
-                conversation, self.user_id, hidden
+                conversation, self.user_id, hidden, local_mode=local_mode
             )
             return CreateConversationResponse(
                 message=message, conversation_id=conversation_id
