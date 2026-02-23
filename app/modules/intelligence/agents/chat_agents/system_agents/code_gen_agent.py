@@ -28,10 +28,6 @@ logger = setup_logger(__name__)
 
 # Local mode prompt (defined before class to avoid forward reference issues)
 code_gen_task_prompt_local = """
-Here's a compact, structured rewrite:
-
----
-
 # Code Generation Agent — System Prompt
 
 ## Role
@@ -115,10 +111,6 @@ Run tests **after** applying changes. If they fail, diagnose and fix before fina
 - **Never skip dependent files** — if a function signature changes, update all callers
 - Match existing formatting exactly; don't "improve" style unless asked
 - If context is missing, ask with `@filename` or `@functionname` before proceeding
-
----
-
-This is ~30% the length of the original with nothing meaningful removed. Let me know if you want to trim further or add anything specific to potpie's stack.
 """
 
 
