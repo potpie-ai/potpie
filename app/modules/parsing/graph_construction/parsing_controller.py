@@ -116,13 +116,11 @@ class ParsingController:
                 commit_id=repo_details.commit_id,
             )
             demo_repos = [
-                "Portkey-AI/gateway",
-                "crewAIInc/crewAI",
-                "AgentOps-AI/agentops",
                 "calcom/cal.com",
                 "langchain-ai/langchain",
-                "AgentOps-AI/AgentStack",
-                "formbricks/formbricks",
+                "electron/electron",
+                "openclaw/openclaw",
+                "pydantic/pydantic-ai",
             ]
             if not project and repo_details.repo_name in demo_repos:
                 existing_project = await project_manager.get_global_project_from_db(
