@@ -5,13 +5,18 @@ from typing import Any, Dict
 
 from dotenv import load_dotenv
 from fastapi import HTTPException
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_
+from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.celery.tasks.parsing_tasks import process_parsing
 from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
+from app.modules.conversations.conversation.conversation_model import (
+    Conversation,
+    Visibility,
+)
 from app.modules.parsing.graph_construction.parsing_helper import ParseHelper
 from app.modules.parsing.graph_construction.parsing_schema import (
     ParsingRequest,
@@ -22,14 +27,13 @@ from app.modules.parsing.graph_construction.parsing_validator import (
     validate_parsing_input,
 )
 from app.modules.parsing.utils.repo_name_normalizer import normalize_repo_name
+from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
+from app.modules.repo_manager import RepoManager
 from app.modules.utils.email_helper import EmailHelper
-from app.modules.utils.posthog_helper import PostHogClient
-from app.modules.conversations.conversation.conversation_model import Conversation
-from app.modules.conversations.conversation.conversation_model import Visibility
-from app.modules.projects.projects_model import Project
 from app.modules.utils.logger import setup_logger
+from app.modules.utils.posthog_helper import PostHogClient
 
 logger = setup_logger(__name__)
 
@@ -40,7 +44,7 @@ class ParsingController:
     @staticmethod
     @validate_parsing_input
     async def parse_directory(
-        repo_details: ParsingRequest, db: AsyncSession, user: Dict[str, Any]
+        repo_details: ParsingRequest, db: Session, user: Dict[str, Any]
     ):
         if "email" not in user:
             user_email = None
@@ -98,21 +102,10 @@ class ParsingController:
                     project_manager,
                     db,
                 )
-
-        demo_repos = [
-            "Portkey-AI/gateway",
-            "crewAIInc/crewAI",
-            "AgentOps-AI/agentops",
-            "calcom/cal.com",
-            "langchain-ai/langchain",
-            "AgentOps-AI/AgentStack",
-            "formbricks/formbricks",
-        ]
-
         try:
             # Normalize repository name for consistent database lookups
             normalized_repo_name = normalize_repo_name(repo_name)
-            logger.info(
+            logger.debug(
                 f"Original repo_name: {repo_name}, Normalized: {normalized_repo_name}"
             )
 
@@ -123,8 +116,13 @@ class ParsingController:
                 repo_path=repo_details.repo_path,
                 commit_id=repo_details.commit_id,
             )
-
-            # First check if this is a demo project that hasn't been accessed by this user yet
+            demo_repos = [
+                "calcom/cal.com",
+                "langchain-ai/langchain",
+                "electron/electron",
+                "openclaw/openclaw",
+                "pydantic/pydantic-ai",
+            ]
             if not project and repo_details.repo_name in demo_repos:
                 existing_project = await project_manager.get_global_project_from_db(
                     normalized_repo_name,
@@ -151,11 +149,25 @@ class ParsingController:
                         repo_name
                     )
 
-                    asyncio.create_task(
+                    task = asyncio.create_task(
                         CodeProviderService(db).get_project_structure_async(
                             new_project_id
                         )
                     )
+
+                    def _on_structure_done(t: asyncio.Task) -> None:
+                        if t.cancelled():
+                            return
+                        try:
+                            exc = t.exception()
+                        except asyncio.CancelledError:
+                            return
+                        if exc is not None:
+                            logger.exception(
+                                "Failed to get project structure", exc_info=exc
+                            )
+
+                    task.add_done_callback(_on_structure_done)
                     # Duplicate the graph under the new repo ID
                     await parsing_service.duplicate_graph(
                         old_project_id, new_project_id
@@ -165,11 +177,23 @@ class ParsingController:
                     await project_manager.update_project_status(
                         new_project_id, ProjectStatusEnum.READY
                     )
-                    create_task(
+                    email_task = create_task(
                         EmailHelper().send_email(
                             user_email, repo_name, repo_details.branch_name
                         )
                     )
+
+                    def _on_email_done(t: asyncio.Task) -> None:
+                        if t.cancelled():
+                            return
+                        try:
+                            exc = t.exception()
+                        except asyncio.CancelledError:
+                            return
+                        if exc is not None:
+                            logger.exception("Failed to send email", exc_info=exc)
+
+                    email_task.add_done_callback(_on_email_done)
 
                     return {
                         "project_id": new_project_id,
@@ -189,6 +213,13 @@ class ParsingController:
             if project:
                 project_id = project.id
 
+                # If project is already inferring, return current state (don't re-submit parse)
+                if project.status == ProjectStatusEnum.INFERRING.value:
+                    logger.info(
+                        f"Project {project_id} already in inferring state. Returning current state."
+                    )
+                    return {"project_id": project_id, "status": project.status}
+
                 # Check if this project is already parsed for the requested commit
                 # Only check commit status if commit_id is provided
                 if repo_details.commit_id:
@@ -205,21 +236,81 @@ class ParsingController:
                         f"Project {project_id} already exists and is READY for commit {repo_details.commit_id or 'branch'}. "
                         "Returning existing project."
                     )
+                    # Ensure worktree exists in repo manager when enabled
+                    if os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true":
+                        repo_name = str(project.repo_name) if project.repo_name is not None else None
+                        branch = str(project.branch_name) if project.branch_name is not None else None
+                        commit_id_val = str(project.commit_id) if project.commit_id is not None else None
+                        repo_path = str(project.repo_path) if project.repo_path is not None else None
+                        if repo_name and not repo_path:
+                            ref = commit_id_val if commit_id_val else branch
+                            if ref:
+                                from app.modules.code_provider.github.github_service import GithubService  # noqa: PLC0415
+                                _repo_manager = RepoManager()
+                                try:
+                                    _auth_token = GithubService(db).get_github_oauth_token(user_id)
+                                except Exception:
+                                    _auth_token = None
+
+                                async def _ensure_worktree_bg(
+                                    _rm=_repo_manager,
+                                    _rn=repo_name,
+                                    _ref=ref,
+                                    _at=_auth_token,
+                                    _ic=bool(commit_id_val),
+                                    _uid=user_id,
+                                ):
+                                    try:
+                                        await asyncio.get_event_loop().run_in_executor(
+                                            None,
+                                            lambda: _rm.prepare_for_parsing(
+                                                _rn, _ref, auth_token=_at, is_commit=_ic, user_id=_uid
+                                            ),
+                                        )
+                                        logger.info(
+                                            "Background worktree ensured for READY project %s (%s@%s)",
+                                            project_id,
+                                            _rn,
+                                            _ref,
+                                        )
+                                    except Exception:
+                                        logger.warning(
+                                            "Background worktree failed for project %s",
+                                            project_id,
+                                            exc_info=True,
+                                        )
+
+                                asyncio.create_task(_ensure_worktree_bg())
                     return {"project_id": project_id, "status": project.status}
 
                 # If project exists but commit doesn't match or status is not READY, reparse
                 cleanup_graph = True
                 logger.info(
-                    f"Submitting parsing task for existing project {project_id} "
-                    f"(is_latest={is_latest}, status={project.status})"
+                    "Submitting parsing task for existing project.",
+                    project_id=project_id,
+                    is_latest=is_latest,
+                    status=project.status,
                 )
-                process_parsing.delay(
-                    repo_details.model_dump(),
-                    user_id,
-                    user_email,
-                    project_id,
-                    cleanup_graph,
-                )
+                try:
+                    task = process_parsing.delay(
+                        repo_details.model_dump(),
+                        user_id,
+                        user_email,
+                        project_id,
+                        cleanup_graph,
+                    )
+                    logger.info(
+                        "Parsing task submitted to Celery",
+                        task_id=task.id,
+                        project_id=project_id,
+                    )
+                except Exception as e:
+                    logger.exception(
+                        "Failed to submit parsing task to Celery",
+                        project_id=project_id,
+                        error=str(e),
+                    )
+                    raise
 
                 await project_manager.update_project_status(
                     project_id, ProjectStatusEnum.SUBMITTED
@@ -258,10 +349,10 @@ class ParsingController:
     async def handle_new_project(
         repo_details: ParsingRequest,
         user_id: str,
-        user_email: str,
+        user_email: str | None,
         new_project_id: str,
         project_manager: ProjectService,
-        db: AsyncSession,
+        db: Session,
     ):
         response = {
             "project_id": new_project_id,
@@ -278,9 +369,9 @@ class ParsingController:
             repo_details.commit_id,
             repo_details.repo_path,
         )
-        asyncio.create_task(
-            CodeProviderService(db).get_project_structure_async(new_project_id)
-        )
+        # asyncio.create_task(
+        #     CodeProviderService(db).get_project_structure_async(new_project_id)
+        # )
         if not user_email:
             user_email = None
 
@@ -305,7 +396,7 @@ class ParsingController:
 
     @staticmethod
     async def fetch_parsing_status(
-        project_id: str, db: AsyncSession, user: Dict[str, Any]
+        project_id: str, db: Session, user: Dict[str, Any]
     ):
         try:
             project_query = (
@@ -318,10 +409,10 @@ class ParsingController:
                     or_(
                         Project.user_id == user["user_id"],
                         Conversation.visibility == Visibility.PUBLIC,
-                        Conversation.shared_with_emails.any(user["email"]),
+                        Conversation.shared_with_emails.any(user.get("email", "")),
                     ),
                 )
-                .limit(1)  # Since we only need one result
+                .limit(1)
             )
 
             result = db.execute(project_query)

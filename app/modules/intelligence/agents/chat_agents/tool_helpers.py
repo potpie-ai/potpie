@@ -1,3 +1,4 @@
+import re
 from typing import Any, Dict, List
 
 # Import todo management for streaming todo list state
@@ -56,8 +57,64 @@ def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
             return (
                 f"Fetching file: {file_path}" if file_path else "Fetching file content"
             )
+        case "fetch_files_batch":
+            paths = args.get("paths") if args else []
+            if paths:
+                return f"Fetching {len(paths)} file(s): {', '.join(paths[:3])}{'...' if len(paths) > 3 else ''}"
+            return "Fetching files"
         case "WebSearchTool":
             return "Searching the web"
+        case "search_text":
+            query = args.get("query") if args else None
+            if query:
+                return f"Searching for text pattern: {query[:60]}"
+            return "Searching for text pattern"
+        case "search_files":
+            pattern = args.get("pattern") if args else None
+            if pattern:
+                return f"Searching for files: {pattern}"
+            return "Searching for files"
+        case "search_symbols":
+            file_path = args.get("file_path") if args else None
+            if file_path:
+                return f"Searching symbols in: {file_path}"
+            return "Searching symbols in file"
+        case "search_workspace_symbols":
+            query = args.get("query") if args else None
+            if query:
+                return f"Searching workspace for symbol: {query}"
+            return "Searching workspace symbols"
+        case "search_references":
+            file_path = args.get("file_path") if args else None
+            line = args.get("line") if args else None
+            if file_path and line:
+                return f"Finding references at {file_path}:{line}"
+            return "Finding symbol references"
+        case "search_definitions":
+            file_path = args.get("file_path") if args else None
+            line = args.get("line") if args else None
+            if file_path and line:
+                return f"Finding definition at {file_path}:{line}"
+            return "Finding symbol definition"
+        case "search_code_structure":
+            file_path = args.get("file_path") if args else None
+            query = args.get("query") if args else None
+            if file_path:
+                return f"Searching code structure in: {file_path}"
+            elif query:
+                return f"Searching code structure for: {query}"
+            return "Searching code structure"
+        case "search_bash":
+            command = args.get("command") if args else None
+            if command:
+                display_cmd = command if len(command) <= 60 else command[:57] + "..."
+                return f"Executing search command: {display_cmd}"
+            return "Executing bash search command"
+        case "semantic_search":
+            query = args.get("query") if args else None
+            if query:
+                return f"Semantically searching codebase: {query[:60]}"
+            return "Semantically searching codebase"
         case "analyze_code_structure":
             return "Analyzing code structure"
         case "bash_command":
@@ -70,18 +127,34 @@ def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
                     )
                     return f"Running: {display_cmd}"
             return "Executing bash command on codebase"
-        case "create_todo":
-            return "Creating todo item"
+        case "execute_terminal_command":
+            if args:
+                command = args.get("command", "")
+                mode = args.get("mode", "sync")
+                if command:
+                    # Truncate long commands for display
+                    display_cmd = (
+                        command if len(command) <= 80 else command[:77] + "..."
+                    )
+                    mode_text = f" ({mode} mode)" if mode == "async" else ""
+                    return f"run: {display_cmd}{mode_text}"
+            return "running command"
+        case "read_todos":
+            return "Reading todo list"
+        case "write_todos":
+            return "Updating todo list"
+        case "add_todo":
+            return "Adding todo item"
         case "update_todo_status":
             return "Updating todo status"
-        case "add_todo_note":
-            return "Adding todo note"
-        case "get_todo":
-            return "Retrieving todo details"
-        case "list_todos":
-            return "Listing todos"
-        case "get_todo_summary":
-            return "Getting todo summary"
+        case "remove_todo":
+            return "Removing todo"
+        case "add_subtask":
+            return "Adding subtask"
+        case "set_dependency":
+            return "Setting task dependency"
+        case "get_available_tasks":
+            return "Getting available tasks"
         case "add_requirements":
             return "Updating requirements document"
         case "delete_requirements":
@@ -114,9 +187,9 @@ def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
         case "replace_in_file":
             file_path = _get_file_path()
             return (
-                f"Replacing pattern in: {file_path}"
+                f"Replacing text in: {file_path}"
                 if file_path
-                else "Replacing pattern in file"
+                else "Replacing text in file"
             )
         case "insert_lines":
             file_path = _get_file_path()
@@ -215,6 +288,31 @@ def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
             return "Querying data"
 
 
+def _parse_terminal_result_string(content: str) -> tuple[str | None, int | None, bool]:
+    """Extract command, exit code, and success from execute_terminal_command formatted string.
+
+    Returns:
+        (command or None, exit_code or None, success)
+    """
+    if not content or not isinstance(content, str):
+        return None, None, True
+    success = (
+        "❌ **Command failed**" not in content and "**Command blocked:**" not in content
+    )
+    command = None
+    exit_code = None
+    # Match "**Command executed** (`command`)" or "Command failed** (exit code: N)"
+    m = re.search(r"\*\*Command executed\*\*\s*\(`([^`]+)`\)", content)
+    if m:
+        command = m.group(1).strip()
+    m = re.search(r"exit code:\s*(\d+)", content, re.IGNORECASE)
+    if m:
+        exit_code = int(m.group(1))
+    if exit_code is None and success:
+        exit_code = 0
+    return command, exit_code, success
+
+
 def get_tool_response_message(
     tool_name: str, args: Dict[str, Any] | None = None, result: Any = None
 ):
@@ -223,7 +321,7 @@ def get_tool_response_message(
     Args:
         tool_name: Name of the tool that completed
         args: Optional dict of tool arguments to include file paths, commands, etc.
-        result: Optional tool result to include small response data
+        result: Optional tool result to include small response data (command run, file paths, exit code, etc.)
     """
 
     # Helper to check if result is small enough to include
@@ -271,9 +369,15 @@ def get_tool_response_message(
             return "Fetched code and docstrings"
         case "get_code_file_structure":
             path = args.get("path") if args else None
-            if path:
-                return f"Project file structure loaded successfully for {path}"
-            return "Project file structure loaded successfully"
+            base = (
+                f"Project file structure loaded successfully for {path}"
+                if path
+                else "Project file structure loaded successfully"
+            )
+            if isinstance(result, str) and result:
+                n = len(result)
+                return f"{base} ({n:,} chars)"
+            return base
         case "GetNodeNeighboursFromNodeID":
             return "Fetched referenced code"
         case "WebpageContentExtractor":
@@ -291,6 +395,15 @@ def get_tool_response_message(
             return "File contents fetched from github"
         case "fetch_file":
             file_path = args.get("file_path") if args else None
+            if isinstance(result, dict):
+                if not result.get("success"):
+                    err = result.get("error", "Unknown error")
+                    err_short = err[:80] + "..." if len(err) > 80 else err
+                    return f"File fetch failed: {file_path or 'file'} — {err_short}"
+                content = result.get("content") or ""
+                lines = len(content.splitlines()) if content else 0
+                suffix = f" ({lines} lines)" if lines else ""
+                return f"File content fetched: {file_path or 'file'}{suffix}"
             if file_path:
                 result_suffix = (
                     _format_small_result(result) if _is_small_result(result) else ""
@@ -300,37 +413,223 @@ def get_tool_response_message(
                 _format_small_result(result) if _is_small_result(result) else ""
             )
             return f"File content fetched successfully{result_suffix}"
+        case "fetch_files_batch":
+            files = result.get("files", []) if isinstance(result, dict) else []
+            ok = sum(1 for f in files if "error" not in f)
+            err = sum(1 for f in files if "error" in f)
+            paths = []
+            for f in files[:5]:
+                p = f.get("path") if isinstance(f, dict) else None
+                if p:
+                    paths.append(p)
+            path_suffix = (
+                f": {', '.join(paths)}{'...' if len(files) > 5 else ''}"
+                if paths
+                else ""
+            )
+            if err:
+                return f"Fetched {ok} file(s), {err} not found{path_suffix}"
+            return f"Fetched {len(files)} file(s) successfully{path_suffix}"
         case "analyze_code_structure":
             file_path = args.get("file_path") if args else None
-            if file_path:
-                return f"Code structure analyzed successfully: {file_path}"
-            return "Code structure analyzed successfully"
+            base = (
+                f"Code structure analyzed: {file_path}"
+                if file_path
+                else "Code structure analyzed successfully"
+            )
+            if isinstance(result, dict):
+                elements = result.get("elements") or []
+                if elements:
+                    return f"{base} ({len(elements)} elements)"
+                if not result.get("success"):
+                    err = result.get("error", "Analysis failed")[:60]
+                    return f"Code structure analysis failed: {err}"
+            return base
         case "WebSearchTool":
             query = args.get("query") if args else None
             if query:
                 return f"Web search successful for: {query}"
             return "Web search successful"
+        case "search_text":
+            query = args.get("query") if args else None
+            file_pattern = args.get("file_pattern") if args else None
+            base = (
+                f"Text search completed: {query[:50]}"
+                if query
+                else "Text search completed"
+            )
+            if file_pattern:
+                base += f" (pattern: {file_pattern})"
+            if isinstance(result, str) and result:
+                matches = len(result.strip().splitlines())
+                if matches > 0:
+                    base += f" — {matches} match(es)"
+            return base
+        case "search_files":
+            pattern = args.get("pattern") if args else None
+            base = (
+                f"File search completed: {pattern}"
+                if pattern
+                else "File search completed"
+            )
+            if isinstance(result, str) and result:
+                count = len(result.strip().splitlines())
+                if count > 0:
+                    base += f" — {count} file(s)"
+            elif isinstance(result, list):
+                base += f" — {len(result)} file(s)"
+            return base
+        case "search_symbols":
+            file_path = args.get("file_path") if args else None
+            base = (
+                f"Symbols found in: {file_path}"
+                if file_path
+                else "Symbols search completed"
+            )
+            if isinstance(result, str) and result:
+                count = len(result.strip().splitlines())
+                if count > 0:
+                    base += f" ({count} symbol(s))"
+            return base
+        case "search_workspace_symbols":
+            query = args.get("query") if args else None
+            base = (
+                f"Workspace symbol search completed: {query}"
+                if query
+                else "Workspace symbol search completed"
+            )
+            if isinstance(result, str) and result:
+                count = len(result.strip().splitlines())
+                if count > 0:
+                    base += f" — {count} result(s)"
+            return base
+        case "search_references":
+            file_path = args.get("file_path") if args else None
+            line = args.get("line") if args else None
+            base = (
+                f"References found for symbol at {file_path}:{line}"
+                if (file_path and line)
+                else "Reference search completed"
+            )
+            if isinstance(result, str) and result:
+                count = len(result.strip().splitlines())
+                if count > 0:
+                    base += f" ({count} reference(s))"
+            return base
+        case "search_definitions":
+            file_path = args.get("file_path") if args else None
+            line = args.get("line") if args else None
+            base = (
+                f"Definition found for symbol at {file_path}:{line}"
+                if (file_path and line)
+                else "Definition search completed"
+            )
+            if isinstance(result, str) and result:
+                base += " — definition retrieved"
+            return base
+        case "search_code_structure":
+            file_path = args.get("file_path") if args else None
+            query = args.get("query") if args else None
+            if file_path:
+                base = f"Code structure search completed: {file_path}"
+            elif query:
+                base = f"Code structure search completed: {query}"
+            else:
+                base = "Code structure search completed"
+            if isinstance(result, str) and result:
+                count = len(result.strip().splitlines())
+                if count > 0:
+                    base += f" ({count} result(s))"
+            return base
+        case "search_bash":
+            command = args.get("command") if args else None
+            if command:
+                display_cmd = command if len(command) <= 50 else command[:47] + "..."
+                if isinstance(result, dict):
+                    exit_code = result.get("exit_code")
+                    success = result.get("success", True)
+                    if exit_code is not None:
+                        status = "completed" if success else "failed"
+                        return f"Bash search command {status}: {display_cmd} (exit {exit_code})"
+                return f"Bash search command executed: {display_cmd}"
+            if isinstance(result, dict):
+                exit_code = result.get("exit_code")
+                if exit_code is not None:
+                    return f"Bash search command completed (exit {exit_code})"
+            return "Bash search command executed"
+        case "semantic_search":
+            query = args.get("query") if args else None
+            top_k = args.get("top_k") if args else None
+            base = (
+                f"Semantic search completed: {query[:50]}"
+                if query
+                else "Semantic search completed"
+            )
+            if top_k:
+                base += f" (top {top_k})"
+            if isinstance(result, list) and result:
+                base += f" — {len(result)} result(s)"
+            elif isinstance(result, str) and result:
+                lines = result.strip().splitlines()
+                if lines:
+                    base += f" — {len(lines)} result(s)"
+            return base
         case "bash_command":
-            if args:
-                command = args.get("command", "")
-                if command:
-                    # Truncate long commands for display
-                    display_cmd = (
-                        command if len(command) <= 60 else command[:57] + "..."
-                    )
-                    result_suffix = (
-                        _format_small_result(result) if _is_small_result(result) else ""
-                    )
-                    return f"Bash command executed successfully: {display_cmd}{result_suffix}"
+            command = args.get("command", "") if args else ""
+            if isinstance(result, dict):
+                exit_code = result.get("exit_code")
+                success = result.get("success", True)
+                display_cmd = (
+                    (command if len(command) <= 60 else command[:57] + "...")
+                    if command
+                    else "command"
+                )
+                if exit_code is not None:
+                    status = "completed" if success else "failed"
+                    return f"Bash command {status}: {display_cmd} (exit {exit_code})"
+            if command:
+                display_cmd = command if len(command) <= 60 else command[:57] + "..."
+                result_suffix = (
+                    _format_small_result(result) if _is_small_result(result) else ""
+                )
+                return (
+                    f"Bash command executed successfully: {display_cmd}{result_suffix}"
+                )
             result_suffix = (
                 _format_small_result(result) if _is_small_result(result) else ""
             )
             return f"Bash command executed successfully{result_suffix}"
-        case "create_todo":
-            title = args.get("title") if args else None
-            if title:
-                return f"Todo item created successfully: {title[:50]}"
-            return "Todo item created successfully"
+        case "execute_terminal_command":
+            command = args.get("command", "") if args else ""
+            mode = args.get("mode", "sync") if args else "sync"
+            if isinstance(result, str):
+                parsed_cmd, exit_code, success = _parse_terminal_result_string(result)
+                display_cmd = (
+                    parsed_cmd
+                    or (command if len(command) <= 60 else command[:57] + "...")
+                    if command
+                    else "command"
+                )
+                mode_text = f" ({mode} mode)" if mode == "async" else ""
+                if "Session ID:" in result or "async mode" in result:
+                    return f"Terminal command started: {display_cmd}{mode_text}"
+                if exit_code is not None:
+                    status = "completed" if success else "failed"
+                    return f"cmd: {parsed_cmd}"
+                return f"Terminal command executed: {display_cmd}{mode_text}"
+            if command:
+                display_cmd = command if len(command) <= 60 else command[:57] + "..."
+                mode_text = f" ({mode} mode)" if mode == "async" else ""
+                result_suffix = (
+                    _format_small_result(result) if _is_small_result(result) else ""
+                )
+                return f"Terminal command executed successfully: {display_cmd}{mode_text}{result_suffix}"
+            return "Terminal command executed successfully"
+        case "add_todo":
+            content = args.get("content") if args else None
+            if content:
+                return f"Todo item added successfully: {content[:50]}"
+            return "Todo item added successfully"
         case "update_todo_status":
             todo_id = args.get("todo_id") if args else None
             status = args.get("status") if args else None
@@ -339,23 +638,26 @@ def get_tool_response_message(
             elif todo_id:
                 return f"Todo status updated successfully: {todo_id}"
             return "Todo status updated successfully"
-        case "add_todo_note":
+        case "remove_todo":
             todo_id = args.get("todo_id") if args else None
             if todo_id:
-                return f"Todo note added successfully: {todo_id}"
-            return "Todo note added successfully"
-        case "get_todo":
-            todo_id = args.get("todo_id") if args else None
-            if todo_id:
-                return f"Todo details retrieved successfully: {todo_id}"
-            return "Todo details retrieved successfully"
-        case "list_todos":
-            status_filter = args.get("status_filter") if args else None
-            if status_filter:
-                return f"Todos listed successfully (filter: {status_filter})"
-            return "Todos listed successfully"
-        case "get_todo_summary":
-            return "Todo summary generated successfully"
+                return f"Todo removed successfully: {todo_id}"
+            return "Todo removed successfully"
+        case "read_todos":
+            return "Todo list retrieved successfully"
+        case "write_todos":
+            todos_arg = args.get("todos", []) if args else []
+            count = len(todos_arg) if isinstance(todos_arg, list) else 0
+            return f"Todo list updated successfully ({count} items)"
+        case "add_subtask":
+            parent_id = args.get("parent_id") if args else None
+            if parent_id:
+                return f"Subtask added successfully (parent: {parent_id})"
+            return "Subtask added successfully"
+        case "set_dependency":
+            return "Dependency set successfully"
+        case "get_available_tasks":
+            return "Available tasks retrieved successfully"
         case "add_requirements":
             return "Requirements document updated successfully"
         case "delete_requirements":
@@ -392,11 +694,12 @@ def get_tool_response_message(
         case "replace_in_file":
             file_path = args.get("file_path") if args else None
             if file_path:
-                pattern = args.get("pattern") if args else None
-                if pattern:
-                    return f"Pattern replacement completed successfully: {file_path} (pattern: {pattern[:50]})"
-                return f"Pattern replacement completed successfully: {file_path}"
-            return "Pattern replacement completed successfully"
+                old_str = args.get("old_str") if args else None
+                if old_str:
+                    preview = old_str[:50].replace("\n", "↵")
+                    return f"Text replacement completed successfully: {file_path} (replaced: {preview!r})"
+                return f"Text replacement completed successfully: {file_path}"
+            return "Text replacement completed successfully"
         case "insert_lines":
             file_path = args.get("file_path") if args else None
             if file_path:
@@ -430,6 +733,18 @@ def get_tool_response_message(
                 return f"File retrieved from code changes successfully: {file_path}"
             return "File retrieved from code changes successfully"
         case "list_files_in_changes":
+            if isinstance(result, dict) and "files" in result:
+                files = result["files"]
+                n = len(files) if isinstance(files, list) else 0
+                return f"Files listed successfully ({n} file(s) in changes)"
+            if isinstance(result, list):
+                return f"Files listed successfully ({len(result)} file(s) in changes)"
+            if isinstance(result, str):
+                m = re.search(r"\((\d+)\s+files?\)", result)
+                if m:
+                    return (
+                        f"Files listed successfully ({m.group(1)} file(s) in changes)"
+                    )
             return "Files listed successfully"
         case "search_content_in_changes":
             return "Content search completed successfully"
@@ -600,10 +915,85 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             return ""
         case "fetch_file":
             return f"fetching contents for file {args.get('file_path')}"
+        case "fetch_files_batch":
+            paths = args.get("paths") or []
+            return f"fetching {len(paths)} file(s)"
         case "analyze_code_structure":
             return f"Analyzing file - {args.get('file_path')}\n"
         case "WebSearchTool":
             return f"-> searching the web for {args.get('query')}\n"
+        case "search_text":
+            query = args.get("query", "")
+            file_pattern = args.get("file_pattern")
+            case_sensitive = args.get("case_sensitive", False)
+            use_regex = args.get("use_regex", False)
+            use_bash = args.get("use_bash", False)
+            pattern_info = (
+                f" in files matching '{file_pattern}'" if file_pattern else ""
+            )
+            flags = []
+            if case_sensitive:
+                flags.append("case-sensitive")
+            if use_regex:
+                flags.append("regex")
+            if use_bash:
+                flags.append("bash/grep")
+            flag_text = f" ({', '.join(flags)})" if flags else ""
+            return f"-> searching for text pattern '{query}'{pattern_info}{flag_text}\n"
+        case "search_files":
+            pattern = args.get("pattern", "")
+            exclude = args.get("exclude")
+            max_results = args.get("max_results")
+            exclude_info = f" (excluding: {exclude})" if exclude else ""
+            max_info = f" (max: {max_results})" if max_results else ""
+            return f"-> searching for files matching pattern '{pattern}'{exclude_info}{max_info}\n"
+        case "search_symbols":
+            file_path = args.get("file_path", "")
+            return f"-> searching for symbols (functions, classes, variables) in file: {file_path}\n"
+        case "search_workspace_symbols":
+            query = args.get("query", "")
+            max_results = args.get("max_results")
+            max_info = f" (max: {max_results})" if max_results else ""
+            return f"-> searching workspace for symbol '{query}'{max_info}\n"
+        case "search_references":
+            file_path = args.get("file_path", "")
+            line = args.get("line", "")
+            character = args.get("character", "")
+            return f"-> finding all references to symbol at {file_path}:{line}:{character}\n"
+        case "search_definitions":
+            file_path = args.get("file_path", "")
+            line = args.get("line", "")
+            character = args.get("character", "")
+            return (
+                f"-> finding definition of symbol at {file_path}:{line}:{character}\n"
+            )
+        case "search_code_structure":
+            file_path = args.get("file_path")
+            query = args.get("query")
+            kind = args.get("kind")
+            if file_path:
+                kind_info = f" (kind: {kind})" if kind else ""
+                return f"-> searching code structure in file: {file_path}{kind_info}\n"
+            elif query:
+                kind_info = f" (kind: {kind})" if kind else ""
+                return f"-> searching code structure for '{query}'{kind_info}\n"
+            else:
+                kind_info = f" (kind: {kind})" if kind else ""
+                return f"-> searching code structure{kind_info}\n"
+        case "search_bash":
+            command = args.get("command", "")
+            working_dir = args.get("working_directory")
+            if command:
+                dir_info = f" in directory '{working_dir}'" if working_dir else ""
+                return f"-> executing bash search command: {command}{dir_info}\n"
+            return "-> executing bash search command\n"
+        case "semantic_search":
+            query = args.get("query", "")
+            project_id = args.get("project_id", "")
+            top_k = args.get("top_k", 10)
+            node_ids = args.get("node_ids")
+            context_info = f" (within {len(node_ids)} nodes)" if node_ids else ""
+            return f"-> semantically searching codebase for '{query}' (top {top_k} results){context_info}\n"
         case "bash_command":
             command = args.get("command")
             working_dir = args.get("working_directory")
@@ -611,27 +1001,45 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
                 dir_info = f" in directory '{working_dir}'" if working_dir else ""
                 return f"-> executing command: {command}{dir_info}\n"
             return "-> executing bash command\n"
-        case "create_todo":
-            title = args.get("title", "")
-            priority = args.get("priority", "medium")
-            return f"-> creating todo: '{title}' (priority: {priority})\n"
+        case "execute_terminal_command":
+            command = args.get("command")
+            working_dir = args.get("working_directory")
+            mode = args.get("mode", "sync")
+            timeout = args.get("timeout")
+            if command:
+                dir_info = f" in directory '{working_dir}'" if working_dir else ""
+                mode_info = f" (mode: {mode})" if mode == "async" else ""
+                timeout_info = f" (timeout: {timeout}ms)" if timeout else ""
+                return f"-> run: {command}{dir_info}{mode_info}{timeout_info}\n"
+            return "-> executing command\n"
+        case "add_todo":
+            content = args.get("content", "")
+            return f"-> adding todo: '{content[:60]}{'...' if len(content) > 60 else ''}'\n"
         case "update_todo_status":
             todo_id = args.get("todo_id", "")
             status = args.get("status", "")
             return f"-> updating todo {todo_id} to status: {status}\n"
-        case "add_todo_note":
+        case "remove_todo":
             todo_id = args.get("todo_id", "")
-            return f"-> adding note to todo {todo_id}\n"
-        case "get_todo":
+            return f"-> removing todo {todo_id}\n"
+        case "read_todos":
+            hierarchical = args.get("hierarchical", False)
+            if hierarchical:
+                return "-> reading todos (hierarchical view)\n"
+            return "-> reading todo list\n"
+        case "write_todos":
+            count = len(args.get("todos", [])) if args else 0
+            return f"-> writing {count} todo(s)\n"
+        case "add_subtask":
+            parent_id = args.get("parent_id", "")
+            content = args.get("content", "")[:50]
+            return f"-> adding subtask to {parent_id}: {content}\n"
+        case "set_dependency":
             todo_id = args.get("todo_id", "")
-            return f"-> retrieving details for todo {todo_id}\n"
-        case "list_todos":
-            status_filter = args.get("status_filter")
-            if status_filter:
-                return f"-> listing todos with status: {status_filter}\n"
-            return "-> listing all todos\n"
-        case "get_todo_summary":
-            return "-> generating todo summary\n"
+            depends_on_id = args.get("depends_on_id", "")
+            return f"-> setting dependency: {todo_id} depends on {depends_on_id}\n"
+        case "get_available_tasks":
+            return "-> getting available tasks\n"
         case "add_requirements":
             requirements = args.get("requirements", "")
             preview = requirements[:150] if len(requirements) > 150 else requirements
@@ -658,8 +1066,9 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             return f"-> updating lines {line_range} in file: {file_path}\n"
         case "replace_in_file":
             file_path = args.get("file_path", "")
-            pattern = args.get("pattern", "")
-            return f"-> replacing pattern '{pattern}' in file: {file_path}\n"
+            old_str = args.get("old_str", "")
+            preview = old_str[:40].replace("\n", "↵") if old_str else ""
+            return f"-> replacing text in file: {file_path} (old_str: {preview!r})\n"
         case "insert_lines":
             file_path = args.get("file_path", "")
             line_number = args.get("line_number", "")
@@ -914,6 +1323,25 @@ description:
 ```{content.get("content")}```
                 """
             return ""
+        case "fetch_files_batch":
+            if isinstance(content, Dict) and content.get("success"):
+                files = content.get("files") or []
+                parts = []
+                for f in files[:5]:
+                    path = f.get("path", "?")
+                    if "error" in f:
+                        parts.append(f"**{path}**: {f.get('error')}")
+                    else:
+                        snippet = (f.get("content") or "")[:400]
+                        if len(f.get("content") or "") > 400:
+                            snippet += "\n..."
+                        parts.append(
+                            f"**{path}** (line_count: {f.get('line_count', '?')}):\n```\n{snippet}\n```"
+                        )
+                if len(files) > 5:
+                    parts.append(f"... and {len(files) - 5} more file(s)")
+                return "\n\n".join(parts) if parts else "No files returned"
+            return ""
         case "analyze_code_structure":
             if isinstance(content, Dict):
                 if not content.get("success"):
@@ -922,7 +1350,7 @@ description:
                     elements = content.get("elements")
                     if elements:
                         return f"""
-{[ f''' {element.get("type")}: {element.get("name")} ''' for element in elements]}
+{[f''' {element.get("type")}: {element.get("name")} ''' for element in elements]}
 """
             return ""
         case "WebSearchTool":
@@ -930,6 +1358,96 @@ description:
                 res = content.get("content")
                 if isinstance(res, str):
                     return res[: min(len(res), 600)] + " ..."
+            return ""
+        case "search_text":
+            if isinstance(content, str):
+                # Format search results with line numbers and file paths
+                lines = content.split("\n")
+                if len(lines) > 50:
+                    preview = "\n".join(lines[:50])
+                    return f"{preview}\n... ({len(lines) - 50} more matches)"
+                return content
+            return ""
+        case "search_files":
+            if isinstance(content, str):
+                # Format file list
+                files = content.split("\n")
+                if len(files) > 30:
+                    preview = "\n".join(files[:30])
+                    return f"{preview}\n... ({len(files) - 30} more files)"
+                return content
+            elif isinstance(content, list):
+                file_list = "\n".join(content[:30])
+                if len(content) > 30:
+                    return f"{file_list}\n... ({len(content) - 30} more files)"
+                return file_list
+            return ""
+        case "search_symbols":
+            if isinstance(content, str):
+                # Format symbol list with locations
+                return content[: min(len(content), 800)] + (
+                    " ..." if len(content) > 800 else ""
+                )
+            return ""
+        case "search_workspace_symbols":
+            if isinstance(content, str):
+                # Format workspace symbol results
+                return content[: min(len(content), 800)] + (
+                    " ..." if len(content) > 800 else ""
+                )
+            return ""
+        case "search_references":
+            if isinstance(content, str):
+                # Format reference locations
+                return content[: min(len(content), 800)] + (
+                    " ..." if len(content) > 800 else ""
+                )
+            return ""
+        case "search_definitions":
+            if isinstance(content, str):
+                # Format definition location and code
+                return content[: min(len(content), 800)] + (
+                    " ..." if len(content) > 800 else ""
+                )
+            return ""
+        case "search_code_structure":
+            if isinstance(content, str):
+                # Format code structure results
+                return content[: min(len(content), 800)] + (
+                    " ..." if len(content) > 800 else ""
+                )
+            return ""
+        case "search_bash":
+            if isinstance(content, str):
+                # Format bash command output
+                lines = content.split("\n")
+                if len(lines) > 100:
+                    preview = "\n".join(lines[:100])
+                    return f"{preview}\n... ({len(lines) - 100} more lines)"
+                return content
+            return ""
+        case "semantic_search":
+            if isinstance(content, str):
+                # Format semantic search results with similarity scores
+                return content[: min(len(content), 1000)] + (
+                    " ..." if len(content) > 1000 else ""
+                )
+            elif isinstance(content, list):
+                # Format list of semantic results
+                formatted = f"Found {len(content)} semantically similar result(s):\n\n"
+                for i, r in enumerate(content[:10], 1):
+                    if isinstance(r, dict):
+                        file_path = r.get("file_path", "unknown")
+                        start_line = r.get("start_line", 0) or 0
+                        similarity = r.get("similarity", 0.0)
+                        name = r.get("name", "")
+                        formatted += f"{i}. {file_path}:{start_line}"
+                        if name:
+                            formatted += f" - `{name}`"
+                        formatted += f" (similarity: {similarity:.3f})\n"
+                if len(content) > 10:
+                    formatted += f"\n... ({len(content) - 10} more results)"
+                return formatted
             return ""
         case "bash_command":
             if isinstance(content, Dict):
@@ -942,13 +1460,13 @@ description:
                     error_msg = f"Command failed with exit code {exit_code}"
                     if error:
                         error_msg += (
-                            f"\n\nError output:\n```\n{error[:min(len(error), 500)]}"
+                            f"\n\nError output:\n```\n{error[: min(len(error), 500)]}"
                         )
                         if len(error) > 500:
                             error_msg += " ..."
                         error_msg += "\n```"
                     if output:
-                        error_msg += f"\n\nStandard output:\n```\n{output[:min(len(output), 500)]}"
+                        error_msg += f"\n\nStandard output:\n```\n{output[: min(len(output), 500)]}"
                         if len(output) > 500:
                             error_msg += " ..."
                         error_msg += "\n```"
@@ -959,27 +1477,62 @@ description:
                     )
                     if output:
                         result_msg += (
-                            f"\n\nOutput:\n```\n{output[:min(len(output), 1000)]}"
+                            f"\n\nOutput:\n```\n{output[: min(len(output), 1000)]}"
                         )
                         if len(output) > 1000:
                             result_msg += "\n... (output truncated)"
                         result_msg += "\n```"
                     if error:
-                        result_msg += f"\n\nWarning/Error output:\n```\n{error[:min(len(error), 500)]}"
+                        result_msg += f"\n\nWarning/Error output:\n```\n{error[: min(len(error), 500)]}"
                         if len(error) > 500:
                             result_msg += " ..."
                         result_msg += "\n```"
                     return result_msg
             return ""
+        case "execute_terminal_command":
+            # Terminal command results are already formatted strings from the tool
+            # They may include session info for async mode or formatted terminal output
+            if isinstance(content, str):
+                # For async mode, content includes session info
+                if "Session ID:" in content or "async mode" in content:
+                    return content
+                # For sync mode, content is already formatted terminal result
+                # Truncate if too long
+                if len(content) > 2000:
+                    return f"{content[:2000]}\n... (output truncated)"
+                return content
+            # If content is a dict (shouldn't happen but handle gracefully)
+            if isinstance(content, Dict):
+                session_id = content.get("session_id")
+                if session_id:
+                    return f"🔄 Command started in async mode\n\n**Session ID:** `{session_id}`\n\nUse `terminal_session_output` tool to get output."
+                output = content.get("output", "")
+                error = content.get("error", "")
+                exit_code = content.get("exit_code", 0)
+                result_msg = f"Command executed (exit code: {exit_code})"
+                if output:
+                    result_msg += f"\n\nOutput:\n```\n{output[:min(len(output), 1000)]}"
+                    if len(output) > 1000:
+                        result_msg += "\n... (output truncated)"
+                    result_msg += "\n```"
+                if error:
+                    result_msg += f"\n\nError:\n```\n{error[:min(len(error), 500)]}"
+                    if len(error) > 500:
+                        result_msg += " ..."
+                    result_msg += "\n```"
+                return result_msg
+            return ""
         case (
-            "create_todo"
+            "read_todos"
+            | "write_todos"
+            | "add_todo"
             | "update_todo_status"
-            | "add_todo_note"
-            | "get_todo"
-            | "list_todos"
-            | "get_todo_summary"
+            | "remove_todo"
+            | "add_subtask"
+            | "set_dependency"
+            | "get_available_tasks"
         ):
-            # For todo tools, return the content directly as it already includes the formatted todo list
+            # For todo tools, return the content directly (may include formatted todo list)
             if isinstance(content, str):
                 return content
             return str(content)

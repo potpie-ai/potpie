@@ -22,6 +22,7 @@ from .utils.delegation_utils import (
 )
 from .utils.tool_utils import create_tool_call_response, create_tool_result_response
 from .utils.tool_call_stream_manager import ToolCallStreamManager
+from app.modules.conversations.exceptions import GenerationCancelled
 from app.modules.intelligence.agents.chat_agent import (
     ChatAgentResponse,
     ToolCallResponse,
@@ -216,6 +217,10 @@ class StreamProcessor:
         }
 
         async for node in run:
+            # Cooperative cancellation: exit if user hit stop
+            check = getattr(current_context, "check_cancelled", None)
+            if callable(check) and check():
+                raise GenerationCancelled()
             # Determine node type for logging
             is_model_request = Agent.is_model_request_node(node)
             is_call_tools = Agent.is_call_tools_node(node)
@@ -223,11 +228,7 @@ class StreamProcessor:
             node_type = (
                 "model_request"
                 if is_model_request
-                else "call_tools"
-                if is_call_tools
-                else "end"
-                if is_end
-                else "other"
+                else "call_tools" if is_call_tools else "end" if is_end else "other"
             )
 
             # Check if we've already processed this exact node object
@@ -263,6 +264,9 @@ class StreamProcessor:
                             request_stream, context
                         ):
                             chunk_count += 1
+                            check = getattr(current_context, "check_cancelled", None)
+                            if callable(check) and check():
+                                raise GenerationCancelled()
                             yield chunk
                         logger.info(
                             f"[{context}] Finished model request stream: yielded {chunk_count} chunks"
@@ -326,6 +330,8 @@ class StreamProcessor:
                 drained_streams: set = set()
                 # Track Redis stream consumer tasks for tool call streaming
                 redis_stream_tasks: Dict[str, asyncio.Task] = {}
+                # Map tool_call_id -> tool_name for yielding subagent text as stream_part (not main message)
+                delegation_tool_names: Dict[str, str] = {}
 
                 # Track event counts for debugging
                 tool_call_event_count = 0
@@ -425,30 +431,40 @@ class StreamProcessor:
                         except asyncio.QueueFull:
                             pass
 
-                async for event in handle_stream:
-                    # Yield any chunks from active delegation streams immediately
-                    # This ensures real-time streaming even when main stream is idle
-                    # Only process streams that haven't been fully drained yet
+                # Interleaved loop: drain delegation queues (subagent text) while waiting for
+                # the next tool-call event. The next event after a delegation call is the tool
+                # result, which only arrives when the subagent finishes - so we poll with
+                # asyncio.wait(FIRST_COMPLETED) so we never cancel the run's __anext__() (which
+                # runs the tool); when the drain timeout fires we just loop and drain, and the
+                # task that is getting the next event keeps running until the tool returns.
+                stream_iter = handle_stream.__aiter__()
+                DRAIN_POLL_TIMEOUT = 0.05  # seconds
+                next_event_task: Optional[asyncio.Task] = asyncio.create_task(
+                    stream_iter.__anext__()
+                )
+
+                while True:
+                    # Cooperative cancellation: exit if user hit stop
+                    check = getattr(current_context, "check_cancelled", None)
+                    if callable(check) and check():
+                        raise GenerationCancelled()
+                    # Drain delegation output queues and yield any available subagent chunks
                     for queue_key in list(output_queues.keys()):
                         if queue_key in drained_streams:
-                            continue  # Skip streams that have already been fully drained
+                            continue
                         output_queue = output_queues[queue_key]
-                        # Consume all available chunks from output queue
                         chunks_yielded = 0
                         while True:
                             try:
                                 chunk = output_queue.get_nowait()
                                 if chunk is None:
-                                    # Stream completed, mark as drained and clean up
                                     drained_streams.add(queue_key)
                                     output_queues.pop(queue_key, None)
-                                    # Only cleanup active_streams and tasks for non-Redis queues
                                     if not queue_key.endswith("_redis"):
                                         active_streams.pop(queue_key, None)
                                         self.delegation_manager.remove_active_stream(
                                             queue_key
                                         )
-                                        # Cancel and wait for consumer task
                                         if queue_key in queue_consumer_tasks:
                                             task = queue_consumer_tasks.pop(queue_key)
                                             if not task.done():
@@ -457,7 +473,6 @@ class StreamProcessor:
                                                     await task
                                                 except asyncio.CancelledError:
                                                     pass
-                                        # Cancel the streaming task if it's still running
                                         if queue_key in streaming_tasks:
                                             task = streaming_tasks.pop(queue_key)
                                             if not task.done():
@@ -467,7 +482,6 @@ class StreamProcessor:
                                                 except asyncio.CancelledError:
                                                     pass
                                     else:
-                                        # Clean up Redis stream task
                                         actual_call_id = queue_key.replace("_redis", "")
                                         if actual_call_id in redis_stream_tasks:
                                             task = redis_stream_tasks.pop(
@@ -481,20 +495,86 @@ class StreamProcessor:
                                                     pass
                                     break
                                 chunks_yielded += 1
-                                # Subagent chunks should only contain text (tool calls are filtered out)
-                                # Log text content for debugging
-                                if chunk.response:
+                                # Yield subagent text as tool_calls stream_part only (empty response)
+                                # so the frontend shows it in the delegation card and does not add to main message
+                                if queue_key.endswith("_redis"):
+                                    yield chunk
+                                elif chunk.response:
+                                    tool_name_for_call = delegation_tool_names.get(
+                                        queue_key, "subagent"
+                                    )
                                     logger.debug(
-                                        f"[process_tool_call_node] Yielding subagent text chunk "
+                                        f"[process_tool_call_node] Yielding subagent text as stream_part "
                                         f"(queue_key={queue_key}, length={len(chunk.response)})"
                                     )
-                                yield chunk
+                                    yield ChatAgentResponse(
+                                        response="",
+                                        tool_calls=[
+                                            ToolCallResponse(
+                                                call_id=queue_key,
+                                                event_type=ToolCallEventType.DELEGATION_RESULT,
+                                                tool_name=tool_name_for_call,
+                                                tool_response="",
+                                                tool_call_details={},
+                                                stream_part=chunk.response,
+                                                is_complete=False,
+                                            )
+                                        ],
+                                        citations=chunk.citations or [],
+                                    )
+                                else:
+                                    yield chunk
                             except asyncio.QueueEmpty:
                                 if chunks_yielded > 0:
                                     logger.debug(
                                         f"[process_tool_call_node] Yielded {chunks_yielded} chunks from queue {queue_key}"
                                     )
                                 break
+
+                    # Wait for EITHER next event OR drain timeout; do not cancel the next-event
+                    # task on timeout so the run can finish the tool and produce the tool result.
+                    drain_done = asyncio.create_task(asyncio.sleep(DRAIN_POLL_TIMEOUT))
+                    try:
+                        done_set, _ = await asyncio.wait(
+                            [next_event_task, drain_done],
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                    except asyncio.CancelledError:
+                        drain_done.cancel()
+                        try:
+                            await drain_done
+                        except asyncio.CancelledError:
+                            pass
+                        logger.warning(
+                            "[process_tool_call_node] Async iteration cancelled during delegation drain"
+                        )
+                        raise RuntimeError(
+                            "Stream iteration was cancelled (e.g. during subagent delegation)"
+                        ) from None
+
+                    if drain_done in done_set:
+                        drain_done.cancel()
+                        try:
+                            await drain_done
+                        except asyncio.CancelledError:
+                            pass
+                        continue
+
+                    # next_event_task completed
+                    try:
+                        event = next_event_task.result()
+                    except StopAsyncIteration:
+                        break
+                    except asyncio.CancelledError:
+                        logger.warning(
+                            "[process_tool_call_node] Async iteration cancelled during delegation drain"
+                        )
+                        raise RuntimeError(
+                            "Stream iteration was cancelled (e.g. during subagent delegation)"
+                        ) from None
+
+                    # Schedule next event for next iteration
+                    next_event_task = asyncio.create_task(stream_iter.__anext__())
 
                     if isinstance(event, FunctionToolCallEvent):
                         tool_call_event_count += 1
@@ -565,6 +645,7 @@ class StreamProcessor:
                                 output_queue: asyncio.Queue = asyncio.Queue()
                                 active_streams[tool_call_id] = input_queue
                                 output_queues[tool_call_id] = output_queue
+                                delegation_tool_names[tool_call_id] = tool_name
                                 self.delegation_manager.register_active_stream(
                                     tool_call_id, input_queue
                                 )
@@ -594,92 +675,9 @@ class StreamProcessor:
                                     f"tool_call_id={tool_call_id[:8]}..."
                                 )
 
-                                # Start Redis stream consumer task for tool call streaming
-                                async def consume_redis_stream_to_queue(
-                                    call_id: str,
-                                    tool_name: str,
-                                    redis_queue: asyncio.Queue,
-                                ):
-                                    """Consume Redis stream for tool call and put updates in queue"""
-                                    try:
-                                        async for stream_event in self.tool_call_stream_manager.consume_stream(
-                                            call_id
-                                        ):
-                                            if (
-                                                stream_event.get("type")
-                                                == "tool_call_stream_part"
-                                            ):
-                                                stream_part = stream_event.get(
-                                                    "stream_part", ""
-                                                )
-                                                is_complete = (
-                                                    stream_event.get(
-                                                        "is_complete", "false"
-                                                    )
-                                                    == "true"
-                                                )
-                                                tool_response = stream_event.get(
-                                                    "tool_response", ""
-                                                )
-                                                tool_call_details = stream_event.get(
-                                                    "tool_call_details", {}
-                                                )
-
-                                                # Create tool call response with stream_part
-                                                stream_tool_response = ToolCallResponse(
-                                                    call_id=call_id,
-                                                    event_type=(
-                                                        ToolCallEventType.DELEGATION_RESULT
-                                                        if is_delegation_tool(tool_name)
-                                                        else ToolCallEventType.RESULT
-                                                    ),
-                                                    tool_name=tool_name,
-                                                    tool_response=tool_response
-                                                    or stream_part,
-                                                    tool_call_details=tool_call_details,
-                                                    stream_part=stream_part,
-                                                    is_complete=is_complete,
-                                                )
-
-                                                await redis_queue.put(
-                                                    ChatAgentResponse(
-                                                        response="",
-                                                        tool_calls=[
-                                                            stream_tool_response
-                                                        ],
-                                                        citations=[],
-                                                    )
-                                                )
-
-                                                if is_complete:
-                                                    await redis_queue.put(None)
-                                                    break
-
-                                            elif (
-                                                stream_event.get("type")
-                                                == "tool_call_stream_end"
-                                            ):
-                                                await redis_queue.put(None)
-                                                break
-
-                                    except Exception as e:
-                                        logger.warning(
-                                            f"Error consuming Redis stream for call_id {call_id}: {e}"
-                                        )
-                                        await redis_queue.put(None)
-
-                                # Create a queue for Redis stream updates
-                                redis_stream_queue: asyncio.Queue = asyncio.Queue()
-                                redis_stream_task = asyncio.create_task(
-                                    consume_redis_stream_to_queue(
-                                        tool_call_id, tool_name, redis_stream_queue
-                                    )
-                                )
-                                redis_stream_tasks[tool_call_id] = redis_stream_task
-                                # Store the queue for consumption in the main loop
-                                output_queues[f"{tool_call_id}_redis"] = (
-                                    redis_stream_queue
-                                )
+                                # Subagent chunks are streamed only via the in-process output_queue
+                                # (delegation_manager also publishes to Redis for potential future use;
+                                # we do not consume that here to avoid yielding each chunk twice.)
 
                                 # Start a background task to continuously consume from input_queue
                                 # and forward to output_queue for real-time streaming
@@ -694,19 +692,11 @@ class StreamProcessor:
                                     f"tool_call_id={tool_call_id[:8]}..."
                                 )
 
-                                # Yield a visual indicator that subagent is starting
-                                yield ChatAgentResponse(
-                                    response="\n\n---\n🤖 **Subagent Starting...**\n\n",
-                                    tool_calls=[],
-                                    citations=[],
-                                )
-
-                                # Immediately try to consume any early chunks from output queue
+                                # Do not yield subagent chunks to the main stream; they are streamed
+                                # separately. Consume any early chunks so we don't block.
                                 chunks, completed = await self.consume_queue_chunks(
                                     output_queue, timeout=0.01, max_chunks=5
                                 )
-                                for chunk in chunks:
-                                    yield chunk
                                 if completed:
                                     # Clean up if stream completed immediately
                                     active_streams.pop(tool_call_id, None)
@@ -793,8 +783,7 @@ class StreamProcessor:
                                         output_queue, timeout=0.1, max_chunks=50
                                     )
                                     total_drained_chunks += len(chunks)
-                                    for chunk in chunks:
-                                        yield chunk
+                                    # Drain only; do not yield subagent chunks to main stream
                                     if completed:
                                         # Mark as drained after completion
                                         drained_streams.add(tool_call_id)
@@ -825,13 +814,6 @@ class StreamProcessor:
                                     f"[process_tool_call_node] No output queue found for tool_call_id={tool_call_id[:8]}... "
                                     f"when trying to drain"
                                 )
-
-                            # Add a visual separator after subagent output
-                            yield ChatAgentResponse(
-                                response="\n\n---\n✅ **Subagent Complete**\n\n",
-                                tool_calls=[],
-                                citations=[],
-                            )
 
                             # Clean up streams and tasks
                             active_streams.pop(tool_call_id, None)
@@ -925,8 +907,7 @@ class StreamProcessor:
                             output_queue, timeout=0.1, max_chunks=50
                         )
                         total_final_chunks += len(chunks)
-                        for chunk in chunks:
-                            yield chunk
+                        # Drain only; do not yield subagent chunks to main stream
                         if completed:
                             drained_streams.add(queue_key)
                             final_drain_elapsed = (
@@ -1106,6 +1087,10 @@ class StreamProcessor:
             logger.warning("Tool call stream would block - continuing...")
         except Exception as e:
             error_str = str(e)
+            # Re-raise stream iteration cancelled so the task fails cleanly instead of
+            # leaving the pydantic-ai run inconsistent ("the stream should set _next_node before it ends").
+            if "stream iteration was cancelled" in error_str.lower():
+                raise
             # Check for duplicate tool_result error
             if "tool_result" in error_str.lower() and "multiple" in error_str.lower():
                 logger.error(

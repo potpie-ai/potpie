@@ -68,7 +68,7 @@ class AddRequirementsInput(BaseModel):
 
 
 def add_requirements_tool(input_data: AddRequirementsInput) -> str:
-    """Add or update requirements document"""
+    """Add or update requirements document."""
     try:
         req_manager = _get_requirement_manager()
         req_manager.set_requirements(input_data.requirements)
@@ -80,27 +80,27 @@ def add_requirements_tool(input_data: AddRequirementsInput) -> str:
         else:
             result += "No requirements added yet."
 
-        # Automatically create a todo for verification
+        # Automatically create a todo for verification (pydantic-ai-todo)
         try:
             from app.modules.intelligence.tools.todo_management_tool import (
-                _get_todo_manager,
+                get_todo_storage,
             )
+            from pydantic_ai_todo.types import Todo
 
-            todo_manager = _get_todo_manager()
-            # Check if verification todo already exists
-            todos = todo_manager.list_todos()
+            storage = get_todo_storage()
             verification_todo_exists = any(
-                "verify all requirements" in todo.get("title", "").lower()
-                for todo in todos
+                "verify all requirements" in (t.content or "").lower()
+                for t in storage.todos
             )
 
             if not verification_todo_exists:
-                verification_todo_id = todo_manager.create_todo(
-                    title="Verify all requirements",
-                    description="Before finalizing your response, read the requirements document and verify that each requirement is met. Check each item systematically.",
-                    priority="high",
+                new_todo = Todo(
+                    content="Verify all requirements: read the requirements document and verify each requirement is met. Check each item systematically.",
+                    status="pending",
+                    active_form="Verifying all requirements",
                 )
-                result += f"\n\n📝 Created verification todo (ID: {verification_todo_id}) to verify all requirements before final response.\n"
+                storage.todos = [*storage.todos, new_todo]
+                result += f"\n\n📝 Created verification todo (ID: {new_todo.id}) to verify all requirements before final response.\n"
         except ImportError:
             # Todo management not available, skip
             pass

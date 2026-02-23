@@ -10,8 +10,11 @@ def generate_content_hash(node_text: str, node_type: Optional[str] = None) -> st
     """
     Generate SHA256 hash of normalized node content with cache versioning.
 
+    Note: Unresolved node_id references should already be normalized by
+    replace_referenced_text() before this function is called.
+
     Args:
-        node_text: The code content to hash
+        node_text: The code content to hash (should already have references resolved/normalized)
         node_type: Optional node type for differentiation
 
     Returns:
@@ -47,7 +50,7 @@ def has_unresolved_references(node_text: str) -> bool:
 
 def is_content_cacheable(node_text: str, min_length: int = 100) -> bool:
     """
-    Determine if content is worth caching based on size and complexity.
+    Determine if content is worth caching based on size, complexity, and resolvability.
 
     Args:
         node_text: The code content to evaluate
@@ -56,13 +59,19 @@ def is_content_cacheable(node_text: str, min_length: int = 100) -> bool:
     Returns:
         True if content should be cached
     """
+    stripped = node_text.strip()
+
     # Cache only substantial content to avoid overhead
-    if len(node_text.strip()) < min_length:
+    if len(stripped) < min_length:
+        return False
+
+    # Skip content with unresolved references - low reuse value
+    if has_unresolved_references(node_text):
         return False
 
     # Skip very repetitive content (likely generated code)
-    lines = node_text.strip().split("\n")
-    if len(set(lines)) < len(lines) * 0.3:  # <30% unique lines
+    lines = stripped.split("\n")
+    if len(lines) > 1 and len(set(lines)) < len(lines) * 0.3:  # <30% unique lines
         return False
 
     return True

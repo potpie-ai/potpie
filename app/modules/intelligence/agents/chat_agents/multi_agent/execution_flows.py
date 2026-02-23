@@ -11,13 +11,22 @@ from .utils.message_history_utils import (
     prepare_multimodal_message_history,
 )
 from .utils.multimodal_utils import create_multimodal_user_content
+from app.modules.conversations.exceptions import GenerationCancelled
 from app.modules.intelligence.agents.chat_agent import ChatContext, ChatAgentResponse
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
 
-def init_managers(conversation_id: Optional[str] = None):
+def init_managers(
+    conversation_id: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    tunnel_url: Optional[str] = None,
+    local_mode: bool = False,
+    repository: Optional[str] = None,
+    branch: Optional[str] = None,
+):
     """Initialize managers for agent run.
 
     This initializes all tool managers for the current agent execution context.
@@ -26,6 +35,12 @@ def init_managers(conversation_id: Optional[str] = None):
 
     Args:
         conversation_id: The conversation ID for persisting state (e.g., code changes) across messages.
+        agent_id: The agent ID to determine routing (e.g., "code" for LocalServer routing).
+        user_id: The user ID for tunnel routing.
+        tunnel_url: Optional tunnel URL from request (takes priority over stored state).
+        local_mode: True only for VS Code extension requests; when True, show_diff refuses to execute (extension handles diff).
+        repository: Optional repository (e.g. owner/repo) for tunnel lookup by workspace.
+        branch: Optional branch for tunnel lookup by workspace.
     """
     from app.modules.intelligence.tools.todo_management_tool import (
         _reset_todo_manager,
@@ -38,10 +53,21 @@ def init_managers(conversation_id: Optional[str] = None):
     )
 
     _reset_todo_manager()
-    _init_code_changes_manager(conversation_id)
+    logger.info(
+        f"🔄 [init_managers] Calling _init_code_changes_manager with tunnel_url={tunnel_url}, local_mode={local_mode}, repository={repository}, branch={branch}"
+    )
+    _init_code_changes_manager(
+        conversation_id=conversation_id,
+        agent_id=agent_id,
+        user_id=user_id,
+        tunnel_url=tunnel_url,
+        local_mode=local_mode,
+        repository=repository,
+        branch=branch,
+    )
     _reset_requirement_manager()
     logger.info(
-        f"🔄 Initialized managers for agent run (conversation_id={conversation_id})"
+        f"🔄 Initialized managers for agent run (conversation_id={conversation_id}, agent_id={agent_id}, user_id={user_id}, tunnel_url={tunnel_url})"
     )
 
 
@@ -251,12 +277,16 @@ class StreamingExecutionFlow:
 
                 # Check for specific error types
                 if isinstance(mcp_error, ModelHTTPError):
-                    error_body = getattr(mcp_error, "body", {})
-                    error_message = (
-                        error_body.get("error", {}).get("message", "")
-                        if isinstance(error_body, dict)
-                        else str(error_body)
-                    )
+                    error_body = getattr(mcp_error, "body", None) or {}
+                    if isinstance(error_body, dict):
+                        # Support both top-level "message" (OpenAI-style) and nested "error.message"
+                        error_message = error_body.get("message", "")
+                        if not error_message:
+                            err_obj = error_body.get("error")
+                            if isinstance(err_obj, dict):
+                                error_message = err_obj.get("message", "")
+                    else:
+                        error_message = str(error_body)
 
                     # Check for duplicate tool_result error
                     if (
@@ -315,6 +345,8 @@ class StreamingExecutionFlow:
                         # Clear the reference when done
                         self.current_supervisor_run_ref["run"] = None
 
+        except GenerationCancelled:
+            raise
         except Exception as e:
             error_str = str(e)
             # Check if this is a tool retry error from pydantic-ai
@@ -415,6 +447,8 @@ class MultimodalStreamingExecutionFlow:
                     # Clear the reference when done
                     self.current_supervisor_run_ref["run"] = None
 
+        except GenerationCancelled:
+            raise
         except Exception as e:
             logger.error(
                 f"Error in multimodal multi-agent stream: {str(e)}", exc_info=True

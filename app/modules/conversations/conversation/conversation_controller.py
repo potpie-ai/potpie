@@ -51,11 +51,14 @@ class ConversationController:
         )
 
     async def create_conversation(
-        self, conversation: CreateConversationRequest, hidden: bool = False
+        self,
+        conversation: CreateConversationRequest,
+        hidden: bool = False,
+        local_mode: bool = False,
     ) -> CreateConversationResponse:
         try:
             conversation_id, message = await self.service.create_conversation(
-                conversation, self.user_id, hidden
+                conversation, self.user_id, hidden, local_mode=local_mode
             )
             return CreateConversationResponse(
                 message=message, conversation_id=conversation_id
@@ -123,10 +126,11 @@ class ConversationController:
         conversation_id: str,
         node_ids: List[NodeContext] = [],
         stream: bool = True,
+        local_mode: bool = False,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         try:
             async for chunk in self.service.regenerate_last_message(
-                conversation_id, self.user_id, node_ids, stream
+                conversation_id, self.user_id, node_ids, stream, local_mode=local_mode
             ):
                 yield chunk
         except ConversationNotFoundError as e:

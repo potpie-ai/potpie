@@ -15,7 +15,7 @@ from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -32,7 +32,7 @@ class QnAAgent(ChatAgent):
         self.tools_provider = tools_provider
         self.prompt_provider = prompt_provider
 
-    def _build_agent(self) -> ChatAgent:
+    def _build_agent(self, ctx: Optional[ChatContext] = None) -> ChatAgent:
         agent_config = AgentConfig(
             role="Codebase Q&A Specialist",
             goal="Provide comprehensive, well-structured answers to questions about the codebase by systematically exploring code, understanding context, and delivering thorough explanations grounded in actual code.",
@@ -53,6 +53,14 @@ class QnAAgent(ChatAgent):
                 )
             ],
         )
+
+        # Exclude embedding-dependent tools during INFERRING status
+        exclude_embedding_tools = ctx.is_inferring() if ctx else False
+        if exclude_embedding_tools:
+            logger.info(
+                "Project is in INFERRING status - excluding embedding-dependent tools (ask_knowledge_graph_queries, get_nodes_from_tags)"
+            )
+
         tools = self.tools_provider.get_tools(
             [
                 "get_code_from_multiple_node_ids",
@@ -64,17 +72,21 @@ class QnAAgent(ChatAgent):
                 "webpage_extractor",
                 "web_search_tool",
                 "fetch_file",
+                "fetch_files_batch",
                 "analyze_code_structure",
                 "bash_command",
-                "create_todo",
+                "read_todos",
+                "write_todos",
+                "add_todo",
                 "update_todo_status",
-                "get_todo",
-                "list_todos",
-                "add_todo_note",
-                "get_todo_summary",
+                "remove_todo",
+                "add_subtask",
+                "set_dependency",
+                "get_available_tasks",
                 "add_requirements",
                 "get_requirements",
-            ]
+            ],
+            exclude_embedding_tools=exclude_embedding_tools,
         )
 
         supports_pydantic = self.llm_provider.supports_pydantic("chat")
@@ -142,13 +154,12 @@ class QnAAgent(ChatAgent):
         return ctx
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
-        return await self._build_agent().run(await self._enriched_context(ctx))
+        return await self._build_agent(ctx).run(ctx)
 
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-        ctx = await self._enriched_context(ctx)
-        async for chunk in self._build_agent().run_stream(ctx):
+        async for chunk in self._build_agent(ctx).run_stream(ctx):
             yield chunk
 
 
@@ -203,8 +214,8 @@ For **complex questions** (multi-step, broad scope, requires deep exploration):
    - What level of detail is needed
    - Any specific components to cover
 
-2. **Call `create_todo`** to break down exploration:
-   - Example: "Locate definition of X class"
+2. **Call `add_todo`** to break down exploration (content + active_form):
+   - Example: content="Locate definition of X class", active_form="Locating definition of X class"
    - Example: "Trace usage of Y function across codebase"
    - Example: "Understand relationship between A and B"
    - Example: "Find all components in Z module"
@@ -297,7 +308,7 @@ For complex questions, structure your answer into logical sections:
 - Examples/Use Cases
 - Edge Cases/Considerations
 
-**Use `add_todo_note`** to document key findings as you explore.
+Document key findings as you explore; use `update_todo_status` to mark tasks in progress or completed.
 
 ---
 
@@ -376,7 +387,7 @@ Before finalizing, check:
 - [ ] **Complete context**: No unexplained assumptions
 - [ ] **Actionable**: Can the user use this information?
 
-**For tracked questions, call `list_todos`** and ensure all exploration tasks are completed.
+**For tracked questions, call `read_todos`** and ensure all exploration tasks are completed.
 
 ---
 
@@ -460,9 +471,9 @@ Before finalizing, check:
 
 1. **Analyze**: Multi-part "how" question - needs implementation details, flow, components
 2. **Plan**:
-   - `create_todo("Locate authentication module/entry point")`
-   - `create_todo("Trace authentication flow from request to response")`
-   - `create_todo("Identify all authentication-related components")`
+   - `add_todo(content="Locate authentication module/entry point", active_form="Locating authentication module")`
+   - `add_todo(content="Trace authentication flow from request to response", active_form="Tracing authentication flow")`
+   - `add_todo(content="Identify all authentication-related components", active_form="Identifying auth components")`
    - `add_requirements("- Explain authentication flow step-by-step\n- List all components involved\n- Show code examples of key functions")`
 3. **Explore**:
    - Use `ask_knowledge_graph_queries` with "authentication", "login", "auth"

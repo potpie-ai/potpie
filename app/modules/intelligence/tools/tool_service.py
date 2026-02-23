@@ -2,6 +2,8 @@ from typing import Any, Dict, List
 
 from sqlalchemy.orm import Session
 
+from app.modules.utils.logger import setup_logger
+
 from app.modules.intelligence.tools.change_detection.change_detection_tool import (
     get_change_detection_tool,
 )
@@ -40,9 +42,19 @@ from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool impo
 )
 from app.modules.intelligence.tools.code_query_tools.get_file_content_by_path import (
     fetch_file_tool,
+    fetch_files_batch_tool,
 )
 from app.modules.intelligence.tools.code_query_tools.bash_command_tool import (
     bash_command_tool,
+)
+from app.modules.intelligence.tools.code_query_tools.apply_changes_tool import (
+    apply_changes_tool,
+)
+from app.modules.intelligence.tools.code_query_tools.git_commit_tool import (
+    git_commit_tool,
+)
+from app.modules.intelligence.tools.code_query_tools.git_push_tool import (
+    git_push_tool,
 )
 from app.modules.intelligence.tools.tool_schema import ToolInfo, ToolInfoWithParameters
 from app.modules.intelligence.tools.web_tools.code_provider_tool import (
@@ -96,7 +108,17 @@ from .code_changes_manager import create_code_changes_management_tools
 from .requirement_verification_tool import create_requirement_verification_tools
 
 
+logger = setup_logger(__name__)
+
+
 class ToolService:
+    # Tools that depend on embeddings/docstrings and should be disabled during INFERRING status
+    # These tools require AI-inferenced content (embeddings, tags) that doesn't exist during inference
+    EMBEDDING_DEPENDENT_TOOLS = {
+        "ask_knowledge_graph_queries",  # Uses vector search which requires embeddings
+        "get_nodes_from_tags",  # Uses AI-generated tags which may not exist yet
+    }
+
     def __init__(self, db: Session, user_id: str):
         self.db = db
         self.user_id = user_id
@@ -123,12 +145,43 @@ class ToolService:
         self.provider_service = ProviderService.create(db, user_id)
         self.tools = self._initialize_tools()
 
-    def get_tools(self, tool_names: List[str]) -> List[StructuredTool]:
-        """get tools if exists"""
+    def get_tools(
+        self, tool_names: List[str], exclude_embedding_tools: bool = False
+    ) -> List[StructuredTool]:
+        """Get tools by name if they exist.
+
+        Args:
+            tool_names: List of tool names to retrieve
+            exclude_embedding_tools: If True, excludes tools that depend on embeddings/AI-generated content.
+                                    Use this when project is in INFERRING status.
+
+        Returns:
+            List of StructuredTool instances for the requested tool names
+
+        Note: Tool filtering based on local_mode is handled in the agent
+        (e.g., code_gen_agent.py) by specifying different tool lists.
+        """
+        if not tool_names:
+            logger.debug(
+                "ToolService.get_tools: tool_names is empty; returning empty list"
+            )
+            return []
         tools = []
+        missing: List[str] = []
         for tool_name in tool_names:
+            # Skip embedding-dependent tools if requested (during INFERRING status)
+            if exclude_embedding_tools and tool_name in self.EMBEDDING_DEPENDENT_TOOLS:
+                continue
             if self.tools.get(tool_name) is not None:
                 tools.append(self.tools[tool_name])
+            else:
+                missing.append(tool_name)
+        if missing:
+            logger.warning(
+                "ToolService.get_tools: requested tool names not found (omitted) missing={} returned_count={}",
+                missing,
+                len(tools),
+            )
         return tools
 
     def _initialize_tools(self) -> Dict[str, Any]:
@@ -187,6 +240,7 @@ class ToolService:
                 self.db, self.provider_service, self.user_id
             ),
             "fetch_file": fetch_file_tool(self.db, self.user_id),
+            "fetch_files_batch": fetch_files_batch_tool(self.db, self.user_id),
             "analyze_code_structure": universal_analyze_code_tool(
                 self.db, self.user_id
             ),
@@ -196,6 +250,20 @@ class ToolService:
         bash_tool = bash_command_tool(self.db, self.user_id)
         if bash_tool:
             tools["bash_command"] = bash_tool
+
+        # Add git workflow tools if repo manager is enabled
+        apply_tool = apply_changes_tool(self.db, self.user_id)
+        if apply_tool:
+            tools["apply_changes"] = apply_tool
+
+        commit_tool = git_commit_tool(self.db, self.user_id)
+        if commit_tool:
+            tools["git_commit"] = commit_tool
+
+        push_tool = git_push_tool(self.db, self.user_id)
+        if push_tool:
+            tools["git_push"] = push_tool
+
         # Add todo management tools
         todo_tools = create_todo_management_tools()
         for tool in todo_tools:

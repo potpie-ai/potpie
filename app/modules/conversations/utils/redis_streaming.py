@@ -1,4 +1,5 @@
 import redis
+import time
 from typing import Generator, Optional
 import json
 from datetime import datetime
@@ -216,10 +217,58 @@ class RedisStreamManager:
         task_id = self.redis_client.get(task_id_key)
         return task_id.decode() if task_id else None
 
-    def clear_session(self, conversation_id: str, run_id: str) -> None:
-        """Clear session data when stopping - publishes end event and cleans up"""
+    def get_stream_snapshot(self, conversation_id: str, run_id: str) -> dict:
+        """
+        Read all events from the stream and return accumulated chunk content.
+        Used when stopping generation so we can persist partial response before clearing.
+        Returns dict with keys: content (str), citations (list), tool_calls (list), chunk_count (int).
+        """
+        key = self.stream_key(conversation_id, run_id)
+        content = ""
+        citations = []
+        tool_calls = []
+        chunk_count = 0
         try:
-            # Publish an end event with cancelled status so clients know to stop
+            if not self.redis_client.exists(key):
+                return {
+                    "content": content,
+                    "citations": citations,
+                    "tool_calls": tool_calls,
+                    "chunk_count": chunk_count,
+                }
+            events = self.redis_client.xrange(key, min="-", max="+")
+            for event_id, event_data in events:
+                formatted = self._format_event(event_id, event_data)
+                if formatted.get("type") != "chunk":
+                    continue
+                chunk_count += 1
+                content += formatted.get("content", "") or ""
+                for c in formatted.get("citations") or []:
+                    if c not in citations:
+                        citations.append(c)
+                for tc in formatted.get("tool_calls") or []:
+                    tool_calls.append(tc)
+            return {
+                "content": content,
+                "citations": citations,
+                "tool_calls": tool_calls,
+                "chunk_count": chunk_count,
+            }
+        except Exception as e:
+            logger.error(
+                f"Failed to get stream snapshot for {conversation_id}:{run_id}: {str(e)}"
+            )
+            return {
+                "content": content,
+                "citations": citations,
+                "tool_calls": tool_calls,
+                "chunk_count": chunk_count,
+            }
+
+    def clear_session(self, conversation_id: str, run_id: str) -> None:
+        """Clear session data when stopping - publishes end event, then removes all keys from Redis."""
+        try:
+            # Publish an end event with cancelled status so clients know to stop (before deleting stream)
             self.publish_event(
                 conversation_id,
                 run_id,
@@ -230,10 +279,22 @@ class RedisStreamManager:
                 },
             )
 
-            # Set task status to cancelled
+            # Set task status to cancelled so any in-flight consumers see it
             self.set_task_status(conversation_id, run_id, "cancelled")
 
-            logger.info(f"Cleared session for {conversation_id}:{run_id}")
+            # Brief delay so any client blocking on xread can receive the end event before we delete the stream
+            time.sleep(0.2)
+
+            # Remove this session's data from Redis so the stream and metadata are gone
+            stream_key = self.stream_key(conversation_id, run_id)
+            cancel_key = f"cancel:{conversation_id}:{run_id}"
+            task_id_key = f"task:id:{conversation_id}:{run_id}"
+            status_key = f"task:status:{conversation_id}:{run_id}"
+            self.redis_client.delete(stream_key, cancel_key, task_id_key, status_key)
+
+            logger.info(
+                f"Cleared session for {conversation_id}:{run_id} (stream and keys removed from Redis)"
+            )
         except Exception as e:
             logger.error(
                 f"Failed to clear session for {conversation_id}:{run_id}: {str(e)}"

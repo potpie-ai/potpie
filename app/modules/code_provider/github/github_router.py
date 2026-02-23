@@ -1,4 +1,4 @@
-from fastapi import Depends, Query
+from fastapi import Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
@@ -12,34 +12,82 @@ router = APIRouter()
 
 @router.get("/github/user-repos")
 async def get_user_repos(
-    user=Depends(AuthService.check_auth), db: Session = Depends(get_db)
+    search: str = Query(None, description="Search query to filter repositories"),
+    limit: int | None = Query(None, ge=1, description="Number of repositories to return"),
+    offset: int = Query(0, ge=0, description="Number of repositories to skip"),
+    user=Depends(AuthService.check_auth),
+    db: Session = Depends(get_db),
 ):
-    user_repo_list = await CodeProviderController(db).get_user_repos(user=user)
+    controller = CodeProviderController(db)
+    
+    # Get repos (controller handles search filtering internally)
+    # We pass search=None initially to get all repos, then filter after adding demo repos
+    user_repo_list = await controller.get_user_repos(user=user, search=None)
+    
+    # Add demo repos if not in development mode
     if not config_provider.get_is_development_mode():
-        user_repo_list["repositories"].extend(config_provider.get_demo_repo_list())
+        demo_repos = config_provider.get_demo_repo_list()
+        if demo_repos:
+            user_repo_list["repositories"].extend(demo_repos)
 
     # Remove duplicates while preserving order
     seen = set()
     deduped_repos = []
-    for repo in reversed(user_repo_list["repositories"]):
+    for repo in user_repo_list.get("repositories", []):
+        if not isinstance(repo, dict):
+            continue
         # Create tuple of values to use as hash key
-        repo_key = repo["full_name"]
+        repo_key = repo.get("full_name")
+        if not repo_key:
+            continue
 
         if repo_key not in seen:
             seen.add(repo_key)
             deduped_repos.append(repo)
 
     user_repo_list["repositories"] = deduped_repos
-    return user_repo_list
+    
+    # Apply search filter after deduplication and demo repo addition
+    # This ensures search works on the complete, deduplicated list
+    if search:
+        try:
+            search_query = controller._normalize_search_query(search)
+            if search_query:
+                user_repo_list["repositories"] = controller._filter_repositories(
+                    user_repo_list["repositories"], search_query
+                )
+        except HTTPException:
+            # Re-raise HTTP exceptions (e.g., query too long)
+            raise
+        except Exception as e:
+            from app.modules.utils.logger import setup_logger
+            logger = setup_logger(__name__)
+            logger.warning(f"Error filtering repositories: {str(e)}")
+
+    # Pagination: offset applied regardless of limit; always return same structure
+    repos = user_repo_list["repositories"]
+    total_count = len(repos)
+    paginated_repos = repos[offset : offset + limit] if limit is not None else repos[offset:]
+    has_next_page = (offset + (limit or total_count)) < total_count
+    return {
+        "repositories": paginated_repos,
+        "has_next_page": has_next_page,
+        "total_count": total_count,
+    }
 
 
 @router.get("/github/get-branch-list")
 async def get_branch_list(
     repo_name: str = Query(..., description="Repository name"),
+    limit: int | None = Query(None, ge=1, description="Number of branches to return"),
+    offset: int = Query(0, ge=0, description="Number of branches to skip"),
+    search: str = Query(None, description="Search query to filter branches"),
     user=Depends(AuthService.check_auth),
     db: Session = Depends(get_db),
 ):
-    return await CodeProviderController(db).get_branch_list(repo_name=repo_name)
+    return await CodeProviderController(db).get_branch_list(
+        repo_name=repo_name, limit=limit, offset=offset, search=search
+    )
 
 
 @router.get("/github/check-public-repo")

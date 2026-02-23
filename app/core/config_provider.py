@@ -73,7 +73,16 @@ class ConfigProvider:
         return self.neo4j_config
 
     def get_github_key(self):
-        return self.github_key
+        """Return GitHub App private key, with literal \\n converted to newlines.
+
+        When GITHUB_PRIVATE_KEY is set in .env or deployment config, newlines are
+        often stored as the two characters \\n. GitHub's JWT auth requires a valid
+        PEM key; without real newlines the JWT is invalid and API returns 401
+        'A JSON web token could not be decoded'.
+        """
+        if not self.github_key:
+            return self.github_key
+        return self.github_key.replace("\\n", "\n").strip()
 
     def is_github_configured(self):
         """Check if GitHub credentials are configured."""
@@ -98,44 +107,28 @@ class ConfigProvider:
                 "owner": "calcom",
             },
             {
-                "id": "demo5",
-                "name": "formbricks",
-                "full_name": "formbricks/formbricks",
+                "id": "demo9",
+                "name": "electron",
+                "full_name": "electron/electron",
                 "private": False,
-                "url": "https://github.com/formbricks/formbricks",
-                "owner": "formbricks",
+                "url": "https://github.com/electron/electron",
+                "owner": "electron",
             },
             {
-                "id": "demo3",
-                "name": "gateway",
-                "full_name": "Portkey-AI/gateway",
+                "id": "demo10",
+                "name": "openclaw",
+                "full_name": "openclaw/openclaw",
                 "private": False,
-                "url": "https://github.com/Portkey-AI/gateway",
-                "owner": "Portkey-AI",
+                "url": "https://github.com/openclaw/openclaw",
+                "owner": "openclaw",
             },
             {
-                "id": "demo2",
-                "name": "crewAI",
-                "full_name": "crewAIInc/crewAI",
+                "id": "demo11",
+                "name": "pydantic-ai",
+                "full_name": "pydantic/pydantic-ai",
                 "private": False,
-                "url": "https://github.com/crewAIInc/crewAI",
-                "owner": "crewAIInc",
-            },
-            {
-                "id": "demo1",
-                "name": "agentops",
-                "full_name": "AgentOps-AI/agentops",
-                "private": False,
-                "url": "https://github.com/AgentOps-AI/agentops",
-                "owner": "AgentOps-AI",
-            },
-            {
-                "id": "demo0",
-                "name": "agentstack",
-                "full_name": "AgentOps-AI/AgentStack",
-                "private": False,
-                "url": "https://github.com/AgentOps-AI/AgentStack",
-                "owner": "AgentOps-AI",
+                "url": "https://github.com/pydantic/pydantic-ai",
+                "owner": "pydantic",
             },
         ]
 

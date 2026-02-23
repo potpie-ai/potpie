@@ -1,17 +1,20 @@
-import os
 import asyncio
+import os
 
 # Set TOKENIZERS_PARALLELISM before any tokenizer imports to prevent fork warnings
 # This must be set before sentence-transformers or any HuggingFace tokenizers are used
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 from urllib.parse import urlparse, urlunparse
 
-from celery import Celery
-from celery.signals import worker_process_shutdown, worker_process_init
 from dotenv import load_dotenv
 
 from app.core.models import *  # noqa #This will import and initialize all models
+from app.modules.intelligence.tracing.logfire_tracer import (
+    initialize_logfire_tracing,
+)
 from app.modules.utils.logger import configure_logging, setup_logger
+from celery import Celery
+from celery.signals import worker_process_init, worker_process_shutdown
 
 # Load environment variables from a .env file if present
 load_dotenv()
@@ -128,23 +131,7 @@ def configure_celery(queue_prefix: str):
 
 configure_celery(queue_name)
 
-
-def setup_phoenix_tracing():
-    """Initialize Phoenix tracing for LLM monitoring in Celery workers."""
-    try:
-        from app.modules.intelligence.tracing.phoenix_tracer import (
-            initialize_phoenix_tracing,
-        )
-
-        initialize_phoenix_tracing()
-    except Exception as e:
-        logger.warning(
-            "Phoenix tracing initialization failed in Celery worker (non-fatal)",
-            error=str(e),
-        )
-
-
-setup_phoenix_tracing()
+initialize_logfire_tracing()
 
 
 def configure_litellm_for_celery():
@@ -265,7 +252,6 @@ def configure_litellm_for_celery():
                 import litellm.utils as litellm_utils
 
                 if hasattr(litellm_utils, "_client_async_logging_helper"):
-                    original_helper = litellm_utils._client_async_logging_helper
 
                     async def patched_helper(*args, **kwargs):
                         """
@@ -366,19 +352,29 @@ def log_worker_memory_config(sender, **kwargs):
     This helps debug memory-related issues like SIGKILL.
     """
     try:
-        import psutil
         import os as os_module
+
+        import psutil
 
         process = psutil.Process()
         memory_info = process.memory_info()
-        max_memory_kb = int(os_module.getenv("CELERY_WORKER_MAX_MEMORY_KB", "2000000"))
+        # Env is the app default; actual limit may be overridden by CLI --max-memory-per-child
+        max_memory_kb_env = int(
+            os_module.getenv("CELERY_WORKER_MAX_MEMORY_KB", "2000000")
+        )
+        max_memory_kb_conf = celery_app.conf.get("worker_max_memory_per_child")
+        max_memory_kb = (
+            int(max_memory_kb_conf)
+            if max_memory_kb_conf is not None
+            else max_memory_kb_env
+        )
         max_memory_mb = max_memory_kb / 1024
         baseline_mb = memory_info.rss / 1024 / 1024
         logger.info(
             f"Worker process {process.pid} initialized. "
             f"Baseline memory (RSS): {baseline_mb:.2f} MB "
             f"(includes Python runtime + imported modules). "
-            f"Max memory limit: {max_memory_mb:.2f} MB. "
+            f"Max memory limit: {max_memory_mb:.2f} MB (conf worker_max_memory_per_child={max_memory_kb_conf}). "
             f"Memory pressure threshold: {max_memory_mb * 0.80:.2f} MB (80%). "
             f"File size limit: {8} MB (configured in CodeChangesManager, reduced from 10MB)"
         )
@@ -393,6 +389,21 @@ def log_worker_memory_config(sender, **kwargs):
             )
         except Exception:
             pass
+
+        # Preload embedding model so semantic search fallback does not spike memory mid-task
+        try:
+            from app.modules.parsing.knowledge_graph.inference_service import (
+                preload_embedding_model,
+            )
+
+            if preload_embedding_model():
+                logger.info(
+                    "Preloaded embedding model for semantic search (cached for worker)"
+                )
+            else:
+                logger.debug("Embedding model preload skipped or failed")
+        except Exception as e:
+            logger.debug("Could not preload embedding model: %s", e)
     except ImportError:
         # psutil not available, skip detailed logging
         logger.info(
@@ -407,8 +418,13 @@ def cleanup_async_tasks_on_shutdown(sender, **kwargs):
     """
     Clean up any pending async tasks before worker process shutdown.
     This prevents "Task was destroyed but it is pending" warnings.
+    Shutdown is often triggered by worker_max_memory_per_child (RSS limit).
     """
-    logger.info("Worker process shutting down, cleaning up async tasks...")
+    logger.info(
+        "Worker process shutting down, cleaning up async tasks... "
+        "(If this occurs during subagent/model work, consider raising "
+        "CELERY_WORKER_MAX_MEMORY_KB or --max-memory-per-child.)"
+    )
 
     try:
         # Try to get any running event loop and clean up pending tasks

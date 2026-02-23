@@ -16,6 +16,7 @@ class MessageRequest(BaseModel):
     content: str
     node_ids: Optional[List[NodeContext]] = None
     attachment_ids: Optional[List[str]] = None  # IDs of uploaded attachments
+    tunnel_url: Optional[str] = None  # Optional tunnel URL from extension (takes priority over stored state)
 
 
 class DirectMessageRequest(BaseModel):

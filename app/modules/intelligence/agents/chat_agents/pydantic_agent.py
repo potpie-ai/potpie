@@ -44,6 +44,12 @@ from pydantic_ai.messages import (
     UserContent,
     ModelMessage,
 )
+from app.modules.intelligence.agents.chat_agents.multi_agent.utils.message_history_utils import (
+    _history_strings_to_model_messages,
+)
+from app.modules.intelligence.agents.chat_agents.multi_agent.utils.tool_utils import (
+    wrap_structured_tools,
+)
 from pydantic_ai.exceptions import ModelRetry, AgentRunError, UserError
 from langchain_core.tools import StructuredTool
 
@@ -94,14 +100,22 @@ class PydanticRagAgent(ChatAgent):
 
         # Prepare multimodal instructions if images are present
         multimodal_instructions = self._prepare_multimodal_instructions(ctx)
-        # Create MCP servers directly - continue even if some fail
+        # Create MCP servers directly - continue even if some fail.
+        # Each MCP server gets a tool_prefix to avoid name conflicts with agent tools (e.g. read_todos).
         mcp_toolsets: List[MCPServerStreamableHTTP] = []
-        for mcp_server in self.mcp_servers:
+        for i, mcp_server in enumerate(self.mcp_servers):
             try:
-                # Add timeout and connection handling for MCP servers
+                name = mcp_server.get("name") or f"mcp{i}"
+                prefix = "".join(
+                    c if c.isalnum() or c in "_-" else "_" for c in str(name).lower()
+                )
+                if not prefix:
+                    prefix = f"mcp{i}"
+                tool_prefix = f"{prefix}_"
                 mcp_server_instance = MCPServerStreamableHTTP(
                     url=mcp_server["link"],
                     timeout=10.0,  # 10 second timeout
+                    tool_prefix=tool_prefix,
                 )
                 mcp_toolsets.append(mcp_server_instance)
                 logger.info(
@@ -121,16 +135,12 @@ class PydanticRagAgent(ChatAgent):
             "supports_tool_parallelism", True
         )
 
+        # Use wrap_structured_tools to pass args_schema for tools (e.g. add_requirements)
+        # so the LLM receives correct parameter definitions and doesn't guess/hallucinate args.
+        wrapped_tools = wrap_structured_tools(self.tools)
         agent_kwargs = {
             "model": self.llm_provider.get_pydantic_model(),
-            "tools": [
-                Tool(
-                    name=tool.name,
-                    description=tool.description,
-                    function=handle_exception(tool.func),  # type: ignore
-                )
-                for tool in self.tools
-            ],
+            "tools": wrapped_tools,
             "mcp_servers": mcp_toolsets,
             "instructions": f"""
 # Agent Execution Guidelines
@@ -167,7 +177,7 @@ Backstory:
 {multimodal_instructions}
 
 CURRENT CONTEXT AND AGENT TASK OVERVIEW:
-{self._create_task_description(task_config=config.tasks[0],ctx=ctx)}
+{self._create_task_description(task_config=config.tasks[0], ctx=ctx)}
             """,
             "output_retries": 3,
             "output_type": str,
@@ -459,22 +469,21 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                     continue
 
         logger.info(
-            f"Final multimodal content has {len(content)} elements: 1 text + {len(content)-1} images"
+            f"Final multimodal content has {len(content)} elements: 1 text + {len(content) - 1} images"
         )
         return content
 
     async def _prepare_multimodal_message_history(
         self, ctx: ChatContext
     ) -> List[ModelMessage]:
-        """Prepare message history with multimodal support"""
-        history_messages = []
+        """Prepare message history with multimodal support.
 
-        for msg in ctx.history:
-            # For now, keep history as text-only to avoid token bloat
-            # Images are only added to the current query
-            history_messages.append(ModelResponse([TextPart(content=str(msg))]))
-
-        return history_messages
+        History strings from conversation_service are 'human: ...' / 'ai: ...'.
+        We convert them to proper ModelRequest (user) and ModelResponse (assistant)
+        so the LLM receives correct system / user / assistant roles.
+        """
+        history_list = ctx.history if ctx.history is not None else []
+        return _history_strings_to_model_messages(history_list)
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
         """Main execution flow with multimodal support using PydanticAI's native capabilities"""
@@ -487,9 +496,21 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             _init_code_changes_manager,
         )
 
-        _init_code_changes_manager(ctx.conversation_id)
         logger.info(
-            f"🔄 Initialized code changes manager for conversation_id={ctx.conversation_id}"
+            f"🔄 [PydanticRagAgent] ctx.tunnel_url={ctx.tunnel_url}, ctx.user_id={ctx.user_id}, "
+            f"ctx.conversation_id={ctx.conversation_id}"
+        )
+        _init_code_changes_manager(
+            conversation_id=ctx.conversation_id,
+            agent_id=ctx.curr_agent_id,
+            user_id=ctx.user_id,
+            tunnel_url=ctx.tunnel_url,
+            local_mode=ctx.local_mode if hasattr(ctx, "local_mode") else False,
+            repository=getattr(ctx, "repository", None),
+            branch=getattr(ctx, "branch", None),
+        )
+        logger.info(
+            f"🔄 Initialized code changes manager for conversation_id={ctx.conversation_id}, agent_id={ctx.curr_agent_id}, user_id={ctx.user_id}, tunnel_url={ctx.tunnel_url}"
         )
 
         # Check if we have images and if the model supports vision
@@ -691,7 +712,8 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                                 or "unknown tool",
                                                 tool_response=get_tool_response_message(
                                                     event.result.tool_name
-                                                    or "unknown tool"
+                                                    or "unknown tool",
+                                                    result=event.result.content,
                                                 ),
                                                 tool_call_details={
                                                     "summary": get_tool_result_info_content(
@@ -846,7 +868,8 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                                             or "unknown tool",
                                                             tool_response=get_tool_response_message(
                                                                 event.result.tool_name
-                                                                or "unknown tool"
+                                                                or "unknown tool",
+                                                                result=event.result.content,
                                                             ),
                                                             tool_call_details={
                                                                 "summary": get_tool_result_info_content(
@@ -1014,7 +1037,8 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                                             or "unknown tool",
                                                             tool_response=get_tool_response_message(
                                                                 event.result.tool_name
-                                                                or "unknown tool"
+                                                                or "unknown tool",
+                                                                result=event.result.content,
                                                             ),
                                                             tool_call_details={
                                                                 "summary": get_tool_result_info_content(

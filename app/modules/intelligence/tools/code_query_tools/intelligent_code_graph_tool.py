@@ -161,8 +161,6 @@ class IntelligentCodeGraphTool:
                     root_node, 1.0, "Root node (simplified processing due to error)"
                 )
 
-                child_nodes = []
-
                 async def process_child(child):
                     relevance = 0.9
                     reason = "Basic relevance assessment"

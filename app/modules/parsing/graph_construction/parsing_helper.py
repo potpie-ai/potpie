@@ -1,14 +1,15 @@
+import asyncio
 import json
 import os
 import shutil
-import tarfile
 import uuid
-from pathlib import Path
+import subprocess
 from typing import Any, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
+from pathlib import Path
+from collections import defaultdict
 
-import requests
-import requests.auth
+
 from fastapi import HTTPException
 from git import GitCommandError, InvalidGitRepositoryError, Repo
 from sqlalchemy.orm import Session
@@ -18,6 +19,7 @@ from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
 from app.modules.parsing.utils.repo_name_normalizer import normalize_repo_name
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
+from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -37,35 +39,67 @@ class ParseHelper:
         self.db = db_session
         self.github_service = CodeProviderService(db_session)
 
-        # Initialize repo manager if enabled
+        # Initialize repo manager - always enabled
         self.repo_manager = None
         try:
-            repo_manager_enabled = (
-                os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
-            )
-            if repo_manager_enabled:
-                from app.modules.repo_manager import RepoManager
+            from app.modules.repo_manager import RepoManager
 
-                self.repo_manager = RepoManager()
-                logger.info("RepoManager initialized in ParseHelper")
+            self.repo_manager = RepoManager()
+            logger.info("RepoManager initialized in ParseHelper")
         except Exception as e:
             logger.warning(f"Failed to initialize RepoManager: {e}")
 
     @staticmethod
     def get_directory_size(path):
         total_size = 0
-        for dirpath, dirnames, filenames in os.walk(path):
+        for dirpath, dirnames, filenames in os.walk(path, followlinks=False):
+            # # Skip symlinked directories
+            # dirnames[:] = [
+            #     d for d in dirnames if not os.path.islink(os.path.join(dirpath, d))
+            # ]
+
             for f in filenames:
                 fp = os.path.join(dirpath, f)
+                # Skip all symlinks
+                if os.path.islink(fp):
+                    continue
                 total_size += os.path.getsize(fp)
         return total_size
 
     async def clone_or_copy_repository(
-        self, repo_details: RepoDetails, user_id: str
-    ) -> Tuple[Any, str, Any]:
+        self,
+        repo_details: RepoDetails,
+        user_id: str,
+        *,
+        auth_token: Optional[str] = None,
+        project_id: Optional[str] = None,
+    ) -> Tuple[Any, Optional[str], Any, Optional[str]]:
+        """
+        Clone or copy repository, using RepoManager as primary source when enabled.
+
+        Args:
+            repo_details: Repository details
+            user_id: User ID
+            auth_token: Optional user GitHub OAuth token
+            project_id: Optional project ID for logging and alerts
+
+        Returns:
+            Tuple of (repo, owner, auth, repo_manager_path)
+            - repo: Git Repo object or PyGithub Repository object
+            - owner: Repository owner login
+            - auth: Authentication object for GitHub API
+            - repo_manager_path: Path to repo in RepoManager if available, None otherwise
+              When this is set, setup_project_directory should use this path directly
+              and skip tarball download.
+        """
         owner = None
         auth = None
         repo = None
+        repo_manager_path = None  # New: path if repo is from/cloned to RepoManager
+
+        logger.info(
+            f"ParsingHelper: clone_or_copy_repository called for repo_name={repo_details.repo_name}, repo_path={repo_details.repo_path}"
+        )
 
         if repo_details.repo_path:
             if not os.path.exists(repo_details.repo_path):
@@ -78,33 +112,222 @@ class ParseHelper:
                 f"ParsingHelper: clone_or_copy_repository created local Repo object for path: {repo_details.repo_path}"
             )
         else:
-            try:
-                github, repo = self.github_service.get_repo(repo_details.repo_name)
-                owner = repo.owner.login
-
-                # Extract auth from the Github client
-                # The auth is stored in the _Github__requester.auth attribute
-                if hasattr(github, "_Github__requester") and hasattr(
-                    github._Github__requester, "auth"
-                ):
-                    auth = github._Github__requester.auth
-                elif hasattr(github, "get_app_auth"):
-                    # Fallback for older method
-                    auth = github.get_app_auth()
-                else:
-                    logger.warning(
-                        f"Could not extract auth from GitHub client for {repo_details.repo_name}"
-                    )
-            except HTTPException as he:
-                raise he
-            except Exception:
-                logger.exception("Failed to fetch repository")
-                raise HTTPException(
-                    status_code=404,
-                    detail="Repository not found or inaccessible on GitHub",
+            # When RepoManager is enabled, it becomes the primary source of truth
+            if self.repo_manager and repo_details.repo_name:
+                logger.info(
+                    f"ParsingHelper: RepoManager enabled, checking for existing repo: {repo_details.repo_name}"
                 )
 
-        return repo, owner, auth
+                # Check for exact match (same branch/commit)
+                cached_repo_path = self.repo_manager.get_repo_path(
+                    repo_name=repo_details.repo_name,
+                    branch=repo_details.branch_name,
+                    commit_id=repo_details.commit_id,
+                    user_id=user_id,
+                )
+
+                if cached_repo_path and os.path.exists(cached_repo_path):
+                    # Verify this is the correct worktree for the commit_id
+                    actual_commit_id = None
+                    try:
+                        worktree_repo = Repo(cached_repo_path)
+                        actual_commit_id = worktree_repo.head.commit.hexsha
+                        logger.info(
+                            f"ParsingHelper: Verified worktree commit: requested={repo_details.commit_id}, "
+                            f"actual={actual_commit_id}, path={cached_repo_path}"
+                        )
+                        if (
+                            repo_details.commit_id
+                            and actual_commit_id != repo_details.commit_id
+                        ):
+                            logger.warning(
+                                f"ParsingHelper: Worktree commit mismatch! Requested {repo_details.commit_id}, "
+                                f"but worktree has {actual_commit_id}. Will create new worktree."
+                            )
+                            cached_repo_path = (
+                                None  # Force creation of correct worktree
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"ParsingHelper: Could not verify commit in worktree {cached_repo_path}: {e}"
+                        )
+                        # If we can't verify, but commit_id was specified, be cautious
+                        if repo_details.commit_id:
+                            logger.warning(
+                                "ParsingHelper: Cannot verify commit_id, but it was specified. "
+                                "Will attempt to use existing worktree."
+                            )
+
+                if cached_repo_path and os.path.exists(cached_repo_path):
+                    logger.info(
+                        f"ParsingHelper: Found existing repo in RepoManager at {cached_repo_path} "
+                        f"(branch={repo_details.branch_name}, commit={repo_details.commit_id}), skipping clone"
+                    )
+                    # Update last accessed timestamp
+                    try:
+                        self.repo_manager.update_last_accessed(
+                            repo_name=repo_details.repo_name,
+                            branch=repo_details.branch_name,
+                            commit_id=repo_details.commit_id,
+                            user_id=user_id,
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to update last_accessed for repo {repo_details.repo_name}: {e}"
+                        )
+
+                    repo_manager_path = cached_repo_path
+
+                    # Extract owner from repo_name (format: owner/repo)
+                    if "/" in repo_details.repo_name:
+                        owner = repo_details.repo_name.split("/")[0]
+                    else:
+                        logger.debug(
+                            f"Repo name '{repo_details.repo_name}' doesn't contain owner, will be extracted later if needed"
+                        )
+
+                    # Try to create a GitPython Repo from cached path (now we have real git repos)
+                    try:
+                        repo = Repo(cached_repo_path)
+                        logger.info(
+                            f"ParsingHelper: Created Repo object from cached path {cached_repo_path}"
+                        )
+                    except InvalidGitRepositoryError:
+                        # Not a git repo - might be old tarball-based cache
+                        # Fall back to GitHub API for metadata
+                        logger.info(
+                            "Cached path is not a git repo, getting GitHub API object"
+                        )
+                        try:
+                            github, github_repo = self.github_service.get_repo(
+                                repo_details.repo_name
+                            )
+                            owner = github_repo.owner.login
+
+                            if hasattr(github, "_Github__requester") and hasattr(
+                                github._Github__requester, "auth"
+                            ):
+                                auth = github._Github__requester.auth
+
+                            repo = github_repo
+                        except Exception as e:
+                            logger.warning(
+                                f"Could not get GitHub repo object: {e}. "
+                                "Will use local language detection."
+                            )
+                            repo = None
+
+                    logger.info(
+                        f"ParsingHelper: Using cached repo from RepoManager at {cached_repo_path} "
+                        f"(branch={repo_details.branch_name}, commit={repo_details.commit_id})"
+                    )
+                    return repo, owner, auth, repo_manager_path
+
+                # Repo not in RepoManager - clone directly to RepoManager instead of .projects
+                logger.info(
+                    "ParsingHelper: Repo not found in RepoManager, cloning directly to .repos"
+                )
+
+                try:
+                    # Get repo info from GitHub first (needed for auth and metadata)
+                    logger.info(
+                        f"ParsingHelper: Getting repo info from github_service for {repo_details.repo_name}"
+                    )
+                    github, github_repo = self.github_service.get_repo(
+                        repo_details.repo_name
+                    )
+                    logger.info(
+                        f"ParsingHelper: github_service.get_repo completed for {repo_details.repo_name}"
+                    )
+                    owner = github_repo.owner.login
+
+                    # Extract auth from the Github client
+                    if hasattr(github, "_Github__requester") and hasattr(
+                        github._Github__requester, "auth"
+                    ):
+                        auth = github._Github__requester.auth
+                    elif hasattr(github, "get_app_auth"):
+                        auth = github.get_app_auth()
+                    else:
+                        logger.warning(
+                            f"Could not extract auth from GitHub client for {repo_details.repo_name}"
+                        )
+
+                    # Clone directly to RepoManager directory
+                    repo_manager_path = await self._clone_to_repo_manager(
+                        github_repo=github_repo,
+                        repo_name=repo_details.repo_name,
+                        branch=repo_details.branch_name,
+                        commit_id=repo_details.commit_id,
+                        user_id=user_id,
+                        auth=auth,
+                        auth_token=auth_token,
+                        project_id=project_id,
+                    )
+
+                    if repo_manager_path:
+                        # We now use git clone, so we have a real git repo
+                        # Try to create Repo object from cloned path
+                        try:
+                            repo = Repo(repo_manager_path)
+                            logger.info(
+                                f"ParsingHelper: Cloned repo to RepoManager at {repo_manager_path}"
+                            )
+                        except InvalidGitRepositoryError:
+                            # Fallback to github_repo for API access
+                            logger.warning(
+                                "Cloned path is not a valid git repo, using GitHub API object"
+                            )
+                            repo = github_repo
+                        return repo, owner, auth, repo_manager_path
+                    else:
+                        # Fallback to normal flow if RepoManager clone failed
+                        logger.warning(
+                            "ParsingHelper: Failed to clone to RepoManager, falling back to normal flow"
+                        )
+                        repo = github_repo
+
+                except HTTPException as he:
+                    raise he
+                except Exception:
+                    logger.exception("Failed to fetch/clone repository")
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Repository not found or inaccessible on GitHub",
+                    )
+            else:
+                # RepoManager disabled - use original flow
+                try:
+                    logger.info(
+                        f"ParsingHelper: About to call github_service.get_repo for {repo_details.repo_name}"
+                    )
+                    github, repo = self.github_service.get_repo(repo_details.repo_name)
+                    logger.info(
+                        f"ParsingHelper: github_service.get_repo completed for {repo_details.repo_name}"
+                    )
+                    owner = repo.owner.login
+
+                    # Extract auth from the Github client
+                    if hasattr(github, "_Github__requester") and hasattr(
+                        github._Github__requester, "auth"
+                    ):
+                        auth = github._Github__requester.auth
+                    elif hasattr(github, "get_app_auth"):
+                        auth = github.get_app_auth()
+                    else:
+                        logger.warning(
+                            f"Could not extract auth from GitHub client for {repo_details.repo_name}"
+                        )
+                except HTTPException as he:
+                    raise he
+                except Exception:
+                    logger.exception("Failed to fetch repository")
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Repository not found or inaccessible on GitHub",
+                    )
+
+        return repo, owner, auth, repo_manager_path
 
     def is_text_file(self, file_path):
         def open_text_file(file_path):
@@ -199,290 +422,6 @@ class ParseHelper:
             return True
         else:
             return False
-
-    async def download_and_extract_tarball(
-        self, repo, branch, target_dir, auth, repo_details, user_id
-    ):
-        # Get repo name for logging - handle both Repo objects and repo objects with full_name
-        repo_name = (
-            repo.working_tree_dir
-            if isinstance(repo, Repo)
-            else getattr(repo, "full_name", "unknown")
-        )
-
-        logger.info(
-            f"ParsingHelper: Starting tarball download for repo '{repo_name}', branch '{branch}'"
-        )
-
-        try:
-            logger.info(
-                f"ParsingHelper: Getting archive link for repo '{repo_name}', branch '{branch}'"
-            )
-            tarball_url = repo.get_archive_link("tarball", branch)
-            logger.info(f"ParsingHelper: Retrieved tarball URL: {tarball_url}")
-
-            # Validate that tarball_url is a string, not an exception object
-            if not isinstance(tarball_url, str):
-                logger.error(
-                    f"ParsingHelper: Invalid tarball URL type: {type(tarball_url)}, value: {tarball_url}"
-                )
-                raise ValueError(
-                    f"Expected string URL, got {type(tarball_url)}: {tarball_url}"
-                )
-
-            # For GitBucket private repos, use PyGithub client's requester for authenticated requests
-            # According to GitBucket API docs: https://github.com/gitbucket/gitbucket/wiki/API-WebHook
-            # Authentication: "Authorization: token YOUR_TOKEN" in header
-            provider_type = os.getenv("CODE_PROVIDER", "github").lower()
-
-            if (
-                provider_type == "gitbucket"
-                and hasattr(repo, "_provider")
-                and repo._provider
-            ):
-                # For GitBucket, use the provider's authentication
-                # According to GitBucket API docs: https://github.com/gitbucket/gitbucket/wiki/API-WebHook
-                # Authentication format: "Authorization: token YOUR_TOKEN" in header
-                try:
-                    github_client = repo._provider.client
-                    if hasattr(github_client, "_Github__requester"):
-                        requester = github_client._Github__requester
-
-                        # Use the requester's session which has authentication already configured
-                        if hasattr(requester, "_Requester__session"):
-                            session = requester._Requester__session
-                            response = session.get(tarball_url, stream=True, timeout=30)
-
-                            # If we get 401, the session auth might not be working, fall back to manual token
-                            if response.status_code == 401:
-                                raise requests.exceptions.HTTPError(
-                                    "401 Unauthorized from session"
-                                )
-                        else:
-                            raise AttributeError("Requester session not available")
-                    else:
-                        raise AttributeError("Requester not found")
-                except Exception:
-                    # Fallback to manual token extraction
-                    token = None
-                    headers = {}
-
-                    # Priority 1: Try to get token from auth parameter
-                    if auth and hasattr(auth, "token"):
-                        token = auth.token
-
-                    # Priority 2: Try to extract from PyGithub client's requester
-                    if not token and hasattr(repo, "_provider") and repo._provider:
-                        try:
-                            github_client = repo._provider.client
-                            if hasattr(github_client, "_Github__requester"):
-                                requester = github_client._Github__requester
-
-                                if hasattr(requester, "auth") and hasattr(
-                                    requester.auth, "token"
-                                ):
-                                    token = requester.auth.token
-                                elif hasattr(
-                                    requester, "_Requester__authorizationHeader"
-                                ):
-                                    auth_header = (
-                                        requester._Requester__authorizationHeader
-                                    )
-                                    if auth_header:
-                                        if auth_header.startswith("token "):
-                                            token = auth_header[6:]
-                                        elif auth_header.startswith("Bearer "):
-                                            token = auth_header[7:]
-                        except Exception:
-                            pass  # Token extraction failed, will try next method
-
-                    # Priority 3: Fallback to environment variable
-                    if not token:
-                        token = os.getenv("CODE_PROVIDER_TOKEN")
-
-                    if not token:
-                        error_msg = "No authentication token available for GitBucket archive download"
-                        logger.error(f"ParsingHelper: {error_msg}")
-                        raise ValueError(error_msg)
-
-                    # GitBucket web endpoints (archive downloads) may require Basic Auth
-                    # Try token header format first (API standard per GitBucket docs)
-                    headers = {"Authorization": f"token {token}"}
-                    logger.debug(
-                        "ParsingHelper: Attempting archive download with token header"
-                    )
-
-                    response = requests.get(
-                        tarball_url, stream=True, headers=headers, timeout=30
-                    )
-
-                    # If token header fails with 401, try Basic Auth with repo owner username
-                    # GitBucket web endpoints sometimes require Basic Auth (supported since v4.3)
-                    if response.status_code == 401:
-                        logger.debug(
-                            "ParsingHelper: Token header auth failed, trying Basic Auth"
-                        )
-                        response.close()
-
-                        # Try Basic Auth with repo owner username and token as password
-                        if hasattr(repo, "owner") and hasattr(repo.owner, "login"):
-                            username = repo.owner.login
-                            basic_auth = requests.auth.HTTPBasicAuth(username, token)
-                            response = requests.get(
-                                tarball_url, stream=True, auth=basic_auth, timeout=30
-                            )
-                            logger.debug(
-                                f"ParsingHelper: Basic Auth response status: {response.status_code}"
-                            )
-            else:
-                # For GitHub and other providers, use standard token auth
-                headers = {}
-                if auth:
-                    headers = {"Authorization": f"token {auth.token}"}
-                response = requests.get(
-                    tarball_url, stream=True, headers=headers, timeout=30
-                )
-
-            response.raise_for_status()
-
-        except requests.exceptions.HTTPError as e:
-            # If we get 401, archive download might not be supported for private repos
-            # Fall back to git clone for GitBucket
-            status_code = None
-            if hasattr(e, "response") and e.response is not None:
-                status_code = e.response.status_code
-            elif "401" in str(e):
-                status_code = 401
-
-            if status_code == 401:
-                provider_type = os.getenv("CODE_PROVIDER", "github").lower()
-                if provider_type == "gitbucket":
-                    logger.info(
-                        "ParsingHelper: Archive download failed with 401 for GitBucket private repo, "
-                        "falling back to git clone"
-                    )
-                    return await self._clone_repository_with_auth(
-                        repo, branch, target_dir, user_id
-                    )
-
-            logger.exception("ParsingHelper: Failed to download repository archive")
-            raise ParsingFailedError("Failed to download repository archive") from e
-        except requests.exceptions.RequestException as e:
-            logger.exception("ParsingHelper: Error fetching tarball")
-            raise ParsingFailedError("Failed to download repository archive") from e
-        except Exception as e:
-            logger.exception("ParsingHelper: Unexpected error in tarball download")
-            raise ParsingFailedError(
-                "Unexpected error during repository download"
-            ) from e
-        tarball_path = os.path.join(
-            target_dir,
-            f"{repo.full_name.replace('/', '-').replace('.', '-')}-{branch.replace('/', '-').replace('.', '-')}.tar.gz",
-        )
-
-        final_dir = os.path.join(
-            target_dir,
-            f"{repo.full_name.replace('/', '-').replace('.', '-')}-{branch.replace('/', '-').replace('.', '-')}-{user_id}",
-        )
-
-        logger.info(f"ParsingHelper: Tarball path: {tarball_path}")
-        logger.info(f"ParsingHelper: Final directory: {final_dir}")
-
-        try:
-            logger.info(f"ParsingHelper: Writing tarball to {tarball_path}")
-            with open(tarball_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            tarball_size = os.path.getsize(tarball_path)
-            logger.info(
-                f"ParsingHelper: Successfully downloaded tarball, size: {tarball_size} bytes"
-            )
-
-            # Validate tarball size - very small files are likely error responses
-            if tarball_size < 100:
-                error_msg = (
-                    f"Tarball is suspiciously small ({tarball_size} bytes). "
-                    "This may indicate an error response from the server or an empty repository."
-                )
-                logger.error(f"ParsingHelper: {error_msg}")
-                raise ParsingFailedError(error_msg)
-
-            logger.info(f"ParsingHelper: Extracting tarball to {final_dir}")
-            try:
-                with tarfile.open(tarball_path, "r:gz") as tar:
-                    # Validate that the tarball is not empty
-                    if not tar.getmembers():
-                        error_msg = "Tarball contains no files"
-                        logger.error(f"ParsingHelper: {error_msg}")
-                        raise ParsingFailedError(error_msg)
-
-                    temp_dir = os.path.join(final_dir, "temp_extract")
-                    os.makedirs(temp_dir, exist_ok=True)
-                    tar.extractall(path=temp_dir)
-                    logger.info(
-                        f"ParsingHelper: Extracted tarball contents to {temp_dir}"
-                    )
-
-                    # Check if extraction directory has contents
-                    extracted_contents = os.listdir(temp_dir)
-                    if not extracted_contents:
-                        error_msg = (
-                            "Tarball extraction resulted in empty directory. "
-                            "The archive may be corrupted or the repository may be empty."
-                        )
-                        logger.error(f"ParsingHelper: {error_msg}")
-                        raise ParsingFailedError(error_msg)
-
-                    extracted_dir = os.path.join(temp_dir, extracted_contents[0])
-                    logger.info(
-                        f"ParsingHelper: Main extracted directory: {extracted_dir}"
-                    )
-
-                    text_files_count = 0
-                    for root, dirs, files in os.walk(extracted_dir):
-                        for file in files:
-                            if file.startswith("."):
-                                continue
-                            file_path = os.path.join(root, file)
-                            if self.is_text_file(file_path):
-                                try:
-                                    relative_path = os.path.relpath(
-                                        file_path, extracted_dir
-                                    )
-                                    dest_path = os.path.join(final_dir, relative_path)
-                                    os.makedirs(
-                                        os.path.dirname(dest_path), exist_ok=True
-                                    )
-                                    shutil.copy2(file_path, dest_path)
-                                    text_files_count += 1
-                                except (shutil.Error, OSError):
-                                    logger.exception(
-                                        "ParsingHelper: Error copying file",
-                                        file_path=file_path,
-                                    )
-
-                    logger.info(
-                        f"ParsingHelper: Copied {text_files_count} text files to final directory"
-                    )
-                    # Remove the temporary directory
-                    try:
-                        shutil.rmtree(temp_dir)
-                    except OSError:
-                        logger.exception("Error removing temporary directory")
-                        pass
-            except tarfile.TarError as e:
-                error_msg = f"Failed to extract tarball: {e}. The archive may be corrupted or invalid."
-                logger.error(f"ParsingHelper: {error_msg}")
-                raise ParsingFailedError(error_msg) from e
-
-        except (IOError, tarfile.TarError, shutil.Error) as e:
-            logger.exception("Error handling tarball")
-            raise ParsingFailedError("Failed to process repository archive") from e
-        finally:
-            if os.path.exists(tarball_path):
-                os.remove(tarball_path)
-
-        return final_dir
 
     async def _clone_repository_with_auth(self, repo, branch, target_dir, user_id):
         """
@@ -625,19 +564,13 @@ class ParseHelper:
             logger.exception("ParsingHelper: Git clone failed")
             # Clean up temp directory on error
             if os.path.exists(temp_clone_dir):
-                try:
-                    shutil.rmtree(temp_clone_dir)
-                except Exception:
-                    pass
+                shutil.rmtree(temp_clone_dir)
             raise ParsingFailedError(f"Failed to clone repository: {e}") from e
         except Exception as e:
             logger.exception("ParsingHelper: Unexpected error during git clone")
             # Clean up temp directory on error
             if os.path.exists(temp_clone_dir):
-                try:
-                    shutil.rmtree(temp_clone_dir)
-                except Exception:
-                    pass
+                shutil.rmtree(temp_clone_dir)
             raise ParsingFailedError(
                 f"Unexpected error during repository clone: {e}"
             ) from e
@@ -666,15 +599,84 @@ class ParseHelper:
             "other": 0,
         }
         total_chars = 0
+        total_files_checked = 0
+        files_by_ext = {}
+
+        logger.info(
+            f"detect_repo_language: Starting detection for {repo_dir} "
+            f"(exists: {os.path.exists(repo_dir)}, isdir: {os.path.isdir(repo_dir) if os.path.exists(repo_dir) else False})"
+        )
+
+        if not os.path.exists(repo_dir):
+            logger.error(f"detect_repo_language: Directory does not exist: {repo_dir}")
+            return "other"
+
+        if not os.path.isdir(repo_dir):
+            logger.error(
+                f"detect_repo_language: Path exists but is not a directory: {repo_dir}"
+            )
+            return "other"
+
+        # Log a sample of what's in the directory
+        try:
+            dir_contents = os.listdir(repo_dir)
+            logger.info(
+                f"detect_repo_language: Directory contains {len(dir_contents)} items. "
+                f"Sample: {dir_contents[:10]}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"detect_repo_language: Could not list directory contents: {e}"
+            )
 
         try:
             for root, _, files in os.walk(repo_dir):
-                if any(part.startswith(".") for part in root.split(os.sep)):
+                # Get relative path from repo_dir to avoid skipping paths that contain .repos_local etc.
+                try:
+                    rel_path = Path(root).relative_to(repo_dir)
+                    # Handle root directory (rel_path == '.') and convert to tuple
+                    rel_parts = rel_path.parts if rel_path != Path(".") else ()
+                except ValueError:
+                    # If relative_to fails, skip this path (shouldn't happen in normal os.walk)
+                    continue
+
+                # Skip .git directory (worktrees have .git as a file, not a directory)
+                skip_this_dir = False
+                if ".git" in rel_parts:
+                    # Find where .git appears in the relative path
+                    for i, part in enumerate(rel_parts):
+                        if part == ".git":
+                            # Check if this .git is a directory
+                            git_path = Path(repo_dir) / Path(*rel_parts[: i + 1])
+                            if git_path.is_dir():
+                                # Skip this .git directory
+                                skip_this_dir = True
+                                break
+                            # If it's a file, it's a worktree - continue processing
+                            break
+
+                if skip_this_dir:
+                    continue
+
+                # Skip hidden directories except .github, .vscode, etc. that might contain code
+                # Only check relative path parts, not the base path
+                if any(
+                    part.startswith(".") and part not in [".github", ".vscode"]
+                    for part in rel_parts
+                ):
                     continue
 
                 for file in files:
+                    # Skip hidden files
+                    if file.startswith("."):
+                        continue
+
                     file_path = os.path.join(root, file)
                     ext = os.path.splitext(file)[1].lower()
+                    total_files_checked += 1
+
+                    # Track file extensions for debugging
+                    files_by_ext[ext] = files_by_ext.get(ext, 0) + 1
 
                     # Try multiple encodings for robustness
                     content = None
@@ -735,16 +737,273 @@ class ParseHelper:
                             logger.warning(f"Error processing file {file_path}: {e}")
                             continue
                     else:
-                        logger.warning(
+                        logger.debug(
                             f"Could not read file with any encoding: {file_path}"
                         )
                         continue
-        except (TypeError, FileNotFoundError, PermissionError):
-            logger.exception("Error accessing directory", repo_dir=repo_dir)
+        except (TypeError, FileNotFoundError, PermissionError) as e:
+            logger.exception(f"Error accessing directory {repo_dir}: {e}")
+            return "other"
+
+        # Log detection results
+        logger.info(
+            f"detect_repo_language: Checked {total_files_checked} files, "
+            f"found {sum(lang_count.values())} supported language files. "
+            f"Language counts: {dict((k, v) for k, v in lang_count.items() if v > 0)}. "
+            f"Top extensions: {dict(sorted(files_by_ext.items(), key=lambda x: x[1], reverse=True)[:10])}"
+        )
 
         # Determine the predominant language based on counts
         predominant_language = max(lang_count, key=lang_count.get)
-        return predominant_language if lang_count[predominant_language] > 0 else "other"
+        result = (
+            predominant_language if lang_count[predominant_language] > 0 else "other"
+        )
+
+        if result == "other":
+            logger.warning(
+                f"detect_repo_language: No supported language files found in {repo_dir}. "
+                f"Total files checked: {total_files_checked}, "
+                f"Top 10 extensions: {dict(sorted(files_by_ext.items(), key=lambda x: x[1], reverse=True)[:10])}"
+            )
+
+        return result
+
+    async def download_and_extract_tarball(
+        self,
+        repo,
+        ref: str,
+        target_dir: str,
+        auth: Any,
+        repo_details: Any,
+        user_id: str,
+    ) -> str:
+        """
+        Download repository tarball from GitHub (or provider) and extract to target_dir.
+
+        Args:
+            repo: PyGithub Repository or MockRepo with get_archive_link
+            ref: Branch name or commit SHA
+            target_dir: Base directory for extraction (e.g. projects/)
+            auth: Auth object (token used for authenticated download)
+            repo_details: ParsingRequest or repo object (for full_name etc.)
+            user_id: User ID for unique directory naming
+
+        Returns:
+            Path to the extracted directory (top-level content dir).
+        """
+        import tarfile
+        import tempfile
+
+        import aiohttp
+
+        full_name = getattr(repo, "full_name", None) or getattr(
+            repo_details, "repo_name", "unknown"
+        )
+        safe_name = full_name.replace("/", "-").replace(".", "-")
+        safe_ref = ref.replace("/", "_").replace("\\", "_") if ref else "head"
+        extract_subdir = os.path.join(
+            target_dir, f"{safe_name}-{safe_ref}-{user_id}-{uuid.uuid4().hex[:8]}"
+        )
+        os.makedirs(extract_subdir, exist_ok=True)
+
+        # Get archive URL (GitHub API or provider)
+        if hasattr(repo, "get_archive_link"):
+            archive_url = repo.get_archive_link("tarball", ref)
+        elif hasattr(repo, "full_name"):
+            # PyGithub Repository: build GitHub tarball URL
+            archive_url = f"https://api.github.com/repos/{repo.full_name}/tarball/{ref}"
+        else:
+            raise ParsingFailedError(
+                "Cannot get archive URL: repo has no get_archive_link or full_name"
+            )
+
+        # Resolve auth token for download
+        token = None
+        if auth is not None:
+            if hasattr(auth, "token"):
+                token = auth.token
+            elif hasattr(auth, "password"):
+                token = auth.password
+
+        headers = {}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        headers.setdefault("Accept", "application/vnd.github+json")
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    archive_url, headers=headers, allow_redirects=True
+                ) as resp:
+                    if resp.status != 200:
+                        raise ParsingFailedError(
+                            f"Failed to download tarball: HTTP {resp.status}"
+                        )
+                    data = await resp.read()
+
+            # Write to temp file and extract
+            with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp:
+                tmp.write(data)
+                tmp_path = tmp.name
+
+            try:
+                with tarfile.open(tmp_path, "r:gz") as tf:
+                    tf.extractall(extract_subdir)
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+            # GitHub tarballs have a single top-level dir (e.g. owner-repo-abc123/)
+            entries = [e for e in os.listdir(extract_subdir) if not e.startswith(".")]
+            if len(entries) == 1 and os.path.isdir(
+                os.path.join(extract_subdir, entries[0])
+            ):
+                return os.path.join(extract_subdir, entries[0])
+            return extract_subdir
+
+        except ParsingFailedError:
+            raise
+        except Exception as e:
+            if os.path.exists(extract_subdir):
+                shutil.rmtree(extract_subdir, ignore_errors=True)
+            logger.exception("ParsingHelper: download_and_extract_tarball failed")
+            raise ParsingFailedError(
+                f"Failed to download and extract repository: {e}"
+            ) from e
+
+    async def _ensure_clean_worktree(
+        self,
+        repo_name: str,
+        ref: str,
+        auth_token: Optional[str],
+        user_id: Optional[str],
+        is_commit: bool = False,
+    ) -> str:
+        """
+        Ensure a clean worktree exists by aggressively cleaning up any stale/corrupt worktrees.
+        This method should NEVER fail - it tries multiple cleanup strategies and creates fresh.
+
+        Args:
+            repo_name: Repository name (owner/repo)
+            ref: Branch name or commit SHA
+            auth_token: Optional authentication token for cloning
+            user_id: User ID for tracking
+            is_commit: Whether ref is a commit SHA
+
+        Returns:
+            Path to the clean worktree directory
+
+        Raises:
+            HTTPException: Only if all recovery strategies fail
+        """
+        
+
+        # Support both bare repo (.bare) and regular repo (.git) structures
+        repo_base_path = self.repo_manager.repos_base_path / repo_name
+        bare_repo_path = repo_base_path / ".bare"
+        regular_git_path = repo_base_path / ".git"
+
+        # Determine which git directory to use
+        if bare_repo_path.exists():
+            git_dir = bare_repo_path
+            is_bare = True
+            logger.info(f"Using bare repo at {bare_repo_path} for worktree operations")
+        elif regular_git_path.exists():
+            git_dir = repo_base_path  # Regular repo uses root as git working dir
+            is_bare = False
+            logger.info(f"Using regular repo at {repo_base_path} for worktree operations (legacy)")
+        else:
+            git_dir = None
+            is_bare = False
+            logger.warning(f"No git repo found at {repo_base_path} (neither .bare nor .git)")
+
+        worktree_path_result = self.repo_manager.get_worktree_path(repo_name, ref)
+        if worktree_path_result:
+            worktree_path = worktree_path_result
+        else:
+            worktree_path = self.repo_manager.repos_base_path / repo_name / "worktrees" / ref.replace("/", "_").replace("\\", "_")
+
+        logger.info(f"_ensure_clean_worktree: Ensuring clean worktree for {repo_name}@{ref} (is_bare={is_bare})")
+
+        # Strategy 1: Prune stale git worktree registrations
+        if git_dir and os.path.exists(git_dir):
+            try:
+                result = subprocess.run(
+                    ["git", "-C", str(git_dir), "worktree", "prune"],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if result.returncode == 0:
+                    logger.info(f"Pruned stale worktrees for {repo_name}")
+            except Exception as e:
+                logger.debug(f"Git worktree prune failed (non-critical): {e}")
+
+        # Strategy 2: Try to unregister from git first (while directory still exists)
+        if git_dir and os.path.exists(git_dir):
+            try:
+                # Try force remove first
+                subprocess.run(
+                    [
+                        "git", "-C", str(git_dir),
+                        "worktree", "remove", "--force",
+                        str(worktree_path)
+                    ],
+                    capture_output=True,
+                    timeout=30,
+                )
+                logger.info(f"Force-removed worktree registration for {repo_name}@{ref}")
+            except Exception:
+                pass  # Ignore errors, prune already cleaned stale entries
+
+        # Strategy 3: Remove worktree directory if it still exists (corrupt or empty)
+        if os.path.exists(worktree_path):
+            logger.info(f"Removing existing worktree directory: {worktree_path}")
+            shutil.rmtree(worktree_path, ignore_errors=True)
+
+        # Strategy 4: Create fresh worktree with exists_ok=True
+        try:
+            logger.info(f"Creating fresh worktree for {repo_name}@{ref} (is_bare={is_bare})")
+
+            if is_bare:
+                # Use RepoManager for bare repos
+                new_path = self.repo_manager.create_worktree(
+                    repo_name=repo_name,
+                    ref=ref,
+                    auth_token=auth_token,
+                    is_commit=is_commit,
+                    user_id=user_id,
+                    exists_ok=True,
+                )
+                logger.info(f"Successfully created worktree via RepoManager at {new_path}")
+                return str(new_path)
+            else:
+                # For regular repos (legacy), create worktree directly
+                logger.info(f"Using legacy worktree creation for regular repo at {git_dir}")
+                regular_repo = Repo(str(git_dir))
+                worktree_path_str = await self._create_git_worktree(
+                    base_repo=regular_repo,
+                    worktree_path=worktree_path,
+                    ref=ref,
+                    is_commit=is_commit,
+                )
+                if worktree_path_str:
+                    logger.info(f"Successfully created worktree at {worktree_path_str}")
+                    return worktree_path_str
+                else:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to create worktree for regular repo {repo_name}@{ref}",
+                    )
+
+        except Exception as e:
+            logger.error(f"Failed to create worktree even after cleanup: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create worktree for {repo_name}@{ref}: {str(e)}",
+            ) from e
 
     async def setup_project_directory(
         self,
@@ -755,16 +1014,46 @@ class ParseHelper:
         user_id,
         project_id=None,  # Change type to str
         commit_id=None,
+        repo_manager_path: Optional[
+            str
+        ] = None,  # New: path from RepoManager if available
+        auth_token: Optional[str] = None,  # User's GitHub OAuth token for cloning
     ):
+        """
+        Set up the project directory for parsing.
+
+        When repo_manager_path is provided (repo was cloned directly to RepoManager),
+        this method skips tarball download and uses that path directly.
+
+        Args:
+            repo: Git Repo object or PyGithub Repository object
+            branch: Branch name
+            auth: Authentication object for GitHub API
+            repo_details: ParsingRequest or Repo object with repository details
+            user_id: User ID
+            project_id: Project ID (optional)
+            commit_id: Specific commit to checkout (optional)
+            repo_manager_path: Path from RepoManager if repo was already cloned there
+        """
         # Check if this is a local repository by examining the repo object
         # In development mode: repo is Repo object, repo_details is ParsingRequest
         # In non-development mode: both repo and repo_details can be Repo objects
         logger.info(
             f"ParsingHelper: setup_project_directory called with repo type: {type(repo).__name__}, "
-            f"repo_details type: {type(repo_details).__name__}"
+            f"repo_details type: {type(repo_details).__name__}, repo_manager_path: {repo_manager_path}"
         )
 
-        if isinstance(repo, Repo):
+        if repo_manager_path:
+            # RepoManager-cached remote repo - DON'T set repo_path (it's a cached remote, not true local)
+            repo_path = None
+            if hasattr(repo_details, "repo_name"):
+                full_name = repo_details.repo_name
+            else:
+                full_name = repo.full_name if hasattr(repo, "full_name") else None
+            logger.info(
+                f"ParsingHelper: Detected RepoManager-cached remote repository {full_name}"
+            )
+        elif isinstance(repo, Repo):
             # Local repository - use full path from Repo object
             repo_path = repo.working_tree_dir
             full_name = repo_path.split("/")[
@@ -814,6 +1103,248 @@ class ParseHelper:
             # Local repository detected - return the path directly without downloading tarball
             logger.info(f"ParsingHelper: Using local repository at {repo_path}")
             return repo_path, project_id
+
+        # Check if we already have a path from RepoManager (cloned directly there)
+        if repo_manager_path and os.path.exists(repo_manager_path):
+            logger.info(
+                f"ParsingHelper: Using RepoManager path directly at {repo_manager_path}, skipping tarball download"
+            )
+
+            # Validate that the path contains actual files (not just .git)
+            file_count = 0
+            try:
+                for root, dirs, files in os.walk(repo_manager_path):
+                    # Skip .git directory (check if .git is a directory component, not substring)
+                    root_parts = root.split(os.sep)
+                    if ".git" in root_parts:
+                        git_idx = root_parts.index(".git")
+                        git_path = os.sep.join(root_parts[: git_idx + 1])
+                        if os.path.isdir(git_path):
+                            continue
+                    # Skip other hidden directories
+                    if any(
+                        part.startswith(".") and part not in [".github", ".vscode"]
+                        for part in root_parts
+                    ):
+                        continue
+                    file_count += sum(1 for f in files if not f.startswith("."))
+                    if file_count > 10:
+                        break
+            except Exception as e:
+                logger.warning(f"Error checking files in {repo_manager_path}: {e}")
+
+            if file_count == 0:
+                logger.error(
+                    f"RepoManager path {repo_manager_path} exists but contains no source files. "
+                    "This might be a worktree issue. Will recreate using bulletproof method."
+                )
+                # Use bulletproof helper to clean up and recreate worktree
+                try:
+                    repo_manager_path = await self._ensure_clean_worktree(
+                        repo_name=normalized_full_name,
+                        ref=commit_id if commit_id else (branch if branch else "main"),
+                        auth_token=auth_token,
+                        user_id=user_id,
+                        is_commit=bool(commit_id),
+                    )
+                    # Validate the new worktree has files
+                    new_file_count = sum(
+                        1 for _, _, files in os.walk(repo_manager_path)
+                        for f in files if not f.startswith(".")
+                    )
+                    if new_file_count == 0:
+                        raise HTTPException(
+                            status_code=500,
+                            detail="Recreated worktree still empty - possible bare repo corruption",
+                        )
+                    logger.info(
+                        f"Successfully recreated worktree at {repo_manager_path} with {new_file_count} files"
+                    )
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    logger.error(f"Failed to recreate worktree: {e}")
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to recreate worktree: {str(e)}",
+                    )
+
+            # At this point we have a valid worktree (either originally valid or recreated)
+            logger.info(
+                f"RepoManager path validated: using {repo_manager_path}"
+            )
+            extracted_dir = repo_manager_path
+
+            # Get commit SHA from RepoManager metadata or from git
+            latest_commit_sha = commit_id
+            if not latest_commit_sha:
+                try:
+                    # Try to get from RepoManager metadata
+                    if self.repo_manager:
+                        repo_info = self.repo_manager.get_repo_info(
+                            repo_name=normalized_full_name,
+                            branch=branch,
+                            commit_id=commit_id,
+                            user_id=user_id,
+                        )
+                        if repo_info and repo_info.get("commit_id"):
+                            latest_commit_sha = repo_info["commit_id"]
+
+                    # Fallback: try to get from git
+                    if not latest_commit_sha:
+                        try:
+                            git_repo = Repo(repo_manager_path)
+                            latest_commit_sha = git_repo.head.commit.hexsha
+                        except Exception:
+                            # Last resort: get from GitHub API if repo is not a local git repo
+                            if hasattr(repo, "get_branch"):
+                                branch_details = repo.get_branch(branch)
+                                latest_commit_sha = branch_details.commit.sha
+                except Exception as e:
+                    logger.warning(f"Could not determine commit SHA: {e}")
+                    latest_commit_sha = commit_id or "unknown"
+
+            # Extract metadata from repo for project update
+            try:
+                if repo is None:
+                    # No repo object available (cached without API access)
+                    repo_metadata = {}
+                elif isinstance(repo, Repo):
+                    repo_metadata = ParseHelper.extract_local_repo_metadata(repo)
+                else:
+                    repo_metadata = ParseHelper.extract_remote_repo_metadata(repo)
+            except Exception as e:
+                logger.warning(f"Could not extract repo metadata: {e}")
+                repo_metadata = {}
+
+            repo_metadata["error_message"] = None
+            project_metadata = json.dumps(repo_metadata).encode("utf-8")
+            ProjectService.update_project(
+                self.db,
+                project_id,
+                properties=project_metadata,
+                commit_id=latest_commit_sha,
+                status=ProjectStatusEnum.CLONED.value,
+            )
+
+            logger.info(
+                f"ParsingHelper: Project directory setup complete using RepoManager path: {extracted_dir}"
+            )
+            return extracted_dir, project_id
+
+        # RepoManager path was set but path missing - try to recreate worktree if bare repo exists
+        if repo_manager_path and not os.path.exists(repo_manager_path):
+            # Extract repo name from repo_details or use the stored full_name
+            repo_name_for_recreate = None
+            if hasattr(repo_details, "repo_name"):
+                repo_name_for_recreate = repo_details.repo_name
+            elif 'full_name' in locals():
+                repo_name_for_recreate = full_name
+
+            if repo_name_for_recreate:
+                # Check if bare repo exists - if so, we can recreate just the worktree
+                bare_repo_path = self.repo_manager._get_bare_repo_path(repo_name_for_recreate)
+                if os.path.exists(bare_repo_path):
+                    logger.info(
+                        f"RepoManager worktree missing at {repo_manager_path} but bare repo exists. "
+                        f"Using bulletproof recreation for {repo_name_for_recreate}..."
+                    )
+                    try:
+                        ref = commit_id if commit_id else (branch if branch else "main")
+                        is_commit = bool(commit_id)
+                        # Use bulletproof helper to ensure clean worktree creation
+                        new_worktree_path = await self._ensure_clean_worktree(
+                            repo_name=repo_name_for_recreate,
+                            ref=ref,
+                            auth_token=auth_token,
+                            user_id=user_id,
+                            is_commit=is_commit,
+                        )
+                        logger.info(
+                            f"Successfully recreated worktree at {new_worktree_path}"
+                        )
+                        repo_manager_path = str(new_worktree_path)
+
+                        # Persist project metadata after worktree recreation (same as "path exists" branch)
+                        latest_commit_sha = commit_id
+                        if not latest_commit_sha:
+                            try:
+                                if self.repo_manager:
+                                    repo_info = self.repo_manager.get_repo_info(
+                                        repo_name=normalized_full_name,
+                                        branch=branch,
+                                        commit_id=commit_id,
+                                        user_id=user_id,
+                                    )
+                                    if repo_info and repo_info.get("commit_id"):
+                                        latest_commit_sha = repo_info["commit_id"]
+                                if not latest_commit_sha:
+                                    try:
+                                        git_repo = Repo(repo_manager_path)
+                                        latest_commit_sha = git_repo.head.commit.hexsha
+                                    except Exception:
+                                        if hasattr(repo, "get_branch"):
+                                            branch_details = repo.get_branch(branch)
+                                            latest_commit_sha = branch_details.commit.sha
+                            except Exception as e:
+                                logger.warning(f"Could not determine commit SHA: {e}")
+                            latest_commit_sha = latest_commit_sha or commit_id or "unknown"
+                        try:
+                            if repo is None:
+                                repo_metadata = {}
+                            elif isinstance(repo, Repo):
+                                repo_metadata = ParseHelper.extract_local_repo_metadata(repo)
+                            else:
+                                repo_metadata = ParseHelper.extract_remote_repo_metadata(repo)
+                        except Exception as e:
+                            logger.warning(f"Could not extract repo metadata: {e}")
+                            repo_metadata = {}
+                        repo_metadata["error_message"] = None
+                        project_metadata = json.dumps(repo_metadata).encode("utf-8")
+                        ProjectService.update_project(
+                            self.db,
+                            project_id,
+                            properties=project_metadata,
+                            commit_id=latest_commit_sha,
+                            status=ProjectStatusEnum.CLONED.value,
+                        )
+                        logger.info(
+                            f"ParsingHelper: Project directory setup complete using recreated worktree: {repo_manager_path}"
+                        )
+                        return repo_manager_path, project_id
+                    except HTTPException:
+                        raise
+                    except Exception as e:
+                        logger.error(f"Failed to recreate worktree: {e}")
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Failed to recreate worktree: {str(e)}",
+                        )
+                else:
+                    # Bare repo also missing - need full re-clone
+                    logger.error(
+                        f"RepoManager path {repo_manager_path} is missing and bare repo not found at {bare_repo_path}. "
+                        "Full re-clone required."
+                    )
+                    raise HTTPException(
+                        status_code=500,
+                        detail=(
+                            "Repository cache path is missing and bare repo not found. "
+                            "Please trigger a new parse to re-clone the repository."
+                        ),
+                    )
+            else:
+                logger.error(
+                    f"RepoManager path {repo_manager_path} is missing and cannot determine repo name for recreation."
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        "Repository cache path is missing and cannot recreate worktree. "
+                        "Please trigger a new parse to re-clone the repository."
+                    ),
+                )
+
         if isinstance(repo_details, Repo):
             extracted_dir = repo_details.working_tree_dir
             try:
@@ -837,47 +1368,23 @@ class ParseHelper:
             finally:
                 os.chdir(current_dir)  # Restore the original working directory
         else:
-            try:
-                if commit_id:
-                    # For GitHub API, we need to download tarball for specific commit
-                    extracted_dir = await self.download_and_extract_tarball(
-                        repo,
-                        commit_id,
-                        str(Path(os.getenv("PROJECT_PATH", "projects/")).absolute()),
-                        auth,
-                        repo_details,
-                        user_id,
-                    )
-                    latest_commit_sha = commit_id
-                else:
-                    extracted_dir = await self.download_and_extract_tarball(
-                        repo,
-                        branch,
-                        str(Path(os.getenv("PROJECT_PATH", "projects/")).absolute()),
-                        auth,
-                        repo_details,
-                        user_id,
-                    )
-                    # Use repo.get_branch() instead of repo_details.get_branch()
-                    # repo is the MockRepo object (or PyGithub Repository) with get_branch method
-                    # repo_details can be ParsingRequest in dev mode, which doesn't have get_branch
-                    branch_details = repo.get_branch(branch)
-                    latest_commit_sha = branch_details.commit.sha
-            except ParsingFailedError as e:
-                logger.exception("Failed to download repository")
-                raise HTTPException(
-                    status_code=500, detail=f"Repository download failed: {e}"
-                ) from e
-            except Exception as e:
-                logger.exception("Unexpected error during repository download")
-                raise HTTPException(
-                    status_code=500, detail=f"Repository download failed: {e}"
-                ) from e
+            # Worktree-only mode: If we reach here, worktree creation failed
+            logger.error(
+                "Worktree creation failed and tarball fallback is disabled. "
+                "Only RepoManager worktrees are supported."
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Failed to create worktree for repository parsing. "
+                    "Please check RepoManager status and try again."
+                ),
+            )
 
         # Use repo instead of repo_details for metadata extraction
         # repo is always the MockRepo (remote) or Repo (local) object with required methods
         # repo_details can be ParsingRequest in dev mode, which lacks these methods
-        repo_metadata = ParseHelper.extract_repository_metadata(repo)
+        repo_metadata = self.extract_repository_metadata(repo)
         repo_metadata["error_message"] = None
         project_metadata = json.dumps(repo_metadata).encode("utf-8")
         ProjectService.update_project(
@@ -888,21 +1395,27 @@ class ParseHelper:
             status=ProjectStatusEnum.CLONED.value,
         )
 
-        # Copy repo to .repos if repo manager is enabled
-        if self.repo_manager and extracted_dir and os.path.exists(extracted_dir):
-            try:
-                await self._copy_repo_to_repo_manager(
-                    normalized_full_name,
-                    extracted_dir,
-                    branch,
-                    latest_commit_sha,
-                    user_id,
-                    repo_metadata,
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to copy repo to repo manager: {e}. Continuing with parsing."
-                )
+        # Note: When RepoManager is enabled as primary source (see clone_or_copy_repository),
+        # repos are cloned directly to .repos via _clone_to_repo_manager.
+        # The _copy_repo_to_repo_manager fallback is only for backward compatibility
+        # when RepoManager is enabled but direct clone failed.
+        # This is intentionally skipped when RepoManager is the primary source of truth.
+        # If needed for backward compat with non-primary mode, uncomment below:
+        #
+        # if self.repo_manager and extracted_dir and os.path.exists(extracted_dir):
+        #     try:
+        #         await self._copy_repo_to_repo_manager(
+        #             normalized_full_name,
+        #             extracted_dir,
+        #             branch,
+        #             latest_commit_sha,
+        #             user_id,
+        #             repo_metadata,
+        #         )
+        #     except Exception as e:
+        #         logger.warning(
+        #             f"Failed to copy repo to repo manager: {e}. Continuing with parsing."
+        #         )
 
         return extracted_dir, project_id
 
@@ -979,6 +1492,797 @@ class ParseHelper:
         except Exception:
             logger.exception("Error creating worktree for repo manager")
             raise
+
+    async def _clone_to_repo_manager(
+        self,
+        github_repo,
+        repo_name: str,
+        branch: Optional[str],
+        commit_id: Optional[str],
+        user_id: str,
+        auth: Any,
+        *,
+        auth_token: Optional[str] = None,
+        project_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Add repository to RepoManager using git clone/worktree.
+
+        If the base repo already exists in RepoManager, creates a worktree
+        for the requested branch/commit (very fast - no download needed).
+
+        If the base repo doesn't exist, clones it first then creates worktree.
+        When auth_token (user's GitHub OAuth token) is provided, uses
+        RepoManager.prepare_for_parsing() so the token is used for cloning.
+
+        Args:
+            github_repo: PyGithub Repository object
+            repo_name: Full repository name (e.g., 'owner/repo')
+            branch: Branch name
+            commit_id: Commit SHA (optional)
+            user_id: User ID
+            auth: Authentication object for GitHub API
+            auth_token: Optional user GitHub OAuth token for cloning private repos
+            project_id: Optional project ID for logging and alerts
+
+        Returns:
+            Path to the repository worktree in .repos, or None if failed
+        """
+        if not self.repo_manager:
+            return None
+
+        try:
+            # Determine the base repo path in .repos (e.g., .repos/owner/repo)
+            base_repo_path = self.repo_manager._get_repo_local_path(repo_name)
+            ref = commit_id if commit_id else branch
+
+            if not ref:
+                logger.warning(
+                    f"No branch or commit_id provided for {repo_name}, cannot clone"
+                )
+                return None
+
+            # Worktree path for this specific branch/commit
+            # Use commit_id directly if provided to ensure exact match
+            if commit_id:
+                worktree_name = commit_id.replace("/", "_").replace("\\", "_")
+                logger.info(
+                    f"ParsingHelper: Creating worktree for exact commit_id={commit_id}, "
+                    f"worktree_name={worktree_name}"
+                )
+            else:
+                worktree_name = branch.replace("/", "_").replace("\\", "_")
+                logger.info(
+                    f"ParsingHelper: Creating worktree for branch={branch}, "
+                    f"worktree_name={worktree_name}"
+                )
+            worktree_path = base_repo_path / "worktrees" / worktree_name
+
+            logger.info(
+                f"ParsingHelper: Worktree path will be: {worktree_path} "
+                f"(for commit_id={commit_id}, branch={branch})"
+            )
+
+            # Check if base repo already exists (has .git directory)
+            base_git_dir = base_repo_path / ".git"
+
+            if base_git_dir.exists():
+                # Base repo exists - just create worktree (fast path!)
+                logger.info(
+                    f"ParsingHelper: Base repo exists at {base_repo_path}, "
+                    f"creating worktree for {ref}"
+                )
+
+                try:
+                    base_repo = Repo(base_repo_path)
+
+                    # Fetch latest to ensure we have the commit
+                    logger.info(f"ParsingHelper: Fetching latest for {repo_name}")
+                    for remote in base_repo.remotes:
+                        try:
+                            remote.fetch()
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch from {remote.name}: {e}")
+
+                    # Create worktree for the requested ref
+                    worktree_path_str = await self._create_git_worktree(
+                        base_repo=base_repo,
+                        worktree_path=worktree_path,
+                        ref=ref,
+                        is_commit=commit_id is not None,
+                    )
+
+                    if worktree_path_str:
+                        # Always get actual commit SHA from worktree to ensure accuracy
+                        actual_commit_id = None
+                        try:
+                            worktree_repo = Repo(worktree_path_str)
+                            actual_commit_id = worktree_repo.head.commit.hexsha
+                            logger.info(
+                                f"ParsingHelper: Worktree created at {worktree_path_str}, "
+                                f"actual commit_id={actual_commit_id} "
+                                f"(requested commit_id={commit_id}, branch={branch})"
+                            )
+                            # Verify commit_id matches if it was specified
+                            if commit_id and actual_commit_id != commit_id:
+                                logger.warning(
+                                    f"ParsingHelper: Commit mismatch! Requested {commit_id}, "
+                                    f"but worktree has {actual_commit_id}. Using actual commit_id."
+                                )
+                        except Exception as e:
+                            logger.warning(
+                                f"Could not get commit SHA from worktree: {e}"
+                            )
+                            # Fallback to requested commit_id or fetch from branch
+                            actual_commit_id = commit_id
+                            if not actual_commit_id:
+                                try:
+                                    branch_info = github_repo.get_branch(branch)
+                                    actual_commit_id = branch_info.commit.sha
+                                except Exception as e2:
+                                    logger.warning(
+                                        f"Could not get commit SHA from branch: {e2}"
+                                    )
+
+                        # Register with RepoManager
+                        try:
+                            repo_metadata = ParseHelper.extract_remote_repo_metadata(
+                                github_repo
+                            )
+                        except Exception:
+                            repo_metadata = {}
+
+                        self.repo_manager.register_repo(
+                            repo_name=repo_name,
+                            local_path=worktree_path_str,
+                            branch=branch,
+                            commit_id=actual_commit_id,
+                            user_id=user_id,
+                            metadata=repo_metadata,
+                        )
+
+                        logger.info(
+                            f"ParsingHelper: Created worktree for {repo_name}@{ref} "
+                            f"at {worktree_path_str} (fast path - no download)"
+                        )
+                        return worktree_path_str
+
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to use existing base repo, will re-clone: {e}"
+                    )
+                    # Fall through to fresh clone
+
+            # Base repo doesn't exist - need to clone it
+            logger.info(
+                f"[Repomanager] Base repo not found, starting authentication chain for {repo_name}",
+                user_id=user_id,
+                repo_name=repo_name,
+                ref=ref,
+                has_user_auth_token=bool(auth_token),
+                has_provider_auth=auth is not None,
+            )
+
+            # ============================================================================
+            # AUTHENTICATION CHAIN: GitHub App -> User OAuth -> Environment Tokens
+            # ============================================================================
+            # Priority 1: GitHub App installation token (from auth object - ghs_* token)
+            # Priority 2: User's OAuth token from DB (gho_* token)
+            # Priority 3: Environment tokens (GH_TOKEN_LIST, CODE_PROVIDER_TOKEN)
+            # ============================================================================
+
+            worktree_path_str = None
+            last_error = None
+
+            # ---------------------------------------------------------------------------
+            # PRIORITY 1: GitHub App Installation Token (ghs_*)
+            # ---------------------------------------------------------------------------
+            # The auth object from github_service.get_repo() contains the GitHub App token
+            # when the app is installed on the repository. This has highest priority
+            # because it provides organization-level access.
+            if auth and hasattr(auth, "token") and auth.token:
+                token = auth.token
+                token_type = self._detect_token_type(token)
+
+                if token_type == "github_app":
+                    logger.info(
+                        f"[Repomanager] Attempting Priority 1: GitHub App token",
+                        user_id=user_id,
+                        repo_name=repo_name,
+                        ref=ref,
+                        token_type=token_type,
+                        token_prefix=token[:7] if token else None,
+                    )
+
+                    try:
+                        # Build authenticated URL with correct prefix for App tokens
+                        clone_url = await self._build_clone_url(
+                            github_repo, auth, user_id=user_id
+                        )
+
+                        if clone_url:
+                            worktree_path_str = self.repo_manager.prepare_for_parsing(
+                                repo_name,
+                                ref,
+                                auth_token=token,
+                                user_id=user_id,
+                                is_commit=bool(commit_id),
+                            )
+
+                            if worktree_path_str:
+                                logger.info(
+                                    f"[Repomanager] SUCCESS: Cloned with GitHub App token",
+                                    user_id=user_id,
+                                    repo_name=repo_name,
+                                    ref=ref,
+                                    worktree_path=worktree_path_str,
+                                    method="github_app_token",
+                                )
+                                return worktree_path_str
+                    except Exception as e:
+                        last_error = e
+                        logger.warning(
+                            f"[Repomanager] FAILED: GitHub App token failed, will try next method",
+                            user_id=user_id,
+                            repo_name=repo_name,
+                            ref=ref,
+                            error_type=type(e).__name__,
+                            error=str(e),
+                            reason="GitHub App may not be installed on this repository or token expired",
+                        )
+                else:
+                    logger.info(
+                        f"[Repomanager] Auth token is not GitHub App type, skipping Priority 1",
+                        user_id=user_id,
+                        repo_name=repo_name,
+                        token_type=token_type,
+                    )
+
+            # ---------------------------------------------------------------------------
+            # PRIORITY 2: User's OAuth Token from DB (gho_*)
+            # ---------------------------------------------------------------------------
+            if auth_token:
+                token_type = self._detect_token_type(auth_token)
+
+                logger.info(
+                    f"[Repomanager] Attempting Priority 2: User OAuth token",
+                    user_id=user_id,
+                    repo_name=repo_name,
+                    ref=ref,
+                    token_type=token_type,
+                    token_prefix=auth_token[:7] if auth_token else None,
+                )
+
+                try:
+                    worktree_path_str = self.repo_manager.prepare_for_parsing(
+                        repo_name,
+                        ref,
+                        auth_token=auth_token,
+                        user_id=user_id,
+                        is_commit=bool(commit_id),
+                    )
+
+                    if worktree_path_str:
+                        logger.info(
+                            f"[Repomanager] SUCCESS: Cloned with User OAuth token",
+                            user_id=user_id,
+                            repo_name=repo_name,
+                            ref=ref,
+                            worktree_path=worktree_path_str,
+                            method="user_oauth_token",
+                        )
+                        return worktree_path_str
+                except Exception as e:
+                    last_error = e
+                    error_str = str(e).lower()
+
+                    # Determine specific failure reason
+                    if "403" in error_str or "forbidden" in error_str:
+                        reason = "User's OAuth token lacks access (may need org approval or repo access)"
+                    elif "401" in error_str or "unauthorized" in error_str:
+                        reason = "User's OAuth token is invalid or expired"
+                    elif "404" in error_str or "not found" in error_str:
+                        reason = "Repository not found or user lacks access"
+                    else:
+                        reason = f"Cloning failed with user token: {error_str[:100]}"
+
+                    logger.warning(
+                        f"[Repomanager] FAILED: User OAuth token failed, will try next method",
+                        user_id=user_id,
+                        repo_name=repo_name,
+                        ref=ref,
+                        error_type=type(e).__name__,
+                        error=str(e)[:200],
+                        reason=reason,
+                    )
+
+            # ---------------------------------------------------------------------------
+            # PRIORITY 3: Environment Tokens (GH_TOKEN_LIST, CODE_PROVIDER_TOKEN)
+            # ---------------------------------------------------------------------------
+            logger.info(
+                f"[Repomanager] Attempting Priority 3: Environment tokens",
+                user_id=user_id,
+                repo_name=repo_name,
+                ref=ref,
+                method="environment_token_fallback",
+            )
+
+            # Build clone URL with authentication (this will use environment tokens)
+            clone_url = await self._build_clone_url(github_repo, auth, user_id=user_id)
+
+            if not clone_url:
+                logger.error(
+                    f"[Repomanager] FAILED: Could not build clone URL for {repo_name}",
+                    user_id=user_id,
+                    repo_name=repo_name,
+                    ref=ref,
+                    reason="No valid authentication method available",
+                )
+                return None
+
+            # Clone as BARE repository to match RepoManager architecture
+            # This ensures worktrees can be created properly
+            bare_repo_path = self.repo_manager._get_bare_repo_path(repo_name)
+            bare_repo_path.parent.mkdir(parents=True, exist_ok=True)
+
+            logger.info(
+                f"[Repomanager] Cloning {repo_name} as bare repo to {bare_repo_path}",
+                user_id=user_id,
+                repo_name=repo_name,
+                ref=ref,
+                method="environment_token_bare_clone",
+            )
+
+            try:
+                # Clone as bare repository
+                Repo.clone_from(
+                    clone_url,
+                    str(bare_repo_path),
+                    bare=True,
+                    mirror=True,  # Mirror for full fidelity
+                )
+                logger.info(
+                    f"[Repomanager] SUCCESS: Cloned {repo_name} as bare repo with environment token",
+                    user_id=user_id,
+                    repo_name=repo_name,
+                    ref=ref,
+                    bare_repo_path=str(bare_repo_path),
+                    method="environment_token",
+                )
+
+                # Configure the bare repo to fetch all refs
+                bare_repo = Repo(str(bare_repo_path))
+                if bare_repo.remotes:
+                    origin = bare_repo.remotes.origin
+                    origin.fetch()
+                    logger.info(
+                        f"[_clone_to_repo_manager] Fetched all refs for {repo_name}",
+                        user_id=user_id,
+                        repo_name=repo_name,
+                    )
+
+            except Exception as e:
+                error_str = str(e).lower()
+                if "403" in error_str or "forbidden" in error_str:
+                    reason = "Environment token lacks access to repository (check GH_TOKEN_LIST)"
+                elif "401" in error_str or "unauthorized" in error_str:
+                    reason = "Environment token is invalid or expired"
+                elif "404" in error_str or "not found" in error_str:
+                    reason = "Repository not found with environment token"
+                else:
+                    reason = f"Clone failed: {str(e)[:200]}"
+
+                logger.error(
+                    f"[Repomanager] FAILED: Environment token clone failed for {repo_name}",
+                    user_id=user_id,
+                    repo_name=repo_name,
+                    ref=ref,
+                    error_type=type(e).__name__,
+                    error=str(e)[:200],
+                    reason=reason,
+                    suggestion="All authentication methods exhausted. Check: 1) GitHub App installation, 2) User OAuth scopes, 3) Environment tokens",
+                )
+
+                # Send email alert for final auth failure
+                try:
+                    email_helper = EmailHelper()
+                    import traceback
+                    await email_helper.send_parsing_failure_alert(
+                        repo_name=repo_name,
+                        branch_name=ref,
+                        error_message=f"{reason}: {str(e)}",
+                        auth_method="environment",
+                        failure_type="cloning_auth",
+                        user_id=user_id,
+                        project_id=project_id,
+                        stack_trace=traceback.format_exc(),
+                    )
+                except Exception as email_err:
+                    logger.error(f"Failed to send failure email: {email_err}")
+
+                return None
+
+            # Now create worktree for the specific ref from the bare repo
+            worktree_path_str = await self._create_git_worktree_from_bare(
+                bare_repo_path=bare_repo_path,
+                worktree_path=worktree_path,
+                ref=ref,
+                is_commit=commit_id is not None,
+            )
+
+            if not worktree_path_str:
+                # Worktree creation failed - don't return bare repo (not usable for parsing)
+                logger.error(
+                    f"[Repomanager] Worktree creation failed for {repo_name}. Bare repo exists but cannot be used for parsing.",
+                    user_id=user_id,
+                    repo_name=repo_name,
+                    ref=ref,
+                )
+
+                # Send email alert for worktree creation failure
+                try:
+                    email_helper = EmailHelper()
+                    await email_helper.send_parsing_failure_alert(
+                        repo_name=repo_name,
+                        branch_name=ref,
+                        error_message="Worktree creation failed after successful bare repo clone",
+                        auth_method="environment",
+                        failure_type="worktree_creation",
+                        user_id=user_id,
+                        project_id=project_id,
+                        stack_trace=None,
+                    )
+                except Exception as email_err:
+                    logger.error(f"Failed to send worktree failure email: {email_err}")
+
+                return None
+
+            # Always get actual commit SHA from worktree to ensure accuracy
+            actual_commit_id = None
+            try:
+                worktree_repo = Repo(worktree_path_str)
+                actual_commit_id = worktree_repo.head.commit.hexsha
+                logger.info(
+                    f"ParsingHelper: Worktree created at {worktree_path_str}, "
+                    f"actual commit_id={actual_commit_id} "
+                    f"(requested commit_id={commit_id}, branch={branch})"
+                )
+                # Verify commit_id matches if it was specified
+                if commit_id and actual_commit_id != commit_id:
+                    logger.warning(
+                        f"ParsingHelper: Commit mismatch! Requested {commit_id}, "
+                        f"but worktree has {actual_commit_id}. Using actual commit_id."
+                    )
+            except Exception as e:
+                logger.warning(f"Could not get commit SHA from worktree: {e}")
+                # Fallback to requested commit_id or fetch from branch
+                actual_commit_id = commit_id
+                if not actual_commit_id:
+                    try:
+                        branch_info = github_repo.get_branch(branch)
+                        actual_commit_id = branch_info.commit.sha
+                    except Exception as e2:
+                        logger.warning(f"Could not get commit SHA from branch: {e2}")
+
+            # Extract metadata
+            try:
+                repo_metadata = ParseHelper.extract_remote_repo_metadata(github_repo)
+            except Exception:
+                repo_metadata = {}
+
+            # Register with RepoManager
+            self.repo_manager.register_repo(
+                repo_name=repo_name,
+                local_path=worktree_path_str,
+                branch=branch,
+                commit_id=actual_commit_id,
+                user_id=user_id,
+                metadata=repo_metadata,
+            )
+
+            logger.info(
+                f"ParsingHelper: Successfully cloned and registered {repo_name}@{ref} "
+                f"in RepoManager at {worktree_path_str}"
+            )
+
+            return worktree_path_str
+
+        except Exception as e:
+            logger.exception(f"Failed to add {repo_name} to RepoManager: {e}")
+            return None
+
+    @staticmethod
+    def _get_token_username_prefix(token: str) -> str:
+        """Get the correct username prefix for a GitHub token based on its type.
+
+        GitHub token types:
+        - ghs_*: GitHub App installation token (temporary) -> uses 'x-access-token'
+        - gho_*: OAuth token (user) -> uses 'oauth2'
+        - ghp_*: Personal Access Token -> uses 'oauth2' (or token directly)
+        - github_pat_*: Fine-grained PAT -> uses 'oauth2'
+
+        Args:
+            token: The GitHub token
+
+        Returns:
+            Username prefix for the token
+        """
+        if not token:
+            return "oauth2"
+
+        # GitHub App installation tokens (ghs_*) must use x-access-token
+        if token.startswith("ghs_"):
+            return "x-access-token"
+
+        # OAuth tokens (gho_*) and PATs use oauth2
+        return "oauth2"
+
+    @staticmethod
+    def _detect_token_type(token: str) -> str:
+        """Detect the type of GitHub token.
+
+        Args:
+            token: The GitHub token
+
+        Returns:
+            Token type: 'github_app', 'oauth', 'pat', 'fine_grained_pat', or 'unknown'
+        """
+        if not token:
+            return "unknown"
+
+        if token.startswith("ghs_"):
+            return "github_app"
+        elif token.startswith("gho_"):
+            return "oauth"
+        elif token.startswith("ghp_"):
+            return "pat"
+        elif token.startswith("github_pat_"):
+            return "fine_grained_pat"
+        else:
+            return "unknown"
+
+    async def _build_clone_url(
+        self,
+        github_repo,
+        auth: Any,
+        user_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """Build authenticated clone URL for the repository with proper token handling.
+
+        Args:
+            github_repo: PyGithub Repository object
+            auth: Authentication object or token string
+            user_id: User ID for logging context
+            project_id: Project ID for logging context
+
+        Returns:
+            Authenticated clone URL or original URL if no auth
+        """
+        try:
+            clone_url = github_repo.clone_url
+            repo_name = getattr(github_repo, "full_name", "unknown")
+
+            # Extract token from auth
+            token = None
+            token_source = "none"
+
+            if isinstance(auth, str):
+                token = auth
+                token_source = "string"
+            elif hasattr(auth, "token"):
+                token = auth.token
+                token_source = "auth_object"
+            elif hasattr(auth, "password"):
+                token = auth.password
+                token_source = "auth_password"
+
+            if token:
+                from urllib.parse import urlparse, urlunparse
+
+                parsed = urlparse(clone_url)
+                username_prefix = self._get_token_username_prefix(token)
+
+                # Log token type being used (without exposing the token)
+                token_type = "unknown"
+                if token.startswith("ghs_"):
+                    token_type = "github_app"
+                elif token.startswith("gho_"):
+                    token_type = "oauth"
+                elif token.startswith("ghp_"):
+                    token_type = "pat"
+                elif token.startswith("github_pat_"):
+                    token_type = "fine_grained_pat"
+
+                logger.info(
+                    f"[Repomanager] Building authenticated URL for {repo_name}",
+                    user_id=user_id,
+                    project_id=project_id,
+                    repo_name=repo_name,
+                    token_type=token_type,
+                    username_prefix=username_prefix,
+                    token_source=token_source,
+                )
+
+                # Reconstruct URL with proper username:token format
+                netloc_with_auth = f"{username_prefix}:{token}@{parsed.netloc}"
+                clone_url = urlunparse(
+                    (
+                        parsed.scheme,
+                        netloc_with_auth,
+                        parsed.path,
+                        parsed.params,
+                        parsed.query,
+                        parsed.fragment,
+                    )
+                )
+            else:
+                logger.info(
+                    f"[_build_clone_url] No auth token provided, using unauthenticated URL for {repo_name}",
+                    user_id=user_id,
+                    project_id=project_id,
+                    repo_name=repo_name,
+                )
+
+            return clone_url
+        except Exception as e:
+            logger.warning(
+                f"[_build_clone_url] Failed to build clone URL: {e}",
+                user_id=user_id,
+                project_id=project_id,
+                repo_name=getattr(github_repo, "full_name", "unknown"),
+                exc_info=True,
+            )
+            return github_repo.clone_url if hasattr(github_repo, "clone_url") else None
+
+    async def _create_git_worktree(
+        self,
+        base_repo: Repo,
+        worktree_path: Path,
+        ref: str,
+        is_commit: bool,
+    ) -> Optional[str]:
+        """
+        Create a git worktree for the specified ref.
+
+        Args:
+            base_repo: The base git repository
+            worktree_path: Path where worktree should be created
+            ref: Branch name or commit SHA
+            is_commit: True if ref is a commit SHA, False if it's a branch
+
+        Returns:
+            Path to the worktree, or None if creation failed
+        """
+        try:
+            # Remove existing worktree if it exists
+            if worktree_path.exists():
+                try:
+                    base_repo.git.worktree("remove", str(worktree_path), force=True)
+                except Exception:
+                    shutil.rmtree(worktree_path, ignore_errors=True)
+                    # Clean up stale worktree references after manual deletion
+                    # Per git docs: manual deletion without 'git worktree remove'
+                    # leaves administrative files that need pruning
+                    try:
+                        base_repo.git.worktree("prune")
+                    except Exception:
+                        pass  # Non-critical, continue with worktree creation
+
+            # Create worktree directory parent
+            worktree_path.parent.mkdir(parents=True, exist_ok=True)
+
+            if is_commit:
+                # For specific commit, use detached HEAD
+                base_repo.git.worktree("add", "--detach", str(worktree_path), ref)
+            else:
+                # For branch, try to track it
+                try:
+                    base_repo.git.worktree("add", str(worktree_path), ref)
+                except GitCommandError:
+                    # Branch might not exist locally, try with remote tracking
+                    try:
+                        base_repo.git.worktree(
+                            "add",
+                            "--track",
+                            "-b",
+                            ref,
+                            str(worktree_path),
+                            f"origin/{ref}",
+                        )
+                    except GitCommandError:
+                        # Last resort: detached HEAD at origin/branch
+                        base_repo.git.worktree(
+                            "add", "--detach", str(worktree_path), f"origin/{ref}"
+                        )
+
+            logger.info(f"Created git worktree at {worktree_path}")
+            return str(worktree_path)
+
+        except Exception as e:
+            logger.exception(f"Failed to create worktree at {worktree_path}: {e}")
+            return None
+
+    async def _create_git_worktree_from_bare(
+        self,
+        bare_repo_path: Path,
+        worktree_path: Path,
+        ref: str,
+        is_commit: bool,
+    ) -> Optional[str]:
+        """
+        Create a git worktree from a bare repository for the specified ref.
+
+        Args:
+            bare_repo_path: Path to the bare git repository
+            worktree_path: Path where worktree should be created
+            ref: Branch name or commit SHA
+            is_commit: True if ref is a commit SHA, False if it's a branch
+
+        Returns:
+            Path to the worktree, or None if creation failed
+        """
+        try:
+            # Open the bare repository
+            bare_repo = Repo(str(bare_repo_path))
+
+            # Remove existing worktree if it exists
+            if worktree_path.exists():
+                logger.info(
+                    f"Removing existing worktree directory: {worktree_path}"
+                )
+                shutil.rmtree(worktree_path, ignore_errors=True)
+                # Also remove from git's worktree registry
+                try:
+                    bare_repo.git.worktree("prune")
+                except Exception:
+                    pass
+
+            # Create worktree directory parent
+            worktree_path.parent.mkdir(parents=True, exist_ok=True)
+
+            if is_commit:
+                # For specific commit, use detached HEAD
+                logger.info(
+                    f"Creating worktree for commit {ref} at {worktree_path}"
+                )
+                bare_repo.git.worktree("add", "--detach", str(worktree_path), ref)
+            else:
+                # For branch, try to track it
+                logger.info(
+                    f"Creating worktree for branch {ref} at {worktree_path}"
+                )
+                try:
+                    bare_repo.git.worktree("add", str(worktree_path), ref)
+                except GitCommandError:
+                    # Branch might not exist locally, try with remote tracking
+                    try:
+                        bare_repo.git.worktree(
+                            "add",
+                            "--track",
+                            "-b",
+                            ref,
+                            str(worktree_path),
+                            f"origin/{ref}",
+                        )
+                    except GitCommandError:
+                        # Last resort: detached HEAD at origin/branch
+                        logger.warning(
+                            f"Could not create tracking worktree for {ref}, "
+                            f"using detached HEAD at origin/{ref}"
+                        )
+                        bare_repo.git.worktree(
+                            "add", "--detach", str(worktree_path), f"origin/{ref}"
+                        )
+
+            logger.info(f"Created git worktree from bare repo at {worktree_path}")
+            return str(worktree_path)
+
+        except Exception as e:
+            logger.exception(
+                f"Failed to create worktree from bare repo at {worktree_path}: {e}"
+            )
+            return None
 
     def _initialize_base_repo(self, base_repo_path: Path, extracted_dir: str) -> Repo:
         """
@@ -1121,14 +2425,15 @@ class ParseHelper:
 
         return worktree_path
 
-    def extract_repository_metadata(repo):
+    def extract_repository_metadata(self, repo):
         if isinstance(repo, Repo):
             metadata = ParseHelper.extract_local_repo_metadata(repo)
         else:
             metadata = ParseHelper.extract_remote_repo_metadata(repo)
         return metadata
 
-    def extract_local_repo_metadata(repo):
+    @staticmethod
+    def extract_local_repo_metadata(repo: Repo):
         languages = ParseHelper.get_local_repo_languages(repo.working_tree_dir)
         total_bytes = sum(languages.values())
 
@@ -1160,26 +2465,48 @@ class ParseHelper:
 
         return metadata
 
-    def get_local_repo_languages(path):
+    @staticmethod
+    def get_local_repo_languages(path: str | os.PathLike[str]) -> dict[str, int]:
+        root = Path(path).resolve()
+        if not root.exists():
+            return {}
+
+        language_bytes = defaultdict(int)
         total_bytes = 0
-        python_bytes = 0
 
-        for dirpath, _, filenames in os.walk(path):
-            for filename in filenames:
-                file_extension = os.path.splitext(filename)[1]
-                file_path = os.path.join(dirpath, filename)
-                file_size = os.path.getsize(file_path)
-                total_bytes += file_size
-                if file_extension == ".py":
-                    python_bytes += file_size
+        stack = [root]
 
-        languages = {}
-        if total_bytes > 0:
-            languages["Python"] = python_bytes
-            languages["Other"] = total_bytes - python_bytes
+        while stack:
+            current = stack.pop()
 
-        return languages
+            try:
+                entries = current.iterdir()
+                for entry in entries:
+                    try:
+                        if not entry.is_symlink() and entry.is_dir():
+                            stack.append(entry)
+                        elif not entry.is_symlink() and entry.is_file():
+                            size = entry.stat().st_size
+                            total_bytes += size
 
+                            if entry.suffix == ".py":
+                                language_bytes["Python"] += size
+                            elif entry.suffix == ".ts":
+                                language_bytes["TypeScript"] += size
+                            elif entry.suffix == ".js":
+                                language_bytes["JavaScript"] += size
+                            else:
+                                language_bytes["Other"] += size
+
+                    except OSError:
+                        # Permission issues, broken files, etc.
+                        continue
+            except OSError:
+                continue
+
+        return dict(language_bytes) if total_bytes else {}
+
+    @staticmethod
     def extract_remote_repo_metadata(repo):
         languages = repo.get_languages()
         total_bytes = sum(languages.values())
@@ -1276,8 +2603,9 @@ class ParseHelper:
             return False
 
         if not branch_name:
-            logger.error(
-                f"Branch is empty so sticking to commit and not updating it for: {project_id}"
+            logger.info(
+                f"check_commit_status: Branch is empty (pinned commit parse) - "
+                f"sticking to commit and not updating it for: {project_id}"
             )
             return True
 
@@ -1287,11 +2615,6 @@ class ParseHelper:
             return False
 
         try:
-            logger.info(
-                f"check_commit_status: Branch-based parse - getting repo info for {repo_name}"
-            )
-            _github, repo = self.github_service.get_repo(repo_name)
-
             # If current_commit_id is None, we should reparse
             if current_commit_id is None:
                 logger.info(
@@ -1299,12 +2622,18 @@ class ParseHelper:
                 )
                 return False
 
-            # Get the latest commit from the branch
+            # Run blocking GitHub API (get_repo, get_branch) in thread pool to avoid blocking the event loop
+            def _fetch_latest_commit_sync() -> Optional[str]:
+                _github, repo = self.github_service.get_repo(repo_name)
+                branch = repo.get_branch(branch_name)
+                return branch.commit.sha
+
             logger.info(
-                f"check_commit_status: Getting latest commit from branch {branch_name}"
+                f"check_commit_status: Branch-based parse - getting repo info for {repo_name}"
             )
-            branch = repo.get_branch(branch_name)
-            latest_commit_id = branch.commit.sha
+            latest_commit_id = await asyncio.to_thread(
+                _fetch_latest_commit_sync
+            )
 
             # Compare current commit with latest commit
             is_up_to_date = current_commit_id == latest_commit_id

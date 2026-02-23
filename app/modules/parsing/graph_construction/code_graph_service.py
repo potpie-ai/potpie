@@ -1,5 +1,7 @@
 import hashlib
+import os
 import time
+from pathlib import Path
 from typing import Dict, Optional
 
 from neo4j import GraphDatabase
@@ -35,7 +37,24 @@ class CodeGraphService:
         self.driver.close()
 
     def create_and_store_graph(self, repo_dir, project_id, user_id):
-        # Create the graph using RepoMap
+        graph_start_time = time.time()
+        # Ensure repo_dir is a string and absolute path
+        repo_dir = str(Path(repo_dir).resolve())
+        logger.info(
+            f"[GRAPH GENERATION] Starting graph creation for project {project_id}",
+            project_id=project_id,
+        )
+        logger.info(
+            f"[GRAPH GENERATION] Using repository directory: {repo_dir} (exists: {os.path.exists(repo_dir)}, isdir: {os.path.isdir(repo_dir)})",
+            project_id=project_id,
+        )
+
+        # Step 1: Create RepoMap and parse repository
+        repo_map_start = time.time()
+        logger.info(
+            f"[GRAPH GENERATION] Step 1/4: Initializing RepoMap parser",
+            project_id=project_id,
+        )
         self.repo_map = RepoMap(
             root=repo_dir,
             verbose=True,
@@ -43,24 +62,58 @@ class CodeGraphService:
             io=SimpleIO(),
         )
 
+        parse_start = time.time()
+        logger.info(
+            f"[GRAPH GENERATION] Step 2/4: Parsing repository structure",
+            project_id=project_id,
+        )
         nx_graph = self.repo_map.create_graph(repo_dir)
+        parse_time = time.time() - parse_start
+        node_count = nx_graph.number_of_nodes()
+        relationship_count = nx_graph.number_of_edges()
+        logger.info(
+            f"[GRAPH GENERATION] Parsed repository: {node_count} nodes, {relationship_count} relationships in {parse_time:.2f}s",
+            project_id=project_id,
+            node_count=node_count,
+            relationship_count=relationship_count,
+            parse_time_seconds=parse_time,
+        )
 
         with self.driver.session() as session:
-            start_time = time.time()
-            node_count = nx_graph.number_of_nodes()
-            logger.info(f"Creating {node_count} nodes")
+            db_start_time = time.time()
 
-            # Create specialized index for relationship queries
+            # Step 2: Create indices
+            index_start = time.time()
+            logger.info(
+                f"[GRAPH GENERATION] Step 3/4: Creating Neo4j indices",
+                project_id=project_id,
+            )
             session.run(
                 """
                 CREATE INDEX node_id_repo_idx IF NOT EXISTS
                 FOR (n:NODE) ON (n.node_id, n.repoId)
             """
             )
+            index_time = time.time() - index_start
+            logger.info(
+                f"[GRAPH GENERATION] Created indices in {index_time:.2f}s",
+                project_id=project_id,
+                index_time_seconds=index_time,
+            )
 
-            # Batch insert nodes
+            # Step 3: Batch insert nodes
+            node_insert_start = time.time()
+            logger.info(
+                f"[GRAPH GENERATION] Step 4/4: Inserting {node_count} nodes into Neo4j",
+                project_id=project_id,
+                total_nodes=node_count,
+            )
             batch_size = 1000
-            for i in range(0, node_count, batch_size):
+            total_batches = (node_count + batch_size - 1) // batch_size
+            nodes_inserted = 0
+
+            for batch_idx, i in enumerate(range(0, node_count, batch_size), 1):
+                batch_start = time.time()
                 batch_nodes = list(nx_graph.nodes(data=True))[i : i + batch_size]
                 nodes_to_create = []
 
@@ -99,6 +152,7 @@ class CodeGraphService:
                     nodes_to_create.append(processed_node)
 
                 # Create nodes with labels
+                insert_start = time.time()
                 session.run(
                     """
                     UNWIND $nodes AS node
@@ -107,9 +161,36 @@ class CodeGraphService:
                     """,
                     nodes=nodes_to_create,
                 )
+                insert_time = time.time() - insert_start
+                nodes_inserted += len(nodes_to_create)
+                batch_time = time.time() - batch_start
 
-            relationship_count = nx_graph.number_of_edges()
-            logger.info(f"Creating {relationship_count} relationships")
+                if batch_idx % 10 == 0 or batch_idx == total_batches:
+                    logger.info(
+                        f"[GRAPH GENERATION] Node batch {batch_idx}/{total_batches}: inserted {len(nodes_to_create)} nodes in {batch_time:.2f}s (insert: {insert_time:.2f}s)",
+                        project_id=project_id,
+                        batch_index=batch_idx,
+                        total_batches=total_batches,
+                        batch_size=len(nodes_to_create),
+                        batch_time_seconds=batch_time,
+                        insert_time_seconds=insert_time,
+                    )
+
+            node_insert_time = time.time() - node_insert_start
+            logger.info(
+                f"[GRAPH GENERATION] Completed node insertion: {nodes_inserted} nodes in {node_insert_time:.2f}s",
+                project_id=project_id,
+                nodes_inserted=nodes_inserted,
+                node_insert_time_seconds=node_insert_time,
+            )
+
+            # Step 4: Insert relationships
+            rel_insert_start = time.time()
+            logger.info(
+                f"[GRAPH GENERATION] Inserting {relationship_count} relationships into Neo4j",
+                project_id=project_id,
+                total_relationships=relationship_count,
+            )
 
             # Pre-calculate common relationship types to avoid dynamic relationship creation
             rel_types = set()
@@ -117,10 +198,18 @@ class CodeGraphService:
                 rel_type = data.get("type", "REFERENCES")
                 rel_types.add(rel_type)
 
+            logger.info(
+                f"[GRAPH GENERATION] Found {len(rel_types)} relationship types: {', '.join(sorted(rel_types))}",
+                project_id=project_id,
+                relationship_types=list(rel_types),
+            )
+
             # Process relationships with huge batch size and type-specific queries
             batch_size = 1000
+            total_rels_inserted = 0
 
             for rel_type in rel_types:
+                rel_type_start = time.time()
                 # Filter edges by relationship type
                 type_edges = [
                     (s, t, d)
@@ -128,11 +217,17 @@ class CodeGraphService:
                     if d.get("type", "REFERENCES") == rel_type
                 ]
 
+                type_batch_count = (len(type_edges) + batch_size - 1) // batch_size
                 logger.info(
-                    f"Creating {len(type_edges)} relationships of type {rel_type}"
+                    f"[GRAPH GENERATION] Processing {len(type_edges)} {rel_type} relationships in {type_batch_count} batches",
+                    project_id=project_id,
+                    relationship_type=rel_type,
+                    relationship_count=len(type_edges),
+                    batch_count=type_batch_count,
                 )
 
-                for i in range(0, len(type_edges), batch_size):
+                for batch_idx, i in enumerate(range(0, len(type_edges), batch_size), 1):
+                    batch_start = time.time()
                     batch_edges = type_edges[i : i + batch_size]
                     edges_to_create = []
 
@@ -150,6 +245,7 @@ class CodeGraphService:
                         )
 
                     # Type-specific relationship creation in one transaction
+                    insert_start = time.time()
                     query = f"""
                         UNWIND $edges AS edge
                         MATCH (source:NODE {{node_id: edge.source_id, repoId: edge.repoId}})
@@ -157,10 +253,50 @@ class CodeGraphService:
                         CREATE (source)-[r:{rel_type} {{repoId: edge.repoId}}]->(target)
                     """
                     session.run(query, edges=edges_to_create)
+                    insert_time = time.time() - insert_start
+                    batch_time = time.time() - batch_start
+                    total_rels_inserted += len(edges_to_create)
 
-            end_time = time.time()
+                    if batch_idx % 10 == 0 or batch_idx == type_batch_count:
+                        logger.info(
+                            f"[GRAPH GENERATION] {rel_type} batch {batch_idx}/{type_batch_count}: inserted {len(edges_to_create)} relationships in {batch_time:.2f}s (insert: {insert_time:.2f}s)",
+                            project_id=project_id,
+                            relationship_type=rel_type,
+                            batch_index=batch_idx,
+                            total_batches=type_batch_count,
+                            batch_size=len(edges_to_create),
+                            batch_time_seconds=batch_time,
+                            insert_time_seconds=insert_time,
+                        )
+
+                rel_type_time = time.time() - rel_type_start
+                logger.info(
+                    f"[GRAPH GENERATION] Completed {rel_type} relationships: {len(type_edges)} in {rel_type_time:.2f}s",
+                    project_id=project_id,
+                    relationship_type=rel_type,
+                    relationship_count=len(type_edges),
+                    rel_type_time_seconds=rel_type_time,
+                )
+
+            rel_insert_time = time.time() - rel_insert_start
             logger.info(
-                f"Time taken to create graph and search index: {end_time - start_time:.2f} seconds"
+                f"[GRAPH GENERATION] Completed relationship insertion: {total_rels_inserted} relationships in {rel_insert_time:.2f}s",
+                project_id=project_id,
+                relationships_inserted=total_rels_inserted,
+                rel_insert_time_seconds=rel_insert_time,
+            )
+
+            db_time = time.time() - db_start_time
+            total_time = time.time() - graph_start_time
+
+            logger.info(
+                f"[GRAPH GENERATION] Graph creation completed in {total_time:.2f}s (DB operations: {db_time:.2f}s, Parsing: {parse_time:.2f}s)",
+                project_id=project_id,
+                total_time_seconds=total_time,
+                db_time_seconds=db_time,
+                parse_time_seconds=parse_time,
+                nodes_inserted=nodes_inserted,
+                relationships_inserted=total_rels_inserted,
             )
 
     def cleanup_graph(self, project_id: str):

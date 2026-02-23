@@ -134,6 +134,54 @@ class ChatHistoryService:
                 f"An unexpected error occurred while flushing message buffer for conversation {conversation_id}"
             ) from e
 
+    def save_partial_ai_message(
+        self,
+        conversation_id: str,
+        content: str,
+        citations: Optional[List[str]] = None,
+    ) -> Optional[str]:
+        """
+        Persist a complete AI message (e.g. partial response saved when generation is stopped).
+        Used so the user can continue the conversation and build on this progress.
+        """
+        if not content.strip():
+            return None
+        try:
+            new_message = Message(
+                id=str(uuid7()),
+                conversation_id=conversation_id,
+                content=content.strip(),
+                sender_id=None,
+                type=MessageType.AI_GENERATED,
+                status=MessageStatus.ACTIVE,
+                created_at=datetime.now(timezone.utc),
+                citations=(",".join(set(citations)) if citations else None),
+            )
+            self.db.add(new_message)
+            self.db.commit()
+            logger.info(
+                f"Saved partial AI message for conversation {conversation_id} (stopped generation)"
+            )
+            return new_message.id
+        except SQLAlchemyError as e:
+            logger.exception(
+                "Database error in save_partial_ai_message",
+                conversation_id=conversation_id,
+            )
+            self.db.rollback()
+            raise ChatHistoryServiceError(
+                f"Failed to save partial AI message for conversation {conversation_id}"
+            ) from e
+        except Exception as e:
+            logger.exception(
+                "Unexpected error in save_partial_ai_message",
+                conversation_id=conversation_id,
+            )
+            self.db.rollback()
+            raise ChatHistoryServiceError(
+                f"An unexpected error occurred while saving partial AI message for conversation {conversation_id}"
+            ) from e
+
     def clear_session_history(self, conversation_id: str):
         try:
             self.db.query(Message).filter_by(conversation_id=conversation_id).delete()

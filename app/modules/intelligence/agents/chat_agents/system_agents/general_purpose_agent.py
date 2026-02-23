@@ -16,8 +16,9 @@ from app.modules.intelligence.agents.chat_agents.agent_config import (
     TaskConfig,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
+from app.modules.intelligence.tools.registry import ToolResolver
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -29,10 +30,12 @@ class GeneralPurposeAgent(ChatAgent):
         llm_provider: ProviderService,
         tools_provider: ToolService,
         prompt_provider: PromptService,
+        tool_resolver: Optional[ToolResolver] = None,
     ):
         self.llm_provider = llm_provider
         self.tools_provider = tools_provider
         self.prompt_provider = prompt_provider
+        self.tool_resolver = tool_resolver
 
     def _build_agent(self) -> ChatAgent:
         agent_config = AgentConfig(
@@ -54,12 +57,20 @@ class GeneralPurposeAgent(ChatAgent):
                 )
             ],
         )
-        tools = self.tools_provider.get_tools(
-            [
-                "webpage_extractor",
-                "web_search_tool",
-            ]
-        )
+        if self.tool_resolver is not None:
+            tools = self.tool_resolver.get_tools_for_agent(
+                "general_purpose",
+                local_mode=False,
+                exclude_embedding_tools=False,
+                log_tool_annotations=True,
+            )
+        else:
+            tools = self.tools_provider.get_tools(
+                [
+                    "webpage_extractor",
+                    "web_search_tool",
+                ]
+            )
 
         supports_pydantic = self.llm_provider.supports_pydantic("chat")
         should_use_multi = MultiAgentConfig.should_use_multi_agent(
@@ -99,6 +110,7 @@ class GeneralPurposeAgent(ChatAgent):
                     None,
                     delegate_agents,
                     tools_provider=self.tools_provider,
+                    tool_resolver=self.tool_resolver,
                 )
             else:
                 logger.info("❌ Multi-agent disabled by config, using PydanticRagAgent")
