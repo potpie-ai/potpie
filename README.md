@@ -266,7 +266,7 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
    - The Celery worker
    - All Docker Compose services
 
-## 🤖 Potpie's Prebuilt Agents
+## Potpie's Prebuilt Agents
 
 Potpie offers a suite of specialized codebase agents for automating and optimizing key aspects of software development:
 
