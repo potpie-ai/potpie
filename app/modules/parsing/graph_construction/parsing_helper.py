@@ -1922,7 +1922,6 @@ class ParseHelper:
                 # Send email alert for worktree creation failure
                 try:
                     email_helper = EmailHelper()
-                    import traceback
                     await email_helper.send_parsing_failure_alert(
                         repo_name=repo_name,
                         branch_name=ref,
@@ -1931,7 +1930,7 @@ class ParseHelper:
                         failure_type="worktree_creation",
                         user_id=user_id,
                         project_id=project_id,
-                        stack_trace=traceback.format_exc(),
+                        stack_trace=None,
                     )
                 except Exception as email_err:
                     logger.error(f"Failed to send worktree failure email: {email_err}")

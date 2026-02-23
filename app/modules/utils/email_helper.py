@@ -105,8 +105,13 @@ Co-Founder, Potpie 🥧</p>
         if not self.transaction_emails_enabled:
             return
 
-        # Internal recipients only
-        internal_recipients = ["deepesh@momentum.sh", "dhiren@potpie.ai"]
+        # Internal recipients from env (no PII in source)
+        internal_recipients = _get_internal_recipients()
+        if not internal_recipients:
+            logging.debug(
+                "EMAIL_INTERNAL_RECIPIENTS unset or invalid; skipping parsing failure alert"
+            )
+            return
 
         # Format auth method for display
         auth_method_display = {
@@ -173,6 +178,19 @@ def is_valid_email(email: str) -> bool:
     """Simple regex-based email validation."""
     pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
     return re.match(pattern, email) is not None
+
+
+def _get_internal_recipients() -> list[str]:
+    """Load internal alert recipients from EMAIL_INTERNAL_RECIPIENTS env var.
+
+    Parses comma-separated list, trims whitespace, lowercases and validates
+    each entry. Returns empty list if unset or if no valid emails found.
+    """
+    raw = os.environ.get("EMAIL_INTERNAL_RECIPIENTS", "").strip()
+    if not raw:
+        return []
+    entries = [e.strip() for e in raw.split(",") if e.strip()]
+    return [e.lower() for e in entries if is_valid_email(e)]
 
 
 # Comprehensive list of personal/free email domains
