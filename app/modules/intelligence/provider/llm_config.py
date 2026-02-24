@@ -119,63 +119,6 @@ MODEL_CONFIG_MAP = {
         "base_url": "https://openrouter.ai/api/v1",
         "api_version": None,
     },
-    # Gemini Models
-    "openrouter/google/gemini-2.5-pro-preview": {
-        "provider": "gemini",
-        "context_window": 1048576,
-        "auth_provider": "openrouter",
-        "default_params": {"temperature": 0.3},
-        "capabilities": {
-            "supports_pydantic": True,
-            "supports_streaming": True,
-            "supports_vision": True,
-            "supports_tool_parallelism": True,
-        },
-        "base_url": "https://openrouter.ai/api/v1",
-        "api_version": None,
-    },
-    "openrouter/google/gemini-3-pro-preview": {
-        "provider": "gemini",
-        "context_window": 1048576,
-        "auth_provider": "openrouter",
-        "default_params": {"temperature": 0.3},
-        "capabilities": {
-            "supports_pydantic": True,
-            "supports_streaming": True,
-            "supports_vision": True,
-            "supports_tool_parallelism": True,
-        },
-        "base_url": "https://openrouter.ai/api/v1",
-        "api_version": None,
-    },
-    "openrouter/google/gemini-3-flash-preview": {
-        "provider": "gemini",
-        "context_window": 1048576,
-        "auth_provider": "openrouter",
-        "default_params": {"temperature": 0.3},
-        "capabilities": {
-            "supports_pydantic": True,
-            "supports_streaming": True,
-            "supports_vision": True,
-            "supports_tool_parallelism": True,
-        },
-        "base_url": "https://openrouter.ai/api/v1",
-        "api_version": None,
-    },
-    "openrouter/google/gemini-3.1-pro-preview": {
-        "provider": "gemini",
-        "context_window": 1048576,
-        "auth_provider": "openrouter",
-        "default_params": {"temperature": 0.3},
-        "capabilities": {
-            "supports_pydantic": True,
-            "supports_streaming": True,
-            "supports_vision": True,
-            "supports_tool_parallelism": True,
-        },
-        "base_url": "https://openrouter.ai/api/v1",
-        "api_version": None,
-    },
     # Z-AI / GLM Models
     "openrouter/z-ai/glm-5": {
         "provider": "zai",
