@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -56,7 +57,12 @@ def _signup_response_with_custom_token(payload: dict) -> dict:
 async def send_slack_message(message: str):
     payload = {"text": message}
     if SLACK_WEBHOOK_URL:
-        requests.post(SLACK_WEBHOOK_URL, json=payload)
+        await asyncio.to_thread(
+            requests.post,
+            SLACK_WEBHOOK_URL,
+            json=payload,
+            timeout=30,
+        )
 
 
 class AuthAPI:
@@ -65,7 +71,9 @@ class AuthAPI:
         email, password = login_request.email, login_request.password
 
         try:
-            res = auth_handler.login(email=email, password=password)
+            res = await asyncio.to_thread(
+                auth_handler.login, email=email, password=password
+            )
             id_token = res.get("idToken")
             return JSONResponse(content={"token": id_token}, status_code=200)
         except ValueError:

@@ -24,6 +24,7 @@ class AuthService:
                 "password": password,
                 "returnSecureToken": True,
             },
+            timeout=30,
         )
 
         try:

@@ -12,6 +12,7 @@ from uuid6 import uuid7
 
 from app.celery.tasks.parsing_tasks import process_parsing
 from app.core.config_provider import config_provider
+from app.core.database import SessionLocal
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.conversations.conversation.conversation_model import (
     Conversation,
@@ -395,9 +396,11 @@ class ParsingController:
         return response
 
     @staticmethod
-    async def fetch_parsing_status(
-        project_id: str, db: Session, user: Dict[str, Any]
-    ):
+    def _query_parsing_status_sync(
+        project_id: str, user_id: str, user_email: str
+    ) -> Any:
+        """Run the parsing status DB query in a sync context (for use in thread)."""
+        db = SessionLocal()
         try:
             project_query = (
                 select(Project.status)
@@ -407,24 +410,35 @@ class ParsingController:
                 .where(
                     Project.id == project_id,
                     or_(
-                        Project.user_id == user["user_id"],
+                        Project.user_id == user_id,
                         Conversation.visibility == Visibility.PUBLIC,
-                        Conversation.shared_with_emails.any(user.get("email", "")),
+                        Conversation.shared_with_emails.any(user_email or ""),
                     ),
                 )
                 .limit(1)
             )
-
             result = db.execute(project_query)
-            project_status = result.scalars().first()
+            return result.scalars().first()
+        finally:
+            db.close()
 
+    @staticmethod
+    async def fetch_parsing_status(
+        project_id: str, db: Session, user: Dict[str, Any]
+    ):
+        try:
+            project_status = await asyncio.to_thread(
+                ParsingController._query_parsing_status_sync,
+                project_id,
+                user["user_id"],
+                user.get("email", "") or "",
+            )
             if not project_status:
                 raise HTTPException(
                     status_code=404, detail="Project not found or access denied"
                 )
             parse_helper = ParseHelper(db)
             is_latest = await parse_helper.check_commit_status(project_id)
-
             return {"status": project_status, "latest": is_latest}
 
         except HTTPException:
