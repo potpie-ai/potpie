@@ -46,7 +46,7 @@ logger = setup_logger(__name__)
 from app.modules.conversations.utils.conversation_routing import (
     normalize_run_id,
     ensure_unique_run_id,
-    redis_stream_generator,
+    redis_stream_generator_async,
     start_celery_task_and_stream,
 )
 
@@ -280,7 +280,9 @@ class ConversationAPI:
 
             # For fresh requests without cursor, ensure we get a unique stream
             if not cursor:
-                run_id = ensure_unique_run_id(conversation_id, run_id)
+                run_id = await asyncio.to_thread(
+                    ensure_unique_run_id, conversation_id, run_id
+                )
 
             # Use parsed node_ids
             node_ids_list = parsed_node_ids or []
@@ -357,7 +359,9 @@ class ConversationAPI:
 
         # For fresh requests without cursor, ensure we get a unique stream
         if not cursor:
-            run_id = ensure_unique_run_id(conversation_id, run_id)
+            run_id = await asyncio.to_thread(
+                ensure_unique_run_id, conversation_id, run_id
+            )
 
         # Extract attachment IDs from last human message
         try:
@@ -418,13 +422,13 @@ class ConversationAPI:
             f"Started regenerate task {task_result.id} for {conversation_id}:{run_id}"
         )
 
-        # Wait for background task to start (with health check) — run in thread to avoid blocking event loop
-        # Increased timeout to 30 seconds to handle queued tasks
+        # Wait for worker to pick up task (status == running), not just queued — run in thread to avoid blocking event loop
         task_started = await asyncio.to_thread(
             redis_manager.wait_for_task_start,
             conversation_id,
             run_id,
             30,
+            True,  # require_running: only True when worker has picked up (running/completed/error)
         )
 
         if not task_started:
@@ -433,9 +437,9 @@ class ConversationAPI:
             )
             # Don't fail - the stream consumer will wait up to 120 seconds
 
-        # Return Redis stream response using shared function
+        # Return Redis stream response using shared function (async to avoid blocking event loop)
         return StreamingResponse(
-            redis_stream_generator(conversation_id, run_id, cursor),
+            redis_stream_generator_async(conversation_id, run_id, cursor),
             media_type="text/event-stream",
         )
 
@@ -582,9 +586,9 @@ class ConversationAPI:
             f"Resuming session {session_id} with status: {task_status}, cursor: {cursor}"
         )
 
-        # Return Redis stream response starting from cursor
+        # Return Redis stream response starting from cursor (async to avoid blocking event loop)
         return StreamingResponse(
-            redis_stream_generator(conversation_id, session_id, cursor),
+            redis_stream_generator_async(conversation_id, session_id, cursor),
             media_type="text/event-stream",
         )
 

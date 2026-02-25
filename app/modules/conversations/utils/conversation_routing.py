@@ -6,8 +6,9 @@ Contains common functions for session management, Redis streaming, and Celery ta
 import asyncio
 import json
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import Generator, Optional
+from typing import AsyncGenerator, Generator, Optional
 
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
@@ -58,50 +59,83 @@ def ensure_unique_run_id(conversation_id: str, run_id: str) -> str:
     return run_id
 
 
+def json_serializer(obj):
+    """Custom JSON serializer to handle bytes objects"""
+    if isinstance(obj, bytes):
+        return obj.decode("utf-8", errors="replace")
+    return str(obj)
+
+
 def redis_stream_generator(
     conversation_id: str, run_id: str, cursor: Optional[str] = None
 ) -> Generator[str, None, None]:
-    """Stream events from Redis to client"""
-
-    def json_serializer(obj):
-        """Custom JSON serializer to handle bytes objects"""
-        if isinstance(obj, bytes):
-            return obj.decode("utf-8", errors="replace")
-        return str(obj)
-
+    """Stream events from Redis to client (sync; blocks event loop). Prefer redis_stream_generator_async."""
     redis_manager = RedisStreamManager()
-
     try:
         for event in redis_manager.consume_stream(conversation_id, run_id, cursor):
-            # Convert to ChatMessageResponse format for compatibility
             if event.get("type") == "chunk":
-                tool_calls = event.get("tool_calls", [])
-                content = event.get("content", "")
                 response = ChatMessageResponse(
-                    message=content,
+                    message=event.get("content", ""),
                     citations=event.get("citations", []),
-                    tool_calls=tool_calls,
+                    tool_calls=event.get("tool_calls", []),
                 )
-                json_response = json.dumps(response.dict(), default=json_serializer)
-                yield json_response
-
+                yield json.dumps(response.dict(), default=json_serializer)
             elif event.get("type") == "queued":
-                # Send a queued status to the client
-                response = ChatMessageResponse(
-                    message="",
-                    citations=[],
-                    tool_calls=[],
-                )
-                json_response = json.dumps(response.dict(), default=json_serializer)
-                yield json_response
-
+                response = ChatMessageResponse(message="", citations=[], tool_calls=[])
+                yield json.dumps(response.dict(), default=json_serializer)
             elif event.get("type") == "end":
-                # End the stream when we receive an end event
                 break
-
     except Exception as e:
         logger.error(f"Redis streaming error: {str(e)}")
-        # Don't yield error events to match original behavior
+
+
+async def redis_stream_generator_async(
+    conversation_id: str, run_id: str, cursor: Optional[str] = None
+) -> AsyncGenerator[str, None]:
+    """
+    Stream events from Redis to client without blocking the event loop.
+    Runs sync consume_stream in a thread and yields via a queue.
+    """
+    queue: asyncio.Queue[Optional[dict]] = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+    redis_manager = RedisStreamManager()
+
+    def run_consume() -> None:
+        try:
+            for event in redis_manager.consume_stream(
+                conversation_id, run_id, cursor
+            ):
+                loop.call_soon_threadsafe(queue.put_nowait, event)
+            loop.call_soon_threadsafe(queue.put_nowait, None)
+        except Exception as e:
+            logger.exception("Redis stream consume error: %s", e)
+            loop.call_soon_threadsafe(
+                queue.put_nowait,
+                {"type": "end", "status": "error", "message": str(e)},
+            )
+            loop.call_soon_threadsafe(queue.put_nowait, None)
+
+    thread = threading.Thread(target=run_consume, daemon=True)
+    thread.start()
+
+    while True:
+        event = await queue.get()
+        if event is None:
+            break
+        if event.get("type") == "chunk":
+            response = ChatMessageResponse(
+                message=event.get("content", ""),
+                citations=event.get("citations", []),
+                tool_calls=event.get("tool_calls", []),
+            )
+            yield json.dumps(response.dict(), default=json_serializer)
+        elif event.get("type") == "queued":
+            response = ChatMessageResponse(
+                message="", citations=[], tool_calls=[]
+            )
+            yield json.dumps(response.dict(), default=json_serializer)
+        elif event.get("type") == "end":
+            break
 
 
 async def start_celery_task_and_stream(
@@ -155,13 +189,13 @@ async def start_celery_task_and_stream(
     redis_manager.set_task_id(conversation_id, run_id, task_result.id)
     logger.info(f"Started agent task {task_result.id} for {conversation_id}:{run_id}")
 
-    # Wait for background task to start (with health check) — run in thread to avoid blocking event loop
-    # Increased timeout to 30 seconds to handle queued tasks
+    # Wait for worker to pick up task (status == running), not just queued — run in thread to avoid blocking event loop
     task_started = await asyncio.to_thread(
         redis_manager.wait_for_task_start,
         conversation_id,
         run_id,
         30,
+        True,  # require_running: only True when worker has picked up (running/completed/error)
     )
 
     if not task_started:
@@ -170,9 +204,9 @@ async def start_celery_task_and_stream(
         )
         # Don't fail - the stream consumer will wait up to 120 seconds
 
-    # Return Redis stream response
+    # Return Redis stream response (async generator so consume_stream runs off event loop)
     return StreamingResponse(
-        redis_stream_generator(conversation_id, run_id, cursor),
+        redis_stream_generator_async(conversation_id, run_id, cursor),
         media_type="text/event-stream",
     )
 
@@ -230,12 +264,13 @@ async def start_celery_task_and_wait(
         f"Started agent task {task_result.id} for {conversation_id}:{run_id} (non-streaming)"
     )
 
-    # Wait for background task to start (with health check) — run in thread to avoid blocking event loop
+    # Wait for worker to pick up task (status == running), not just queued — run in thread to avoid blocking event loop
     task_started = await asyncio.to_thread(
         redis_manager.wait_for_task_start,
         conversation_id,
         run_id,
         30,
+        True,  # require_running: only True when worker has picked up (running/completed/error)
     )
 
     if not task_started:

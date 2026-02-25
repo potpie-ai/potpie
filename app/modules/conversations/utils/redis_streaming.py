@@ -1,3 +1,8 @@
+"""
+Redis stream manager for chat streaming. Uses sync redis client (no decode_responses)
+so stream keys and values match Celery task usage. Tunnel/socket services use
+decode_responses=True; keep that in mind when sharing Redis URLs or adding new clients.
+"""
 import redis
 import time
 from typing import Generator, Optional
@@ -294,15 +299,26 @@ class RedisStreamManager:
             )
 
     def wait_for_task_start(
-        self, conversation_id: str, run_id: str, timeout: int = 10
+        self,
+        conversation_id: str,
+        run_id: str,
+        timeout: int = 10,
+        require_running: bool = False,
     ) -> bool:
-        """Wait for background task to signal it has started"""
+        """
+        Wait for background task to signal it has started.
+        If require_running is True, only returns True when status is running/completed/error
+        (worker has picked up the task); otherwise also accepts 'queued' (can false-positive
+        since we set 'queued' before the worker runs).
+        """
         start_time = datetime.now()
         while (datetime.now() - start_time).total_seconds() < timeout:
             status = self.get_task_status(conversation_id, run_id)
-            if status in ["queued", "running", "completed", "error"]:
-                return True
-            import time
-
+            if require_running:
+                if status in ("running", "completed", "error"):
+                    return True
+            else:
+                if status in ("queued", "running", "completed", "error"):
+                    return True
             time.sleep(0.5)
         return False
