@@ -43,7 +43,6 @@ class BaseSecretRequest(BaseModel):
             "anthropic",
             "deepseek",
             "meta-llama",
-            "gemini",
             "openrouter",
         ]:
             raise ValueError(f"Invalid provider in chat model: {provider}")
@@ -77,7 +76,6 @@ class BaseSecretRequest(BaseModel):
             "anthropic",
             "deepseek",
             "meta-llama",
-            "gemini",
             "openrouter",
         ]:
             raise ValueError(f"Invalid provider in inference model: {provider}")
