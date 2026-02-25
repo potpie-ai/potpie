@@ -1,3 +1,4 @@
+import asyncio
 import json
 from typing import Any, AsyncGenerator, List, Optional, Union, Literal
 
@@ -83,7 +84,6 @@ class ConversationAPI:
     @router.post("/conversations", response_model=CreateConversationResponse)
     async def create_conversation(
         conversation: CreateConversationRequest,
-        request: Request,
         hidden: bool = Query(
             False, description="Whether to hide this conversation from the web UI"
         ),
@@ -91,9 +91,6 @@ class ConversationAPI:
         async_db: AsyncSession = Depends(get_async_db),
         user=Depends(AuthService.check_auth),
     ):
-        user_agent = request.headers.get("user-agent", "")
-        local_mode = user_agent == "Potpie-VSCode-Extension/1.0.1"
-
         user_id = user["user_id"]
         checked = await UsageService.check_usage_limit(user_id)
         if not checked:
@@ -103,9 +100,7 @@ class ConversationAPI:
             )
         user_email = user["email"]
         controller = ConversationController(db, async_db, user_id, user_email)
-        return await controller.create_conversation(
-            conversation, hidden, local_mode=local_mode
-        )
+        return await controller.create_conversation(conversation, hidden)
 
     @staticmethod
     @router.get(
@@ -291,7 +286,7 @@ class ConversationAPI:
             node_ids_list = parsed_node_ids or []
 
             # Start background task and return streaming response
-            return start_celery_task_and_stream(
+            return await start_celery_task_and_stream(
                 conversation_id=conversation_id,
                 run_id=run_id,
                 user_id=user_id,
@@ -423,10 +418,13 @@ class ConversationAPI:
             f"Started regenerate task {task_result.id} for {conversation_id}:{run_id}"
         )
 
-        # Wait for background task to start (with health check)
+        # Wait for background task to start (with health check) — run in thread to avoid blocking event loop
         # Increased timeout to 30 seconds to handle queued tasks
-        task_started = redis_manager.wait_for_task_start(
-            conversation_id, run_id, timeout=30
+        task_started = await asyncio.to_thread(
+            redis_manager.wait_for_task_start,
+            conversation_id,
+            run_id,
+            30,
         )
 
         if not task_started:
