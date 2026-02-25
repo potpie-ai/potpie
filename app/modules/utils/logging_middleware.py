@@ -4,8 +4,8 @@ FastAPI Middleware for Automatic Logging Context Injection
 This middleware automatically adds request-level context (user_id, request_id, path)
 to all logs within a request, without requiring manual log_context() calls in every route.
 
-Best Practice: Use this for automatic context, and log_context() for domain-specific IDs
-(conversation_id, project_id) that are only available in specific routes.
+Also sets Logfire trace metadata (Baggage) so Pydantic AI / LiteLLM spans created
+during the request are queryable in Logfire by user_id and request_id.
 """
 
 import uuid
@@ -17,6 +17,20 @@ from app.modules.utils.logger import log_context, setup_logger
 logger = setup_logger(__name__)
 
 
+def _get_logfire_trace_metadata():
+    """Lazy import to avoid loading logfire when disabled."""
+    try:
+        from app.modules.intelligence.tracing.logfire_tracer import (
+            is_logfire_enabled,
+            logfire_trace_metadata,
+        )
+        if is_logfire_enabled():
+            return logfire_trace_metadata
+    except ImportError:
+        pass
+    return None
+
+
 class LoggingContextMiddleware(BaseHTTPMiddleware):
     """
     Middleware to automatically inject request-level context into all logs.
@@ -26,8 +40,8 @@ class LoggingContextMiddleware(BaseHTTPMiddleware):
     - path: The API endpoint path
     - user_id: The authenticated user (if available)
 
-    Domain-specific IDs (conversation_id, project_id) should still be added
-    manually using log_context() in routes where they're available.
+    When Logfire is enabled, also sets trace metadata (user_id, request_id) so
+    all spans (including Pydantic AI / LiteLLM) are queryable in Logfire SQL.
     """
 
     async def dispatch(self, request: Request, call_next):
@@ -50,10 +64,20 @@ class LoggingContextMiddleware(BaseHTTPMiddleware):
         if user_id:
             context["user_id"] = user_id
 
-        # Add context to all logs in this request
-        with log_context(**context):
-            # Add request_id to response headers for tracing
-            response = await call_next(request)
-            response.headers["X-Request-ID"] = request_id
+        # Logfire: set trace metadata so HTTP and any LLM spans are queryable by user_id / request_id
+        logfire_metadata = _get_logfire_trace_metadata()
+        trace_kwargs = {"request_id": request_id}
+        if user_id:
+            trace_kwargs["user_id"] = user_id
 
-            return response
+        if logfire_metadata and trace_kwargs:
+            with logfire_metadata(**trace_kwargs):
+                with log_context(**context):
+                    response = await call_next(request)
+                    response.headers["X-Request-ID"] = request_id
+                    return response
+        else:
+            with log_context(**context):
+                response = await call_next(request)
+                response.headers["X-Request-ID"] = request_id
+                return response

@@ -1,7 +1,9 @@
 """Execution flows for different agent execution modes"""
 
+import os
 import traceback
 from typing import AsyncGenerator, Any, Optional
+
 import anyio
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.usage import UsageLimits
@@ -13,6 +15,10 @@ from .utils.message_history_utils import (
 from .utils.multimodal_utils import create_multimodal_user_content
 from app.modules.conversations.exceptions import GenerationCancelled
 from app.modules.intelligence.agents.chat_agent import ChatContext, ChatAgentResponse
+from app.modules.intelligence.provider.openrouter_usage_context import (
+    push_usage_from_run,
+)
+from app.modules.intelligence.tracing.logfire_tracer import logfire_trace_metadata
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -75,6 +81,33 @@ def init_managers(
 reset_managers = init_managers
 
 
+def _build_run_metadata(ctx: ChatContext) -> dict[str, Any]:
+    """
+    Build per-run metadata for Pydantic AI agents.
+
+    This metadata is attached to agent spans via Pydantic AI's `metadata` parameter
+    and shows up in Logfire as span attributes when instrumentation is enabled.
+    """
+    meta: dict[str, Any] = {
+        "project_id": getattr(ctx, "project_id", None),
+        "project_name": getattr(ctx, "project_name", None),
+        "agent_id": getattr(ctx, "curr_agent_id", None),
+    }
+
+    if getattr(ctx, "user_id", None):
+        meta["user_id"] = ctx.user_id  # type: ignore[assignment]
+    if getattr(ctx, "conversation_id", None):
+        meta["conversation_id"] = ctx.conversation_id  # type: ignore[assignment]
+
+    # Also include environment if available so it is easy to query
+    env = os.getenv("LOGFIRE_ENVIRONMENT") or os.getenv("ENV")
+    if env:
+        meta["environment"] = env
+
+    # Drop None values
+    return {k: v for k, v in meta.items() if v is not None}
+
+
 class StandardExecutionFlow:
     """Standard text-only non-streaming execution flow"""
 
@@ -94,62 +127,75 @@ class StandardExecutionFlow:
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
         """Standard text-only multi-agent execution"""
-        try:
-            # Prepare message history
-            message_history = await prepare_multimodal_message_history(
-                ctx, self.history_processor
-            )
-
-            # Create and run supervisor agent
-            supervisor_agent = self.create_supervisor_agent(ctx)
-
-            # Validate message history before sending to model (single validation)
-            message_history = validate_and_fix_message_history(message_history)
-
-            # Try to initialize MCP servers with timeout handling
+        with logfire_trace_metadata(
+            user_id=getattr(ctx, "user_id", None),
+            conversation_id=getattr(ctx, "conversation_id", None),
+            project_id=getattr(ctx, "project_id", None),
+            agent_id=getattr(ctx, "curr_agent_id", None),
+        ):
             try:
-                async with supervisor_agent.run_mcp_servers():
+                # Prepare message history
+                message_history = await prepare_multimodal_message_history(
+                    ctx, self.history_processor
+                )
+
+                # Create and run supervisor agent
+                supervisor_agent = self.create_supervisor_agent(ctx)
+
+                # Validate message history before sending to model (single validation)
+                message_history = validate_and_fix_message_history(message_history)
+
+                # Try to initialize MCP servers with timeout handling
+                try:
+                    async with supervisor_agent.run_mcp_servers():
+                        resp = await supervisor_agent.run(
+                            user_prompt=ctx.query,
+                            message_history=message_history,
+                            metadata=_build_run_metadata(ctx),
+                        )
+                except (TimeoutError, anyio.WouldBlock, Exception) as mcp_error:
+                    error_detail = f"{type(mcp_error).__name__}: {str(mcp_error)}"
+                    logger.warning(
+                        f"MCP server initialization failed in standard run: {error_detail}",
+                        exc_info=True,
+                    )
+                    # Check if it's a JSON parsing error
+                    if (
+                        "json" in str(mcp_error).lower()
+                        or "parse" in str(mcp_error).lower()
+                    ):
+                        logger.error(
+                            "JSON parsing error during MCP server initialization in standard run - "
+                            "MCP server may be returning malformed or incomplete JSON. "
+                            f"Full traceback:\n{traceback.format_exc()}"
+                        )
+                    logger.info("Continuing without MCP servers...")
+
+                    # Fallback: run without MCP servers
                     resp = await supervisor_agent.run(
                         user_prompt=ctx.query,
                         message_history=message_history,
+                        metadata=_build_run_metadata(ctx),
                     )
-            except (TimeoutError, anyio.WouldBlock, Exception) as mcp_error:
-                error_detail = f"{type(mcp_error).__name__}: {str(mcp_error)}"
-                logger.warning(
-                    f"MCP server initialization failed in standard run: {error_detail}",
-                    exc_info=True,
-                )
-                # Check if it's a JSON parsing error
-                if (
-                    "json" in str(mcp_error).lower()
-                    or "parse" in str(mcp_error).lower()
-                ):
-                    logger.error(
-                        f"JSON parsing error during MCP server initialization in standard run - MCP server may be returning malformed or incomplete JSON. Full traceback:\n{traceback.format_exc()}"
-                    )
-                logger.info("Continuing without MCP servers...")
 
-                # Fallback: run without MCP servers
-                resp = await supervisor_agent.run(
-                    user_prompt=ctx.query,
-                    message_history=message_history,
+                return ChatAgentResponse(
+                    response=resp.output,
+                    tool_calls=[],
+                    citations=[],
                 )
 
-            return ChatAgentResponse(
-                response=resp.output,
-                tool_calls=[],
-                citations=[],
-            )
-
-        except Exception as e:
-            logger.error(
-                f"Error in standard multi-agent run method: {str(e)}", exc_info=True
-            )
-            return ChatAgentResponse(
-                response=f"An error occurred while processing your request: {str(e)}",
-                tool_calls=[],
-                citations=[],
-            )
+            except Exception as e:
+                logger.error(
+                    f"Error in standard multi-agent run method: {str(e)}", exc_info=True
+                )
+                return ChatAgentResponse(
+                    response=(
+                        "An error occurred while processing your request: "
+                        f"{str(e)}"
+                    ),
+                    tool_calls=[],
+                    citations=[],
+                )
 
 
 class MultimodalExecutionFlow:
@@ -174,36 +220,44 @@ class MultimodalExecutionFlow:
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
         """Multimodal multi-agent execution using PydanticAI's native multimodal capabilities"""
-        try:
-            # Create multimodal user content with images
-            multimodal_content = create_multimodal_user_content(ctx)
+        with logfire_trace_metadata(
+            user_id=getattr(ctx, "user_id", None),
+            conversation_id=getattr(ctx, "conversation_id", None),
+            project_id=getattr(ctx, "project_id", None),
+            agent_id=getattr(ctx, "curr_agent_id", None),
+        ):
+            try:
+                # Create multimodal user content with images
+                multimodal_content = create_multimodal_user_content(ctx)
 
-            # Prepare message history (text-only for now to avoid token bloat)
-            message_history = await prepare_multimodal_message_history(
-                ctx, self.history_processor
-            )
+                # Prepare message history (text-only for now to avoid token bloat)
+                message_history = await prepare_multimodal_message_history(
+                    ctx, self.history_processor
+                )
 
-            # Create and run supervisor agent
-            supervisor_agent = self.create_supervisor_agent(ctx)
+                # Create and run supervisor agent
+                supervisor_agent = self.create_supervisor_agent(ctx)
 
-            resp = await supervisor_agent.run(
-                user_prompt=multimodal_content,
-                message_history=message_history,
-            )
+                resp = await supervisor_agent.run(
+                    user_prompt=multimodal_content,
+                    message_history=message_history,
+                    metadata=_build_run_metadata(ctx),
+                )
 
-            return ChatAgentResponse(
-                response=resp.output,
-                tool_calls=[],
-                citations=[],
-            )
+                return ChatAgentResponse(
+                    response=resp.output,
+                    tool_calls=[],
+                    citations=[],
+                )
 
-        except Exception as e:
-            logger.error(
-                f"Error in multimodal multi-agent run method: {str(e)}", exc_info=True
-            )
-            # Fallback to standard execution
-            logger.info("Falling back to standard text-only execution")
-            return await self.standard_flow.run(ctx)
+            except Exception as e:
+                logger.error(
+                    f"Error in multimodal multi-agent run method: {str(e)}",
+                    exc_info=True,
+                )
+                # Fallback to standard execution
+                logger.info("Falling back to standard text-only execution")
+                return await self.standard_flow.run(ctx)
 
 
 class StreamingExecutionFlow:
@@ -233,25 +287,136 @@ class StreamingExecutionFlow:
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         """Standard multi-agent streaming execution with MCP server support"""
-        # Create supervisor agent directly
-        supervisor_agent = self.create_supervisor_agent(ctx)
+        with logfire_trace_metadata(
+            user_id=getattr(ctx, "user_id", None),
+            conversation_id=getattr(ctx, "conversation_id", None),
+            project_id=getattr(ctx, "project_id", None),
+            agent_id=getattr(ctx, "curr_agent_id", None),
+        ):
+            # Create supervisor agent directly
+            supervisor_agent = self.create_supervisor_agent(ctx)
 
-        try:
-            # Try to initialize MCP servers with timeout handling
             try:
-                # Use prepare_multimodal_message_history to get compressed history if available
-                message_history = await prepare_multimodal_message_history(
-                    ctx, self.history_processor
-                )
-                message_history = validate_and_fix_message_history(message_history)
+                # Try to initialize MCP servers with timeout handling
+                try:
+                    # Use prepare_multimodal_message_history to get compressed history if available
+                    message_history = await prepare_multimodal_message_history(
+                        ctx, self.history_processor
+                    )
+                    message_history = validate_and_fix_message_history(message_history)
 
-                async with supervisor_agent.run_mcp_servers():
+                    async with supervisor_agent.run_mcp_servers():
+                        async with supervisor_agent.iter(
+                            user_prompt=ctx.query,
+                            message_history=message_history,
+                            usage_limits=UsageLimits(
+                                request_limit=None
+                            ),  # No request limit for long-running tasks
+                            metadata=_build_run_metadata(ctx),
+                        ) as run:
+                            # Store the supervisor run so delegation functions can access its message history
+                            self.current_supervisor_run_ref["run"] = run
+                            try:
+                                async for (
+                                    response
+                                ) in self.stream_processor.process_agent_run_nodes(
+                                    run, "multi-agent", current_context=ctx
+                                ):
+                                    yield response
+                            finally:
+                                # Capture run usage so Celery task can publish it in the stream end event
+                                try:
+                                    usage = (
+                                        run.usage()
+                                        if hasattr(run, "usage")
+                                        and callable(getattr(run, "usage"))
+                                        else None
+                                    )
+                                    if usage is not None:
+                                        model_name = getattr(
+                                            getattr(supervisor_agent, "model", None),
+                                            "model_name",
+                                            None,
+                                        ) or "openrouter"
+                                        push_usage_from_run(usage, model_name)
+                                except Exception as e:  # pragma: no cover - debug only
+                                    logger.debug(
+                                        "Failed to capture run usage for stream: %s", e
+                                    )
+                                # Clear the reference when done
+                                self.current_supervisor_run_ref["run"] = None
+
+                except (
+                    TimeoutError,
+                    anyio.WouldBlock,
+                    ModelHTTPError,
+                    Exception,
+                ) as mcp_error:
+                    error_detail = f"{type(mcp_error).__name__}: {str(mcp_error)}"
+                    error_str = str(mcp_error).lower()
+
+                    # Check for specific error types
+                    if isinstance(mcp_error, ModelHTTPError):
+                        error_body = getattr(mcp_error, "body", None) or {}
+                        if isinstance(error_body, dict):
+                            # Support both top-level "message" (OpenAI-style) and nested "error.message"
+                            error_message = error_body.get("message", "")
+                            if not error_message:
+                                err_obj = error_body.get("error")
+                                if isinstance(err_obj, dict):
+                                    error_message = err_obj.get("message", "")
+                        else:
+                            error_message = str(error_body)
+
+                        # Check for duplicate tool_result error
+                        if (
+                            "tool_result" in error_message.lower()
+                            and "multiple" in error_message.lower()
+                        ):
+                            logger.error(
+                                "Duplicate tool_result error detected in ModelHTTPError: %s. "
+                                "This indicates pydantic_ai's message history has duplicate tool results. "
+                                "This may be caused by retries or error recovery. The message history may need to be cleared.",
+                                error_message,
+                            )
+                        # Check for token limit error
+                        elif (
+                            "too long" in error_message.lower()
+                            or "maximum" in error_message.lower()
+                        ):
+                            logger.error(
+                                "Token limit exceeded: %s. "
+                                "Message history is too large. Consider reducing history size or starting a new conversation.",
+                                error_message,
+                            )
+
+                    logger.warning(
+                        "MCP server initialization failed in stream: %s",
+                        error_detail,
+                        exc_info=True,
+                    )
+                    # Check if it's a JSON parsing error
+                    if "json" in error_str or "parse" in error_str:
+                        logger.error(
+                            "JSON parsing error during MCP server initialization in stream - "
+                            "MCP server may be returning malformed or incomplete JSON. "
+                            f"Full traceback:\n{traceback.format_exc()}"
+                        )
+                    logger.info("Continuing without MCP servers...")
+
+                    # Fallback without MCP servers - use compressed history if available
+                    message_history = await prepare_multimodal_message_history(
+                        ctx, self.history_processor
+                    )
+                    message_history = validate_and_fix_message_history(message_history)
+
                     async with supervisor_agent.iter(
                         user_prompt=ctx.query,
                         message_history=message_history,
                         usage_limits=UsageLimits(
                             request_limit=None
                         ),  # No request limit for long-running tasks
+                        metadata=_build_run_metadata(ctx),
                     ) as run:
                         # Store the supervisor run so delegation functions can access its message history
                         self.current_supervisor_run_ref["run"] = run
@@ -263,123 +428,49 @@ class StreamingExecutionFlow:
                             ):
                                 yield response
                         finally:
-                            # Clear the reference when done
                             self.current_supervisor_run_ref["run"] = None
 
-            except (
-                TimeoutError,
-                anyio.WouldBlock,
-                ModelHTTPError,
-                Exception,
-            ) as mcp_error:
-                error_detail = f"{type(mcp_error).__name__}: {str(mcp_error)}"
-                error_str = str(mcp_error).lower()
+            except GenerationCancelled:
+                raise
+            except Exception as e:
+                error_str = str(e)
+                # Check if this is a tool retry error from pydantic-ai
+                if (
+                    "exceeded max retries" in error_str.lower()
+                    and "tool" in error_str.lower()
+                ):
+                    # Extract tool name if possible
+                    tool_name = "unknown"
+                    if "'" in error_str:
+                        parts = error_str.split("'")
+                        if len(parts) >= 2:
+                            tool_name = parts[1]
 
-                # Check for specific error types
-                if isinstance(mcp_error, ModelHTTPError):
-                    error_body = getattr(mcp_error, "body", None) or {}
-                    if isinstance(error_body, dict):
-                        # Support both top-level "message" (OpenAI-style) and nested "error.message"
-                        error_message = error_body.get("message", "")
-                        if not error_message:
-                            err_obj = error_body.get("error")
-                            if isinstance(err_obj, dict):
-                                error_message = err_obj.get("message", "")
-                    else:
-                        error_message = str(error_body)
-
-                    # Check for duplicate tool_result error
-                    if (
-                        "tool_result" in error_message.lower()
-                        and "multiple" in error_message.lower()
-                    ):
-                        logger.error(
-                            f"Duplicate tool_result error detected in ModelHTTPError: {error_message}. "
-                            f"This indicates pydantic_ai's message history has duplicate tool results. "
-                            f"This may be caused by retries or error recovery. The message history may need to be cleared."
-                        )
-                    # Check for token limit error
-                    elif (
-                        "too long" in error_message.lower()
-                        or "maximum" in error_message.lower()
-                    ):
-                        logger.error(
-                            f"Token limit exceeded: {error_message}. "
-                            f"Message history is too large. Consider reducing history size or starting a new conversation."
-                        )
-
-                logger.warning(
-                    f"MCP server initialization failed in stream: {error_detail}",
-                    exc_info=True,
-                )
-                # Check if it's a JSON parsing error
-                if "json" in error_str or "parse" in error_str:
-                    logger.error(
-                        f"JSON parsing error during MCP server initialization in stream - MCP server may be returning malformed or incomplete JSON. Full traceback:\n{traceback.format_exc()}"
+                    logger.warning(
+                        "Tool '%s' exceeded max retries in multi-agent stream. "
+                        "This usually indicates the tool is failing repeatedly. Error: %s",
+                        tool_name,
+                        error_str,
+                        exc_info=True,
                     )
-                logger.info("Continuing without MCP servers...")
-
-                # Fallback without MCP servers - use compressed history if available
-                message_history = await prepare_multimodal_message_history(
-                    ctx, self.history_processor
-                )
-                message_history = validate_and_fix_message_history(message_history)
-
-                async with supervisor_agent.iter(
-                    user_prompt=ctx.query,
-                    message_history=message_history,
-                    usage_limits=UsageLimits(
-                        request_limit=None
-                    ),  # No request limit for long-running tasks
-                ) as run:
-                    # Store the supervisor run so delegation functions can access its message history
-                    self.current_supervisor_run_ref["run"] = run
-                    try:
-                        async for (
-                            response
-                        ) in self.stream_processor.process_agent_run_nodes(
-                            run, "multi-agent", current_context=ctx
-                        ):
-                            yield response
-                    finally:
-                        # Clear the reference when done
-                        self.current_supervisor_run_ref["run"] = None
-
-        except GenerationCancelled:
-            raise
-        except Exception as e:
-            error_str = str(e)
-            # Check if this is a tool retry error from pydantic-ai
-            if (
-                "exceeded max retries" in error_str.lower()
-                and "tool" in error_str.lower()
-            ):
-                # Extract tool name if possible
-                tool_name = "unknown"
-                if "'" in error_str:
-                    parts = error_str.split("'")
-                    if len(parts) >= 2:
-                        tool_name = parts[1]
-
-                logger.warning(
-                    f"Tool '{tool_name}' exceeded max retries in multi-agent stream. "
-                    f"This usually indicates the tool is failing repeatedly. Error: {error_str}",
-                    exc_info=True,
-                )
-                yield ChatAgentResponse(
-                    response=f"\n\n*An error occurred while executing tool '{tool_name}'. The tool failed after retries. Please try a different approach.*\n\n",
-                    tool_calls=[],
-                    citations=[],
-                )
-            else:
-                logger.error(
-                    f"Error in standard multi-agent stream: {error_str}", exc_info=True
-                )
-                yield ChatAgentResponse(
-                    response="\n\n*An error occurred during multi-agent streaming*\n\n",
-                    tool_calls=[],
-                    citations=[],
-                )
+                    yield ChatAgentResponse(
+                        response=(
+                            "\n\n*An error occurred while executing tool "
+                            f"'{tool_name}'. The tool failed after retries. "
+                            "Please try a different approach.*\n\n"
+                        ),
+                        tool_calls=[],
+                        citations=[],
+                    )
+                else:
+                    logger.error(
+                        "Error in standard multi-agent stream: %s", error_str, exc_info=True
+                    )
+                    yield ChatAgentResponse(
+                        response="\n\n*An error occurred during multi-agent streaming*\n\n",
+                        tool_calls=[],
+                        citations=[],
+                    )
 
 
 class MultimodalStreamingExecutionFlow:
