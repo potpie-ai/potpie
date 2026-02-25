@@ -396,7 +396,7 @@ class ParsingController:
 
     @staticmethod
     async def fetch_parsing_status(
-        project_id: str, db: Session, user: Dict[str, Any]
+        project_id: str, db: AsyncSession, user: Dict[str, Any]
     ):
         try:
             project_query = (
@@ -415,7 +415,7 @@ class ParsingController:
                 .limit(1)
             )
 
-            result = db.execute(project_query)
+            result = await db.execute(project_query)
             project_status = result.scalars().first()
 
             if not project_status:
