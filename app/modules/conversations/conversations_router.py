@@ -1,3 +1,4 @@
+import asyncio
 import json
 from typing import Any, AsyncGenerator, List, Optional, Union, Literal
 
@@ -285,7 +286,7 @@ class ConversationAPI:
             node_ids_list = parsed_node_ids or []
 
             # Start background task and return streaming response
-            return start_celery_task_and_stream(
+            return await start_celery_task_and_stream(
                 conversation_id=conversation_id,
                 run_id=run_id,
                 user_id=user_id,
@@ -417,10 +418,13 @@ class ConversationAPI:
             f"Started regenerate task {task_result.id} for {conversation_id}:{run_id}"
         )
 
-        # Wait for background task to start (with health check)
+        # Wait for background task to start (with health check) — run in thread to avoid blocking event loop
         # Increased timeout to 30 seconds to handle queued tasks
-        task_started = redis_manager.wait_for_task_start(
-            conversation_id, run_id, timeout=30
+        task_started = await asyncio.to_thread(
+            redis_manager.wait_for_task_start,
+            conversation_id,
+            run_id,
+            30,
         )
 
         if not task_started:
