@@ -1566,7 +1566,9 @@ class ConversationService:
                 ActiveSessionErrorResponse,
             )
 
-            active_session = self.session_service.get_active_session(conversation_id)
+            active_session = await asyncio.to_thread(
+                self.session_service.get_active_session, conversation_id
+            )
 
             if isinstance(active_session, ActiveSessionErrorResponse):
                 # No active session found - this is okay, just return success
@@ -1584,14 +1586,18 @@ class ConversationService:
                 f"Found active session {run_id} for conversation {conversation_id}"
             )
 
-        # Retrieve task_id before any mutation so we know whether we will revoke (and thus need to save from stream).
-        task_id = self.redis_manager.get_task_id(conversation_id, run_id)
+        # Retrieve task_id before any mutation (Redis in thread to avoid blocking event loop).
+        task_id = await asyncio.to_thread(
+            self.redis_manager.get_task_id, conversation_id, run_id
+        )
         logger.info(
             f"Stop generation: conversation_id={conversation_id}, run_id={run_id}, task_id={task_id or 'none'}"
         )
 
         # Snapshot the stream before revoke so we have a consistent read (worker may be killed mid-write after revoke).
-        snapshot = self.redis_manager.get_stream_snapshot(conversation_id, run_id)
+        snapshot = await asyncio.to_thread(
+            self.redis_manager.get_stream_snapshot, conversation_id, run_id
+        )
         content_len = len(snapshot.get("content") or "")
         citations_count = len(snapshot.get("citations") or [])
         tool_calls_count = len(snapshot.get("tool_calls") or [])
@@ -1601,12 +1607,17 @@ class ConversationService:
             f"content_len={content_len}, citations={citations_count}, tool_calls={tool_calls_count}, chunk_count={chunk_count}"
         )
 
-        # Set cancellation flag and revoke the Celery task so it stops producing chunks.
-        self.redis_manager.set_cancellation(conversation_id, run_id)
+        # Set cancellation flag and revoke the Celery task (Redis + Celery control in thread to avoid blocking).
+        await asyncio.to_thread(
+            self.redis_manager.set_cancellation, conversation_id, run_id
+        )
         if task_id:
             try:
-                self.celery_app.control.revoke(
-                    task_id, terminate=True, signal="SIGTERM"
+                await asyncio.to_thread(
+                    self.celery_app.control.revoke,
+                    task_id,
+                    terminate=True,
+                    signal="SIGTERM",
                 )
                 logger.info(
                     f"Revoked Celery task {task_id} for {conversation_id}:{run_id}"
@@ -1632,7 +1643,8 @@ class ConversationService:
                 else:
                     content_to_save = ""
                 if content_to_save:
-                    saved_message_id = self.history_manager.save_partial_ai_message(
+                    saved_message_id = await asyncio.to_thread(
+                        self.history_manager.save_partial_ai_message,
                         conversation_id,
                         content=content_to_save,
                         citations=snapshot.get("citations"),
@@ -1656,12 +1668,11 @@ class ConversationService:
                     exc_info=True,
                 )
 
-        # Always clear the session - publish end event and update status
-        # This ensures clients know the session is stopped and prevents stale sessions
-        # This is important even if there's no task_id - it clears any stale session data
-        # This will also handle the case where stop is called with a stale session_id
+        # Always clear the session - publish end event and update status (Redis in thread to avoid blocking).
         try:
-            self.redis_manager.clear_session(conversation_id, run_id)
+            await asyncio.to_thread(
+                self.redis_manager.clear_session, conversation_id, run_id
+            )
         except Exception as e:
             logger.warning(
                 f"Failed to clear session for {conversation_id}:{run_id}: {str(e)}"

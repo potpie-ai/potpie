@@ -504,9 +504,11 @@ class ConversationAPI:
             logger.error(f"Access denied for conversation {conversation_id}: {str(e)}")
             raise HTTPException(status_code=403, detail="Access denied to conversation")
 
-        # Get session information
+        # Get session information (Redis calls run in thread to avoid blocking event loop)
         session_service = SessionService()
-        result = session_service.get_active_session(conversation_id)
+        result = await asyncio.to_thread(
+            session_service.get_active_session, conversation_id
+        )
 
         # Return appropriate HTTP status based on result type
         if isinstance(result, ActiveSessionErrorResponse):
@@ -534,9 +536,11 @@ class ConversationAPI:
             logger.error(f"Access denied for conversation {conversation_id}: {str(e)}")
             raise HTTPException(status_code=403, detail="Access denied to conversation")
 
-        # Get task status information
+        # Get task status information (Redis calls run in thread to avoid blocking event loop)
         session_service = SessionService()
-        result = session_service.get_task_status(conversation_id)
+        result = await asyncio.to_thread(
+            session_service.get_task_status, conversation_id
+        )
 
         # Return appropriate HTTP status based on result type
         if isinstance(result, TaskStatusErrorResponse):
@@ -568,20 +572,22 @@ class ConversationAPI:
             logger.error(f"Access denied for conversation {conversation_id}: {str(e)}")
             raise HTTPException(status_code=403, detail="Access denied to conversation")
 
-        # Verify the session exists in Redis
+        # Verify the session exists in Redis (run in thread to avoid blocking event loop)
         from app.modules.conversations.utils.redis_streaming import RedisStreamManager
 
         redis_manager = RedisStreamManager()
-
-        # Check if the session stream exists
         stream_key = redis_manager.stream_key(conversation_id, session_id)
-        if not redis_manager.redis_client.exists(stream_key):
+        stream_exists = await asyncio.to_thread(
+            redis_manager.redis_client.exists, stream_key
+        )
+        if not stream_exists:
             raise HTTPException(
                 status_code=404, detail=f"Session {session_id} not found or expired"
             )
 
-        # Check if there's a task status for this session
-        task_status = redis_manager.get_task_status(conversation_id, session_id)
+        task_status = await asyncio.to_thread(
+            redis_manager.get_task_status, conversation_id, session_id
+        )
         logger.info(
             f"Resuming session {session_id} with status: {task_status}, cursor: {cursor}"
         )
