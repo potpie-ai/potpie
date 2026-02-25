@@ -15,6 +15,7 @@ OPTIONAL_TOOL_NAMES: FrozenSet[str] = frozenset(
         "apply_changes",
         "git_commit",
         "git_push",
+        "checkout_worktree_branch",
     }
 )
 
@@ -194,6 +195,7 @@ TOOL_DEFINITIONS: Dict[str, dict] = {
         "tier": "high",
         "category": "integration_github",
         "aliases": ["github_create_pull_request"],
+        "requires_confirmation": True,
     },
     "code_provider_add_pr_comments": {
         "tier": "high",
@@ -206,6 +208,12 @@ TOOL_DEFINITIONS: Dict[str, dict] = {
         "aliases": ["github_update_branch"],
     },
     # Git workflow tools (apply changes from Redis to worktree)
+    "checkout_worktree_branch": {
+        "tier": "medium",
+        "category": "code_changes",
+        "short_description": "Checkout or create an edits worktree branch for the conversation.",
+        "destructive": True,
+    },
     "apply_changes": {
         "tier": "medium",
         "category": "code_changes",
@@ -230,6 +238,7 @@ TOOL_DEFINITIONS: Dict[str, dict] = {
         "category": "code_changes",
         "short_description": "Composite tool: apply changes, commit, push, and create PR in one operation.",
         "destructive": True,
+        "requires_confirmation": True,
     },
 }
 
@@ -383,6 +392,8 @@ EXECUTE_EXCLUDE_IN_LOCAL: List[str] = ["show_diff"]
 # Supervisor non-local additions: repo-manager-backed tools not needed in local/VSCode mode
 SUPERVISOR_ADD_WHEN_NON_LOCAL: List[str] = [
     "bash_command",
+    "apply_changes",
+    "checkout_worktree_branch",
 ]
 
 # Explore: minimal read-only set (for future use)

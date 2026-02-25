@@ -398,12 +398,13 @@ class CodeChangesManager:
             description=description,
         )
         self._changes_cache[file_path] = change
+        # Worktree first (mandatory when project_id + non-local), then Redis
+        if project_id and not _get_local_mode():
+            _write_change_to_worktree(project_id, file_path, "add", content, db)
         self._persist_change()
         logger.info(
             f"CodeChangesManager.add_file: Successfully added file '{file_path}' (conversation: {self._conversation_id or self._fallback_id})"
         )
-        if project_id and not _get_local_mode():
-            _write_change_to_worktree(project_id, file_path, "add", content, db)
         return True
 
     def _get_current_content(
@@ -1001,6 +1002,9 @@ class CodeChangesManager:
         logger.info(
             f"CodeChangesManager.update_file: Updating file '{file_path}' with full content (content length: {len(content)} chars)"
         )
+        # Worktree first (mandatory when project_id + non-local), then Redis via _apply_update
+        if project_id and not _get_local_mode():
+            _write_change_to_worktree(project_id, file_path, "update", content, db)
         result = self._apply_update(
             file_path,
             content,
@@ -1016,8 +1020,6 @@ class CodeChangesManager:
         logger.info(
             f"CodeChangesManager.update_file: Successfully updated file '{file_path}'"
         )
-        if project_id and not _get_local_mode():
-            _write_change_to_worktree(project_id, file_path, "update", content, db)
         return result
 
     def update_file_lines(
@@ -1127,6 +1129,12 @@ class CodeChangesManager:
             original_content = (
                 current_content if file_path not in self.changes else None
             )
+            # Worktree first (mandatory when project_id + non-local), then Redis via _apply_update
+            worktree_ok, worktree_err = False, None
+            if project_id and not _get_local_mode():
+                worktree_ok, worktree_err = _write_change_to_worktree(
+                    project_id, file_path, "update", updated_content, db
+                )
             update_success = self._apply_update(
                 file_path,
                 updated_content,
@@ -1168,9 +1176,7 @@ class CodeChangesManager:
             logger.info(
                 f"CodeChangesManager.update_file_lines: Successfully updated lines {start_line}-{end_line} in '{file_path}' (replaced {len(replaced_lines)} lines with {len(new_lines)} new lines)"
             )
-            if project_id and not _get_local_mode():
-                _write_change_to_worktree(project_id, file_path, "update", updated_content, db)
-            return {
+            out = {
                 "success": True,
                 "file_path": file_path,
                 "start_line": start_line,
@@ -1182,6 +1188,11 @@ class CodeChangesManager:
                 "context_start_line": context_start_line,
                 "context_end_line": context_end_line,
             }
+            if project_id and not _get_local_mode():
+                out["worktree_write"] = (
+                    "ok" if worktree_ok else f"failed: {worktree_err or 'unknown'}"
+                )
+            return out
         except Exception as e:
             logger.exception(
                 "CodeChangesManager.update_file_lines: Error updating lines",
@@ -1261,6 +1272,12 @@ class CodeChangesManager:
 
             change_desc = description or f"str_replace in '{file_path}' at line ~{match_line}"
             original_content = current_content if file_path not in self.changes else None
+            # Worktree first (mandatory when project_id + non-local), then Redis via _apply_update
+            worktree_ok, worktree_err = False, None
+            if project_id and not _get_local_mode():
+                worktree_ok, worktree_err = _write_change_to_worktree(
+                    project_id, file_path, "update", new_content, db
+                )
             update_success = self._apply_update(
                 file_path, new_content, change_desc, original_content=original_content
             )
@@ -1276,14 +1293,17 @@ class CodeChangesManager:
             logger.info(
                 f"CodeChangesManager.replace_in_file: Successfully replaced 1 occurrence in '{file_path}' at line {match_line}"
             )
-            if project_id and not _get_local_mode():
-                _write_change_to_worktree(project_id, file_path, "update", new_content, db)
-            return {
+            out = {
                 "success": True,
                 "file_path": file_path,
                 "match_line": match_line,
                 "replacements_made": 1,
             }
+            if project_id and not _get_local_mode():
+                out["worktree_write"] = (
+                    "ok" if worktree_ok else f"failed: {worktree_err or 'unknown'}"
+                )
+            return out
         except Exception as e:
             logger.exception(
                 "CodeChangesManager.replace_in_file: Error replacing text",
@@ -1383,6 +1403,12 @@ class CodeChangesManager:
             original_content = (
                 current_content if file_path not in self.changes else None
             )
+            # Worktree first (mandatory when project_id + non-local), then Redis via _apply_update
+            worktree_ok, worktree_err = False, None
+            if project_id and not _get_local_mode():
+                worktree_ok, worktree_err = _write_change_to_worktree(
+                    project_id, file_path, "update", updated_content, db
+                )
             update_success = self._apply_update(
                 file_path,
                 updated_content,
@@ -1424,9 +1450,7 @@ class CodeChangesManager:
             logger.info(
                 f"CodeChangesManager.insert_lines: Successfully inserted {len(new_lines)} line(s) {position} line {line_number} in '{file_path}'"
             )
-            if project_id and not _get_local_mode():
-                _write_change_to_worktree(project_id, file_path, "update", updated_content, db)
-            return {
+            out = {
                 "success": True,
                 "file_path": file_path,
                 "line_number": line_number,
@@ -1436,6 +1460,11 @@ class CodeChangesManager:
                 "context_start_line": context_start_line,
                 "context_end_line": context_end_line,
             }
+            if project_id and not _get_local_mode():
+                out["worktree_write"] = (
+                    "ok" if worktree_ok else f"failed: {worktree_err or 'unknown'}"
+                )
+            return out
         except Exception as e:
             logger.exception(
                 "CodeChangesManager.insert_lines: Error inserting lines",
@@ -1529,6 +1558,12 @@ class CodeChangesManager:
             original_content = (
                 current_content if file_path not in self.changes else None
             )
+            # Worktree first (mandatory when project_id + non-local), then Redis via _apply_update
+            worktree_ok, worktree_err = False, None
+            if project_id and not _get_local_mode():
+                worktree_ok, worktree_err = _write_change_to_worktree(
+                    project_id, file_path, "update", updated_content, db
+                )
             update_success = self._apply_update(
                 file_path,
                 updated_content,
@@ -1544,9 +1579,7 @@ class CodeChangesManager:
             logger.info(
                 f"CodeChangesManager.delete_lines: Successfully deleted {len(deleted_lines)} line(s) ({start_line}-{end_line}) from '{file_path}'"
             )
-            if project_id and not _get_local_mode():
-                _write_change_to_worktree(project_id, file_path, "update", updated_content, db)
-            return {
+            out = {
                 "success": True,
                 "file_path": file_path,
                 "start_line": start_line,
@@ -1554,6 +1587,11 @@ class CodeChangesManager:
                 "lines_deleted": len(deleted_lines),
                 "deleted_content": deleted_content,
             }
+            if project_id and not _get_local_mode():
+                out["worktree_write"] = (
+                    "ok" if worktree_ok else f"failed: {worktree_err or 'unknown'}"
+                )
+            return out
         except Exception as e:
             logger.exception(
                 "CodeChangesManager.delete_lines: Error deleting lines",
@@ -1587,6 +1625,9 @@ class CodeChangesManager:
                 existing.description = description
             if previous_content:
                 existing.previous_content = previous_content
+            # Worktree first (mandatory when project_id + non-local), then Redis
+            if project_id and not _get_local_mode():
+                _write_change_to_worktree(project_id, file_path, "delete", None, db)
             self._persist_change()
         else:
             # New deletion record
@@ -1598,12 +1639,13 @@ class CodeChangesManager:
                 description=description,
             )
             self._changes_cache[file_path] = change
+            # Worktree first (mandatory when project_id + non-local), then Redis
+            if project_id and not _get_local_mode():
+                _write_change_to_worktree(project_id, file_path, "delete", None, db)
             self._persist_change()
         logger.info(
             f"CodeChangesManager.delete_file: Successfully marked file '{file_path}' for deletion"
         )
-        if project_id and not _get_local_mode():
-            _write_change_to_worktree(project_id, file_path, "delete", None, db)
         return True
 
     def get_file(self, file_path: str) -> Optional[Dict[str, Any]]:
@@ -2782,6 +2824,59 @@ def _get_branch() -> Optional[str]:
     return _branch_ctx.get()
 
 
+# Cache for project_id lookup from conversation_id to avoid repeated DB calls
+_project_id_cache: Dict[str, Optional[str]] = {}
+
+
+def _get_project_id_from_conversation_id(conversation_id: Optional[str]) -> Optional[str]:
+    """Fetch project_id from conversation_id via database lookup (non-local mode only).
+
+    This is used as a fallback when the LLM doesn't provide project_id in tool calls.
+    In local mode, this returns None immediately since project_id is not needed.
+    Conversations can have multiple projects, but typically have one primary project.
+
+    Args:
+        conversation_id: The conversation ID to look up
+
+    Returns:
+        The first project_id associated with the conversation, or None if not found
+        or if in local mode.
+    """
+    # Skip lookup in local mode - project_id is not needed
+    if _get_local_mode():
+        return None
+
+    if not conversation_id:
+        return None
+
+    # Check cache first
+    if conversation_id in _project_id_cache:
+        return _project_id_cache[conversation_id]
+
+    try:
+        from app.modules.conversations.conversation.conversation_model import Conversation
+        from app.core.database import get_db
+
+        db = next(get_db())
+        conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+
+        if conversation and conversation.project_ids and len(conversation.project_ids) > 0:
+            project_id = conversation.project_ids[0]
+            _project_id_cache[conversation_id] = project_id
+            logger.info(
+                f"CodeChangesManager: Resolved project_id={project_id} from conversation_id={conversation_id}"
+            )
+            return project_id
+
+        _project_id_cache[conversation_id] = None
+        return None
+    except Exception as e:
+        logger.warning(
+            f"CodeChangesManager: Failed to resolve project_id from conversation_id={conversation_id}: {e}"
+        )
+        return None
+
+
 def _write_change_to_worktree(
     project_id: str,
     file_path: str,
@@ -2807,16 +2902,23 @@ def _write_change_to_worktree(
     """
     try:
         if _get_local_mode():
+            logger.debug(
+                "_write_change_to_worktree: skipped (local_mode=True)",
+                file_path=file_path,
+                project_id=project_id,
+            )
             return False, "local_mode"
-
-        if os.getenv("REPO_MANAGER_ENABLED", "false").lower() != "true":
-            return False, "repo_manager_disabled"
 
         if not project_id:
             return False, "no_project_id"
 
         conversation_id = _get_conversation_id()
         if not conversation_id:
+            logger.warning(
+                "_write_change_to_worktree: skipped (no conversation_id in context)",
+                file_path=file_path,
+                project_id=project_id,
+            )
             return False, "no_conversation_id"
 
         user_id = _get_user_id()
@@ -4121,6 +4223,16 @@ def _wrap_tool(func, input_model):
 # Tool functions
 def add_file_tool(input_data: AddFileInput) -> str:
     """Add a new file to the code changes manager"""
+    # Resolve project_id: use provided value or look up from conversation_id (non-local mode only)
+    project_id = input_data.project_id
+    if not project_id and not _get_local_mode():
+        conversation_id = _get_conversation_id()
+        project_id = _get_project_id_from_conversation_id(conversation_id)
+        if project_id:
+            logger.info(
+                f"Tool add_file_tool: Resolved project_id={project_id} from conversation_id={conversation_id}"
+            )
+
     logger.info(f"🔧 [Tool Call] add_file_tool: Adding file '{input_data.file_path}'")
 
     # LOCAL-FIRST: Try local execution first
@@ -4142,14 +4254,14 @@ def add_file_tool(input_data: AddFileInput) -> str:
     try:
         manager = _get_code_changes_manager()
         db = None
-        if input_data.project_id:
+        if project_id:
             from app.core.database import get_db
             db = next(get_db())
         success = manager.add_file(
             file_path=input_data.file_path,
             content=input_data.content,
             description=input_data.description,
-            project_id=input_data.project_id,
+            project_id=project_id,
             db=db,
         )
 
@@ -4648,9 +4760,19 @@ def update_file_lines_tool(input_data: UpdateFileLinesInput) -> str:
 
 def replace_in_file_tool(input_data: ReplaceInFileInput) -> str:
     """Replace an exact literal string in a file (str_replace semantics)."""
+    # Resolve project_id: use provided value or look up from conversation_id (non-local mode only)
+    project_id = input_data.project_id
+    if not project_id and not _get_local_mode():
+        conversation_id = _get_conversation_id()
+        project_id = _get_project_id_from_conversation_id(conversation_id)
+        if project_id:
+            logger.info(
+                f"Tool replace_in_file_tool: Resolved project_id={project_id} from conversation_id={conversation_id}"
+            )
+
     logger.info(
         f"🔧 [Tool Call] replace_in_file_tool: str_replace in '{input_data.file_path}' "
-        f"(project_id={input_data.project_id})"
+        f"(project_id={project_id})"
     )
 
     # LOCAL-FIRST: Try local execution first
@@ -4672,9 +4794,9 @@ def replace_in_file_tool(input_data: ReplaceInFileInput) -> str:
     try:
         manager = _get_code_changes_manager()
         db = None
-        if input_data.project_id:
+        if project_id:
             logger.info(
-                f"Tool replace_in_file_tool: Project ID provided ({input_data.project_id}), fetching database session"
+                f"Tool replace_in_file_tool: Project ID available ({project_id}), fetching database session"
             )
             from app.core.database import get_db
 
@@ -4685,7 +4807,7 @@ def replace_in_file_tool(input_data: ReplaceInFileInput) -> str:
             old_str=input_data.old_str,
             new_str=input_data.new_str,
             description=input_data.description,
-            project_id=input_data.project_id,
+            project_id=project_id,
             db=db,
         )
 
@@ -5036,8 +5158,18 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
             "The VSCode Extension handles diff display directly. Use get_file_diff per file to verify changes."
         )
 
+    # Resolve project_id: use provided value or look up from conversation_id (non-local mode only)
+    project_id = input_data.project_id
+    if not project_id and not _get_local_mode():
+        conversation_id = _get_conversation_id()
+        project_id = _get_project_id_from_conversation_id(conversation_id)
+        if project_id:
+            logger.info(
+                f"Tool show_diff_tool: Resolved project_id={project_id} from conversation_id={conversation_id}"
+            )
+
     logger.info(
-        f"Tool show_diff_tool: Displaying diff(s) (file_path: {input_data.file_path}, context_lines: {input_data.context_lines}, project_id: {input_data.project_id})"
+        f"Tool show_diff_tool: Displaying diff(s) (file_path: {input_data.file_path}, context_lines: {input_data.context_lines}, project_id: {project_id})"
     )
     try:
         manager = _get_code_changes_manager()
@@ -5050,9 +5182,9 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
 
         # Get database session if project_id provided
         db = None
-        if input_data.project_id:
+        if project_id:
             logger.info(
-                f"Tool show_diff_tool: Project ID provided ({input_data.project_id}), fetching database session"
+                f"Tool show_diff_tool: Project ID available ({project_id}), fetching database session"
             )
             from app.core.database import get_db
 
@@ -5086,7 +5218,7 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
                 else:
                     # Try to get from repository first if project_id/db provided
                     old_content = None
-                    if input_data.project_id and db:
+                    if project_id and db:
                         try:
                             from app.modules.code_provider.code_provider_service import (
                                 CodeProviderService,
@@ -5099,7 +5231,7 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
 
                             project = (
                                 db.query(Project)
-                                .filter(Project.id == input_data.project_id)
+                                .filter(Project.id == project_id)
                                 .first()
                             )
                             if project:
@@ -5112,7 +5244,7 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
                                         branch_name=project.branch_name,
                                         start_line=None,
                                         end_line=None,
-                                        project_id=input_data.project_id,
+                                        project_id=project_id,
                                         commit_id=project.commit_id,
                                     )
 
@@ -5214,9 +5346,15 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
         result += combined_diff
         result += "\n```\n\n--generated diff--\n"
 
+        # Non-local mode: remind agent to apply changes to worktree
+        if project_id:
+            result += (
+                "\n**Next step (non-local mode):** Call `apply_changes(project_id, conversation_id)` "
+                "to write these changes to the worktree. Then ask the user if they want to create a PR.\n"
+            )
+
         return result
     except Exception:
-        project_id = getattr(input_data, "project_id", None)
         logger.exception(
             "Tool show_diff_tool: Error displaying diff", project_id=project_id
         )

@@ -81,6 +81,8 @@ This tool orchestrates the full PR workflow:
 
 Use this when you have batched file changes in CodeChangesManager and want to create a PR.
 
+**IMPORTANT:** Only use this tool after the user has explicitly affirmed they want a PR (e.g. replied 'yes', 'create PR', or 'proceed' to your prompt). Do not create a PR on your own initiative.
+
 Args:
     project_id: The repository project ID (UUID)
     conversation_id: The conversation ID where changes are stored

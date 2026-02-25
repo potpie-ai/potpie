@@ -142,6 +142,7 @@ GITHUB_AGENT_INSTRUCTIONS = """You are a GitHub integration specialist subagent.
 - **github_update_branch**: Update files in branches
 
 **PR CREATION FROM CODE CHANGES (PREFER create_pr_workflow):**
+- **ONLY run when the user explicitly asked for a PR** (e.g. replied "yes" or "create PR"). Do not create a PR on your own initiative.
 - When task is "create PR" from code changes: Use **create_pr_workflow** in ONE call (apply + commit + push + create PR).
 - Optional: Call **get_changes_for_pr(conversation_id)** first to verify changes exist.
 - Context must include: project_id, conversation_id, branch_name, commit_message, pr_title, pr_body, base_branch.
@@ -376,7 +377,7 @@ def get_supervisor_instructions(
               - Repository operations
               - ANY mention of "GitHub", "PR", "pull request", "branch", "commit", "repository"
               - When user asks about GitHub, PRs, branches, or repository operations
-              - **PR creation from code changes:** When user confirms creating a PR after code edits, delegate with context: project_id, conversation_id, branch_name, commit_message, pr_title, pr_body, base_branch (usually "main"). The GitHub agent has `create_pr_workflow` — it does apply + commit + push + create PR in ONE call. Prefer this over separate apply_changes/git_commit/git_push calls.
+              - **PR creation from code changes:** Only when the user has explicitly affirmed in their message (e.g. "yes", "create PR", "proceed") that they want a PR. Never delegate PR creation on your own. When they have affirmed, delegate with context: project_id, conversation_id, branch_name, commit_message, pr_title, pr_body, base_branch (usually "main"). The GitHub agent has `create_pr_workflow` — it does apply + commit + push + create PR in ONE call. Prefer this over separate apply_changes/git_commit/git_push calls.
 
             - 🎫 **Jira Agent** (delegate_to_jira_agent): Use for ANY Jira-related task:
               - Issue management (create, update, search, transition)
