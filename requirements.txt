@@ -8,7 +8,6 @@ aiohttp==3.13.3
     # via
     #   potpie (pyproject.toml)
     #   firecrawl-py
-    #   huggingface-hub
     #   instructor
     #   litellm
     #   xai-sdk
@@ -19,10 +18,12 @@ alembic==1.18.3
 amqp==5.3.1
     # via kombu
 annotated-doc==0.0.4
-    # via fastapi
+    # via
+    #   fastapi
+    #   typer
 annotated-types==0.7.0
     # via pydantic
-anthropic==0.77.1
+anthropic==0.84.0
     # via
     #   potpie (pyproject.toml)
     #   pydantic-ai-slim
@@ -111,13 +112,11 @@ click-repl==0.3.0
     # via celery
 cloudpickle==3.1.2
     # via pydocket
-cohere==5.20.2
+cohere==5.20.7
     # via pydantic-ai-slim
-colorama==0.4.6
-    # via griffe
 croniter==6.0.0
     # via pydocket
-cryptography==46.0.4
+cryptography==46.0.5
     # via
     #   potpie (pyproject.toml)
     #   authlib
@@ -171,7 +170,6 @@ filelock==3.20.3
     # via
     #   huggingface-hub
     #   torch
-    #   transformers
 firebase-admin==7.1.0
     # via potpie (pyproject.toml)
 firecrawl-py==4.14.0
@@ -239,7 +237,7 @@ greenlet==3.3.1
     # via potpie (pyproject.toml)
 grep-ast==0.9.0
     # via potpie (pyproject.toml)
-griffe==1.15.0
+griffelib==2.0.0
     # via pydantic-ai-slim
 groq==1.0.0
     # via pydantic-ai-slim
@@ -281,6 +279,7 @@ httpx==0.28.1
     #   genai-prices
     #   google-genai
     #   groq
+    #   huggingface-hub
     #   langgraph-sdk
     #   langsmith
     #   litellm
@@ -291,7 +290,7 @@ httpx==0.28.1
     #   pydantic-graph
 httpx-sse==0.4.3
     # via mcp
-huggingface-hub==0.36.1
+huggingface-hub==1.4.1
     # via
     #   pydantic-ai-slim
     #   sentence-transformers
@@ -525,7 +524,7 @@ pathspec==1.0.4
     #   grep-ast
 pathvalidate==3.3.1
     # via py-key-value-aio
-pillow==12.1.0
+pillow==12.1.1
     # via potpie (pyproject.toml)
 platformdirs==4.5.1
     # via fastmcp
@@ -615,9 +614,9 @@ pydantic==2.12.5
     #   pydantic-graph
     #   pydantic-settings
     #   xai-sdk
-pydantic-ai==1.54.0
+pydantic-ai==1.63.0
     # via potpie (pyproject.toml)
-pydantic-ai-slim==1.54.0
+pydantic-ai-slim==1.63.0
     # via
     #   pydantic-ai
     #   pydantic-ai-todo
@@ -629,9 +628,9 @@ pydantic-core==2.41.5
     #   cohere
     #   instructor
     #   pydantic
-pydantic-evals==1.54.0
+pydantic-evals==1.63.0
     # via pydantic-ai-slim
-pydantic-graph==1.54.0
+pydantic-graph==1.63.0
     # via pydantic-ai-slim
 pydantic-settings==2.12.0
     # via mcp
@@ -720,7 +719,6 @@ requests==2.32.5
     #   google-auth
     #   google-cloud-storage
     #   google-genai
-    #   huggingface-hub
     #   instructor
     #   jsonschema-path
     #   langsmith
@@ -731,7 +729,6 @@ requests==2.32.5
     #   requests-toolbelt
     #   resend
     #   tiktoken
-    #   transformers
     #   xai-sdk
 requests-toolbelt==1.0.0
     # via langsmith
@@ -777,7 +774,9 @@ setuptools==80.10.2
     #   openinference-instrumentation-litellm
     #   torch
 shellingham==1.5.4
-    # via typer
+    # via
+    #   huggingface-hub
+    #   typer
 simple-websocket==1.1.0
     # via python-engineio
 six==1.17.0
@@ -840,7 +839,7 @@ tqdm==4.67.3
     #   openai
     #   sentence-transformers
     #   transformers
-transformers==4.57.6
+transformers==5.2.0
     # via
     #   potpie (pyproject.toml)
     #   sentence-transformers
@@ -858,10 +857,15 @@ tree-sitter-language-pack==0.13.0
     #   grep-ast
 tree-sitter-yaml==0.7.2
     # via tree-sitter-language-pack
-typer==0.21.1
+typer==0.24.1
     # via
     #   instructor
     #   pydocket
+    #   typer-slim
+typer-slim==0.24.0
+    # via
+    #   huggingface-hub
+    #   transformers
 types-protobuf==6.32.1.20251210
     # via temporalio
 types-requests==2.32.4.20260107
@@ -896,7 +900,6 @@ typing-extensions==4.15.0
     #   sqlalchemy
     #   temporalio
     #   torch
-    #   typer
     #   typing-inspection
 typing-inspection==0.4.2
     # via
