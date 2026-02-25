@@ -10,6 +10,9 @@ from app.modules.key_management.secret_manager import SecretManager
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.posthog_helper import PostHogClient
 from app.modules.utils.logger import setup_logger
+from app.modules.intelligence.tracing.logfire_tracer import (
+    logfire_llm_call_metadata,
+)
 
 from .provider_schema import (
     ProviderInfo,
@@ -32,6 +35,9 @@ from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from app.modules.intelligence.provider.openrouter_gemini_model import (
     OpenRouterGeminiModel,
+)
+from app.modules.intelligence.provider.openrouter_glm_model import (
+    OpenRouterGlmModel,
 )
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from app.modules.intelligence.provider.anthropic_caching_model import (
@@ -257,6 +263,33 @@ def robust_llm_call(settings: Optional[RetrySettings] = None):
         return wrapper
 
     return decorator
+
+
+def _log_openrouter_usage(model_id: str, response: Any) -> None:
+    """
+    Log OpenRouter usage (tokens + cost) from a completion response.
+    OpenRouter returns usage in every response; see https://openrouter.ai/docs/guides/guides/usage-accounting
+    """
+    if not model_id or not str(model_id).startswith("openrouter/"):
+        return
+    usage = getattr(response, "usage", None)
+    if not usage:
+        return
+    prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+    completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+    total_tokens = getattr(usage, "total_tokens", 0) or 0
+    cost = getattr(usage, "cost", None)
+    if cost is None:
+        cost = getattr(usage, "total_cost", None)
+    cost_str = f", cost={cost} credits" if cost is not None else ""
+    msg = (
+        f"[OpenRouter usage] model={model_id} "
+        f"prompt_tokens={prompt_tokens} completion_tokens={completion_tokens} "
+        f"total_tokens={total_tokens}{cost_str}"
+    )
+    logger.info(msg)
+    # Guarantee visibility (e.g. when call_llm runs in API or worker)
+    print(msg, flush=True)
 
 
 def sanitize_messages_for_tracing(messages: list) -> list:
@@ -816,6 +849,13 @@ class ProviderService:
 
         routing_provider = config.provider
 
+        # Environment for span attributes
+        env = (
+            os.getenv("LOGFIRE_ENVIRONMENT")
+            or os.getenv("ENV")
+            or "local"
+        ).strip()
+
         try:
             if output_schema:
                 # Use structured output with instructor
@@ -873,16 +913,30 @@ class ProviderService:
                 if stream:
 
                     async def generator() -> AsyncGenerator[str, None]:
-                        response = await acompletion(
-                            messages=messages, stream=True, **params
-                        )
-                        async for chunk in response:
-                            yield chunk.choices[0].delta.content or ""
+                        with logfire_llm_call_metadata(
+                            user_id=self.user_id,
+                            environment=env,
+                        ):
+                            response = await acompletion(
+                                messages=messages, stream=True, **params
+                            )
+                            last_chunk = None
+                            async for chunk in response:
+                                if getattr(chunk, "usage", None):
+                                    last_chunk = chunk
+                                yield chunk.choices[0].delta.content or ""
+                            if last_chunk:
+                                _log_openrouter_usage(params.get("model", ""), last_chunk)
 
                     return generator()
                 else:
-                    response = await acompletion(messages=messages, **params)
-                    return response.choices[0].message.content
+                    with logfire_llm_call_metadata(
+                        user_id=self.user_id,
+                        environment=env,
+                    ):
+                        response = await acompletion(messages=messages, **params)
+                        _log_openrouter_usage(params.get("model", ""), response)
+                        return response.choices[0].message.content
         except Exception as e:
             logger.exception(
                 "Error calling LLM",
@@ -906,21 +960,43 @@ class ProviderService:
         params = self._build_llm_params(config)
         routing_provider = config.provider
 
-        # Handle streaming response if requested
+        # Environment for span attributes
+        env = (
+            os.getenv("LOGFIRE_ENVIRONMENT")
+            or os.getenv("ENV")
+            or "local"
+        ).strip()
+
+        # Handle streaming response if requested. We wrap the actual LiteLLM call
+        # in a Logfire span so we always get an app-owned span with user_id/env.
         try:
             if stream:
 
                 async def generator() -> AsyncGenerator[str, None]:
-                    response = await acompletion(
-                        messages=messages, stream=True, **params
-                    )
-                    async for chunk in response:
-                        yield chunk.choices[0].delta.content or ""
+                    with logfire_llm_call_metadata(
+                        user_id=self.user_id,
+                        environment=env,
+                    ):
+                        response = await acompletion(
+                            messages=messages, stream=True, **params
+                        )
+                        last_chunk = None
+                        async for chunk in response:
+                            if getattr(chunk, "usage", None):
+                                last_chunk = chunk
+                            yield chunk.choices[0].delta.content or ""
+                        if last_chunk:
+                            _log_openrouter_usage(params.get("model", ""), last_chunk)
 
                 return generator()
             else:
-                response = await acompletion(messages=messages, **params)
-                return response.choices[0].message.content
+                with logfire_llm_call_metadata(
+                    user_id=self.user_id,
+                    environment=env,
+                ):
+                    response = await acompletion(messages=messages, **params)
+                    _log_openrouter_usage(params.get("model", ""), response)
+                    return response.choices[0].message.content
         except Exception as e:
             logger.exception("Error calling LLM", provider=routing_provider)
             raise e
@@ -945,48 +1021,60 @@ class ProviderService:
             if key in params
         }
 
+        # Environment for span attributes
+        env = (
+            os.getenv("LOGFIRE_ENVIRONMENT")
+            or os.getenv("ENV")
+            or "local"
+        ).strip()
+
         try:
-            if config.provider == "ollama":
-                # use openai client to call ollama because of https://github.com/BerriAI/litellm/issues/7355
-                ollama_base_root = (
-                    params.get("base_url")
-                    or config.base_url
-                    or os.environ.get("LLM_API_BASE")
-                    or "http://localhost:11434"
-                )
-                ollama_base_url = ollama_base_root.rstrip("/") + "/v1"
-                ollama_api_key = params.get("api_key") or os.environ.get(
-                    "OLLAMA_API_KEY", "ollama"
-                )
-                client = instructor.from_openai(
-                    AsyncOpenAI(base_url=ollama_base_url, api_key=ollama_api_key),
-                    mode=instructor.Mode.JSON,
-                )
-                ollama_request_kwargs = {
-                    key: value
-                    for key, value in request_kwargs.items()
-                    if key not in {"base_url", "api_key", "api_version"}
-                }
-                response = await client.chat.completions.create(
-                    model=params["model"].split("/")[-1],
-                    messages=messages,
-                    response_model=output_schema,
-                    temperature=params.get("temperature", 0.3),
-                    max_tokens=params.get("max_tokens"),
-                    **ollama_request_kwargs,
-                )
-            else:
-                client = instructor.from_litellm(acompletion, mode=instructor.Mode.JSON)
-                response = await client.chat.completions.create(
-                    model=params["model"],
-                    messages=messages,
-                    response_model=output_schema,
-                    strict=True,
-                    temperature=params.get("temperature", 0.3),
-                    max_tokens=params.get("max_tokens"),
-                    **request_kwargs,
-                )
-            return response
+            with logfire_llm_call_metadata(
+                user_id=self.user_id,
+                environment=env,
+            ):
+                if config.provider == "ollama":
+                    # use openai client to call ollama because of https://github.com/BerriAI/litellm/issues/7355
+                    ollama_base_root = (
+                        params.get("base_url")
+                        or config.base_url
+                        or os.environ.get("LLM_API_BASE")
+                        or "http://localhost:11434"
+                    )
+                    ollama_base_url = ollama_base_root.rstrip("/") + "/v1"
+                    ollama_api_key = params.get("api_key") or os.environ.get(
+                        "OLLAMA_API_KEY", "ollama"
+                    )
+                    client = instructor.from_openai(
+                        AsyncOpenAI(base_url=ollama_base_url, api_key=ollama_api_key),
+                        mode=instructor.Mode.JSON,
+                    )
+                    ollama_request_kwargs = {
+                        key: value
+                        for key, value in request_kwargs.items()
+                        if key not in {"base_url", "api_key", "api_version"}
+                    }
+                    response = await client.chat.completions.create(
+                        model=params["model"].split("/")[-1],
+                        messages=messages,
+                        response_model=output_schema,
+                        temperature=params.get("temperature", 0.3),
+                        max_tokens=params.get("max_tokens"),
+                        **ollama_request_kwargs,
+                    )
+                else:
+                    client = instructor.from_litellm(acompletion, mode=instructor.Mode.JSON)
+                    response = await client.chat.completions.create(
+                        model=params["model"],
+                        messages=messages,
+                        response_model=output_schema,
+                        strict=True,
+                        temperature=params.get("temperature", 0.3),
+                        max_tokens=params.get("max_tokens"),
+                        **request_kwargs,
+                    )
+                _log_openrouter_usage(params.get("model", ""), response)
+                return response
         except Exception as e:
             logger.exception("LLM call with structured output failed")
             raise e
@@ -1041,16 +1129,30 @@ class ProviderService:
             if stream:
 
                 async def generator() -> AsyncGenerator[str, None]:
-                    response = await acompletion(
-                        messages=messages, stream=True, **params
-                    )
-                    async for chunk in response:
-                        yield chunk.choices[0].delta.content or ""
+                    with logfire_llm_call_metadata(
+                        user_id=self.user_id,
+                        environment=env,
+                    ):
+                        response = await acompletion(
+                            messages=messages, stream=True, **params
+                        )
+                        last_chunk = None
+                        async for chunk in response:
+                            if getattr(chunk, "usage", None):
+                                last_chunk = chunk
+                            yield chunk.choices[0].delta.content or ""
+                        if last_chunk:
+                            _log_openrouter_usage(params.get("model", ""), last_chunk)
 
                 return generator()
             else:
-                response = await acompletion(messages=messages, **params)
-                return response.choices[0].message.content
+                with logfire_llm_call_metadata(
+                    user_id=self.user_id,
+                    environment=env,
+                ):
+                    response = await acompletion(messages=messages, **params)
+                    _log_openrouter_usage(params.get("model", ""), response)
+                    return response.choices[0].message.content
         except Exception as e:
             logger.exception("Error calling multimodal LLM", provider=routing_provider)
             raise e
@@ -1341,11 +1443,20 @@ class ProviderService:
                     or "http://localhost:11434"
                 )
                 provider_kwargs["base_url"] = base_url_root.rstrip("/") + "/v1"
-            model_class = (
-                OpenRouterGeminiModel
-                if config.auth_provider == "openrouter" and config.provider == "gemini"
-                else OpenAIModel
-            )
+
+            # Choose a custom OpenRouter-backed model when appropriate so we can
+            # capture usage and cost from the streaming path.
+            if config.auth_provider == "openrouter":
+                if config.provider == "gemini":
+                    model_class = OpenRouterGeminiModel
+                elif config.provider == "zai":
+                    # Z-AI / GLM models via OpenRouter
+                    model_class = OpenRouterGlmModel
+                else:
+                    model_class = OpenAIModel
+            else:
+                model_class = OpenAIModel
+
             return model_class(
                 model_name=model_name,
                 provider=OpenAIProvider(
