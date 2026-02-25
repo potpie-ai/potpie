@@ -95,16 +95,20 @@ async def redis_stream_generator_async(
     """
     Stream events from Redis to client without blocking the event loop.
     Runs sync consume_stream in a thread and yields via a queue.
+    Uses stop_event so the background thread exits when the generator is closed.
     """
     queue: asyncio.Queue[Optional[dict]] = asyncio.Queue()
     loop = asyncio.get_running_loop()
     redis_manager = RedisStreamManager()
+    stop_event = threading.Event()
 
     def run_consume() -> None:
         try:
             for event in redis_manager.consume_stream(
-                conversation_id, run_id, cursor
+                conversation_id, run_id, cursor, stop_event=stop_event
             ):
+                if stop_event.is_set():
+                    break
                 loop.call_soon_threadsafe(queue.put_nowait, event)
             loop.call_soon_threadsafe(queue.put_nowait, None)
         except Exception as e:
@@ -118,24 +122,28 @@ async def redis_stream_generator_async(
     thread = threading.Thread(target=run_consume, daemon=True)
     thread.start()
 
-    while True:
-        event = await queue.get()
-        if event is None:
-            break
-        if event.get("type") == "chunk":
-            response = ChatMessageResponse(
-                message=event.get("content", ""),
-                citations=event.get("citations", []),
-                tool_calls=event.get("tool_calls", []),
-            )
-            yield json.dumps(response.dict(), default=json_serializer)
-        elif event.get("type") == "queued":
-            response = ChatMessageResponse(
-                message="", citations=[], tool_calls=[]
-            )
-            yield json.dumps(response.dict(), default=json_serializer)
-        elif event.get("type") == "end":
-            break
+    try:
+        while True:
+            event = await queue.get()
+            if event is None:
+                break
+            if event.get("type") == "chunk":
+                response = ChatMessageResponse(
+                    message=event.get("content", ""),
+                    citations=event.get("citations", []),
+                    tool_calls=event.get("tool_calls", []),
+                )
+                yield json.dumps(response.dict(), default=json_serializer)
+            elif event.get("type") == "queued":
+                response = ChatMessageResponse(
+                    message="", citations=[], tool_calls=[]
+                )
+                yield json.dumps(response.dict(), default=json_serializer)
+            elif event.get("type") == "end":
+                break
+    finally:
+        stop_event.set()
+        # Thread will see stop_event, exit consume_stream, and put None so we can exit cleanly if still in queue.get()
 
 
 async def start_celery_task_and_stream(

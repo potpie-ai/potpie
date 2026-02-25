@@ -4,6 +4,7 @@ so stream keys and values match Celery task usage. Tunnel/socket services use
 decode_responses=True; keep that in mind when sharing Redis URLs or adding new clients.
 """
 import redis
+import threading
 import time
 from typing import Generator, Optional
 import json
@@ -68,9 +69,15 @@ class RedisStreamManager:
             raise
 
     def consume_stream(
-        self, conversation_id: str, run_id: str, cursor: Optional[str] = None
+        self,
+        conversation_id: str,
+        run_id: str,
+        cursor: Optional[str] = None,
+        stop_event: Optional[threading.Event] = None,
     ) -> Generator[dict, None, None]:
-        """Synchronous Redis stream consumption for HTTP streaming"""
+        """Synchronous Redis stream consumption for HTTP streaming.
+        If stop_event is set, the generator exits promptly so the caller can shut down.
+        """
         key = self.stream_key(conversation_id, run_id)
 
         try:
@@ -80,6 +87,8 @@ class RedisStreamManager:
                 events = self.redis_client.xrange(key, min=cursor, max="+")
 
                 for event_id, event_data in events:
+                    if stop_event and stop_event.is_set():
+                        return
                     formatted_event = self._format_event(event_id, event_data)
                     yield formatted_event
 
@@ -97,11 +106,12 @@ class RedisStreamManager:
             # If no cursor provided (fresh request), wait for stream to be created
             if not cursor and not self.redis_client.exists(key):
                 # Wait for the stream to be created (with timeout)
-                # Increased timeout to 120 seconds to handle queued Celery tasks
                 wait_timeout = 120  # 2 minutes
                 wait_start = datetime.now()
 
                 while not self.redis_client.exists(key):
+                    if stop_event and stop_event.is_set():
+                        return
                     if (datetime.now() - wait_start).total_seconds() > wait_timeout:
                         yield {
                             "type": "end",
@@ -110,13 +120,11 @@ class RedisStreamManager:
                             "stream_id": "0-0",
                         }
                         return
-
-                    # Check every 500ms
-                    import time
-
                     time.sleep(0.5)
 
             while True:
+                if stop_event and stop_event.is_set():
+                    return
                 # Check if key still exists (TTL expiry detection)
                 if not self.redis_client.exists(key):
                     yield {
@@ -127,7 +135,8 @@ class RedisStreamManager:
                     }
                     return
 
-                events = self.redis_client.xread({key: last_id}, block=5000, count=1)
+                # Use 1s block so we can check stop_event at least every second
+                events = self.redis_client.xread({key: last_id}, block=1000, count=1)
                 if not events:
                     continue
 
