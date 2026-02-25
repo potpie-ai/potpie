@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 import logging
 import os
@@ -180,7 +181,9 @@ async def post_message(
 
     # For fresh requests without cursor, ensure we get a unique stream
     if not cursor:
-        run_id = ensure_unique_run_id(conversation_id, run_id)
+        run_id = await asyncio.to_thread(
+            ensure_unique_run_id, conversation_id, run_id
+        )
 
     # Extract agent_id from conversation (will be handled in background task)
     agent_id = None

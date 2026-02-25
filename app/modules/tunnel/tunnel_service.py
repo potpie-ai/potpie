@@ -8,10 +8,9 @@ isolation by workspace_id = sha256(user_id:repo_url)[:16].
 
 import hashlib
 import json
-import time
 import redis
 import os
-from typing import Optional, Dict, List, cast
+from typing import Optional, Dict, List
 from app.modules.utils.logger import setup_logger
 from app.core.config_provider import ConfigProvider
 
@@ -23,7 +22,7 @@ TUNNEL_TTL_SECONDS = 60 * 60  # 1 hour expiry (refreshed on each registration)
 
 # Workspace tunnel record (metadata: user_id, repo_url, status), stored in Redis
 WORKSPACE_TUNNEL_RECORD_PREFIX = "workspace_tunnel:"
-# No TTL - records persist until deprovision (or optional long TTL later)
+WORKSPACE_TUNNEL_RECORD_TTL = 24 * 60 * 60  # 24h TTL so stale records expire
 
 # In-process lookup cache: avoid hitting Redis on every get_tunnel_url when the same
 # lookup is repeated (e.g. multiple tools in one message). Entries expire after this many seconds.
@@ -200,7 +199,7 @@ class TunnelService:
         repo_url: str,
         status: str = "active",
     ) -> bool:
-        """Store workspace record in Redis (or in-memory fallback). No TTL."""
+        """Store workspace record in Redis (or in-memory fallback) with 24h TTL."""
         try:
             key = self._workspace_tunnel_record_key(workspace_id)
             value = json.dumps({
@@ -209,7 +208,7 @@ class TunnelService:
                 "status": status,
             })
             if self.redis_client:
-                self.redis_client.set(key, value)
+                self.redis_client.setex(key, WORKSPACE_TUNNEL_RECORD_TTL, value)
             else:
                 self._in_memory_workspace_tunnel_records[key] = value
             logger.debug(
@@ -455,13 +454,13 @@ class TunnelService:
         tunnels = {}
         try:
             if self.redis_client:
-                # Search for conversation-level tunnels belonging to this user
-                # We need to scan all conversation keys and filter by user_id
+                # Search for conversation-level tunnels belonging to this user.
+                # Use SCAN instead of KEYS to avoid blocking Redis on large key sets.
                 conversation_pattern = f"{TUNNEL_KEY_PREFIX}:conversation:*"
-                # Sync redis client: .keys() returns a list; cast for type checker (avoids Awaitable confusion)
-                conversation_keys: List[str] = cast(
-                    List[str], self.redis_client.keys(conversation_pattern)
-                )
+                conversation_keys: List[str] = [
+                    k.decode() if isinstance(k, bytes) else k
+                    for k in self.redis_client.scan_iter(match=conversation_pattern)
+                ]
                 for key in conversation_keys:
                     data = self.redis_client.get(key)
                     if data:

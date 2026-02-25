@@ -112,6 +112,25 @@ class WorkspaceSocketService:
             self._sync_redis = None
             return False
 
+    async def close(self) -> None:
+        """Close async Redis client on app shutdown. Call from lifespan/shutdown event."""
+        if self._async_redis is not None:
+            try:
+                await self._async_redis.aclose()
+            except Exception as e:
+                logger.warning(
+                    "[WorkspaceSocketService] Error closing async Redis: %s", e
+                )
+            self._async_redis = None
+        if self._sync_redis is not None:
+            try:
+                self._sync_redis.close()
+            except Exception as e:
+                logger.warning(
+                    "[WorkspaceSocketService] Error closing sync Redis: %s", e
+                )
+            self._sync_redis = None
+
     async def execute_tool_call(
         self,
         workspace_id: str,

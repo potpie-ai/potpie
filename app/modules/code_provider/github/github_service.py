@@ -1123,7 +1123,7 @@ class GithubService:
         cache_key = (
             f"project_structure:{project_id}:exact_path_{path}:depth_{self.max_depth}"
         )
-        cached_structure = self.redis.get(cache_key)
+        cached_structure = await asyncio.to_thread(self.redis.get, cache_key)
 
         if cached_structure:
             logger.info(
@@ -1168,7 +1168,9 @@ class GithubService:
             )
             formatted_structure = self._format_tree_structure(structure)
 
-            self.redis.setex(cache_key, 3600, formatted_structure)  # Cache for 1 hour
+            await asyncio.to_thread(
+                self.redis.setex, cache_key, 3600, formatted_structure
+            )  # Cache for 1 hour
 
             return formatted_structure
         except HTTPException as he:

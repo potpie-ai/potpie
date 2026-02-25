@@ -222,9 +222,18 @@ class MainApp:
         finally:
             db.close()
 
+    async def shutdown_event(self):
+        """Close Redis and other resources on app shutdown."""
+        try:
+            from app.modules.tunnel.socket_service import get_socket_service
+            await get_socket_service().close()
+        except Exception:
+            logger.exception("Error during socket service shutdown")
+
     def run(self):
         self.add_health_check()
         self.app.add_event_handler("startup", self.startup_event)
+        self.app.add_event_handler("shutdown", self.shutdown_event)
         return self.app
 
 
