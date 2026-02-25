@@ -21,7 +21,7 @@ import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from app.modules.repo_manager.repo_manager_interface import IRepoManager
 from app.modules.utils.logger import setup_logger
@@ -220,6 +220,9 @@ class RepoManager(IRepoManager):
         if not auth_token:
             return repo_url
 
+        auth_token = auth_token.strip()
+        repo_url = repo_url.rstrip("/")
+
         parsed = urlparse(repo_url)
 
         if parsed.scheme not in ("https", "http"):
@@ -252,8 +255,17 @@ class RepoManager(IRepoManager):
             username_prefix=username_prefix,
         )
 
-        netloc = f"{username_prefix}:{auth_token}@{parsed.netloc}"
-        return parsed._replace(netloc=netloc).geturl()
+        # URL-encode the token to handle special characters
+        encoded_token = quote(auth_token, safe="")
+
+        # Use parsed.hostname (not parsed.netloc) to strip any pre-existing
+        # credentials that would produce a malformed double-auth URL
+        # (e.g. "user:tok1@user:tok2@host" → curl misparses tok2@host as port).
+        host = parsed.hostname or parsed.netloc
+        if parsed.port:
+            host = f"{host}:{parsed.port}"
+        netloc = f"{username_prefix}:{encoded_token}@{host}"
+        return parsed._replace(netloc=netloc).geturl().rstrip("/")
 
     # ========== PATH HELPERS ==========
 
@@ -1102,6 +1114,145 @@ class RepoManager(IRepoManager):
                 f"Unexpected error creating worktree for {repo_name}@{ref}"
             )
             raise RuntimeError(f"Failed to create worktree: {e}") from e
+
+    def create_worktree_with_new_branch(
+        self,
+        repo_name: str,
+        base_ref: str,
+        new_branch_name: str,
+        auth_token: Optional[str] = None,
+        user_id: Optional[str] = None,
+        unique_id: Optional[str] = None,
+        exists_ok: bool = False,
+        repo_url: Optional[str] = None,
+    ) -> Path:
+        """
+        Create a worktree on a new branch from base_ref.
+
+        Uses ``git worktree add -b <new_branch_name> <path> <base_ref>`` to
+        create an isolated editing branch per conversation.
+
+        Args:
+            repo_name: Repository name
+            base_ref: Branch or commit to base the new branch on
+            new_branch_name: Name of the new branch to create
+            auth_token: Optional authentication token
+            user_id: User ID for multi-tenant tracking
+            unique_id: Unique identifier (e.g., conversation_id) for worktree path
+            exists_ok: If True, return existing worktree path without error
+            repo_url: Optional repository URL (derived if not provided)
+
+        Returns:
+            Path to the worktree directory
+        """
+        self._validate_repo_name(repo_name)
+        self._validate_ref(base_ref)
+        self._validate_ref(new_branch_name)
+
+        if not user_id:
+            raise ValueError("user_id is required for create_worktree_with_new_branch")
+        if not unique_id:
+            raise ValueError("unique_id is required for create_worktree_with_new_branch")
+
+        worktree_path = self._get_unique_worktree_path(
+            repo_name, new_branch_name, user_id, unique_id
+        )
+        bare_repo_path = self._get_bare_repo_path(repo_name)
+
+        self._get_worktrees_dir(repo_name).mkdir(parents=True, exist_ok=True)
+
+        # Return existing worktree if present
+        if worktree_path.exists():
+            if exists_ok:
+                logger.info(
+                    f"Edits worktree already exists for {repo_name}:{new_branch_name}",
+                    repo_name=repo_name,
+                    user_id=user_id,
+                )
+                return worktree_path
+            else:
+                raise FileExistsError(
+                    f"Worktree already exists for {repo_name}:{new_branch_name} at {worktree_path}"
+                )
+
+        # Ensure bare repo exists and base_ref is fetched
+        github_token = auth_token or self._get_github_token()
+        if repo_url is None:
+            repo_url = self._derive_github_url(repo_name)
+
+        _ = self.ensure_bare_repo(repo_name, repo_url, github_token, base_ref, user_id)
+
+        cmd = [
+            "git",
+            "-C",
+            str(bare_repo_path),
+            "worktree",
+            "add",
+            "-b",
+            new_branch_name,
+            str(worktree_path),
+            base_ref,
+        ]
+
+        try:
+            logger.info(
+                f"Creating worktree with new branch {new_branch_name} for {repo_name}@{base_ref}",
+                repo_name=repo_name,
+                user_id=user_id,
+            )
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self._FETCH_TIMEOUT,
+            )
+
+            if result.returncode != 0:
+                error_msg = result.stderr or "Unknown error"
+                logger.error(f"Failed to create worktree with new branch: {error_msg}")
+                raise RuntimeError(f"Git worktree add -b failed: {error_msg}")
+
+            logger.info(
+                f"Successfully created worktree with new branch: {repo_name}:{new_branch_name}",
+                repo_name=repo_name,
+                user_id=user_id,
+            )
+
+            # Register in metadata with branch=new_branch_name
+            metadata = {
+                "type": self._TYPE_WORKTREE,
+                "is_commit": False,
+                "unique_id": unique_id,
+                "new_branch": True,
+                "base_ref": base_ref,
+            }
+
+            self.register_repo(
+                repo_name=repo_name,
+                local_path=str(worktree_path),
+                branch=new_branch_name,
+                commit_id=None,
+                user_id=user_id,
+                metadata=metadata,
+            )
+
+            self._update_bare_repo_metadata(repo_name, user_id=user_id)
+
+            return worktree_path
+
+        except subprocess.TimeoutExpired:
+            logger.error(
+                f"Worktree creation timeout for {repo_name}:{new_branch_name}"
+            )
+            raise RuntimeError(
+                f"Worktree creation timed out after {self._FETCH_TIMEOUT // 60} minutes"
+            )
+        except Exception as e:
+            logger.exception(
+                f"Unexpected error creating worktree with new branch for {repo_name}"
+            )
+            raise RuntimeError(f"Failed to create worktree with new branch: {e}") from e
 
     def remove_worktree(
         self,

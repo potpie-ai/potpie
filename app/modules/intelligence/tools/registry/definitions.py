@@ -101,6 +101,7 @@ TOOL_DEFINITIONS: Dict[str, dict] = {
         "destructive": True,
     },
     "get_changes_summary": {"tier": "medium", "category": "code_changes"},
+    "get_changes_for_pr": {"tier": "medium", "category": "code_changes"},
     "export_changes": {"tier": "medium", "category": "code_changes"},
     "show_updated_file": {"tier": "medium", "category": "code_changes"},
     "get_file_diff": {"tier": "medium", "category": "code_changes"},
@@ -223,6 +224,13 @@ TOOL_DEFINITIONS: Dict[str, dict] = {
         "short_description": "Push the current branch to the remote repository.",
         "destructive": True,
     },
+    # Composite PR workflow tool (combines apply_changes + git_commit + git_push + create_pr)
+    "create_pr_workflow": {
+        "tier": "medium",
+        "category": "code_changes",
+        "short_description": "Composite tool: apply changes, commit, push, and create PR in one operation.",
+        "destructive": True,
+    },
 }
 
 # --- Allow-lists ---
@@ -276,6 +284,8 @@ CODE_GEN_BASE_TOOLS: List[str] = [
     "apply_changes",
     "git_commit",
     "git_push",
+    # Composite PR workflow tool (single tool for apply + commit + push + create_pr)
+    "create_pr_workflow",
 ]
 
 CODE_GEN_ADD_WHEN_NON_LOCAL: List[str] = [
@@ -341,6 +351,7 @@ EXECUTE_TOOLS: List[str] = [
     "clear_file_from_changes",
     "clear_all_changes",
     "get_changes_summary",
+    "get_changes_for_pr",
     "export_changes",
     "show_updated_file",
     "get_file_diff",
@@ -352,6 +363,8 @@ EXECUTE_TOOLS: List[str] = [
     "git_push",
     "code_provider_create_branch",
     "code_provider_create_pr",
+    # Composite PR workflow (apply + commit + push + create_pr in one call)
+    "create_pr_workflow",
 ]
 EXECUTE_ADD_WHEN_NON_LOCAL: List[str] = [
     "get_code_from_multiple_node_ids",
@@ -397,10 +410,14 @@ INTEGRATION_GITHUB_TOOLS: List[str] = [
     "code_provider_create_pr",
     "code_provider_add_pr_comments",
     "code_provider_update_file",
+    # Get changes summary for PR (verify before create_pr_workflow)
+    "get_changes_for_pr",
     # Git workflow tools for PR creation from worktree
     "apply_changes",
     "git_commit",
     "git_push",
+    # Composite PR workflow (apply + commit + push + create_pr in one call)
+    "create_pr_workflow",
 ]
 INTEGRATION_CONFLUENCE_TOOLS: List[str] = [
     "get_confluence_spaces",

@@ -257,12 +257,10 @@ class CodeChangesManager:
 
         Args:
             conversation_id: The conversation ID to use as part of the Redis key.
-                           If None, a random session_id is used (backward compatible).
+                           If None, a random fallback id is used (backward compatible).
         """
         self._conversation_id = conversation_id
-        self.session_id = (
-            conversation_id[:8] if conversation_id else str(uuid.uuid4())[:8]
-        )
+        self._fallback_id = str(uuid.uuid4()) if not conversation_id else None
 
         # Initialize Redis client
         config = ConfigProvider()
@@ -273,7 +271,7 @@ class CodeChangesManager:
 
         logger.info(
             f"CodeChangesManager: Initialized with conversation_id={conversation_id}, "
-            f"session_id={self.session_id}, redis_key={self._redis_key}"
+            f"redis_key={self._redis_key}"
         )
 
     @property
@@ -281,7 +279,7 @@ class CodeChangesManager:
         """Get the Redis key for storing changes"""
         if self._conversation_id:
             return f"{CODE_CHANGES_KEY_PREFIX}:{self._conversation_id}"
-        return f"{CODE_CHANGES_KEY_PREFIX}:session:{self.session_id}"
+        return f"{CODE_CHANGES_KEY_PREFIX}:session:{self._fallback_id}"
 
     @property
     def changes(self) -> Dict[str, FileChange]:
@@ -342,7 +340,6 @@ class CodeChangesManager:
                 return
 
             data = {
-                "session_id": self.session_id,
                 "conversation_id": self._conversation_id,
                 "changes": [
                     {
@@ -379,6 +376,8 @@ class CodeChangesManager:
         file_path: str,
         content: str,
         description: Optional[str] = None,
+        project_id: Optional[str] = None,
+        db: Optional[Session] = None,
     ) -> bool:
         """Add a new file"""
         logger.info(
@@ -401,8 +400,10 @@ class CodeChangesManager:
         self._changes_cache[file_path] = change
         self._persist_change()
         logger.info(
-            f"CodeChangesManager.add_file: Successfully added file '{file_path}' (session: {self.session_id})"
+            f"CodeChangesManager.add_file: Successfully added file '{file_path}' (conversation: {self._conversation_id or self._fallback_id})"
         )
+        if project_id and not _get_local_mode():
+            _write_change_to_worktree(project_id, file_path, "add", content, db)
         return True
 
     def _get_current_content(
@@ -989,6 +990,8 @@ class CodeChangesManager:
         description: Optional[str] = None,
         preserve_previous: bool = True,
         previous_content: Optional[str] = None,
+        project_id: Optional[str] = None,
+        db: Optional[Session] = None,
     ) -> bool:
         """Update an existing file with full content.
 
@@ -1013,6 +1016,8 @@ class CodeChangesManager:
         logger.info(
             f"CodeChangesManager.update_file: Successfully updated file '{file_path}'"
         )
+        if project_id and not _get_local_mode():
+            _write_change_to_worktree(project_id, file_path, "update", content, db)
         return result
 
     def update_file_lines(
@@ -1163,6 +1168,8 @@ class CodeChangesManager:
             logger.info(
                 f"CodeChangesManager.update_file_lines: Successfully updated lines {start_line}-{end_line} in '{file_path}' (replaced {len(replaced_lines)} lines with {len(new_lines)} new lines)"
             )
+            if project_id and not _get_local_mode():
+                _write_change_to_worktree(project_id, file_path, "update", updated_content, db)
             return {
                 "success": True,
                 "file_path": file_path,
@@ -1269,6 +1276,8 @@ class CodeChangesManager:
             logger.info(
                 f"CodeChangesManager.replace_in_file: Successfully replaced 1 occurrence in '{file_path}' at line {match_line}"
             )
+            if project_id and not _get_local_mode():
+                _write_change_to_worktree(project_id, file_path, "update", new_content, db)
             return {
                 "success": True,
                 "file_path": file_path,
@@ -1415,6 +1424,8 @@ class CodeChangesManager:
             logger.info(
                 f"CodeChangesManager.insert_lines: Successfully inserted {len(new_lines)} line(s) {position} line {line_number} in '{file_path}'"
             )
+            if project_id and not _get_local_mode():
+                _write_change_to_worktree(project_id, file_path, "update", updated_content, db)
             return {
                 "success": True,
                 "file_path": file_path,
@@ -1533,6 +1544,8 @@ class CodeChangesManager:
             logger.info(
                 f"CodeChangesManager.delete_lines: Successfully deleted {len(deleted_lines)} line(s) ({start_line}-{end_line}) from '{file_path}'"
             )
+            if project_id and not _get_local_mode():
+                _write_change_to_worktree(project_id, file_path, "update", updated_content, db)
             return {
                 "success": True,
                 "file_path": file_path,
@@ -1553,6 +1566,8 @@ class CodeChangesManager:
         file_path: str,
         description: Optional[str] = None,
         preserve_content: bool = True,
+        project_id: Optional[str] = None,
+        db: Optional[Session] = None,
     ) -> bool:
         """Mark a file for deletion"""
         logger.info(
@@ -1587,6 +1602,8 @@ class CodeChangesManager:
         logger.info(
             f"CodeChangesManager.delete_file: Successfully marked file '{file_path}' for deletion"
         )
+        if project_id and not _get_local_mode():
+            _write_change_to_worktree(project_id, file_path, "delete", None, db)
         return True
 
     def get_file(self, file_path: str) -> Optional[Dict[str, Any]]:
@@ -1725,7 +1742,7 @@ class CodeChangesManager:
         changes = self.changes
         count = len(changes)
         logger.info(
-            f"CodeChangesManager.clear_all: Clearing all changes ({count} files) from session {self.session_id}"
+            f"CodeChangesManager.clear_all: Clearing all changes ({count} files) from conversation {self._conversation_id or self._fallback_id}"
         )
         self._changes_cache.clear()
         self._persist_change()
@@ -1737,14 +1754,14 @@ class CodeChangesManager:
     def get_summary(self) -> Dict[str, Any]:
         """Get a summary of all changes"""
         logger.debug(
-            f"CodeChangesManager.get_summary: Generating summary for session {self.session_id}"
+            f"CodeChangesManager.get_summary: Generating summary for conversation {self._conversation_id or self._fallback_id}"
         )
         change_counts = {ct.value: 0 for ct in ChangeType}
         for change in self.changes.values():
             change_counts[change.change_type.value] += 1
 
         return {
-            "session_id": self.session_id,
+            "conversation_id": self._conversation_id,
             "total_files": len(self.changes),
             "change_counts": change_counts,
             "files": [
@@ -1764,7 +1781,7 @@ class CodeChangesManager:
             f"CodeChangesManager.serialize: Serializing {len(self.changes)} file changes to JSON"
         )
         data = {
-            "session_id": self.session_id,
+            "conversation_id": self._conversation_id,
             "changes": [
                 {
                     "file_path": change.file_path,
@@ -1787,7 +1804,13 @@ class CodeChangesManager:
         )
         try:
             data = json.loads(json_str)
-            self.session_id = data.get("session_id", str(uuid.uuid4())[:8])
+            self._conversation_id = data.get("conversation_id")
+            if self._conversation_id:
+                self._fallback_id = None
+            else:
+                # Backward compat: old format had session_id (truncated id)
+                old_session_id = data.get("session_id")
+                self._fallback_id = old_session_id or str(uuid.uuid4())
             # Initialize empty cache
             self._changes_cache = {}
 
@@ -2211,6 +2234,435 @@ class CodeChangesManager:
                 f"Unknown format: {format}. Supported formats: 'dict', 'list', 'json', 'diff'"
             )
 
+    def commit_file_and_extract_patch(
+        self,
+        file_path: str,
+        commit_message: str,
+        project_id: str,
+        db: Optional[Session] = None,
+        branch_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Write file to worktree, commit it, extract unified diff patch, and store in Redis.
+
+        This method is used by the new agent flow to:
+        1. Write the file to the edits worktree
+        2. Create a git commit
+        3. Extract the unified diff patch from the commit
+        4. Store the patch in Redis for later PR creation
+
+        Args:
+            file_path: Path to the file to commit
+            commit_message: Git commit message
+            project_id: Project ID for worktree lookup
+            db: Database session
+            branch_name: Optional branch name (defaults to agent/edits-{conversation_id})
+
+        Returns:
+            Dictionary with:
+            - success: bool
+            - commit_hash: The commit hash
+            - patch: The extracted unified diff patch
+            - error: Error message if failed
+        """
+        try:
+            if _get_local_mode():
+                return {
+                    "success": False,
+                    "error": "commit_file_and_extract_patch is not available in local mode",
+                }
+
+            if os.getenv("REPO_MANAGER_ENABLED", "false").lower() != "true":
+                return {
+                    "success": False,
+                    "error": "REPO_MANAGER_ENABLED is not set to true",
+                }
+
+            conversation_id = _get_conversation_id()
+            if not conversation_id:
+                return {"success": False, "error": "No conversation_id set"}
+
+            user_id = _get_user_id()
+
+            # Import here to avoid circular imports
+            from app.modules.repo_manager import RepoManager
+            from app.modules.repo_manager.sync_helper import get_or_create_edits_worktree_path
+            from app.modules.code_provider.git_safe import safe_git_repo_operation
+
+            # Get or create edits worktree
+            repo_manager = RepoManager()
+            worktree_path, failure_reason = get_or_create_edits_worktree_path(
+                repo_manager,
+                project_id=project_id,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                sql_db=db,
+            )
+
+            if not worktree_path:
+                return {
+                    "success": False,
+                    "error": f"Could not get edits worktree: {failure_reason}",
+                }
+
+            # Determine branch name
+            if not branch_name:
+                sanitized_conv_id = conversation_id.replace("/", "-").replace("\\", "-").replace(" ", "-")
+                branch_name = f"agent/edits-{sanitized_conv_id}"
+
+            # Get file content from changes
+            if file_path not in self.changes:
+                return {
+                    "success": False,
+                    "error": f"File '{file_path}' not found in changes",
+                }
+
+            change = self.changes[file_path]
+            if change.change_type == ChangeType.DELETE:
+                content = None
+            else:
+                content = change.content
+
+            # Write file to worktree
+            worktree_abs = os.path.abspath(worktree_path)
+            full_path = os.path.abspath(os.path.join(worktree_path, file_path))
+
+            # Path traversal validation
+            try:
+                common = os.path.commonpath([worktree_abs, full_path])
+                if common != worktree_abs:
+                    return {
+                        "success": False,
+                        "error": f"Path traversal blocked for '{file_path}'",
+                    }
+            except ValueError:
+                return {
+                    "success": False,
+                    "error": f"Path traversal blocked for '{file_path}'",
+                }
+
+            # Write or delete the file
+            if change.change_type == ChangeType.DELETE:
+                if os.path.exists(full_path):
+                    os.remove(full_path)
+            else:
+                if content is None:
+                    return {"success": False, "error": f"No content for file '{file_path}'"}
+                parent_dir = os.path.dirname(full_path)
+                if parent_dir and not os.path.exists(parent_dir):
+                    os.makedirs(parent_dir, exist_ok=True)
+                with open(full_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+
+            # Git operations: create branch, commit
+            def _git_operation(repo):
+                # Create or checkout branch
+                existing_branch = next(
+                    (b for b in repo.branches if b.name == branch_name), None
+                )
+                if existing_branch is not None:
+                    try:
+                        if repo.active_branch.name != branch_name:
+                            existing_branch.checkout()
+                    except TypeError:
+                        # Detached HEAD
+                        existing_branch.checkout()
+                else:
+                    new_branch = repo.create_head(branch_name)
+                    new_branch.checkout()
+
+                # Stage the file
+                repo.git.add("-A", "--", file_path)
+
+                # Check if there are changes to commit
+                diff = repo.git.diff("--cached", "--name-only")
+                if not diff.strip():
+                    return {
+                        "success": False,
+                        "error": "No changes to commit",
+                    }
+
+                # Create commit
+                commit = repo.index.commit(commit_message)
+                commit_hash = commit.hexsha
+
+                return {
+                    "success": True,
+                    "commit_hash": commit_hash,
+                    "branch": branch_name,
+                }
+
+            git_result = safe_git_repo_operation(
+                worktree_path,
+                _git_operation,
+                operation_name="commit_file",
+                timeout=30.0,
+            )
+
+            if not git_result.get("success"):
+                return git_result
+
+            commit_hash = git_result["commit_hash"]
+
+            # Extract patch from commit
+            def _extract_patch(repo):
+                try:
+                    patch = repo.git.show(
+                        "--pretty=format:",
+                        "--patch",
+                        commit_hash,
+                        "--",
+                        file_path,
+                    )
+                    return patch if patch and patch.strip() else None
+                except Exception as e:
+                    logger.warning(f"Failed to extract patch for {file_path}: {e}")
+                    return None
+
+            patch = safe_git_repo_operation(
+                worktree_path,
+                _extract_patch,
+                operation_name="extract_patch",
+                timeout=10.0,
+            )
+
+            # Store patch in Redis
+            if patch:
+                try:
+                    import redis
+                    from app.core.config_provider import ConfigProvider
+
+                    config = ConfigProvider()
+                    client = redis.from_url(config.get_redis_url())
+
+                    safe_file_path = file_path.replace("/", ":")
+                    key = f"pr_patches:{conversation_id}:{safe_file_path}"
+                    client.setex(key, CODE_CHANGES_TTL_SECONDS, patch)
+                    logger.info(
+                        f"CodeChangesManager: Stored patch for {file_path} in Redis "
+                        f"(key={key}, {len(patch)} chars)"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to store patch for {file_path}: {e}")
+
+            return {
+                "success": True,
+                "commit_hash": commit_hash,
+                "patch": patch,
+                "branch": branch_name,
+                "file_path": file_path,
+            }
+
+        except Exception as e:
+            logger.exception("CodeChangesManager.commit_file_and_extract_patch: Error")
+            return {"success": False, "error": str(e)}
+
+    def commit_all_files_and_extract_patches(
+        self,
+        commit_message: str,
+        project_id: str,
+        db: Optional[Session] = None,
+        branch_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Write all changed files to worktree, commit them, extract patches for each file.
+
+        This is a batch version of commit_file_and_extract_patch for committing
+        all changes at once while still extracting individual patches.
+
+        Args:
+            commit_message: Git commit message
+            project_id: Project ID for worktree lookup
+            db: Database session
+            branch_name: Optional branch name (defaults to agent/edits-{conversation_id})
+
+        Returns:
+            Dictionary with:
+            - success: bool
+            - commit_hash: The commit hash
+            - patches: Dict mapping file paths to their patches
+            - error: Error message if failed
+        """
+        try:
+            if _get_local_mode():
+                return {
+                    "success": False,
+                    "error": "commit_all_files_and_extract_patches is not available in local mode",
+                }
+
+            if os.getenv("REPO_MANAGER_ENABLED", "false").lower() != "true":
+                return {
+                    "success": False,
+                    "error": "REPO_MANAGER_ENABLED is not set to true",
+                }
+
+            conversation_id = _get_conversation_id()
+            if not conversation_id:
+                return {"success": False, "error": "No conversation_id set"}
+
+            if not self.changes:
+                return {"success": False, "error": "No changes to commit"}
+
+            user_id = _get_user_id()
+
+            # Import here to avoid circular imports
+            from app.modules.repo_manager import RepoManager
+            from app.modules.repo_manager.sync_helper import get_or_create_edits_worktree_path
+            from app.modules.code_provider.git_safe import safe_git_repo_operation
+
+            # Get or create edits worktree
+            repo_manager = RepoManager()
+            worktree_path, failure_reason = get_or_create_edits_worktree_path(
+                repo_manager,
+                project_id=project_id,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                sql_db=db,
+            )
+
+            if not worktree_path:
+                return {
+                    "success": False,
+                    "error": f"Could not get edits worktree: {failure_reason}",
+                }
+
+            # Determine branch name
+            if not branch_name:
+                sanitized_conv_id = conversation_id.replace("/", "-").replace("\\", "-").replace(" ", "-")
+                branch_name = f"agent/edits-{sanitized_conv_id}"
+
+            worktree_abs = os.path.abspath(worktree_path)
+            files_to_stage = []
+
+            # Write all files to worktree
+            for fpath, change in self.changes.items():
+                full_path = os.path.abspath(os.path.join(worktree_path, fpath))
+
+                # Path traversal validation
+                try:
+                    common = os.path.commonpath([worktree_abs, full_path])
+                    if common != worktree_abs:
+                        logger.warning(f"Path traversal blocked for '{fpath}'")
+                        continue
+                except ValueError:
+                    logger.warning(f"Path traversal blocked for '{fpath}'")
+                    continue
+
+                if change.change_type == ChangeType.DELETE:
+                    if os.path.exists(full_path):
+                        os.remove(full_path)
+                    files_to_stage.append(fpath)
+                else:
+                    if change.content is not None:
+                        parent_dir = os.path.dirname(full_path)
+                        if parent_dir and not os.path.exists(parent_dir):
+                            os.makedirs(parent_dir, exist_ok=True)
+                        with open(full_path, "w", encoding="utf-8") as f:
+                            f.write(change.content)
+                        files_to_stage.append(fpath)
+
+            if not files_to_stage:
+                return {"success": False, "error": "No files to commit"}
+
+            # Git operations: create branch, commit all files
+            def _git_operation(repo):
+                # Create or checkout branch
+                existing_branch = next(
+                    (b for b in repo.branches if b.name == branch_name), None
+                )
+                if existing_branch is not None:
+                    try:
+                        if repo.active_branch.name != branch_name:
+                            existing_branch.checkout()
+                    except TypeError:
+                        existing_branch.checkout()
+                else:
+                    new_branch = repo.create_head(branch_name)
+                    new_branch.checkout()
+
+                # Stage all files
+                repo.git.add("-A", "--", *files_to_stage)
+
+                # Check if there are changes to commit
+                diff = repo.git.diff("--cached", "--name-only")
+                if not diff.strip():
+                    return {"success": False, "error": "No changes to commit"}
+
+                # Create commit
+                commit = repo.index.commit(commit_message)
+                commit_hash = commit.hexsha
+
+                return {
+                    "success": True,
+                    "commit_hash": commit_hash,
+                    "branch": branch_name,
+                    "files_committed": files_to_stage,
+                }
+
+            git_result = safe_git_repo_operation(
+                worktree_path,
+                _git_operation,
+                operation_name="commit_all_files",
+                timeout=60.0,
+            )
+
+            if not git_result.get("success"):
+                return git_result
+
+            commit_hash = git_result["commit_hash"]
+
+            # Extract patches for each file
+            patches = {}
+            for fpath in files_to_stage:
+                def _extract_patch(repo, fp=fpath):
+                    try:
+                        patch = repo.git.show(
+                            "--pretty=format:",
+                            "--patch",
+                            commit_hash,
+                            "--",
+                            fp,
+                        )
+                        return patch if patch and patch.strip() else None
+                    except Exception as e:
+                        logger.warning(f"Failed to extract patch for {fp}: {e}")
+                        return None
+
+                patch = safe_git_repo_operation(
+                    worktree_path,
+                    _extract_patch,
+                    operation_name=f"extract_patch_{fpath}",
+                    timeout=10.0,
+                )
+
+                if patch:
+                    patches[fpath] = patch
+                    # Store in Redis
+                    try:
+                        import redis
+                        from app.core.config_provider import ConfigProvider
+
+                        config = ConfigProvider()
+                        client = redis.from_url(config.get_redis_url())
+
+                        safe_file_path = fpath.replace("/", ":")
+                        key = f"pr_patches:{conversation_id}:{safe_file_path}"
+                        client.setex(key, CODE_CHANGES_TTL_SECONDS, patch)
+                    except Exception as e:
+                        logger.warning(f"Failed to store patch for {fpath}: {e}")
+
+            return {
+                "success": True,
+                "commit_hash": commit_hash,
+                "branch": branch_name,
+                "patches": patches,
+                "files_committed": files_to_stage,
+            }
+
+        except Exception as e:
+            logger.exception("CodeChangesManager.commit_all_files_and_extract_patches: Error")
+            return {"success": False, "error": str(e)}
+
 
 # Context variable for code changes manager - provides isolation per execution context
 # This ensures parallel agent runs have separate, isolated state
@@ -2328,6 +2780,110 @@ def _set_branch(branch: Optional[str]) -> None:
 def _get_branch() -> Optional[str]:
     """Get the branch for the current execution context."""
     return _branch_ctx.get()
+
+
+def _write_change_to_worktree(
+    project_id: str,
+    file_path: str,
+    change_type: str,
+    content: Optional[str],
+    db: Any,
+) -> tuple[bool, Optional[str]]:
+    """
+    Write a single file change directly to the edits worktree (non-local mode only).
+
+    Best-effort: never raises.  Redis remains the source of truth.
+    No-op when ``REPO_MANAGER_ENABLED=false`` or ``local_mode=True``.
+
+    Args:
+        project_id: Project ID used to locate the edits worktree
+        file_path: Repo-relative path to write
+        change_type: ``"add"``, ``"update"``, or ``"delete"``
+        content: File content for add/update; ``None`` for delete
+        db: DB session for project lookup and OAuth token retrieval
+
+    Returns:
+        ``(success, error_message)``
+    """
+    try:
+        if _get_local_mode():
+            return False, "local_mode"
+
+        if os.getenv("REPO_MANAGER_ENABLED", "false").lower() != "true":
+            return False, "repo_manager_disabled"
+
+        if not project_id:
+            return False, "no_project_id"
+
+        conversation_id = _get_conversation_id()
+        if not conversation_id:
+            return False, "no_conversation_id"
+
+        user_id = _get_user_id()
+
+        from app.modules.repo_manager import RepoManager
+        from app.modules.repo_manager.sync_helper import get_or_create_edits_worktree_path
+
+        repo_manager = RepoManager()
+        worktree_path, failure_reason = get_or_create_edits_worktree_path(
+            repo_manager,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            sql_db=db,
+        )
+
+        if not worktree_path:
+            logger.warning(
+                f"_write_change_to_worktree: Could not get edits worktree: {failure_reason}",
+                project_id=project_id,
+                conversation_id=conversation_id,
+            )
+            return False, f"worktree_unavailable:{failure_reason}"
+
+        worktree_abs = os.path.abspath(worktree_path)
+        full_path = os.path.abspath(os.path.join(worktree_path, file_path))
+
+        # Path traversal validation
+        try:
+            common = os.path.commonpath([worktree_abs, full_path])
+            if common != worktree_abs:
+                logger.error(
+                    f"_write_change_to_worktree: Path traversal blocked for '{file_path}'",
+                    project_id=project_id,
+                )
+                return False, "path_traversal"
+        except ValueError:
+            return False, "path_traversal"
+
+        if change_type == "delete":
+            if os.path.exists(full_path):
+                os.remove(full_path)
+            logger.info(
+                f"_write_change_to_worktree: Deleted '{file_path}' from edits worktree",
+                project_id=project_id,
+            )
+            return True, None
+        else:
+            if content is None:
+                return False, "no_content"
+            parent_dir = os.path.dirname(full_path)
+            if parent_dir and not os.path.exists(parent_dir):
+                os.makedirs(parent_dir, exist_ok=True)
+            with open(full_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            logger.info(
+                f"_write_change_to_worktree: Wrote '{file_path}' to edits worktree",
+                project_id=project_id,
+            )
+            return True, None
+
+    except Exception as e:
+        logger.warning(
+            f"_write_change_to_worktree: Error writing '{file_path}': {e}",
+            project_id=project_id if project_id else "unknown",
+        )
+        return False, str(e)
 
 
 def _extract_error_message(error_text: str, status_code: int) -> str:
@@ -3275,7 +3831,7 @@ def _get_code_changes_manager() -> CodeChangesManager:
         manager = CodeChangesManager(conversation_id=conversation_id)
         _code_changes_manager_ctx.set(manager)
         logger.info(
-            f"CodeChangesManager: Created new manager with session_id={manager.session_id}, "
+            f"CodeChangesManager: Created new manager with conversation_id={manager._conversation_id}, "
             f"redis_key={manager._redis_key}, existing_changes={len(manager.changes)}"
         )
     return manager
@@ -3297,7 +3853,7 @@ def _init_code_changes_manager(
 
     Args:
         conversation_id: The conversation ID to use for Redis key. If None,
-                        uses a random session_id (backward compatible, no persistence).
+                        uses a random fallback id (backward compatible, no persistence).
         agent_id: The agent ID to determine routing (e.g., "code" for LocalServer routing).
         user_id: The user ID for tunnel routing.
         tunnel_url: Optional tunnel URL from request (takes priority over stored state).
@@ -3320,11 +3876,11 @@ def _init_code_changes_manager(
     _set_branch(branch)
 
     old_manager = _code_changes_manager_ctx.get()
-    old_session = old_manager.session_id if old_manager else None
+    old_conversation_id = old_manager._conversation_id if old_manager else None
     old_count = len(old_manager.changes) if old_manager else 0
     logger.info(
         f"CodeChangesManager: Initializing manager for conversation_id={conversation_id} "
-        f"(previous session: {old_session}, previous file count: {old_count})"
+        f"(previous conversation_id: {old_conversation_id}, previous file count: {old_count})"
     )
 
     # Create manager - it will load existing changes from Redis automatically
@@ -3332,7 +3888,7 @@ def _init_code_changes_manager(
     _code_changes_manager_ctx.set(new_manager)
 
     logger.info(
-        f"CodeChangesManager: Initialized with session_id={new_manager.session_id}, "
+        f"CodeChangesManager: Initialized with conversation_id={new_manager._conversation_id}, "
         f"loaded {len(new_manager.changes)} existing changes from Redis"
     )
 
@@ -3355,6 +3911,10 @@ class AddFileInput(BaseModel):
     description: Optional[str] = Field(
         default=None, description="Optional description of what this file does"
     )
+    project_id: Optional[str] = Field(
+        default=None,
+        description="Optional project ID (from conversation context) to write change directly to the repo worktree in non-local mode.",
+    )
 
 
 class UpdateFileInput(BaseModel):
@@ -3367,6 +3927,10 @@ class UpdateFileInput(BaseModel):
         default=True,
         description="Whether to preserve previous content for reference",
     )
+    project_id: Optional[str] = Field(
+        default=None,
+        description="Optional project ID (from conversation context) to write change directly to the repo worktree in non-local mode.",
+    )
 
 
 class DeleteFileInput(BaseModel):
@@ -3377,6 +3941,10 @@ class DeleteFileInput(BaseModel):
     preserve_content: bool = Field(
         default=True,
         description="Whether to preserve file content before deletion",
+    )
+    project_id: Optional[str] = Field(
+        default=None,
+        description="Optional project ID (from conversation context) to delete the file from the repo worktree in non-local mode.",
     )
 
 
@@ -3437,6 +4005,15 @@ class ExportChangesInput(BaseModel):
     project_id: Optional[str] = Field(
         default=None,
         description="Optional project ID to fetch original content from repository for accurate diff. Use project_id from conversation context.",
+    )
+
+
+class GetChangesForPRInput(BaseModel):
+    """Input for get_changes_for_pr - fetches changes by conversation_id (for delegated PR flows)."""
+
+    conversation_id: str = Field(
+        ...,
+        description="Conversation ID where changes are stored in Redis. Pass from delegate context when creating PR.",
     )
 
 
@@ -3564,10 +4141,16 @@ def add_file_tool(input_data: AddFileInput) -> str:
     # No tunnel available - use cloud CodeChangesManager (for web UI users)
     try:
         manager = _get_code_changes_manager()
+        db = None
+        if input_data.project_id:
+            from app.core.database import get_db
+            db = next(get_db())
         success = manager.add_file(
             file_path=input_data.file_path,
             content=input_data.content,
             description=input_data.description,
+            project_id=input_data.project_id,
+            db=db,
         )
 
         if success:
@@ -3606,11 +4189,17 @@ def update_file_tool(input_data: UpdateFileInput) -> str:
     # No tunnel available - use cloud CodeChangesManager (for web UI users)
     try:
         manager = _get_code_changes_manager()
+        db = None
+        if input_data.project_id:
+            from app.core.database import get_db
+            db = next(get_db())
         success = manager.update_file(
             file_path=input_data.file_path,
             content=input_data.content,
             description=input_data.description,
             preserve_previous=input_data.preserve_previous,
+            project_id=input_data.project_id,
+            db=db,
         )
 
         if success:
@@ -3675,10 +4264,16 @@ def delete_file_tool(input_data: DeleteFileInput) -> str:
     # No tunnel available - use cloud CodeChangesManager (for web UI users)
     try:
         manager = _get_code_changes_manager()
+        db = None
+        if input_data.project_id:
+            from app.core.database import get_db
+            db = next(get_db())
         success = manager.delete_file(
             file_path=input_data.file_path,
             description=input_data.description,
             preserve_content=input_data.preserve_content,
+            project_id=input_data.project_id,
+            db=db,
         )
 
         if success:
@@ -3907,7 +4502,8 @@ def get_changes_summary_tool() -> str:
         manager = _get_code_changes_manager()
         summary = manager.get_summary()
 
-        result = f"📊 **Code Changes Summary** (Session: {summary['session_id']})\n\n"
+        cid = summary.get("conversation_id") or "(ephemeral)"
+        result = f"📊 **Code Changes Summary** (Conversation: {cid})\n\n"
         result += f"Total files: {summary['total_files']}\n\n"
 
         change_emoji = {"add": "➕", "update": "✏️", "delete": "🗑️"}
@@ -3931,6 +4527,48 @@ def get_changes_summary_tool() -> str:
     except Exception:
         logger.exception("Tool get_summary_tool: Error getting summary")
         return "❌ Error getting summary"
+
+
+def get_changes_for_pr_tool(input_data: GetChangesForPRInput) -> str:
+    """
+    Get summary of code changes for a conversation (for delegated PR flows).
+
+    Use when delegated to create a PR: verify changes exist in Redis before calling
+    create_pr_workflow. Takes conversation_id explicitly so sub-agents can fetch
+    changes for the parent conversation.
+    """
+    logger.info(
+        f"Tool get_changes_for_pr_tool: Getting changes for conversation {input_data.conversation_id}"
+    )
+    try:
+        manager = CodeChangesManager(conversation_id=input_data.conversation_id)
+        summary = manager.get_summary()
+
+        if summary["total_files"] == 0:
+            return "📋 No changes found for this conversation. Run code modifications first, or ensure the conversation_id is correct."
+
+        change_emoji = {"add": "➕", "update": "✏️", "delete": "🗑️"}
+
+        result = (
+            f"📋 **Changes for PR** (conversation: {input_data.conversation_id})\n\n"
+            f"**Total files:** {summary['total_files']}\n\n"
+        )
+        result += "**Change Types:**\n"
+        for change_type, count in summary["change_counts"].items():
+            if count > 0:
+                emoji = change_emoji.get(change_type, "📄")
+                result += f"{emoji} {change_type.title()}: {count}\n"
+
+        result += "\n**Files:**\n"
+        for file_info in summary["files"]:
+            emoji = change_emoji.get(file_info["change_type"], "📄")
+            result += f"{emoji} {file_info['file_path']} ({file_info['change_type']})\n"
+
+        result += "\n💡 Call `create_pr_workflow` with project_id, conversation_id, branch_name, commit_message, pr_title, pr_body to create the PR."
+        return result
+    except Exception:
+        logger.exception("Tool get_changes_for_pr_tool: Error getting changes")
+        return "❌ Error fetching changes. Check conversation_id is correct and changes exist in Redis."
 
 
 def update_file_lines_tool(input_data: UpdateFileLinesInput) -> str:
@@ -4722,8 +5360,9 @@ def get_comprehensive_metadata_tool(input_data: GetComprehensiveMetadataInput) -
         manager = _get_code_changes_manager()
         summary = manager.get_summary()
 
+        cid = summary.get("conversation_id") or "(ephemeral)"
         result = (
-            f"📊 **Complete Session State** (Session ID: {summary['session_id']})\n\n"
+            f"📊 **Complete Session State** (Conversation: {cid})\n\n"
         )
         result += f"**Total Files Changed:** {summary['total_files']}\n\n"
 
@@ -4962,6 +5601,12 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
             description="Get a summary overview of all code changes including file counts by change type.",
             func=get_changes_summary_tool,
             args_schema=None,
+        ),
+        SimpleTool(
+            name="get_changes_for_pr",
+            description="Get summary of code changes for a conversation by conversation_id. Use when delegated to create a PR: verify changes exist in Redis before calling create_pr_workflow. Takes conversation_id explicitly (pass from delegate context).",
+            func=get_changes_for_pr_tool,
+            args_schema=GetChangesForPRInput,
         ),
         SimpleTool(
             name="export_changes",

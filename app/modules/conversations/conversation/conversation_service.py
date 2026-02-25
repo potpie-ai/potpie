@@ -748,6 +748,8 @@ class ConversationService:
 
         except AccessTypeReadError:
             raise
+        except GenerationCancelled:
+            raise
         except Exception as e:
             logger.exception(
                 f"Error in store_message for conversation {conversation_id}",
@@ -1605,8 +1607,11 @@ class ConversationService:
         self.redis_manager.set_cancellation(conversation_id, run_id)
         if task_id:
             try:
+                # Use SIGKILL to forcefully terminate the task immediately
+                # This is necessary because SIGTERM may not work reliably on all platforms
+                # (e.g., macOS/Darwin) and the task may be stuck in async operations
                 self.celery_app.control.revoke(
-                    task_id, terminate=True, signal="SIGTERM"
+                    task_id, terminate=True, signal="SIGKILL"
                 )
                 logger.info(
                     f"Revoked Celery task {task_id} for {conversation_id}:{run_id}"
