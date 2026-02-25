@@ -2,16 +2,22 @@ services:
   postgres:
     image: postgres:latest
     container_name: potpie_postgres
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: mysecretpassword
-      POSTGRES_DB: momentum
+    env_file:
+      - .env
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql
+      - postgres_data:/var/lib/postgresql/data
     networks:
       - app-network
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 0.5
+    logging:
+      driver: "json-file"
+      options:
+        max-ssize: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -22,7 +28,8 @@ services:
     image: neo4j:latest
     container_name: potpie_neo4j
     environment:
-      NEO4J_AUTH: neo4j/mysecretpassword
+      env_file:
+        - .env
       NEO4JLABS_PLUGINS: '["apoc"]' # Add this line to include APOC plugin
       NEO4J_dbms_security_procedures_unrestricted: "apoc.*" # Allow APOC procedures
       NEO4J_dbms_memory_transaction_total_max: 0
@@ -34,6 +41,19 @@ services:
       - neo4j_logs:/logs
     networks:
       - app-network
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 0.5
+    logging:
+      driver: "json-file"
+      options:
+        max-ssize: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5    
 
   redis:
     image: redis:latest
@@ -44,6 +64,19 @@ services:
       - redis_data:/data
     networks:
       - app-network
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 0.5
+    logging:
+      driver: "json-file"
+      options:
+        max-ssize: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5    
 
 volumes:
   postgres_data:
