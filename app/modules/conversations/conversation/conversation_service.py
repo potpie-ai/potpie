@@ -585,12 +585,7 @@ class ConversationService:
     ):
         content = f"You can now ask questions about the {project_name} repository."
         try:
-            self.history_manager.add_message_chunk(
-                conversation_id, content, MessageType.SYSTEM_GENERATED, user_id
-            )
-            self.history_manager.flush_message_buffer(
-                conversation_id, MessageType.SYSTEM_GENERATED, user_id
-            )
+            await self.message_store.create_system_message(conversation_id, content)
             logger.info(
                 f"Added system message to conversation {conversation_id} for user {user_id}"
             )
@@ -728,6 +723,7 @@ class ConversationService:
                 else:
                     full_message = ""
                     all_citations = []
+                    accumulated_thinking = None
                     async for chunk in self._generate_and_stream_ai_response(
                         message.content,
                         conversation_id,
@@ -741,9 +737,11 @@ class ConversationService:
                     ):
                         full_message += chunk.message
                         all_citations = all_citations + chunk.citations
+                        if chunk.thinking:
+                            accumulated_thinking = chunk.thinking
 
                     yield ChatMessageResponse(
-                        message=full_message, citations=all_citations, tool_calls=[]
+                        message=full_message, citations=all_citations, tool_calls=[], thinking=accumulated_thinking
                     )
 
         except AccessTypeReadError:
@@ -864,6 +862,7 @@ class ConversationService:
             else:
                 full_message = ""
                 all_citations = []
+                accumulated_thinking = None
 
                 async for chunk in self._generate_and_stream_ai_response(
                     last_human_message.content,
@@ -876,9 +875,11 @@ class ConversationService:
                 ):
                     full_message += chunk.message
                     all_citations = all_citations + chunk.citations
+                    if chunk.thinking:
+                        accumulated_thinking = chunk.thinking
 
                 yield ChatMessageResponse(
-                    message=full_message, citations=all_citations, tool_calls=[]
+                    message=full_message, citations=all_citations, tool_calls=[], thinking=accumulated_thinking
                 )
 
         except AccessTypeReadError:
@@ -1120,14 +1121,31 @@ class ConversationService:
                         custom_ctx,
                     )
                 )
+                accumulated_tool_calls = []
+                accumulated_thinking = None
                 async for chunk in res:
                     if check_cancelled and check_cancelled():
                         raise GenerationCancelled()
+                    # Accumulate tool_calls from each chunk
+                    if chunk.tool_calls:
+                        for tool_call in chunk.tool_calls:
+                            tool_call_dict = (
+                                tool_call.model_dump()
+                                if hasattr(tool_call, "model_dump")
+                                else tool_call.dict()
+                                if hasattr(tool_call, "dict")
+                                else tool_call
+                            )
+                            accumulated_tool_calls.append(tool_call_dict)
+                    # Capture thinking content if present
+                    if chunk.thinking:
+                        accumulated_thinking = chunk.thinking
                     self.history_manager.add_message_chunk(
                         conversation_id,
                         chunk.response,
                         MessageType.AI_GENERATED,
                         citations=chunk.citations,
+                        tool_calls=accumulated_tool_calls if chunk.tool_calls else None,
                     )
                     yield ChatMessageResponse(
                         message=chunk.response,
@@ -1136,9 +1154,11 @@ class ConversationService:
                             tool_call.model_dump_json()
                             for tool_call in chunk.tool_calls
                         ],
+                        thinking=chunk.thinking,
                     )
+                # Flush with thinking content if captured
                 self.history_manager.flush_message_buffer(
-                    conversation_id, MessageType.AI_GENERATED
+                    conversation_id, MessageType.AI_GENERATED, thinking=accumulated_thinking
                 )
             else:
                 # Create enhanced ChatContext with multimodal support
@@ -1168,14 +1188,31 @@ class ConversationService:
 
                 res = self.agent_service.execute_stream(chat_context)
 
+                accumulated_tool_calls = []
+                accumulated_thinking = None
                 async for chunk in res:
                     if check_cancelled and check_cancelled():
                         raise GenerationCancelled()
+                    # Accumulate tool_calls from each chunk
+                    if chunk.tool_calls:
+                        for tool_call in chunk.tool_calls:
+                            tool_call_dict = (
+                                tool_call.model_dump()
+                                if hasattr(tool_call, "model_dump")
+                                else tool_call.dict()
+                                if hasattr(tool_call, "dict")
+                                else tool_call
+                            )
+                            accumulated_tool_calls.append(tool_call_dict)
+                    # Capture thinking content if present
+                    if chunk.thinking:
+                        accumulated_thinking = chunk.thinking
                     self.history_manager.add_message_chunk(
                         conversation_id,
                         chunk.response,
                         MessageType.AI_GENERATED,
                         citations=chunk.citations,
+                        tool_calls=accumulated_tool_calls if chunk.tool_calls else None,
                     )
                     yield ChatMessageResponse(
                         message=chunk.response,
@@ -1184,9 +1221,11 @@ class ConversationService:
                             tool_call.model_dump_json()
                             for tool_call in chunk.tool_calls
                         ],
+                        thinking=chunk.thinking,
                     )
+                # Flush with thinking content if captured
                 self.history_manager.flush_message_buffer(
-                    conversation_id, MessageType.AI_GENERATED
+                    conversation_id, MessageType.AI_GENERATED, thinking=accumulated_thinking
                 )
 
             logger.info(
@@ -1532,6 +1571,8 @@ class ConversationService:
                         ),
                         has_attachments=message.has_attachments,
                         attachments=attachments,
+                        tool_calls=message.tool_calls,
+                        thinking=message.thinking,
                     )
                 )
             return message_responses

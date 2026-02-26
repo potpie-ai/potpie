@@ -81,6 +81,7 @@ def redis_stream_generator(
                     message=content,
                     citations=event.get("citations", []),
                     tool_calls=tool_calls,
+                    thinking=event.get("thinking"),
                 )
                 json_response = json.dumps(response.dict(), default=json_serializer)
                 yield json_response
@@ -91,6 +92,7 @@ def redis_stream_generator(
                     message="",
                     citations=[],
                     tool_calls=[],
+                    thinking=None,
                 )
                 json_response = json.dumps(response.dict(), default=json_serializer)
                 yield json_response

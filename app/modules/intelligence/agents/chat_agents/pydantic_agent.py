@@ -919,6 +919,14 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                     logger.info(
                                         f"Reasoning content saved with hash: {reasoning_hash}"
                                     )
+                                # Yield thinking content at the end of stream
+                                if reasoning_manager.content:
+                                    yield ChatAgentResponse(
+                                        response="",
+                                        tool_calls=[],
+                                        citations=[],
+                                        thinking=reasoning_manager.content,
+                                    )
 
             except (TimeoutError, anyio.WouldBlock, Exception) as mcp_error:
                 logger.warning(f"MCP server initialization failed: {mcp_error}")
@@ -1087,6 +1095,14 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                 if reasoning_hash:
                                     logger.info(
                                         f"Reasoning content saved with hash: {reasoning_hash}"
+                                    )
+                                # Yield thinking content at the end of stream
+                                if reasoning_manager.content:
+                                    yield ChatAgentResponse(
+                                        response="",
+                                        tool_calls=[],
+                                        citations=[],
+                                        thinking=reasoning_manager.content,
                                     )
 
                 except (ModelRetry, AgentRunError, UserError) as pydantic_error:

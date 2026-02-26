@@ -192,6 +192,7 @@ def execute_agent_background(
                                     "content": chunk.message or "",
                                     "citations_json": chunk.citations or [],
                                     "tool_calls_json": serialized_tool_calls,
+                                    "thinking": chunk.thinking,
                                 },
                             )
 
@@ -442,6 +443,7 @@ def execute_regenerate_background(
                                 "content": chunk.message or "",
                                 "citations_json": chunk.citations or [],
                                 "tool_calls_json": serialized_tool_calls,
+                                "thinking": chunk.thinking,
                             },
                         )
 
