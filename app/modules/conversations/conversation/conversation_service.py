@@ -4,6 +4,7 @@ import os
 from datetime import datetime, timezone
 from typing import AsyncGenerator, Callable, List, Optional, Dict, Union
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
@@ -38,7 +39,10 @@ from app.modules.intelligence.agents.context_config import (
     HISTORY_MESSAGE_CAP,
     get_history_token_budget,
 )
-from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
+from app.modules.intelligence.memory.chat_history_service import (
+    AsyncChatHistoryService,
+    ChatHistoryService,
+)
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.projects.projects_service import ProjectService
 from app.modules.repo_manager.sync_helper import ensure_repo_registered
@@ -95,6 +99,9 @@ class ConversationService:
         media_service: MediaService,
         session_service: SessionService = None,
         redis_manager: RedisStreamManager = None,
+        async_redis_manager: AsyncRedisStreamManager = None,
+        async_session_service: AsyncSessionService = None,
+        async_history_manager: Optional[AsyncChatHistoryService] = None,
     ):
         self.db = db
         self.user_id = user_id
@@ -103,6 +110,7 @@ class ConversationService:
         self.message_store = message_store
         self.project_service = project_service
         self.history_manager = history_manager
+        self.async_history_manager = async_history_manager
         self.provider_service = provider_service
         self.tool_service = tools_service
         self.prompt_service = promt_service
@@ -138,9 +146,15 @@ class ConversationService:
         db: Session,
         user_id: str,
         user_email: str,
+        async_db: Optional[AsyncSession] = None,
+        async_redis_manager: Optional[AsyncRedisStreamManager] = None,
+        async_session_service: Optional[AsyncSessionService] = None,
     ):
         project_service = ProjectService(db)
         history_manager = ChatHistoryService(db)
+        async_history_manager: Optional[AsyncChatHistoryService] = None
+        if async_db is not None:
+            async_history_manager = AsyncChatHistoryService(async_db)
         provider_service = ProviderService(db, user_id)
         tool_service = ToolService(db, user_id)
         prompt_service = PromptService(db)
@@ -168,6 +182,67 @@ class ConversationService:
             media_service,
             session_service,
             redis_manager,
+            async_redis_manager=async_redis_manager,
+            async_session_service=async_session_service,
+            async_history_manager=async_history_manager,
+        )
+
+    async def _history_get_session_history(
+        self, user_id: str, conversation_id: str
+    ):
+        """Dispatch to async or sync history manager for get_session_history."""
+        if self.async_history_manager:
+            return await self.async_history_manager.get_session_history(
+                user_id, conversation_id
+            )
+        return self.history_manager.get_session_history(user_id, conversation_id)
+
+    def _history_add_message_chunk(
+        self,
+        conversation_id: str,
+        content: str,
+        message_type: MessageType,
+        sender_id: Optional[str] = None,
+        citations: Optional[List[str]] = None,
+    ) -> None:
+        """Dispatch to async or sync history manager for add_message_chunk."""
+        target = (
+            self.async_history_manager
+            if self.async_history_manager
+            else self.history_manager
+        )
+        target.add_message_chunk(
+            conversation_id, content, message_type, sender_id, citations
+        )
+
+    async def _history_flush_message_buffer(
+        self,
+        conversation_id: str,
+        message_type: MessageType,
+        sender_id: Optional[str] = None,
+    ):
+        """Dispatch to async or sync history manager for flush_message_buffer."""
+        if self.async_history_manager:
+            return await self.async_history_manager.flush_message_buffer(
+                conversation_id, message_type, sender_id
+            )
+        return self.history_manager.flush_message_buffer(
+            conversation_id, message_type, sender_id
+        )
+
+    async def _history_save_partial_ai_message(
+        self,
+        conversation_id: str,
+        content: str,
+        citations: Optional[List[str]] = None,
+    ):
+        """Dispatch to async or sync history manager for save_partial_ai_message."""
+        if self.async_history_manager:
+            return await self.async_history_manager.save_partial_ai_message(
+                conversation_id, content, citations
+            )
+        return self.history_manager.save_partial_ai_message(
+            conversation_id, content, citations
         )
 
     async def check_conversation_access(
@@ -585,10 +660,10 @@ class ConversationService:
     ):
         content = f"You can now ask questions about the {project_name} repository."
         try:
-            self.history_manager.add_message_chunk(
+            self._history_add_message_chunk(
                 conversation_id, content, MessageType.SYSTEM_GENERATED, user_id
             )
-            self.history_manager.flush_message_buffer(
+            await self._history_flush_message_buffer(
                 conversation_id, MessageType.SYSTEM_GENERATED, user_id
             )
             logger.info(
@@ -624,10 +699,10 @@ class ConversationService:
             )
             if access_level == ConversationAccessType.READ:
                 raise AccessTypeReadError("Access denied.")
-            self.history_manager.add_message_chunk(
+            self._history_add_message_chunk(
                 conversation_id, message.content, message_type, user_id
             )
-            message_id = self.history_manager.flush_message_buffer(
+            message_id = await self._history_flush_message_buffer(
                 conversation_id, message_type, user_id
             )
             logger.info(f"Stored message in conversation {conversation_id}")
@@ -1035,7 +1110,9 @@ class ConversationService:
         project_id = conversation.project_ids[0] if conversation.project_ids else None
 
         try:
-            history = self.history_manager.get_session_history(user_id, conversation_id)
+            history = await self._history_get_session_history(
+                user_id, conversation_id
+            )
             validated_history = [
                 (f"{msg.type}: {msg.content}" if msg.content else msg)
                 for msg in history
@@ -1121,7 +1198,7 @@ class ConversationService:
                 async for chunk in res:
                     if check_cancelled and check_cancelled():
                         raise GenerationCancelled()
-                    self.history_manager.add_message_chunk(
+                    self._history_add_message_chunk(
                         conversation_id,
                         chunk.response,
                         MessageType.AI_GENERATED,
@@ -1135,7 +1212,7 @@ class ConversationService:
                             for tool_call in chunk.tool_calls
                         ],
                     )
-                self.history_manager.flush_message_buffer(
+                await self._history_flush_message_buffer(
                     conversation_id, MessageType.AI_GENERATED
                 )
             else:
@@ -1169,7 +1246,7 @@ class ConversationService:
                 async for chunk in res:
                     if check_cancelled and check_cancelled():
                         raise GenerationCancelled()
-                    self.history_manager.add_message_chunk(
+                    self._history_add_message_chunk(
                         conversation_id,
                         chunk.response,
                         MessageType.AI_GENERATED,
@@ -1183,7 +1260,7 @@ class ConversationService:
                             for tool_call in chunk.tool_calls
                         ],
                     )
-                self.history_manager.flush_message_buffer(
+                await self._history_flush_message_buffer(
                     conversation_id, MessageType.AI_GENERATED
                 )
 
@@ -1632,7 +1709,7 @@ class ConversationService:
                 else:
                     content_to_save = ""
                 if content_to_save:
-                    saved_message_id = self.history_manager.save_partial_ai_message(
+                    saved_message_id = await self._history_save_partial_ai_message(
                         conversation_id,
                         content=content_to_save,
                         citations=snapshot.get("citations"),

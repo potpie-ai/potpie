@@ -48,6 +48,7 @@ class ConversationController:
             db=self.db,
             user_id=self.user_id,
             user_email=self.user_email,
+            async_db=self.async_db,
         )
 
     async def create_conversation(
