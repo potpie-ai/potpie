@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import os
 from datetime import datetime, timezone
-from typing import AsyncGenerator, Callable, List, Optional, Dict, Union
+from typing import AsyncGenerator, Callable, Dict, List, Optional, Union
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
