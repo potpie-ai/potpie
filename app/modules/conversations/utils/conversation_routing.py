@@ -15,7 +15,10 @@ from fastapi.responses import StreamingResponse
 from app.modules.conversations.conversation.conversation_schema import (
     ChatMessageResponse,
 )
-from app.modules.conversations.utils.redis_streaming import RedisStreamManager
+from app.modules.conversations.utils.redis_streaming import (
+    AsyncRedisStreamManager,
+    RedisStreamManager,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +46,7 @@ def ensure_unique_run_id(conversation_id: str, run_id: str) -> str:
     """
     Ensure the run_id is unique by checking if a stream already exists.
     If it exists, append a counter to make it unique.
+    (Sync version for Celery / sync callers.)
     """
     redis_manager = RedisStreamManager()
     original_run_id = run_id
@@ -55,6 +59,22 @@ def ensure_unique_run_id(conversation_id: str, run_id: str) -> str:
         run_id = f"{original_run_id}-{counter}"
         counter += 1
 
+    return run_id
+
+
+async def async_ensure_unique_run_id(
+    conversation_id: str, run_id: str, async_redis: AsyncRedisStreamManager
+) -> str:
+    """
+    Async version: ensure run_id is unique using async Redis.
+    """
+    original_run_id = run_id
+    counter = 1
+    key = async_redis.stream_key(conversation_id, run_id)
+    while await async_redis.redis_client.exists(key):
+        run_id = f"{original_run_id}-{counter}"
+        counter += 1
+        key = async_redis.stream_key(conversation_id, run_id)
     return run_id
 
 
@@ -104,7 +124,7 @@ def redis_stream_generator(
         # Don't yield error events to match original behavior
 
 
-def start_celery_task_and_stream(
+async def start_celery_task_and_stream(
     conversation_id: str,
     run_id: str,
     user_id: str,
@@ -112,23 +132,22 @@ def start_celery_task_and_stream(
     agent_id: Optional[str],
     node_ids: list,
     attachment_ids: list,
+    async_redis_manager: AsyncRedisStreamManager,
     cursor: Optional[str] = None,
     local_mode: bool = False,
     tunnel_url: Optional[str] = None,
 ) -> StreamingResponse:
     """
     Start a Celery background task and return a streaming response.
-    This is the common pattern used by both v1 and v2 endpoints.
+    Uses async Redis so the event loop is not blocked.
     """
     from app.celery.tasks.agent_tasks import execute_agent_background
 
-    redis_manager = RedisStreamManager()
-
     # Set initial "queued" status before starting the task
-    redis_manager.set_task_status(conversation_id, run_id, "queued")
+    await async_redis_manager.set_task_status(conversation_id, run_id, "queued")
 
     # Publish a queued event so the client knows the task is accepted
-    redis_manager.publish_event(
+    await async_redis_manager.publish_event(
         conversation_id,
         run_id,
         "queued",
@@ -152,22 +171,20 @@ def start_celery_task_and_stream(
     )
 
     # Store the Celery task ID for later revocation
-    redis_manager.set_task_id(conversation_id, run_id, task_result.id)
+    await async_redis_manager.set_task_id(conversation_id, run_id, task_result.id)
     logger.info(f"Started agent task {task_result.id} for {conversation_id}:{run_id}")
 
-    # Wait for background task to start (with health check)
-    # Increased timeout to 30 seconds to handle queued tasks
-    task_started = redis_manager.wait_for_task_start(
-        conversation_id, run_id, timeout=30
+    # Wait for background task to start (require "running" for correctness)
+    task_started = await async_redis_manager.wait_for_task_start(
+        conversation_id, run_id, timeout=30, require_running=True
     )
 
     if not task_started:
         logger.warning(
             f"Background task failed to start within 30s for {conversation_id}:{run_id} - may still be queued"
         )
-        # Don't fail - the stream consumer will wait up to 120 seconds
 
-    # Return Redis stream response
+    # Return Redis stream response (sync generator runs in Starlette thread pool)
     return StreamingResponse(
         redis_stream_generator(conversation_id, run_id, cursor),
         media_type="text/event-stream",
@@ -182,23 +199,21 @@ async def start_celery_task_and_wait(
     agent_id: Optional[str],
     node_ids: list,
     attachment_ids: list,
+    async_redis_manager: AsyncRedisStreamManager,
     local_mode: bool = False,
     tunnel_url: Optional[str] = None,
 ) -> ChatMessageResponse:
     """
     Start a Celery background task and wait for the complete response.
-    Collects all chunks from Redis stream and returns the full response.
-    Used for non-streaming requests in v2 API.
+    Uses async Redis for setup; stream collection runs in thread pool.
     """
     from app.celery.tasks.agent_tasks import execute_agent_background
 
-    redis_manager = RedisStreamManager()
-
     # Set initial "queued" status before starting the task
-    redis_manager.set_task_status(conversation_id, run_id, "queued")
+    await async_redis_manager.set_task_status(conversation_id, run_id, "queued")
 
     # Publish a queued event so the client knows the task is accepted
-    redis_manager.publish_event(
+    await async_redis_manager.publish_event(
         conversation_id,
         run_id,
         "queued",
@@ -222,14 +237,14 @@ async def start_celery_task_and_wait(
     )
 
     # Store the Celery task ID for later revocation
-    redis_manager.set_task_id(conversation_id, run_id, task_result.id)
+    await async_redis_manager.set_task_id(conversation_id, run_id, task_result.id)
     logger.info(
         f"Started agent task {task_result.id} for {conversation_id}:{run_id} (non-streaming)"
     )
 
-    # Wait for background task to start (with health check)
-    task_started = redis_manager.wait_for_task_start(
-        conversation_id, run_id, timeout=30
+    # Wait for background task to start (require "running")
+    task_started = await async_redis_manager.wait_for_task_start(
+        conversation_id, run_id, timeout=30, require_running=True
     )
 
     if not task_started:
@@ -237,18 +252,18 @@ async def start_celery_task_and_wait(
             f"Background task failed to start within 30s for {conversation_id}:{run_id} - may still be queued"
         )
 
-    # Collect all chunks from the stream
-    # Run the synchronous stream consumption in a thread pool to avoid blocking
+    # Collect all chunks from the stream (sync consume_stream in thread pool)
     full_message = ""
     all_citations = []
     all_tool_calls = []
     error_message = None
+    sync_redis = RedisStreamManager()
 
     def collect_from_stream():
         """Synchronous function to collect all events from Redis stream"""
         events = []
         try:
-            for event in redis_manager.consume_stream(conversation_id, run_id):
+            for event in sync_redis.consume_stream(conversation_id, run_id):
                 events.append(event)
                 # Stop collecting when we get an end event
                 if event.get("type") == "end":

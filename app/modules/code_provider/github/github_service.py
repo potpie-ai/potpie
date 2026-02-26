@@ -80,7 +80,18 @@ class GithubService:
             "Authorization": f"Bearer {jwt}",
             "X-GitHub-Api-Version": "2022-11-28",
         }
-        response = requests.get(url, headers=headers)
+        try:
+            response = requests.get(url, headers=headers, timeout=30)
+        except requests.exceptions.Timeout as e:
+            raise HTTPException(
+                status_code=504,
+                detail=f"GitHub API request timed out: {e}",
+            ) from e
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"GitHub API request failed: {e}",
+            ) from e
         if response.status_code == 401:
             detail = (
                 f"Failed to get installation for {repo_name}: GitHub returned 401 (JWT could not be decoded). "

@@ -1,11 +1,16 @@
 import time
-from typing import Union
-from app.modules.conversations.utils.redis_streaming import RedisStreamManager
+from typing import List, Optional, Union
+
+import redis
 from app.modules.conversations.conversation.conversation_schema import (
-    ActiveSessionResponse,
     ActiveSessionErrorResponse,
-    TaskStatusResponse,
+    ActiveSessionResponse,
     TaskStatusErrorResponse,
+    TaskStatusResponse,
+)
+from app.modules.conversations.utils.redis_streaming import (
+    AsyncRedisStreamManager,
+    RedisStreamManager,
 )
 from app.modules.utils.logger import setup_logger
 
@@ -66,8 +71,17 @@ class SessionService:
                     active_key, count=1
                 )
                 cursor = latest_events[0][0].decode() if latest_events else "0-0"
+            except (redis.exceptions.RedisError, OSError) as e:
+                logger.exception(
+                    "Redis error getting stream info for %s: %s", active_key, e
+                )
+                raise
             except Exception as e:
-                logger.warning(f"Could not get stream info for {active_key}: {e}")
+                logger.exception(
+                    "Unexpected error getting stream info for %s: %s",
+                    active_key,
+                    e,
+                )
                 cursor = "0-0"
 
             # Check task status to determine session status
@@ -91,8 +105,17 @@ class SessionService:
                 lastActivity=current_time,
             )
 
+        except (redis.exceptions.RedisError, OSError) as e:
+            logger.exception(
+                "Redis/infra error getting active session for %s: %s",
+                conversation_id,
+                e,
+            )
+            raise
         except Exception as e:
-            logger.error(f"Error getting active session for {conversation_id}: {e}")
+            logger.exception(
+                "Error getting active session for %s: %s", conversation_id, e
+            )
             return ActiveSessionErrorResponse(
                 error="No active session found", conversationId=conversation_id
             )
@@ -156,8 +179,214 @@ class SessionService:
                 error="No background task found", conversationId=conversation_id
             )
 
+        except (redis.exceptions.RedisError, OSError) as e:
+            logger.exception(
+                "Redis/infra error getting task status for %s: %s",
+                conversation_id,
+                e,
+            )
+            raise
         except Exception as e:
-            logger.error(f"Error getting task status for {conversation_id}: {e}")
+            logger.exception(
+                "Error getting task status for %s: %s", conversation_id, e
+            )
+            return TaskStatusErrorResponse(
+                error="No background task found", conversationId=conversation_id
+            )
+
+
+class AsyncSessionService:
+    """Session service using AsyncRedisStreamManager for FastAPI routes."""
+
+    def __init__(self, redis_manager: AsyncRedisStreamManager):
+        self.redis_manager = redis_manager
+
+    def _current_timestamp_ms(self) -> int:
+        return int(time.time() * 1000)
+
+    async def _get_stream_keys_by_recency(
+        self, stream_keys: List[str]
+    ) -> List[str]:
+        """Return stream keys ordered by newest-first (by XREVRANGE last entry ID)."""
+        if not stream_keys:
+            return []
+        latest_ids: list[tuple[str, str]] = []
+        for key_str in stream_keys:
+            try:
+                events = await self.redis_manager.redis_client.xrevrange(
+                    key_str, count=1
+                )
+                if events:
+                    lid = events[0][0]
+                    entry_id = lid.decode() if isinstance(lid, bytes) else lid
+                    latest_ids.append((key_str, entry_id))
+                else:
+                    latest_ids.append((key_str, "0-0"))
+            except (redis.exceptions.RedisError, OSError) as e:
+                logger.exception(
+                    "Redis error while getting stream recency for key %s: %s",
+                    key_str,
+                    e,
+                )
+                raise
+        # Redis stream IDs compare lexicographically by time then sequence
+        latest_ids.sort(key=lambda x: x[1], reverse=True)
+        return [k for k, _ in latest_ids]
+
+    async def _get_most_recent_stream_key(
+        self, stream_keys: List[str]
+    ) -> Optional[str]:
+        """Pick the stream key whose latest entry is newest (by XREVRANGE last entry ID)."""
+        ordered = await self._get_stream_keys_by_recency(stream_keys)
+        return ordered[0] if ordered else None
+
+    async def get_active_session(
+        self, conversation_id: str
+    ) -> Union[ActiveSessionResponse, ActiveSessionErrorResponse]:
+        try:
+            pattern = f"chat:stream:{conversation_id}:*"
+            stream_keys = []
+            async for key in self.redis_manager.redis_client.scan_iter(
+                match=pattern, count=100
+            ):
+                stream_keys.append(
+                    key.decode() if isinstance(key, bytes) else key
+                )
+
+            if not stream_keys:
+                return ActiveSessionErrorResponse(
+                    error="No active session found", conversationId=conversation_id
+                )
+
+            prefix = f"chat:stream:{conversation_id}:"
+            candidates = await self._get_stream_keys_by_recency(stream_keys)
+            active_key = None
+            while candidates:
+                candidate = candidates[0]
+                exists = await self.redis_manager.redis_client.exists(candidate)
+                if exists:
+                    active_key = candidate
+                    break
+                candidates = candidates[1:]
+
+            if not active_key:
+                return ActiveSessionErrorResponse(
+                    error="No active session found", conversationId=conversation_id
+                )
+            key_str = active_key
+            run_id = key_str[len(prefix) :]
+
+            try:
+                await self.redis_manager.redis_client.xinfo_stream(active_key)
+                latest_events = await self.redis_manager.redis_client.xrevrange(
+                    active_key, count=1
+                )
+                if latest_events:
+                    lid = latest_events[0][0]
+                    cursor = lid if isinstance(lid, str) else lid.decode()
+                else:
+                    cursor = "0-0"
+            except (redis.exceptions.RedisError, OSError) as e:
+                logger.exception(
+                    "Redis error getting stream info for %s: %s", active_key, e
+                )
+                raise
+            except Exception as e:
+                logger.exception(
+                    "Unexpected error getting stream info for %s: %s",
+                    active_key,
+                    e,
+                )
+                cursor = "0-0"
+
+            task_status = await self.redis_manager.get_task_status(
+                conversation_id, run_id
+            )
+            if task_status in ["running"]:
+                status = "active"
+            elif task_status in ["completed"]:
+                status = "completed"
+            else:
+                status = "idle"
+
+            current_time = self._current_timestamp_ms()
+            return ActiveSessionResponse(
+                sessionId=run_id,
+                status=status,
+                cursor=cursor,
+                conversationId=conversation_id,
+                startedAt=current_time - 30000,
+                lastActivity=current_time,
+            )
+        except (redis.exceptions.RedisError, OSError) as e:
+            logger.exception(
+                "Redis/infra error getting active session for %s: %s",
+                conversation_id,
+                e,
+            )
+            raise
+        except Exception as e:
+            logger.exception(
+                "Error getting active session for %s: %s", conversation_id, e
+            )
+            return ActiveSessionErrorResponse(
+                error="No active session found", conversationId=conversation_id
+            )
+
+    async def get_task_status(
+        self, conversation_id: str
+    ) -> Union[TaskStatusResponse, TaskStatusErrorResponse]:
+        try:
+            pattern = f"chat:stream:{conversation_id}:*"
+            stream_keys = []
+            async for key in self.redis_manager.redis_client.scan_iter(
+                match=pattern, count=100
+            ):
+                stream_keys.append(
+                    key.decode() if isinstance(key, bytes) else key
+                )
+            stream_keys_by_recency = await self._get_stream_keys_by_recency(
+                stream_keys
+            )
+
+            if not stream_keys_by_recency:
+                return TaskStatusErrorResponse(
+                    error="No background task found", conversationId=conversation_id
+                )
+
+            prefix = f"chat:stream:{conversation_id}:"
+            for key_str in stream_keys_by_recency:
+                run_id = key_str[len(prefix) :]
+                task_status = await self.redis_manager.get_task_status(
+                    conversation_id, run_id
+                )
+                if task_status:
+                    is_active = task_status in ["running", "pending"]
+                    current_time = self._current_timestamp_ms()
+                    estimated_completion = (
+                        current_time + 60000 if is_active else current_time - 5000
+                    )
+                    return TaskStatusResponse(
+                        isActive=is_active,
+                        sessionId=run_id,
+                        estimatedCompletion=estimated_completion,
+                        conversationId=conversation_id,
+                    )
+
+            return TaskStatusErrorResponse(
+                error="No background task found", conversationId=conversation_id
+            )
+        except (redis.exceptions.RedisError, OSError) as e:
+            logger.exception(
+                "Redis/infra error getting task status for %s: %s",
+                conversation_id,
+                e,
+            )
+            raise
+        except Exception as e:
+            logger.exception(
+                "Error getting task status for %s: %s", conversation_id, e
+            )
             return TaskStatusErrorResponse(
                 error="No background task found", conversationId=conversation_id
             )
