@@ -78,7 +78,6 @@ async def _run_concurrent(
 
     for r in results:
         if isinstance(r, Exception):
-            latencies_ms.append(0.0)
             continue
         lat, n = r
         latencies_ms.append(lat)
