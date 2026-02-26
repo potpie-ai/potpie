@@ -20,6 +20,7 @@ class MockRepo:
         self.description = repo_info["description"]
         self.language = repo_info["language"]
         self.html_url = repo_info["url"]
+        self.clone_url = repo_info.get("clone_url", repo_info.get("url", ""))
         self.size = repo_info.get("size", 0)
         self.stargazers_count = repo_info.get("stars", 0)
         self.forks_count = repo_info.get("forks", 0)

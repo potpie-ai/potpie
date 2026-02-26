@@ -99,8 +99,11 @@ class CodeProviderFactory:
 
         elif provider_type == ProviderType.GITLAB:
             base_url = base_url or "https://gitlab.com"
-            # provider = GitLabProvider(base_url=base_url)
-            raise NotImplementedError("GitLab provider not yet implemented")
+            from app.modules.code_provider.gitlab.gitlab_provider import (
+                GitLabProvider,
+            )
+
+            provider = GitLabProvider(base_url=base_url)
 
         elif provider_type == ProviderType.BITBUCKET:
             base_url = base_url or "https://api.bitbucket.org/2.0"
@@ -363,17 +366,17 @@ class CodeProviderFactory:
 
         provider_type = os.getenv("CODE_PROVIDER", "github").lower()
 
-        # For GitHub, validate that repo_name looks like a valid GitHub repo name
-        # GitHub repos must be in "owner/repo" format
-        if provider_type == "github" and "/" not in repo_name:
+        # For GitHub/GitLab, validate that repo_name looks like a valid remote repo name
+        # Remote repos must be in "owner/repo" (or "namespace/project" for GitLab) format
+        if provider_type in (ProviderType.GITHUB, ProviderType.GITLAB) and "/" not in repo_name:
             logger.error(
-                f"Invalid GitHub repository name: '{repo_name}'. "
-                f"GitHub repos must be in 'owner/repo' format. "
+                f"Invalid {provider_type} repository name: '{repo_name}'. "
+                f"Remote repos must be in 'owner/repo' format. "
                 f"If this is a local repository, ensure repo_path is set in the database."
             )
             raise ValueError(
                 f"Invalid repository name '{repo_name}'. "
-                f"GitHub repos must be in 'owner/repo' format (e.g., 'facebook/react'). "
+                f"Remote repos must be in 'owner/repo' format (e.g., 'namespace/project'). "
                 f"For local repositories, use the full filesystem path."
             )
 
@@ -447,6 +450,17 @@ class CodeProviderFactory:
                         {"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN
                     )
                     return provider
+
+        # For GitLab: also check GITLAB_TOKEN environment variable
+        if provider_type == ProviderType.GITLAB:
+            gitlab_token = os.getenv("GITLAB_TOKEN")
+            if gitlab_token:
+                logger.info("Using GITLAB_TOKEN for GitLab authentication")
+                provider = CodeProviderFactory.create_provider(provider_type=provider_type)
+                provider.authenticate(
+                    {"token": gitlab_token}, AuthMethod.PERSONAL_ACCESS_TOKEN
+                )
+                return provider
 
         # Try CODE_PROVIDER_TOKEN (for non-GitHub providers, or as fallback for GitHub)
         token = os.getenv("CODE_PROVIDER_TOKEN")
@@ -537,6 +551,10 @@ def has_code_provider_credentials() -> bool:
         tokens = [t.strip() for t in token_list_str.split(",") if t.strip()]
         if tokens:
             return True
+
+    # Check for GitLab token (GitLab only)
+    if os.getenv("GITLAB_TOKEN"):
+        return True
 
     # Check for Basic Auth credentials (works for GitBucket)
     if os.getenv("CODE_PROVIDER_USERNAME") and os.getenv("CODE_PROVIDER_PASSWORD"):

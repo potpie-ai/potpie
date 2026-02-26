@@ -32,6 +32,9 @@ from app.modules.auth.unified_auth_service import (
     PROVIDER_TYPE_FIREBASE_GITHUB,
     PROVIDER_TYPE_FIREBASE_EMAIL,
 )
+from pydantic import BaseModel
+
+PROVIDER_TYPE_GITLAB = "gitlab"
 from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
 from app.modules.utils.posthog_helper import PostHogClient
@@ -873,5 +876,196 @@ class AuthAPI:
         except Exception as e:
             return JSONResponse(
                 content={"error": f"Failed to get account: {str(e)}"},
+                status_code=400,
+            )
+
+
+class LinkGitLabRequest(BaseModel):
+    """Request to link a GitLab Personal Access Token to a user account."""
+    token: str
+    instance_url: str = "https://gitlab.com"
+    username: str = ""
+
+
+class AuthAPI_GitLab:
+    @auth_router.post("/link-gitlab")
+    async def link_gitlab(
+        request: Request,
+        body: LinkGitLabRequest,
+        user=Depends(AuthService.check_auth),
+        db: Session = Depends(get_db),
+    ):
+        """
+        Link a GitLab Personal Access Token to the authenticated user's account.
+
+        Validates the token against the GitLab API, then stores it encrypted
+        in user_auth_providers with provider_type='gitlab'.
+        """
+        try:
+            user_id = user["user_id"]
+
+            # Validate the token by calling GitLab API
+            try:
+                from app.modules.code_provider.gitlab.gitlab_provider import (
+                    GitLabProvider,
+                )
+                from app.modules.code_provider.base.code_provider_interface import (
+                    AuthMethod,
+                )
+
+                gl_provider = GitLabProvider(base_url=body.instance_url)
+                gl_provider.authenticate(
+                    {"token": body.token}, AuthMethod.PERSONAL_ACCESS_TOKEN
+                )
+                # Verify auth by fetching current user info
+                gl_user = gl_provider.client.users.get("me") if hasattr(gl_provider.client, "users") else None
+                # python-gitlab uses gl.auth() to verify - already done in authenticate()
+                current_user = gl_provider.client.auth()
+                username = body.username or (
+                    gl_provider.client.users.get_by_id("self").username
+                    if hasattr(gl_provider.client.users, "get_by_id")
+                    else body.username or "gitlab_user"
+                )
+            except Exception as validate_err:
+                # Try a simpler validation - just check if the token resolves a user
+                try:
+                    import requests as req
+                    resp = req.get(
+                        f"{body.instance_url.rstrip('/')}/api/v4/user",
+                        headers={"PRIVATE-TOKEN": body.token},
+                        timeout=10,
+                    )
+                    if resp.status_code == 401:
+                        return JSONResponse(
+                            content={"error": "Invalid GitLab token - authentication failed"},
+                            status_code=401,
+                        )
+                    elif resp.status_code != 200:
+                        return JSONResponse(
+                            content={"error": f"GitLab API error: {resp.status_code}"},
+                            status_code=400,
+                        )
+                    username = resp.json().get("username", body.username or "gitlab_user")
+                except Exception as e:
+                    return JSONResponse(
+                        content={"error": f"Failed to validate GitLab token: {str(e)}"},
+                        status_code=400,
+                    )
+
+            # Store the token in user_auth_providers
+            unified_auth = UnifiedAuthService(db)
+            provider_uid = f"gitlab:{username}:{body.instance_url}"
+
+            provider_data = {
+                "username": username,
+                "instance_url": body.instance_url,
+                "provider": "gitlab",
+            }
+
+            from app.modules.auth.auth_schema import AuthProviderCreate
+
+            provider_create = AuthProviderCreate(
+                provider_type=PROVIDER_TYPE_GITLAB,
+                provider_uid=provider_uid,
+                provider_data=provider_data,
+                access_token=body.token,
+                is_primary=False,
+            )
+
+            # Check if already linked - update token if so
+            existing = unified_auth.get_provider(user_id, PROVIDER_TYPE_GITLAB)
+            if existing:
+                # Update the existing token
+                from app.modules.integrations.token_encryption import encrypt_token
+                existing.access_token = encrypt_token(body.token)
+                existing.provider_data = provider_data
+                existing.provider_uid = provider_uid
+                db.commit()
+                logger.info(f"Updated GitLab token for user {user_id}")
+                return JSONResponse(
+                    content={"status": "updated", "message": "GitLab token updated successfully"},
+                    status_code=200,
+                )
+
+            unified_auth.add_provider(
+                user_id=user_id,
+                provider_create=provider_create,
+                ip_address=request.client.host if request.client else None,
+                user_agent=request.headers.get("user-agent"),
+            )
+            db.commit()
+
+            logger.info(f"GitLab token linked for user {user_id}")
+            return JSONResponse(
+                content={"status": "linked", "message": "GitLab account linked successfully", "username": username},
+                status_code=200,
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to link GitLab account: {e}", exc_info=True)
+            return JSONResponse(
+                content={"error": f"Failed to link GitLab account: {str(e)}"},
+                status_code=400,
+            )
+
+    @auth_router.delete("/link-gitlab")
+    async def unlink_gitlab(
+        user=Depends(AuthService.check_auth),
+        db: Session = Depends(get_db),
+    ):
+        """Remove GitLab provider from the user's account."""
+        try:
+            user_id = user["user_id"]
+            unified_auth = UnifiedAuthService(db)
+            provider = unified_auth.get_provider(user_id, PROVIDER_TYPE_GITLAB)
+
+            if not provider:
+                return JSONResponse(
+                    content={"error": "GitLab account not linked"},
+                    status_code=404,
+                )
+
+            db.delete(provider)
+            db.commit()
+
+            return JSONResponse(
+                content={"status": "unlinked", "message": "GitLab account unlinked"},
+                status_code=200,
+            )
+        except Exception as e:
+            return JSONResponse(
+                content={"error": f"Failed to unlink GitLab: {str(e)}"},
+                status_code=400,
+            )
+
+    @auth_router.get("/link-gitlab/status")
+    async def get_gitlab_status(
+        user=Depends(AuthService.check_auth),
+        db: Session = Depends(get_db),
+    ):
+        """Get the current GitLab linking status for the authenticated user."""
+        try:
+            user_id = user["user_id"]
+            unified_auth = UnifiedAuthService(db)
+            provider = unified_auth.get_provider(user_id, PROVIDER_TYPE_GITLAB)
+
+            if provider:
+                provider_data = provider.provider_data or {}
+                return JSONResponse(
+                    content={
+                        "linked": True,
+                        "username": provider_data.get("username", ""),
+                        "instance_url": provider_data.get("instance_url", "https://gitlab.com"),
+                    },
+                    status_code=200,
+                )
+            else:
+                return JSONResponse(
+                    content={"linked": False},
+                    status_code=200,
+                )
+        except Exception as e:
+            return JSONResponse(
+                content={"error": f"Failed to get GitLab status: {str(e)}"},
                 status_code=400,
             )

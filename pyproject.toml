@@ -48,6 +48,7 @@ dependencies = [
     "pydantic-ai-todo>=0.1.6",
     "pydantic[email]>=2.12.4",
     "pygithub>=2.8.1",
+    "python-gitlab>=4.0.0",
     "pygments>=2.19.2",
     "pyjwt>=2.10.1",
     "pynacl>=1.6.2",

@@ -638,6 +638,8 @@ pydocket==0.17.5
     # via fastmcp
 pygithub==2.8.1
     # via potpie (pyproject.toml)
+python-gitlab>=4.0.0
+    # via potpie (pyproject.toml)
 pygments==2.19.2
     # via
     #   potpie (pyproject.toml)

@@ -154,6 +154,7 @@ class GitBucketProvider(ICodeProvider):
                 "default_branch": repo.default_branch,
                 "private": repo.private,
                 "url": repo.html_url,
+                "clone_url": repo.clone_url if hasattr(repo, "clone_url") else repo.html_url,
                 "description": repo.description,
                 "language": repo.language,
             }

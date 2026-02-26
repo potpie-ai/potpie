@@ -335,3 +335,22 @@ class CodeProviderController:
             return await asyncio.to_thread(self._check_public_repo_sync, repo_name)
         except Exception:
             return False
+
+    def _get_repo_structure_sync(self, repo_name: str, branch_name: str) -> list:
+        """Sync helper: fetch repository file tree via provider. Runs in thread."""
+        provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
+        return provider.get_repository_structure(repo_name, ref=branch_name)
+
+    async def get_repo_structure(self, repo_name: str, branch_name: str) -> list:
+        """
+        Get the file/directory structure for a repository branch.
+        Returns a flat list of file/dir objects with path and type.
+        """
+        try:
+            return await asyncio.to_thread(
+                self._get_repo_structure_sync, repo_name, branch_name
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, detail=f"Error fetching repository structure: {str(e)}"
+            )
