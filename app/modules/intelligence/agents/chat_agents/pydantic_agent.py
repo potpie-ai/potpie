@@ -154,6 +154,7 @@ You are an AI assistant that helps users with code analysis and tasks. Follow th
 
 ## Tool Usage Best Practices
 
+- Use available tools to gather information before generating responses
 - Use `fetch_file` with `with_line_numbers=true` for precise code references
 - Use `ask_knowledge_graph_queries` for semantic code search
 - Use `get_code_file_structure` to understand project layout

@@ -70,6 +70,9 @@ def redis_stream_generator(
         return str(obj)
 
     redis_manager = RedisStreamManager()
+    logger.info(
+        f"Stream consumer started for {conversation_id}:{run_id}, waiting for events"
+    )
 
     try:
         for event in redis_manager.consume_stream(conversation_id, run_id, cursor):
@@ -157,8 +160,14 @@ def start_celery_task_and_stream(
 
     # Wait for background task to start (with health check)
     # Increased timeout to 30 seconds to handle queued tasks
+    logger.info(
+        f"Waiting for task to signal start (timeout=30s) for {conversation_id}:{run_id}"
+    )
     task_started = redis_manager.wait_for_task_start(
         conversation_id, run_id, timeout=30
+    )
+    logger.info(
+        f"Task start check done for {conversation_id}:{run_id} (started={task_started})"
     )
 
     if not task_started:
@@ -168,6 +177,7 @@ def start_celery_task_and_stream(
         # Don't fail - the stream consumer will wait up to 120 seconds
 
     # Return Redis stream response
+    logger.info(f"Returning stream response for {conversation_id}:{run_id}")
     return StreamingResponse(
         redis_stream_generator(conversation_id, run_id, cursor),
         media_type="text/event-stream",

@@ -12,7 +12,14 @@ logger = setup_logger(__name__)
 class RedisStreamManager:
     def __init__(self):
         config = ConfigProvider()
-        self.redis_client = redis.from_url(config.get_redis_url())
+        redis_url = config.get_redis_url()
+        # Prevent indefinite blocking: Redis can hang without timeouts (e.g. under load)
+        self.redis_client = redis.from_url(
+            redis_url,
+            socket_connect_timeout=10,
+            socket_timeout=30,
+            decode_responses=False,
+        )
         self.stream_ttl = ConfigProvider.get_stream_ttl_secs()
         self.max_len = ConfigProvider.get_stream_maxlen()
 
