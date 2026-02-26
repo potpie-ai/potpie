@@ -1170,7 +1170,9 @@ class GithubService:
             if async_redis:
                 cached_structure = await async_redis.get(cache_key)
             else:
-                cached_structure = self.redis.get(cache_key)
+                cached_structure = await asyncio.to_thread(
+                    self.redis.get, cache_key
+                )
         except (RedisError, OSError) as e:
             logger.warning(
                 "Redis cache read failed for project_structure (cache_key=%s): %s",
@@ -1233,7 +1235,9 @@ class GithubService:
                         cache_key, 3600, formatted_structure
                     )  # Cache for 1 hour
                 else:
-                    self.redis.setex(cache_key, 3600, formatted_structure)
+                    await asyncio.to_thread(
+                        self.redis.setex, cache_key, 3600, formatted_structure
+                    )
             except (RedisError, OSError) as e:
                 logger.warning(
                     "Redis cache write failed for project_structure (cache_key=%s): %s",
