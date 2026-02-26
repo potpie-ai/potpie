@@ -33,9 +33,22 @@ class AuthService:
             try:
                 user_auth_response.raise_for_status()
                 return user_auth_response.json()
-            except Exception as e:
+            except httpx.HTTPStatusError as e:
+                logging.warning("%s upstream auth failed: %s", log_prefix, e)
+                try:
+                    detail = e.response.json()
+                except Exception:
+                    detail = e.response.text or str(e)
+                raise HTTPException(
+                    status_code=e.response.status_code,
+                    detail=detail,
+                )
+            except httpx.HTTPError as e:
                 logging.exception("%s %s", log_prefix, str(e))
-                raise Exception(user_auth_response.json())
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Upstream auth request failed",
+                ) from e
 
     async def login_async(self, email, password):
         """Non-blocking login using httpx. Use from FastAPI routes."""
@@ -55,13 +68,22 @@ class AuthService:
                 )
                 response.raise_for_status()
                 return response.json()
-        except Exception as e:
-            logging.exception("%s %s", log_prefix, str(e))
+        except httpx.HTTPStatusError as e:
+            logging.warning("%s upstream auth failed: %s", log_prefix, e)
             try:
-                body = response.json() if response is not None else {}
+                detail = e.response.json()
             except Exception:
-                body = {}
-            raise Exception(body)
+                detail = e.response.text or str(e)
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail=detail,
+            )
+        except httpx.HTTPError as e:
+            logging.exception("%s %s", log_prefix, str(e))
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Upstream auth request failed",
+            ) from e
 
     def signup(self, email: str, password: str, name: str) -> tuple:
         try:

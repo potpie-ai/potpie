@@ -52,6 +52,25 @@ class BranchCache:
                 )
                 self._async_redis_client = None
 
+    async def aclose(self) -> None:
+        """
+        Close Redis client connections. Call from route teardown or app shutdown
+        to avoid connection leaks when BranchCache is long-lived.
+        """
+        if self._async_redis_client is not None:
+            try:
+                await self._async_redis_client.aclose()
+            except Exception as e:
+                logger.warning("BranchCache: error closing async Redis client: %s", e)
+            self._async_redis_client = None
+        if self.redis_client is not None:
+            try:
+                self.redis_client.close()
+            except Exception as e:
+                logger.warning("BranchCache: error closing sync Redis client: %s", e)
+            self.redis_client = None
+        self.available = False
+
     def _get_cache_key(self, repo_name: str, search_query: Optional[str] = None) -> str:
         """
         Generate cache key for repository branches.

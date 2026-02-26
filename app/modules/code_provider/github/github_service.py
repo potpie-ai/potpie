@@ -22,6 +22,7 @@ from sqlalchemy import func
 from app.modules.utils.logger import setup_logger
 from sqlalchemy.orm import Session
 from redis import Redis
+from redis.exceptions import RedisError
 
 from app.core.config_provider import config_provider
 from app.modules.code_provider.base.code_provider_interface import AuthMethod
@@ -57,6 +58,17 @@ async def _get_async_redis_cache():  # noqa: ANN201
     except Exception as e:
         logger.warning("Async Redis cache unavailable: %s", e)
         return None
+
+
+async def close_github_async_redis_cache() -> None:
+    """Close the global async Redis cache. Call from app shutdown to avoid connection leaks."""
+    global _async_redis_cache
+    if _async_redis_cache is not None:
+        try:
+            await _async_redis_cache.aclose()
+        except Exception as e:
+            logger.warning("Failed to close GitHub async Redis cache: %s", e)
+        _async_redis_cache = None
 
 
 class GithubService:
@@ -1148,11 +1160,20 @@ class GithubService:
         cache_key = (
             f"project_structure:{project_id}:exact_path_{path}:depth_{self.max_depth}"
         )
+        cached_structure = None
         async_redis = await _get_async_redis_cache()
-        if async_redis:
-            cached_structure = await async_redis.get(cache_key)
-        else:
-            cached_structure = self.redis.get(cache_key)
+        try:
+            if async_redis:
+                cached_structure = await async_redis.get(cache_key)
+            else:
+                cached_structure = self.redis.get(cache_key)
+        except (RedisError, OSError) as e:
+            logger.warning(
+                "Redis cache read failed for project_structure (cache_key=%s): %s",
+                cache_key,
+                e,
+            )
+            cached_structure = None
 
         if cached_structure:
             logger.info(
@@ -1202,12 +1223,19 @@ class GithubService:
             formatted_structure = self._format_tree_structure(structure)
 
             async_redis = await _get_async_redis_cache()
-            if async_redis:
-                await async_redis.setex(
-                    cache_key, 3600, formatted_structure
-                )  # Cache for 1 hour
-            else:
-                self.redis.setex(cache_key, 3600, formatted_structure)
+            try:
+                if async_redis:
+                    await async_redis.setex(
+                        cache_key, 3600, formatted_structure
+                    )  # Cache for 1 hour
+                else:
+                    self.redis.setex(cache_key, 3600, formatted_structure)
+            except (RedisError, OSError) as e:
+                logger.warning(
+                    "Redis cache write failed for project_structure (cache_key=%s): %s",
+                    cache_key,
+                    e,
+                )
 
             return formatted_structure
         except HTTPException as he:

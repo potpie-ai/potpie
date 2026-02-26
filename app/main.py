@@ -222,9 +222,20 @@ class MainApp:
         finally:
             db.close()
 
+    async def shutdown_event(self):
+        """Close async Redis and other resources on app shutdown."""
+        try:
+            from app.modules.code_provider.github.github_service import (
+                close_github_async_redis_cache,
+            )
+            await close_github_async_redis_cache()
+        except Exception as e:
+            logger.warning("Shutdown cleanup error: %s", e)
+
     def run(self):
         self.add_health_check()
         self.app.add_event_handler("startup", self.startup_event)
+        self.app.add_event_handler("shutdown", self.shutdown_event)
         return self.app
 
 
