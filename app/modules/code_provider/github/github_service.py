@@ -18,7 +18,8 @@ from fastapi import HTTPException
 from github import Github
 from github.Auth import AppAuth
 from github.GithubException import GithubException
-from sqlalchemy import func
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.utils.logger import setup_logger
 from sqlalchemy.orm import Session
 from redis import Redis
@@ -302,7 +303,9 @@ class GithubService:
                     break
         return links
 
-    async def get_repos_for_user(self, user_id: str):
+    async def get_repos_for_user(
+        self, user_id: str, async_session: Optional[AsyncSession] = None
+    ):
         if self.is_development_mode:
             return {"repositories": []}
 
@@ -310,7 +313,12 @@ class GithubService:
 
         start_time = time.time()  # Start timing the entire method
         try:
-            user = self.db.query(User).filter(User.uid == user_id).first()
+            if async_session is not None:
+                stmt_user = select(User).where(User.uid == user_id).limit(1)
+                result_user = await async_session.execute(stmt_user)
+                user = result_user.scalar_one_or_none()
+            else:
+                user = self.db.query(User).filter(User.uid == user_id).first()
             if user is None:
                 raise HTTPException(status_code=404, detail="User not found")
 
@@ -319,14 +327,26 @@ class GithubService:
             # Check if user has GitHub provider via unified auth system
             from app.modules.auth.auth_provider_model import UserAuthProvider
 
-            github_provider = (
-                self.db.query(UserAuthProvider)
-                .filter(
-                    UserAuthProvider.user_id == user_id,
-                    UserAuthProvider.provider_type == "firebase_github",
+            if async_session is not None:
+                stmt_provider = (
+                    select(UserAuthProvider)
+                    .where(
+                        UserAuthProvider.user_id == user_id,
+                        UserAuthProvider.provider_type == "firebase_github",
+                    )
+                    .limit(1)
                 )
-                .first()
-            )
+                result_provider = await async_session.execute(stmt_provider)
+                github_provider = result_provider.scalar_one_or_none()
+            else:
+                github_provider = (
+                    self.db.query(UserAuthProvider)
+                    .filter(
+                        UserAuthProvider.user_id == user_id,
+                        UserAuthProvider.provider_type == "firebase_github",
+                    )
+                    .first()
+                )
 
             # If no GitHub provider linked, check if user needs to link GitHub
             if not github_provider:
@@ -932,22 +952,42 @@ class GithubService:
                 f"get_repos_for_user executed in {total_duration:.2f} seconds"
             )  # Log total duration
 
-    async def get_combined_user_repos(self, user_id: str):
-        subquery = (
-            self.db.query(Project.repo_name, func.min(Project.id).label("min_id"))
-            .filter(Project.user_id == user_id)
-            .group_by(Project.repo_name)
-            .subquery()
-        )
-        projects = (
-            self.db.query(Project)
-            .join(
-                subquery,
-                (Project.repo_name == subquery.c.repo_name)
-                & (Project.id == subquery.c.min_id),
+    async def get_combined_user_repos(
+        self, user_id: str, async_session: Optional[AsyncSession] = None
+    ):
+        if async_session is not None:
+            subquery = (
+                select(Project.repo_name, func.min(Project.id).label("min_id"))
+                .where(Project.user_id == user_id)
+                .group_by(Project.repo_name)
+                .subquery()
             )
-            .all()
-        )
+            stmt = (
+                select(Project)
+                .join(
+                    subquery,
+                    (Project.repo_name == subquery.c.repo_name)
+                    & (Project.id == subquery.c.min_id),
+                )
+            )
+            result = await async_session.execute(stmt)
+            projects = result.scalars().all()
+        else:
+            subquery = (
+                self.db.query(Project.repo_name, func.min(Project.id).label("min_id"))
+                .filter(Project.user_id == user_id)
+                .group_by(Project.repo_name)
+                .subquery()
+            )
+            projects = (
+                self.db.query(Project)
+                .join(
+                    subquery,
+                    (Project.repo_name == subquery.c.repo_name)
+                    & (Project.id == subquery.c.min_id),
+                )
+                .all()
+            )
         project_list = (
             [
                 {
@@ -967,7 +1007,9 @@ class GithubService:
             if projects is not None
             else []
         )
-        user_repo_response = await self.get_repos_for_user(user_id)
+        user_repo_response = await self.get_repos_for_user(
+            user_id, async_session=async_session
+        )
         user_repos = user_repo_response["repositories"]
         db_project_full_names = {project["full_name"] for project in project_list}
 
