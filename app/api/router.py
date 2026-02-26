@@ -106,7 +106,7 @@ async def create_conversation(
 ):
     user_id = user["user_id"]
     # This will either return True or raise an HTTPException
-    await UsageService.check_usage_limit(user_id)
+    await UsageService.check_usage_limit(user_id, async_db)
     # Create full conversation request with defaults
     full_request = CreateConversationRequest(
         user_id=user_id,
@@ -166,12 +166,7 @@ async def post_message(
         raise HTTPException(status_code=400, detail="Message content cannot be empty")
 
     user_id = user["user_id"]
-    checked = await UsageService.check_usage_limit(user_id)
-    if not checked:
-        raise HTTPException(
-            status_code=402,
-            detail="Subscription required to create a conversation.",
-        )
+    await UsageService.check_usage_limit(user_id, async_db)
 
     # Use Celery for both streaming and non-streaming requests
     run_id = normalize_run_id(

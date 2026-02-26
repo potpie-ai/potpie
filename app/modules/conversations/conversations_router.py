@@ -95,12 +95,7 @@ class ConversationAPI:
         local_mode = user_agent == "Potpie-VSCode-Extension/1.0.1"
 
         user_id = user["user_id"]
-        checked = await UsageService.check_usage_limit(user_id)
-        if not checked:
-            raise HTTPException(
-                status_code=402,
-                detail="Subscription required to create a conversation.",
-            )
+        await UsageService.check_usage_limit(user_id, async_db)
         user_email = user["email"]
         controller = ConversationController(db, async_db, user_id, user_email)
         return await controller.create_conversation(
@@ -199,12 +194,7 @@ class ConversationAPI:
 
         # Set up logging context with domain IDs
         with log_context(conversation_id=conversation_id, user_id=user_id):
-            checked = await UsageService.check_usage_limit(user_id)
-            if not checked:
-                raise HTTPException(
-                    status_code=402,
-                    detail="Subscription required to create a conversation.",
-                )
+            await UsageService.check_usage_limit(user_id, async_db)
 
             # Process images if present
             attachment_ids = []
@@ -330,12 +320,7 @@ class ConversationAPI:
         local_mode = user_agent == "Potpie-VSCode-Extension/1.0.1"
 
         user_id = user["user_id"]
-        checked = await UsageService.check_usage_limit(user_id)
-        if not checked:
-            raise HTTPException(
-                status_code=402,
-                detail="Subscription required to create a conversation.",
-            )
+        await UsageService.check_usage_limit(user_id, async_db)
         user_email = user["email"]
 
         if not stream or not background:
