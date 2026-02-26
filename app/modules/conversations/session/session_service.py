@@ -182,7 +182,9 @@ class AsyncSessionService:
         try:
             pattern = f"chat:stream:{conversation_id}:*"
             stream_keys = []
-            async for key in self.redis_manager.redis_client.scan_iter(match=pattern):
+            async for key in self.redis_manager.redis_client.scan_iter(
+                match=pattern, count=100
+            ):
                 stream_keys.append(
                     key.decode() if isinstance(key, bytes) else key
                 )
@@ -249,7 +251,9 @@ class AsyncSessionService:
         try:
             pattern = f"chat:stream:{conversation_id}:*"
             stream_keys = []
-            async for key in self.redis_manager.redis_client.scan_iter(match=pattern):
+            async for key in self.redis_manager.redis_client.scan_iter(
+                match=pattern, count=100
+            ):
                 stream_keys.append(
                     key.decode() if isinstance(key, bytes) else key
                 )
