@@ -1,5 +1,5 @@
 import time
-from typing import Union
+from typing import List, Optional, Union
 
 from app.modules.conversations.conversation.conversation_schema import (
     ActiveSessionErrorResponse,
@@ -176,6 +176,37 @@ class AsyncSessionService:
     def _current_timestamp_ms(self) -> int:
         return int(time.time() * 1000)
 
+    async def _get_stream_keys_by_recency(
+        self, stream_keys: List[str]
+    ) -> List[str]:
+        """Return stream keys ordered by newest-first (by XREVRANGE last entry ID)."""
+        if not stream_keys:
+            return []
+        latest_ids: list[tuple[str, str]] = []
+        for key_str in stream_keys:
+            try:
+                events = await self.redis_manager.redis_client.xrevrange(
+                    key_str, count=1
+                )
+                if events:
+                    lid = events[0][0]
+                    entry_id = lid.decode() if isinstance(lid, bytes) else lid
+                    latest_ids.append((key_str, entry_id))
+                else:
+                    latest_ids.append((key_str, "0-0"))
+            except Exception:
+                latest_ids.append((key_str, "0-0"))
+        # Redis stream IDs compare lexicographically by time then sequence
+        latest_ids.sort(key=lambda x: x[1], reverse=True)
+        return [k for k, _ in latest_ids]
+
+    async def _get_most_recent_stream_key(
+        self, stream_keys: List[str]
+    ) -> Optional[str]:
+        """Pick the stream key whose latest entry is newest (by XREVRANGE last entry ID)."""
+        ordered = await self._get_stream_keys_by_recency(stream_keys)
+        return ordered[0] if ordered else None
+
     async def get_active_session(
         self, conversation_id: str
     ) -> Union[ActiveSessionResponse, ActiveSessionErrorResponse]:
@@ -188,16 +219,19 @@ class AsyncSessionService:
                 stream_keys.append(
                     key.decode() if isinstance(key, bytes) else key
                 )
-            stream_keys_sorted = sorted(stream_keys, reverse=True)
 
-            if not stream_keys_sorted:
+            if not stream_keys:
                 return ActiveSessionErrorResponse(
                     error="No active session found", conversationId=conversation_id
                 )
 
-            active_key = stream_keys_sorted[0]
-            key_str = active_key
             prefix = f"chat:stream:{conversation_id}:"
+            active_key = await self._get_most_recent_stream_key(stream_keys)
+            if not active_key:
+                return ActiveSessionErrorResponse(
+                    error="No active session found", conversationId=conversation_id
+                )
+            key_str = active_key
             run_id = key_str[len(prefix) :]
 
             exists = await self.redis_manager.redis_client.exists(active_key)
@@ -257,15 +291,17 @@ class AsyncSessionService:
                 stream_keys.append(
                     key.decode() if isinstance(key, bytes) else key
                 )
-            stream_keys_sorted = sorted(stream_keys, reverse=True)
+            stream_keys_by_recency = await self._get_stream_keys_by_recency(
+                stream_keys
+            )
 
-            if not stream_keys_sorted:
+            if not stream_keys_by_recency:
                 return TaskStatusErrorResponse(
                     error="No background task found", conversationId=conversation_id
                 )
 
             prefix = f"chat:stream:{conversation_id}:"
-            for key_str in stream_keys_sorted:
+            for key_str in stream_keys_by_recency:
                 run_id = key_str[len(prefix) :]
                 task_status = await self.redis_manager.get_task_status(
                     conversation_id, run_id

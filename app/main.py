@@ -214,11 +214,14 @@ class MainApp:
             self.app.state.async_redis_stream_manager = AsyncRedisStreamManager()
             logger.info("AsyncRedisStreamManager initialized")
         except Exception as e:
-            logger.warning(
-                "AsyncRedisStreamManager not initialized (redis.asyncio may be unavailable): %s",
+            logger.exception(
+                "AsyncRedisStreamManager failed to initialize (redis.asyncio required): %s",
                 e,
             )
-            self.app.state.async_redis_stream_manager = None
+            raise RuntimeError(
+                "Async Redis stream manager unavailable; cannot start. "
+                "Install redis>=4.2 with redis.asyncio support."
+            ) from e
 
         # Setup data (Firebase or dummy user)
         logger.info("Setting up application data...")
