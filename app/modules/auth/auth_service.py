@@ -22,29 +22,31 @@ class AuthService:
         identity_url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={identity_tool_kit_id}"
 
         with httpx.Client(timeout=LOGIN_TIMEOUT) as client:
-            user_auth_response = client.post(
-                url=identity_url,
-                json={
-                    "email": email,
-                    "password": password,
-                    "returnSecureToken": True,
-                },
-            )
             try:
+                user_auth_response = client.post(
+                    url=identity_url,
+                    json={
+                        "email": email,
+                        "password": password,
+                        "returnSecureToken": True,
+                    },
+                )
                 user_auth_response.raise_for_status()
                 return user_auth_response.json()
             except httpx.HTTPStatusError as e:
-                logging.warning("%s upstream auth failed: %s", log_prefix, e)
+                logging.warning(
+                    "%s upstream auth failed: status=%s", log_prefix, e.response.status_code
+                )
                 try:
                     detail = e.response.json()
                 except Exception:
-                    detail = e.response.text or str(e)
+                    detail = e.response.text or "Upstream auth error"
                 raise HTTPException(
                     status_code=e.response.status_code,
                     detail=detail,
                 )
             except httpx.HTTPError as e:
-                logging.exception("%s %s", log_prefix, str(e))
+                logging.warning("%s upstream auth failed: httpx error", log_prefix)
                 raise HTTPException(
                     status_code=status.HTTP_502_BAD_GATEWAY,
                     detail="Upstream auth request failed",
@@ -69,17 +71,19 @@ class AuthService:
                 response.raise_for_status()
                 return response.json()
         except httpx.HTTPStatusError as e:
-            logging.warning("%s upstream auth failed: %s", log_prefix, e)
+            logging.warning(
+                "%s upstream auth failed: status=%s", log_prefix, e.response.status_code
+            )
             try:
                 detail = e.response.json()
             except Exception:
-                detail = e.response.text or str(e)
+                detail = e.response.text or "Upstream auth error"
             raise HTTPException(
                 status_code=e.response.status_code,
                 detail=detail,
             )
         except httpx.HTTPError as e:
-            logging.exception("%s %s", log_prefix, str(e))
+            logging.warning("%s upstream auth failed: httpx error", log_prefix)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="Upstream auth request failed",

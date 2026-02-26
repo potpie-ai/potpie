@@ -41,23 +41,27 @@ logger = setup_logger(__name__)
 
 # Lazy async Redis client for project structure cache (shared across instances)
 _async_redis_cache: Optional[Any] = None
+_async_redis_cache_lock = asyncio.Lock()
 
 
 async def _get_async_redis_cache():  # noqa: ANN201
-    """Return shared async Redis client for cache; create on first use."""
+    """Return shared async Redis client for cache; create on first use (guarded by lock)."""
     global _async_redis_cache
     if _async_redis_cache is not None:
         return _async_redis_cache
     if redis_async is None or not config_provider.get_redis_url():
         return None
-    try:
-        _async_redis_cache = redis_async.from_url(
-            config_provider.get_redis_url(), decode_responses=False
-        )
-        return _async_redis_cache
-    except Exception as e:
-        logger.warning("Async Redis cache unavailable: %s", e)
-        return None
+    async with _async_redis_cache_lock:
+        if _async_redis_cache is not None:
+            return _async_redis_cache
+        try:
+            _async_redis_cache = redis_async.from_url(
+                config_provider.get_redis_url(), decode_responses=False
+            )
+            return _async_redis_cache
+        except Exception as e:
+            logger.warning("Async Redis cache unavailable: %s", e)
+            return None
 
 
 async def close_github_async_redis_cache() -> None:
