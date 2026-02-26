@@ -24,14 +24,39 @@ from sqlalchemy.orm import Session
 from redis import Redis
 
 from app.core.config_provider import config_provider
+from app.modules.code_provider.base.code_provider_interface import AuthMethod
+from app.modules.code_provider.github.github_provider import GitHubProvider
+from app.modules.code_provider.provider_factory import CodeProviderFactory
 from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_service import ProjectService
 from app.modules.users.user_model import User
-from app.modules.code_provider.github.github_provider import GitHubProvider
-from app.modules.code_provider.provider_factory import CodeProviderFactory
-from app.modules.code_provider.base.code_provider_interface import AuthMethod
+
+try:
+    import redis.asyncio as redis_async
+except ImportError:
+    redis_async = None  # type: ignore[assignment]
 
 logger = setup_logger(__name__)
+
+# Lazy async Redis client for project structure cache (shared across instances)
+_async_redis_cache: Optional[Any] = None
+
+
+async def _get_async_redis_cache():  # noqa: ANN201
+    """Return shared async Redis client for cache; create on first use."""
+    global _async_redis_cache
+    if _async_redis_cache is not None:
+        return _async_redis_cache
+    if redis_async is None or not config_provider.get_redis_url():
+        return None
+    try:
+        _async_redis_cache = redis_async.from_url(
+            config_provider.get_redis_url(), decode_responses=False
+        )
+        return _async_redis_cache
+    except Exception as e:
+        logger.warning("Async Redis cache unavailable: %s", e)
+        return None
 
 
 class GithubService:
@@ -1123,13 +1148,21 @@ class GithubService:
         cache_key = (
             f"project_structure:{project_id}:exact_path_{path}:depth_{self.max_depth}"
         )
-        cached_structure = self.redis.get(cache_key)
+        async_redis = await _get_async_redis_cache()
+        if async_redis:
+            cached_structure = await async_redis.get(cache_key)
+        else:
+            cached_structure = self.redis.get(cache_key)
 
         if cached_structure:
             logger.info(
                 f"Project structure found in cache for project ID: {project_id}, path: {path}"
             )
-            return cached_structure.decode("utf-8")
+            return (
+                cached_structure.decode("utf-8")
+                if isinstance(cached_structure, bytes)
+                else cached_structure
+            )
 
         project = await self.project_manager.get_project_from_db_by_id(project_id)
         if not project:
@@ -1168,7 +1201,13 @@ class GithubService:
             )
             formatted_structure = self._format_tree_structure(structure)
 
-            self.redis.setex(cache_key, 3600, formatted_structure)  # Cache for 1 hour
+            async_redis = await _get_async_redis_cache()
+            if async_redis:
+                await async_redis.setex(
+                    cache_key, 3600, formatted_structure
+                )  # Cache for 1 hour
+            else:
+                self.redis.setex(cache_key, 3600, formatted_structure)
 
             return formatted_structure
         except HTTPException as he:

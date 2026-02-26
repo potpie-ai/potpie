@@ -1,9 +1,9 @@
+import asyncio
 import logging
 import os
+import re
 
 import resend
-
-import re
 
 # Try to import email-inspector library for robust email domain detection
 try:
@@ -74,7 +74,8 @@ Co-Founder, Potpie 🥧</p>
             """,
         }
 
-        email = resend.Emails.send(params)
+        # Resend SDK is sync-only; offload to thread to avoid blocking the event loop
+        email = await asyncio.to_thread(resend.Emails.send, params)
         return email
 
     async def send_parsing_failure_alert(
@@ -167,7 +168,8 @@ Co-Founder, Potpie 🥧</p>
         }
 
         try:
-            email = resend.Emails.send(params)
+            # Resend SDK is sync-only; offload to thread to avoid blocking
+            email = await asyncio.to_thread(resend.Emails.send, params)
             return email
         except Exception as e:
             logging.error(f"Failed to send parsing failure alert: {e}")

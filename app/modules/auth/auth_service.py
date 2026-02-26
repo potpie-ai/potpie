@@ -1,7 +1,7 @@
 import logging
 import os
 
-import requests
+import httpx
 from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -10,28 +10,58 @@ from firebase_admin.exceptions import FirebaseError
 
 load_dotenv(override=True)
 
+# Timeout for Firebase Identity Toolkit (connect, read)
+LOGIN_TIMEOUT = httpx.Timeout(10.0, 30.0)
+
 
 class AuthService:
     def login(self, email, password):
+        """Sync login (e.g. for tests)."""
         log_prefix = "AuthService::login:"
         identity_tool_kit_id = os.getenv("GOOGLE_IDENTITY_TOOL_KIT_KEY")
         identity_url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={identity_tool_kit_id}"
 
-        user_auth_response = requests.post(
-            url=identity_url,
-            json={
-                "email": email,
-                "password": password,
-                "returnSecureToken": True,
-            },
-        )
+        with httpx.Client(timeout=LOGIN_TIMEOUT) as client:
+            user_auth_response = client.post(
+                url=identity_url,
+                json={
+                    "email": email,
+                    "password": password,
+                    "returnSecureToken": True,
+                },
+            )
+            try:
+                user_auth_response.raise_for_status()
+                return user_auth_response.json()
+            except Exception as e:
+                logging.exception("%s %s", log_prefix, str(e))
+                raise Exception(user_auth_response.json())
 
+    async def login_async(self, email, password):
+        """Non-blocking login using httpx. Use from FastAPI routes."""
+        log_prefix = "AuthService::login:"
+        identity_tool_kit_id = os.getenv("GOOGLE_IDENTITY_TOOL_KIT_KEY")
+        identity_url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={identity_tool_kit_id}"
+        response = None
         try:
-            user_auth_response.raise_for_status()
-            return user_auth_response.json()
+            async with httpx.AsyncClient(timeout=LOGIN_TIMEOUT) as client:
+                response = await client.post(
+                    identity_url,
+                    json={
+                        "email": email,
+                        "password": password,
+                        "returnSecureToken": True,
+                    },
+                )
+                response.raise_for_status()
+                return response.json()
         except Exception as e:
             logging.exception("%s %s", log_prefix, str(e))
-            raise Exception(user_auth_response.json())
+            try:
+                body = response.json() if response is not None else {}
+            except Exception:
+                body = {}
+            raise Exception(body)
 
     def signup(self, email: str, password: str, name: str) -> tuple:
         try:

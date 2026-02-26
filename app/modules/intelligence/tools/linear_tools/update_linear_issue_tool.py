@@ -83,18 +83,20 @@ class UpdateLinearIssueTool:
             if priority is not None:
                 update_data["priority"] = priority
 
-            # Update the issue if there are changes
+            # Update the issue if there are changes (async to avoid blocking)
             if update_data:
-                result = client.update_issue(issue_id, update_data)
+                result = await client.update_issue_async(issue_id, update_data)
                 issue = result["issue"]
             else:
                 # If no updates, fetch current issue state
-                issue = client.get_issue(issue_id)
+                issue = await client.get_issue_async(issue_id)
 
             # Add comment if provided
             comment_result = None
             if comment:
-                comment_result = client.comment_create(issue_id, comment)
+                comment_result = await client.comment_create_async(
+                    issue_id, comment
+                )
 
             # Return updated issue details
             return {

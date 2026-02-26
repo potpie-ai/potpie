@@ -2,7 +2,7 @@ import json
 import logging
 import os
 
-import requests
+import httpx
 from dotenv import load_dotenv
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse, Response
@@ -56,7 +56,11 @@ def _signup_response_with_custom_token(payload: dict) -> dict:
 async def send_slack_message(message: str):
     payload = {"text": message}
     if SLACK_WEBHOOK_URL:
-        requests.post(SLACK_WEBHOOK_URL, json=payload)
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                await client.post(SLACK_WEBHOOK_URL, json=payload)
+        except Exception as e:
+            logger.warning("Failed to send Slack signup notification: %s", e)
 
 
 class AuthAPI:
@@ -65,7 +69,7 @@ class AuthAPI:
         email, password = login_request.email, login_request.password
 
         try:
-            res = auth_handler.login(email=email, password=password)
+            res = await auth_handler.login_async(email=email, password=password)
             id_token = res.get("idToken")
             return JSONResponse(content={"token": id_token}, status_code=200)
         except ValueError:
