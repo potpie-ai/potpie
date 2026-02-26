@@ -874,7 +874,7 @@ class GithubService:
                                     async with response:
                                         if response.status == 414:
                                             logger.warning(
-                                                f"414 URI Too Long for pagination request. Skipping this page."
+                                                "414 URI Too Long for pagination request. Skipping this page."
                                             )
                                             continue
                                         elif response.status == 200:

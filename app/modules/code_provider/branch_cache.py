@@ -22,17 +22,22 @@ class BranchCache:
 
     def __init__(self):
         """Initialize Redis client (sync and optional async for FastAPI routes)."""
-        try:
-            redis_url = config_provider.get_redis_url()
-            self.redis_client = redis.from_url(redis_url, decode_responses=True)
-            # Test connection
-            self.redis_client.ping()
-            self.available = True
-            logger.info("BranchCache: ✅ Redis connection established and available")
-        except Exception as e:
-            logger.warning(f"BranchCache: Redis not available - {str(e)}")
+        redis_url = config_provider.get_redis_url()
+        if not redis_url:
+            logger.warning("BranchCache: Redis URL not configured")
             self.redis_client = None
             self.available = False
+        else:
+            try:
+                self.redis_client = redis.from_url(redis_url, decode_responses=True)
+                # Test connection
+                self.redis_client.ping()
+                self.available = True
+                logger.info("BranchCache: ✅ Redis connection established and available")
+            except Exception as e:
+                logger.warning(f"BranchCache: Redis not available - {str(e)}")
+                self.redis_client = None
+                self.available = False
 
         self._async_redis_client: Any = None
         if redis_async is not None and self.available and config_provider.get_redis_url():

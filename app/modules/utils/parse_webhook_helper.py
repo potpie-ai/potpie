@@ -1,7 +1,10 @@
 import json
+import logging
 import os
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 class ParseWebhookHelper:
@@ -23,8 +26,10 @@ class ParseWebhookHelper:
                         headers={"Content-Type": "application/json"},
                     )
                     if response.status_code != 200:
-                        print(
-                            f"Failed to send message to Slack: {response.status_code} {response.text}"
+                        logger.warning(
+                            "Failed to send message to Slack: %s %s",
+                            response.status_code,
+                            response.text,
                         )
         except Exception as e:
-            print(f"Error sending message to Slack: {e}")
+            logger.warning("Error sending message to Slack: %s", e)

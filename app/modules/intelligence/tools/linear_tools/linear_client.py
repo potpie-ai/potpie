@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 
 # Timeout for Linear GraphQL API (connect, read)
-LINEAR_REQUEST_TIMEOUT = httpx.Timeout(10.0, 30.0)
+LINEAR_REQUEST_TIMEOUT = httpx.Timeout(connect=10.0, read=30.0)
 
 
 class LinearClient:

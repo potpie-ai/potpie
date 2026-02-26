@@ -41,7 +41,8 @@ class EmailHelper:
         self.from_address = os.environ.get(
             "EMAIL_FROM_ADDRESS", "dhiren@updates.potpie.ai"
         )
-        resend.api_key = self.api_key
+        if self.api_key:
+            resend.api_key = self.api_key
 
     async def send_email(self, to_address, repo_name, branch_name):
         if not self.transaction_emails_enabled:
