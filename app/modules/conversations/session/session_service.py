@@ -226,19 +226,22 @@ class AsyncSessionService:
                 )
 
             prefix = f"chat:stream:{conversation_id}:"
-            active_key = await self._get_most_recent_stream_key(stream_keys)
+            candidates = await self._get_stream_keys_by_recency(stream_keys)
+            active_key = None
+            while candidates:
+                candidate = candidates[0]
+                exists = await self.redis_manager.redis_client.exists(candidate)
+                if exists:
+                    active_key = candidate
+                    break
+                candidates = candidates[1:]
+
             if not active_key:
                 return ActiveSessionErrorResponse(
                     error="No active session found", conversationId=conversation_id
                 )
             key_str = active_key
             run_id = key_str[len(prefix) :]
-
-            exists = await self.redis_manager.redis_client.exists(active_key)
-            if not exists:
-                return ActiveSessionErrorResponse(
-                    error="No active session found", conversationId=conversation_id
-                )
 
             try:
                 await self.redis_manager.redis_client.xinfo_stream(active_key)
