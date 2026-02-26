@@ -401,63 +401,21 @@ async def prepare_multimodal_message_history(
     token_budget: Optional[int] = None,
     model_name: Optional[str] = None,
 ) -> List[ModelMessage]:
-    """Prepare message history with multimodal support.
+    """Prepare message history for the agent from ctx.history (plain text strings).
 
-    CRITICAL: This method now prioritizes using compressed message history from previous runs.
-    It retrieves compressed messages from the history processor's internal storage.
-    Otherwise, it falls back to rebuilding from ctx.history (text strings), trimmed by
-    token budget when provided (Phase 2: token-based limits).
+    Previous conversation turns are represented as plain user/assistant text messages —
+    no tool calls or tool results. Tool calls only exist within the current agent run
+    (accumulated by pydantic_ai during the run and processed by the history_processor).
 
     Args:
-        ctx: Chat context with history list (strings).
-        history_processor: History processor (may expose .processor for compressed lookup).
-        token_budget: Max tokens for history when building from ctx.history. When None,
-                      uses get_history_token_budget(None).
+        ctx: Chat context with history list (strings like "human: ..." / "ai: ...").
+        history_processor: History processor passed through (used during the run, not here).
+        token_budget: Max tokens for history. When None, uses get_history_token_budget(None).
         model_name: Optional model for token counting and model-aware budget.
 
     Returns:
-        List of ModelMessage for the agent.
+        List of ModelMessage (plain text only) for the agent's message_history parameter.
     """
-    # Try to get compressed history from the history processor
-    # The processor stores compressed messages keyed by run_id from RunContext
-    # We need to check if we have a stored run_id from a previous run
-    # For now, we'll use a simple approach: check if processor has any stored history
-    # and use the most recent one (since we're in the same execution context)
-
-    # Access the processor instance from the history processor function
-    processor = getattr(history_processor, "processor", None)
-    if processor:
-        # Get all stored compressed histories (there should be at most one per run)
-        stored_keys = list(processor._last_compressed_output.keys())
-        if stored_keys:
-            # Use the most recent key (last one added)
-            latest_key = stored_keys[-1]
-            compressed_history = processor.get_compressed_history(latest_key)
-            if compressed_history:
-                # Validate the compressed history before using it
-                return validate_and_fix_message_history(compressed_history)
-
-    # Phase 3: conversation-scoped persisted compressed history (cross-request)
-    if ctx.conversation_id:
-        from app.modules.intelligence.agents.context_config import (
-            use_persisted_compressed_history,
-        )
-        from app.modules.intelligence.agents.chat_agents.compressed_history_store import (
-            get_compressed_history_store,
-        )
-
-        if use_persisted_compressed_history():
-            store = get_compressed_history_store()
-            if store:
-                stored = store.get(ctx.conversation_id, user_id=ctx.user_id)
-                if stored:
-                    logger.info(
-                        "Using persisted compressed history for conversation_id=%s",
-                        ctx.conversation_id,
-                    )
-                    return validate_and_fix_message_history(stored)
-
-    # Fallback: rebuild from ctx.history with token-based trimming (Phase 2)
     budget = (
         token_budget
         if token_budget is not None
@@ -475,8 +433,4 @@ async def prepare_multimodal_message_history(
         )
 
     history_messages = _history_strings_to_model_messages(limited_history)
-
-    # Validate and fix message history to ensure tool calls/results are paired
-    history_messages = validate_and_fix_message_history(history_messages)
-
-    return history_messages
+    return validate_and_fix_message_history(history_messages)

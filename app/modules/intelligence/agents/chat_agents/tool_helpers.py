@@ -54,13 +54,11 @@ def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
             return "Fetching content from github"
         case "fetch_file":
             file_path = _get_file_path()
-            return (
-                f"Fetching file: {file_path}" if file_path else "Fetching file content"
-            )
+            return f"Reading file: {file_path}" if file_path else "Reading file content"
         case "fetch_files_batch":
             paths = args.get("paths") if args else []
             if paths:
-                return f"Fetching {len(paths)} file(s): {', '.join(paths[:3])}{'...' if len(paths) > 3 else ''}"
+                return f"Reading {len(paths)} file(s): {', '.join(paths[:3])}{'...' if len(paths) > 3 else ''}"
             return "Fetching files"
         case "WebSearchTool":
             return "Searching the web"

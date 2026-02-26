@@ -38,7 +38,8 @@ def execute_terminal_command_tool(input_data: ExecuteTerminalCommandInput) -> st
     """Execute a shell command on the user's local machine via the VS Code extension (Socket.IO).
 
     This tool executes commands directly on the user's local machine through the VS Code extension.
-    Commands run within the workspace directory with security restrictions.
+    The terminal opens at the root of the current repository. Commands run within the workspace
+    directory with security restrictions.
 
     **Sync Mode (default):**
     - Returns immediate results

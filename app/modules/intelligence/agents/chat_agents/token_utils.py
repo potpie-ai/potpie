@@ -3,7 +3,7 @@ Shared token counting for context and history management.
 
 Uses tiktoken for consistency with OpenAI/Anthropic tokenizers. Used by
 message_history_utils (prepare_multimodal_message_history) and
-TokenAwareHistoryProcessor so that history trimming and compaction use the
+the history processor (create_history_processor) so that history trimming and compaction use the
 same notion of token count.
 """
 
