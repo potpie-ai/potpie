@@ -47,8 +47,14 @@ from app.modules.utils.posthog_helper import PostHogClient
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.media.media_service import MediaService
-from app.modules.conversations.session.session_service import SessionService
-from app.modules.conversations.utils.redis_streaming import RedisStreamManager
+from app.modules.conversations.session.session_service import (
+    AsyncSessionService,
+    SessionService,
+)
+from app.modules.conversations.utils.redis_streaming import (
+    AsyncRedisStreamManager,
+    RedisStreamManager,
+)
 from app.celery.celery_app import celery_app
 from app.modules.conversations.exceptions import GenerationCancelled
 from .conversation_store import ConversationStore, StoreError
@@ -95,6 +101,8 @@ class ConversationService:
         media_service: MediaService,
         session_service: SessionService = None,
         redis_manager: RedisStreamManager = None,
+        async_redis_manager: AsyncRedisStreamManager = None,
+        async_session_service: AsyncSessionService = None,
     ):
         self.db = db
         self.user_id = user_id
@@ -109,9 +117,10 @@ class ConversationService:
         self.agent_service = agent_service
         self.custom_agent_service = custom_agent_service
         self.media_service = media_service
-        # Dependency injection for stop_generation
         self.session_service = session_service or SessionService()
         self.redis_manager = redis_manager or RedisStreamManager()
+        self.async_redis_manager = async_redis_manager
+        self.async_session_service = async_session_service
         self.celery_app = celery_app
 
         # Initialize repo manager if enabled
@@ -138,6 +147,8 @@ class ConversationService:
         db: Session,
         user_id: str,
         user_email: str,
+        async_redis_manager: AsyncRedisStreamManager = None,
+        async_session_service: AsyncSessionService = None,
     ):
         project_service = ProjectService(db)
         history_manager = ChatHistoryService(db)
@@ -168,6 +179,8 @@ class ConversationService:
             media_service,
             session_service,
             redis_manager,
+            async_redis_manager=async_redis_manager,
+            async_session_service=async_session_service,
         )
 
     async def check_conversation_access(
@@ -1566,7 +1579,14 @@ class ConversationService:
                 ActiveSessionErrorResponse,
             )
 
-            active_session = self.session_service.get_active_session(conversation_id)
+            if self.async_session_service:
+                active_session = await self.async_session_service.get_active_session(
+                    conversation_id
+                )
+            else:
+                active_session = self.session_service.get_active_session(
+                    conversation_id
+                )
 
             if isinstance(active_session, ActiveSessionErrorResponse):
                 # No active session found - this is okay, just return success
@@ -1585,13 +1605,25 @@ class ConversationService:
             )
 
         # Retrieve task_id before any mutation so we know whether we will revoke (and thus need to save from stream).
-        task_id = self.redis_manager.get_task_id(conversation_id, run_id)
+        if self.async_redis_manager:
+            task_id = await self.async_redis_manager.get_task_id(
+                conversation_id, run_id
+            )
+        else:
+            task_id = self.redis_manager.get_task_id(conversation_id, run_id)
         logger.info(
             f"Stop generation: conversation_id={conversation_id}, run_id={run_id}, task_id={task_id or 'none'}"
         )
 
         # Snapshot the stream before revoke so we have a consistent read (worker may be killed mid-write after revoke).
-        snapshot = self.redis_manager.get_stream_snapshot(conversation_id, run_id)
+        if self.async_redis_manager:
+            snapshot = await self.async_redis_manager.get_stream_snapshot(
+                conversation_id, run_id
+            )
+        else:
+            snapshot = self.redis_manager.get_stream_snapshot(
+                conversation_id, run_id
+            )
         content_len = len(snapshot.get("content") or "")
         citations_count = len(snapshot.get("citations") or [])
         tool_calls_count = len(snapshot.get("tool_calls") or [])
@@ -1602,7 +1634,12 @@ class ConversationService:
         )
 
         # Set cancellation flag and revoke the Celery task so it stops producing chunks.
-        self.redis_manager.set_cancellation(conversation_id, run_id)
+        if self.async_redis_manager:
+            await self.async_redis_manager.set_cancellation(
+                conversation_id, run_id
+            )
+        else:
+            self.redis_manager.set_cancellation(conversation_id, run_id)
         if task_id:
             try:
                 self.celery_app.control.revoke(
@@ -1657,11 +1694,13 @@ class ConversationService:
                 )
 
         # Always clear the session - publish end event and update status
-        # This ensures clients know the session is stopped and prevents stale sessions
-        # This is important even if there's no task_id - it clears any stale session data
-        # This will also handle the case where stop is called with a stale session_id
         try:
-            self.redis_manager.clear_session(conversation_id, run_id)
+            if self.async_redis_manager:
+                await self.async_redis_manager.clear_session(
+                    conversation_id, run_id
+                )
+            else:
+                self.redis_manager.clear_session(conversation_id, run_id)
         except Exception as e:
             logger.warning(
                 f"Failed to clear session for {conversation_id}:{run_id}: {str(e)}"
