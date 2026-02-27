@@ -32,7 +32,7 @@ from app.modules.parsing.graph_construction.parsing_schema import (
     ParsingStatusRequest,
 )
 from app.modules.projects.projects_controller import ProjectController
-from app.modules.users.user_service import UserService
+from app.modules.users.user_service import AsyncUserService
 from app.modules.utils.APIRouter import APIRouter
 from app.modules.usage.usage_service import UsageService
 from app.modules.search.search_service import SearchService
@@ -57,6 +57,7 @@ async def get_api_key_user(
     x_api_key: Optional[str] = Header(None),
     x_user_id: Optional[str] = Header(None),
     db: Session = Depends(get_db),
+    async_db: AsyncSession = Depends(get_async_db),
 ) -> dict:
     """Dependency to validate API key and get user info."""
     if not x_api_key:
@@ -67,7 +68,7 @@ async def get_api_key_user(
         )
 
     if x_api_key == os.environ.get("INTERNAL_ADMIN_SECRET"):
-        user = UserService(db).get_user_by_uid(x_user_id or "")
+        user = await AsyncUserService(async_db).get_user_by_uid(x_user_id or "")
         if not user:
             raise HTTPException(
                 status_code=401,

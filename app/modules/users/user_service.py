@@ -1,11 +1,14 @@
 import asyncio
 import os
 from datetime import datetime
-from typing import List
+from typing import List, Optional, Tuple
 
 from firebase_admin import auth
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
+
 from app.modules.users.user_model import User
 from app.modules.users.user_schema import CreateUser, UserProfileResponse
 from app.modules.utils.logger import setup_logger
@@ -174,3 +177,105 @@ class UserService:
         except Exception as e:
             logger.error(f"Error retrieving user profile picture: {e}")
             return None
+
+
+class AsyncUserService:
+    """User service using AsyncSession for FastAPI request-scoped use."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def get_user_by_uid(self, uid: str) -> Optional[User]:
+        try:
+            stmt = select(User).where(User.uid == uid).limit(1)
+            result = await self.session.execute(stmt)
+            return result.scalar_one_or_none()
+        except Exception as e:
+            logger.error("Error fetching user: %s", e)
+            return None
+
+    async def get_user_id_by_email(self, email: str) -> Optional[str]:
+        try:
+            stmt = select(User).where(User.email == email).limit(1)
+            result = await self.session.execute(stmt)
+            user = result.scalar_one_or_none()
+            if user:
+                return user.uid
+            return None
+        except Exception as e:
+            logger.error("Error fetching user ID by email %s: %s", email, e)
+            return None
+
+    async def get_user_by_email(self, email: str) -> Optional[User]:
+        try:
+            stmt = select(User).where(User.email == email).limit(1)
+            result = await self.session.execute(stmt)
+            return result.scalar_one_or_none()
+        except SQLAlchemyError as e:
+            logger.error("Database error fetching user by email %s: %s", email, e)
+            return None
+        except Exception as e:
+            logger.error("Unexpected error fetching user by email %s: %s", email, e)
+            return None
+
+    async def get_user_ids_by_emails(self, emails: List[str]) -> Optional[List[str]]:
+        try:
+            stmt = select(User).where(User.email.in_(emails))
+            result = await self.session.execute(stmt)
+            users = result.scalars().all()
+            if users:
+                return [u.uid for u in users]
+            return None
+        except Exception as e:
+            logger.error("Error fetching user IDs by emails %s: %s", emails, e)
+            return None
+
+    async def create_user(
+        self, user_details: CreateUser
+    ) -> Tuple[str, str, bool]:
+        new_user = User(
+            uid=user_details.uid,
+            email=user_details.email,
+            display_name=user_details.display_name,
+            email_verified=user_details.email_verified,
+            created_at=user_details.created_at,
+            last_login_at=user_details.last_login_at,
+            provider_info=user_details.provider_info,
+            provider_username=user_details.provider_username,
+        )
+        try:
+            self.session.add(new_user)
+            await self.session.commit()
+            await self.session.refresh(new_user)
+            return new_user.uid, f"User created with ID: {new_user.uid}", False
+        except Exception as e:
+            logger.error("Error creating user: %s", e)
+            await self.session.rollback()
+            return "", "error creating user", True
+
+    async def update_last_login(
+        self, uid: str, oauth_token: str
+    ) -> Tuple[str, bool]:
+        try:
+            stmt = select(User).where(User.uid == uid).limit(1)
+            result = await self.session.execute(stmt)
+            user = result.scalar_one_or_none()
+            if not user:
+                return "User not found", True
+            user.last_login_at = datetime.utcnow()
+            if user.provider_info is None:
+                user.provider_info = {}
+            provider_info = (
+                user.provider_info.copy()
+                if isinstance(user.provider_info, dict)
+                else {}
+            )
+            provider_info["access_token"] = oauth_token
+            user.provider_info = provider_info
+            await self.session.commit()
+            await self.session.refresh(user)
+            return f"Updated last login time for user with ID: {user.uid}", False
+        except Exception as e:
+            logger.error("Error updating last login time: %s", e)
+            await self.session.rollback()
+            return "Error updating last login time", True

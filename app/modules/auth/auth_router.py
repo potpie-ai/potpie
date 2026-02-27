@@ -10,10 +10,11 @@ from fastapi.exceptions import HTTPException
 
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-from app.core.database import get_db
+from app.core.database import get_async_db, get_db
 from app.modules.auth.auth_schema import (
     LoginRequest,
     SSOLoginRequest,
@@ -32,7 +33,7 @@ from app.modules.auth.unified_auth_service import (
     PROVIDER_TYPE_FIREBASE_GITHUB,
     PROVIDER_TYPE_FIREBASE_EMAIL,
 )
-from app.modules.users.user_service import UserService
+from app.modules.users.user_service import AsyncUserService
 from app.modules.utils.APIRouter import APIRouter
 from app.modules.utils.posthog_helper import PostHogClient
 from app.modules.utils.email_helper import is_personal_email_domain
@@ -80,7 +81,11 @@ class AuthAPI:
             return JSONResponse(content={"error": f"ERROR: {str(e)}"}, status_code=400)
 
     @auth_router.post("/signup")
-    async def signup(request: Request, db: Session = Depends(get_db)):
+    async def signup(
+        request: Request,
+        db: Session = Depends(get_db),
+        async_db: AsyncSession = Depends(get_async_db),
+    ):
         """
         SIMPLIFIED Signup/Login endpoint.
 
@@ -137,7 +142,7 @@ class AuthAPI:
                 content=json.dumps({"error": "Missing email"}), status_code=400
             )
 
-        user_service = UserService(db)
+        async_user_service = AsyncUserService(async_db)
         unified_auth = UnifiedAuthService(db)
 
         # Determine if this is GitHub flow
@@ -161,7 +166,7 @@ class AuthAPI:
 
             # Find the SSO user
             db.expire_all()  # Ensure fresh data
-            user = user_service.get_user_by_uid(link_to_user_id)
+            user = await async_user_service.get_user_by_uid(link_to_user_id)
 
             if not user:
                 logger.error(f"SSO user {link_to_user_id} not found in database!")
@@ -329,14 +334,18 @@ class AuthAPI:
 
             if existing_provider:
                 # GitHub is linked - find the user
-                user = user_service.get_user_by_uid(existing_provider.user_id)
+                user = await async_user_service.get_user_by_uid(
+                    existing_provider.user_id
+                )
                 if user:
                     logger.info(f"GitHub {provider_uid} linked to user {user.uid}")
 
                     # Update last login
                     # Note: update_last_login handles encryption internally, pass plaintext token
                     if oauth_token:
-                        user_service.update_last_login(user.uid, oauth_token)
+                        await async_user_service.update_last_login(
+                            user.uid, oauth_token
+                        )
 
                     return Response(
                         content=json.dumps(
@@ -403,7 +412,7 @@ class AuthAPI:
         # ============================================================
         logger.info(f"Email/password flow for {email}")
 
-        user = user_service.get_user_by_uid(uid)
+        user = await async_user_service.get_user_by_uid(uid)
 
         if user:
             # Existing user
@@ -489,6 +498,7 @@ class AuthAPI:
         request: Request,
         sso_request: SSOLoginRequest,
         db: Session = Depends(get_db),
+        async_db: AsyncSession = Depends(get_async_db),
     ):
         """
         SSO Login endpoint.
@@ -540,8 +550,8 @@ class AuthAPI:
 
             # VALIDATION: Block new users with generic emails (for Google SSO)
             # Check if user already exists by email (legacy user check)
-            user_service = UserService(db)
-            existing_user = user_service.get_user_by_email(verified_email)
+            async_user_service = AsyncUserService(async_db)
+            existing_user = await async_user_service.get_user_by_email(verified_email)
 
             if is_personal_email_domain(verified_email):
                 if not existing_user:
@@ -826,6 +836,7 @@ class AuthAPI:
     async def get_my_account(
         user=Depends(AuthService.check_auth),
         db: Session = Depends(get_db),
+        async_db: AsyncSession = Depends(get_async_db),
     ):
         """Get complete account information including all providers"""
         try:
@@ -837,8 +848,8 @@ class AuthAPI:
                     status_code=401,
                 )
 
-            user_service = UserService(db)
-            user = user_service.get_user_by_uid(user_id)
+            async_user_service = AsyncUserService(async_db)
+            user = await async_user_service.get_user_by_uid(user_id)
 
             if not user:
                 return JSONResponse(

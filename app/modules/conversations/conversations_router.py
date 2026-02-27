@@ -15,7 +15,7 @@ from app.modules.conversations.access.access_schema import (
     ShareChatResponse,
 )
 from app.modules.conversations.access.access_service import (
-    ShareChatService,
+    AsyncShareChatService,
     ShareChatServiceError,
 )
 from app.modules.conversations.conversation.conversation_controller import (
@@ -567,11 +567,11 @@ class ConversationAPI:
 @router.post("/conversations/share", response_model=ShareChatResponse, status_code=201)
 async def share_chat(
     request: ShareChatRequest,
-    db: Session = Depends(get_db),
+    async_db: AsyncSession = Depends(get_async_db),
     user=Depends(AuthService.check_auth),
 ):
     user_id = user["user_id"]
-    service = ShareChatService(db)
+    service = AsyncShareChatService(async_db)
     try:
         shared_conversation = await service.share_chat(
             request.conversation_id,
@@ -589,11 +589,11 @@ async def share_chat(
 @router.get("/conversations/{conversation_id}/shared-emails", response_model=List[str])
 async def get_shared_emails(
     conversation_id: str,
-    db: Session = Depends(get_db),
+    async_db: AsyncSession = Depends(get_async_db),
     user=Depends(AuthService.check_auth),
 ):
     user_id = user["user_id"]
-    service = ShareChatService(db)
+    service = AsyncShareChatService(async_db)
     shared_emails = await service.get_shared_emails(conversation_id, user_id)
     return shared_emails
 
@@ -603,10 +603,10 @@ async def remove_access(
     conversation_id: str,
     request: RemoveAccessRequest,
     user: str = Depends(AuthService.check_auth),
-    db: Session = Depends(get_db),
+    async_db: AsyncSession = Depends(get_async_db),
 ) -> dict:
     """Remove access for specified emails from a conversation."""
-    share_service = ShareChatService(db)
+    share_service = AsyncShareChatService(async_db)
     current_user_id = user["user_id"]
     try:
         await share_service.remove_access(
