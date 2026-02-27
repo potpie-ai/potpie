@@ -37,7 +37,7 @@ from app.modules.intelligence.agents.chat_agents.message_compressor import (
     truncate_tool_result_message,
     validate_and_fix_tool_pairing,
 )
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelResponse
 
 logger = logging.getLogger(__name__)
 
