@@ -1,9 +1,13 @@
-from typing import AsyncGenerator, List
+from typing import AsyncGenerator, List, Optional
 
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.modules.conversations.utils.redis_streaming import AsyncRedisStreamManager
+from app.modules.conversations.session.session_service import AsyncSessionService
+
 from .conversation_store import ConversationStore
 from ..message.message_store import MessageStore
 
@@ -32,7 +36,13 @@ from app.modules.intelligence.agents.custom_agents.custom_agent_model import Cus
 
 class ConversationController:
     def __init__(
-        self, db: Session, async_db: AsyncSession, user_id: str, user_email: str
+        self,
+        db: Session,
+        async_db: AsyncSession,
+        user_id: str,
+        user_email: str,
+        async_redis_manager: Optional[AsyncRedisStreamManager] = None,
+        async_session_service: Optional[AsyncSessionService] = None,
     ):
         self.user_email = user_email
         self.user_id = user_id
@@ -48,6 +58,8 @@ class ConversationController:
             db=self.db,
             user_id=self.user_id,
             user_email=self.user_email,
+            async_redis_manager=async_redis_manager,
+            async_session_service=async_session_service,
         )
 
     async def create_conversation(

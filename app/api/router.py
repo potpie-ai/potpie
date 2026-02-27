@@ -87,10 +87,12 @@ async def get_api_key_user(
     return user
 
 
+from app.modules.conversations.conversation_deps import get_async_redis_stream_manager
 from app.modules.conversations.utils.conversation_routing import (
     normalize_run_id,
-    ensure_unique_run_id,
+    async_ensure_unique_run_id,
     start_celery_task_and_stream,
+    start_celery_task_and_wait,
 )
 
 
@@ -161,6 +163,7 @@ async def post_message(
     db: Session = Depends(get_db),
     async_db: AsyncSession = Depends(get_async_db),
     user=Depends(get_api_key_user),
+    async_redis=Depends(get_async_redis_stream_manager),
 ):
     if message.content == "" or message.content is None or message.content.isspace():
         raise HTTPException(status_code=400, detail="Message content cannot be empty")
@@ -173,31 +176,20 @@ async def post_message(
             detail="Subscription required to create a conversation.",
         )
 
-    # Use Celery for both streaming and non-streaming requests
     run_id = normalize_run_id(
         conversation_id, user_id, session_id, prev_human_message_id
     )
-
-    # For fresh requests without cursor, ensure we get a unique stream
     if not cursor:
-        run_id = ensure_unique_run_id(conversation_id, run_id)
+        run_id = await async_ensure_unique_run_id(
+            conversation_id, run_id, async_redis
+        )
 
-    # Extract agent_id from conversation (will be handled in background task)
     agent_id = None
-
-    # Extract node_id strings from NodeContext objects
     node_ids_list = [nc.node_id for nc in (message.node_ids or [])]
-
-    # Check User-Agent header for local mode
     user_agent = request.headers.get("user-agent", "")
     local_mode = user_agent == "Potpie-VSCode-Extension/1.0.1"
 
     if not stream:
-        # Non-streaming: use Celery but wait for complete response
-        from app.modules.conversations.utils.conversation_routing import (
-            start_celery_task_and_wait,
-        )
-
         return await start_celery_task_and_wait(
             conversation_id=conversation_id,
             run_id=run_id,
@@ -206,13 +198,12 @@ async def post_message(
             agent_id=agent_id,
             node_ids=node_ids_list,
             attachment_ids=message.attachment_ids or [],
+            async_redis_manager=async_redis,
             local_mode=local_mode,
             tunnel_url=message.tunnel_url,
         )
 
-    # Streaming: use Celery with streaming response
-
-    return start_celery_task_and_stream(
+    return await start_celery_task_and_stream(
         conversation_id=conversation_id,
         run_id=run_id,
         user_id=user_id,
@@ -220,6 +211,7 @@ async def post_message(
         agent_id=agent_id,
         node_ids=node_ids_list,
         attachment_ids=message.attachment_ids or [],
+        async_redis_manager=async_redis,
         cursor=cursor,
         local_mode=local_mode,
         tunnel_url=message.tunnel_url,
