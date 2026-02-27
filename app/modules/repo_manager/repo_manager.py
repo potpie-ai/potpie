@@ -1190,6 +1190,7 @@ class RepoManager(IRepoManager):
             "add",
             "-b",
             new_branch_name,
+            "--",
             str(worktree_path),
             base_ref,
         ]

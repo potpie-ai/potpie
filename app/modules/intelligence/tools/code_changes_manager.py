@@ -400,7 +400,14 @@ class CodeChangesManager:
         self._changes_cache[file_path] = change
         # Worktree first (mandatory when project_id + non-local), then Redis
         if project_id and not _get_local_mode():
-            _write_change_to_worktree(project_id, file_path, "add", content, db)
+            worktree_ok, worktree_err = _write_change_to_worktree(
+                project_id, file_path, "add", content, db
+            )
+            if not worktree_ok:
+                logger.warning(
+                    f"CodeChangesManager.add_file: Worktree write failed for '{file_path}': {worktree_err}"
+                )
+                return False
         self._persist_change()
         logger.info(
             f"CodeChangesManager.add_file: Successfully added file '{file_path}' (conversation: {self._conversation_id or self._fallback_id})"
@@ -1004,7 +1011,14 @@ class CodeChangesManager:
         )
         # Worktree first (mandatory when project_id + non-local), then Redis via _apply_update
         if project_id and not _get_local_mode():
-            _write_change_to_worktree(project_id, file_path, "update", content, db)
+            worktree_ok, worktree_err = _write_change_to_worktree(
+                project_id, file_path, "update", content, db
+            )
+            if not worktree_ok:
+                logger.warning(
+                    f"CodeChangesManager.update_file: Worktree write failed for '{file_path}': {worktree_err}"
+                )
+                return False
         result = self._apply_update(
             file_path,
             content,
@@ -1627,7 +1641,14 @@ class CodeChangesManager:
                 existing.previous_content = previous_content
             # Worktree first (mandatory when project_id + non-local), then Redis
             if project_id and not _get_local_mode():
-                _write_change_to_worktree(project_id, file_path, "delete", None, db)
+                worktree_ok, worktree_err = _write_change_to_worktree(
+                    project_id, file_path, "delete", None, db
+                )
+                if not worktree_ok:
+                    logger.warning(
+                        f"CodeChangesManager.delete_file: Worktree delete failed for '{file_path}': {worktree_err}"
+                    )
+                    return False
             self._persist_change()
         else:
             # New deletion record
@@ -1641,7 +1662,14 @@ class CodeChangesManager:
             self._changes_cache[file_path] = change
             # Worktree first (mandatory when project_id + non-local), then Redis
             if project_id and not _get_local_mode():
-                _write_change_to_worktree(project_id, file_path, "delete", None, db)
+                worktree_ok, worktree_err = _write_change_to_worktree(
+                    project_id, file_path, "delete", None, db
+                )
+                if not worktree_ok:
+                    logger.warning(
+                        f"CodeChangesManager.delete_file: Worktree delete failed for '{file_path}': {worktree_err}"
+                    )
+                    return False
             self._persist_change()
         logger.info(
             f"CodeChangesManager.delete_file: Successfully marked file '{file_path}' for deletion"
@@ -2320,7 +2348,7 @@ class CodeChangesManager:
                     "error": "REPO_MANAGER_ENABLED is not set to true",
                 }
 
-            conversation_id = _get_conversation_id()
+            conversation_id = _get_conversation_id() or self._conversation_id
             if not conversation_id:
                 return {"success": False, "error": "No conversation_id set"}
 
@@ -2538,7 +2566,7 @@ class CodeChangesManager:
                     "error": "REPO_MANAGER_ENABLED is not set to true",
                 }
 
-            conversation_id = _get_conversation_id()
+            conversation_id = _get_conversation_id() or self._conversation_id
             if not conversation_id:
                 return {"success": False, "error": "No conversation_id set"}
 
@@ -2857,24 +2885,87 @@ def _get_project_id_from_conversation_id(conversation_id: Optional[str]) -> Opti
         from app.modules.conversations.conversation.conversation_model import Conversation
         from app.core.database import get_db
 
-        db = next(get_db())
-        conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+        db_gen = get_db()
+        try:
+            db = next(db_gen)
+            conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
 
-        if conversation and conversation.project_ids and len(conversation.project_ids) > 0:
-            project_id = conversation.project_ids[0]
-            _project_id_cache[conversation_id] = project_id
-            logger.info(
-                f"CodeChangesManager: Resolved project_id={project_id} from conversation_id={conversation_id}"
-            )
-            return project_id
+            if conversation and conversation.project_ids and len(conversation.project_ids) > 0:
+                project_id = conversation.project_ids[0]
+                _project_id_cache[conversation_id] = project_id
+                logger.info(
+                    f"CodeChangesManager: Resolved project_id={project_id} from conversation_id={conversation_id}"
+                )
+                return project_id
 
-        _project_id_cache[conversation_id] = None
-        return None
+            _project_id_cache[conversation_id] = None
+            return None
+        finally:
+            db_gen.close()
     except Exception as e:
         logger.warning(
             f"CodeChangesManager: Failed to resolve project_id from conversation_id={conversation_id}: {e}"
         )
         return None
+
+
+def _check_can_access_conversation_changes(conversation_id: str) -> bool:
+    """
+    Verify the current caller has permission to view the given conversation's changes.
+    Used by get_changes_for_pr_tool to prevent IDOR. Logs only access decision on denial.
+    """
+    user_id = _get_user_id()
+    if not user_id:
+        logger.warning(
+            "get_changes_for_pr_tool: access denied (no caller identity)",
+            extra={"conversation_id": conversation_id},
+        )
+        return False
+    try:
+        from app.core.database import get_db
+        from app.modules.conversations.conversation.conversation_model import (
+            Conversation,
+            Visibility,
+        )
+        from app.modules.users.user_service import UserService
+
+        db_gen = get_db()
+        try:
+            db = next(db_gen)
+            conversation = (
+                db.query(Conversation).filter(Conversation.id == conversation_id).first()
+            )
+            if not conversation:
+                logger.warning(
+                    "get_changes_for_pr_tool: access denied (conversation not found)",
+                    extra={"conversation_id": conversation_id},
+                )
+                return False
+            if conversation.user_id == user_id:
+                return True
+            visibility = conversation.visibility or Visibility.PRIVATE
+            if visibility == Visibility.PUBLIC:
+                return True
+            if conversation.shared_with_emails:
+                user_service = UserService(db)
+                shared_ids = user_service.get_user_ids_by_emails(
+                    conversation.shared_with_emails
+                )
+                if shared_ids and user_id in shared_ids:
+                    return True
+            logger.warning(
+                "get_changes_for_pr_tool: access denied (insufficient permission)",
+                extra={"conversation_id": conversation_id},
+            )
+            return False
+        finally:
+            db_gen.close()
+    except Exception as e:
+        logger.warning(
+            "get_changes_for_pr_tool: access check failed",
+            extra={"conversation_id": conversation_id, "error": str(e)},
+        )
+        return False
 
 
 def _write_change_to_worktree(
@@ -4259,22 +4350,28 @@ def add_file_tool(input_data: AddFileInput) -> str:
     try:
         manager = _get_code_changes_manager()
         db = None
+        db_gen = None
         if project_id:
             from app.core.database import get_db
-            db = next(get_db())
-        success = manager.add_file(
-            file_path=input_data.file_path,
-            content=input_data.content,
-            description=input_data.description,
-            project_id=project_id,
-            db=db,
-        )
+            db_gen = get_db()
+            db = next(db_gen)
+        try:
+            success = manager.add_file(
+                file_path=input_data.file_path,
+                content=input_data.content,
+                description=input_data.description,
+                project_id=project_id,
+                db=db,
+            )
 
-        if success:
-            summary = manager.get_summary()
-            return f"✅ Added file '{input_data.file_path}' (cloud)\n\nTotal files in changes: {summary['total_files']}"
-        else:
-            return f"❌ File '{input_data.file_path}' already exists in changes. Use update_file to modify it."
+            if success:
+                summary = manager.get_summary()
+                return f"✅ Added file '{input_data.file_path}' (cloud)\n\nTotal files in changes: {summary['total_files']}"
+            else:
+                return f"❌ File '{input_data.file_path}' already exists in changes. Use update_file to modify it."
+        finally:
+            if db_gen is not None:
+                db_gen.close()
     except Exception:
         logger.exception(
             "Tool add_file_tool: Error adding file", file_path=input_data.file_path
@@ -4307,23 +4404,29 @@ def update_file_tool(input_data: UpdateFileInput) -> str:
     try:
         manager = _get_code_changes_manager()
         db = None
+        db_gen = None
         if input_data.project_id:
             from app.core.database import get_db
-            db = next(get_db())
-        success = manager.update_file(
-            file_path=input_data.file_path,
-            content=input_data.content,
-            description=input_data.description,
-            preserve_previous=input_data.preserve_previous,
-            project_id=input_data.project_id,
-            db=db,
-        )
+            db_gen = get_db()
+            db = next(db_gen)
+        try:
+            success = manager.update_file(
+                file_path=input_data.file_path,
+                content=input_data.content,
+                description=input_data.description,
+                preserve_previous=input_data.preserve_previous,
+                project_id=input_data.project_id,
+                db=db,
+            )
 
-        if success:
-            summary = manager.get_summary()
-            return f"✅ Updated file '{input_data.file_path}' (cloud)\n\nTotal files in changes: {summary['total_files']}"
-        else:
-            return f"❌ Error updating file '{input_data.file_path}'"
+            if success:
+                summary = manager.get_summary()
+                return f"✅ Updated file '{input_data.file_path}' (cloud)\n\nTotal files in changes: {summary['total_files']}"
+            else:
+                return f"❌ Error updating file '{input_data.file_path}'"
+        finally:
+            if db_gen is not None:
+                db_gen.close()
     except Exception:
         logger.exception(
             "Tool update_file_tool: Error updating file", file_path=input_data.file_path
@@ -4382,22 +4485,28 @@ def delete_file_tool(input_data: DeleteFileInput) -> str:
     try:
         manager = _get_code_changes_manager()
         db = None
+        db_gen = None
         if input_data.project_id:
             from app.core.database import get_db
-            db = next(get_db())
-        success = manager.delete_file(
-            file_path=input_data.file_path,
-            description=input_data.description,
-            preserve_content=input_data.preserve_content,
-            project_id=input_data.project_id,
-            db=db,
-        )
+            db_gen = get_db()
+            db = next(db_gen)
+        try:
+            success = manager.delete_file(
+                file_path=input_data.file_path,
+                description=input_data.description,
+                preserve_content=input_data.preserve_content,
+                project_id=input_data.project_id,
+                db=db,
+            )
 
-        if success:
-            summary = manager.get_summary()
-            return f"✅ Marked file '{input_data.file_path}' for deletion (cloud)\n\nTotal files in changes: {summary['total_files']}"
-        else:
-            return f"❌ Error deleting file '{input_data.file_path}'"
+            if success:
+                summary = manager.get_summary()
+                return f"✅ Marked file '{input_data.file_path}' for deletion (cloud)\n\nTotal files in changes: {summary['total_files']}"
+            else:
+                return f"❌ Error deleting file '{input_data.file_path}'"
+        finally:
+            if db_gen is not None:
+                db_gen.close()
     except Exception:
         logger.exception(
             "Tool delete_file_tool: Error deleting file", file_path=input_data.file_path
@@ -4654,6 +4763,8 @@ def get_changes_for_pr_tool(input_data: GetChangesForPRInput) -> str:
     create_pr_workflow. Takes conversation_id explicitly so sub-agents can fetch
     changes for the parent conversation.
     """
+    if not _check_can_access_conversation_changes(input_data.conversation_id):
+        return "Permission denied."
     logger.info(
         f"Tool get_changes_for_pr_tool: Getting changes for conversation {input_data.conversation_id}"
     )
@@ -4717,13 +4828,15 @@ def update_file_lines_tool(input_data: UpdateFileLinesInput) -> str:
     try:
         manager = _get_code_changes_manager()
         db = None
+        db_gen = None
         if input_data.project_id:
             logger.info(
                 f"Tool update_file_lines_tool: Project ID provided ({input_data.project_id}), fetching database session"
             )
             from app.core.database import get_db
 
-            db = next(get_db())
+            db_gen = get_db()
+            db = next(db_gen)
             logger.debug("Tool update_file_lines_tool: Database session obtained")
         # project_id is now required, so this shouldn't happen, but keep for safety
         if not input_data.project_id:
@@ -4731,7 +4844,8 @@ def update_file_lines_tool(input_data: UpdateFileLinesInput) -> str:
                 "Tool update_file_lines_tool: ERROR - project_id is required but was not provided!"
             )
             return "❌ Error: project_id is required to update file lines. Please provide the project_id from the conversation context."
-        result = manager.update_file_lines(
+        try:
+            result = manager.update_file_lines(
             file_path=input_data.file_path,
             start_line=input_data.start_line,
             end_line=input_data.end_line,
@@ -4753,8 +4867,11 @@ def update_file_lines_tool(input_data: UpdateFileLinesInput) -> str:
                 + f"Replaced content:\n```\n{result['replaced_content'][:200]}{'...' if len(result['replaced_content']) > 200 else ''}\n```"
                 + context_str
             )
-        else:
-            return f"❌ Error updating lines: {result.get('error', 'Unknown error')}"
+            else:
+                return f"❌ Error updating lines: {result.get('error', 'Unknown error')}"
+        finally:
+            if db_gen is not None:
+                db_gen.close()
     except Exception:
         logger.exception(
             "Tool update_file_lines_tool: Error updating file lines",
@@ -4799,60 +4916,66 @@ def replace_in_file_tool(input_data: ReplaceInFileInput) -> str:
     try:
         manager = _get_code_changes_manager()
         db = None
+        db_gen = None
         if project_id:
             logger.info(
                 f"Tool replace_in_file_tool: Project ID available ({project_id}), fetching database session"
             )
             from app.core.database import get_db
 
-            db = next(get_db())
+            db_gen = get_db()
+            db = next(db_gen)
             logger.debug("Tool replace_in_file_tool: Database session obtained")
-        result = manager.replace_in_file(
-            file_path=input_data.file_path,
-            old_str=input_data.old_str,
-            new_str=input_data.new_str,
-            description=input_data.description,
-            project_id=project_id,
-            db=db,
-        )
-
-        if result.get("success"):
-            msg = (
-                f"✅ str_replace applied in '{input_data.file_path}' "
-                f"(match at line ~{result['match_line']})"
+        try:
+            result = manager.replace_in_file(
+                file_path=input_data.file_path,
+                old_str=input_data.old_str,
+                new_str=input_data.new_str,
+                description=input_data.description,
+                project_id=project_id,
+                db=db,
             )
-            # Append diff and line stats from manager (cloud path has no LocalServer)
-            file_data = manager.get_file(input_data.file_path)
-            if (
-                file_data
-                and file_data.get("previous_content")
-                and file_data.get("content")
-            ):
-                try:
-                    diff = manager._create_unified_diff(
-                        file_data["previous_content"],
-                        file_data["content"],
-                        input_data.file_path,
-                        input_data.file_path,
-                        3,
-                    )
-                    if diff:
-                        msg += (
-                            "\n\n**Diff (uncommitted changes):**\n```diff\n"
-                            + diff
-                            + "\n```"
+
+            if result.get("success"):
+                msg = (
+                    f"✅ str_replace applied in '{input_data.file_path}' "
+                    f"(match at line ~{result['match_line']})"
+                )
+                # Append diff and line stats from manager (cloud path has no LocalServer)
+                file_data = manager.get_file(input_data.file_path)
+                if (
+                    file_data
+                    and file_data.get("previous_content")
+                    and file_data.get("content")
+                ):
+                    try:
+                        diff = manager._create_unified_diff(
+                            file_data["previous_content"],
+                            file_data["content"],
+                            input_data.file_path,
+                            input_data.file_path,
+                            3,
                         )
-                    old_lines = len(file_data["previous_content"].splitlines())
-                    new_lines = len(file_data["content"].splitlines())
-                    msg += (
-                        f"\n\n**Line stats:** lines_added={max(0, new_lines - old_lines)}, "
-                        f"lines_deleted={max(0, old_lines - new_lines)}"
-                    )
-                except Exception:
-                    pass
-            return msg
-        else:
-            return f"❌ str_replace failed: {result.get('error', 'Unknown error')}"
+                        if diff:
+                            msg += (
+                                "\n\n**Diff (uncommitted changes):**\n```diff\n"
+                                + diff
+                                + "\n```"
+                            )
+                        old_lines = len(file_data["previous_content"].splitlines())
+                        new_lines = len(file_data["content"].splitlines())
+                        msg += (
+                            f"\n\n**Line stats:** lines_added={max(0, new_lines - old_lines)}, "
+                            f"lines_deleted={max(0, old_lines - new_lines)}"
+                        )
+                    except Exception:
+                        pass
+                return msg
+            else:
+                return f"❌ str_replace failed: {result.get('error', 'Unknown error')}"
+        finally:
+            if db_gen is not None:
+                db_gen.close()
     except Exception:
         logger.exception(
             "Tool replace_in_file_tool: Error replacing in file",
@@ -4891,13 +5014,15 @@ def insert_lines_tool(input_data: InsertLinesInput) -> str:
     try:
         manager = _get_code_changes_manager()
         db = None
+        db_gen = None
         if input_data.project_id:
             logger.info(
                 f"Tool insert_lines_tool: Project ID provided ({input_data.project_id}), fetching database session"
             )
             from app.core.database import get_db
 
-            db = next(get_db())
+            db_gen = get_db()
+            db = next(db_gen)
             logger.debug("Tool insert_lines_tool: Database session obtained")
         # project_id is now required, so this shouldn't happen, but keep for safety
         if not input_data.project_id:
@@ -4905,29 +5030,33 @@ def insert_lines_tool(input_data: InsertLinesInput) -> str:
                 "Tool insert_lines_tool: ERROR - project_id is required but was not provided!"
             )
             return "❌ Error: project_id is required to insert lines. Please provide the project_id from the conversation context."
-        result = manager.insert_lines(
-            file_path=input_data.file_path,
-            line_number=input_data.line_number,
-            content=input_data.content,
-            description=input_data.description,
-            insert_after=input_data.insert_after,
-            project_id=input_data.project_id,
-            db=db,
-        )
+        try:
+            result = manager.insert_lines(
+                file_path=input_data.file_path,
+                line_number=input_data.line_number,
+                content=input_data.content,
+                description=input_data.description,
+                insert_after=input_data.insert_after,
+                project_id=input_data.project_id,
+                db=db,
+            )
 
-        if result.get("success"):
-            position = "after" if result["position"] == "after" else "before"
-            context_str = ""
-            if result.get("inserted_context"):
-                context_start = result.get("context_start_line", input_data.line_number)
-                context_end = result.get(
-                    "context_end_line",
-                    input_data.line_number + result["lines_inserted"],
-                )
-                context_str = f"\n\nInserted lines with context (lines {context_start}-{context_end}):\n```{input_data.file_path}\n{result['inserted_context']}\n```"
-            return f"✅ Inserted {result['lines_inserted']} line(s) {position} line {input_data.line_number} in '{input_data.file_path}'{context_str}"
-        else:
-            return f"❌ Error inserting lines: {result.get('error', 'Unknown error')}"
+            if result.get("success"):
+                position = "after" if result["position"] == "after" else "before"
+                context_str = ""
+                if result.get("inserted_context"):
+                    context_start = result.get("context_start_line", input_data.line_number)
+                    context_end = result.get(
+                        "context_end_line",
+                        input_data.line_number + result["lines_inserted"],
+                    )
+                    context_str = f"\n\nInserted lines with context (lines {context_start}-{context_end}):\n```{input_data.file_path}\n{result['inserted_context']}\n```"
+                return f"✅ Inserted {result['lines_inserted']} line(s) {position} line {input_data.line_number} in '{input_data.file_path}'{context_str}"
+            else:
+                return f"❌ Error inserting lines: {result.get('error', 'Unknown error')}"
+        finally:
+            if db_gen is not None:
+                db_gen.close()
     except Exception:
         logger.exception(
             "Tool insert_lines_tool: Error inserting lines",
@@ -4965,32 +5094,38 @@ def delete_lines_tool(input_data: DeleteLinesInput) -> str:
     try:
         manager = _get_code_changes_manager()
         db = None
+        db_gen = None
         if input_data.project_id:
             logger.info(
                 f"Tool delete_lines_tool: Project ID provided ({input_data.project_id}), fetching database session"
             )
             from app.core.database import get_db
 
-            db = next(get_db())
+            db_gen = get_db()
+            db = next(db_gen)
             logger.debug("Tool delete_lines_tool: Database session obtained")
-        result = manager.delete_lines(
-            file_path=input_data.file_path,
-            start_line=input_data.start_line,
-            end_line=input_data.end_line,
-            description=input_data.description,
-            project_id=input_data.project_id,
-            db=db,
-        )
-
-        if result.get("success"):
-            deleted_preview = result["deleted_content"][:200]
-            return (
-                f"✅ Deleted lines {result['start_line']}-{result['end_line']} from '{input_data.file_path}'\n\n"
-                + f"Deleted {result['lines_deleted']} line(s)\n"
-                + f"Deleted content:\n```\n{deleted_preview}{'...' if len(result['deleted_content']) > 200 else ''}\n```"
+        try:
+            result = manager.delete_lines(
+                file_path=input_data.file_path,
+                start_line=input_data.start_line,
+                end_line=input_data.end_line,
+                description=input_data.description,
+                project_id=input_data.project_id,
+                db=db,
             )
-        else:
-            return f"❌ Error deleting lines: {result.get('error', 'Unknown error')}"
+
+            if result.get("success"):
+                deleted_preview = result["deleted_content"][:200]
+                return (
+                    f"✅ Deleted lines {result['start_line']}-{result['end_line']} from '{input_data.file_path}'\n\n"
+                    + f"Deleted {result['lines_deleted']} line(s)\n"
+                    + f"Deleted content:\n```\n{deleted_preview}{'...' if len(result['deleted_content']) > 200 else ''}\n```"
+                )
+            else:
+                return f"❌ Error deleting lines: {result.get('error', 'Unknown error')}"
+        finally:
+            if db_gen is not None:
+                db_gen.close()
     except Exception:
         logger.exception(
             "Tool delete_lines_tool: Error deleting lines",
@@ -5187,16 +5322,19 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
 
         # Get database session if project_id provided
         db = None
+        db_gen = None
         if project_id:
             logger.info(
                 f"Tool show_diff_tool: Project ID available ({project_id}), fetching database session"
             )
             from app.core.database import get_db
 
-            db = next(get_db())
+            db_gen = get_db()
+            db = next(db_gen)
 
-        # Generate git-style diffs for each file
-        files_to_diff = (
+        try:
+            # Generate git-style diffs for each file
+            files_to_diff = (
             [input_data.file_path]
             if input_data.file_path
             else list(manager.changes.keys())
@@ -5359,6 +5497,9 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
             )
 
         return result
+        finally:
+            if db_gen is not None:
+                db_gen.close()
     except Exception:
         logger.exception(
             "Tool show_diff_tool: Error displaying diff", project_id=project_id
@@ -5402,79 +5543,91 @@ def get_file_diff_tool(input_data: GetFileDiffInput) -> str:
                     "The file may not exist or the VS Code extension tunnel may be disconnected."
                 )
             db = None
+            db_gen = None
             if input_data.project_id:
                 from app.core.database import get_db
 
-                db = next(get_db())
-            old_content = ""
-            if input_data.project_id and db:
-                repo_content = _fetch_repo_file_content_for_diff(
-                    input_data.project_id, input_data.file_path, db
+                db_gen = get_db()
+                db = next(db_gen)
+            try:
+                old_content = ""
+                if input_data.project_id and db:
+                    repo_content = _fetch_repo_file_content_for_diff(
+                        input_data.project_id, input_data.file_path, db
+                    )
+                    if repo_content is not None:
+                        old_content = repo_content
+                if old_content:
+                    diff_content = manager._create_unified_diff(
+                        old_content,
+                        local_content,
+                        input_data.file_path,
+                        input_data.file_path,
+                        input_data.context_lines,
+                    )
+                else:
+                    diff_content = manager._create_unified_diff(
+                        "",
+                        local_content,
+                        "/dev/null",
+                        input_data.file_path,
+                        input_data.context_lines,
+                    )
+                result = (
+                    f"📝 **Diff for {input_data.file_path}** (✏️ local file vs repo)\n\n"
+                    f"**Source:** Local workspace (file not in session changes)\n\n"
+                    "```diff\n"
                 )
-                if repo_content is not None:
-                    old_content = repo_content
-            if old_content:
-                diff_content = manager._create_unified_diff(
-                    old_content,
-                    local_content,
-                    input_data.file_path,
-                    input_data.file_path,
-                    input_data.context_lines,
-                )
-            else:
-                diff_content = manager._create_unified_diff(
-                    "",
-                    local_content,
-                    "/dev/null",
-                    input_data.file_path,
-                    input_data.context_lines,
-                )
-            result = (
-                f"📝 **Diff for {input_data.file_path}** (✏️ local file vs repo)\n\n"
-                f"**Source:** Local workspace (file not in session changes)\n\n"
-                "```diff\n"
-            )
-            result += diff_content
-            result += "\n```\n"
-            return result
+                result += diff_content
+                result += "\n```\n"
+                return result
+            finally:
+                if db_gen is not None:
+                    db_gen.close()
 
         if not file_data:
             return f"❌ File '{input_data.file_path}' not found in changes"
 
         # Get database session if project_id provided
         db = None
+        db_gen = None
         if input_data.project_id:
             logger.info(
                 f"Tool get_file_diff_tool: Project ID provided ({input_data.project_id}), fetching database session"
             )
             from app.core.database import get_db
 
-            db = next(get_db())
+            db_gen = get_db()
+            db = next(db_gen)
 
-        # Generate diff for this specific file
-        diffs = manager.generate_diff(
-            file_path=input_data.file_path,
-            context_lines=input_data.context_lines,
-            project_id=input_data.project_id,
-            db=db,
-        )
+        try:
+            # Generate diff for this specific file
+            diffs = manager.generate_diff(
+                file_path=input_data.file_path,
+                context_lines=input_data.context_lines,
+                project_id=input_data.project_id,
+                db=db,
+            )
 
-        if not diffs or input_data.file_path not in diffs:
-            return f"❌ No diff generated for '{input_data.file_path}'"
+            if not diffs or input_data.file_path not in diffs:
+                return f"❌ No diff generated for '{input_data.file_path}'"
 
-        diff_content = diffs[input_data.file_path]
-        change_emoji = {"add": "➕", "update": "✏️", "delete": "🗑️"}
-        emoji = change_emoji.get(file_data["change_type"], "📄")
+            diff_content = diffs[input_data.file_path]
+            change_emoji = {"add": "➕", "update": "✏️", "delete": "🗑️"}
+            emoji = change_emoji.get(file_data["change_type"], "📄")
 
-        result = f"📝 **Diff for {input_data.file_path}** ({emoji} {file_data['change_type']})\n\n"
-        if file_data.get("description"):
-            result += f"*{file_data['description']}*\n\n"
-        result += f"**Last updated:** {file_data['updated_at']}\n\n"
-        result += "```diff\n"
-        result += diff_content
-        result += "\n```\n"
+            result = f"📝 **Diff for {input_data.file_path}** ({emoji} {file_data['change_type']})\n\n"
+            if file_data.get("description"):
+                result += f"*{file_data['description']}*\n\n"
+            result += f"**Last updated:** {file_data['updated_at']}\n\n"
+            result += "```diff\n"
+            result += diff_content
+            result += "\n```\n"
 
-        return result
+            return result
+        finally:
+            if db_gen is not None:
+                db_gen.close()
     except Exception:
         logger.exception(
             "Tool get_file_diff_tool: Error getting file diff",
@@ -5570,46 +5723,52 @@ def export_changes_tool(input_data: ExportChangesInput) -> str:
 
         # Get database session if project_id provided (needed for diff format)
         db = None
+        db_gen = None
         if input_data.project_id:
             logger.info(
                 f"Tool export_changes_tool: Project ID provided ({input_data.project_id}), fetching database session"
             )
             from app.core.database import get_db
 
-            db = next(get_db())
+            db_gen = get_db()
+            db = next(db_gen)
 
-        exported = manager.export_changes(
-            format=input_data.format, project_id=input_data.project_id, db=db
-        )
+        try:
+            exported = manager.export_changes(
+                format=input_data.format, project_id=input_data.project_id, db=db
+            )
 
-        if input_data.format == "json":
-            # Return JSON directly (might be long, but that's expected)
-            return f"📦 **Exported Changes (JSON)**\n\n```json\n{exported}\n```"
-        elif input_data.format == "dict":
-            if not isinstance(exported, dict):
-                return f"❌ Expected dict format, got {type(exported)}"
-            result = f"📦 **Exported Changes (Dictionary)** - {len(exported)} files\n\n"
-            items_list = list(exported.items())[:5]  # Show first 5
-            for file_path, content in items_list:
-                result += f"**{file_path}** ({len(content)} chars):\n```\n{content[:200]}...\n```\n\n"
-            if len(exported) > 5:
-                result += f"... and {len(exported) - 5} more files\n"
-            return result
-        elif input_data.format == "diff":
-            # Return diff patch format with "Generated Diff:" heading
-            if not exported or not isinstance(exported, str):
-                return "❌ No diff generated or invalid format"
-            return f"Generated Diff:\n\n```\n{exported}\n```"
-        else:  # list format
-            if not isinstance(exported, list):
-                return f"❌ Expected list format, got {type(exported)}"
-            result = f"📦 **Exported Changes (List)** - {len(exported)} files\n\n"
-            for change in exported[:5]:  # Show first 5
-                if isinstance(change, dict):
-                    result += f"**{change.get('file_path', 'unknown')}** ({change.get('change_type', 'unknown')})\n"
-            if len(exported) > 5:
-                result += f"... and {len(exported) - 5} more files\n"
-            return result
+            if input_data.format == "json":
+                # Return JSON directly (might be long, but that's expected)
+                return f"📦 **Exported Changes (JSON)**\n\n```json\n{exported}\n```"
+            elif input_data.format == "dict":
+                if not isinstance(exported, dict):
+                    return f"❌ Expected dict format, got {type(exported)}"
+                result = f"📦 **Exported Changes (Dictionary)** - {len(exported)} files\n\n"
+                items_list = list(exported.items())[:5]  # Show first 5
+                for file_path, content in items_list:
+                    result += f"**{file_path}** ({len(content)} chars):\n```\n{content[:200]}...\n```\n\n"
+                if len(exported) > 5:
+                    result += f"... and {len(exported) - 5} more files\n"
+                return result
+            elif input_data.format == "diff":
+                # Return diff patch format with "Generated Diff:" heading
+                if not exported or not isinstance(exported, str):
+                    return "❌ No diff generated or invalid format"
+                return f"Generated Diff:\n\n```\n{exported}\n```"
+            else:  # list format
+                if not isinstance(exported, list):
+                    return f"❌ Expected list format, got {type(exported)}"
+                result = f"📦 **Exported Changes (List)** - {len(exported)} files\n\n"
+                for change in exported[:5]:  # Show first 5
+                    if isinstance(change, dict):
+                        result += f"**{change.get('file_path', 'unknown')}** ({change.get('change_type', 'unknown')})\n"
+                if len(exported) > 5:
+                    result += f"... and {len(exported) - 5} more files\n"
+                return result
+        finally:
+            if db_gen is not None:
+                db_gen.close()
     except Exception:
         logger.exception(
             "Tool export_changes_tool: Error exporting changes",

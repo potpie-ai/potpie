@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import time
 from datetime import datetime, timezone
 from typing import AsyncGenerator, Callable, List, Optional, Dict, Union
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -1648,15 +1649,32 @@ class ConversationService:
         self.redis_manager.set_cancellation(conversation_id, run_id)
         if task_id:
             try:
-                # Use SIGKILL to forcefully terminate the task immediately
-                # This is necessary because SIGTERM may not work reliably on all platforms
-                # (e.g., macOS/Darwin) and the task may be stuck in async operations
-                self.celery_app.control.revoke(
-                    task_id, terminate=True, signal="SIGKILL"
-                )
+                # Step 1: Try graceful revocation first (cooperative cancellation).
+                # The Celery task checks redis_manager.check_cancellation() regularly
+                # and will exit cleanly when it sees the cancellation flag.
+                self.celery_app.control.revoke(task_id, terminate=False)
                 logger.info(
-                    f"Revoked Celery task {task_id} for {conversation_id}:{run_id}"
+                    f"Sent graceful revoke for Celery task {task_id} for {conversation_id}:{run_id}"
                 )
+
+                # Step 2: Wait briefly for the task to stop gracefully
+                time.sleep(0.5)
+
+                # Check if task is still running via task status
+                task_status = self.redis_manager.get_task_status(conversation_id, run_id)
+                if task_status in ["running", "queued"]:
+                    logger.info(
+                        f"Task {task_id} still running after graceful revoke, using terminate"
+                    )
+                    # Step 3: Use terminate with SIGTERM as fallback
+                    self.celery_app.control.revoke(task_id, terminate=True, signal="SIGTERM")
+                    logger.info(
+                        f"Sent SIGTERM to Celery task {task_id} for {conversation_id}:{run_id}"
+                    )
+                else:
+                    logger.info(
+                        f"Task {task_id} stopped gracefully for {conversation_id}:{run_id}"
+                    )
             except Exception as e:
                 logger.warning(f"Failed to revoke Celery task {task_id}: {str(e)}")
         else:

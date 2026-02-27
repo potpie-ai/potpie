@@ -12,6 +12,7 @@ This reduces LLM round-trips and eliminates the need for delegation to github_ag
 """
 
 import os
+import subprocess
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -592,12 +593,10 @@ Returns:
             config = ConfigProvider()
             client = redis.from_url(config.get_redis_url())
 
-            # Find all patch keys for this conversation
+            # Find all patch keys for this conversation (scan_iter is non-blocking)
             pattern = f"pr_patches:{conversation_id}:*"
-            keys = client.keys(pattern)
-
             patches = {}
-            for key in keys:
+            for key in client.scan_iter(pattern):
                 key_str = key.decode("utf-8") if isinstance(key, bytes) else key
                 data = client.get(key_str)
                 if data:
@@ -635,7 +634,7 @@ Returns:
             client = redis.from_url(config.get_redis_url())
 
             pattern = f"pr_patches:{conversation_id}:*"
-            keys = client.keys(pattern)
+            keys = list(client.scan_iter(pattern))
             if keys:
                 client.delete(*keys)
                 logger.info(
@@ -698,14 +697,13 @@ Returns:
                 ["--ignore-whitespace"],
             ]:
                 try:
-                    import subprocess
-
                     result = subprocess.run(
                         ["git", "apply", *strategy],
                         input=patch,
                         cwd=worktree_path,
                         capture_output=True,
                         text=True,
+                        timeout=60,
                     )
 
                     if result.returncode == 0:
@@ -722,6 +720,11 @@ Returns:
                             f"{result.stderr}"
                         )
 
+                except subprocess.TimeoutExpired as e:
+                    logger.debug(
+                        f"CreatePRWorkflowTool: Patch apply timed out for {file_path} "
+                        f"with strategy {strategy}, worktree_path={worktree_path}: {e}"
+                    )
                 except Exception as e:
                     logger.debug(
                         f"CreatePRWorkflowTool: Error applying patch for {file_path} "
@@ -1008,14 +1011,12 @@ Returns:
             )
 
             if patch_result.get("files_applied"):
-                # Patches were applied successfully
+                # Patches were applied successfully; stage only applied files
+                # (files_failed are handled by fallback and added only after confirmation)
                 logger.info(
                     f"CreatePRWorkflowTool: Applied {len(patch_result['files_applied'])} patches from Redis"
                 )
-                files_to_stage = (
-                    patch_result.get("files_applied", [])
-                    + patch_result.get("files_failed", [])
-                )
+                files_to_stage = patch_result.get("files_applied", [])
 
                 # If some patches failed, fall back to CodeChangesManager for those
                 if patch_result.get("files_failed"):
