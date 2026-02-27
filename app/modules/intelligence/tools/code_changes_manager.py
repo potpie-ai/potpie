@@ -3066,7 +3066,9 @@ def _route_to_local_server(
         Result string if successful, None if should fall back to CodeChangesManager
     """
 
-    def _append_line_stats(msg: str, res: Dict[str, Any]) -> str:
+    def _append_line_stats(
+        msg: str, res: Dict[str, Any], operation: Optional[str] = None
+    ) -> str:
         """Append line-change stats from LocalServer so the agent can verify edits."""
         lines_changed = res.get("lines_changed")
         lines_added = res.get("lines_added")
@@ -3084,9 +3086,10 @@ def _route_to_local_server(
             if lines_deleted is not None:
                 parts.append(f"lines_deleted={lines_deleted}")
             msg += "\n\n**Line stats:** " + ", ".join(parts)
-            # Warn when many lines were deleted—often indicates placeholder like "... rest of file unchanged ..." was used
+            # Skip "Many lines were deleted" warning for add_file (new file creation): lines_deleted
+            # is meaningless there (should be 0); extension may return incorrect stats for new files.
             lines_deleted_val = lines_deleted if lines_deleted is not None else 0
-            if lines_deleted_val > 15:
+            if lines_deleted_val > 15 and operation != "add_file":
                 msg += (
                     f"\n\n⚠️ **Many lines were deleted ({lines_deleted_val} lines).** "
                     "Double-check with get_file_from_changes that the file content is correct. "
@@ -3099,9 +3102,11 @@ def _route_to_local_server(
             )
         return msg
 
-    def _append_diff(msg: str, res: Dict[str, Any]) -> str:
+    def _append_diff(
+        msg: str, res: Dict[str, Any], operation: Optional[str] = None
+    ) -> str:
         """Append tunnel line stats and diff to response so agent can review/fix changes."""
-        msg = _append_line_stats(msg, res)
+        msg = _append_line_stats(msg, res, operation)
         raw_diff = res.get("diff")
         diff = (
             raw_diff.strip()
@@ -3413,7 +3418,7 @@ def _route_to_local_server(
                     response_msg += (
                         f"\n⚠️ Validation errors: {len(result['errors'])}"
                     )
-                return _append_diff(response_msg, result)
+                return _append_diff(response_msg, result, operation)
             elif operation == "update_file_lines":
                 start_line = data.get("start_line", 0)
                 end_line = data.get("end_line", start_line)
@@ -3436,7 +3441,7 @@ def _route_to_local_server(
                     response_msg += (
                         f"\n⚠️ Validation errors: {len(result['errors'])}"
                     )
-                return _append_diff(response_msg, result)
+                return _append_diff(response_msg, result, operation)
             elif operation == "add_file":
                 response_msg = f"✅ Created file '{file_path}' locally\n\nChanges applied successfully in your IDE."
                 if result.get("auto_fixed"):
@@ -3445,7 +3450,7 @@ def _route_to_local_server(
                     response_msg += (
                         f"\n⚠️ Validation errors: {len(result['errors'])}"
                     )
-                return _append_diff(response_msg, result)
+                return _append_diff(response_msg, result, operation)
             elif operation == "update_file":
                 response_msg = f"✅ Updated file '{file_path}' locally\n\nChanges applied successfully in your IDE."
                 if result.get("auto_fixed"):
@@ -3454,7 +3459,7 @@ def _route_to_local_server(
                     response_msg += (
                         f"\n⚠️ Validation errors: {len(result['errors'])}"
                     )
-                return _append_diff(response_msg, result)
+                return _append_diff(response_msg, result, operation)
             elif operation == "insert_lines":
                 line_number = data.get("line_number", 0)
                 position = (
@@ -3479,7 +3484,7 @@ def _route_to_local_server(
                     response_msg += (
                         f"\n⚠️ Validation errors: {len(result['errors'])}"
                     )
-                return _append_diff(response_msg, result)
+                return _append_diff(response_msg, result, operation)
             elif operation == "delete_lines":
                 start_line = data.get("start_line", 0)
                 end_line = data.get("end_line", start_line)
@@ -3487,13 +3492,13 @@ def _route_to_local_server(
                     f"✅ Deleted lines {start_line}-{end_line} from '{file_path}' locally\n\n"
                     + "Changes applied successfully in your IDE."
                 )
-                return _append_diff(response_msg, result)
+                return _append_diff(response_msg, result, operation)
             elif operation == "delete_file":
                 response_msg = (
                     f"✅ Deleted file '{file_path}' locally\n\n"
                     + "File removed successfully from your IDE."
                 )
-                return _append_diff(response_msg, result)
+                return _append_diff(response_msg, result, operation)
             elif operation == "revert_file":
                 target = data.get("target", "saved")
                 target_label = (
@@ -3509,7 +3514,7 @@ def _route_to_local_server(
                     response_msg += (
                         f"\n⚠️ Validation errors: {len(result['errors'])}"
                     )
-                return _append_diff(response_msg, result)
+                return _append_diff(response_msg, result, operation)
             elif operation in ["get_file", "show_updated_file"]:
                 content = result.get("content", "")
                 line_count = result.get("line_count", 0)
@@ -3535,7 +3540,7 @@ def _route_to_local_server(
 
             else:
                 response_msg = f"✅ Applied {operation.replace('_', ' ')} to '{file_path}' locally"
-                return _append_diff(response_msg, result)
+                return _append_diff(response_msg, result, operation)
 
     except Exception as e:
         # Outer exception handler for non-httpx errors
