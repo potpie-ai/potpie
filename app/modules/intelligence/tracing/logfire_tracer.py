@@ -18,6 +18,7 @@ def initialize_logfire_tracing(
     token: Optional[str] = None,
     environment: Optional[str] = None,
     send_to_logfire: bool = True,
+    instrument_pydantic_ai: bool = True,
 ) -> bool:
     """
     Initialize Logfire tracing for the application.
@@ -30,6 +31,10 @@ def initialize_logfire_tracing(
         token: Logfire API token. If None, reads from LOGFIRE_TOKEN env var
         environment: Environment identifier (e.g., "development", "production", "staging", "testing")
         send_to_logfire: Whether to send traces to Logfire cloud (default: True)
+        instrument_pydantic_ai: Whether to instrument Pydantic AI for tracing (default: True).
+            Set to False in Celery workers to avoid OpenTelemetry contextvar errors
+            ("Token was created in a different Context") when async generators yield
+            during tool execution with prefork workers.
 
     Returns:
         bool: True if initialization successful, False otherwise
@@ -73,8 +78,13 @@ def initialize_logfire_tracing(
         )
         logfire.configure(**config_kwargs)
 
-        logfire.instrument_pydantic_ai()
-        logger.info("Instrumented Pydantic AI for Logfire tracing")
+        if instrument_pydantic_ai:
+            logfire.instrument_pydantic_ai()
+            logger.info("Instrumented Pydantic AI for Logfire tracing")
+        else:
+            logger.debug(
+                "Skipped Pydantic AI instrumentation (avoids OTel contextvar errors in Celery prefork)"
+            )
 
         logfire.instrument_litellm()
         logger.info("Instrumented LiteLLM for Logfire tracing")
