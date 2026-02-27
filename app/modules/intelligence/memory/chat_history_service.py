@@ -2,7 +2,9 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
@@ -204,4 +206,174 @@ class ChatHistoryService:
             self.db.rollback()
             raise ChatHistoryServiceError(
                 f"An unexpected error occurred while clearing session history for conversation {conversation_id}"
+            ) from e
+
+
+class AsyncChatHistoryService:
+    """Async chat history service using AsyncSession for FastAPI request-scoped use."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+        self.message_buffer: Dict[str, Dict[str, str]] = {}
+
+    async def get_session_history(
+        self, user_id: str, conversation_id: str
+    ) -> List[BaseMessage]:
+        try:
+            stmt = (
+                select(Message)
+                .where(Message.conversation_id == conversation_id)
+                .where(Message.status == MessageStatus.ACTIVE)
+                .order_by(Message.created_at)
+            )
+            result = await self.session.execute(stmt)
+            messages = result.scalars().all()
+            history = []
+            for msg in messages:
+                if msg.type == MessageType.HUMAN:
+                    history.append(HumanMessage(content=msg.content))
+                else:
+                    history.append(AIMessage(content=msg.content))
+            logger.info(
+                "Retrieved session history for conversation: %s",
+                conversation_id,
+            )
+            return history
+        except SQLAlchemyError as e:
+            logger.exception(
+                "Database error in get_session_history conversation_id=%s user_id=%s",
+                conversation_id,
+                user_id,
+            )
+            raise ChatHistoryServiceError(
+                f"Failed to retrieve session history for conversation {conversation_id}"
+            ) from e
+        except Exception as e:
+            logger.exception(
+                "Unexpected error in get_session_history conversation_id=%s user_id=%s",
+                conversation_id,
+                user_id,
+            )
+            raise ChatHistoryServiceError(
+                f"An unexpected error occurred while retrieving session history for conversation {conversation_id}"
+            ) from e
+
+    def add_message_chunk(
+        self,
+        conversation_id: str,
+        content: str,
+        message_type: MessageType,
+        sender_id: Optional[str] = None,
+        citations: Optional[List[str]] = None,
+    ) -> None:
+        """Buffer a chunk (in-memory only; no DB)."""
+        if conversation_id not in self.message_buffer:
+            self.message_buffer[conversation_id] = {"content": "", "citations": []}
+        self.message_buffer[conversation_id]["content"] += content
+        if citations:
+            self.message_buffer[conversation_id]["citations"].extend(citations)
+        logger.debug(
+            "Added message chunk to buffer for conversation: %s",
+            conversation_id,
+        )
+
+    async def flush_message_buffer(
+        self,
+        conversation_id: str,
+        message_type: MessageType,
+        sender_id: Optional[str] = None,
+    ) -> Optional[str]:
+        try:
+            if (
+                conversation_id in self.message_buffer
+                and self.message_buffer[conversation_id]["content"]
+            ):
+                content = self.message_buffer[conversation_id]["content"]
+                citations = self.message_buffer[conversation_id]["citations"]
+
+                new_message = Message(
+                    id=str(uuid7()),
+                    conversation_id=conversation_id,
+                    content=content,
+                    sender_id=sender_id if message_type == MessageType.HUMAN else None,
+                    type=message_type,
+                    created_at=datetime.now(timezone.utc),
+                    citations=(
+                        ",".join(set(citations)) if citations else None
+                    ),
+                )
+                self.session.add(new_message)
+                await self.session.commit()
+                self.message_buffer[conversation_id] = {"content": "", "citations": []}
+                logger.info(
+                    "Flushed message buffer for conversation: %s",
+                    conversation_id,
+                )
+                return new_message.id
+            return None
+        except SQLAlchemyError as e:
+            logger.exception(
+                "Database error in flush_message_buffer conversation_id=%s",
+                conversation_id,
+            )
+            await self.session.rollback()
+            raise ChatHistoryServiceError(
+                f"Failed to flush message buffer for conversation {conversation_id}"
+            ) from e
+        except Exception as e:
+            logger.exception(
+                "Unexpected error in flush_message_buffer conversation_id=%s",
+                conversation_id,
+            )
+            await self.session.rollback()
+            raise ChatHistoryServiceError(
+                f"An unexpected error occurred while flushing message buffer for conversation {conversation_id}"
+            ) from e
+
+    async def save_partial_ai_message(
+        self,
+        conversation_id: str,
+        content: str,
+        citations: Optional[List[str]] = None,
+    ) -> Optional[str]:
+        """
+        Persist a complete AI message (e.g. partial response saved when generation is stopped).
+        """
+        if not content.strip():
+            return None
+        try:
+            new_message = Message(
+                id=str(uuid7()),
+                conversation_id=conversation_id,
+                content=content.strip(),
+                sender_id=None,
+                type=MessageType.AI_GENERATED,
+                status=MessageStatus.ACTIVE,
+                created_at=datetime.now(timezone.utc),
+                citations=(",".join(set(citations)) if citations else None),
+            )
+            self.session.add(new_message)
+            await self.session.commit()
+            logger.info(
+                "Saved partial AI message for conversation %s (stopped generation)",
+                conversation_id,
+            )
+            return new_message.id
+        except SQLAlchemyError as e:
+            logger.exception(
+                "Database error in save_partial_ai_message conversation_id=%s",
+                conversation_id,
+            )
+            await self.session.rollback()
+            raise ChatHistoryServiceError(
+                f"Failed to save partial AI message for conversation {conversation_id}"
+            ) from e
+        except Exception as e:
+            logger.exception(
+                "Unexpected error in save_partial_ai_message conversation_id=%s",
+                conversation_id,
+            )
+            await self.session.rollback()
+            raise ChatHistoryServiceError(
+                f"An unexpected error occurred while saving partial AI message for conversation {conversation_id}"
             ) from e

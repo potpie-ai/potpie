@@ -58,6 +58,7 @@ class ConversationController:
             db=self.db,
             user_id=self.user_id,
             user_email=self.user_email,
+            async_db=self.async_db,
             async_redis_manager=async_redis_manager,
             async_session_service=async_session_service,
         )

@@ -450,7 +450,10 @@ class GithubService:
                     f"Fetching organizations from: {orgs_url} (length: {len(orgs_url)})"
                 )
 
-                response = requests.get(orgs_url, headers=orgs_headers, timeout=10)
+                # Connect 10s, read 30s — orgs list can be slow under load
+                response = requests.get(
+                    orgs_url, headers=orgs_headers, timeout=(10, 30)
+                )
                 if response.status_code == 414:
                     logger.warning(
                         f"414 URI Too Long when fetching organizations for user {user_id}. "
@@ -510,7 +513,8 @@ class GithubService:
                 ttl_dns_cache=300,
                 family=socket.AF_INET,
             )
-            timeout = ClientTimeout(total=20)
+            # Connect 10s, total 60s per request — pagination can have many large responses
+            timeout = ClientTimeout(sock_connect=10, total=60)
 
             async with aiohttp.ClientSession(
                 connector=connector, timeout=timeout
