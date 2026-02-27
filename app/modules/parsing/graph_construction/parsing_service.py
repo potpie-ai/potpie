@@ -702,9 +702,12 @@ class ParsingService:
                 f"Successfully duplicated graph from {old_repo_id} to {new_repo_id}"
             )
 
-        except Exception:
+        except Exception as e:
             logger.exception(
                 "Error duplicating graph",
                 old_repo_id=old_repo_id,
                 new_repo_id=new_repo_id,
             )
+            raise ParsingServiceError(
+                f"Failed to duplicate graph from {old_repo_id} to {new_repo_id}: {e}"
+            ) from e
