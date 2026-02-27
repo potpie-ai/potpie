@@ -278,11 +278,12 @@ def validate_and_fix_tool_pairing(
 
         messages_to_skip.add(i)
         if is_tool_call and i + 1 < len(messages):
-            if not is_llm_response_message(messages[i + 1]):
+            next_msg = messages[i + 1]
+            if not is_user_message(next_msg) and not is_llm_response_message(next_msg):
                 messages_to_skip.add(i + 1)
         if is_tool_result and i > 0:
             prev = messages[i - 1]
-            if is_tool_call_message(prev) and not is_llm_response_message(prev):
+            if not is_user_message(prev) and is_tool_call_message(prev) and not is_llm_response_message(prev):
                 messages_to_skip.add(i - 1)
 
     ids_whose_tool_results_must_skip: Set[str] = set()

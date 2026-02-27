@@ -303,6 +303,8 @@ class StreamProcessor:
                             )
                             break  # success
                     except Exception as e:
+                        if isinstance(e, GenerationCancelled):
+                            raise
                         if attempt < max_stream_retries and self._is_retryable_stream_error(e):
                             delay = 1.0 * (attempt + 1)
                             logger.warning(

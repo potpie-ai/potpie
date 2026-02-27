@@ -1149,6 +1149,11 @@ class CodeChangesManager:
                 worktree_ok, worktree_err = _write_change_to_worktree(
                     project_id, file_path, "update", updated_content, db
                 )
+                if not worktree_ok:
+                    return {
+                        "success": False,
+                        "error": f"Worktree write failed for '{file_path}': {worktree_err or 'unknown'}",
+                    }
             update_success = self._apply_update(
                 file_path,
                 updated_content,
@@ -1292,6 +1297,11 @@ class CodeChangesManager:
                 worktree_ok, worktree_err = _write_change_to_worktree(
                     project_id, file_path, "update", new_content, db
                 )
+                if not worktree_ok:
+                    return {
+                        "success": False,
+                        "error": f"Worktree write failed for '{file_path}': {worktree_err or 'unknown'}",
+                    }
             update_success = self._apply_update(
                 file_path, new_content, change_desc, original_content=original_content
             )
@@ -1423,6 +1433,11 @@ class CodeChangesManager:
                 worktree_ok, worktree_err = _write_change_to_worktree(
                     project_id, file_path, "update", updated_content, db
                 )
+                if not worktree_ok:
+                    return {
+                        "success": False,
+                        "error": f"Worktree write failed for '{file_path}': {worktree_err or 'unknown'}",
+                    }
             update_success = self._apply_update(
                 file_path,
                 updated_content,
@@ -1578,6 +1593,11 @@ class CodeChangesManager:
                 worktree_ok, worktree_err = _write_change_to_worktree(
                     project_id, file_path, "update", updated_content, db
                 )
+                if not worktree_ok:
+                    return {
+                        "success": False,
+                        "error": f"Worktree write failed for '{file_path}': {worktree_err or 'unknown'}",
+                    }
             update_success = self._apply_update(
                 file_path,
                 updated_content,

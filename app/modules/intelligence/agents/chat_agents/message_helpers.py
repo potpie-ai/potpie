@@ -30,22 +30,28 @@ def is_user_message(msg: ModelMessage) -> bool:
 def is_tool_call_message(msg: ModelMessage) -> bool:
     """Check if a message contains tool calls (tool_use blocks)."""
     if isinstance(msg, ModelRequest):
+        found_tool_call = False
+        found_tool_return = False
         for part in msg.parts:
             if hasattr(part, "__dict__"):
                 part_dict = part.__dict__
                 if "part_kind" in part_dict:
                     if part_dict["part_kind"] == "tool-call":
-                        return True
+                        found_tool_call = True
                     elif part_dict["part_kind"] == "tool-return":
-                        return False
+                        found_tool_return = True
                 if "tool_call_id" in part_dict and "tool_name" in part_dict:
                     if "result" not in part_dict and "content" not in part_dict:
-                        return True
+                        found_tool_call = True
                 if "part" in part_dict:
                     part_obj = part_dict["part"]
                     if hasattr(part_obj, "tool_call_id") and hasattr(part_obj, "tool_name"):
                         if not hasattr(part_obj, "result") and not hasattr(part_obj, "content"):
-                            return True
+                            found_tool_call = True
+        if found_tool_call:
+            return True
+        if found_tool_return:
+            return False
     elif isinstance(msg, ModelResponse):
         for part in msg.parts:
             if hasattr(part, "__dict__"):
@@ -61,17 +67,23 @@ def is_tool_call_message(msg: ModelMessage) -> bool:
 def is_tool_result_message(msg: ModelMessage) -> bool:
     """Check if a message contains tool results (which can be large)."""
     if isinstance(msg, ModelRequest):
+        found_tool_return = False
+        found_tool_call = False
         for part in msg.parts:
             if hasattr(part, "__dict__"):
                 part_dict = part.__dict__
                 if "part_kind" in part_dict:
                     if part_dict["part_kind"] == "tool-return":
-                        return True
+                        found_tool_return = True
                     elif part_dict["part_kind"] == "tool-call":
-                        return False
+                        found_tool_call = True
                 if any(k in part_dict for k in ["result", "tool_name", "tool_call_id"]):
                     if "result" in part_dict or "content" in part_dict:
-                        return True
+                        found_tool_return = True
+        if found_tool_return:
+            return True
+        if found_tool_call:
+            return False
     elif isinstance(msg, ModelResponse):
         for part in msg.parts:
             if hasattr(part, "__dict__"):
@@ -132,7 +144,7 @@ def extract_tool_call_info(msg: ModelMessage) -> Optional[Tuple[str, str, str]]:
         for part in msg.parts:
             if hasattr(part, "__dict__"):
                 part_dict = part.__dict__
-                if "tool_name" in part_dict and "tool_call_id" in part_dict and "result" not in part_dict:
+                if "tool_name" in part_dict and "tool_call_id" in part_dict and "result" not in part_dict and "content" not in part_dict:
                     tool_name = part_dict.get("tool_name", "unknown_tool")
                     tool_call_id = part_dict.get("tool_call_id", "")
                     args_str = ""
@@ -171,30 +183,32 @@ def extract_tool_result_info(msg: ModelMessage) -> Optional[Tuple[str, str, str]
         for part in msg.parts:
             if hasattr(part, "__dict__"):
                 part_dict = part.__dict__
-                if "tool_name" in part_dict or "result" in part_dict or "tool_call_id" in part_dict:
-                    tool_name = part_dict.get("tool_name", "unknown_tool")
-                    tool_call_id = part_dict.get("tool_call_id", "")
-                    result_content = ""
-                    if "result" in part_dict:
-                        result = part_dict["result"]
-                        result_content = str(getattr(result, "content", result) if hasattr(result, "content") else result)
-                    elif "content" in part_dict:
-                        result_content = str(part_dict["content"])
-                    return (str(tool_name), result_content, str(tool_call_id))
+                result_content = ""
+                if "result" in part_dict:
+                    result = part_dict["result"]
+                    result_content = str(getattr(result, "content", result) if hasattr(result, "content") else result)
+                elif "content" in part_dict:
+                    result_content = str(part_dict["content"])
+                if not result_content.strip():
+                    continue
+                tool_name = part_dict.get("tool_name", "unknown_tool")
+                tool_call_id = part_dict.get("tool_call_id", "")
+                return (str(tool_name), result_content, str(tool_call_id))
     elif isinstance(msg, ModelResponse):
         for part in msg.parts:
             if hasattr(part, "__dict__"):
                 part_dict = part.__dict__
-                if "tool_name" in part_dict or "result" in part_dict or "tool_call_id" in part_dict:
-                    tool_name = part_dict.get("tool_name", "unknown_tool")
-                    tool_call_id = part_dict.get("tool_call_id", "")
-                    result_content = ""
-                    if "result" in part_dict:
-                        result = part_dict["result"]
-                        result_content = str(getattr(result, "content", result) if hasattr(result, "content") else result)
-                    elif "content" in part_dict:
-                        result_content = str(part_dict["content"])
-                    return (str(tool_name), result_content, str(tool_call_id))
+                result_content = ""
+                if "result" in part_dict:
+                    result = part_dict["result"]
+                    result_content = str(getattr(result, "content", result) if hasattr(result, "content") else result)
+                elif "content" in part_dict:
+                    result_content = str(part_dict["content"])
+                if not result_content.strip():
+                    continue
+                tool_name = part_dict.get("tool_name", "unknown_tool")
+                tool_call_id = part_dict.get("tool_call_id", "")
+                return (str(tool_name), result_content, str(tool_call_id))
     return None
 
 
