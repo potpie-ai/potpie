@@ -241,12 +241,20 @@ class MainApp:
             db.close()
 
     async def shutdown_event(self):
+        """Close async Redis and other resources on app shutdown."""
         if getattr(self.app.state, "async_redis_stream_manager", None):
             try:
                 await self.app.state.async_redis_stream_manager.aclose()
                 logger.info("AsyncRedisStreamManager closed")
             except Exception as e:
                 logger.warning("Error closing AsyncRedisStreamManager: %s", e)
+        try:
+            from app.modules.code_provider.github.github_service import (
+                close_github_async_redis_cache,
+            )
+            await close_github_async_redis_cache()
+        except Exception as e:
+            logger.warning("Shutdown cleanup error: %s", e)
 
     def run(self):
         self.add_health_check()

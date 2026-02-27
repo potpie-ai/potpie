@@ -243,8 +243,10 @@ class CodeProviderController:
         logger = setup_logger(__name__)
         search_query = self._normalize_search_query(search)
 
-        # Fast path: check cache (sync Redis read is brief; consider moving to thread if needed)
-        cached_branches = self.branch_cache.get_branches(repo_name, search_query=None)
+        # Fast path: check cache (async Redis when available)
+        cached_branches = await self.branch_cache.get_branches_async(
+            repo_name, search_query=None
+        )
         if cached_branches is not None:
             logger.info(f"Found {len(cached_branches)} cached branches for {repo_name}")
             filtered_branches = self._filter_branches(cached_branches, search_query)

@@ -2,12 +2,11 @@ import json
 import logging
 import os
 
-import requests
+import httpx
 from dotenv import load_dotenv
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import HTTPException
-
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,10 +23,10 @@ from app.modules.auth.auth_schema import (
     UserAuthProvidersResponse,
     AuthProviderResponse,
     AccountResponse,
+    AuthProviderCreate,
 )
 from app.modules.auth.auth_service import auth_handler, AuthService
 from app.modules.auth.auth_provider_model import UserAuthProvider
-from app.modules.auth.auth_schema import AuthProviderCreate
 from app.modules.auth.unified_auth_service import (
     UnifiedAuthService,
     PROVIDER_TYPE_FIREBASE_GITHUB,
@@ -37,6 +36,8 @@ from app.modules.users.user_service import AsyncUserService
 from app.modules.utils.APIRouter import APIRouter
 from app.modules.utils.posthog_helper import PostHogClient
 from app.modules.utils.email_helper import is_personal_email_domain
+
+logger = logging.getLogger(__name__)
 
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", None)
 
@@ -57,7 +58,11 @@ def _signup_response_with_custom_token(payload: dict) -> dict:
 async def send_slack_message(message: str):
     payload = {"text": message}
     if SLACK_WEBHOOK_URL:
-        requests.post(SLACK_WEBHOOK_URL, json=payload)
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                await client.post(SLACK_WEBHOOK_URL, json=payload)
+        except Exception as e:
+            logger.warning("Failed to send Slack signup notification: %s", e)
 
 
 class AuthAPI:
@@ -66,7 +71,7 @@ class AuthAPI:
         email, password = login_request.email, login_request.password
 
         try:
-            res = auth_handler.login(email=email, password=password)
+            res = await auth_handler.login_async(email=email, password=password)
             id_token = res.get("idToken")
             return JSONResponse(content={"token": id_token}, status_code=200)
         except ValueError:
