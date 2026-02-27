@@ -1,44 +1,45 @@
 """
 History processor for managing token usage in Pydantic AI agents.
 
-This module provides a history processor that tracks token usage and automatically
-summarizes message history when approaching token limits to maintain context while
-reducing token consumption.
+Always truncates older tool result content (keeping the last RECENT_TOOL_RESULTS_TO_KEEP
+in full), preserving system messages, tool schemas, user input, message order,
+and all model text responses. Only tool result bodies are replaced with a truncation notice.
+
+Previous conversation turns are passed as plain text via message_history (built by
+prepare_multimodal_message_history). This processor only runs WITHIN a single agent
+run, truncating older tool results that accumulated during that run.
+
+Stateless: no in-memory caches; config is captured in the closure at factory time.
 """
 
 import json
 import logging
-import os
 import re
-from datetime import datetime
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Callable, List, Optional, Set, Tuple
 
 if TYPE_CHECKING:
-    from app.modules.intelligence.agents.chat_agents.compressed_history_store import (
-        CompressedHistoryStore,
-    )
     from app.modules.intelligence.agents.chat_agents.history_summarizer import (
         HistorySummarizer,
     )
 
 from pydantic_ai import Agent, RunContext
+
 from app.modules.intelligence.agents.chat_agents.token_utils import (
     count_tokens as shared_count_tokens,
 )
-from pydantic_ai.messages import (
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    TextPart,
-    ToolCallPart,
-    UserPromptPart,
-    SystemPromptPart,
+from app.modules.intelligence.agents.chat_agents.message_helpers import (
+    extract_system_prompt_from_messages,
+    extract_tool_call_ids,
+    is_tool_result_message,
+    serialize_messages_to_text,
 )
+from app.modules.intelligence.agents.chat_agents.message_compressor import (
+    truncate_tool_result_message,
+    validate_and_fix_tool_pairing,
+)
+from pydantic_ai.messages import ModelMessage
 
 logger = logging.getLogger(__name__)
-
-# Debug directory for tokenizer inputs
-DEBUG_TOKENIZER_DIR = ".data/tokenizer_debug"
 
 # Token thresholds
 TOKEN_LIMIT_THRESHOLD = 35000  # Start evicting/compressing when approaching this limit
@@ -596,9 +597,9 @@ class TokenAwareHistoryProcessor:
             for part in msg.parts:
                 if hasattr(part, "__dict__"):
                     part_dict = part.__dict__
-                    # Check if this is a tool call (has tool_name and tool_call_id, but no result)
+                    # Check if this is a tool call (has tool_name and tool_call_id, but no result/content)
                     if "tool_name" in part_dict and "tool_call_id" in part_dict:
-                        if "result" not in part_dict:  # This is a call, not a result
+                        if "result" not in part_dict and "content" not in part_dict:
                             tool_name = part_dict.get("tool_name", "unknown_tool")
                             tool_call_id = part_dict.get("tool_call_id", "")
                             args_str = ""
@@ -617,7 +618,9 @@ class TokenAwareHistoryProcessor:
                         if hasattr(part_obj, "tool_name") and hasattr(
                             part_obj, "tool_call_id"
                         ):
-                            if not hasattr(part_obj, "result"):  # It's a call
+                            if not hasattr(part_obj, "result") and not hasattr(
+                                part_obj, "content"
+                            ):
                                 tool_name = getattr(
                                     part_obj, "tool_name", "unknown_tool"
                                 )
@@ -639,55 +642,69 @@ class TokenAwareHistoryProcessor:
     ) -> Optional[Tuple[str, str, str]]:
         """Extract tool name, result content, and tool_call_id from a tool result message.
 
+        Only parts that actually carry a result payload (non-empty result or content)
+        are classified as tool results; parts with only tool_name/tool_call_id are ignored.
+
         Returns:
             Tuple of (tool_name, result_content, tool_call_id) or None if not a tool result
         """
+
+        def _has_result_payload(part_dict: dict) -> bool:
+            """True only when part has a non-empty result or content."""
+            if "result" in part_dict:
+                r = part_dict["result"]
+                if r is None:
+                    return False
+                if hasattr(r, "content"):
+                    return bool(str(r.content).strip())
+                if isinstance(r, str):
+                    return bool(r.strip())
+                return True
+            if "content" in part_dict:
+                c = part_dict["content"]
+                return c is not None and bool(str(c).strip())
+            return False
+
         if isinstance(msg, ModelRequest):
             for part in msg.parts:
                 if hasattr(part, "__dict__"):
                     part_dict = part.__dict__
-                    if (
-                        "tool_name" in part_dict
-                        or "result" in part_dict
-                        or "tool_call_id" in part_dict
-                    ):
-                        tool_name = part_dict.get("tool_name", "unknown_tool")
-                        tool_call_id = part_dict.get("tool_call_id", "")
-                        result_content = ""
-                        if "result" in part_dict:
-                            result = part_dict["result"]
-                            if hasattr(result, "content"):
-                                result_content = str(result.content)
-                            elif isinstance(result, str):
-                                result_content = result
-                            else:
-                                result_content = str(result)
-                        elif "content" in part_dict:
-                            result_content = str(part_dict["content"])
-                        return (str(tool_name), result_content, str(tool_call_id))
+                    if not _has_result_payload(part_dict):
+                        continue
+                    tool_name = part_dict.get("tool_name", "unknown_tool")
+                    tool_call_id = part_dict.get("tool_call_id", "")
+                    result_content = ""
+                    if "result" in part_dict:
+                        result = part_dict["result"]
+                        if hasattr(result, "content"):
+                            result_content = str(result.content)
+                        elif isinstance(result, str):
+                            result_content = result
+                        else:
+                            result_content = str(result)
+                    elif "content" in part_dict:
+                        result_content = str(part_dict["content"])
+                    return (str(tool_name), result_content, str(tool_call_id))
         elif isinstance(msg, ModelResponse):
             for part in msg.parts:
                 if hasattr(part, "__dict__"):
                     part_dict = part.__dict__
-                    if (
-                        "tool_name" in part_dict
-                        or "result" in part_dict
-                        or "tool_call_id" in part_dict
-                    ):
-                        tool_name = part_dict.get("tool_name", "unknown_tool")
-                        tool_call_id = part_dict.get("tool_call_id", "")
-                        result_content = ""
-                        if "result" in part_dict:
-                            result = part_dict["result"]
-                            if hasattr(result, "content"):
-                                result_content = str(result.content)
-                            elif isinstance(result, str):
-                                result_content = result
-                            else:
-                                result_content = str(result)
-                        elif "content" in part_dict:
-                            result_content = str(part_dict["content"])
-                        return (str(tool_name), result_content, str(tool_call_id))
+                    if not _has_result_payload(part_dict):
+                        continue
+                    tool_name = part_dict.get("tool_name", "unknown_tool")
+                    tool_call_id = part_dict.get("tool_call_id", "")
+                    result_content = ""
+                    if "result" in part_dict:
+                        result = part_dict["result"]
+                        if hasattr(result, "content"):
+                            result_content = str(result.content)
+                        elif isinstance(result, str):
+                            result_content = result
+                        else:
+                            result_content = str(result)
+                    elif "content" in part_dict:
+                        result_content = str(part_dict["content"])
+                    return (str(tool_name), result_content, str(tool_call_id))
         return None
 
     def _trim_tool_args(
@@ -945,8 +962,8 @@ class TokenAwareHistoryProcessor:
                     # (which should contain the tool_results)
                     if is_tool_call and i + 1 < len(messages):
                         next_msg = messages[i + 1]
-                        # Don't remove if next message is an LLM response with text
-                        if not self._is_llm_response_message(next_msg):
+                        # Don't remove if next message is user or LLM response with text
+                        if not self._is_user_message(next_msg) and not self._is_llm_response_message(next_msg):
                             messages_to_skip.add(i + 1)
                             logger.debug(
                                 f"[History Processor] Also marking message {i + 1} for removal "
@@ -957,10 +974,12 @@ class TokenAwareHistoryProcessor:
                     # (which should contain the tool_calls)
                     if is_tool_result and i > 0:
                         prev_msg = messages[i - 1]
-                        # Don't remove if previous message is an LLM response with text
-                        if self._is_tool_call_message(
-                            prev_msg
-                        ) and not self._is_llm_response_message(prev_msg):
+                        # Don't remove if previous message is user or LLM response with text
+                        if (
+                            not self._is_user_message(prev_msg)
+                            and self._is_tool_call_message(prev_msg)
+                            and not self._is_llm_response_message(prev_msg)
+                        ):
                             messages_to_skip.add(i - 1)
                             logger.debug(
                                 f"[History Processor] Also marking message {i - 1} for removal "
@@ -1138,10 +1157,10 @@ class TokenAwareHistoryProcessor:
                     # CRITICAL: Remove if ANY tool_call_id is problematic
                     if any(tid in working_problematic for tid in call_ids):
                         working_messages_to_skip.add(i)
-                        # Also remove paired messages (but NOT LLM responses with text)
+                        # Also remove paired messages (but NOT user or LLM responses with text)
                         if is_tool_call and i + 1 < len(working_messages):
                             next_msg = working_messages[i + 1]
-                            if not self._is_llm_response_message(next_msg):
+                            if not self._is_user_message(next_msg) and not self._is_llm_response_message(next_msg):
                                 working_messages_to_skip.add(i + 1)
                         if (
                             is_tool_result
@@ -1149,7 +1168,7 @@ class TokenAwareHistoryProcessor:
                             and self._is_tool_call_message(working_messages[i - 1])
                         ):
                             prev_msg = working_messages[i - 1]
-                            if not self._is_llm_response_message(prev_msg):
+                            if not self._is_user_message(prev_msg) and not self._is_llm_response_message(prev_msg):
                                 working_messages_to_skip.add(i - 1)
 
                 for i, msg in enumerate(working_messages):
@@ -1366,10 +1385,14 @@ class TokenAwareHistoryProcessor:
                 # CRITICAL: If this is a tool call message, we MUST also remove the next message
                 # (which should contain the tool results for these calls)
                 if is_tool_call and i + 1 < len(messages):
-                    messages_to_skip.add(i + 1)
-                    logger.debug(
-                        f"[History Processor] Removing tool call message {i} and its result message {i + 1}"
-                    )
+                    next_msg = messages[i + 1]
+                    if not self._is_user_message(next_msg):
+                        messages_to_skip.add(i + 1)
+                        logger.debug(
+                            f"[History Processor] Removing tool call message {i} and its result message {i + 1}"
+                        )
+                    else:
+                        logger.debug(f"[History Processor] Removing tool message {i}")
                 else:
                     logger.debug(f"[History Processor] Removing tool message {i}")
 
@@ -1542,1017 +1565,117 @@ class TokenAwareHistoryProcessor:
             logger.debug(f"Failed to extract model name from context: {e}")
         return None
 
-    def _get_agent_from_context(self, ctx: RunContext) -> Optional[Agent]:
-        """Extract agent from RunContext if available."""
-        try:
-            # Try various ways to access the agent
-            if hasattr(ctx, "agent"):
-                agent = getattr(ctx, "agent", None)
+
+def _get_agent_from_context(ctx: RunContext) -> Optional[Agent]:
+    """Extract agent from run context; pure, no state."""
+    try:
+        if hasattr(ctx, "agent"):
+            agent = getattr(ctx, "agent", None)
+            if agent:
+                return agent
+        if hasattr(ctx, "_agent"):
+            agent = getattr(ctx, "_agent", None)
+            if agent:
+                return agent
+        if hasattr(ctx, "run_state"):
+            run_state = getattr(ctx, "run_state", None)
+            if run_state and hasattr(run_state, "agent"):
+                agent = getattr(run_state, "agent", None)
                 if agent:
                     return agent
-            if hasattr(ctx, "_agent"):
-                agent = getattr(ctx, "_agent", None)
-                if agent:
-                    return agent
-            # Try to get from run_state if available
-            if hasattr(ctx, "run_state"):
-                run_state = getattr(ctx, "run_state", None)
-                if run_state and hasattr(run_state, "agent"):
-                    agent = getattr(run_state, "agent", None)
-                    if agent:
-                        return agent
-        except Exception as e:
-            logger.debug(f"Failed to extract agent from context: {e}")
-        return None
+    except Exception as e:
+        logger.debug("Failed to extract agent from context: %s", e)
+    return None
 
-    def _cache_agent_info(self, agent: Agent) -> Tuple[str, str]:
-        """Extract and cache agent instructions and tool schemas."""
-        agent_id = id(agent)
-        if agent_id in self._agent_cache:
-            return self._agent_cache[agent_id]
 
-        instructions = ""
-        tool_schemas = ""
+def _extract_agent_info(agent: Agent) -> Tuple[str, str]:
+    """Extract (instructions, tool_schemas) from agent; pure, no cache."""
+    instructions = ""
+    tool_schemas = ""
+    try:
+        if hasattr(agent, "instructions"):
+            instructions = str(getattr(agent, "instructions", ""))
+        elif hasattr(agent, "_instructions"):
+            instructions = str(getattr(agent, "_instructions", ""))
+        if hasattr(agent, "tools"):
+            tools = getattr(agent, "tools", None)
+            if tools:
+                tool_list = []
+                for tool in tools:
+                    tool_dict = {}
+                    if hasattr(tool, "name"):
+                        tool_dict["name"] = getattr(tool, "name", "")
+                    if hasattr(tool, "description"):
+                        tool_dict["description"] = getattr(tool, "description", "")
+                    if hasattr(tool, "args_schema"):
+                        try:
+                            schema = getattr(tool, "args_schema", None)
+                            if schema:
+                                tool_dict["args_schema"] = str(schema)
+                        except Exception:
+                            pass
+                    tool_list.append(json.dumps(tool_dict, default=str))
+                tool_schemas = "\n".join(tool_list)
+    except Exception as e:
+        logger.debug("Failed to extract agent info: %s", e)
+    return (instructions, tool_schemas)
 
-        try:
-            # Try to get instructions
-            if hasattr(agent, "instructions"):
-                instructions = str(getattr(agent, "instructions", ""))
-            elif hasattr(agent, "_instructions"):
-                instructions = str(getattr(agent, "_instructions", ""))
 
-            # Try to get tools
-            if hasattr(agent, "tools"):
-                tools = getattr(agent, "tools", None)
-                if tools:
-                    tool_list = []
-                    for tool in tools:
-                        tool_dict = {}
-                        if hasattr(tool, "name"):
-                            tool_dict["name"] = getattr(tool, "name", "")
-                        if hasattr(tool, "description"):
-                            tool_dict["description"] = getattr(tool, "description", "")
-                        if hasattr(tool, "args_schema"):
-                            try:
-                                schema = getattr(tool, "args_schema", None)
-                                if schema:
-                                    tool_dict["args_schema"] = str(schema)
-                            except Exception:
-                                pass
-                        tool_list.append(json.dumps(tool_dict, default=str))
-                    tool_schemas = "\n".join(tool_list)
-        except Exception as e:
-            logger.debug(f"Failed to cache agent info: {e}")
+def _count_total_context_tokens(
+    ctx: RunContext,
+    messages: List[ModelMessage],
+    model_name: Optional[str] = None,
+) -> int:
+    """Count tokens for system prompt + tool schemas + messages; pure, no state."""
+    total = 0
+    agent = _get_agent_from_context(ctx)
+    system_prompt_text = ""
+    tool_schemas_text = ""
+    if agent:
+        instructions, tool_schemas_text = _extract_agent_info(agent)
+        system_prompt_text = instructions
+    if not system_prompt_text:
+        system_prompt_text = extract_system_prompt_from_messages(messages)
+    if system_prompt_text:
+        total += shared_count_tokens(system_prompt_text, model_name)
+    if tool_schemas_text:
+        total += shared_count_tokens(tool_schemas_text, model_name)
+    message_text = serialize_messages_to_text(messages)
+    total += shared_count_tokens(message_text, model_name)
+    return total
 
-        self._agent_cache[agent_id] = (instructions, tool_schemas)
-        return (instructions, tool_schemas)
 
-    def _write_tokenizer_debug_file(
-        self,
-        content: str,
-        section: str,
-        model_name: Optional[str] = None,
-        token_count: Optional[int] = None,
-        ctx: Optional[RunContext] = None,
-    ):
-        """Write tokenizer input to a debug file for inspection."""
-        try:
-            # Create debug directory if it doesn't exist
-            os.makedirs(DEBUG_TOKENIZER_DIR, exist_ok=True)
-
-            # Create filename with timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            filename = f"{timestamp}_{section}.txt"
-            filepath = os.path.join(DEBUG_TOKENIZER_DIR, filename)
-
-            # Write content with metadata
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write("=== Tokenizer Debug File ===\n")
-                f.write(f"Section: {section}\n")
-                f.write(f"Model: {model_name or 'cl100k_base'}\n")
-                if token_count is not None:
-                    f.write(f"Token Count: {token_count}\n")
-                f.write(f"Content Length: {len(content)} characters\n")
-                f.write(f"Timestamp: {datetime.now().isoformat()}\n")
-
-                # Log RunContext information if provided
-                if ctx is not None:
-                    f.write(f"\n{'=' * 50}\n")
-                    f.write("RunContext Information:\n")
-                    f.write(f"{'=' * 50}\n")
-                    try:
-                        # Try to extract useful information from RunContext
-                        ctx_info = {}
-                        if hasattr(ctx, "usage") and ctx.usage:
-                            ctx_info["usage"] = {
-                                "total_tokens": getattr(
-                                    ctx.usage, "total_tokens", None
-                                ),
-                                "input_tokens": getattr(
-                                    ctx.usage, "input_tokens", None
-                                ),
-                                "output_tokens": getattr(
-                                    ctx.usage, "output_tokens", None
-                                ),
-                            }
-                        if hasattr(ctx, "model"):
-                            model = getattr(ctx, "model", None)
-                            if model:
-                                ctx_info["model"] = str(model)
-                        if hasattr(ctx, "agent"):
-                            agent = getattr(ctx, "agent", None)
-                            if agent:
-                                ctx_info["agent"] = str(type(agent))
-                        if hasattr(ctx, "run_state"):
-                            run_state = getattr(ctx, "run_state", None)
-                            if run_state:
-                                ctx_info["run_state"] = str(type(run_state))
-
-                        # Get all attributes
-                        ctx_attrs = [
-                            attr for attr in dir(ctx) if not attr.startswith("__")
-                        ]
-                        ctx_info["available_attributes"] = ctx_attrs
-
-                        f.write(json.dumps(ctx_info, indent=2, default=str))
-                    except Exception as e:
-                        f.write(f"Error extracting RunContext info: {e}\n")
-                        f.write(f"RunContext type: {type(ctx)}\n")
-                        f.write(f"RunContext repr: {repr(ctx)[:500]}\n")
-
-                f.write(f"\n{'=' * 50}\n")
-                f.write("CONTENT:\n")
-                f.write(f"{'=' * 50}\n\n")
-                f.write(content)
-
-            logger.info(
-                f"[History Processor] Wrote tokenizer debug file: {filepath} "
-                f"({len(content)} chars, {token_count or 'N/A'} tokens)"
-            )
-        except Exception as e:
-            logger.warning(f"Failed to write tokenizer debug file: {e}")
-
-    def _write_messages_to_debug_file(
-        self,
-        messages: List[ModelMessage],
-        model_name: Optional[str] = None,
-        token_count: Optional[int] = None,
-        ctx: Optional[RunContext] = None,
-    ):
-        """Write the actual messages that will be sent to the LLM to a debug file."""
-        try:
-            # Create debug directory if it doesn't exist
-            os.makedirs(DEBUG_TOKENIZER_DIR, exist_ok=True)
-
-            # Create filename with timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            filename = f"{timestamp}_messages_to_llm.txt"
-            filepath = os.path.join(DEBUG_TOKENIZER_DIR, filename)
-
-            # Serialize messages to text
-            message_text = self._serialize_messages_to_text(messages)
-
-            # Write content with metadata
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write("=== Messages Sent to LLM ===\n")
-                f.write(f"Model: {model_name or 'cl100k_base'}\n")
-                if token_count is not None:
-                    f.write(f"Total Token Count: {token_count}\n")
-                f.write(f"Message Count: {len(messages)}\n")
-                f.write(f"Timestamp: {datetime.now().isoformat()}\n")
-
-                # Log RunContext information if provided
-                if ctx is not None:
-                    f.write(f"\n{'=' * 50}\n")
-                    f.write("RunContext Information:\n")
-                    f.write(f"{'=' * 50}\n")
-                    try:
-                        ctx_info = {}
-                        if hasattr(ctx, "usage") and ctx.usage:
-                            ctx_info["usage"] = {
-                                "total_tokens": getattr(
-                                    ctx.usage, "total_tokens", None
-                                ),
-                                "input_tokens": getattr(
-                                    ctx.usage, "input_tokens", None
-                                ),
-                                "output_tokens": getattr(
-                                    ctx.usage, "output_tokens", None
-                                ),
-                            }
-                        if hasattr(ctx, "model"):
-                            model = getattr(ctx, "model", None)
-                            if model:
-                                ctx_info["model"] = str(model)
-                        if hasattr(ctx, "agent"):
-                            agent = getattr(ctx, "agent", None)
-                            if agent:
-                                ctx_info["agent"] = str(type(agent))
-                        if hasattr(ctx, "run_state"):
-                            run_state = getattr(ctx, "run_state", None)
-                            if run_state:
-                                ctx_info["run_state"] = str(type(run_state))
-
-                        # Get all attributes
-                        ctx_attrs = [
-                            attr for attr in dir(ctx) if not attr.startswith("__")
-                        ]
-                        ctx_info["available_attributes"] = ctx_attrs
-
-                        f.write(json.dumps(ctx_info, indent=2, default=str))
-                    except Exception as e:
-                        f.write(f"Error extracting RunContext info: {e}\n")
-                        f.write(f"RunContext type: {type(ctx)}\n")
-                        f.write(f"RunContext repr: {repr(ctx)[:500]}\n")
-
-                f.write(f"\n{'=' * 50}\n")
-                f.write("MESSAGE CONTENT (as sent to LLM):\n")
-                f.write(f"{'=' * 50}\n\n")
-                f.write(message_text)
-
-                # Also write a detailed breakdown of each message
-                f.write(f"\n\n{'=' * 50}\n")
-                f.write("DETAILED MESSAGE BREAKDOWN:\n")
-                f.write(f"{'=' * 50}\n\n")
-                for i, msg in enumerate(messages):
-                    f.write(f"--- Message {i} ---\n")
-                    f.write(f"Type: {type(msg).__name__}\n")
-
-                    # Extract tool call IDs if present
-                    tool_call_ids = self._extract_tool_call_ids_from_message(msg)
-                    if tool_call_ids:
-                        f.write(f"Tool Call IDs: {tool_call_ids}\n")
-
-                    # Check if it's a tool call or result
-                    if self._is_tool_call_message(msg):
-                        f.write("Message Type: TOOL_CALL\n")
-                        call_info = self._extract_tool_call_info_from_message(msg)
-                        if call_info:
-                            tool_name, tool_args, tool_call_id = call_info
-                            f.write(f"  Tool Name: {tool_name}\n")
-                            f.write(f"  Tool Call ID: {tool_call_id}\n")
-                            f.write(
-                                f"  Args: {tool_args[:200]}...\n"
-                                if len(tool_args) > 200
-                                else f"  Args: {tool_args}\n"
-                            )
-                    elif self._is_tool_result_message(msg):
-                        f.write("Message Type: TOOL_RESULT\n")
-                        result_info = self._extract_tool_info_from_message(msg)
-                        if result_info:
-                            tool_name, result_content, tool_call_id = result_info
-                            f.write(f"  Tool Name: {tool_name}\n")
-                            f.write(f"  Tool Call ID: {tool_call_id}\n")
-                            f.write(f"  Result Length: {len(result_content)} chars\n")
-                            f.write(
-                                f"  Result Preview: {result_content[:200]}...\n"
-                                if len(result_content) > 200
-                                else f"  Result: {result_content}\n"
-                            )
-                    elif self._is_user_message(msg):
-                        f.write("Message Type: USER\n")
-                    else:
-                        f.write("Message Type: OTHER\n")
-
-                    # Write message representation
-                    try:
-                        msg_repr = repr(msg)
-                        if len(msg_repr) > 500:
-                            msg_repr = msg_repr[:500] + "..."
-                        f.write(f"Message Repr: {msg_repr}\n")
-                    except Exception as e:
-                        f.write(f"Error getting message repr: {e}\n")
-
-                    f.write("\n")
-
-            logger.info(
-                f"[History Processor] Wrote messages to LLM debug file: {filepath} "
-                f"({len(messages)} messages, {token_count or 'N/A'} tokens)"
-            )
-        except Exception as e:
-            logger.warning(f"Failed to write messages to LLM debug file: {e}")
-
-    def _count_total_context_tokens(
-        self,
-        ctx: RunContext,
-        messages: List[ModelMessage],
-        model_name: Optional[str] = None,
-    ) -> int:
-        """
-        Count total tokens in the complete context that will be sent to the LLM.
-
-        This includes:
-        1. System prompt (agent instructions)
-        2. Tool schemas (all tool definitions)
-        3. Message history (conversation messages)
-
-        Args:
-            ctx: RunContext containing agent and model information
-            messages: Message history
-            model_name: Optional model name for tokenizer
-
-        Returns:
-            Total token count for the complete context
-        """
-        total = 0
-
-        # Try to get agent from context and cache its info
-        agent = self._get_agent_from_context(ctx)
-
-        # Try to extract system prompt from agent
-        system_prompt_text = ""
-        tool_schemas_text = ""
-
-        if agent:
-            # Cache agent info (instructions and tools)
-            instructions, tool_schemas = self._cache_agent_info(agent)
-            system_prompt_text = instructions
-            tool_schemas_text = tool_schemas
-
-        # Fallback: Extract system prompt from messages if not found in agent
-        if not system_prompt_text:
-            system_prompt_text = self._extract_system_prompt_from_messages(messages)
-
-        # Count system prompt tokens
-        system_tokens = 0
-        if system_prompt_text:
-            system_tokens = self._count_tokens_exact(system_prompt_text, model_name)
-            total += system_tokens
-
-        # Count tool schema tokens
-        tool_schema_tokens = 0
-        if tool_schemas_text:
-            tool_schema_tokens = self._count_tokens_exact(tool_schemas_text, model_name)
-            total += tool_schema_tokens
-
-        # Count message history tokens
-        message_text = self._serialize_messages_to_text(messages)
-        message_tokens = self._count_tokens_exact(message_text, model_name)
-        total += message_tokens
-
-        # Write debug files if enabled (only when debugging is needed)
-        # Commented out - not needed right now
-        # if logger.isEnabledFor(logging.DEBUG):
-        #     if system_tokens > 0:
-        #         self._write_tokenizer_debug_file(
-        #             system_prompt_text, "system_prompt", model_name, system_tokens, ctx
-        #         )
-        #     if tool_schema_tokens > 0:
-        #         self._write_tokenizer_debug_file(
-        #             tool_schemas_text,
-        #             "tool_schemas",
-        #             model_name,
-        #             tool_schema_tokens,
-        #             ctx,
-        #         )
-        #     self._write_tokenizer_debug_file(
-        #         message_text, "message_history", model_name, message_tokens, ctx
-        #     )
-        #     combined_text = f"=== SYSTEM PROMPT ===\n{system_prompt_text}\n\n"
-        #     combined_text += f"=== TOOL SCHEMAS ===\n{tool_schemas_text}\n\n"
-        #     combined_text += f"=== MESSAGE HISTORY ===\n{message_text}\n"
-        #     self._write_tokenizer_debug_file(
-        #         combined_text, "combined_context", model_name, total, ctx
-        #     )
-
-        return total
-
-    async def __call__(
-        self,
-        ctx: RunContext,
-        messages: List[ModelMessage],
-    ) -> List[ModelMessage]:
-        """
-        Process message history based on token usage.
-
-        When total_tokens < token_limit, returns messages unchanged.
-        When total_tokens >= token_limit, runs compaction: removes older tool call/result
-        pairs while preserving a protection zone (last N messages / last M tokens),
-        never removes LLM text responses, and always validates tool pairing after
-        removal. Result is stored in _last_compressed_output for retrieval on the next
-        turn within the same run.
-
-        Invariants:
-        - Tool use/result pairing is always valid after compaction.
-        - LLM response messages (ModelResponse with TextPart) are never removed.
-        - Messages in the protection zone are never pruned.
-
-        Args:
-            ctx: RunContext containing usage information and model access
-            messages: Current message history
-
-        Returns:
-            Message history, possibly compacted if over token limit
-        """
-        # Get model name from context if available
-        model_name = self._get_model_name_from_context(ctx)
-
-        # Model-aware effective limit and protection zone (Phase 2)
-        effective_limit = self.token_limit
-        effective_protection_zone_tokens = self.protection_zone_tokens
-        if model_name and self._context_window_resolver:
-            context_window = self._context_window_resolver(model_name)
-            if context_window is not None and context_window > 0:
-                from app.modules.intelligence.agents.context_config import (
-                    HISTORY_TOKEN_BUDGET_RATIO,
-                    get_protection_zone_tokens,
-                )
-
-                effective_limit = min(
-                    self.token_limit,
-                    int(context_window * HISTORY_TOKEN_BUDGET_RATIO),
-                )
-                effective_protection_zone_tokens = get_protection_zone_tokens(
-                    context_window
-                )
-
-        # Count total context tokens (system prompt + tool schemas + message history)
-        total_tokens = self._count_total_context_tokens(ctx, messages, model_name)
-
-        model_info = (
-            f", model: {model_name}" if model_name else ", encoding: cl100k_base"
-        )
-        logger.info(
-            f"[History Processor] Total context tokens: {total_tokens} "
-            f"(system + tools + messages, using tiktoken{model_info})"
-        )
-
-        if total_tokens < effective_limit:
-            logger.debug(
-                f"Token count {total_tokens} < limit {effective_limit}, no action needed"
-            )
-            self._write_to_conversation_store(messages)
-            return messages
-
-        # Over limit: run compaction with protection zone and strict tool pairing
-        # We need to compact - split messages into old (to remove) and recent (to keep)
-        logger.info(
-            f"Token count {total_tokens} >= limit {effective_limit}, triggering summarization"
-        )
-
-        # Strategy: Prioritize user messages, then recent small tool results, then summarize large/old ones
-        # CRITICAL: Tool results must have corresponding tool calls to avoid "tool_result without tool_use" errors
-
-        # First pass: identify message types and count tokens per message
-        user_messages: List[ModelMessage] = []
-        tool_result_messages: List[ModelMessage] = []
-        other_messages: List[ModelMessage] = []
-
-        # Message metadata: (message, token_count, is_user, is_tool_call, is_tool_result, tool_call_ids)
-        message_metadata: List[Tuple[ModelMessage, int, bool, bool, bool, Set[str]]] = (
-            []
-        )
-
-        for msg in messages:
-            is_user = self._is_user_message(msg)
-            is_tool_call = self._is_tool_call_message(msg)
-            is_tool_result = self._is_tool_result_message(msg)
-            msg_tokens = self._count_message_tokens(msg, model_name)
-            tool_call_ids = self._extract_tool_call_ids_from_message(msg)
-
-            message_metadata.append(
-                (msg, msg_tokens, is_user, is_tool_call, is_tool_result, tool_call_ids)
-            )
-
-            if is_user:
-                user_messages.append(msg)
-            elif is_tool_result:
-                tool_result_messages.append(msg)
+def _apply_truncation(messages: List[ModelMessage]) -> List[ModelMessage]:
+    """
+    Always truncate older tool results: keep last RECENT_TOOL_RESULTS_TO_KEEP in full,
+    replace older tool result content with truncation notice. Preserves order and all
+    non-tool-result messages.
+    """
+    # Reverse-scan: collect tool_call_ids of the most recent RECENT_TOOL_RESULTS_TO_KEEP
+    protected_tool_call_ids: Set[str] = set()
+    seen_result_count = 0
+    for i in range(len(messages) - 1, -1, -1):
+        msg = messages[i]
+        if is_tool_result_message(msg):
+            seen_result_count += 1
+            if seen_result_count <= RECENT_TOOL_RESULTS_TO_KEEP:
+                protected_tool_call_ids.update(extract_tool_call_ids(msg))
             else:
-                other_messages.append(msg)
+                break
 
-        # Always keep all user messages (they're typically small and critical)
-        # Identify the last N tool results to keep in full (newer than last N)
-        recent_tool_results_to_keep = RECENT_TOOL_RESULTS_TO_KEEP
-        tool_call_ids_to_keep_full: Set[str] = set()
-
-        # Get the last N tool results (by position, not size)
-        # CRITICAL: If there are fewer than N tool results, keep ALL of them
-        if len(tool_result_messages) <= recent_tool_results_to_keep:
-            # Keep ALL tool results - we have fewer than the limit
-            for i, (msg, _, _, _, is_tool_result, tool_call_ids) in enumerate(
-                message_metadata
-            ):
-                if is_tool_result:
-                    tool_call_ids_to_keep_full.update(tool_call_ids)
-            logger.debug(
-                f"Keeping ALL {len(tool_result_messages)} tool results (under limit of {recent_tool_results_to_keep})"
-            )
+    # Forward-pass: keep all messages; replace only old tool result content
+    rebuilt: List[ModelMessage] = []
+    for msg in messages:
+        if not is_tool_result_message(msg):
+            rebuilt.append(msg)
+            continue
+        ids_in_msg = extract_tool_call_ids(msg)
+        if ids_in_msg <= protected_tool_call_ids:
+            rebuilt.append(msg)
         else:
-            # Get indices of the most recent tool result messages
-            recent_indices = []
-            for i in range(len(message_metadata) - 1, -1, -1):
-                _, _, _, _, is_tool_result, _ = message_metadata[i]
-                if is_tool_result:
-                    recent_indices.append(i)
-                    if len(recent_indices) >= recent_tool_results_to_keep:
-                        break
+            rebuilt.append(truncate_tool_result_message(msg))
 
-            # Keep the most recent tool results (by position)
-            for i in reversed(recent_indices):
-                msg, _, _, _, _, tool_call_ids = message_metadata[i]
-                tool_call_ids_to_keep_full.update(tool_call_ids)
-
-            logger.debug(
-                f"Identified {len(tool_call_ids_to_keep_full)} tool_call_ids to keep in full "
-                f"from {recent_tool_results_to_keep} most recent tool results"
-            )
-
-        # Second pass: process messages and compress old tool calls/results
-        # Process messages in forward order to maintain tool_use -> tool_result pairing
-        messages_to_keep_list: List[ModelMessage] = []
-
-        # Track which tool calls/results should be removed (older than last 5)
-        # CRITICAL: We must remove BOTH tool calls AND their results together
-        # to avoid "tool_use without tool_result" errors
-        tool_call_ids_to_remove: Set[str] = set()
-
-        # First, identify which tool results should be removed (older than last 5)
-        for i, (
-            msg,
-            msg_tokens,
-            is_user,
-            is_tool_call,
-            is_tool_result,
-            tool_call_ids_in_msg,
-        ) in enumerate(message_metadata):
-            if is_tool_result:
-                # Check if this is one of the recent ones to keep in full
-                should_keep_full = any(
-                    tid in tool_call_ids_to_keep_full for tid in tool_call_ids_in_msg
-                )
-                if not should_keep_full:
-                    # Mark for removal (both call and result must be removed together)
-                    tool_call_ids_to_remove.update(tool_call_ids_in_msg)
-
-        # Collect metadata about removed tool calls for creating summary messages
-        # Process in forward order to collect both calls and results
-        removed_tool_metadata: Dict[str, Tuple[str, str, str]] = (
-            {}
-        )  # tool_call_id -> (tool_name, tool_args, result_summary)
-
-        # First pass: collect metadata for all tool calls/results to be removed
-        for (
-            msg,
-            msg_tokens,
-            is_user,
-            is_tool_call,
-            is_tool_result,
-            tool_call_ids_in_msg,
-        ) in message_metadata:
-            should_remove = any(
-                tid in tool_call_ids_to_remove for tid in tool_call_ids_in_msg
-            )
-
-            if should_remove:
-                if is_tool_result:
-                    result_info = self._extract_tool_info_from_message(msg)
-                    if result_info:
-                        tool_name, result_content, tool_call_id = result_info
-                        result_summary = self._trim_tool_result_lines(result_content)
-                        # Initialize or update metadata
-                        if tool_call_id not in removed_tool_metadata:
-                            removed_tool_metadata[tool_call_id] = (
-                                tool_name,
-                                "",
-                                result_summary,
-                            )
-                        else:
-                            # Update with result summary
-                            name, args, _ = removed_tool_metadata[tool_call_id]
-                            removed_tool_metadata[tool_call_id] = (
-                                name,
-                                args,
-                                result_summary,
-                            )
-                elif is_tool_call:
-                    call_info = self._extract_tool_call_info_from_message(msg)
-                    if call_info:
-                        tool_name, tool_args, tool_call_id = call_info
-                        # Initialize or update metadata
-                        if tool_call_id not in removed_tool_metadata:
-                            removed_tool_metadata[tool_call_id] = (
-                                tool_name,
-                                tool_args,
-                                "",
-                            )
-                        else:
-                            # Update with call args
-                            name, _, result_summary = removed_tool_metadata[
-                                tool_call_id
-                            ]
-                            removed_tool_metadata[tool_call_id] = (
-                                name,
-                                tool_args,
-                                result_summary,
-                            )
-
-        # Second pass: remove messages and keep only recent ones
-        # CRITICAL: Anthropic requires tool_use to be immediately followed by tool_result
-        # We must ensure consecutive pairing
-
-        # First, mark which messages should be kept (not marked for removal)
-        messages_to_keep_mask = [False] * len(message_metadata)
-
-        # Protection zone: indices that must never be pruned (last N messages and/or last M tokens)
-        n_msgs = len(message_metadata)
-        protected_indices: Set[int] = set()
-        if self.protection_zone_messages > 0:
-            for i in range(max(0, n_msgs - self.protection_zone_messages), n_msgs):
-                protected_indices.add(i)
-        if effective_protection_zone_tokens > 0:
-            cum_tokens = 0
-            for i in range(n_msgs - 1, -1, -1):
-                _, msg_tokens, *_ = message_metadata[i]
-                cum_tokens += msg_tokens
-                if cum_tokens <= effective_protection_zone_tokens:
-                    protected_indices.add(i)
-                else:
-                    break
-        if protected_indices:
-            logger.debug(
-                f"[History Processor] Protection zone: {len(protected_indices)} messages "
-                f"(last {self.protection_zone_messages} msgs, last {effective_protection_zone_tokens} tokens)"
-            )
-
-        # Count preserved LLM responses for logging
-        preserved_llm_responses = 0
-
-        for i, (
-            msg,
-            msg_tokens,
-            is_user,
-            is_tool_call,
-            is_tool_result,
-            tool_call_ids_in_msg,
-        ) in enumerate(message_metadata):
-            # Always keep user messages
-            if is_user:
-                messages_to_keep_mask[i] = True
-                continue
-
-            # CRITICAL: ALWAYS preserve LLM response messages (ModelResponse with any TextPart)
-            # This is the most important rule - the LLM needs to see what it already said
-            # to avoid repeating itself. This takes precedence over ALL other logic.
-            if self._is_llm_response_message(msg):
-                messages_to_keep_mask[i] = True
-                preserved_llm_responses += 1
-                logger.debug(
-                    f"[History Processor] ALWAYS preserving LLM response at message {i} "
-                    f"(may also have tool_call_ids: {tool_call_ids_in_msg})"
-                )
-                continue
-
-            # For non-tool messages (no tool_call_ids), keep them
-            if not tool_call_ids_in_msg:
-                messages_to_keep_mask[i] = True
-                continue
-
-            # Check if this tool call/result should be removed (old)
-            # ONLY remove pure tool call/result messages, not LLM responses
-            should_remove = any(
-                tid in tool_call_ids_to_remove for tid in tool_call_ids_in_msg
-            )
-
-            if should_remove:
-                # Protection zone: never prune messages in the protected tail
-                if i in protected_indices:
-                    messages_to_keep_mask[i] = True
-                    logger.debug(
-                        f"[History Processor] Keeping tool message at {i} (in protection zone)"
-                    )
-                    continue
-                # Mark for removal - but only if this is a PURE tool message
-                # (we already preserved LLM responses above)
-                logger.debug(
-                    f"[History Processor] Removing old tool message at {i}: "
-                    f"is_tool_call={is_tool_call}, is_tool_result={is_tool_result}, "
-                    f"tool_call_ids={tool_call_ids_in_msg}"
-                )
-                continue
-
-            # Keep recent tool calls and results
-            messages_to_keep_mask[i] = True
-
-        logger.info(
-            f"[History Processor] Preserved {preserved_llm_responses} LLM response messages"
-        )
-
-        # Now validate tool_use -> tool_result pairing
-        # Remove tool calls that don't have results in the next message
-        # Remove tool results that don't have calls in the previous message
-        # CRITICAL: NEVER remove LLM responses with text content, even if tool pairing is broken
-        for i, (
-            msg,
-            msg_tokens,
-            is_user,
-            is_tool_call,
-            is_tool_result,
-            tool_call_ids_in_msg,
-        ) in enumerate(message_metadata):
-            if not messages_to_keep_mask[i]:
-                continue
-
-            # CRITICAL: NEVER remove LLM responses with text content
-            # This check must come BEFORE tool pairing validation
-            if self._is_llm_response_message(msg):
-                # This is an LLM response - keep it no matter what
-                # The LLM needs to see what it already said to avoid repeating itself
-                continue
-
-            # For tool calls: must have result in next message
-            # CRITICAL: Next message must be a tool_result message AND contain all tool_call_ids
-            if is_tool_call and tool_call_ids_in_msg:
-                has_next_result = False
-                if i + 1 < len(message_metadata) and messages_to_keep_mask[i + 1]:
-                    _, _, _, _, next_is_tool_result, next_tool_call_ids = (
-                        message_metadata[i + 1]
-                    )
-                    # CRITICAL: Next message must be a tool_result message
-                    if next_is_tool_result:
-                        # Check if all tool_call_ids have results in next message
-                        has_next_result = all(
-                            tid in next_tool_call_ids for tid in tool_call_ids_in_msg
-                        )
-                    # If next message is not a tool_result, the tool call is orphaned
-
-                if not has_next_result:
-                    # Remove - tool call without result in next message
-                    messages_to_keep_mask[i] = False
-                    logger.debug(
-                        f"Removing tool call without result in next message: {tool_call_ids_in_msg}"
-                    )
-
-            # For tool results: must have call in previous message
-            elif is_tool_result and tool_call_ids_in_msg:
-                has_prev_call = False
-                if i > 0 and messages_to_keep_mask[i - 1]:
-                    _, _, _, prev_is_tool_call, _, prev_tool_call_ids = (
-                        message_metadata[i - 1]
-                    )
-                    if prev_is_tool_call:
-                        # Check if all tool_call_ids have calls in previous message
-                        has_prev_call = all(
-                            tid in prev_tool_call_ids for tid in tool_call_ids_in_msg
-                        )
-
-                if not has_prev_call:
-                    # Remove - tool result without call in previous message
-                    messages_to_keep_mask[i] = False
-                    logger.debug(
-                        f"Removing tool result without call in previous message: {tool_call_ids_in_msg}"
-                    )
-
-        # Build the final list of messages to keep
-        for i, (
-            msg,
-            msg_tokens,
-            is_user,
-            is_tool_call,
-            is_tool_result,
-            tool_call_ids_in_msg,
-        ) in enumerate(message_metadata):
-            if messages_to_keep_mask[i]:
-                messages_to_keep_list.append(msg)
-
-        messages_to_keep = messages_to_keep_list
-
-        # Create metadata summary message for removed tool calls if any were removed
-        # IMPORTANT: Do this BEFORE validation to avoid breaking tool_use/tool_result pairing
-        if removed_tool_metadata:
-            # Create a summary message with metadata about removed tool calls
-            summary_lines = [
-                "[Previous tool calls (removed from context to save tokens):]"
-            ]
-            for tool_call_id, (
-                tool_name,
-                tool_args,
-                result_summary,
-            ) in removed_tool_metadata.items():
-                trimmed_args = self._trim_tool_args(tool_args) if tool_args else ""
-                summary_lines.append(f"\n- Tool: {tool_name}")
-                if trimmed_args:
-                    summary_lines.append(f"  Args: {trimmed_args}")
-                if result_summary:
-                    # Truncate result summary to first 200 chars
-                    summary_lines.append(
-                        f"  Result (summary): {result_summary[:200]}..."
-                    )
-            summary_text = "\n".join(summary_lines)
-
-            # Add summary as a user message to preserve context
-            # CRITICAL: Insert at the BEGINNING to avoid breaking tool_use/tool_result pairing
-            # Never insert between tool calls and their results
-            summary_msg = ModelRequest(
-                parts=[
-                    SystemPromptPart(
-                        content="Summary of previous tool calls that were removed from context to manage token usage."
-                    ),
-                    UserPromptPart(content=summary_text),
-                ]
-            )
-            # Always insert at the beginning to be safe
-            messages_to_keep.insert(0, summary_msg)
-            logger.info(
-                f"Created metadata summary for {len(removed_tool_metadata)} removed tool calls"
-            )
-
-        # CRITICAL: Validate and fix any orphaned tool calls/results to prevent API errors
-        # Anthropic requires every tool_use to have a tool_result in the next message
-        # This must happen AFTER inserting the summary to catch any issues
-        messages_to_keep = self._validate_and_fix_tool_pairing(messages_to_keep)
-
-        # Count tokens in messages to keep
-        keep_tokens = self._count_total_context_tokens(
-            ctx, messages_to_keep, model_name
-        )
-
-        # Count how many messages have meaningful text content (assistant responses)
-        preserved_text_messages = sum(
-            1 for msg in messages_to_keep if self._has_meaningful_text_content(msg)
-        )
-
-        logger.info(
-            f"Filtered messages: keeping {len(messages_to_keep)} messages "
-            f"({keep_tokens} tokens after compression), "
-            f"preserved {preserved_text_messages} assistant text messages"
-        )
-
-        # If we're still over the limit, continue compressing older messages
-        if keep_tokens > effective_limit:
-            logger.info(
-                f"Still over limit ({keep_tokens} > {effective_limit}), "
-                f"compressing more messages..."
-            )
-            # Continue compressing older tool results until we're under the limit
-            messages_to_keep = self._continue_compressing_until_under_limit(
-                ctx, messages_to_keep, model_name, token_limit=effective_limit
-            )
-            final_tokens = self._count_total_context_tokens(
-                ctx, messages_to_keep, model_name
-            )
-            logger.info(
-                f"Final token count: {final_tokens} (target: {effective_limit})"
-            )
-
-        # LLM summarization is commented out - just return the messages we decided to keep
-        # # Check if we have a summarize agent
-        # if not self.summarize_agent:
-        #     logger.warning(
-        #         "No summarize agent provided, falling back to keeping only recent messages"
-        #     )
-        #     return messages_to_keep if messages_to_keep else messages[-5:]
-        #
-        # # Summarize old messages
-        # try:
-        #     logger.info(
-        #         f"Summarizing {len(messages_to_summarize)} messages "
-        #         f"(keeping {len(messages_to_keep)} recent messages)"
-        #     )
-        #
-        #     summarized_messages = await self._summarize_messages(
-        #         messages_to_summarize, self.summarize_agent, model_name
-        #     )
-        #
-        #     # Combine summary with recent messages
-        #     processed_messages = summarized_messages + messages_to_keep
-        #
-        #     # Count tokens for processed messages
-        #     new_tokens = self._count_total_context_tokens(
-        #         ctx, processed_messages, model_name
-        #     )
-        #
-        #     reduction = total_tokens - new_tokens
-        #     reduction_pct = (100 * reduction / total_tokens) if total_tokens > 0 else 0
-        #
-        #     logger.info(
-        #         f"Summarization complete: {total_tokens} -> {new_tokens} tokens "
-        #         f"({reduction} saved, {reduction_pct:.1f}% reduction)"
-        #     )
-        #
-        #     return processed_messages
-        # except Exception as e:
-        #     logger.error(f"Error during summarization: {e}", exc_info=True)
-        #     # Fallback: return recent messages
-        #     return messages_to_keep if messages_to_keep else messages[-5:]
-
-        # Return the processed messages (with compression applied)
-        final_tokens = self._count_total_context_tokens(
-            ctx, messages_to_keep, model_name
-        )
-        reduction = total_tokens - final_tokens
-        reduction_pct = (100 * reduction / total_tokens) if total_tokens > 0 else 0
-
-        logger.info(
-            f"Message processing complete: {total_tokens} -> {final_tokens} tokens "
-            f"({reduction} saved, {reduction_pct:.1f}% reduction)"
-        )
-
-        # Phase 4: Optional LLM summarization when still over limit after compaction
-        # When compaction left no messages, never use raw messages[-5:] - it can have
-        # orphaned tool results (tool without preceding tool_calls), causing API 400.
-        if messages_to_keep:
-            final_messages = messages_to_keep
-        else:
-            fallback = messages[-5:] if messages else []
-            final_messages = (
-                self._validate_and_fix_tool_pairing(fallback) if fallback else []
-            )
-        if final_tokens > effective_limit and self._history_summarizer is not None:
-            from app.modules.intelligence.agents.context_config import (
-                CONTEXT_MANAGEMENT_SUMMARIZATION_ENABLED,
-            )
-            from app.modules.intelligence.agents.chat_agents.history_summarizer import (
-                NoOpHistorySummarizer,
-            )
-
-            if CONTEXT_MANAGEMENT_SUMMARIZATION_ENABLED and not isinstance(
-                self._history_summarizer, NoOpHistorySummarizer
-            ):
-                head_count = self._summarization_head_messages
-                tail_count = self._summarization_tail_messages
-                if len(messages_to_keep) > head_count + tail_count:
-                    head = messages_to_keep[:head_count]
-                    tail = messages_to_keep[-tail_count:]
-                    middle = messages_to_keep[head_count:-tail_count]
-                    logger.info(
-                        "Summarization triggered: over limit after compaction "
-                        "(before=%s, limit=%s)",
-                        final_tokens,
-                        effective_limit,
-                    )
-                    try:
-                        summarized_middle = await self._history_summarizer.summarize(
-                            middle,
-                            model_name=model_name,
-                            target_tokens=self.target_summary_tokens,
-                        )
-                        final_messages = head + summarized_middle + tail
-                        final_messages = self._validate_and_fix_tool_pairing(
-                            final_messages
-                        )
-                        tokens_after = self._count_total_context_tokens(
-                            ctx, final_messages, model_name
-                        )
-                        logger.info(
-                            "Summarization complete: head=%s, middle=%s, tail=%s, "
-                            "summary_messages=%s, tokens_after=%s",
-                            len(head),
-                            len(middle),
-                            len(tail),
-                            len(summarized_middle),
-                            tokens_after,
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            "Summarization failed, using compacted history: %s", e
-                        )
-                        final_messages = messages_to_keep
-                else:
-                    logger.debug(
-                        "Summarization skipped: no middle segment "
-                        "(len=%s <= head=%s + tail=%s)",
-                        len(messages_to_keep),
-                        head_count,
-                        tail_count,
-                    )
-
-        # Log output RunContext to debug file (only if DEBUG enabled)
-        # Commented out - not needed right now
-        # if logger.isEnabledFor(logging.DEBUG):
-        #     self._write_tokenizer_debug_file(
-        #         f"Output messages count: {len(final_messages)}\n"
-        #         f"Output RunContext logged at end of processing\n"
-        #         f"Token reduction: {reduction} tokens ({reduction_pct:.1f}%)",
-        #         "output_runcontext",
-        #         model_name,
-        #         final_tokens,
-        #         ctx,
-        #     )
-
-        # ALWAYS write messages to LLM debug file (unconditional) for debugging errors
-        # This helps debug tool_use/tool_result pairing issues even when errors occur
-        # Commented out - not needed right now
-        # self._write_messages_to_debug_file(
-        #     final_messages,
-        #     model_name,
-        #     final_tokens,
-        #     ctx,
-        # )
-
-        # CRITICAL: Store compressed output for retrieval in subsequent runs within the same execution
-        # Generate a key from the run context to identify this conversation
-        history_key = self._get_history_key_from_context(ctx)
-        if history_key:
-            self._last_compressed_output[history_key] = final_messages
-            logger.debug(
-                f"Stored compressed output for key '{history_key}': {len(final_messages)} messages"
-            )
-
-        # Phase 3: Also persist to conversation-scoped store for cross-request reuse
-        self._write_to_conversation_store(final_messages)
-
-        return final_messages
+    return validate_and_fix_tool_pairing(rebuilt)
 
 
 def create_history_processor(
@@ -2561,97 +1684,113 @@ def create_history_processor(
     target_summary_tokens: int = TARGET_SUMMARY_TOKENS,
 ):
     """
-    Factory function to create a history processor function with optional summarization.
-
-    Phase 4: When CONTEXT_MANAGEMENT_SUMMARIZATION_ENABLED is True, builds an
-    LLMHistorySummarizer and injects it so that when context is still over the
-    token limit after compaction, a middle segment is replaced with an LLM summary
-    (head and tail preserved).
-
-    Args:
-        llm_provider: ProviderService instance to create summarization agent/summarizer
-        token_limit: Token threshold for triggering compaction (overridden by model-aware budget)
-        target_summary_tokens: Target token count for summarized history
-
-    Returns:
-        A function that can be used as a history processor (takes ctx and messages)
+    Factory to create a stateless history processor (async ctx, messages -> messages).
+    Always truncates older tool results; optionally runs Phase 4 summarization when
+    still over limit and summarizer is configured.
     """
     from app.modules.intelligence.agents.context_config import (
+        CONTEXT_MANAGEMENT_SUMMARIZATION_ENABLED,
         CONTEXT_MANAGEMENT_SUMMARIZATION_MODEL,
+        HISTORY_TOKEN_BUDGET_RATIO,
         SUMMARIZATION_HEAD_MESSAGES,
         SUMMARIZATION_TAIL_MESSAGES,
         SUMMARIZATION_TARGET_TOKENS,
         get_history_token_budget,
     )
-    from app.modules.intelligence.agents.chat_agents.compressed_history_store import (
-        get_compressed_history_store,
-    )
     from app.modules.intelligence.agents.chat_agents.history_summarizer import (
+        NoOpHistorySummarizer,
         get_history_summarizer,
     )
     from app.modules.intelligence.provider.llm_config import get_context_window
 
-    # Model-aware token budget (Phase 2)
     model_string = None
     if hasattr(llm_provider, "chat_config") and llm_provider.chat_config:
         model_string = getattr(llm_provider.chat_config, "model", None)
     effective_token_limit = (
         get_history_token_budget(model_string) if model_string else token_limit
     )
-
-    # Phase 4: Build optional history summarizer (LLM or NoOp)
-    history_summarizer = get_history_summarizer(
+    context_window_resolver: Callable[[str], Optional[int]] = get_context_window
+    history_summarizer: "HistorySummarizer" = get_history_summarizer(
         llm_provider,
         summarization_model=CONTEXT_MANAGEMENT_SUMMARIZATION_MODEL,
         target_tokens=target_summary_tokens or SUMMARIZATION_TARGET_TOKENS,
     )
+    summarization_head_messages = max(0, SUMMARIZATION_HEAD_MESSAGES)
+    summarization_tail_messages = max(0, SUMMARIZATION_TAIL_MESSAGES)
+    target_summary_tokens_resolved = target_summary_tokens or SUMMARIZATION_TARGET_TOKENS
 
-    # Legacy summarize_agent for backward compatibility (processor may still reference it)
-    summarize_agent = None
-    try:
-        if hasattr(llm_provider, "inference_config") and llm_provider.inference_config:
-            summarize_model = llm_provider.get_pydantic_model(
-                model=llm_provider.inference_config.model
-            )
-        else:
-            summarize_model = llm_provider.get_pydantic_model()
-        from pydantic_ai import Agent
-
-        summarize_agent = Agent(
-            model=summarize_model,
-            instructions=(
-                "You are a conversation summarizer. Condense conversation history "
-                "while preserving critical context, key decisions, and important findings."
-            ),
-            output_type=str,
-        )
-    except Exception as e:
-        logger.debug(
-            "Optional summarization agent not created: %s (Phase 4 summarizer used when enabled).",
-            e,
-        )
-
-    compressed_history_store = get_compressed_history_store()
-
-    processor = TokenAwareHistoryProcessor(
-        summarize_agent=summarize_agent,
-        token_limit=effective_token_limit,
-        target_summary_tokens=target_summary_tokens or SUMMARIZATION_TARGET_TOKENS,
-        context_window_resolver=get_context_window,
-        compressed_history_store=compressed_history_store,
-        history_summarizer=history_summarizer,
-        summarization_head_messages=SUMMARIZATION_HEAD_MESSAGES,
-        summarization_tail_messages=SUMMARIZATION_TAIL_MESSAGES,
-    )
-
-    # Return a function closure that Pydantic AI can inspect properly
     async def history_processor(
         ctx: RunContext, messages: List[ModelMessage]
     ) -> List[ModelMessage]:
-        """History processor function that wraps the TokenAwareHistoryProcessor instance."""
-        return await processor(ctx, messages)
+        # 1–3: Always truncate older tool results and validate pairing
+        rebuilt = _apply_truncation(messages)
+        final_messages = rebuilt
 
-    # Expose processor so prepare_multimodal_message_history can retrieve compressed history
-    # (keyed by run context id) for the next turn within the same agent execution
-    history_processor.processor = processor  # type: ignore[attr-defined]
+        # 4: Only if summarizer is configured and not no-op, count tokens and maybe summarize
+        if history_summarizer is None or isinstance(
+            history_summarizer, NoOpHistorySummarizer
+        ):
+            return final_messages
+        if not CONTEXT_MANAGEMENT_SUMMARIZATION_ENABLED:
+            return final_messages
+
+        model_name = _get_model_name_from_context(ctx)
+        effective_limit = effective_token_limit
+        if model_name and context_window_resolver:
+            context_window = context_window_resolver(model_name)
+            if context_window is not None and context_window > 0:
+                effective_limit = min(
+                    effective_token_limit,
+                    int(context_window * HISTORY_TOKEN_BUDGET_RATIO),
+                )
+
+        final_tokens = _count_total_context_tokens(ctx, rebuilt, model_name)
+        logger.info(
+            "[History Processor] After truncation: %s messages, %s tokens%s",
+            len(rebuilt),
+            final_tokens,
+            f", model: {model_name}" if model_name else "",
+        )
+
+        if final_tokens <= effective_limit:
+            return final_messages
+
+        if len(rebuilt) <= summarization_head_messages + summarization_tail_messages:
+            return final_messages
+
+        head = rebuilt[:summarization_head_messages]
+        tail = rebuilt[-summarization_tail_messages:]
+        middle = rebuilt[summarization_head_messages:-summarization_tail_messages]
+        logger.info(
+            "Summarization triggered: over limit after truncation (before=%s, limit=%s)",
+            final_tokens,
+            effective_limit,
+        )
+        try:
+            summarized_middle = await history_summarizer.summarize(
+                middle,
+                model_name=model_name,
+                target_tokens=target_summary_tokens_resolved,
+            )
+            final_messages = head + summarized_middle + tail
+            final_messages = validate_and_fix_tool_pairing(final_messages)
+            final_tokens = _count_total_context_tokens(
+                ctx, final_messages, model_name
+            )
+            logger.info(
+                "Summarization complete: head=%s, middle=%s, tail=%s, summary_messages=%s, tokens_after=%s",
+                len(head),
+                len(middle),
+                len(tail),
+                len(summarized_middle),
+                final_tokens,
+            )
+        except Exception as e:
+            logger.warning(
+                "Summarization failed, using truncated history: %s", e
+            )
+            final_messages = rebuilt
+
+        return final_messages
+
     return history_processor

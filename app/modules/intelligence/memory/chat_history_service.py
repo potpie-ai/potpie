@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from sqlalchemy.exc import SQLAlchemyError
@@ -23,7 +23,7 @@ class ChatHistoryServiceError(Exception):
 class ChatHistoryService:
     def __init__(self, db: Session):
         self.db = db
-        self.message_buffer: Dict[str, Dict[str, str]] = {}
+        self.message_buffer: Dict[str, Dict[str, Any]] = {}
 
     def get_session_history(
         self, user_id: str, conversation_id: str
@@ -72,12 +72,26 @@ class ChatHistoryService:
         message_type: MessageType,
         sender_id: Optional[str] = None,
         citations: Optional[List[str]] = None,
+        tool_calls: Optional[List[Dict[str, Any]]] = None,
+        thinking: Optional[str] = None,
     ):
         if conversation_id not in self.message_buffer:
-            self.message_buffer[conversation_id] = {"content": "", "citations": []}
+            self.message_buffer[conversation_id] = {
+                "content": "",
+                "citations": [],
+                "tool_calls": [],
+                "thinking": None,
+            }
         self.message_buffer[conversation_id]["content"] += content
         if citations:
             self.message_buffer[conversation_id]["citations"].extend(citations)
+        if tool_calls:
+            self.message_buffer[conversation_id]["tool_calls"].extend(tool_calls)
+        if thinking:
+            if self.message_buffer[conversation_id]["thinking"] is None:
+                self.message_buffer[conversation_id]["thinking"] = thinking
+            else:
+                self.message_buffer[conversation_id]["thinking"] += thinking
         logger.debug(
             f"Added message chunk to buffer for conversation: {conversation_id}"
         )
@@ -87,6 +101,7 @@ class ChatHistoryService:
         conversation_id: str,
         message_type: MessageType,
         sender_id: Optional[str] = None,
+        thinking: Optional[str] = None,
     ) -> Optional[str]:
         try:
             if (
@@ -95,6 +110,9 @@ class ChatHistoryService:
             ):
                 content = self.message_buffer[conversation_id]["content"]
                 citations = self.message_buffer[conversation_id]["citations"]
+                tool_calls = self.message_buffer[conversation_id].get("tool_calls", [])
+                # Use provided thinking if given, otherwise fall back to buffer
+                thinking = thinking or self.message_buffer[conversation_id].get("thinking")
 
                 new_message = Message(
                     id=str(uuid7()),
@@ -106,10 +124,17 @@ class ChatHistoryService:
                     citations=(
                         ",".join(set(citations)) if citations else None
                     ),  # Use set to remove duplicates
+                    tool_calls=tool_calls if tool_calls else None,
+                    thinking=thinking,
                 )
                 self.db.add(new_message)
                 self.db.commit()
-                self.message_buffer[conversation_id] = {"content": "", "citations": []}
+                self.message_buffer[conversation_id] = {
+                    "content": "",
+                    "citations": [],
+                    "tool_calls": [],
+                    "thinking": None,
+                }
                 logger.info(
                     f"Flushed message buffer for conversation: {conversation_id}"
                 )
@@ -139,6 +164,8 @@ class ChatHistoryService:
         conversation_id: str,
         content: str,
         citations: Optional[List[str]] = None,
+        tool_calls: Optional[List[Dict[str, Any]]] = None,
+        thinking: Optional[str] = None,
     ) -> Optional[str]:
         """
         Persist a complete AI message (e.g. partial response saved when generation is stopped).
@@ -156,6 +183,8 @@ class ChatHistoryService:
                 status=MessageStatus.ACTIVE,
                 created_at=datetime.now(timezone.utc),
                 citations=(",".join(set(citations)) if citations else None),
+                tool_calls=tool_calls if tool_calls else None,
+                thinking=thinking,
             )
             self.db.add(new_message)
             self.db.commit()

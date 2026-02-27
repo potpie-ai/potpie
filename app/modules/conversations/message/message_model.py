@@ -1,6 +1,6 @@
 import enum
 
-from sqlalchemy import TIMESTAMP, Boolean, CheckConstraint, Column
+from sqlalchemy import TIMESTAMP, Boolean, CheckConstraint, Column, JSON
 from sqlalchemy import Enum as SQLAEnum
 from sqlalchemy import ForeignKey, String, Text, func
 from sqlalchemy.orm import relationship
@@ -51,6 +51,8 @@ class Message(Base):
     created_at = Column(TIMESTAMP(timezone=True), default=func.now(), nullable=False)
     citations = Column(Text, nullable=True)
     has_attachments = Column(Boolean, default=False, nullable=False)
+    tool_calls = Column(JSON, nullable=True)
+    thinking = Column(Text, nullable=True)
 
     conversation = relationship("Conversation", back_populates="messages")
     attachments = relationship("MessageAttachment", cascade="all, delete-orphan")

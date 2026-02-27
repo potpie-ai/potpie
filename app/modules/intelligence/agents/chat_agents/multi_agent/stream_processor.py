@@ -89,6 +89,19 @@ class StreamProcessor:
         self, error: Exception, context: str = "model request stream"
     ) -> Optional[ChatAgentResponse]:
         """Handle streaming errors and return appropriate response"""
+        # Network/API errors (e.g. connection lost during stream)
+        try:
+            from openai import APIError as OpenAIAPIError
+            if isinstance(error, OpenAIAPIError):
+                logger.warning(
+                    f"Model API connection error in {context}: {error}. "
+                    "Often caused by network drops, timeouts, or proxy/load balancer limits."
+                )
+                return self.create_error_response(
+                    "*The connection to the model was lost. You can try again.*"
+                )
+        except ImportError:
+            pass
         if isinstance(error, (ModelRetry, AgentRunError, UserError)):
             logger.warning(f"Pydantic-ai error in {context}: {error}")
             return self.create_error_response(
@@ -126,6 +139,21 @@ class StreamProcessor:
             return self.create_error_response(
                 "*An unexpected error occurred. Continuing...*"
             )
+
+    @staticmethod
+    def _is_retryable_stream_error(error: Exception) -> bool:
+        """True if the error is a transient connection/network error worth retrying."""
+        try:
+            from openai import APIError as OpenAIAPIError
+            if isinstance(error, OpenAIAPIError):
+                return True
+        except ImportError:
+            pass
+        err_str = str(error).lower()
+        return any(
+            p in err_str
+            for p in ("connection lost", "connection error", "network", "eof", "timeout")
+        )
 
     @staticmethod
     async def consume_queue_chunks(
@@ -253,31 +281,44 @@ class StreamProcessor:
             )
 
             if is_model_request:
-                # Stream tokens from the model's request
+                # Stream tokens from the model's request (with retry on connection errors)
                 logger.info(
                     f"[{context}] Starting model request stream (model_request #{node_counts['model_request']})"
                 )
-                try:
-                    async with node.stream(run.ctx) as request_stream:
-                        chunk_count = 0
-                        async for chunk in self.yield_text_stream_events(
-                            request_stream, context
-                        ):
-                            chunk_count += 1
-                            check = getattr(current_context, "check_cancelled", None)
-                            if callable(check) and check():
-                                raise GenerationCancelled()
-                            yield chunk
-                        logger.info(
-                            f"[{context}] Finished model request stream: yielded {chunk_count} chunks"
+                max_stream_retries = 2
+                for attempt in range(max_stream_retries + 1):
+                    try:
+                        async with node.stream(run.ctx) as request_stream:
+                            chunk_count = 0
+                            async for chunk in self.yield_text_stream_events(
+                                request_stream, context
+                            ):
+                                chunk_count += 1
+                                check = getattr(current_context, "check_cancelled", None)
+                                if callable(check) and check():
+                                    raise GenerationCancelled()
+                                yield chunk
+                            logger.info(
+                                f"[{context}] Finished model request stream: yielded {chunk_count} chunks"
+                            )
+                            break  # success
+                    except Exception as e:
+                        if isinstance(e, GenerationCancelled):
+                            raise
+                        if attempt < max_stream_retries and self._is_retryable_stream_error(e):
+                            delay = 1.0 * (attempt + 1)
+                            logger.warning(
+                                f"[{context}] Model stream error (attempt {attempt + 1}/{max_stream_retries + 1}): {e}. Retrying in {delay:.1f}s..."
+                            )
+                            await asyncio.sleep(delay)
+                            continue
+                        error_response = self.handle_stream_error(
+                            e, f"{context} model request stream"
                         )
-                except Exception as e:
-                    error_response = self.handle_stream_error(
-                        e, f"{context} model request stream"
-                    )
-                    if error_response:
-                        yield error_response
-                    continue
+                        if error_response:
+                            yield error_response
+                        break
+                continue
 
             elif is_call_tools:
                 # Handle tool calls and results

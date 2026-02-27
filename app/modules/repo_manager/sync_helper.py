@@ -6,7 +6,7 @@ Used by parsing and conversation flows.
 import asyncio
 import os
 import traceback
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.logger import setup_logger
@@ -25,7 +25,7 @@ def get_or_create_worktree_path(
     commit_id: Optional[str],
     user_id: Optional[str],
     sql_db: Optional["Session"] = None,
-) -> Optional[str]:
+) -> Tuple[Optional[str], Optional[str]]:
     """
     Get the worktree path for a repo, cloning via prepare_for_parsing if missing.
 
@@ -42,10 +42,12 @@ def get_or_create_worktree_path(
         sql_db: Optional DB session used to fetch the user's GitHub auth token
 
     Returns:
-        Path to the worktree, or None if it can't be obtained
+        Tuple of (worktree_path, failure_reason). On success: (path, None).
+        On failure: (None, reason) where reason describes the failure (e.g. "no_ref",
+        "auth_failed", "clone_failed", "worktree_add_failed").
     """
     if not repo_manager:
-        return None
+        return None, "repo_manager_not_initialized"
 
     def _lookup() -> Optional[str]:
         path = repo_manager.get_repo_path(
@@ -69,7 +71,7 @@ def get_or_create_worktree_path(
 
     worktree_path = _lookup()
     if worktree_path:
-        return worktree_path
+        return worktree_path, None
 
     # Worktree not found — try to create it via prepare_for_parsing
     ref = commit_id if commit_id else branch
@@ -79,7 +81,7 @@ def get_or_create_worktree_path(
             repo_name=repo_name,
             user_id=user_id,
         )
-        return None
+        return None, "no_ref"
 
     # ============================================================================
     # AUTHENTICATION CHAIN: GitHub App -> User OAuth -> Environment Tokens
@@ -159,7 +161,7 @@ def get_or_create_worktree_path(
                     worktree_path=worktree_path_str,
                     method="github_app_token",
                 )
-                return worktree_path_str
+                return worktree_path_str, None
         except Exception as e:
             last_error = e
             logger.warning(
@@ -195,7 +197,7 @@ def get_or_create_worktree_path(
                     worktree_path=worktree_path_str,
                     method="user_oauth_token",
                 )
-                return worktree_path_str
+                return worktree_path_str, None
         except Exception as e:
             last_error = e
             logger.warning(
@@ -230,7 +232,7 @@ def get_or_create_worktree_path(
                 worktree_path=worktree_path_str,
                 method="environment_token",
             )
-            return worktree_path_str
+            return worktree_path_str, None
     except Exception as e:
         last_error = e
         logger.error(
@@ -259,7 +261,182 @@ def get_or_create_worktree_path(
         except Exception as email_err:
             logger.exception(f"[Repomanager] Failed to send failure email: {email_err}")
 
-    return None
+    # Determine failure reason for richer error propagation
+    failure_reason = "auth_failed"
+    if last_error:
+        err_str = str(last_error).lower()
+        if "clone" in err_str or "git clone" in err_str:
+            failure_reason = "clone_failed"
+        elif "worktree" in err_str or "work tree" in err_str:
+            failure_reason = "worktree_add_failed"
+    return None, failure_reason
+
+
+def get_or_create_edits_worktree_path(
+    repo_manager: "RepoManager",
+    project_id: str,
+    conversation_id: str,
+    user_id: Optional[str],
+    sql_db: Optional["Session"] = None,
+) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Get or create a dedicated edits worktree for the given conversation.
+
+    Creates a new branch ``agent/edits-{conversation_id}`` from the project's
+    base branch and checks out a worktree on it.  Subsequent calls for the
+    same conversation reuse the existing worktree (idempotent).
+
+    Args:
+        repo_manager: RepoManager instance
+        project_id: Project ID used to look up repo details
+        conversation_id: Conversation ID used to derive the unique branch name
+        user_id: User ID for auth and multi-tenant isolation
+        sql_db: DB session for project lookup and OAuth token retrieval
+
+    Returns:
+        Tuple of (worktree_path, failure_reason).  On success: (path, None).
+        On failure: (None, reason).
+    """
+    if not repo_manager:
+        return None, "repo_manager_not_initialized"
+
+    if not project_id:
+        return None, "project_id_required"
+
+    if not conversation_id:
+        return None, "conversation_id_required"
+
+    # Sanitize conversation_id for use as a git branch name component
+    sanitized_conv_id = (
+        conversation_id.replace("/", "-").replace("\\", "-").replace(" ", "-")
+    )
+    new_branch_name = f"agent/edits-{sanitized_conv_id}"
+
+    # Resolve project details (repo_name, base_branch)
+    try:
+        from app.modules.projects.projects_service import ProjectService
+
+        project_service = ProjectService(sql_db)
+        details = project_service.get_project_from_db_by_id_sync(project_id)  # type: ignore[arg-type]
+        if not details or "project_name" not in details:
+            return None, "project_not_found"
+
+        repo_name = details["project_name"]
+        base_branch = details.get("branch_name") or "main"
+        project_user_id = details.get("user_id")
+        effective_user_id = user_id or project_user_id
+    except Exception as e:
+        logger.warning(
+            f"[Repomanager] get_or_create_edits_worktree_path: Failed to get project {project_id}: {e}",
+            project_id=project_id,
+            user_id=user_id,
+        )
+        return None, "project_lookup_failed"
+
+    if not repo_name:
+        return None, "no_repo_name"
+
+    if not effective_user_id:
+        return None, "no_user_id"
+
+    # Fast path: return existing edits worktree
+    existing = repo_manager.get_repo_path(
+        repo_name, branch=new_branch_name, user_id=effective_user_id
+    )
+    if existing and os.path.exists(existing):
+        logger.info(
+            f"[Repomanager] Reusing existing edits worktree for {repo_name}:{new_branch_name}",
+            repo_name=repo_name,
+            user_id=effective_user_id,
+        )
+        return existing, None
+
+    # ============================================================================
+    # AUTHENTICATION CHAIN: GitHub App -> User OAuth -> Environment Tokens
+    # ============================================================================
+
+    github_app_token = None
+    try:
+        from app.modules.code_provider.provider_factory import CodeProviderFactory
+
+        provider = CodeProviderFactory.create_github_app_provider(repo_name)
+        if provider and hasattr(provider, "client") and hasattr(provider.client, "_Github__requester"):
+            requester = provider.client._Github__requester
+            if hasattr(requester, "auth") and requester.auth:
+                github_app_token = requester.auth.token
+    except Exception as e:
+        logger.info(
+            f"[Repomanager] GitHub App token not available for edits worktree: {e}",
+            repo_name=repo_name,
+            user_id=effective_user_id,
+        )
+
+    user_oauth_token = None
+    if sql_db and effective_user_id:
+        try:
+            from app.modules.code_provider.github.github_service import GithubService
+
+            user_oauth_token = GithubService(sql_db).get_github_oauth_token(effective_user_id)
+        except Exception as e:
+            logger.info(
+                f"[Repomanager] Could not get OAuth token for edits worktree: {e}",
+                repo_name=repo_name,
+                user_id=effective_user_id,
+            )
+
+    last_error = None
+
+    for auth_token, method_name in [
+        (github_app_token, "github_app_token"),
+        (user_oauth_token, "user_oauth_token"),
+        (None, "environment_token"),
+    ]:
+        if auth_token is None and method_name != "environment_token":
+            continue
+
+        try:
+            logger.info(
+                f"[Repomanager] Creating edits worktree with {method_name} for {repo_name}:{new_branch_name}",
+                repo_name=repo_name,
+                user_id=effective_user_id,
+                branch=new_branch_name,
+            )
+            worktree_path = repo_manager.create_worktree_with_new_branch(
+                repo_name=repo_name,
+                base_ref=base_branch,
+                new_branch_name=new_branch_name,
+                auth_token=auth_token,
+                user_id=effective_user_id,
+                unique_id=conversation_id,
+                exists_ok=True,
+            )
+            worktree_path_str = str(worktree_path)
+            if worktree_path_str and os.path.exists(worktree_path_str):
+                logger.info(
+                    f"[Repomanager] SUCCESS: edits worktree at {worktree_path_str}",
+                    repo_name=repo_name,
+                    user_id=effective_user_id,
+                    branch=new_branch_name,
+                    method=method_name,
+                )
+                return worktree_path_str, None
+        except Exception as e:
+            last_error = e
+            logger.warning(
+                f"[Repomanager] {method_name} failed for edits worktree: {e}",
+                repo_name=repo_name,
+                user_id=effective_user_id,
+            )
+
+    failure_reason = "auth_failed"
+    if last_error:
+        err_str = str(last_error).lower()
+        if "clone" in err_str or "git clone" in err_str:
+            failure_reason = "clone_failed"
+        elif "worktree" in err_str or "work tree" in err_str:
+            failure_reason = "worktree_add_failed"
+
+    return None, failure_reason
 
 
 def ensure_repo_registered(

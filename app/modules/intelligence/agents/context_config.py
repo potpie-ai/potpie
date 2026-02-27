@@ -3,7 +3,7 @@ Central configuration for context and history management.
 
 Phase 2: Token- and model-aware limits. Single source of truth for history
 token budget, message caps, and ratios. Used by conversation_service,
-prepare_multimodal_message_history, and TokenAwareHistoryProcessor.
+prepare_multimodal_message_history, and the history processor (create_history_processor).
 """
 
 import logging

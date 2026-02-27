@@ -38,6 +38,9 @@ class ToolCallResponse(BaseModel):
         description="Whether this tool call response is complete (False for streaming parts)",
     )
 
+    class Config:
+        use_enum_values = True
+
 
 class ChatAgentResponse(BaseModel):
     response: str = Field(
@@ -48,6 +51,10 @@ class ChatAgentResponse(BaseModel):
     citations: List[str] = Field(
         ...,
         description="List of file names extracted from context and referenced in the response",
+    )
+    thinking: Optional[str] = Field(
+        default=None,
+        description="Reasoning/thinking content from the model",
     )
 
 

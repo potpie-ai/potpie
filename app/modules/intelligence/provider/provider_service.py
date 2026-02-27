@@ -158,6 +158,13 @@ def is_recoverable_error(error: Exception, settings: RetrySettings) -> bool:
     ):
         return True
 
+    # Check for connection/network errors (e.g. "Network connection lost")
+    if any(
+        pattern in error_str
+        for pattern in ["connection lost", "connection error", "network error", "eof"]
+    ):
+        return True
+
     return False
 
 
