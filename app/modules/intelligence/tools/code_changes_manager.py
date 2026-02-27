@@ -4875,18 +4875,18 @@ def update_file_lines_tool(input_data: UpdateFileLinesInput) -> str:
             db=db,
         )
 
-        if result.get("success"):
-            context_str = ""
-            if result.get("updated_context"):
-                context_start = result.get("context_start_line", result["start_line"])
-                context_end = result.get("context_end_line", result["end_line"])
-                context_str = f"\nUpdated lines with context (lines {context_start}-{context_end}):\n```{input_data.file_path}\n{result['updated_context']}\n```"
-            return (
-                f"✅ Updated lines {result['start_line']}-{result['end_line']} in '{input_data.file_path}'\n\n"
-                + f"Replaced {result['lines_replaced']} lines with {result['lines_added']} new lines\n"
-                + f"Replaced content:\n```\n{result['replaced_content'][:200]}{'...' if len(result['replaced_content']) > 200 else ''}\n```"
-                + context_str
-            )
+            if result.get("success"):
+                context_str = ""
+                if result.get("updated_context"):
+                    context_start = result.get("context_start_line", result["start_line"])
+                    context_end = result.get("context_end_line", result["end_line"])
+                    context_str = f"\nUpdated lines with context (lines {context_start}-{context_end}):\n```{input_data.file_path}\n{result['updated_context']}\n```"
+                return (
+                    f"✅ Updated lines {result['start_line']}-{result['end_line']} in '{input_data.file_path}'\n\n"
+                    + f"Replaced {result['lines_replaced']} lines with {result['lines_added']} new lines\n"
+                    + f"Replaced content:\n```\n{result['replaced_content'][:200]}{'...' if len(result['replaced_content']) > 200 else ''}\n```"
+                    + context_str
+                )
             else:
                 return f"❌ Error updating lines: {result.get('error', 'Unknown error')}"
         finally:
@@ -5359,164 +5359,164 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
             if input_data.file_path
             else list(manager.changes.keys())
         )
-        git_diffs = []
-
-        for file_path in files_to_diff:
-            if file_path not in manager.changes:
-                continue
-
-            change = manager.changes[file_path]
-
-            # Get old content
-            if change.change_type == ChangeType.DELETE:
-                old_content = change.previous_content or ""
-                new_content = ""
-            elif change.change_type == ChangeType.ADD:
-                old_content = ""
-                new_content = change.content or ""
-            else:  # UPDATE
-                new_content = change.content or ""
-                if change.previous_content is not None:
-                    old_content = change.previous_content
-                else:
-                    # Try to get from repository first if project_id/db provided
-                    old_content = None
-                    if project_id and db:
-                        try:
-                            from app.modules.code_provider.code_provider_service import (
-                                CodeProviderService,
-                            )
-                            from app.modules.code_provider.git_safe import (
-                                safe_git_operation,
-                                GitOperationError,
-                            )
-                            from app.modules.projects.projects_model import Project
-
-                            project = (
-                                db.query(Project)
-                                .filter(Project.id == project_id)
-                                .first()
-                            )
-                            if project:
-                                cp_service = CodeProviderService(db)
-
-                                def _fetch_old_content():
-                                    return cp_service.get_file_content(
-                                        repo_name=project.repo_name,
-                                        file_path=file_path,
-                                        branch_name=project.branch_name,
-                                        start_line=None,
-                                        end_line=None,
-                                        project_id=project_id,
-                                        commit_id=project.commit_id,
-                                    )
-
-                                try:
-                                    # Use timeout to prevent blocking worker
-                                    repo_content = safe_git_operation(
-                                        _fetch_old_content,
-                                        max_retries=1,
-                                        timeout=20.0,
-                                        max_total_timeout=25.0,
-                                        operation_name=f"show_diff_get_old_content({file_path})",
-                                    )
-                                except GitOperationError as git_error:
-                                    logger.warning(
-                                        f"Tool show_diff_tool: Git operation timed out: {git_error}"
-                                    )
-                                    repo_content = None
-
-                                if repo_content:
-                                    old_content = repo_content
-                        except Exception as e:
-                            logger.warning(
-                                f"Tool show_diff_tool: Error fetching from repository: {e}"
-                            )
-                            old_content = None
-
-                    # Fallback to filesystem
-                    if old_content is None:
-                        old_content = manager._read_file_from_codebase(file_path)
-
-                    # If file doesn't exist, treat as new file
-                    if old_content is None or old_content == "":
-                        old_content = ""
-
-            # Generate git-style diff
-            git_diff = manager._generate_git_diff_patch(
-                file_path=file_path,
-                old_content=old_content or "",
-                new_content=new_content or "",
-                context_lines=input_data.context_lines,
-            )
-
-            if git_diff:
-                git_diffs.append(git_diff)
-
-        if not git_diffs:
-            return "📋 **No diffs to display**\n\nNo changes found."
-
-        # Combine all diffs into a single string
-        combined_diff = "\n".join(git_diffs)
-
-        # Write diff to .data folder as JSON
-        try:
-            data_dir = ".data"
-            os.makedirs(data_dir, exist_ok=True)
-
-            # Generate unique filename with timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"diff_{timestamp}_{uuid.uuid4().hex[:8]}.json"
-            filepath = os.path.join(data_dir, filename)
-
-            # Get reasoning hash from reasoning manager
-            reasoning_hash = None
-            try:
-                from app.modules.intelligence.tools.reasoning_manager import (
-                    _get_reasoning_manager,
+            git_diffs = []
+    
+            for file_path in files_to_diff:
+                if file_path not in manager.changes:
+                    continue
+    
+                change = manager.changes[file_path]
+    
+                # Get old content
+                if change.change_type == ChangeType.DELETE:
+                    old_content = change.previous_content or ""
+                    new_content = ""
+                elif change.change_type == ChangeType.ADD:
+                    old_content = ""
+                    new_content = change.content or ""
+                else:  # UPDATE
+                    new_content = change.content or ""
+                    if change.previous_content is not None:
+                        old_content = change.previous_content
+                    else:
+                        # Try to get from repository first if project_id/db provided
+                        old_content = None
+                        if project_id and db:
+                            try:
+                                from app.modules.code_provider.code_provider_service import (
+                                    CodeProviderService,
+                                )
+                                from app.modules.code_provider.git_safe import (
+                                    safe_git_operation,
+                                    GitOperationError,
+                                )
+                                from app.modules.projects.projects_model import Project
+    
+                                project = (
+                                    db.query(Project)
+                                    .filter(Project.id == project_id)
+                                    .first()
+                                )
+                                if project:
+                                    cp_service = CodeProviderService(db)
+    
+                                    def _fetch_old_content():
+                                        return cp_service.get_file_content(
+                                            repo_name=project.repo_name,
+                                            file_path=file_path,
+                                            branch_name=project.branch_name,
+                                            start_line=None,
+                                            end_line=None,
+                                            project_id=project_id,
+                                            commit_id=project.commit_id,
+                                        )
+    
+                                    try:
+                                        # Use timeout to prevent blocking worker
+                                        repo_content = safe_git_operation(
+                                            _fetch_old_content,
+                                            max_retries=1,
+                                            timeout=20.0,
+                                            max_total_timeout=25.0,
+                                            operation_name=f"show_diff_get_old_content({file_path})",
+                                        )
+                                    except GitOperationError as git_error:
+                                        logger.warning(
+                                            f"Tool show_diff_tool: Git operation timed out: {git_error}"
+                                        )
+                                        repo_content = None
+    
+                                    if repo_content:
+                                        old_content = repo_content
+                            except Exception as e:
+                                logger.warning(
+                                    f"Tool show_diff_tool: Error fetching from repository: {e}"
+                                )
+                                old_content = None
+    
+                        # Fallback to filesystem
+                        if old_content is None:
+                            old_content = manager._read_file_from_codebase(file_path)
+    
+                        # If file doesn't exist, treat as new file
+                        if old_content is None or old_content == "":
+                            old_content = ""
+    
+                # Generate git-style diff
+                git_diff = manager._generate_git_diff_patch(
+                    file_path=file_path,
+                    old_content=old_content or "",
+                    new_content=new_content or "",
+                    context_lines=input_data.context_lines,
                 )
-
-                reasoning_manager = _get_reasoning_manager()
-                reasoning_hash = reasoning_manager.get_reasoning_hash()
-                # If not finalized yet, try to finalize it
-                if not reasoning_hash:
-                    reasoning_hash = reasoning_manager.finalize_and_save()
+    
+                if git_diff:
+                    git_diffs.append(git_diff)
+    
+            if not git_diffs:
+                return "📋 **No diffs to display**\n\nNo changes found."
+    
+            # Combine all diffs into a single string
+            combined_diff = "\n".join(git_diffs)
+    
+            # Write diff to .data folder as JSON
+            try:
+                data_dir = ".data"
+                os.makedirs(data_dir, exist_ok=True)
+    
+                # Generate unique filename with timestamp
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"diff_{timestamp}_{uuid.uuid4().hex[:8]}.json"
+                filepath = os.path.join(data_dir, filename)
+    
+                # Get reasoning hash from reasoning manager
+                reasoning_hash = None
+                try:
+                    from app.modules.intelligence.tools.reasoning_manager import (
+                        _get_reasoning_manager,
+                    )
+    
+                    reasoning_manager = _get_reasoning_manager()
+                    reasoning_hash = reasoning_manager.get_reasoning_hash()
+                    # If not finalized yet, try to finalize it
+                    if not reasoning_hash:
+                        reasoning_hash = reasoning_manager.finalize_and_save()
+                except Exception as e:
+                    logger.warning(
+                        f"Tool show_diff_tool: Failed to get reasoning hash: {e}"
+                    )
+    
+                # Create JSON with model_patch and reasoning_hash fields
+                diff_data = {"model_patch": combined_diff}
+                if reasoning_hash:
+                    diff_data["reasoning_hash"] = reasoning_hash
+    
+                with open(filepath, "w", encoding="utf-8") as f:
+                    json.dump(diff_data, f, indent=2, ensure_ascii=False)
+    
+                logger.info(
+                    f"Tool show_diff_tool: Diff written to {filepath} "
+                    f"(reasoning_hash: {reasoning_hash})"
+                )
             except Exception as e:
                 logger.warning(
-                    f"Tool show_diff_tool: Failed to get reasoning hash: {e}"
+                    f"Tool show_diff_tool: Failed to write diff to .data folder: {e}"
                 )
-
-            # Create JSON with model_patch and reasoning_hash fields
-            diff_data = {"model_patch": combined_diff}
-            if reasoning_hash:
-                diff_data["reasoning_hash"] = reasoning_hash
-
-            with open(filepath, "w", encoding="utf-8") as f:
-                json.dump(diff_data, f, indent=2, ensure_ascii=False)
-
-            logger.info(
-                f"Tool show_diff_tool: Diff written to {filepath} "
-                f"(reasoning_hash: {reasoning_hash})"
-            )
-        except Exception as e:
-            logger.warning(
-                f"Tool show_diff_tool: Failed to write diff to .data folder: {e}"
-            )
-
-        # Output clean diff format
-        result = "--generated diff--\n\n"
-        result += "```\n"
-        result += combined_diff
-        result += "\n```\n\n--generated diff--\n"
-
-        # Non-local mode: remind agent to apply changes to worktree
-        if project_id:
-            result += (
-                "\n**Next step (non-local mode):** Call `apply_changes(project_id, conversation_id)` "
-                "to write these changes to the worktree. Then ask the user if they want to create a PR.\n"
-            )
-
-        return result
+    
+            # Output clean diff format
+            result = "--generated diff--\n\n"
+            result += "```\n"
+            result += combined_diff
+            result += "\n```\n\n--generated diff--\n"
+    
+            # Non-local mode: remind agent to apply changes to worktree
+            if project_id:
+                result += (
+                    "\n**Next step (non-local mode):** Call `apply_changes(project_id, conversation_id)` "
+                    "to write these changes to the worktree. Then ask the user if they want to create a PR.\n"
+                )
+    
+            return result
         finally:
             if db_gen is not None:
                 db_gen.close()
