@@ -60,7 +60,9 @@ class RepositoriesResource(BaseResource):
         try:
             from app.modules.repo_manager import RepoManager
 
-            self._repo_manager = RepoManager()
+            self._repo_manager = RepoManager(
+                repos_base_path=self._config.repos_base_path
+            )
             logger.info("RepositoriesResource: RepoManager initialized")
             return self._repo_manager
         except Exception as e:
