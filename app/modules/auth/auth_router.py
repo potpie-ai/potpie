@@ -2,7 +2,7 @@ import json
 import logging
 import os
 
-import requests
+import httpx
 from dotenv import load_dotenv
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse, Response
@@ -56,7 +56,8 @@ def _signup_response_with_custom_token(payload: dict) -> dict:
 async def send_slack_message(message: str):
     payload = {"text": message}
     if SLACK_WEBHOOK_URL:
-        requests.post(SLACK_WEBHOOK_URL, json=payload)
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(SLACK_WEBHOOK_URL, json=payload)
 
 
 class AuthAPI:
