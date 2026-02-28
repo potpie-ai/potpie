@@ -51,7 +51,7 @@ from app.modules.intelligence.agents.chat_agents.multi_agent.utils.tool_utils im
     wrap_structured_tools,
 )
 from pydantic_ai.exceptions import ModelRetry, AgentRunError, UserError
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 
 logger = setup_logger(__name__)
 
@@ -74,7 +74,7 @@ class PydanticRagAgent(ChatAgent):
         self,
         llm_provider: ProviderService,
         config: AgentConfig,
-        tools: List[StructuredTool],
+        tools: List[OnyxTool],
         mcp_servers: List[dict] | None = None,
     ):
         """Initialize the agent with configuration and tools"""

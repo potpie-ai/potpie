@@ -6,7 +6,7 @@ from urllib.parse import quote as url_quote
 from pydantic import BaseModel, Field
 from redis import Redis
 from sqlalchemy.orm import Session
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_service import ProjectService
 from app.core.config_provider import config_provider
@@ -468,9 +468,9 @@ class FetchFileTool:
 
 def fetch_file_tool(
     sql_db: Session, user_id: str, internal_call: bool = False
-) -> StructuredTool:
+) -> OnyxTool:
     tool_instance = FetchFileTool(sql_db, user_id, internal_call=internal_call)
-    return StructuredTool.from_function(
+    return OnyxTool(
         coroutine=tool_instance._arun,
         func=tool_instance._run,
         name="fetch_file",
@@ -572,9 +572,9 @@ class FetchFilesBatchTool:
         return self._run(project_id, paths, with_line_numbers)
 
 
-def fetch_files_batch_tool(sql_db: Session, user_id: str) -> StructuredTool:
+def fetch_files_batch_tool(sql_db: Session, user_id: str) -> OnyxTool:
     tool_instance = FetchFilesBatchTool(sql_db, user_id)
-    return StructuredTool.from_function(
+    return OnyxTool(
         coroutine=tool_instance._arun,
         func=tool_instance._run,
         name="fetch_files_batch",

@@ -10,6 +10,7 @@ from typing import Any, List, Sequence
 from pydantic import BaseModel
 from pydantic_ai import Tool
 from pydantic_ai.messages import FunctionToolCallEvent, FunctionToolResultEvent
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 
 from .delegation_utils import (
     is_delegation_tool,
@@ -292,7 +293,7 @@ def _adapt_func_for_from_schema(tool: Any) -> Any:
 
 
 def wrap_structured_tools(tools: Sequence[Any]) -> List[Tool]:
-    """Convert tool instances (StructuredTool or similar) to PydanticAI Tool instances.
+    """Convert tool instances (OnyxTool, OnyxTool or similar) to PydanticAI Tool instances.
     Tool names are sanitized to match API requirement ^[a-zA-Z0-9_-]+$.
     When a tool has args_schema (e.g. SimpleTool with a Pydantic model), the schema is
     inlined so APIs that require a 'type' key in every node (e.g. OpenAI) accept it.
@@ -303,7 +304,7 @@ def wrap_structured_tools(tools: Sequence[Any]) -> List[Tool]:
     result: List[Tool] = []
     for tool in tools:
         name = sanitize_tool_name_for_api(tool.name)
-        description = tool.description
+        description = getattr(tool, "description", "")
         func = _adapt_func_for_from_schema(tool)
         func = handle_exception(func)  # type: ignore[arg-type]
         args_schema = _get_tool_args_schema(tool)

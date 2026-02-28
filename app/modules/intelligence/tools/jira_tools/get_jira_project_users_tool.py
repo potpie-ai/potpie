@@ -5,7 +5,7 @@ Tool for getting users in a Jira project (for assignment purposes).
 import asyncio
 from typing import Any, Dict, Optional
 
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -104,7 +104,7 @@ class GetJiraProjectUsersTool:
         return asyncio.run(self.arun(project_key, query))
 
 
-def get_jira_project_users_tool(db: Session, user_id: int) -> StructuredTool:
+def get_jira_project_users_tool(db: Session, user_id: int) -> OnyxTool:
     """
     Factory function to create a configured GetJiraProjectUsersTool.
 
@@ -113,10 +113,10 @@ def get_jira_project_users_tool(db: Session, user_id: int) -> StructuredTool:
         user_id: ID of the user
 
     Returns:
-        A configured StructuredTool for getting Jira project users
+        A configured OnyxTool for getting Jira project users
     """
     tool_instance = GetJiraProjectUsersTool(db, user_id)
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=tool_instance.arun,
         func=tool_instance.run,
         name="Get Jira Project Users",

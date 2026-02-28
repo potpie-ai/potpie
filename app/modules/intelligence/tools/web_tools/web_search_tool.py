@@ -6,7 +6,7 @@ logger = setup_logger(__name__)
 from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from sqlalchemy.orm import Session
 
 from app.modules.intelligence.provider.provider_service import ProviderService
@@ -111,12 +111,12 @@ class WebSearchTool:
             }
 
 
-def web_search_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
+def web_search_tool(sql_db: Session, user_id: str) -> Optional[OnyxTool]:
     tool_instance = WebSearchTool(sql_db, user_id)
     if tool_instance.api_key == "None":
         # DO NOT USE THIS TOOL IF THE API KEY IS NOT SET
         return None
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=tool_instance.arun,
         func=tool_instance.run,
         name="Web Search Tool",

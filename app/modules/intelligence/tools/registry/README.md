@@ -17,7 +17,7 @@ Single source of truth for tool metadata and agent–tool binding. Agents resolv
 ## Usage
 
 - **Population**: `build_registry_from_tool_service(tool_service, strict=False)` builds a `ToolRegistry` from `definitions.py` and ToolService (descriptions, validation).
-- **Resolver**: `ToolResolver(registry, tools_provider).get_tools_for_agent(allow_list_id, local_mode=..., exclude_embedding_tools=...)` returns `List[StructuredTool]`.
+- **Resolver**: `ToolResolver(registry, tools_provider).get_tools_for_agent(allow_list_id, local_mode=..., exclude_embedding_tools=...)` returns `List[OnyxTool]`.
 - **Agents**: CodeGenAgent and GeneralPurposeAgent accept optional `tool_resolver`; when set they use `get_tools_for_agent("code_gen")` / `get_tools_for_agent("general_purpose")` instead of hardcoded lists.
 
 ## Adding tools / allow-lists

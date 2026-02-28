@@ -4,7 +4,7 @@ from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
 
@@ -210,9 +210,9 @@ class GetCodeGraphFromNodeIdTool:
             self.neo4j_driver.close()
 
 
-def get_code_graph_from_node_id_tool(sql_db: Session) -> StructuredTool:
+def get_code_graph_from_node_id_tool(sql_db: Session) -> OnyxTool:
     tool_instance = GetCodeGraphFromNodeIdTool(sql_db)
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=tool_instance.arun,
         func=tool_instance.run,
         name="Get Code Graph From Node ID",

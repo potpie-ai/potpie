@@ -1,7 +1,7 @@
 import asyncio
 from typing import List
 
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from pydantic import BaseModel, Field
 
 from app.core.config_provider import ConfigProvider
@@ -124,8 +124,8 @@ class GetNodesFromTags:
         return nodes
 
 
-def get_nodes_from_tags_tool(sql_db, user_id) -> StructuredTool:
-    return StructuredTool.from_function(
+def get_nodes_from_tags_tool(sql_db, user_id) -> OnyxTool:
+    return OnyxTool.from_function(
         coroutine=GetNodesFromTags(sql_db, user_id).arun,
         func=GetNodesFromTags(sql_db, user_id).run,
         name="Get Nodes from Tags",

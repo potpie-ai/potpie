@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from github import Github
 from github.GithubException import GithubException
 from sqlalchemy.orm import Session
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 
 from app.modules.code_provider.provider_factory import CodeProviderFactory
 
@@ -268,7 +268,7 @@ class CodeProviderUpdateFileTool:
 
 def code_provider_update_file_tool(
     sql_db: Session, user_id: str
-) -> Optional[StructuredTool]:
+) -> Optional[OnyxTool]:
     from app.modules.code_provider.provider_factory import has_code_provider_credentials
 
     if not has_code_provider_credentials():
@@ -279,7 +279,7 @@ def code_provider_update_file_tool(
         return None
 
     tool_instance = CodeProviderUpdateFileTool(sql_db, user_id)
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=tool_instance._arun,
         func=tool_instance._run,
         name="Update a file in a branch",

@@ -1,7 +1,7 @@
 import asyncio
 from typing import Any, Dict, List
 
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from neo4j import GraphDatabase
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -168,9 +168,9 @@ class GetCodeFromMultipleNodeIdsTool:
 
 def get_code_from_multiple_node_ids_tool(
     sql_db: Session, user_id: str
-) -> StructuredTool:
+) -> OnyxTool:
     tool_instance = GetCodeFromMultipleNodeIdsTool(sql_db, user_id)
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=tool_instance.arun,
         func=tool_instance.run,
         name="Get Code and docstring From Multiple Node IDs",

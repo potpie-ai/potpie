@@ -1,7 +1,7 @@
 """Phase 4: Log tool behavioral annotations on every tool call for audits and observability.
 
 Single module for (1) extracting annotation dict from ToolMetadata and (2) wrapping
-StructuredTools for pre-invoke logging (direct path). Discovery path calls
+OnyxTools for pre-invoke logging (direct path). Discovery path calls
 get_annotations_for_logging from discovery_tools._execute_tool.
 """
 
@@ -9,7 +9,7 @@ import inspect
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from pydantic import BaseModel
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 
 from app.modules.utils.logger import setup_logger
 
@@ -80,18 +80,18 @@ def get_annotations_for_logging(
 
 
 def wrap_tool_for_annotation_logging(
-    tool: StructuredTool,
+    tool: OnyxTool,
     registry: "ToolRegistry",
-) -> StructuredTool:
+) -> OnyxTool:
     """
-    Return a new StructuredTool that logs annotations then delegates to the inner tool.
+    Return a new OnyxTool that logs annotations then delegates to the inner tool.
 
     On invoke: looks up metadata by tool.name, logs annotations via
     get_annotations_for_logging, then invokes the inner tool. If registry lookup
     fails, logs with empty annotations dict and still invokes (best-effort).
     """
     raw_schema = getattr(tool, "args_schema", None)
-    # LangChain StructuredTool accepts only BaseModel subclass or JSON schema dict
+    # Onyx OnyxTool accepts only BaseModel subclass or JSON schema dict
     args_schema = None
     if isinstance(raw_schema, type) and issubclass(raw_schema, BaseModel):
         args_schema = raw_schema
@@ -108,7 +108,7 @@ def wrap_tool_for_annotation_logging(
         )
         return _invoke_inner_tool(tool, kwargs)
 
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         name=tool.name,
         description=tool.description or "",
         func=_invoke,
