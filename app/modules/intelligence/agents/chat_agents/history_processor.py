@@ -1568,7 +1568,7 @@ def _get_model_name_from_context(ctx: RunContext) -> Optional[str]:
                 return getattr(model, "model_name", None)
             model_str = str(model)
             match = re.search(
-                r"(gpt-[0-9.]+|claude-[0-9.]+|gemini-[0-9.]+)",
+                r"(gpt-[0-9A-Za-z._-]+|claude-[0-9A-Za-z._-]+|gemini-[0-9A-Za-z._-]+)",
                 model_str,
                 re.IGNORECASE,
             )
