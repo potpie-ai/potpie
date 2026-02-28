@@ -1,7 +1,6 @@
 from typing import AsyncGenerator, List
 
 from fastapi import HTTPException
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
 from .conversation_store import ConversationStore
@@ -27,7 +26,6 @@ from app.modules.conversations.message.message_schema import (
     NodeContext,
 )
 from app.modules.users.user_schema import UserConversationListResponse
-from app.modules.intelligence.agents.custom_agents.custom_agent_model import CustomAgent
 
 
 class ConversationController:
@@ -183,45 +181,8 @@ class ConversationController:
         order: str = "desc",
     ) -> List[UserConversationListResponse]:
         try:
-            conversations = await self.service.get_conversations_with_projects_for_user(
+            return await self.service.list_conversations_for_user(
                 self.user_id, start, limit, sort, order
             )
-            response = []
-            agent_ids = [
-                conversation.agent_ids[0]
-                for conversation in conversations
-                if conversation.agent_ids
-            ]
-
-            custom_agents = {}
-            stmt = select(CustomAgent).where(CustomAgent.id.in_(agent_ids))
-            result = await self.async_db.execute(stmt)
-
-            agents = result.scalars().all()
-            custom_agents = {agent.id: agent.role for agent in agents}
-
-            for conversation in conversations:
-                projects = conversation.projects
-                repo_name = projects[0].repo_name if projects else None
-                branch_name = projects[0].branch_name if projects else None
-
-                agent_id = conversation.agent_ids[0] if conversation.agent_ids else None
-                display_agent_id = custom_agents.get(agent_id, agent_id)
-
-                response.append(
-                    UserConversationListResponse(
-                        id=conversation.id,
-                        title=conversation.title,
-                        status=conversation.status,
-                        project_ids=conversation.project_ids,
-                        repository=repo_name,
-                        branch=branch_name,
-                        agent_id=display_agent_id,
-                        created_at=conversation.created_at.isoformat(),
-                        updated_at=conversation.updated_at.isoformat(),
-                    )
-                )
-
-            return response
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))

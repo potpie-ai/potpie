@@ -4,6 +4,7 @@ import os
 import time
 from datetime import datetime, timezone
 from typing import AsyncGenerator, Callable, List, Optional, Dict, Union
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -29,9 +30,13 @@ from app.modules.conversations.message.message_schema import (
     MessageResponse,
     NodeContext,
 )
+from app.modules.intelligence.agents.custom_agents.custom_agent_model import (
+    CustomAgent as CustomAgentModel,
+)
 from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
     CustomAgentService,
 )
+from app.modules.users.user_schema import UserConversationListResponse
 from app.modules.intelligence.agents.agents_service import AgentsService
 from app.modules.intelligence.agents.chat_agent import ChatContext
 from app.modules.intelligence.agents.context_config import (
@@ -1825,4 +1830,74 @@ class ConversationService:
             )
             raise ConversationServiceError(
                 f"An unexpected error occurred while retrieving conversations for user {user_id}"
+            ) from e
+
+    async def list_conversations_for_user(
+        self,
+        user_id: str,
+        start: int,
+        limit: int,
+        sort: str = "updated_at",
+        order: str = "desc",
+    ) -> List[UserConversationListResponse]:
+        """
+        Returns a paginated list of conversations for a user, with agent display names resolved.
+        All DB access is via the store layer; response assembly is handled here in the service.
+        """
+        try:
+            conversations = await self.conversation_store.get_for_user(
+                user_id=user_id,
+                start=start,
+                limit=limit,
+                sort=sort,
+                order=order,
+            )
+
+            # Resolve custom-agent IDs to display names in a single batch query.
+            agent_ids = [c.agent_ids[0] for c in conversations if c.agent_ids]
+            custom_agent_display_names: Dict[str, str] = {}
+            if agent_ids:
+                stmt = select(CustomAgentModel).where(
+                    CustomAgentModel.id.in_(agent_ids)
+                )
+                result = await self.conversation_store.async_db.execute(stmt)
+                agents = result.scalars().all()
+                custom_agent_display_names = {agent.id: agent.role for agent in agents}
+
+            response = []
+            for conversation in conversations:
+                projects = conversation.projects
+                repo_name = projects[0].repo_name if projects else None
+                branch_name = projects[0].branch_name if projects else None
+                agent_id = conversation.agent_ids[0] if conversation.agent_ids else None
+                display_agent_id = custom_agent_display_names.get(agent_id, agent_id)
+                response.append(
+                    UserConversationListResponse(
+                        id=conversation.id,
+                        title=conversation.title,
+                        status=conversation.status,
+                        project_ids=conversation.project_ids,
+                        repository=repo_name,
+                        branch=branch_name,
+                        agent_id=display_agent_id,
+                        created_at=conversation.created_at.isoformat(),
+                        updated_at=conversation.updated_at.isoformat(),
+                    )
+                )
+            return response
+        except StoreError as e:
+            logger.exception(
+                f"Store layer failed to list conversations for user {user_id}",
+                user_id=user_id,
+            )
+            raise ConversationServiceError(
+                f"Failed to retrieve conversations for user {user_id}"
+            ) from e
+        except Exception as e:
+            logger.exception(
+                f"Unexpected error listing conversations for user {user_id}",
+                user_id=user_id,
+            )
+            raise ConversationServiceError(
+                f"An unexpected error occurred while listing conversations for user {user_id}"
             ) from e
