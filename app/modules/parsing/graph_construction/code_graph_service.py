@@ -1,8 +1,9 @@
 import hashlib
 import os
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Generator, Optional
 
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
@@ -15,28 +16,91 @@ logger = setup_logger(__name__)
 
 
 class CodeGraphService:
-    def __init__(self, neo4j_uri, neo4j_user, neo4j_password, db: Session):
-        self.driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
+    """Manage graph persistence and maintenance operations for repository parsing."""
+
+    def __init__(
+        self, neo4j_uri: str, neo4j_user: str, neo4j_password: str, db: Session
+    ) -> None:
+        """Initialize a Neo4j-backed graph service.
+
+        Args:
+            neo4j_uri: Neo4j connection URI.
+            neo4j_user: Neo4j username.
+            neo4j_password: Neo4j password.
+            db: Active SQLAlchemy session for secondary services.
+
+        Raises:
+            Exception: Re-raises any Neo4j driver initialization failure.
+        """
+        self.driver = None
+        try:
+            self.driver = GraphDatabase.driver(
+                neo4j_uri, auth=(neo4j_user, neo4j_password)
+            )
+        except Exception:
+            logger.exception("Failed to initialize Neo4j driver", uri=neo4j_uri)
+            raise
         self.db = db
 
+    def __enter__(self) -> "CodeGraphService":
+        """Enter context manager scope for deterministic driver cleanup."""
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Close the Neo4j driver when leaving context manager scope."""
+        self.close()
+
+    def _require_driver(self):
+        """Return the active Neo4j driver or raise if closed/uninitialized."""
+        if self.driver is None:
+            raise RuntimeError("Neo4j driver is not available")
+        return self.driver
+
+    @contextmanager
+    def _session(self) -> Generator:
+        """Yield a Neo4j session from the active driver.
+
+        Yields:
+            neo4j.Session: Open Neo4j session.
+        """
+        with self._require_driver().session() as session:
+            yield session
+
     @staticmethod
-    def generate_node_id(path: str, user_id: str):
-        # Concatenate path and signature
+    def generate_node_id(path: str, user_id: str) -> str:
+        """Generate deterministic node identifier scoped to a user.
+
+        Args:
+            path: Source path or node signature.
+            user_id: Owning user identifier.
+
+        Returns:
+            MD5 hex digest used as ``node_id``.
+        """
         combined_string = f"{user_id}:{path}"
 
-        # Create a SHA-1 hash of the combined string
         hash_object = hashlib.md5()
         hash_object.update(combined_string.encode("utf-8"))
-
-        # Get the hexadecimal representation of the hash
         node_id = hash_object.hexdigest()
-
         return node_id
 
-    def close(self):
-        self.driver.close()
+    def close(self) -> None:
+        """Close the Neo4j driver safely and idempotently."""
+        if self.driver is None:
+            return
 
-    def delete_nodes_by_file_paths(self, project_id: str, file_paths: list[str]):
+        try:
+            self.driver.close()
+        finally:
+            self.driver = None
+
+    def delete_nodes_by_file_paths(self, project_id: str, file_paths: list[str]) -> None:
+        """Delete all graph nodes that belong to the provided file paths.
+
+        Args:
+            project_id: Project/repository identifier in the graph.
+            file_paths: Relative file paths to remove from graph storage.
+        """
         normalized_paths = [
             str(Path(file_path).as_posix()).lstrip("./")
             for file_path in file_paths
@@ -45,7 +109,7 @@ class CodeGraphService:
         if not normalized_paths:
             return
 
-        with self.driver.session() as session:
+        with self._session() as session:
             session.run(
                 """
                 MATCH (n:NODE {repoId: $project_id})
@@ -56,7 +120,21 @@ class CodeGraphService:
                 file_paths=normalized_paths,
             )
 
-    def create_and_store_graph(self, repo_dir, project_id, user_id, changed_files=None):
+    def create_and_store_graph(
+        self,
+        repo_dir: str,
+        project_id: str,
+        user_id: str,
+        changed_files: Optional[list[str]] = None,
+    ) -> None:
+        """Parse repository structure and persist graph nodes/relationships in Neo4j.
+
+        Args:
+            repo_dir: Local repository directory to parse.
+            project_id: Project/repository identifier.
+            user_id: User identifier for node ID generation.
+            changed_files: Optional subset of changed files for incremental updates.
+        """
         graph_start_time = time.time()
         changed_files_set = None
         if changed_files:
@@ -131,7 +209,7 @@ class CodeGraphService:
                 incremental_relationship_count=relationship_count,
             )
 
-        with self.driver.session() as session:
+        with self._session() as session:
             db_start_time = time.time()
 
             # Step 2: Create indices
@@ -369,8 +447,13 @@ class CodeGraphService:
                 relationships_inserted=total_rels_inserted,
             )
 
-    def cleanup_graph(self, project_id: str):
-        with self.driver.session() as session:
+    def cleanup_graph(self, project_id: str) -> None:
+        """Remove all graph data and search index state for a project.
+
+        Args:
+            project_id: Project/repository identifier.
+        """
+        with self._session() as session:
             session.run(
                 """
                 MATCH (n {repoId: $project_id})
@@ -384,7 +467,16 @@ class CodeGraphService:
         search_service.delete_project_index(project_id)
 
     async def get_node_by_id(self, node_id: str, project_id: str) -> Optional[Dict]:
-        with self.driver.session() as session:
+        """Fetch a single node by logical node ID and project identifier.
+
+        Args:
+            node_id: Graph node ID.
+            project_id: Project/repository identifier.
+
+        Returns:
+            Node property dictionary if found, otherwise ``None``.
+        """
+        with self._session() as session:
             result = session.run(
                 """
                 MATCH (n:NODE {node_id: $node_id, repoId: $project_id})
@@ -396,13 +488,23 @@ class CodeGraphService:
             record = result.single()
             return dict(record["n"]) if record else None
 
-    def query_graph(self, query):
-        with self.driver.session() as session:
+    def query_graph(self, query: str) -> list[Dict[str, Any]]:
+        """Execute an arbitrary Cypher query and return record dictionaries.
+
+        Args:
+            query: Cypher query string.
+
+        Returns:
+            List of row dictionaries from query results.
+        """
+        with self._session() as session:
             result = session.run(query)
             return [record.data() for record in result]
 
 
 class SimpleIO:
+    """Minimal file IO adapter consumed by ``RepoMap`` parsing routines."""
+
     def read_text(self, fname):
         """
         Read file with multiple encoding fallbacks.
@@ -434,12 +536,17 @@ class SimpleIO:
         return ""
 
     def tool_error(self, message):
+        """Emit parser tool error message through the shared logger."""
         logger.error(f"Error: {message}")
 
     def tool_output(self, message):
+        """Emit parser tool output message through the shared logger."""
         logger.info(message)
 
 
 class SimpleTokenCounter:
+    """Approximate token counter used by RepoMap parsing."""
+
     def token_count(self, text):
+        """Return a whitespace-token approximation for the provided text."""
         return len(text.split())

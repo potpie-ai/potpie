@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import shutil
 import uuid
 import subprocess
@@ -34,7 +35,19 @@ class ParsingFailedError(ParsingServiceError):
 
 
 class ParseHelper:
+    """Coordinate repository preparation, metadata extraction, and parse utilities.
+
+    This helper encapsulates repository checkout logic (local and remote),
+    RepoManager integration, language detection, metadata extraction, and git diff
+    helpers used by incremental graph parsing flows.
+    """
+
     def __init__(self, db_session: Session):
+        """Initialize parse helper dependencies.
+
+        Args:
+            db_session: Active SQLAlchemy database session.
+        """
         self.project_manager = ProjectService(db_session)
         self.db = db_session
         self.github_service = CodeProviderService(db_session)
@@ -51,6 +64,14 @@ class ParseHelper:
 
     @staticmethod
     def get_directory_size(path):
+        """Calculate total size of non-symlink files under a directory.
+
+        Args:
+            path: Root directory path to scan.
+
+        Returns:
+            Total size in bytes for regular files reachable from ``path``.
+        """
         total_size = 0
         for dirpath, dirnames, filenames in os.walk(path, followlinks=False):
             # # Skip symlinked directories
@@ -330,6 +351,16 @@ class ParseHelper:
         return repo, owner, auth, repo_manager_path
 
     def is_text_file(self, file_path):
+        """Determine whether a file should be treated as text for parsing.
+
+        Args:
+            file_path: Absolute or relative path to a file.
+
+        Returns:
+            ``True`` when the file is likely textual and safe to parse,
+            otherwise ``False``.
+        """
+
         def open_text_file(file_path):
             """
             Try multiple encodings to detect if file is text.
@@ -577,6 +608,15 @@ class ParseHelper:
 
     @staticmethod
     def detect_repo_language(repo_dir):
+        """Detect predominant language for a repository directory.
+
+        Args:
+            repo_dir: Root directory that contains repository files.
+
+        Returns:
+            Normalized language identifier supported by the parser, or
+            ``"other"`` if no supported language could be identified.
+        """
         lang_count = {
             "c_sharp": 0,
             "c": 0,
@@ -2426,6 +2466,14 @@ class ParseHelper:
         return worktree_path
 
     def extract_repository_metadata(self, repo):
+        """Extract repository metadata from local or remote repository objects.
+
+        Args:
+            repo: Either a ``git.Repo`` instance or a provider repository object.
+
+        Returns:
+            Dictionary containing repository metadata used in project records.
+        """
         if isinstance(repo, Repo):
             metadata = ParseHelper.extract_local_repo_metadata(repo)
         else:
@@ -2434,6 +2482,14 @@ class ParseHelper:
 
     @staticmethod
     def extract_local_repo_metadata(repo: Repo):
+        """Build metadata payload for a locally available git repository.
+
+        Args:
+            repo: Local GitPython repository object.
+
+        Returns:
+            Dictionary with normalized local repository metadata.
+        """
         languages = ParseHelper.get_local_repo_languages(repo.working_tree_dir)
         total_bytes = sum(languages.values())
 
@@ -2467,6 +2523,14 @@ class ParseHelper:
 
     @staticmethod
     def get_local_repo_languages(path: str | os.PathLike[str]) -> dict[str, int]:
+        """Estimate language byte breakdown by scanning repository files.
+
+        Args:
+            path: Directory path to scan.
+
+        Returns:
+            Mapping of language name to cumulative byte count.
+        """
         root = Path(path).resolve()
         if not root.exists():
             return {}
@@ -2508,6 +2572,14 @@ class ParseHelper:
 
     @staticmethod
     def extract_remote_repo_metadata(repo):
+        """Build metadata payload for a provider-backed remote repository.
+
+        Args:
+            repo: Provider repository object exposing GitHub-like attributes.
+
+        Returns:
+            Dictionary with normalized remote repository metadata.
+        """
         languages = repo.get_languages()
         total_bytes = sum(languages.values())
 
@@ -2654,6 +2726,31 @@ class ParseHelper:
             return False
 
     @staticmethod
+    def validate_commit_sha(commit_sha: str, *, field_name: str = "commit_sha") -> str:
+        """Validate and normalize a commit SHA before git command usage.
+
+        Args:
+            commit_sha: Candidate commit SHA to validate.
+            field_name: Field name used in validation error messages.
+
+        Returns:
+            Lowercase normalized SHA string.
+
+        Raises:
+            ValueError: If the SHA is missing or not a 40-character hex string.
+        """
+        if commit_sha is None:
+            raise ValueError(f"{field_name} is required")
+
+        normalized_sha = commit_sha.strip()
+        if not re.fullmatch(r"[0-9a-fA-F]{40}", normalized_sha):
+            raise ValueError(
+                f"Invalid {field_name}: expected 40-character hexadecimal SHA"
+            )
+
+        return normalized_sha.lower()
+
+    @staticmethod
     def get_changed_files_between_commits(
         repo_path: str, old_commit: str, new_commit: str
     ) -> Dict[str, List[str]]:
@@ -2661,9 +2758,27 @@ class ParseHelper:
         Return added/modified/deleted files between two commits.
 
         Uses `git diff --name-status old..new` and normalizes paths to POSIX style.
+
+        Args:
+            repo_path: Local repository path.
+            old_commit: Base commit SHA for diff.
+            new_commit: Target commit SHA for diff.
+
+        Returns:
+            Mapping with ``added``, ``modified``, and ``deleted`` file lists.
+
+        Raises:
+            ValueError: If one of the commit identifiers is not a valid SHA.
         """
         if not repo_path or not old_commit or not new_commit:
             return {"added": [], "modified": [], "deleted": []}
+
+        old_commit = ParseHelper.validate_commit_sha(
+            old_commit, field_name="old_commit"
+        )
+        new_commit = ParseHelper.validate_commit_sha(
+            new_commit, field_name="new_commit"
+        )
 
         if old_commit == new_commit:
             return {"added": [], "modified": [], "deleted": []}

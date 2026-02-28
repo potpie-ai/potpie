@@ -33,6 +33,8 @@ logger = setup_logger(__name__)
 
 
 class ParsingService:
+    """Orchestrate repository parsing, graph generation, and inference lifecycle."""
+
     def __init__(
         self,
         db: Session,
@@ -60,6 +62,35 @@ class ParsingService:
         self._neo4j_config = neo4j_config
         self._raise_library_exceptions = raise_library_exceptions
         self.repo_manager = RepoManager()
+
+    def _cleanup_graph_for_project(self, project_id: str, user_id: str) -> None:
+        """Delete existing graph/search state for a project.
+
+        Args:
+            project_id: Project identifier whose graph should be cleaned.
+            user_id: User identifier for structured logging context.
+
+        Raises:
+            ParsingServiceError: If graph cleanup fails and callers choose to escalate.
+        """
+        neo4j_config = self._get_neo4j_config()
+        try:
+            with CodeGraphService(
+                neo4j_config["uri"],
+                neo4j_config["username"],
+                neo4j_config["password"],
+                self.db,
+            ) as code_graph_service:
+                code_graph_service.cleanup_graph(str(project_id))
+        except Exception as exc:
+            logger.exception(
+                "Failed to cleanup project graph",
+                project_id=project_id,
+                user_id=user_id,
+            )
+            raise ParsingServiceError(
+                f"Failed to cleanup graph for project {project_id}: {exc}"
+            ) from exc
 
     @classmethod
     def create_from_config(
@@ -95,6 +126,14 @@ class ParsingService:
 
     @contextmanager
     def change_dir(self, path):
+        """Temporarily change process working directory within a context block.
+
+        Args:
+            path: Target directory path.
+
+        Yields:
+            None: Control returns to caller while the directory is active.
+        """
         old_dir = os.getcwd()
         os.chdir(path)
         try:
@@ -110,6 +149,22 @@ class ParsingService:
         project_id: str,
         cleanup_graph: bool = True,
     ):
+        """Parse a repository and refresh graph/inference artifacts for a project.
+
+        Args:
+            repo_details: Parsing input describing repository source and revision.
+            user_id: User identifier that owns the parse request.
+            user_email: Email address used for completion notifications.
+            project_id: Target project identifier.
+            cleanup_graph: Whether to clean previous graph before parsing.
+
+        Returns:
+            Dictionary containing parse completion message and project id.
+
+        Raises:
+            HTTPException: For API-facing parse failures when library exceptions are disabled.
+            ParsingServiceError: For library-mode parse failures.
+        """
         # Set up logging context with domain IDs
         with log_context(project_id=str(project_id), user_id=user_id):
             project_manager = ProjectService(self.db)
@@ -203,24 +258,11 @@ class ParsingService:
                 )
 
                 if cleanup_graph and not incremental_candidate:
-                    neo4j_config = self._get_neo4j_config()
                     try:
-                        code_graph_service = CodeGraphService(
-                            neo4j_config["uri"],
-                            neo4j_config["username"],
-                            neo4j_config["password"],
-                            self.db,
-                        )
-                        code_graph_service.cleanup_graph(str(project_id))
-                        code_graph_service.close()
-                    except Exception:
-                        logger.exception(
-                            "Error in cleanup_graph",
-                            project_id=project_id,
-                            user_id=user_id,
-                        )
+                        self._cleanup_graph_for_project(str(project_id), user_id)
+                    except ParsingServiceError:
                         if self._raise_library_exceptions:
-                            raise ParsingServiceError("Failed to cleanup graph")
+                            raise
                         raise HTTPException(
                             status_code=500, detail="Internal server error"
                         )
@@ -357,15 +399,7 @@ class ParsingService:
                             previous_commit_id=previous_commit_id,
                             current_commit_id=repo_details.commit_id,
                         )
-                        neo4j_config = self._get_neo4j_config()
-                        code_graph_service = CodeGraphService(
-                            neo4j_config["uri"],
-                            neo4j_config["username"],
-                            neo4j_config["password"],
-                            self.db,
-                        )
-                        code_graph_service.cleanup_graph(str(project_id))
-                        code_graph_service.close()
+                        self._cleanup_graph_for_project(str(project_id), user_id)
                         incremental_changed_files = None
                         incremental_files_to_delete = None
 
@@ -424,13 +458,27 @@ class ParsingService:
 
             except ParsingServiceError as e:
                 message = str(f"{project_id} Failed during parsing: " + str(e))
-                await project_manager.update_project_status(
-                    project_id, ProjectStatusEnum.ERROR
-                )
-                if not self._raise_library_exceptions:
-                    await ParseWebhookHelper().send_slack_notification(
-                        project_id, message
+                try:
+                    await project_manager.update_project_status(
+                        project_id, ProjectStatusEnum.ERROR
                     )
+                except Exception:
+                    logger.exception(
+                        "Failed to update project status after ParsingServiceError",
+                        project_id=project_id,
+                        user_id=user_id,
+                    )
+                if not self._raise_library_exceptions:
+                    try:
+                        await ParseWebhookHelper().send_slack_notification(
+                            project_id, message
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to send slack notification",
+                            project_id=project_id,
+                            user_id=user_id,
+                        )
                     raise HTTPException(status_code=500, detail=message)
                 raise
 
@@ -463,7 +511,16 @@ class ParsingService:
                     raise ParsingServiceError(
                         f"Parsing failed for project {project_id}: {e}"
                     ) from e
-                await ParseWebhookHelper().send_slack_notification(project_id, str(e))
+                try:
+                    await ParseWebhookHelper().send_slack_notification(
+                        project_id, str(e)
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to send slack notification",
+                        project_id=project_id,
+                        user_id=user_id,
+                    )
                 # Raise generic error with correlation ID for client
                 raise HTTPException(
                     status_code=500,
@@ -471,6 +528,11 @@ class ParsingService:
                 )
 
     def create_neo4j_indices(self, graph_manager):
+        """Create required Neo4j indexes for node and relationship lookups.
+
+        Args:
+            graph_manager: Graph manager object that owns a Neo4j driver and index helpers.
+        """
         # Create existing indices from blar_graph
         graph_manager.create_entityId_index()
         graph_manager.create_node_id_index()
@@ -506,6 +568,24 @@ class ParsingService:
         incremental_changed_files: list[str] | None = None,
         incremental_files_to_delete: list[str] | None = None,
     ):
+        """Run graph construction and inference for an extracted repository directory.
+
+        Args:
+            extracted_dir: Repository path prepared for parsing.
+            project_id: Project identifier.
+            user_id: User identifier.
+            db: Database session used by graph services.
+            language: Predominant repository language.
+            user_email: Optional recipient for completion email.
+            incremental_changed_files: Changed files to parse for incremental updates.
+            incremental_files_to_delete: Files whose nodes should be deleted before insert.
+
+        Raises:
+            ValueError: If ``extracted_dir`` is not a valid string path.
+            FileNotFoundError: If ``extracted_dir`` does not exist.
+            HTTPException: If project does not exist and HTTP mode is enabled.
+            ParsingFailedError: If repository language is unsupported.
+        """
         logger.info(
             f"ParsingService: Parsing project {project_id}: Analyzing directory: {extracted_dir}"
         )
@@ -513,14 +593,14 @@ class ParsingService:
         # Validate that extracted_dir is a valid path
         if not isinstance(extracted_dir, str):
             error_msg = f"ParsingService: Invalid extracted_dir type: {type(extracted_dir)}, value: {extracted_dir}"
-            logger.bind(project_id=project_id, user_id=user_id).error(error_msg)
+            logger.error(error_msg, project_id=project_id, user_id=user_id)
             raise ValueError(
                 f"Expected string path, got {type(extracted_dir)}: {extracted_dir}"
             )
 
         if not os.path.exists(extracted_dir):
             error_msg = f"ParsingService: Directory does not exist: {extracted_dir}"
-            logger.bind(project_id=project_id, user_id=user_id).error(error_msg)
+            logger.error(error_msg, project_id=project_id, user_id=user_id)
             raise FileNotFoundError(f"Directory not found: {extracted_dir}")
 
         logger.info(
@@ -534,7 +614,7 @@ class ParsingService:
             branch_name = project_details.get("branch_name")
         else:
             error_msg = f"Project with ID {project_id} not found."
-            logger.bind(project_id=project_id, user_id=user_id).error(error_msg)
+            logger.error(error_msg, project_id=project_id, user_id=user_id)
             if self._raise_library_exceptions:
                 raise ParsingServiceError(error_msg)
             raise HTTPException(status_code=404, detail="Project not found.")
@@ -703,6 +783,13 @@ class ParsingService:
 
 
 async def duplicate_graph(self, old_repo_id: str, new_repo_id: str):
+    """Clone graph/search data from one repository id to another.
+
+    Args:
+        self: Service instance that owns search and Neo4j handles.
+        old_repo_id: Source repository identifier.
+        new_repo_id: Destination repository identifier.
+    """
     await self.search_service.clone_search_indices(old_repo_id, new_repo_id)
     node_batch_size = 3000  # Fixed batch size for nodes
     relationship_batch_size = 3000  # Fixed batch size for relationships
