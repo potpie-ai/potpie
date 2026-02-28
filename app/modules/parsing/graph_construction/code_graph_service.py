@@ -36,8 +36,36 @@ class CodeGraphService:
     def close(self):
         self.driver.close()
 
-    def create_and_store_graph(self, repo_dir, project_id, user_id):
+    def delete_nodes_by_file_paths(self, project_id: str, file_paths: list[str]):
+        normalized_paths = [
+            str(Path(file_path).as_posix()).lstrip("./")
+            for file_path in file_paths
+            if file_path
+        ]
+        if not normalized_paths:
+            return
+
+        with self.driver.session() as session:
+            session.run(
+                """
+                MATCH (n:NODE {repoId: $project_id})
+                WHERE n.file_path IN $file_paths
+                DETACH DELETE n
+                """,
+                project_id=project_id,
+                file_paths=normalized_paths,
+            )
+
+    def create_and_store_graph(self, repo_dir, project_id, user_id, changed_files=None):
         graph_start_time = time.time()
+        changed_files_set = None
+        if changed_files:
+            changed_files_set = {
+                str(Path(file_path).as_posix()).lstrip("./")
+                for file_path in changed_files
+                if file_path
+            }
+
         # Ensure repo_dir is a string and absolute path
         repo_dir = str(Path(repo_dir).resolve())
         logger.info(
@@ -69,15 +97,39 @@ class CodeGraphService:
         )
         nx_graph = self.repo_map.create_graph(repo_dir)
         parse_time = time.time() - parse_start
-        node_count = nx_graph.number_of_nodes()
-        relationship_count = nx_graph.number_of_edges()
+        total_node_count = nx_graph.number_of_nodes()
+        total_relationship_count = nx_graph.number_of_edges()
+        node_count = total_node_count
+        relationship_count = total_relationship_count
+        if changed_files_set:
+            node_count = sum(
+                1
+                for _, node_data in nx_graph.nodes(data=True)
+                if node_data.get("file") in changed_files_set
+            )
+            relationship_count = sum(
+                1
+                for source, target, _ in nx_graph.edges(data=True)
+                if (
+                    nx_graph.nodes[source].get("file") in changed_files_set
+                    or nx_graph.nodes[target].get("file") in changed_files_set
+                )
+            )
         logger.info(
-            f"[GRAPH GENERATION] Parsed repository: {node_count} nodes, {relationship_count} relationships in {parse_time:.2f}s",
+            f"[GRAPH GENERATION] Parsed repository: {total_node_count} nodes, {total_relationship_count} relationships in {parse_time:.2f}s",
             project_id=project_id,
-            node_count=node_count,
-            relationship_count=relationship_count,
+            node_count=total_node_count,
+            relationship_count=total_relationship_count,
             parse_time_seconds=parse_time,
         )
+        if changed_files_set:
+            logger.info(
+                "[GRAPH GENERATION] Incremental mode",
+                project_id=project_id,
+                changed_files_count=len(changed_files_set),
+                incremental_node_count=node_count,
+                incremental_relationship_count=relationship_count,
+            )
 
         with self.driver.session() as session:
             db_start_time = time.time()
@@ -118,6 +170,9 @@ class CodeGraphService:
                 nodes_to_create = []
 
                 for node_id, node_data in batch_nodes:
+                    if changed_files_set and node_data.get("file") not in changed_files_set:
+                        continue
+
                     # Get the node type and ensure it's one of our expected types
                     node_type = node_data.get("type", "UNKNOWN")
                     if node_type == "UNKNOWN":
@@ -195,6 +250,14 @@ class CodeGraphService:
             # Pre-calculate common relationship types to avoid dynamic relationship creation
             rel_types = set()
             for source, target, data in nx_graph.edges(data=True):
+                if changed_files_set:
+                    source_file = nx_graph.nodes[source].get("file")
+                    target_file = nx_graph.nodes[target].get("file")
+                    if (
+                        source_file not in changed_files_set
+                        and target_file not in changed_files_set
+                    ):
+                        continue
                 rel_type = data.get("type", "REFERENCES")
                 rel_types.add(rel_type)
 
@@ -215,6 +278,13 @@ class CodeGraphService:
                     (s, t, d)
                     for s, t, d in nx_graph.edges(data=True)
                     if d.get("type", "REFERENCES") == rel_type
+                    and (
+                        not changed_files_set
+                        or (
+                            nx_graph.nodes[s].get("file") in changed_files_set
+                            or nx_graph.nodes[t].get("file") in changed_files_set
+                        )
+                    )
                 ]
 
                 type_batch_count = (len(type_edges) + batch_size - 1) // batch_size

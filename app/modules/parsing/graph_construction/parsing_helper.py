@@ -4,7 +4,7 @@ import os
 import shutil
 import uuid
 import subprocess
-from typing import Any, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
 from pathlib import Path
 from collections import defaultdict
@@ -2652,3 +2652,73 @@ class ParseHelper:
                 project_id=project_id,
             )
             return False
+
+    @staticmethod
+    def get_changed_files_between_commits(
+        repo_path: str, old_commit: str, new_commit: str
+    ) -> Dict[str, List[str]]:
+        """
+        Return added/modified/deleted files between two commits.
+
+        Uses `git diff --name-status old..new` and normalizes paths to POSIX style.
+        """
+        if not repo_path or not old_commit or not new_commit:
+            return {"added": [], "modified": [], "deleted": []}
+
+        if old_commit == new_commit:
+            return {"added": [], "modified": [], "deleted": []}
+
+        try:
+            repo = Repo(repo_path)
+            diff_output = repo.git.diff(
+                "--name-status",
+                old_commit,
+                new_commit,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to compute git diff for incremental parsing",
+                repo_path=repo_path,
+                old_commit=old_commit,
+                new_commit=new_commit,
+            )
+            raise
+
+        added = set()
+        modified = set()
+        deleted = set()
+
+        for raw_line in diff_output.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            parts = line.split("\t")
+            status = parts[0] if parts else ""
+
+            # R/C statuses include old and new paths: R100\told\tnew
+            if status.startswith("R") and len(parts) >= 3:
+                deleted.add(parts[1].replace(os.sep, "/"))
+                added.add(parts[2].replace(os.sep, "/"))
+                continue
+
+            if status.startswith("C") and len(parts) >= 3:
+                added.add(parts[2].replace(os.sep, "/"))
+                continue
+
+            if len(parts) < 2:
+                continue
+
+            path = parts[1].replace(os.sep, "/")
+            if status == "A":
+                added.add(path)
+            elif status == "D":
+                deleted.add(path)
+            else:
+                modified.add(path)
+
+        return {
+            "added": sorted(added),
+            "modified": sorted(modified),
+            "deleted": sorted(deleted),
+        }

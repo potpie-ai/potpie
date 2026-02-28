@@ -114,6 +114,8 @@ class ParsingService:
         with log_context(project_id=str(project_id), user_id=user_id):
             project_manager = ProjectService(self.db)
             extracted_dir = None
+            incremental_changed_files = None
+            incremental_files_to_delete = None
             try:
                 # Early check: if project is already inferring, return without re-running (avoids duplicate work and status update errors)
                 existing_project = await project_manager.get_project_from_db_by_id(
@@ -190,9 +192,18 @@ class ParsingService:
                             "id": project_id,
                         }
 
-                if cleanup_graph:
-                    neo4j_config = self._get_neo4j_config()
+                previous_commit_id = (
+                    existing_project.get("commit_id") if existing_project else None
+                )
+                incremental_candidate = bool(
+                    cleanup_graph
+                    and previous_commit_id
+                    and repo_details.commit_id
+                    and previous_commit_id != repo_details.commit_id
+                )
 
+                if cleanup_graph and not incremental_candidate:
+                    neo4j_config = self._get_neo4j_config()
                     try:
                         code_graph_service = CodeGraphService(
                             neo4j_config["uri"],
@@ -200,8 +211,8 @@ class ParsingService:
                             neo4j_config["password"],
                             self.db,
                         )
-
                         code_graph_service.cleanup_graph(str(project_id))
+                        code_graph_service.close()
                     except Exception:
                         logger.exception(
                             "Error in cleanup_graph",
@@ -313,6 +324,51 @@ class ParsingService:
                     )
                 extracted_dir = str(extracted_dir)
 
+                if incremental_candidate and previous_commit_id and repo_details.commit_id:
+                    try:
+                        changed_files_map = ParseHelper.get_changed_files_between_commits(
+                            extracted_dir,
+                            previous_commit_id,
+                            repo_details.commit_id,
+                        )
+                        changed_files_to_parse = sorted(
+                            set(changed_files_map.get("added", []))
+                            | set(changed_files_map.get("modified", []))
+                        )
+                        incremental_changed_files = changed_files_to_parse
+                        incremental_files_to_delete = sorted(
+                            set(changed_files_to_parse)
+                            | set(changed_files_map.get("deleted", []))
+                        )
+                        logger.info(
+                            "Incremental parse candidate computed",
+                            project_id=project_id,
+                            previous_commit_id=previous_commit_id,
+                            current_commit_id=repo_details.commit_id,
+                            changed_files_count=len(changed_files_to_parse),
+                            deleted_files_count=len(
+                                changed_files_map.get("deleted", [])
+                            ),
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to compute incremental diff, falling back to full graph rebuild",
+                            project_id=project_id,
+                            previous_commit_id=previous_commit_id,
+                            current_commit_id=repo_details.commit_id,
+                        )
+                        neo4j_config = self._get_neo4j_config()
+                        code_graph_service = CodeGraphService(
+                            neo4j_config["uri"],
+                            neo4j_config["username"],
+                            neo4j_config["password"],
+                            self.db,
+                        )
+                        code_graph_service.cleanup_graph(str(project_id))
+                        code_graph_service.close()
+                        incremental_changed_files = None
+                        incremental_files_to_delete = None
+
                 if repo is None or isinstance(repo, Repo):
                     # Local repo or cached repo without GitHub API access
                     # Use local language detection
@@ -354,7 +410,14 @@ class ParsingService:
                     },
                 )
                 await self.analyze_directory(
-                    extracted_dir, project_id, user_id, self.db, language, user_email
+                    extracted_dir,
+                    project_id,
+                    user_id,
+                    self.db,
+                    language,
+                    user_email,
+                    incremental_changed_files=incremental_changed_files,
+                    incremental_files_to_delete=incremental_files_to_delete,
                 )
                 message = "The project has been parsed successfully"
                 return {"message": message, "id": project_id}
@@ -440,6 +503,8 @@ class ParsingService:
         db,
         language: str,
         user_email: str,
+        incremental_changed_files: list[str] | None = None,
+        incremental_files_to_delete: list[str] | None = None,
     ):
         logger.info(
             f"ParsingService: Parsing project {project_id}: Analyzing directory: {extracted_dir}"
@@ -498,8 +563,27 @@ class ParsingService:
                     neo4j_config["password"],
                     db,
                 )
-
-                service.create_and_store_graph(extracted_dir, project_id, user_id)
+                if incremental_changed_files is not None or incremental_files_to_delete is not None:
+                    files_to_delete = sorted(
+                        set(incremental_files_to_delete or [])
+                        | set(incremental_changed_files or [])
+                    )
+                    if files_to_delete:
+                        service.delete_nodes_by_file_paths(project_id, files_to_delete)
+                    if incremental_changed_files:
+                        service.create_and_store_graph(
+                            extracted_dir,
+                            project_id,
+                            user_id,
+                            changed_files=incremental_changed_files,
+                        )
+                    else:
+                        logger.info(
+                            "[PARSING] Incremental mode with no added/modified files; skipping graph insert",
+                            project_id=project_id,
+                        )
+                else:
+                    service.create_and_store_graph(extracted_dir, project_id, user_id)
                 graph_gen_time = time.time() - graph_gen_start
                 logger.info(
                     f"[PARSING] Graph generation completed in {graph_gen_time:.2f}s",
