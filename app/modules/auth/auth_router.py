@@ -5,7 +5,7 @@ import os
 import requests
 from dotenv import load_dotenv
 from fastapi import Depends, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse
 from fastapi.exceptions import HTTPException
 
 from sqlalchemy.orm import Session
@@ -129,12 +129,12 @@ class AuthAPI:
 
         # Validate
         if not uid:
-            return Response(
-                content=json.dumps({"error": "Missing uid"}), status_code=400
+            return JSONResponse(
+                content={"error": "Missing uid"}, status_code=400
             )
         if not email:
-            return Response(
-                content=json.dumps({"error": "Missing email"}), status_code=400
+            return JSONResponse(
+                content={"error": "Missing email"}, status_code=400
             )
 
         user_service = UserService(db)
@@ -165,10 +165,8 @@ class AuthAPI:
 
             if not user:
                 logger.error(f"SSO user {link_to_user_id} not found in database!")
-                return Response(
-                    content=json.dumps(
-                        {"error": "User not found. Please sign in again."}
-                    ),
+                return JSONResponse(
+                    content={"error": "User not found. Please sign in again."},
                     status_code=404,
                 )
 
@@ -186,15 +184,13 @@ class AuthAPI:
 
             if existing_github:
                 logger.info(f"GitHub already linked to user {user.uid}")
-                return Response(
-                    content=json.dumps(
-                        _signup_response_with_custom_token(
-                            {
-                                "uid": user.uid,
-                                "exists": True,
-                                "needs_github_linking": False,
-                            }
-                        )
+                return JSONResponse(
+                    content=_signup_response_with_custom_token(
+                        {
+                            "uid": user.uid,
+                            "exists": True,
+                            "needs_github_linking": False,
+                        }
                     ),
                     status_code=200,
                 )
@@ -221,14 +217,12 @@ class AuthAPI:
                     f"GitHub account {provider_uid} is already linked to user {existing_provider_with_uid.user_id}, "
                     f"cannot link to user {user.uid}"
                 )
-                return Response(
-                    content=json.dumps(
-                        {
-                            "error": error_message,
-                            "details": f"GitHub account {provider_uid} is already linked to user {existing_provider_with_uid.user_id}, cannot link to user {user.uid}",
-                        }
-                    ),
-                    status_code=409,  # Conflict
+                return JSONResponse(
+                    content={
+                        "error": error_message,
+                        "details": f"GitHub account {provider_uid} is already linked to user {existing_provider_with_uid.user_id}, cannot link to user {user.uid}",
+                    },
+                    status_code=409,
                 )
 
             # Link GitHub provider
@@ -260,14 +254,12 @@ class AuthAPI:
                     logger.error(
                         f"GitHub account {provider_uid} is already linked to another user: {e}"
                     )
-                    return Response(
-                        content=json.dumps(
-                            {
-                                "error": error_message,
-                                "details": f"GitHub account {provider_uid} is already linked to another user. Database constraint violation: {str(e)}",
-                            }
-                        ),
-                        status_code=409,  # Conflict
+                    return JSONResponse(
+                        content={
+                            "error": error_message,
+                            "details": f"GitHub account {provider_uid} is already linked to another user. Database constraint violation: {str(e)}",
+                        },
+                        status_code=409,
                     )
                 # Re-raise other IntegrityErrors (e.g., unique_user_provider)
                 raise
@@ -279,15 +271,13 @@ class AuthAPI:
                 raise
 
             logger.info(f"Successfully linked GitHub to user {user.uid}")
-            return Response(
-                content=json.dumps(
-                    _signup_response_with_custom_token(
-                        {
-                            "uid": user.uid,
-                            "exists": True,
-                            "needs_github_linking": False,
-                        }
-                    )
+            return JSONResponse(
+                content=_signup_response_with_custom_token(
+                    {
+                        "uid": user.uid,
+                        "exists": True,
+                        "needs_github_linking": False,
+                    }
                 ),
                 status_code=200,
             )
@@ -317,14 +307,12 @@ class AuthAPI:
                 logger.warning(
                     f"Blocked new GitHub signup attempt: GitHub UID {provider_uid} is not linked to any user"
                 )
-                return Response(
-                    content=json.dumps(
-                        {
-                            "error": "GitHub sign-up is no longer supported. Please use 'Continue with Google' with your work email address.",
-                            "details": "New GitHub signups are disabled. Existing GitHub users can still sign in.",
-                        }
-                    ),
-                    status_code=403,  # Forbidden
+                return JSONResponse(
+                    content={
+                        "error": "GitHub sign-up is no longer supported. Please use 'Continue with Google' with your work email address.",
+                        "details": "New GitHub signups are disabled. Existing GitHub users can still sign in.",
+                    },
+                    status_code=403,
                 )
 
             if existing_provider:
@@ -338,15 +326,13 @@ class AuthAPI:
                     if oauth_token:
                         user_service.update_last_login(user.uid, oauth_token)
 
-                    return Response(
-                        content=json.dumps(
-                            _signup_response_with_custom_token(
-                                {
-                                    "uid": user.uid,
-                                    "exists": True,
-                                    "needs_github_linking": False,
-                                }
-                            )
+                    return JSONResponse(
+                        content=_signup_response_with_custom_token(
+                            {
+                                "uid": user.uid,
+                                "exists": True,
+                                "needs_github_linking": False,
+                            }
                         ),
                         status_code=200,
                     )
@@ -378,23 +364,21 @@ class AuthAPI:
                     },
                 )
 
-                return Response(
-                    content=json.dumps(
-                        _signup_response_with_custom_token(
-                            {
-                                "uid": new_user.uid,
-                                "exists": False,
-                                "needs_github_linking": False,  # They signed up with GitHub
-                            }
-                        )
+                return JSONResponse(
+                    content=_signup_response_with_custom_token(
+                        {
+                            "uid": new_user.uid,
+                            "exists": False,
+                            "needs_github_linking": False,
+                        }
                     ),
                     status_code=201,
                 )
             except Exception as e:
                 db.rollback()
                 logger.error(f"Failed to create user: {e}", exc_info=True)
-                return Response(
-                    content=json.dumps({"error": f"Signup failed: {str(e)}"}),
+                return JSONResponse(
+                    content={"error": f"Signup failed: {str(e)}"},
                     status_code=500,
                 )
 
@@ -412,15 +396,13 @@ class AuthAPI:
             # Check GitHub linking
             has_github, _ = unified_auth.check_github_linked(user.uid)
 
-            return Response(
-                content=json.dumps(
-                    _signup_response_with_custom_token(
-                        {
-                            "uid": user.uid,
-                            "exists": True,
-                            "needs_github_linking": not has_github,
-                        }
-                    )
+            return JSONResponse(
+                content=_signup_response_with_custom_token(
+                    {
+                        "uid": user.uid,
+                        "exists": True,
+                        "needs_github_linking": not has_github,
+                    }
                 ),
                 status_code=200,
             )
@@ -438,23 +420,21 @@ class AuthAPI:
 
                 logger.info(f"Created email/password user: {new_user.uid}")
 
-                return Response(
-                    content=json.dumps(
-                        _signup_response_with_custom_token(
-                            {
-                                "uid": new_user.uid,
-                                "exists": False,
-                                "needs_github_linking": True,  # Email users always need GitHub
-                            }
-                        )
+                return JSONResponse(
+                    content=_signup_response_with_custom_token(
+                        {
+                            "uid": new_user.uid,
+                            "exists": False,
+                            "needs_github_linking": True,
+                        }
                     ),
                     status_code=201,
                 )
             except Exception as e:
                 db.rollback()
                 logger.error(f"Email/password signup failed: {e}", exc_info=True)
-                return Response(
-                    content=json.dumps({"error": str(e)}),
+                return JSONResponse(
+                    content={"error": str(e)},
                     status_code=500,
                 )
 
@@ -467,18 +447,18 @@ class AuthAPI:
         """
         uid = user.get("uid") or user.get("user_id")
         if not uid:
-            return Response(
-                content=json.dumps({"error": "Missing uid in token"}),
+            return JSONResponse(
+                content={"error": "Missing uid in token"},
                 status_code=401,
             )
         custom_token = AuthService.create_custom_token(uid)
         if not custom_token:
-            return Response(
-                content=json.dumps({"error": "Failed to create custom token"}),
+            return JSONResponse(
+                content={"error": "Failed to create custom token"},
                 status_code=500,
             )
-        return Response(
-            content=json.dumps({"customToken": custom_token}),
+        return JSONResponse(
+            content={"customToken": custom_token},
             status_code=200,
         )
 
