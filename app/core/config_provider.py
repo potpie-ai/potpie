@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from typing import List, Optional, Any
 
 from dotenv import load_dotenv
@@ -196,6 +197,10 @@ class ConfigProvider:
                 return True, provider
 
         return False, "none"
+
+    @staticmethod
+    def get_project_path() -> str:
+        return str(Path(os.getenv("PROJECT_PATH", "projects/")).absolute())
 
     @staticmethod
     def get_stream_ttl_secs() -> int:
