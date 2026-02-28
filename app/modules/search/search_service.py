@@ -1,16 +1,15 @@
-import os
-from pathlib import Path
 from typing import Dict, List
 
 from sqlalchemy import delete, or_
 from sqlalchemy.orm import Session
 
+from app.core.config_provider import ConfigProvider
 from app.modules.search.search_models import SearchIndex
 
 
 class SearchService:
     def __init__(self, db: Session):
-        self.project_path = str(Path(os.getenv("PROJECT_PATH", "projects/")).absolute())
+        self.project_path = ConfigProvider.get_project_path()
         self.db = db
 
     async def commit_indices(self):
