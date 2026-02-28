@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING, List
 
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 
 from app.modules.intelligence.tools.registry.annotation_logging import (
     wrap_tool_for_annotation_logging,
@@ -35,7 +35,7 @@ class ToolResolver:
         exclude_embedding_tools: bool = False,
         include_deferred_tools: bool = True,
         log_tool_annotations: bool = True,
-    ) -> List[StructuredTool]:
+    ) -> List[OnyxTool]:
         """
         Resolve an allow-list to tool names, then fetch tools from ToolService.
 
@@ -47,7 +47,7 @@ class ToolResolver:
         on invoke, annotations are logged before delegating to the inner tool.
 
         Returns:
-            List of StructuredTool instances. Missing tools are omitted (ToolService logs them).
+            List of OnyxTool instances. Missing tools are omitted (ToolService logs them).
         """
         try:
             names = self.registry.resolve_allow_list(
@@ -104,7 +104,7 @@ class ToolResolver:
         local_mode: bool = False,
         exclude_embedding_tools: bool = False,
         log_tool_annotations: bool = True,
-    ) -> List[StructuredTool]:
+    ) -> List[OnyxTool]:
         """
         Return the three Phase 3 discovery meta-tools (search_tools, describe_tool, execute_tool)
         scoped to the given allow-list. Use when use_tool_search_flow=True instead of
@@ -112,7 +112,7 @@ class ToolResolver:
         logs annotations before invoking the underlying tool.
 
         Returns:
-            List of three StructuredTool instances: search_tools, describe_tool, execute_tool.
+            List of three OnyxTool instances: search_tools, describe_tool, execute_tool.
         """
         from app.modules.intelligence.tools.registry.discovery_tools import (
             get_discovery_tools,

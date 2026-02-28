@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from github import Github
 from github.GithubException import UnknownObjectException
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -226,7 +226,7 @@ class CodeProviderTool:
             return None
 
 
-def code_provider_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
+def code_provider_tool(sql_db: Session, user_id: str) -> Optional[OnyxTool]:
     from app.modules.code_provider.provider_factory import has_code_provider_credentials
 
     if not has_code_provider_credentials():
@@ -237,7 +237,7 @@ def code_provider_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool
         return None
 
     tool_instance = CodeProviderTool(sql_db, user_id)
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=tool_instance.arun,
         func=tool_instance.run,
         name="Code Provider Content Fetcher",

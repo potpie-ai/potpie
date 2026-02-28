@@ -8,7 +8,7 @@ from app.modules.utils.logger import setup_logger
 logger = setup_logger(__name__)
 import asyncio
 from typing import Any, Dict, Optional
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -201,7 +201,7 @@ class UpdateConfluencePageTool:
         return asyncio.run(self.arun(page_id, version_number, title, body, status))
 
 
-def update_confluence_page_tool(db: Session, user_id: str) -> StructuredTool:
+def update_confluence_page_tool(db: Session, user_id: str) -> OnyxTool:
     """
     Create a tool for updating Confluence pages with user context.
 
@@ -210,11 +210,11 @@ def update_confluence_page_tool(db: Session, user_id: str) -> StructuredTool:
         user_id: The user ID to fetch their specific Confluence integration
 
     Returns:
-        A configured StructuredTool for updating Confluence pages
+        A configured OnyxTool for updating Confluence pages
     """
     tool_instance = UpdateConfluencePageTool(db, user_id)
 
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=tool_instance.arun,
         func=tool_instance.run,
         name="Update Confluence Page",

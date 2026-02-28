@@ -14,7 +14,7 @@ import redis
 from app.core.config_provider import ConfigProvider
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 
 from app.modules.projects.projects_service import ProjectService
 from app.modules.repo_manager import RepoManager
@@ -354,7 +354,7 @@ class ApplyChangesTool:
         )
 
 
-def apply_changes_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
+def apply_changes_tool(sql_db: Session, user_id: str) -> Optional[OnyxTool]:
     """
     Create apply changes tool if repo manager is enabled.
 
@@ -370,7 +370,7 @@ def apply_changes_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool
         logger.debug("ApplyChangesTool not created: RepoManager initialization failed")
         return None
 
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=tool_instance._arun,
         func=tool_instance._run,
         name="apply_changes",

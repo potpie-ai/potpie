@@ -8,7 +8,7 @@ from app.modules.utils.logger import setup_logger
 logger = setup_logger(__name__)
 import asyncio
 from typing import Any, Dict
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -163,7 +163,7 @@ class GetConfluenceSpacePagesTool:
         return asyncio.run(self.arun(space_id, limit, status))
 
 
-def get_confluence_space_pages_tool(db: Session, user_id: str) -> StructuredTool:
+def get_confluence_space_pages_tool(db: Session, user_id: str) -> OnyxTool:
     """
     Create a tool for getting pages in a Confluence space with user context.
 
@@ -172,11 +172,11 @@ def get_confluence_space_pages_tool(db: Session, user_id: str) -> StructuredTool
         user_id: The user ID to fetch their specific Confluence integration
 
     Returns:
-        A configured StructuredTool for getting space pages
+        A configured OnyxTool for getting space pages
     """
     tool_instance = GetConfluenceSpacePagesTool(db, user_id)
 
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=tool_instance.arun,
         func=tool_instance.run,
         name="Get Confluence Space Pages",

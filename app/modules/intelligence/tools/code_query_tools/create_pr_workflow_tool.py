@@ -16,7 +16,7 @@ import subprocess
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 
 from app.modules.projects.projects_service import ProjectService
 from app.modules.repo_manager import RepoManager
@@ -1142,7 +1142,7 @@ Returns:
 
 def create_pr_workflow_tool(
     sql_db: Session, user_id: str
-) -> Optional[StructuredTool]:
+) -> Optional[OnyxTool]:
     """
     Create the composite PR workflow tool if repo manager is enabled.
 
@@ -1164,7 +1164,7 @@ def create_pr_workflow_tool(
         )
         return None
 
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=tool_instance._arun,
         func=tool_instance._run,
         name="create_pr_workflow",

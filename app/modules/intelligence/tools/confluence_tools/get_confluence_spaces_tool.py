@@ -8,7 +8,7 @@ from app.modules.utils.logger import setup_logger
 logger = setup_logger(__name__)
 import asyncio
 from typing import Any, Dict
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -143,7 +143,7 @@ class GetConfluenceSpacesTool:
         return asyncio.run(self.arun(limit, space_type))
 
 
-def get_confluence_spaces_tool(db: Session, user_id: str) -> StructuredTool:
+def get_confluence_spaces_tool(db: Session, user_id: str) -> OnyxTool:
     """
     Create a tool for getting Confluence spaces with user context.
 
@@ -152,11 +152,11 @@ def get_confluence_spaces_tool(db: Session, user_id: str) -> StructuredTool:
         user_id: The user ID to fetch their specific Confluence integration
 
     Returns:
-        A configured StructuredTool for getting Confluence spaces
+        A configured OnyxTool for getting Confluence spaces
     """
     tool_instance = GetConfluenceSpacesTool(db, user_id)
 
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=tool_instance.arun,
         func=tool_instance.run,
         name="Get Confluence Spaces",

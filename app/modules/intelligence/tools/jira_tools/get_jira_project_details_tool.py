@@ -3,7 +3,7 @@
 from typing import Dict, Any
 import asyncio
 from pydantic import BaseModel, Field
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from sqlalchemy.orm import Session
 
 from app.modules.intelligence.tools.jira_tools.jira_client import (
@@ -83,7 +83,7 @@ class GetJiraProjectDetailsTool:
         return asyncio.run(self.arun(project_key))
 
 
-def get_jira_project_details_tool(db: Session, user_id: str) -> StructuredTool:
+def get_jira_project_details_tool(db: Session, user_id: str) -> OnyxTool:
     """
     Create a tool for fetching comprehensive Jira project details with user context.
 
@@ -92,10 +92,10 @@ def get_jira_project_details_tool(db: Session, user_id: str) -> StructuredTool:
         user_id: The user ID to fetch their specific Jira integration
 
     Returns:
-        A configured StructuredTool for fetching Jira project details
+        A configured OnyxTool for fetching Jira project details
     """
     tool_instance = GetJiraProjectDetailsTool(db, user_id)
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=tool_instance.arun,
         func=tool_instance.run,
         name="Get Jira Project Details",

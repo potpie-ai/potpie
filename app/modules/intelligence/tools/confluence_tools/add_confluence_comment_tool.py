@@ -8,7 +8,7 @@ from app.modules.utils.logger import setup_logger
 logger = setup_logger(__name__)
 import asyncio
 from typing import Any, Dict, Optional
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -168,7 +168,7 @@ class AddConfluenceCommentTool:
         return asyncio.run(self.arun(page_id, comment, parent_comment_id, status))
 
 
-def add_confluence_comment_tool(db: Session, user_id: str) -> StructuredTool:
+def add_confluence_comment_tool(db: Session, user_id: str) -> OnyxTool:
     """
     Create a tool for adding comments to Confluence pages with user context.
 
@@ -177,11 +177,11 @@ def add_confluence_comment_tool(db: Session, user_id: str) -> StructuredTool:
         user_id: The user ID to fetch their specific Confluence integration
 
     Returns:
-        A configured StructuredTool for adding Confluence comments
+        A configured OnyxTool for adding Confluence comments
     """
     tool_instance = AddConfluenceCommentTool(db, user_id)
 
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=tool_instance.arun,
         func=tool_instance.run,
         name="Add Confluence Comment",
