@@ -15,14 +15,25 @@ Stateless: no in-memory caches; config is captured in the closure at factory tim
 import json
 import logging
 import re
-from typing import TYPE_CHECKING, Callable, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Set, Tuple
 
 if TYPE_CHECKING:
+    from app.modules.intelligence.agents.chat_agents.compressed_history_store import (
+        CompressedHistoryStore,
+    )
     from app.modules.intelligence.agents.chat_agents.history_summarizer import (
         HistorySummarizer,
     )
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    ToolCallPart,
+    UserPromptPart,
+)
 
 from app.modules.intelligence.agents.chat_agents.token_utils import (
     count_tokens as shared_count_tokens,
@@ -1545,25 +1556,27 @@ class TokenAwareHistoryProcessor:
 
     def _get_model_name_from_context(self, ctx: RunContext) -> Optional[str]:
         """Extract model name from RunContext if available."""
-        try:
-            if hasattr(ctx, "model") and ctx.model:
-                model = ctx.model
-                # Try to get model name from various attributes
-                if hasattr(model, "model_name"):
-                    return getattr(model, "model_name", None)
-                # Try to extract from string representation
-                model_str = str(model)
-                # Look for common patterns like "gpt-4", "claude", etc.
-                match = re.search(
-                    r"(gpt-[0-9.]+|claude-[0-9.]+|gemini-[0-9.]+)",
-                    model_str,
-                    re.IGNORECASE,
-                )
-                if match:
-                    return match.group(1)
-        except Exception as e:
-            logger.debug(f"Failed to extract model name from context: {e}")
-        return None
+        return _get_model_name_from_context(ctx)
+
+
+def _get_model_name_from_context(ctx: RunContext) -> Optional[str]:
+    """Extract model name from RunContext if available (module-level for use in closures)."""
+    try:
+        if hasattr(ctx, "model") and ctx.model:
+            model = ctx.model
+            if hasattr(model, "model_name"):
+                return getattr(model, "model_name", None)
+            model_str = str(model)
+            match = re.search(
+                r"(gpt-[0-9A-Za-z._-]+|claude-[0-9A-Za-z._-]+|gemini-[0-9A-Za-z._-]+)",
+                model_str,
+                re.IGNORECASE,
+            )
+            if match:
+                return match.group(1)
+    except Exception as e:
+        logger.debug(f"Failed to extract model name from context: {e}")
+    return None
 
 
 def _get_agent_from_context(ctx: RunContext) -> Optional[Agent]:
