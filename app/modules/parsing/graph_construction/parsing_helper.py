@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import os
 import re
@@ -508,25 +509,24 @@ class ParseHelper:
             else f"/{repo.full_name}.git"
         )
 
-        clone_url_with_auth = urlunparse(
-            (
-                parsed.scheme,
-                f"{username}:{password}@{parsed.netloc}",
-                repo_path,
-                "",
-                "",
-                "",
-            )
-        )
-
-        # Log URL without credentials for security
+        # Build URL without credentials; auth is passed via extra HTTP header.
         safe_url = urlunparse((parsed.scheme, parsed.netloc, repo_path, "", "", ""))
         logger.info(f"ParsingHelper: Cloning from {safe_url}")
 
         try:
-            # Clone the repository to temporary directory with shallow clone for faster download
+            # Clone with shallow depth and pass credentials via Authorization header.
+            encoded_credentials = base64.b64encode(
+                f"{username}:{password}".encode("utf-8")
+            ).decode("ascii")
             _ = Repo.clone_from(
-                clone_url_with_auth, temp_clone_dir, branch=branch, depth=1
+                safe_url,
+                temp_clone_dir,
+                branch=branch,
+                depth=1,
+                multi_options=[
+                    "-c",
+                    f"http.extraHeader=Authorization: Basic {encoded_credentials}",
+                ],
             )
             logger.info(
                 f"ParsingHelper: Successfully cloned repository to temporary directory: {temp_clone_dir}"

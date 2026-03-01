@@ -320,36 +320,20 @@ class ParsingService:
                     project_id=project_id,
                     repo_manager_path=repo_manager_path,
                 )
-                if config_provider.get_is_development_mode():
-                    (
-                        extracted_dir,
-                        returned_project_id,
-                    ) = await self.parse_helper.setup_project_directory(
-                        repo,
-                        repo_details.branch_name,
-                        auth,
-                        repo_details,
-                        user_id,
-                        str(project_id),
-                        commit_id=repo_details.commit_id,
-                        repo_manager_path=repo_manager_path,
-                        auth_token=user_token,
-                    )
-                else:
-                    (
-                        extracted_dir,
-                        returned_project_id,
-                    ) = await self.parse_helper.setup_project_directory(
-                        repo,
-                        repo_details.branch_name,
-                        auth,
-                        repo_details,
-                        user_id,
-                        str(project_id),
-                        commit_id=repo_details.commit_id,
-                        repo_manager_path=repo_manager_path,
-                        auth_token=user_token,
-                    )
+                (
+                    extracted_dir,
+                    returned_project_id,
+                ) = await self.parse_helper.setup_project_directory(
+                    repo,
+                    repo_details.branch_name,
+                    auth,
+                    repo_details,
+                    user_id,
+                    str(project_id),
+                    commit_id=repo_details.commit_id,
+                    repo_manager_path=repo_manager_path,
+                    auth_token=user_token,
+                )
 
                 # setup_project_directory returns str | None, but project_id is int
                 # Keep original project_id since it's already set and used as int throughout
