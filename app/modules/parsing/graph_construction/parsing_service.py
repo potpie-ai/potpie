@@ -644,24 +644,32 @@ class ParsingService:
                     db,
                 )
                 if incremental_changed_files is not None or incremental_files_to_delete is not None:
-                    files_to_delete = sorted(
-                        set(incremental_files_to_delete or [])
-                        | set(incremental_changed_files or [])
-                    )
-                    if files_to_delete:
-                        service.delete_nodes_by_file_paths(project_id, files_to_delete)
-                    if incremental_changed_files:
-                        service.create_and_store_graph(
-                            extracted_dir,
-                            project_id,
-                            user_id,
-                            changed_files=incremental_changed_files,
-                        )
-                    else:
+                    if service.has_legacy_md5_node_ids(project_id):
                         logger.info(
-                            "[PARSING] Incremental mode with no added/modified files; skipping graph insert",
+                            "[PARSING] Legacy node IDs detected; performing one-time full graph rebuild",
                             project_id=project_id,
                         )
+                        service.cleanup_graph(project_id)
+                        service.create_and_store_graph(extracted_dir, project_id, user_id)
+                    else:
+                        files_to_delete = sorted(
+                            set(incremental_files_to_delete or [])
+                            | set(incremental_changed_files or [])
+                        )
+                        if files_to_delete:
+                            service.delete_nodes_by_file_paths(project_id, files_to_delete)
+                        if incremental_changed_files:
+                            service.create_and_store_graph(
+                                extracted_dir,
+                                project_id,
+                                user_id,
+                                changed_files=incremental_changed_files,
+                            )
+                        else:
+                            logger.info(
+                                "[PARSING] Incremental mode with no added/modified files; skipping graph insert",
+                                project_id=project_id,
+                            )
                 else:
                     service.create_and_store_graph(extracted_dir, project_id, user_id)
                 graph_gen_time = time.time() - graph_gen_start

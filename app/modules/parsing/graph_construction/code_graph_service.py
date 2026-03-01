@@ -83,15 +83,6 @@ class CodeGraphService:
         node_id = hash_object.hexdigest()
         return node_id
 
-    @staticmethod
-    def generate_legacy_node_id(path: str, user_id: str) -> str:
-        """Generate legacy MD5 node ID for backward-compatible relationship matching."""
-        combined_string = f"{user_id}:{path}"
-        # usedforsecurity=False: retained only for matching previously persisted node IDs.
-        hash_object = hashlib.md5(usedforsecurity=False)  # noqa: S324  # NOSONAR
-        hash_object.update(combined_string.encode("utf-8"))
-        return hash_object.hexdigest()
-
     def close(self) -> None:
         """Close the Neo4j driver safely and idempotently."""
         if self.driver is None:
@@ -288,9 +279,6 @@ class CodeGraphService:
                         "end_line": node_data.get("end_line", -1),
                         "repoId": project_id,
                         "node_id": CodeGraphService.generate_node_id(node_id, user_id),
-                        "legacy_node_id": CodeGraphService.generate_legacy_node_id(
-                            node_id, user_id
-                        ),
                         "entityId": user_id,
                         "type": node_type,
                         "text": node_data.get("text", ""),
@@ -405,19 +393,13 @@ class CodeGraphService:
                     batch_edges = type_edges[i : i + batch_size]
                     edges_to_create = []
 
-                    for source, target, data in batch_edges:
+                    for source, target, _data in batch_edges:
                         edges_to_create.append(
                             {
                                 "source_id": CodeGraphService.generate_node_id(
                                     source, user_id
                                 ),
-                                "source_legacy_id": CodeGraphService.generate_legacy_node_id(
-                                    source, user_id
-                                ),
                                 "target_id": CodeGraphService.generate_node_id(
-                                    target, user_id
-                                ),
-                                "target_legacy_id": CodeGraphService.generate_legacy_node_id(
                                     target, user_id
                                 ),
                                 "repoId": project_id,
@@ -428,10 +410,8 @@ class CodeGraphService:
                     insert_start = time.time()
                     query = f"""
                         UNWIND $edges AS edge
-                        MATCH (source:NODE {{repoId: edge.repoId}})
-                        WHERE source.node_id = edge.source_id OR source.node_id = edge.source_legacy_id
-                        MATCH (target:NODE {{repoId: edge.repoId}})
-                        WHERE target.node_id = edge.target_id OR target.node_id = edge.target_legacy_id
+                        MATCH (source:NODE {{node_id: edge.source_id, repoId: edge.repoId}})
+                        MATCH (target:NODE {{node_id: edge.target_id, repoId: edge.repoId}})
                         CREATE (source)-[r:{rel_type} {{repoId: edge.repoId}}]->(target)
                     """
                     session.run(query, edges=edges_to_create)
@@ -499,6 +479,21 @@ class CodeGraphService:
         # Clean up search index
         search_service = SearchService(self.db)
         search_service.delete_project_index(project_id)
+
+    def has_legacy_md5_node_ids(self, project_id: str) -> bool:
+        """Return whether the graph still contains legacy 32-char node ids."""
+        with self._session() as session:
+            result = session.run(
+                """
+                MATCH (n:NODE {repoId: $project_id})
+                WHERE size(n.node_id) = 32
+                RETURN count(n) AS legacy_count
+                """,
+                project_id=project_id,
+            )
+            record = result.single()
+            legacy_count = record["legacy_count"] if record else 0
+            return bool(legacy_count)
 
     def query_graph(self, query: str) -> list[Dict[str, Any]]:
         """Execute an arbitrary Cypher query and return record dictionaries.
