@@ -1,8 +1,10 @@
 import os
+from unittest.mock import MagicMock, patch
+
+import httpx
 import pytest
-import requests
-from unittest.mock import patch, MagicMock
 from fastapi import HTTPException
+
 from app.modules.auth.auth_service import AuthService
 
 
@@ -54,7 +56,14 @@ class TestAuthService:
             self, auth_service, mock_env_vars, mock_successful_login_response
         ):
             """Test successful login with valid credentials."""
-            with patch("requests.post", return_value=mock_successful_login_response):
+            with patch(
+                "app.modules.auth.auth_service.httpx.Client"
+            ) as mock_client_cls:
+                mock_client = MagicMock()
+                mock_client.post.return_value = mock_successful_login_response
+                mock_client.__enter__.return_value = mock_client
+                mock_client.__exit__.return_value = None
+                mock_client_cls.return_value = mock_client
                 result = auth_service.login("test@example.com", "valid_password")
                 assert result["idToken"] == "test_token"
                 assert result["email"] == "test@example.com"
@@ -63,7 +72,14 @@ class TestAuthService:
             self, auth_service, mock_env_vars, mock_failed_login_response
         ):
             """Test login with invalid credentials."""
-            with patch("requests.post", return_value=mock_failed_login_response):
+            with patch(
+                "app.modules.auth.auth_service.httpx.Client"
+            ) as mock_client_cls:
+                mock_client = MagicMock()
+                mock_client.post.return_value = mock_failed_login_response
+                mock_client.__enter__.return_value = mock_client
+                mock_client.__exit__.return_value = None
+                mock_client_cls.return_value = mock_client
                 with pytest.raises(Exception) as exc_info:
                     auth_service.login("test@example.com", "invalid_password")
                 assert "INVALID_PASSWORD" in str(exc_info.value)
@@ -72,9 +88,17 @@ class TestAuthService:
             """Test login with empty credentials."""
             mock_response = MagicMock()
             mock_response.json.return_value = {"error": {"message": "MISSING_EMAIL"}}
-            mock_response.raise_for_status.side_effect = Exception(mock_response.json())
-
-            with patch("requests.post", return_value=mock_response):
+            mock_response.raise_for_status.side_effect = Exception(
+                mock_response.json()
+            )
+            with patch(
+                "app.modules.auth.auth_service.httpx.Client"
+            ) as mock_client_cls:
+                mock_client = MagicMock()
+                mock_client.post.return_value = mock_response
+                mock_client.__enter__.return_value = mock_client
+                mock_client.__exit__.return_value = None
+                mock_client_cls.return_value = mock_client
                 with pytest.raises(Exception) as exc_info:
                     auth_service.login("", "")
                 assert "MISSING_EMAIL" in str(exc_info.value)
@@ -82,22 +106,32 @@ class TestAuthService:
         def test_login_network_error(self, auth_service, mock_env_vars):
             """Test login with network connection error."""
             with patch(
-                "requests.post",
-                side_effect=requests.exceptions.ConnectionError("Failed to connect"),
-            ):
-                with pytest.raises(Exception) as exc_info:
+                "app.modules.auth.auth_service.httpx.Client"
+            ) as mock_client_cls:
+                mock_client = MagicMock()
+                mock_client.post.side_effect = httpx.ConnectError(
+                    "Failed to connect"
+                )
+                mock_client.__enter__.return_value = mock_client
+                mock_client.__exit__.return_value = None
+                mock_client_cls.return_value = mock_client
+                with pytest.raises(httpx.ConnectError):
                     auth_service.login("test@example.com", "password")
-                assert isinstance(exc_info.value, requests.exceptions.ConnectionError)
 
         def test_login_timeout_error(self, auth_service, mock_env_vars):
             """Test login with request timeout."""
             with patch(
-                "requests.post",
-                side_effect=requests.exceptions.Timeout("Request timed out"),
-            ):
-                with pytest.raises(Exception) as exc_info:
+                "app.modules.auth.auth_service.httpx.Client"
+            ) as mock_client_cls:
+                mock_client = MagicMock()
+                mock_client.post.side_effect = httpx.TimeoutException(
+                    "Request timed out"
+                )
+                mock_client.__enter__.return_value = mock_client
+                mock_client.__exit__.return_value = None
+                mock_client_cls.return_value = mock_client
+                with pytest.raises(httpx.TimeoutException):
                     auth_service.login("test@example.com", "password")
-                assert isinstance(exc_info.value, requests.exceptions.Timeout)
 
     class TestSignup:
         """Test cases for signup functionality."""
