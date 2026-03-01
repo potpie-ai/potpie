@@ -1769,7 +1769,6 @@ class ParseHelper:
                             repo_name=repo_name,
                             ref=ref,
                             error_type=type(e).__name__,
-                            error=str(e),
                             reason="GitHub App may not be installed on this repository or token expired",
                         )
                 else:
@@ -1832,7 +1831,6 @@ class ParseHelper:
                         repo_name=repo_name,
                         ref=ref,
                         error_type=type(e).__name__,
-                        error=str(e)[:200],
                         reason=reason,
                     )
 
@@ -1881,7 +1879,7 @@ class ParseHelper:
                 elif "404" in error_str or "not found" in error_str:
                     reason = "Repository not found with environment token"
                 else:
-                    reason = f"Clone failed: {str(e)[:200]}"
+                    reason = "Clone failed with environment token"
 
                 logger.error(
                     f"[Repomanager] FAILED: Environment token clone failed for {repo_name}",
@@ -1889,7 +1887,6 @@ class ParseHelper:
                     repo_name=repo_name,
                     ref=ref,
                     error_type=type(e).__name__,
-                    error=str(e)[:200],
                     reason=reason,
                     suggestion="All authentication methods exhausted. Check: 1) GitHub App installation, 2) User OAuth scopes, 3) Environment tokens",
                 )

@@ -304,7 +304,7 @@ class ParsingService:
                         "Failed to fetch user GitHub token - falling back to environment tokens",
                         user_id=user_id,
                         repo_name=repo_details.repo_name,
-                        error=str(e),
+                        error_type=type(e).__name__,
                     )
                 (
                     repo,
