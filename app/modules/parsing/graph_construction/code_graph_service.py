@@ -80,7 +80,6 @@ class CodeGraphService:
         combined_string = f"{user_id}:{path}"
         hash_object = hashlib.sha256()
         hash_object.update(combined_string.encode("utf-8"))
-        hash_object.update(combined_string.encode("utf-8"))
         node_id = hash_object.hexdigest()
         return node_id
 
