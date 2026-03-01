@@ -360,6 +360,13 @@ class CodeGraphService:
             total_rels_inserted = 0
 
             for rel_type in rel_types:
+                # Validate relationship type to prevent Cypher injection
+                if not rel_type.isidentifier():
+                    logger.warning(
+                        f"[GRAPH GENERATION] Skipping invalid relationship type: {rel_type!r}",
+                        project_id=project_id,
+                    )
+                    continue
                 rel_type_start = time.time()
                 # Filter edges by relationship type
                 type_edges = [
