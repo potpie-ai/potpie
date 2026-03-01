@@ -259,17 +259,27 @@ class CodeProviderFactory:
     def create_tunnel_provider(
         user_id: Optional[str] = None,
         conversation_id: Optional[str] = None,
+        local_mode: bool = False,
     ) -> Optional[ICodeProvider]:
         """
-        Create tunnel provider if tunnel is available.
+        Create tunnel provider if tunnel is available and local_mode is True.
+
+        Tunnel provider should ONLY be used in local mode (VSCode Extension).
+        In web mode, this method should always return None to prevent
+        unnecessary tunnel connection attempts.
 
         Args:
             user_id: User ID for tunnel lookup
             conversation_id: Conversation ID for tunnel lookup
+            local_mode: Must be True for tunnel provider to be created (VSCode only)
 
         Returns:
-            UserLocalTunnelProvider instance if tunnel is available, None otherwise
+            UserLocalTunnelProvider instance if tunnel is available and local_mode=True, None otherwise
         """
+        # Tunnel provider is only available in local mode (VSCode Extension)
+        if not local_mode:
+            return None
+
         try:
             from app.modules.code_provider.user_local_tunnel.user_local_tunnel_provider import (
                 UserLocalTunnelProvider,
@@ -311,7 +321,7 @@ class CodeProviderFactory:
             return None
 
     @staticmethod
-    def create_provider_with_fallback(repo_name: str) -> ICodeProvider:
+    def create_provider_with_fallback(repo_name: str, local_mode: bool = False) -> ICodeProvider:
         """
         Create provider with comprehensive authentication fallback strategy.
 
@@ -320,14 +330,16 @@ class CodeProviderFactory:
         their own retry logic.
 
         Authentication priority order:
-        1. Local repository (if repo_name is a local path)
-        2. GitHub App (if GITHUB_APP_ID configured and provider is GitHub)
-        3. PAT from GH_TOKEN_LIST (GitHub only, random selection for load distribution)
-        4. PAT from CODE_PROVIDER_TOKEN (universal fallback for all providers)
-        5. Unauthenticated access (GitHub only, for public repos)
+        1. Tunnel provider (only in local_mode / VSCode Extension)
+        2. Local repository (if repo_name is a local path)
+        3. GitHub App (if GITHUB_APP_ID configured and provider is GitHub)
+        4. PAT from GH_TOKEN_LIST (GitHub only, random selection for load distribution)
+        5. PAT from CODE_PROVIDER_TOKEN (universal fallback for all providers)
+        6. Unauthenticated access (GitHub only, for public repos)
 
         Args:
             repo_name: Repository name or local path
+            local_mode: If True, allows tunnel provider for VSCode Extension. Default False (web mode).
 
         Returns:
             Authenticated ICodeProvider instance
@@ -335,11 +347,11 @@ class CodeProviderFactory:
         Raises:
             ValueError: If no authentication method is available
         """
-        logger.info(f"ProviderFactory: create_provider_with_fallback called for {repo_name}")
-        
-        # Check if tunnel provider is available (highest priority for local access)
-        # This should be checked before local filesystem access
-        tunnel_provider = CodeProviderFactory.create_tunnel_provider()
+        logger.info(f"ProviderFactory: create_provider_with_fallback called for {repo_name}, local_mode={local_mode}")
+
+        # Check if tunnel provider is available (highest priority for local access, VSCode only)
+        # Only check tunnel in local_mode to prevent web mode from attempting tunnel connections
+        tunnel_provider = CodeProviderFactory.create_tunnel_provider(local_mode=local_mode)
         if tunnel_provider:
             # Verify tunnel is working by checking access
             try:
