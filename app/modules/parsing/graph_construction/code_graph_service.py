@@ -501,17 +501,20 @@ class CodeGraphService:
             legacy_count = record["legacy_count"] if record else 0
             return bool(legacy_count)
 
-    def query_graph(self, query: str) -> list[Dict[str, Any]]:
+    def query_graph(
+        self, query: str, parameters: Optional[Dict[str, Any]] = None
+    ) -> list[Dict[str, Any]]:
         """Execute an arbitrary Cypher query and return record dictionaries.
 
         Args:
             query: Cypher query string.
+            parameters: Optional parameter dictionary for query placeholders.
 
         Returns:
             List of row dictionaries from query results.
         """
         with self._session() as session:
-            result = session.run(query)
+            result = session.run(query, parameters=parameters or {})
             return [record.data() for record in result]
 
 
