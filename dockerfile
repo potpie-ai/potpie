@@ -1,49 +1,59 @@
-# Use an official Python runtime as a parent image
+# Use minimal Python base image
 FROM python:3.11-slim
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y git procps wget curl gnupg2 ca-certificates supervisor && rm -rf /var/lib/apt/lists/*
+# Prevent Python from writing .pyc files & enable stdout logging
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
-# Set the working directory in the container
+# Set working directory
 WORKDIR /app
 
-# Install uv.
+# Install system dependencies (minimal)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    wget \
+    ca-certificates \
+    supervisor \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv (faster dependency manager)
 COPY --from=ghcr.io/astral-sh/uv:0.9.6 /uv /uvx /bin/
 
-# Copy dependency metadata first for better layer caching
+# Copy only dependency files first (for caching)
 COPY pyproject.toml uv.lock ./
 
-# Install project dependencies using uv (creates .venv)
+# Install dependencies
 RUN uv sync --frozen --no-cache
 
-# Ensure the virtual environment binaries are on PATH
+# Set virtual environment path
 ENV VIRTUAL_ENV=/app/.venv
-ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+ENV PATH="/app/.venv/bin:$PATH"
 
-# Download required NLTK data inside the managed environment
+# Download required NLTK data
 RUN uv run python -c "import nltk; nltk.download('punkt')"
 
-# Install gVisor (runsc) via official APT repository for command isolation
-RUN curl -fsSL https://gvisor.dev/archive.key | gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg && \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" > /etc/apt/sources.list.d/gvisor.list && \
-    apt-get update && \
-    apt-get install -y runsc || echo "gVisor runsc package not available for this architecture; continuing without it" && \
-    rm -rf /var/lib/apt/lists/*
-
-# Copy the rest of the application code into the container
+# Copy application code
 COPY . .
 
-# env path for newrelic.ini
-ENV NEW_RELIC_CONFIG_FILE=/app/newrelic.ini
-
-# Copy the Supervisor configuration file into the container
+# Copy supervisor config
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-# Expose the port that the app runs on
+# Set New Relic config path
+ENV NEW_RELIC_CONFIG_FILE=/app/newrelic.ini
+
+# Create non-root user (IMPORTANT)
+RUN useradd -m appuser && chown -R appuser:appuser /app
+
+USER appuser
+
+# Expose application port
 EXPOSE 8001
 
-# Define environment variable
-ENV PYTHONUNBUFFERED=1
+# Healthcheck (important for reliability)
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD curl -f http://localhost:8001/health || exit 1
 
-# Run Supervisor when the container launches
+# Start application via supervisor
 CMD ["supervisord", "-n", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
