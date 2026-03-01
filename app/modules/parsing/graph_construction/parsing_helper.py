@@ -2802,7 +2802,7 @@ class ParseHelper:
         Raises:
             ValueError: If one of the commit identifiers is not a valid SHA.
         """
-        if not repo_path or not old_commit or not new_commit:
+        if not old_commit or not new_commit:
             return {"added": [], "modified": [], "deleted": []}
 
         old_commit = ParseHelper.validate_commit_sha(
@@ -2811,6 +2811,9 @@ class ParseHelper:
         new_commit = ParseHelper.validate_commit_sha(
             new_commit, field_name="new_commit"
         )
+
+        if not repo_path:
+            return {"added": [], "modified": [], "deleted": []}
 
         if old_commit == new_commit:
             return {"added": [], "modified": [], "deleted": []}
