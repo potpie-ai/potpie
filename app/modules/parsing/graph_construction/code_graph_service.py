@@ -240,11 +240,6 @@ class CodeGraphService:
 
             # Step 3: Batch insert nodes
             node_insert_start = time.time()
-            logger.info(
-                f"[GRAPH GENERATION] Step 4/4: Inserting {node_count} nodes into Neo4j",
-                project_id=project_id,
-                total_nodes=node_count,
-            )
             batch_size = 1000
             
             # Construct the list of nodes to process based on changed_files_set
@@ -258,6 +253,11 @@ class CodeGraphService:
                 nodes_to_process = list(nx_graph.nodes(data=True))
             
             node_count = len(nodes_to_process)
+            logger.info(
+                f"[GRAPH GENERATION] Step 4/4: Inserting {node_count} nodes into Neo4j",
+                project_id=project_id,
+                total_nodes=node_count,
+            )
             total_batches = (node_count + batch_size - 1) // batch_size
             nodes_inserted = 0
 

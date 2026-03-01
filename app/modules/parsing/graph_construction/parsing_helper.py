@@ -887,7 +887,31 @@ class ParseHelper:
 
             try:
                 with tarfile.open(tmp_path, "r:gz") as tf:
-                    tf.extractall(extract_subdir)
+                    # Sanitize members to prevent path traversal (Tar Slip)
+                    real_dest = os.path.realpath(extract_subdir)
+                    safe_members = []
+                    for member in tf.getmembers():
+                        # Reject symlinks that could escape the target
+                        if member.issym() or member.islnk():
+                            logger.warning(
+                                "Skipping tarball symlink/hardlink entry: %s",
+                                member.name,
+                            )
+                            continue
+                        member_path = os.path.realpath(
+                            os.path.join(real_dest, member.name)
+                        )
+                        if not (
+                            member_path == real_dest
+                            or member_path.startswith(real_dest + os.sep)
+                        ):
+                            logger.warning(
+                                "Skipping tarball entry with path traversal: %s",
+                                member.name,
+                            )
+                            continue
+                        safe_members.append(member)
+                    tf.extractall(extract_subdir, members=safe_members)
             finally:
                 try:
                     os.unlink(tmp_path)
@@ -1699,7 +1723,6 @@ class ParseHelper:
             # ============================================================================
 
             worktree_path_str = None
-            last_error = None
 
             # ---------------------------------------------------------------------------
             # PRIORITY 1: GitHub App Installation Token (ghs_*)
@@ -1718,7 +1741,6 @@ class ParseHelper:
                         repo_name=repo_name,
                         ref=ref,
                         token_type=token_type,
-                        token_prefix=token[:7] if token else None,
                     )
 
                     try:
@@ -1747,7 +1769,6 @@ class ParseHelper:
                                 )
                                 return worktree_path_str
                     except Exception as e:
-                        last_error = e
                         logger.warning(
                             f"[Repomanager] FAILED: GitHub App token failed, will try next method",
                             user_id=user_id,
@@ -1777,7 +1798,6 @@ class ParseHelper:
                     repo_name=repo_name,
                     ref=ref,
                     token_type=token_type,
-                    token_prefix=auth_token[:7] if auth_token else None,
                 )
 
                 try:
@@ -1800,7 +1820,6 @@ class ParseHelper:
                         )
                         return worktree_path_str
                 except Exception as e:
-                    last_error = e
                     error_str = str(e).lower()
 
                     # Determine specific failure reason

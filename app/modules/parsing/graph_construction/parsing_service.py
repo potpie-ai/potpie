@@ -290,7 +290,7 @@ class ParsingService:
                             "Using user's GitHub OAuth token for cloning",
                             user_id=user_id,
                             repo_name=repo_details.repo_name,
-                            token_prefix=user_token[:8] if len(user_token) > 8 else "short",
+                            has_user_token=True,
                         )
                     else:
                         logger.warning(
@@ -781,101 +781,100 @@ class ParsingService:
                 "Repository doesn't consist of a language currently supported."
             )
 
+    async def duplicate_graph(self, old_repo_id: str, new_repo_id: str):
+        """Clone graph/search data from one repository id to another.
 
-async def duplicate_graph(self, old_repo_id: str, new_repo_id: str):
-    """Clone graph/search data from one repository id to another.
+        Args:
+            old_repo_id: Source repository identifier.
+            new_repo_id: Destination repository identifier.
+        """
+        node_batch_size = 3000  # Fixed batch size for nodes
+        relationship_batch_size = 3000  # Fixed batch size for relationships
+        try:
+            await self.search_service.clone_search_indices(old_repo_id, new_repo_id)
+            # Step 1: Fetch and duplicate nodes in batches
+            with self.inference_service.driver.session() as session:
+                offset = 0
+                while True:
+                    nodes_query = """
+                        MATCH (n:NODE {repoId: $old_repo_id})
+                        RETURN n.node_id AS node_id, n.text AS text, n.file_path AS file_path,
+                               n.start_line AS start_line, n.end_line AS end_line, n.name AS name,
+                               COALESCE(n.docstring, '') AS docstring,
+                               COALESCE(n.embedding, []) AS embedding,
+                               labels(n) AS labels
+                        SKIP $offset LIMIT $limit
+                        """
+                    nodes_result = session.run(
+                        nodes_query,
+                        old_repo_id=old_repo_id,
+                        offset=offset,
+                        limit=node_batch_size,
+                    )
+                    nodes = [dict(record) for record in nodes_result]
 
-    Args:
-        self: Service instance that owns search and Neo4j handles.
-        old_repo_id: Source repository identifier.
-        new_repo_id: Destination repository identifier.
-    """
-    await self.search_service.clone_search_indices(old_repo_id, new_repo_id)
-    node_batch_size = 3000  # Fixed batch size for nodes
-    relationship_batch_size = 3000  # Fixed batch size for relationships
-    try:
-        # Step 1: Fetch and duplicate nodes in batches
-        with self.inference_service.driver.session() as session:
-            offset = 0
-            while True:
-                nodes_query = """
-                    MATCH (n:NODE {repoId: $old_repo_id})
-                    RETURN n.node_id AS node_id, n.text AS text, n.file_path AS file_path,
-                           n.start_line AS start_line, n.end_line AS end_line, n.name AS name,
-                           COALESCE(n.docstring, '') AS docstring,
-                           COALESCE(n.embedding, []) AS embedding,
-                           labels(n) AS labels
-                    SKIP $offset LIMIT $limit
-                    """
-                nodes_result = session.run(
-                    nodes_query,
-                    old_repo_id=old_repo_id,
-                    offset=offset,
-                    limit=node_batch_size,
-                )
-                nodes = [dict(record) for record in nodes_result]
+                    if not nodes:
+                        break
 
-                if not nodes:
-                    break
+                    # Insert nodes under the new repo ID, preserving labels, docstring, and embedding
+                    create_query = """
+                        UNWIND $batch AS node
+                        CALL apoc.create.node(node.labels, {
+                            repoId: $new_repo_id,
+                            node_id: node.node_id,
+                            text: node.text,
+                            file_path: node.file_path,
+                            start_line: node.start_line,
+                            end_line: node.end_line,
+                            name: node.name,
+                            docstring: node.docstring,
+                            embedding: node.embedding
+                        }) YIELD node AS new_node
+                        RETURN new_node
+                        """
+                    session.run(create_query, new_repo_id=new_repo_id, batch=nodes)
+                    offset += node_batch_size
 
-                # Insert nodes under the new repo ID, preserving labels, docstring, and embedding
-                create_query = """
-                    UNWIND $batch AS node
-                    CALL apoc.create.node(node.labels, {
-                        repoId: $new_repo_id,
-                        node_id: node.node_id,
-                        text: node.text,
-                        file_path: node.file_path,
-                        start_line: node.start_line,
-                        end_line: node.end_line,
-                        name: node.name,
-                        docstring: node.docstring,
-                        embedding: node.embedding
-                    }) YIELD node AS new_node
-                    RETURN new_node
-                    """
-                session.run(create_query, new_repo_id=new_repo_id, batch=nodes)
-                offset += node_batch_size
+            # Step 2: Fetch and duplicate relationships in batches
+            with self.inference_service.driver.session() as session:
+                offset = 0
+                while True:
+                    relationships_query = """
+                        MATCH (n:NODE {repoId: $old_repo_id})-[r]->(m:NODE)
+                        RETURN n.node_id AS start_node_id, type(r) AS relationship_type, m.node_id AS end_node_id
+                        SKIP $offset LIMIT $limit
+                        """
+                    relationships_result = session.run(
+                        relationships_query,
+                        old_repo_id=old_repo_id,
+                        offset=offset,
+                        limit=relationship_batch_size,
+                    )
+                    relationships = [dict(record) for record in relationships_result]
 
-        # Step 2: Fetch and duplicate relationships in batches
-        with self.inference_service.driver.session() as session:
-            offset = 0
-            while True:
-                relationships_query = """
-                    MATCH (n:NODE {repoId: $old_repo_id})-[r]->(m:NODE)
-                    RETURN n.node_id AS start_node_id, type(r) AS relationship_type, m.node_id AS end_node_id
-                    SKIP $offset LIMIT $limit
-                    """
-                relationships_result = session.run(
-                    relationships_query,
-                    old_repo_id=old_repo_id,
-                    offset=offset,
-                    limit=relationship_batch_size,
-                )
-                relationships = [dict(record) for record in relationships_result]
+                    if not relationships:
+                        break
 
-                if not relationships:
-                    break
+                    relationship_query = """
+                        UNWIND $batch AS relationship
+                        MATCH (a:NODE {repoId: $new_repo_id, node_id: relationship.start_node_id}),
+                              (b:NODE {repoId: $new_repo_id, node_id: relationship.end_node_id})
+                        CALL apoc.create.relationship(a, relationship.relationship_type, {}, b) YIELD rel
+                        RETURN rel
+                        """
+                    session.run(
+                        relationship_query, new_repo_id=new_repo_id, batch=relationships
+                    )
+                    offset += relationship_batch_size
 
-                relationship_query = """
-                    UNWIND $batch AS relationship
-                    MATCH (a:NODE {repoId: $new_repo_id, node_id: relationship.start_node_id}),
-                          (b:NODE {repoId: $new_repo_id, node_id: relationship.end_node_id})
-                    CALL apoc.create.relationship(a, relationship.relationship_type, {}, b) YIELD rel
-                    RETURN rel
-                    """
-                session.run(
-                    relationship_query, new_repo_id=new_repo_id, batch=relationships
-                )
-                offset += relationship_batch_size
+            logger.info(
+                f"Successfully duplicated graph from {old_repo_id} to {new_repo_id}"
+            )
 
-        logger.info(
-            f"Successfully duplicated graph from {old_repo_id} to {new_repo_id}"
-        )
-
-    except Exception:
-        logger.exception(
-            "Error duplicating graph",
-            old_repo_id=old_repo_id,
-            new_repo_id=new_repo_id,
-        )
+        except Exception:
+            logger.exception(
+                "Error duplicating graph",
+                old_repo_id=old_repo_id,
+                new_repo_id=new_repo_id,
+            )
+            raise
