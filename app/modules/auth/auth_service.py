@@ -77,49 +77,28 @@ class AuthService:
             else:
                 credential = None
 
-        logging.info("DEBUG: AuthService.check_auth called")
-        logging.info("DEBUG: Development mode: %s", os.getenv("isDevelopmentMode"))
-        logging.info("DEBUG: Credential provided: %s", credential is not None)
-
         # Check if the application is in debug mode
         if os.getenv("isDevelopmentMode") == "enabled" and credential is None:
             request.state.user = {"user_id": os.getenv("defaultUsername")}
-            logging.info("DEBUG: Development mode enabled. Using Mock Authentication.")
             return {
                 "user_id": os.getenv("defaultUsername"),
                 "email": "defaultuser@potpie.ai",
             }
         else:
             if credential is None:
-                logging.error(
-                    "DEBUG: No credential provided and not in development mode"
-                )
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Bearer authentication is needed",
                     headers={"WWW-Authenticate": 'Bearer realm="auth_required"'},
                 )
             try:
-                logging.info(
-                    "DEBUG: Verifying Firebase token: %s...",
-                    credential.credentials[:20],
-                )
                 decoded_token = auth.verify_id_token(credential.credentials)
                 # Normalize token to always include "user_id" for consistency across environments
                 # Firebase tokens use "uid", but our codebase expects "user_id"
                 if "uid" in decoded_token and "user_id" not in decoded_token:
                     decoded_token["user_id"] = decoded_token["uid"]
-                logging.info(
-                    "DEBUG: Successfully verified token for user: %s",
-                    decoded_token.get("user_id", decoded_token.get("uid", "unknown")),
-                )
-                logging.info(
-                    "DEBUG: Token email: %s",
-                    decoded_token.get("email", "unknown"),
-                )
                 request.state.user = decoded_token
             except Exception as err:
-                logging.error("DEBUG: Firebase token verification failed: %s", str(err))
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail=f"Invalid authentication from Firebase. {err}",
