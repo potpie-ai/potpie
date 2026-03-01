@@ -911,33 +911,7 @@ class ParseHelper:
                             )
                             continue
                         safe_members.append(member)
-
-                    # Extract members explicitly after validation to avoid tar-slip vectors.
-                    for member in safe_members:
-                        destination = os.path.realpath(
-                            os.path.join(real_dest, member.name)
-                        )
-                        if member.isdir():
-                            os.makedirs(destination, exist_ok=True)
-                            continue
-                        if not member.isfile():
-                            logger.warning(
-                                "Skipping unsupported tar member type: %s",
-                                member.name,
-                            )
-                            continue
-
-                        file_obj = tf.extractfile(member)
-                        if file_obj is None:
-                            logger.warning(
-                                "Skipping unreadable tar member: %s",
-                                member.name,
-                            )
-                            continue
-
-                        os.makedirs(os.path.dirname(destination), exist_ok=True)
-                        with file_obj, open(destination, "wb") as out_file:
-                            shutil.copyfileobj(file_obj, out_file)
+                    tf.extractall(extract_subdir, members=safe_members)
             finally:
                 try:
                     os.unlink(tmp_path)
