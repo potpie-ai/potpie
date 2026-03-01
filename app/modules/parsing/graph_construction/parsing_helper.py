@@ -1770,30 +1770,24 @@ class ParseHelper:
                     )
 
                     try:
-                        # Build authenticated URL with correct prefix for App tokens
-                        clone_url = await self._build_clone_url(
-                            github_repo, auth, user_id=user_id
+                        worktree_path_str = self.repo_manager.prepare_for_parsing(
+                            repo_name,
+                            ref,
+                            auth_token=token,
+                            user_id=user_id,
+                            is_commit=bool(commit_id),
                         )
 
-                        if clone_url:
-                            worktree_path_str = self.repo_manager.prepare_for_parsing(
-                                repo_name,
-                                ref,
-                                auth_token=token,
+                        if worktree_path_str:
+                            logger.info(
+                                f"[Repomanager] SUCCESS: Cloned with GitHub App token",
                                 user_id=user_id,
-                                is_commit=bool(commit_id),
+                                repo_name=repo_name,
+                                ref=ref,
+                                worktree_path=worktree_path_str,
+                                method="github_app_token",
                             )
-
-                            if worktree_path_str:
-                                logger.info(
-                                    f"[Repomanager] SUCCESS: Cloned with GitHub App token",
-                                    user_id=user_id,
-                                    repo_name=repo_name,
-                                    ref=ref,
-                                    worktree_path=worktree_path_str,
-                                    method="github_app_token",
-                                )
-                                return worktree_path_str
+                            return worktree_path_str
                     except Exception as e:
                         logger.warning(
                             f"[Repomanager] FAILED: GitHub App token failed, will try next method",
@@ -1879,60 +1873,31 @@ class ParseHelper:
                 method="environment_token_fallback",
             )
 
-            # Build clone URL with authentication (this will use environment tokens)
-            clone_url = await self._build_clone_url(github_repo, auth, user_id=user_id)
-
-            if not clone_url:
-                logger.error(
-                    f"[Repomanager] FAILED: Could not build clone URL for {repo_name}",
-                    user_id=user_id,
-                    repo_name=repo_name,
-                    ref=ref,
-                    reason="No valid authentication method available",
-                )
-                return None
-
-            # Clone as BARE repository to match RepoManager architecture
-            # This ensures worktrees can be created properly
-            bare_repo_path = self.repo_manager._get_bare_repo_path(repo_name)
-            bare_repo_path.parent.mkdir(parents=True, exist_ok=True)
-
-            logger.info(
-                f"[Repomanager] Cloning {repo_name} as bare repo to {bare_repo_path}",
-                user_id=user_id,
-                repo_name=repo_name,
-                ref=ref,
-                method="environment_token_bare_clone",
-            )
-
             try:
-                # Clone as bare repository
-                Repo.clone_from(
-                    clone_url,
-                    str(bare_repo_path),
-                    bare=True,
-                    mirror=True,  # Mirror for full fidelity
-                )
-                logger.info(
-                    f"[Repomanager] SUCCESS: Cloned {repo_name} as bare repo with environment token",
+                worktree_path_str = self.repo_manager.prepare_for_parsing(
+                    repo_name,
+                    ref,
+                    auth_token=None,  # RepoManager resolves environment token
                     user_id=user_id,
-                    repo_name=repo_name,
-                    ref=ref,
-                    bare_repo_path=str(bare_repo_path),
-                    method="environment_token",
+                    is_commit=bool(commit_id),
                 )
-
-                # Configure the bare repo to fetch all refs
-                bare_repo = Repo(str(bare_repo_path))
-                if bare_repo.remotes:
-                    origin = bare_repo.remotes.origin
-                    origin.fetch()
+                if worktree_path_str:
                     logger.info(
-                        f"[_clone_to_repo_manager] Fetched all refs for {repo_name}",
+                        f"[Repomanager] SUCCESS: Cloned with environment token",
                         user_id=user_id,
                         repo_name=repo_name,
+                        ref=ref,
+                        worktree_path=worktree_path_str,
+                        method="environment_token",
                     )
-
+                    return worktree_path_str
+                logger.error(
+                    f"[Repomanager] FAILED: Environment token clone returned no worktree",
+                    user_id=user_id,
+                    repo_name=repo_name,
+                    ref=ref,
+                )
+                return None
             except Exception as e:
                 error_str = str(e).lower()
                 if "403" in error_str or "forbidden" in error_str:
@@ -1973,91 +1938,6 @@ class ParseHelper:
                     logger.error(f"Failed to send failure email: {email_err}")
 
                 return None
-
-            # Now create worktree for the specific ref from the bare repo
-            worktree_path_str = await self._create_git_worktree_from_bare(
-                bare_repo_path=bare_repo_path,
-                worktree_path=worktree_path,
-                ref=ref,
-                is_commit=commit_id is not None,
-            )
-
-            if not worktree_path_str:
-                # Worktree creation failed - don't return bare repo (not usable for parsing)
-                logger.error(
-                    f"[Repomanager] Worktree creation failed for {repo_name}. Bare repo exists but cannot be used for parsing.",
-                    user_id=user_id,
-                    repo_name=repo_name,
-                    ref=ref,
-                )
-
-                # Send email alert for worktree creation failure
-                try:
-                    email_helper = EmailHelper()
-                    await email_helper.send_parsing_failure_alert(
-                        repo_name=repo_name,
-                        branch_name=ref,
-                        error_message="Worktree creation failed after successful bare repo clone",
-                        auth_method="environment",
-                        failure_type="worktree_creation",
-                        user_id=user_id,
-                        project_id=project_id,
-                        stack_trace=None,
-                    )
-                except Exception as email_err:
-                    logger.error(f"Failed to send worktree failure email: {email_err}")
-
-                return None
-
-            # Always get actual commit SHA from worktree to ensure accuracy
-            actual_commit_id = None
-            try:
-                worktree_repo = Repo(worktree_path_str)
-                actual_commit_id = worktree_repo.head.commit.hexsha
-                logger.info(
-                    f"ParsingHelper: Worktree created at {worktree_path_str}, "
-                    f"actual commit_id={actual_commit_id} "
-                    f"(requested commit_id={commit_id}, branch={branch})"
-                )
-                # Verify commit_id matches if it was specified
-                if commit_id and actual_commit_id != commit_id:
-                    logger.warning(
-                        f"ParsingHelper: Commit mismatch! Requested {commit_id}, "
-                        f"but worktree has {actual_commit_id}. Using actual commit_id."
-                    )
-            except Exception as e:
-                logger.warning(f"Could not get commit SHA from worktree: {e}")
-                # Fallback to requested commit_id or fetch from branch
-                actual_commit_id = commit_id
-                if not actual_commit_id:
-                    try:
-                        branch_info = github_repo.get_branch(branch)
-                        actual_commit_id = branch_info.commit.sha
-                    except Exception as e2:
-                        logger.warning(f"Could not get commit SHA from branch: {e2}")
-
-            # Extract metadata
-            try:
-                repo_metadata = ParseHelper.extract_remote_repo_metadata(github_repo)
-            except Exception:
-                repo_metadata = {}
-
-            # Register with RepoManager
-            self.repo_manager.register_repo(
-                repo_name=repo_name,
-                local_path=worktree_path_str,
-                branch=branch,
-                commit_id=actual_commit_id,
-                user_id=user_id,
-                metadata=repo_metadata,
-            )
-
-            logger.info(
-                f"ParsingHelper: Successfully cloned and registered {repo_name}@{ref} "
-                f"in RepoManager at {worktree_path_str}"
-            )
-
-            return worktree_path_str
 
         except Exception as e:
             logger.exception(f"Failed to add {repo_name} to RepoManager: {e}")
@@ -2120,7 +2000,7 @@ class ParseHelper:
         user_id: Optional[str] = None,
         project_id: Optional[str] = None,
     ) -> Optional[str]:
-        """Build authenticated clone URL for the repository with proper token handling.
+        """Build clone URL for the repository and emit auth context logs.
 
         Args:
             github_repo: PyGithub Repository object
@@ -2129,7 +2009,7 @@ class ParseHelper:
             project_id: Project ID for logging context
 
         Returns:
-            Authenticated clone URL or original URL if no auth
+            Repository clone URL (credentials are not embedded in the URL).
         """
         try:
             clone_url = github_repo.clone_url
@@ -2150,11 +2030,6 @@ class ParseHelper:
                 token_source = "auth_password"
 
             if token:
-                from urllib.parse import urlparse, urlunparse
-
-                parsed = urlparse(clone_url)
-                username_prefix = self._get_token_username_prefix(token)
-
                 # Log token type being used (without exposing the token)
                 token_type = "unknown"
                 if token.startswith("ghs_"):
@@ -2172,21 +2047,7 @@ class ParseHelper:
                     project_id=project_id,
                     repo_name=repo_name,
                     token_type=token_type,
-                    username_prefix=username_prefix,
                     token_source=token_source,
-                )
-
-                # Reconstruct URL with proper username:token format
-                netloc_with_auth = f"{username_prefix}:{token}@{parsed.netloc}"
-                clone_url = urlunparse(
-                    (
-                        parsed.scheme,
-                        netloc_with_auth,
-                        parsed.path,
-                        parsed.params,
-                        parsed.query,
-                        parsed.fragment,
-                    )
                 )
             else:
                 logger.info(
