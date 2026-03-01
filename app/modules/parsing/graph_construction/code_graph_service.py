@@ -408,13 +408,19 @@ class CodeGraphService:
 
                     # Type-specific relationship creation in one transaction
                     insert_start = time.time()
-                    query = f"""
+                    query = """
                         UNWIND $edges AS edge
-                        MATCH (source:NODE {{node_id: edge.source_id, repoId: edge.repoId}})
-                        MATCH (target:NODE {{node_id: edge.target_id, repoId: edge.repoId}})
-                        CREATE (source)-[r:{rel_type} {{repoId: edge.repoId}}]->(target)
+                        MATCH (source:NODE {node_id: edge.source_id, repoId: edge.repoId})
+                        MATCH (target:NODE {node_id: edge.target_id, repoId: edge.repoId})
+                        CALL apoc.create.relationship(
+                            source,
+                            $rel_type,
+                            {repoId: edge.repoId},
+                            target
+                        ) YIELD rel
+                        RETURN count(rel) AS created_count
                     """
-                    session.run(query, edges=edges_to_create)
+                    session.run(query, edges=edges_to_create, rel_type=rel_type)
                     insert_time = time.time() - insert_start
                     batch_time = time.time() - batch_start
                     total_rels_inserted += len(edges_to_create)
