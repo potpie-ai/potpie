@@ -103,7 +103,7 @@ class CodeGraphService:
             file_paths: Relative file paths to remove from graph storage.
         """
         normalized_paths = [
-            str(Path(file_path).as_posix()).lstrip("./")
+            str(Path(file_path).as_posix()).removeprefix("./")
             for file_path in file_paths
             if file_path
         ]
@@ -140,7 +140,7 @@ class CodeGraphService:
         changed_files_set = None
         if changed_files:
             changed_files_set = {
-                str(Path(file_path).as_posix()).lstrip("./")
+                str(Path(file_path).as_posix()).removeprefix("./")
                 for file_path in changed_files
                 if file_path
             }
@@ -240,18 +240,27 @@ class CodeGraphService:
                 total_nodes=node_count,
             )
             batch_size = 1000
+            
+            # Construct the list of nodes to process based on changed_files_set
+            if changed_files_set:
+                nodes_to_process = [
+                    (node_id, node_data)
+                    for node_id, node_data in nx_graph.nodes(data=True)
+                    if node_data.get("file") in changed_files_set
+                ]
+            else:
+                nodes_to_process = list(nx_graph.nodes(data=True))
+            
+            node_count = len(nodes_to_process)
             total_batches = (node_count + batch_size - 1) // batch_size
             nodes_inserted = 0
 
             for batch_idx, i in enumerate(range(0, node_count, batch_size), 1):
                 batch_start = time.time()
-                batch_nodes = list(nx_graph.nodes(data=True))[i : i + batch_size]
+                batch_nodes = nodes_to_process[i : i + batch_size]
                 nodes_to_create = []
 
                 for node_id, node_data in batch_nodes:
-                    if changed_files_set and node_data.get("file") not in changed_files_set:
-                        continue
-
                     # Get the node type and ensure it's one of our expected types
                     node_type = node_data.get("type", "UNKNOWN")
                     if node_type == "UNKNOWN":
@@ -466,28 +475,6 @@ class CodeGraphService:
         # Clean up search index
         search_service = SearchService(self.db)
         search_service.delete_project_index(project_id)
-
-    async def get_node_by_id(self, node_id: str, project_id: str) -> Optional[Dict]:
-        """Fetch a single node by logical node ID and project identifier.
-
-        Args:
-            node_id: Graph node ID.
-            project_id: Project/repository identifier.
-
-        Returns:
-            Node property dictionary if found, otherwise ``None``.
-        """
-        with self._session() as session:
-            result = session.run(
-                """
-                MATCH (n:NODE {node_id: $node_id, repoId: $project_id})
-                RETURN n
-                """,
-                node_id=node_id,
-                project_id=project_id,
-            )
-            record = result.single()
-            return dict(record["n"]) if record else None
 
     def query_graph(self, query: str) -> list[Dict[str, Any]]:
         """Execute an arbitrary Cypher query and return record dictionaries.
