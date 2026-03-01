@@ -79,7 +79,8 @@ class CodeGraphService:
         """
         combined_string = f"{user_id}:{path}"
 
-        hash_object = hashlib.md5()
+        # usedforsecurity=False: MD5 is used for non-cryptographic node ID generation only
+        hash_object = hashlib.md5(usedforsecurity=False)  # noqa: S324
         hash_object.update(combined_string.encode("utf-8"))
         node_id = hash_object.hexdigest()
         return node_id

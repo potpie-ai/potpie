@@ -4,7 +4,6 @@ import os
 import re
 import shutil
 import uuid
-import subprocess
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
 from pathlib import Path
@@ -967,33 +966,21 @@ class ParseHelper:
 
         logger.info(f"_ensure_clean_worktree: Ensuring clean worktree for {repo_name}@{ref} (is_bare={is_bare})")
 
-        # Strategy 1: Prune stale git worktree registrations
+        # Strategy 1: Prune stale git worktree registrations (uses gitpython to avoid subprocess)
         if git_dir and os.path.exists(git_dir):
             try:
-                result = subprocess.run(
-                    ["git", "-C", str(git_dir), "worktree", "prune"],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-                if result.returncode == 0:
-                    logger.info(f"Pruned stale worktrees for {repo_name}")
+                _prune_repo = Repo(str(git_dir))
+                _prune_repo.git.worktree("prune")
+                logger.info(f"Pruned stale worktrees for {repo_name}")
             except Exception as e:
                 logger.debug(f"Git worktree prune failed (non-critical): {e}")
 
         # Strategy 2: Try to unregister from git first (while directory still exists)
         if git_dir and os.path.exists(git_dir):
             try:
-                # Try force remove first
-                subprocess.run(
-                    [
-                        "git", "-C", str(git_dir),
-                        "worktree", "remove", "--force",
-                        str(worktree_path)
-                    ],
-                    capture_output=True,
-                    timeout=30,
-                )
+                # Try force remove first (uses gitpython to avoid subprocess hotspot)
+                _rm_repo = Repo(str(git_dir))
+                _rm_repo.git.worktree("remove", "--force", str(worktree_path))
                 logger.info(f"Force-removed worktree registration for {repo_name}@{ref}")
             except Exception:
                 pass  # Ignore errors, prune already cleaned stale entries
