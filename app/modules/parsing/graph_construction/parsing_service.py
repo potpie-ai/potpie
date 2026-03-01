@@ -260,12 +260,12 @@ class ParsingService:
                 if cleanup_graph and not incremental_candidate:
                     try:
                         self._cleanup_graph_for_project(str(project_id), user_id)
-                    except ParsingServiceError:
+                    except ParsingServiceError as exc:
                         if self._raise_library_exceptions:
                             raise
                         raise HTTPException(
                             status_code=500, detail="Internal server error"
-                        )
+                        ) from exc
 
                 # Convert ParsingRequest to RepoDetails
                 repo_details_converted = RepoDetails(
@@ -479,7 +479,7 @@ class ParsingService:
                             project_id=project_id,
                             user_id=user_id,
                         )
-                    raise HTTPException(status_code=500, detail=message)
+                    raise HTTPException(status_code=500, detail=message) from e
                 raise
 
             except Exception as e:
@@ -525,7 +525,7 @@ class ParsingService:
                 raise HTTPException(
                     status_code=500,
                     detail=f"Internal server error. Please contact support with project ID: {project_id}",
-                )
+                ) from e
 
     def create_neo4j_indices(self, graph_manager):
         """Create required Neo4j indexes for node and relationship lookups.

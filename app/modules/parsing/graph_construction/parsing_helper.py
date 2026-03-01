@@ -309,12 +309,12 @@ class ParseHelper:
 
                 except HTTPException as he:
                     raise he
-                except Exception:
+                except Exception as e:
                     logger.exception("Failed to fetch/clone repository")
                     raise HTTPException(
                         status_code=404,
                         detail="Repository not found or inaccessible on GitHub",
-                    )
+                    ) from e
             else:
                 # RepoManager disabled - use original flow
                 try:
@@ -340,12 +340,12 @@ class ParseHelper:
                         )
                 except HTTPException as he:
                     raise he
-                except Exception:
+                except Exception as e:
                     logger.exception("Failed to fetch repository")
                     raise HTTPException(
                         status_code=404,
                         detail="Repository not found or inaccessible on GitHub",
-                    )
+                    ) from e
 
         return repo, owner, auth, repo_manager_path
 
@@ -1218,7 +1218,7 @@ class ParseHelper:
                     raise HTTPException(
                         status_code=500,
                         detail=f"Failed to recreate worktree: {str(e)}",
-                    )
+                    ) from e
 
             # At this point we have a valid worktree (either originally valid or recreated)
             logger.info(
@@ -1370,7 +1370,7 @@ class ParseHelper:
                         raise HTTPException(
                             status_code=500,
                             detail=f"Failed to recreate worktree: {str(e)}",
-                        )
+                        ) from e
                 else:
                     # Bare repo also missing - need full re-clone
                     logger.error(
@@ -1415,7 +1415,7 @@ class ParseHelper:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Failed to checkout {'commit ' + commit_id if commit_id else 'branch ' + branch}",
-                )
+                ) from e
             finally:
                 os.chdir(current_dir)  # Restore the original working directory
         else:
