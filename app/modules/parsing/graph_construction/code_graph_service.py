@@ -75,15 +75,23 @@ class CodeGraphService:
             user_id: Owning user identifier.
 
         Returns:
-            MD5 hex digest used as ``node_id``.
+            SHA-256 hex digest used as ``node_id``.
         """
         combined_string = f"{user_id}:{path}"
-
-        # usedforsecurity=False: MD5 is used for non-cryptographic node ID generation only
-        hash_object = hashlib.md5(usedforsecurity=False)  # noqa: S324  # NOSONAR
+        hash_object = hashlib.sha256()
+        hash_object.update(combined_string.encode("utf-8"))
         hash_object.update(combined_string.encode("utf-8"))
         node_id = hash_object.hexdigest()
         return node_id
+
+    @staticmethod
+    def generate_legacy_node_id(path: str, user_id: str) -> str:
+        """Generate legacy MD5 node ID for backward-compatible relationship matching."""
+        combined_string = f"{user_id}:{path}"
+        # usedforsecurity=False: retained only for matching previously persisted node IDs.
+        hash_object = hashlib.md5(usedforsecurity=False)  # noqa: S324  # NOSONAR
+        hash_object.update(combined_string.encode("utf-8"))
+        return hash_object.hexdigest()
 
     def close(self) -> None:
         """Close the Neo4j driver safely and idempotently."""
@@ -157,9 +165,8 @@ class CodeGraphService:
         )
 
         # Step 1: Create RepoMap and parse repository
-        repo_map_start = time.time()
         logger.info(
-            f"[GRAPH GENERATION] Step 1/4: Initializing RepoMap parser",
+            "[GRAPH GENERATION] Step 1/4: Initializing RepoMap parser",
             project_id=project_id,
         )
         self.repo_map = RepoMap(
@@ -171,7 +178,7 @@ class CodeGraphService:
 
         parse_start = time.time()
         logger.info(
-            f"[GRAPH GENERATION] Step 2/4: Parsing repository structure",
+            "[GRAPH GENERATION] Step 2/4: Parsing repository structure",
             project_id=project_id,
         )
         nx_graph = self.repo_map.create_graph(repo_dir)
@@ -216,7 +223,7 @@ class CodeGraphService:
             # Step 2: Create indices
             index_start = time.time()
             logger.info(
-                f"[GRAPH GENERATION] Step 3/4: Creating Neo4j indices",
+                "[GRAPH GENERATION] Step 3/4: Creating Neo4j indices",
                 project_id=project_id,
             )
             session.run(
@@ -282,6 +289,9 @@ class CodeGraphService:
                         "end_line": node_data.get("end_line", -1),
                         "repoId": project_id,
                         "node_id": CodeGraphService.generate_node_id(node_id, user_id),
+                        "legacy_node_id": CodeGraphService.generate_legacy_node_id(
+                            node_id, user_id
+                        ),
                         "entityId": user_id,
                         "type": node_type,
                         "text": node_data.get("text", ""),
@@ -402,7 +412,13 @@ class CodeGraphService:
                                 "source_id": CodeGraphService.generate_node_id(
                                     source, user_id
                                 ),
+                                "source_legacy_id": CodeGraphService.generate_legacy_node_id(
+                                    source, user_id
+                                ),
                                 "target_id": CodeGraphService.generate_node_id(
+                                    target, user_id
+                                ),
+                                "target_legacy_id": CodeGraphService.generate_legacy_node_id(
                                     target, user_id
                                 ),
                                 "repoId": project_id,
@@ -413,8 +429,10 @@ class CodeGraphService:
                     insert_start = time.time()
                     query = f"""
                         UNWIND $edges AS edge
-                        MATCH (source:NODE {{node_id: edge.source_id, repoId: edge.repoId}})
-                        MATCH (target:NODE {{node_id: edge.target_id, repoId: edge.repoId}})
+                        MATCH (source:NODE {{repoId: edge.repoId}})
+                        WHERE source.node_id = edge.source_id OR source.node_id = edge.source_legacy_id
+                        MATCH (target:NODE {{repoId: edge.repoId}})
+                        WHERE target.node_id = edge.target_id OR target.node_id = edge.target_legacy_id
                         CREATE (source)-[r:{rel_type} {{repoId: edge.repoId}}]->(target)
                     """
                     session.run(query, edges=edges_to_create)
