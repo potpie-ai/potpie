@@ -5,7 +5,7 @@ import json
 import os
 import time
 from datetime import datetime, timezone
-from typing import AsyncGenerator, Callable, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
@@ -1251,12 +1251,13 @@ class ConversationService:
                     # Capture thinking content if present
                     if chunk.thinking:
                         accumulated_thinking = chunk.thinking
-                    self.history_manager.add_message_chunk(
+                    self._history_add_message_chunk(
                         conversation_id,
                         chunk.response,
                         MessageType.AI_GENERATED,
                         citations=chunk.citations,
                         tool_calls=accumulated_tool_calls if chunk.tool_calls else None,
+                        thinking=accumulated_thinking,
                     )
                     yield ChatMessageResponse(
                         message=chunk.response,
@@ -1317,12 +1318,13 @@ class ConversationService:
                     # Capture thinking content if present
                     if chunk.thinking:
                         accumulated_thinking = chunk.thinking
-                    self.history_manager.add_message_chunk(
+                    self._history_add_message_chunk(
                         conversation_id,
                         chunk.response,
                         MessageType.AI_GENERATED,
                         citations=chunk.citations,
                         tool_calls=accumulated_tool_calls if chunk.tool_calls else None,
+                        thinking=accumulated_thinking,
                     )
                     yield ChatMessageResponse(
                         message=chunk.response,

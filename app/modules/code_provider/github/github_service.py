@@ -1179,8 +1179,15 @@ class GithubService:
             # Check if repo_name is a path to a local repository
             if os.path.exists(repo_name) and os.path.isdir(repo_name):
                 try:
-                    # Handle local repository
-                    git = _get_git_module()
+                    # Handle local repository; get git once so except handlers can use it
+                    try:
+                        git = _get_git_module()
+                    except ImportError as e:
+                        logger.error("Git module not available: %s", e)
+                        raise HTTPException(
+                            status_code=500,
+                            detail="Git support not available",
+                        ) from e
                     local_repo = git.Repo(repo_name)
 
                     # Get the default branch

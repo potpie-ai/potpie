@@ -88,6 +88,14 @@ async def async_ensure_unique_run_id(
             key, value, nx=True, ex=RUN_ID_RESERVATION_TTL
         )
         if claimed:
+            # Reservation TTL may have expired while stream was still active;
+            # ensure we do not re-use a run_id that already has an active stream.
+            stream_key = async_redis.stream_key(conversation_id, run_id)
+            if await async_redis.redis_client.exists(stream_key):
+                await async_redis.redis_client.delete(key)
+                run_id = f"{original_run_id}-{counter}"
+                counter += 1
+                continue
             return run_id
         run_id = f"{original_run_id}-{counter}"
         counter += 1

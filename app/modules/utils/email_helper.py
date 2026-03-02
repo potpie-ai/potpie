@@ -5,6 +5,11 @@ import re
 
 import resend
 
+logger = logging.getLogger(__name__)
+
+# Timeout for Resend API send (seconds). Used by _send_with_resend.
+RESEND_SEND_TIMEOUT_SECONDS = 30
+
 # Try to import email-inspector library for robust email domain detection
 try:
     from email_inspector import inspect as email_inspect
@@ -30,6 +35,30 @@ except ImportError:
         "Falling back to simple domain extraction. "
         "Install with: pip install tldextract"
     )
+
+
+async def _send_with_resend(params, timeout_seconds=None):
+    """Send email via Resend API in a thread with timeout and uniform error handling.
+
+    Uses asyncio.to_thread + asyncio.wait_for so the sync Resend SDK does not
+    block the event loop and so sends are bounded by timeout_seconds.
+    """
+    timeout = timeout_seconds if timeout_seconds is not None else RESEND_SEND_TIMEOUT_SECONDS
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(resend.Emails.send, params),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        logger.error(
+            "Resend send timed out after %s seconds",
+            timeout,
+            exc_info=True,
+        )
+        raise
+    except Exception:
+        logger.exception("Resend send failed")
+        raise
 
 
 class EmailHelper:
@@ -75,8 +104,7 @@ Co-Founder, Potpie 🥧</p>
             """,
         }
 
-        # Resend SDK is sync-only; offload to thread to avoid blocking the event loop
-        email = await asyncio.to_thread(resend.Emails.send, params)
+        email = await _send_with_resend(params)
         return email
 
     async def send_parsing_failure_alert(
@@ -169,11 +197,9 @@ Co-Founder, Potpie 🥧</p>
         }
 
         try:
-            # Resend SDK is sync-only; offload to thread to avoid blocking
-            email = await asyncio.to_thread(resend.Emails.send, params)
+            email = await _send_with_resend(params)
             return email
-        except Exception as e:
-            logging.error(f"Failed to send parsing failure alert: {e}")
+        except Exception:
             return None
 
 
