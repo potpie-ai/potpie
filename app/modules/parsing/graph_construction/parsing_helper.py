@@ -887,31 +887,46 @@ class ParseHelper:
 
             try:
                 with tarfile.open(tmp_path, "r:gz") as tf:
-                    # Sanitize members to prevent path traversal (Tar Slip)
+                    # Validate and extract entries one by one to avoid Tar Slip.
                     real_dest = os.path.realpath(extract_subdir)
-                    safe_members = []
                     for member in tf.getmembers():
-                        # Reject symlinks that could escape the target
                         if member.issym() or member.islnk():
                             logger.warning(
                                 "Skipping tarball symlink/hardlink entry: %s",
                                 member.name,
                             )
                             continue
-                        member_path = os.path.realpath(
-                            os.path.join(real_dest, member.name)
-                        )
-                        if not (
-                            member_path == real_dest
-                            or member_path.startswith(real_dest + os.sep)
+                        if member.isdev():
+                            logger.warning(
+                                "Skipping tarball device entry: %s",
+                                member.name,
+                            )
+                            continue
+
+                        normalized_name = os.path.normpath(member.name)
+                        if os.path.isabs(normalized_name) or normalized_name.startswith(
+                            ".." + os.sep
                         ):
                             logger.warning(
                                 "Skipping tarball entry with path traversal: %s",
                                 member.name,
                             )
                             continue
-                        safe_members.append(member)
-                    tf.extractall(extract_subdir, members=safe_members)
+
+                        member_path = os.path.realpath(
+                            os.path.join(real_dest, normalized_name)
+                        )
+                        if not (
+                            member_path == real_dest
+                            or member_path.startswith(real_dest + os.sep)
+                        ):
+                            logger.warning(
+                                "Skipping tarball entry escaping extraction dir: %s",
+                                member.name,
+                            )
+                            continue
+
+                        tf.extract(member, path=real_dest)
             finally:
                 try:
                     os.unlink(tmp_path)
@@ -1736,7 +1751,7 @@ class ParseHelper:
 
                 if token_type == "github_app":
                     logger.info(
-                        f"[Repomanager] Attempting Priority 1: GitHub App token",
+                        "[Repomanager] Attempting Priority 1: GitHub App token",
                         user_id=user_id,
                         repo_name=repo_name,
                         ref=ref,
@@ -1754,7 +1769,7 @@ class ParseHelper:
 
                         if worktree_path_str:
                             logger.info(
-                                f"[Repomanager] SUCCESS: Cloned with GitHub App token",
+                                "[Repomanager] SUCCESS: Cloned with GitHub App token",
                                 user_id=user_id,
                                 repo_name=repo_name,
                                 ref=ref,
@@ -1764,7 +1779,7 @@ class ParseHelper:
                             return worktree_path_str
                     except Exception as e:
                         logger.warning(
-                            f"[Repomanager] FAILED: GitHub App token failed, will try next method",
+                            "[Repomanager] FAILED: GitHub App token failed, will try next method",
                             user_id=user_id,
                             repo_name=repo_name,
                             ref=ref,
@@ -1773,7 +1788,7 @@ class ParseHelper:
                         )
                 else:
                     logger.info(
-                        f"[Repomanager] Auth token is not GitHub App type, skipping Priority 1",
+                        "[Repomanager] Auth token is not GitHub App type, skipping Priority 1",
                         user_id=user_id,
                         repo_name=repo_name,
                         token_type=token_type,
@@ -1786,7 +1801,7 @@ class ParseHelper:
                 token_type = self._detect_token_type(auth_token)
 
                 logger.info(
-                    f"[Repomanager] Attempting Priority 2: User OAuth token",
+                    "[Repomanager] Attempting Priority 2: User OAuth token",
                     user_id=user_id,
                     repo_name=repo_name,
                     ref=ref,
@@ -1804,7 +1819,7 @@ class ParseHelper:
 
                     if worktree_path_str:
                         logger.info(
-                            f"[Repomanager] SUCCESS: Cloned with User OAuth token",
+                            "[Repomanager] SUCCESS: Cloned with User OAuth token",
                             user_id=user_id,
                             repo_name=repo_name,
                             ref=ref,
@@ -1826,7 +1841,7 @@ class ParseHelper:
                         reason = f"Cloning failed with user token: {error_str[:100]}"
 
                     logger.warning(
-                        f"[Repomanager] FAILED: User OAuth token failed, will try next method",
+                        "[Repomanager] FAILED: User OAuth token failed, will try next method",
                         user_id=user_id,
                         repo_name=repo_name,
                         ref=ref,
@@ -1838,7 +1853,7 @@ class ParseHelper:
             # PRIORITY 3: Environment Tokens (GH_TOKEN_LIST, CODE_PROVIDER_TOKEN)
             # ---------------------------------------------------------------------------
             logger.info(
-                f"[Repomanager] Attempting Priority 3: Environment tokens",
+                "[Repomanager] Attempting Priority 3: Environment tokens",
                 user_id=user_id,
                 repo_name=repo_name,
                 ref=ref,
@@ -1855,7 +1870,7 @@ class ParseHelper:
                 )
                 if worktree_path_str:
                     logger.info(
-                        f"[Repomanager] SUCCESS: Cloned with environment token",
+                        "[Repomanager] SUCCESS: Cloned with environment token",
                         user_id=user_id,
                         repo_name=repo_name,
                         ref=ref,
@@ -1864,7 +1879,7 @@ class ParseHelper:
                     )
                     return worktree_path_str
                 logger.error(
-                    f"[Repomanager] FAILED: Environment token clone returned no worktree",
+                    "[Repomanager] FAILED: Environment token clone returned no worktree",
                     user_id=user_id,
                     repo_name=repo_name,
                     ref=ref,
