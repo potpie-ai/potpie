@@ -904,8 +904,10 @@ class ParseHelper:
                             continue
 
                         normalized_name = os.path.normpath(member.name)
-                        if os.path.isabs(normalized_name) or normalized_name.startswith(
-                            ".." + os.sep
+                        if (
+                            os.path.isabs(normalized_name)
+                            or normalized_name == ".."
+                            or normalized_name.startswith(".." + os.sep)
                         ):
                             logger.warning(
                                 "Skipping tarball entry with path traversal: %s",
@@ -926,7 +928,27 @@ class ParseHelper:
                             )
                             continue
 
-                        tf.extract(member, path=real_dest)
+                        if member.isdir():
+                            os.makedirs(member_path, exist_ok=True)
+                            continue
+
+                        if not member.isfile():
+                            logger.warning(
+                                "Skipping unsupported tarball entry type: %s",
+                                member.name,
+                            )
+                            continue
+
+                        os.makedirs(os.path.dirname(member_path), exist_ok=True)
+                        extracted_file = tf.extractfile(member)
+                        if extracted_file is None:
+                            logger.warning(
+                                "Skipping unreadable tarball file entry: %s",
+                                member.name,
+                            )
+                            continue
+                        with extracted_file, open(member_path, "wb") as target_file:
+                            shutil.copyfileobj(extracted_file, target_file)
             finally:
                 try:
                     os.unlink(tmp_path)
