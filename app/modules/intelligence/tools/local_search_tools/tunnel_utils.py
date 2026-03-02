@@ -59,6 +59,15 @@ def _execute_via_socket(
             return out
         except TunnelConnectionError as exc:
             last_error = exc.last_error or str(exc)
+            # Do NOT retry on timeout: the extension may have completed the operation
+            # and the response was lost. Retrying would emit a duplicate tool_call,
+            # causing double execution (e.g. replace_in_file runs twice, second fails).
+            if last_error == "timeout":
+                logger.warning(
+                    "[_execute_via_socket] Attempt %d failed (timeout) — not retrying to avoid duplicate execution",
+                    attempt,
+                )
+                return None
             if attempt <= _SOCKET_MAX_RETRIES:
                 delay = _SOCKET_RETRY_DELAY_SECS * attempt
                 logger.warning(

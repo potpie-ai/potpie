@@ -14,7 +14,6 @@ from .tool_inputs import (
     RevertFileInput,
     GetFileInput,
     ListFilesInput,
-    SearchContentInput,
     ClearFileInput,
     ExportChangesInput,
     GetChangesForPRInput,
@@ -345,57 +344,6 @@ def list_files_tool(input_data: ListFilesInput) -> str:
     except Exception:
         logger.exception("Tool list_files_tool: Error listing files")
         return "❌ Error listing files"
-
-
-def search_content_tool(input_data: SearchContentInput) -> str:
-    """Search for pattern in file contents (grep-like functionality)"""
-    logger.info(
-        f"Tool search_content_tool: Searching for pattern '{input_data.pattern}' (file_pattern: {input_data.file_pattern})"
-    )
-    try:
-        manager = _get_code_changes_manager()
-        matches = manager.search_content(
-            pattern=input_data.pattern,
-            file_pattern=input_data.file_pattern,
-            case_sensitive=input_data.case_sensitive,
-        )
-
-        if not matches:
-            filter_text = ""
-            if input_data.file_pattern:
-                filter_text = f" in files matching '{input_data.file_pattern}'"
-            return (
-                f"🔍 No matches found for pattern '{input_data.pattern}'{filter_text}"
-            )
-
-        # Group matches by file
-        matches_by_file: Dict[str, List[Dict[str, Any]]] = {}
-        for match in matches:
-            if "error" in match:
-                return f"❌ {match['error']}"
-            file_path = match["file_path"]
-            if file_path not in matches_by_file:
-                matches_by_file[file_path] = []
-            matches_by_file[file_path].append(match)
-
-        result = f"🔍 **Search Results** ({len(matches)} matches in {len(matches_by_file)} files)\n\n"
-        result += f"Pattern: `{input_data.pattern}`\n\n"
-
-        for file_path, file_matches in matches_by_file.items():
-            result += f"📄 **{file_path}** ({len(file_matches)} matches):\n"
-            for match in file_matches[:10]:  # Show first 10 matches per file
-                result += f"  Line {match['line_number']}: {match['line']}\n"
-            if len(file_matches) > 10:
-                result += f"  ... and {len(file_matches) - 10} more matches\n"
-            result += "\n"
-
-        return result
-    except Exception:
-        logger.exception(
-            "Tool search_content_tool: Error searching content",
-            pattern=input_data.pattern,
-        )
-        return "❌ Error searching content"
 
 
 def clear_file_tool(input_data: ClearFileInput) -> str:

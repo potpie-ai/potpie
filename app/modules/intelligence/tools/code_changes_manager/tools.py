@@ -20,7 +20,6 @@ from .tool_inputs import (
     RevertFileInput,
     GetFileInput,
     ListFilesInput,
-    SearchContentInput,
     ClearFileInput,
     ExportChangesInput,
     GetChangesForPRInput,
@@ -44,7 +43,6 @@ from .tool_functions import (
     revert_file_tool,
     get_file_tool,
     list_files_tool,
-    search_content_tool,
     clear_file_tool,
     clear_all_changes_tool,
     get_changes_summary_tool,
@@ -112,7 +110,7 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
         ),
         SimpleTool(
             name="replace_in_file",
-            description="Replace pattern matches using regex. Use word_boundary=True for safe replacements (prevents partial matches—e.g. replacing 'get_db' won't match 'get_database'). Supports capturing groups (\\1, \\2). Set count=0 for all occurrences. DO: (1) Provide project_id from conversation context. (2) Verify after with get_file_from_changes; check line stats in response. DON'T skip verification. When using the VS Code extension, if lines_changed/added/deleted don't match intent, use get_file_from_changes to verify and fix.",
+            description="Exact literal string replacement (str_replace semantics). Finds old_str in the file and replaces it with new_str. old_str must match character-for-character including indentation and whitespace—no regex, no wildcards. old_str must appear EXACTLY ONCE in the file; fails if found 0 or 2+ times. Include enough surrounding lines in old_str to make it unique. DO: (1) Provide project_id from conversation context. (2) Verify after with get_file_from_changes. DON'T use for multi-occurrence replacements (fetch with get_file_from_changes and use replace_in_file or update_file_lines for each occurrence). When using the VS Code extension, use get_file_from_changes to verify the result.",
             func=replace_in_file_tool,
             args_schema=ReplaceInFileInput,
         ),
@@ -158,12 +156,6 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
             description="List all files in the code changes manager, optionally filtered by change type (add/update/delete) or file path pattern (regex).",
             func=list_files_tool,
             args_schema=ListFilesInput,
-        ),
-        SimpleTool(
-            name="search_content_in_changes",
-            description="Search for a pattern in file contents using regex (grep-like functionality). Supports filtering by file path pattern. Returns matching lines with line numbers.",
-            func=search_content_tool,
-            args_schema=SearchContentInput,
         ),
         SimpleTool(
             name="clear_file_from_changes",

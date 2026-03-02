@@ -81,19 +81,6 @@ class ListFilesInput(BaseModel):
     )
 
 
-class SearchContentInput(BaseModel):
-    pattern: str = Field(
-        description="Regex pattern to search for in file contents (grep-like search)"
-    )
-    file_pattern: Optional[str] = Field(
-        default=None,
-        description="Optional regex pattern to filter files by path before searching",
-    )
-    case_sensitive: bool = Field(
-        default=False, description="Whether search should be case-sensitive"
-    )
-
-
 class ClearFileInput(BaseModel):
     file_path: str = Field(description="Path to the file to clear from changes")
 
