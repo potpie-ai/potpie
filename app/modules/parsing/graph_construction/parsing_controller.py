@@ -424,7 +424,6 @@ class ParsingController:
                 )
             parse_helper = ParseHelper(db)
             is_latest = await parse_helper.check_commit_status(project_id)
-
             return {"status": project_status, "latest": is_latest}
 
         except HTTPException:

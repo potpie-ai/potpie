@@ -1,7 +1,6 @@
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
-from git import GitCommandError, InvalidGitRepositoryError, NoSuchPathError, Repo
 import pathspec
 
 from app.modules.code_provider.base.code_provider_interface import (
@@ -11,6 +10,16 @@ from app.modules.code_provider.base.code_provider_interface import (
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+# Lazy import for GitPython - top-level import causes SIGSEGV in forked workers
+if TYPE_CHECKING:
+    from git import Repo as RepoType
+
+
+def _get_git_imports():
+    """Lazy import git module to avoid fork-safety issues."""
+    from git import GitCommandError, InvalidGitRepositoryError, NoSuchPathError, Repo
+    return GitCommandError, InvalidGitRepositoryError, NoSuchPathError, Repo
 
 
 class LocalProvider(ICodeProvider):
@@ -46,7 +55,7 @@ class LocalProvider(ICodeProvider):
 
     # ============ Repository Helpers ============
 
-    def _get_repo(self, repo_name: Optional[str]) -> Repo:
+    def _get_repo(self, repo_name: Optional[str]) -> Any:
         path = repo_name or self.default_repo_path
         if not path:
             raise ValueError(
@@ -58,6 +67,7 @@ class LocalProvider(ICodeProvider):
             raise FileNotFoundError(f"Local repository at {expanded_path} not found")
 
         try:
+            _, InvalidGitRepositoryError, NoSuchPathError, Repo = _get_git_imports()
             return Repo(expanded_path)
         except (InvalidGitRepositoryError, NoSuchPathError) as exc:
             raise ValueError(f"Path {expanded_path} is not a git repository") from exc
@@ -193,6 +203,7 @@ class LocalProvider(ICodeProvider):
             ValueError: If ref is invalid
         """
         from app.modules.code_provider.git_safe import safe_git_repo_operation
+        GitCommandError, _, _, _ = _get_git_imports()
 
         expanded_path = os.path.abspath(
             os.path.expanduser(repo_name or self.default_repo_path)
@@ -474,6 +485,7 @@ class LocalProvider(ICodeProvider):
             }
         """
         repo = self._get_repo(repo_name)
+        GitCommandError, _, _, _ = _get_git_imports()
 
         # Validate branches exist
         if base_branch not in repo.heads:

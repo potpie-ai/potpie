@@ -3,13 +3,12 @@ import os
 import secrets
 import re
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
 
 import aiohttp
 from aiohttp import ClientTimeout, ClientConnectorError
 import chardet
-import git
 import requests
 import ssl
 import socket
@@ -18,6 +17,16 @@ from fastapi import HTTPException
 from github import Github
 from github.Auth import AppAuth
 from github.GithubException import GithubException
+
+# Lazy import for GitPython - top-level import causes SIGSEGV in forked workers
+if TYPE_CHECKING:
+    import git as git_module
+
+
+def _get_git_module():
+    """Lazy import git module to avoid fork-safety issues."""
+    import git
+    return git
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.utils.logger import setup_logger
@@ -1167,6 +1176,7 @@ class GithubService:
             if os.path.exists(repo_name) and os.path.isdir(repo_name):
                 try:
                     # Handle local repository
+                    git = _get_git_module()
                     local_repo = git.Repo(repo_name)
 
                     # Get the default branch
