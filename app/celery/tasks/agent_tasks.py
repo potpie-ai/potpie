@@ -250,13 +250,11 @@ def execute_agent_background(
 
                     return True  # Indicate successful completion
 
-            # Run the async agent execution on the worker's long-lived loop
-            logger.info("Entering run_async (agent coroutine)")
-            completed = self.run_async(run_agent())
             # Run the async agent execution on the worker's long-lived loop.
             # Convert asyncio.CancelledError to RuntimeError so Celery's result callback
             # receives (failed, retval, runtime) instead of ExceptionInfo (avoids
             # "cannot unpack non-iterable ExceptionInfo object").
+            logger.info("Entering run_async (agent coroutine)")
             try:
                 completed = self.run_async(run_agent())
             except asyncio.CancelledError as e:

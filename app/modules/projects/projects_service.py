@@ -188,7 +188,12 @@ class ProjectService:
 
     async def update_project_status(self, project_id: str, status: ProjectStatusEnum):
         try:
-            ProjectService.update_project(self.db, project_id, status=status.value)
+            ProjectService.update_project(
+                self.db,
+                project_id,
+                status=status.value,
+                updated_at=datetime.utcnow(),
+            )
             logger.info(
                 f"Project with ID {project_id} has now been updated with status {status}."
             )

@@ -1,6 +1,7 @@
 import asyncio
 import os
 from asyncio import create_task
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from dotenv import load_dotenv
@@ -400,7 +401,14 @@ class ParsingController:
     ):
         try:
             project_query = (
-                select(Project.status)
+                select(
+                    Project.status,
+                    Project.updated_at,
+                    Project.repo_name,
+                    Project.branch_name,
+                    Project.repo_path,
+                    Project.commit_id,
+                )
                 .join(
                     Conversation, Conversation.project_ids.any(Project.id), isouter=True
                 )
@@ -416,14 +424,70 @@ class ParsingController:
             )
 
             result = db.execute(project_query)
-            project_status = result.scalars().first()
+            row = result.first()
 
-            if not project_status:
+            if not row:
                 raise HTTPException(
                     status_code=404, detail="Project not found or access denied"
                 )
+
+            project_status = row.status
             parse_helper = ParseHelper(db)
             is_latest = await parse_helper.check_commit_status(project_id)
+
+            # Auto-recover: if a project has been stuck in "submitted" with no active
+            # Celery task (task was lost due to worker crash/restart), re-submit the
+            # parse task. Once the Celery task starts, status advances beyond "submitted"
+            # (→ cloned/parsed/inferring/ready) and updated_at is refreshed with each
+            # transition. If status is still "submitted" past the threshold, the task
+            # was never picked up and must be re-queued.
+            if (
+                project_status == ProjectStatusEnum.SUBMITTED.value
+                and not is_latest
+                and row.updated_at is not None
+                and (row.repo_name or row.repo_path)
+            ):
+                stuck_threshold_minutes = int(
+                    os.getenv("PARSING_STUCK_THRESHOLD_MINUTES", "10")
+                )
+                updated = row.updated_at
+                if updated.tzinfo is None:
+                    updated = updated.replace(tzinfo=timezone.utc)
+                age_minutes = (datetime.now(timezone.utc) - updated).total_seconds() / 60
+
+                if age_minutes > stuck_threshold_minutes:
+                    try:
+                        repo_details = ParsingRequest(
+                            repo_name=row.repo_name,
+                            repo_path=row.repo_path,
+                            branch_name=row.branch_name,
+                            commit_id=row.commit_id,
+                        )
+                        # Reset updated_at now to prevent concurrent polls from all
+                        # triggering duplicate re-submissions within the same window.
+                        ProjectService.update_project(
+                            db,
+                            project_id,
+                            updated_at=datetime.utcnow(),
+                        )
+                        process_parsing.delay(
+                            repo_details.model_dump(),
+                            user["user_id"],
+                            user.get("email"),
+                            project_id,
+                            True,
+                        )
+                        logger.warning(
+                            "Auto-recovered stuck parsing task",
+                            project_id=project_id,
+                            age_minutes=round(age_minutes, 1),
+                            stuck_threshold_minutes=stuck_threshold_minutes,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to auto-recover stuck parsing task",
+                            project_id=project_id,
+                        )
 
             return {"status": project_status, "latest": is_latest}
 
