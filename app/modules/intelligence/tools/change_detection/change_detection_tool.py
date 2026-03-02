@@ -87,6 +87,15 @@ class ChangeDetectionTool:
                 pass
             self.neo4j_driver = None
 
+    def __del__(self) -> None:
+        """Ensure Neo4j driver is closed when the tool is garbage-collected."""
+        if hasattr(self, "neo4j_driver") and self.neo4j_driver is not None:
+            try:
+                self.neo4j_driver.close()
+            except Exception:
+                pass
+            self.neo4j_driver = None
+
     def _find_node_by_file_and_name(
         self, project_id: str, file_path: str, function_name: str
     ) -> Optional[str]:

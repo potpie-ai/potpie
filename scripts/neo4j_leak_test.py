@@ -235,8 +235,9 @@ def run_api_mode(
                 rss_str = f"  server RSS={rss_samples[-1]:.1f} MiB" if rss_samples else ""
                 print(f"  request {i + 1}/{iterations}  errors={errors}{rss_str}")
 
-    if errors:
-        print(f"WARN: {errors}/{iterations} requests failed (check auth and params)")
+    if errors > 0:
+        print(f"FAIL: {errors}/{iterations} requests failed (check auth and params).")
+        return False
     if not rss_samples:
         print("INFO: Set SERVER_PID to sample server process memory.")
         return True

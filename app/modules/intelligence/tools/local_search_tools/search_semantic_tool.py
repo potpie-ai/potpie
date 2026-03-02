@@ -69,10 +69,11 @@ def search_semantic_tool(input_data: SearchSemanticInput) -> str:
     
     # Fallback: Direct backend call if tunnel not available
     logger.info("⚠️ [search_semantic_tool] LocalServer not available, using direct backend call")
+    db = None
     try:
         from app.modules.parsing.knowledge_graph.inference_service import InferenceService
         from app.core.database import get_db
-        
+
         db = next(get_db())
         inference_service = InferenceService(db, user_id)
         try:
@@ -119,3 +120,9 @@ def search_semantic_tool(input_data: SearchSemanticInput) -> str:
             "2. Tunnel is active for local execution, OR\n"
             "3. Backend knowledge graph service is accessible"
         )
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
