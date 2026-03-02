@@ -202,14 +202,19 @@ async def start_celery_task_and_stream(
     await async_redis_manager.set_task_id(conversation_id, run_id, task_result.id)
     logger.info(f"Started agent task {task_result.id} for {conversation_id}:{run_id}")
 
-    # Wait for background task to start (require "running" for correctness)
+    # Wait for task to reach any terminal or active state (avoids blocking 30s if task goes straight to completed/error)
     task_started = await async_redis_manager.wait_for_task_start(
-        conversation_id, run_id, timeout=30, require_running=True
+        conversation_id, run_id, timeout=30, require_running=False
     )
+    if task_started:
+        status = await async_redis_manager.get_task_status(conversation_id, run_id)
+        if status in ("completed", "error"):
+            logger.info(
+                f"Task already {status} for {conversation_id}:{run_id} - stream will contain result"
+            )
     logger.info(
         f"Task start check done for {conversation_id}:{run_id} (started={task_started})"
     )
-
     if not task_started:
         logger.warning(
             f"Background task failed to start within 30s for {conversation_id}:{run_id} - may still be queued"
@@ -273,11 +278,16 @@ async def start_celery_task_and_wait(
         f"Started agent task {task_result.id} for {conversation_id}:{run_id} (non-streaming)"
     )
 
-    # Wait for background task to start (require "running")
+    # Wait for task to reach any terminal or active state (avoids blocking 30s if task goes straight to completed/error)
     task_started = await async_redis_manager.wait_for_task_start(
-        conversation_id, run_id, timeout=30, require_running=True
+        conversation_id, run_id, timeout=30, require_running=False
     )
-
+    if task_started:
+        status = await async_redis_manager.get_task_status(conversation_id, run_id)
+        if status in ("completed", "error"):
+            logger.info(
+                f"Task already {status} for {conversation_id}:{run_id} - collecting from stream"
+            )
     if not task_started:
         logger.warning(
             f"Background task failed to start within 30s for {conversation_id}:{run_id} - may still be queued"
