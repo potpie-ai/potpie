@@ -345,11 +345,14 @@ class AuthAPI:
                 if user:
                     logger.info(f"GitHub {provider_uid} linked to user {user.uid}")
 
-                    # Update last login
-                    # Note: update_last_login handles encryption internally, pass plaintext token
+                    # Update last login (encrypt token before storing; update_last_login does not encrypt)
                     if oauth_token:
+                        from app.modules.integrations.token_encryption import (
+                            encrypt_token,
+                        )
+
                         await async_user_service.update_last_login(
-                            user.uid, oauth_token
+                            user.uid, encrypt_token(oauth_token)
                         )
 
                     return Response(

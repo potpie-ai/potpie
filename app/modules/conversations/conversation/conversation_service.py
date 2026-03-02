@@ -214,6 +214,8 @@ class ConversationService:
         message_type: MessageType,
         sender_id: Optional[str] = None,
         citations: Optional[List[str]] = None,
+        tool_calls: Optional[List[Dict[str, Any]]] = None,
+        thinking: Optional[str] = None,
     ) -> None:
         """Dispatch to async or sync history manager for add_message_chunk."""
         target = (
@@ -222,7 +224,13 @@ class ConversationService:
             else self.history_manager
         )
         target.add_message_chunk(
-            conversation_id, content, message_type, sender_id, citations
+            conversation_id,
+            content,
+            message_type,
+            sender_id,
+            citations,
+            tool_calls=tool_calls,
+            thinking=thinking,
         )
 
     async def _history_flush_message_buffer(
@@ -245,14 +253,24 @@ class ConversationService:
         conversation_id: str,
         content: str,
         citations: Optional[List[str]] = None,
+        tool_calls: Optional[List[Dict[str, Any]]] = None,
+        thinking: Optional[str] = None,
     ):
         """Dispatch to async or sync history manager for save_partial_ai_message."""
         if self.async_history_manager:
             return await self.async_history_manager.save_partial_ai_message(
-                conversation_id, content, citations
+                conversation_id,
+                content,
+                citations,
+                tool_calls=tool_calls,
+                thinking=thinking,
             )
         return self.history_manager.save_partial_ai_message(
-            conversation_id, content, citations
+            conversation_id,
+            content,
+            citations,
+            tool_calls=tool_calls,
+            thinking=thinking,
         )
 
     async def check_conversation_access(
@@ -1775,7 +1793,14 @@ class ConversationService:
                 time.sleep(0.5)
 
                 # Check if task is still running via task status
-                task_status = self.redis_manager.get_task_status(conversation_id, run_id)
+                if self.async_redis_manager:
+                    task_status = await self.async_redis_manager.get_task_status(
+                        conversation_id, run_id
+                    )
+                else:
+                    task_status = self.redis_manager.get_task_status(
+                        conversation_id, run_id
+                    )
                 if task_status in ["running", "queued"]:
                     logger.info(
                         f"Task {task_id} still running after graceful revoke, using terminate"
@@ -1814,6 +1839,8 @@ class ConversationService:
                         conversation_id,
                         content=content_to_save,
                         citations=snapshot.get("citations"),
+                        tool_calls=snapshot.get("tool_calls"),
+                        thinking=snapshot.get("thinking"),
                     )
                     saved_partial = saved_message_id is not None
                     if saved_partial:

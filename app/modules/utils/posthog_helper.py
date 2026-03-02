@@ -31,9 +31,9 @@ class PostHogClient:
                 properties=properties,
             )
         except Exception:
+            # Do not log raw user_id to avoid leaking identifiers
             logger.exception(
                 "Failed to send PostHog event",
-                user_id=user_id,
                 event_name=event_name,
             )
 

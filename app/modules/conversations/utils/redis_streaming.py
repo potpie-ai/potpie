@@ -479,10 +479,10 @@ class AsyncRedisStreamManager:
             **{k: serialize_value(v) for k, v in payload.items()},
         }
         try:
-            await _retry_redis_async(
-                lambda: self.redis_client.xadd(
-                    key, event_data, maxlen=self.max_len, approximate=True
-                )
+            # XADD with auto-generated ID must not be retried: each retry would append a
+            # duplicate entry. Call xadd directly; only retry idempotent operations.
+            await self.redis_client.xadd(
+                key, event_data, maxlen=self.max_len, approximate=True
             )
             await _retry_redis_async(
                 lambda: self.redis_client.expire(key, self.stream_ttl)

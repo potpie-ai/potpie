@@ -10,8 +10,8 @@ from firebase_admin.exceptions import FirebaseError
 
 load_dotenv(override=True)
 
-# Timeout for Firebase Identity Toolkit (connect, read)
-LOGIN_TIMEOUT = httpx.Timeout(connect=10.0, read=30.0)
+# Timeout for Firebase Identity Toolkit (default 30s read, 10s connect)
+LOGIN_TIMEOUT = httpx.Timeout(30.0, connect=10.0, read=30.0)
 
 
 class AuthService:

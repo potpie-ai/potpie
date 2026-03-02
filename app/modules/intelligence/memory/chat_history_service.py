@@ -243,7 +243,7 @@ class AsyncChatHistoryService:
 
     def __init__(self, session: AsyncSession):
         self.session = session
-        self.message_buffer: Dict[str, Dict[str, str]] = {}
+        self.message_buffer: Dict[str, Dict[str, Any]] = {}
 
     async def get_session_history(
         self, user_id: str, conversation_id: str
@@ -294,13 +294,27 @@ class AsyncChatHistoryService:
         message_type: MessageType,
         sender_id: Optional[str] = None,
         citations: Optional[List[str]] = None,
+        tool_calls: Optional[List[Dict[str, Any]]] = None,
+        thinking: Optional[str] = None,
     ) -> None:
         """Buffer a chunk (in-memory only; no DB)."""
         if conversation_id not in self.message_buffer:
-            self.message_buffer[conversation_id] = {"content": "", "citations": []}
+            self.message_buffer[conversation_id] = {
+                "content": "",
+                "citations": [],
+                "tool_calls": [],
+                "thinking": None,
+            }
         self.message_buffer[conversation_id]["content"] += content
         if citations:
             self.message_buffer[conversation_id]["citations"].extend(citations)
+        if tool_calls:
+            self.message_buffer[conversation_id]["tool_calls"].extend(tool_calls)
+        if thinking:
+            if self.message_buffer[conversation_id]["thinking"] is None:
+                self.message_buffer[conversation_id]["thinking"] = thinking
+            else:
+                self.message_buffer[conversation_id]["thinking"] += thinking
         logger.debug(
             "Added message chunk to buffer for conversation: %s",
             conversation_id,
@@ -319,6 +333,8 @@ class AsyncChatHistoryService:
             ):
                 content = self.message_buffer[conversation_id]["content"]
                 citations = self.message_buffer[conversation_id]["citations"]
+                tool_calls = self.message_buffer[conversation_id].get("tool_calls", [])
+                thinking = self.message_buffer[conversation_id].get("thinking")
 
                 new_message = Message(
                     id=str(uuid7()),
@@ -330,10 +346,17 @@ class AsyncChatHistoryService:
                     citations=(
                         ",".join(set(citations)) if citations else None
                     ),
+                    tool_calls=tool_calls if tool_calls else None,
+                    thinking=thinking,
                 )
                 self.session.add(new_message)
                 await self.session.commit()
-                self.message_buffer[conversation_id] = {"content": "", "citations": []}
+                self.message_buffer[conversation_id] = {
+                    "content": "",
+                    "citations": [],
+                    "tool_calls": [],
+                    "thinking": None,
+                }
                 logger.info(
                     "Flushed message buffer for conversation: %s",
                     conversation_id,
@@ -364,6 +387,8 @@ class AsyncChatHistoryService:
         conversation_id: str,
         content: str,
         citations: Optional[List[str]] = None,
+        tool_calls: Optional[List[Dict[str, Any]]] = None,
+        thinking: Optional[str] = None,
     ) -> Optional[str]:
         """
         Persist a complete AI message (e.g. partial response saved when generation is stopped).
@@ -380,6 +405,8 @@ class AsyncChatHistoryService:
                 status=MessageStatus.ACTIVE,
                 created_at=datetime.now(timezone.utc),
                 citations=(",".join(set(citations)) if citations else None),
+                tool_calls=tool_calls if tool_calls else None,
+                thinking=thinking,
             )
             self.session.add(new_message)
             await self.session.commit()

@@ -604,8 +604,12 @@ class GithubService:
                 )
 
                 # Connect 10s, read 30s — orgs list can be slow under load
-                response = requests.get(
-                    orgs_url, headers=orgs_headers, timeout=(10, 30)
+                # Run blocking requests.get off the event loop to avoid blocking
+                response = await asyncio.to_thread(
+                    requests.get,
+                    orgs_url,
+                    headers=orgs_headers,
+                    timeout=(10, 30),
                 )
                 if response.status_code == 414:
                     logger.warning(

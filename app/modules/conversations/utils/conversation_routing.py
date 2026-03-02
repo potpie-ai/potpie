@@ -6,8 +6,12 @@ Contains common functions for session management, Redis streaming, and Celery ta
 import asyncio
 import json
 import logging
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Generator, Optional
+
+# TTL for run_id reservation lock (seconds). Reservation expires if stream not established.
+RUN_ID_RESERVATION_TTL = 120
 
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
@@ -62,20 +66,31 @@ def ensure_unique_run_id(conversation_id: str, run_id: str) -> str:
     return run_id
 
 
+def _reservation_key(conversation_id: str, run_id: str) -> str:
+    """Key for atomic run_id claim; separate from stream key so stream type is unchanged."""
+    return f"chat:stream:reservation:{conversation_id}:{run_id}"
+
+
 async def async_ensure_unique_run_id(
     conversation_id: str, run_id: str, async_redis: AsyncRedisStreamManager
 ) -> str:
     """
-    Async version: ensure run_id is unique using async Redis.
+    Ensure run_id is unique by atomically claiming it with Redis SET NX EX.
+    Avoids TOCTOU races vs the previous exists-then-use loop.
+    Reservation key expires after RUN_ID_RESERVATION_TTL if stream is never established.
     """
     original_run_id = run_id
     counter = 1
-    key = async_redis.stream_key(conversation_id, run_id)
-    while await async_redis.redis_client.exists(key):
+    while True:
+        key = _reservation_key(conversation_id, run_id)
+        value = str(uuid.uuid4())
+        claimed = await async_redis.redis_client.set(
+            key, value, nx=True, ex=RUN_ID_RESERVATION_TTL
+        )
+        if claimed:
+            return run_id
         run_id = f"{original_run_id}-{counter}"
         counter += 1
-        key = async_redis.stream_key(conversation_id, run_id)
-    return run_id
 
 
 def redis_stream_generator(
