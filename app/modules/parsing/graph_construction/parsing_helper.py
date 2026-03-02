@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import json
 import os
 import re
@@ -513,20 +512,38 @@ class ParseHelper:
         safe_url = urlunparse((parsed.scheme, parsed.netloc, repo_path, "", "", ""))
         logger.info(f"ParsingHelper: Cloning from {safe_url}")
 
+        askpass_script_path = ""
         try:
-            # Clone with shallow depth and pass credentials via Authorization header.
-            encoded_credentials = base64.b64encode(
-                f"{username}:{password}".encode("utf-8")
-            ).decode("ascii")
+            # Clone with shallow depth using an ephemeral askpass helper.
+            import tempfile
+
+            askpass_fd, askpass_script_path = tempfile.mkstemp(
+                prefix="git_askpass_", suffix=".sh"
+            )
+            with os.fdopen(askpass_fd, "w", encoding="utf-8") as askpass_file:
+                askpass_file.write("#!/bin/sh\n")
+                askpass_file.write('case "$1" in\n')
+                askpass_file.write('  *sername*) printf "%s\\n" "$GIT_AUTH_USER" ;;\n')
+                askpass_file.write('  *assword*) printf "%s\\n" "$GIT_AUTH_PASS" ;;\n')
+                askpass_file.write('  *) printf "\\n" ;;\n')
+                askpass_file.write("esac\n")
+            os.chmod(askpass_script_path, 0o700)
+
+            clone_env = os.environ.copy()
+            clone_env.update(
+                {
+                    "GIT_TERMINAL_PROMPT": "0",
+                    "GIT_ASKPASS": askpass_script_path,
+                    "GIT_AUTH_USER": username,
+                    "GIT_AUTH_PASS": password,
+                }
+            )
             _ = Repo.clone_from(
                 safe_url,
                 temp_clone_dir,
                 branch=branch,
                 depth=1,
-                multi_options=[
-                    "-c",
-                    f"http.extraHeader=Authorization: Basic {encoded_credentials}",
-                ],
+                env=clone_env,
             )
             logger.info(
                 f"ParsingHelper: Successfully cloned repository to temporary directory: {temp_clone_dir}"
@@ -604,6 +621,14 @@ class ParseHelper:
             raise ParsingFailedError(
                 f"Unexpected error during repository clone: {e}"
             ) from e
+        finally:
+            if askpass_script_path and os.path.exists(askpass_script_path):
+                try:
+                    os.unlink(askpass_script_path)
+                except OSError:
+                    logger.warning(
+                        "ParsingHelper: Failed to clean up askpass helper script"
+                    )
 
     @staticmethod
     def detect_repo_language(repo_dir):
