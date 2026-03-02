@@ -172,7 +172,17 @@ class ChatHistoryService:
         Used so the user can continue the conversation and build on this progress.
         """
         if not content.strip():
+            logger.debug(
+                f"save_partial_ai_message skipped: empty content for {conversation_id}"
+            )
             return None
+        logger.info(
+            f"save_partial_ai_message called for conversation {conversation_id}, "
+            f"content_len={len(content)}, has_citations={bool(citations)}"
+        )
+        # Ensure citations are strings (snapshot may contain mixed types)
+        if citations:
+            citations = [str(c) for c in citations if c is not None]
         try:
             new_message = Message(
                 id=str(uuid7()),
@@ -189,7 +199,8 @@ class ChatHistoryService:
             self.db.add(new_message)
             self.db.commit()
             logger.info(
-                f"Saved partial AI message for conversation {conversation_id} (stopped generation)"
+                f"Saved partial AI message for conversation {conversation_id} "
+                f"(stopped generation), message_id={new_message.id}"
             )
             return new_message.id
         except SQLAlchemyError as e:

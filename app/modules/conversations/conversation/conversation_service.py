@@ -1682,6 +1682,18 @@ class ConversationService:
                 f"No task ID for {conversation_id}:{run_id} - already completed or revoked"
             )
 
+        # Take a second snapshot after revoke/wait to capture chunks published during the graceful period.
+        if task_id:
+            snapshot2 = self.redis_manager.get_stream_snapshot(conversation_id, run_id)
+            len1 = len(snapshot.get("content") or "")
+            len2 = len(snapshot2.get("content") or "")
+            if len2 > len1:
+                snapshot = snapshot2
+                logger.info(
+                    f"Using post-revoke snapshot for {conversation_id}:{run_id} "
+                    f"(captured {len2 - len1} more chars)"
+                )
+
         # Only save from stream when we revoked (worker did not flush). Persist content or tool-only placeholder.
         saved_partial = False
         saved_message_id = None
