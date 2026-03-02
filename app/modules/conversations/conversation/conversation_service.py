@@ -1219,7 +1219,6 @@ class ConversationService:
                 async for chunk in res:
                     if check_cancelled and check_cancelled():
                         raise GenerationCancelled()
-                    self._history_add_message_chunk(
                     # Accumulate tool_calls from each chunk
                     if chunk.tool_calls:
                         for tool_call in chunk.tool_calls:
@@ -1286,7 +1285,6 @@ class ConversationService:
                 async for chunk in res:
                     if check_cancelled and check_cancelled():
                         raise GenerationCancelled()
-                    self._history_add_message_chunk(
                     # Accumulate tool_calls from each chunk
                     if chunk.tool_calls:
                         for tool_call in chunk.tool_calls:
