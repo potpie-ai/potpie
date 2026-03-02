@@ -56,6 +56,12 @@ from app.modules.intelligence.tools.code_query_tools.git_commit_tool import (
 from app.modules.intelligence.tools.code_query_tools.git_push_tool import (
     git_push_tool,
 )
+from app.modules.intelligence.tools.code_query_tools.create_pr_workflow_tool import (
+    create_pr_workflow_tool,
+)
+from app.modules.intelligence.tools.code_query_tools.checkout_worktree_branch_tool import (
+    checkout_worktree_branch_tool,
+)
 from app.modules.intelligence.tools.tool_schema import ToolInfo, ToolInfoWithParameters
 from app.modules.intelligence.tools.web_tools.code_provider_tool import (
     code_provider_tool,
@@ -263,6 +269,16 @@ class ToolService:
         push_tool = git_push_tool(self.db, self.user_id)
         if push_tool:
             tools["git_push"] = push_tool
+
+        # Add composite PR workflow tool if repo manager is enabled
+        pr_workflow_tool = create_pr_workflow_tool(self.db, self.user_id)
+        if pr_workflow_tool:
+            tools["create_pr_workflow"] = pr_workflow_tool
+
+        # Add checkout worktree branch tool if repo manager is enabled
+        checkout_branch_tool = checkout_worktree_branch_tool(self.db, self.user_id)
+        if checkout_branch_tool:
+            tools["checkout_worktree_branch"] = checkout_branch_tool
 
         # Add todo management tools
         todo_tools = create_todo_management_tools()

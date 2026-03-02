@@ -51,7 +51,7 @@ if redis_url:
         client_manager = socketio.AsyncRedisManager(redis_url)
         logger.info("[SocketServer] Using AsyncRedisManager for Socket.IO")
     except Exception as e:
-        logger.warning("[SocketServer] Redis manager failed, using in-memory: %s", e)
+        logger.warning("[SocketServer] Redis manager failed, using in-memory: {}", e)
         client_manager = None
 
 sio = socketio.AsyncServer(
@@ -133,7 +133,7 @@ async def _get_async_redis() -> Optional[aioredis.Redis]:
         await _async_redis.ping()  # type: ignore[misc]
         return _async_redis
     except Exception as e:
-        logger.warning("[SocketServer] Async Redis unavailable: %s", e)
+        logger.warning("[SocketServer] Async Redis unavailable: {}", e)
         _async_redis = None
         return None
 
@@ -200,7 +200,7 @@ async def _auth_timeout_task(sid: str) -> None:
         await asyncio.sleep(AUTH_TIMEOUT_SECS)
         user_id = await _get_authenticated(sid)
         if user_id is None:
-            logger.warning("[SocketServer] Auth timeout for sid=%s, disconnecting", sid)
+            logger.warning("[SocketServer] Auth timeout for sid={}, disconnecting", sid)
             await sio.disconnect(sid, namespace=WORKSPACE_NAMESPACE)
     except asyncio.CancelledError:
         pass
@@ -220,7 +220,7 @@ async def _verify_token(token: Optional[str]) -> Optional[dict]:
             decoded["user_id"] = decoded["uid"]
         return decoded
     except Exception as e:
-        logger.debug("[SocketServer] Token verification failed: %s", e)
+        logger.debug("[SocketServer] Token verification failed: {}", e)
         return None
 
 
@@ -266,9 +266,9 @@ async def connect(sid: str, environ: dict, auth: Optional[dict] = None):
         if user:
             user_id = user.get("user_id") or user.get("uid", "")
             await _set_authenticated(sid, user_id)
-            logger.info("[SocketServer] Connected sid=%s user_id=%s (token at connect)", sid, user_id)
+            logger.info("[SocketServer] Connected sid={} user_id={} (token at connect)", sid, user_id)
             return True
-        logger.warning("[SocketServer] Connect: invalid token for sid=%s, allowing (send auth event)", sid)
+        logger.warning("[SocketServer] Connect: invalid token for sid={}, allowing (send auth event)", sid)
 
     # No token or invalid: allow connect; client must send 'auth' event (auth timeout applies)
     task = asyncio.create_task(_auth_timeout_task(sid))
@@ -293,7 +293,7 @@ async def auth(sid: str, data: dict):
                 user_id = user.get("user_id") or user.get("uid", user_id)
         await _set_authenticated(sid, user_id)
         await sio.emit("auth_success", {"uid": user_id}, room=sid, namespace=WORKSPACE_NAMESPACE)
-        logger.info("[SocketServer] auth sid=%s user_id=%s (dev mode)", sid, user_id)
+        logger.info("[SocketServer] auth sid={} user_id={} (dev mode)", sid, user_id)
         return
 
     if not token or not isinstance(token, str):
@@ -308,7 +308,7 @@ async def auth(sid: str, data: dict):
     user_id = user.get("user_id") or user.get("uid", "")
     await _set_authenticated(sid, user_id)
     await sio.emit("auth_success", {"uid": user_id}, room=sid, namespace=WORKSPACE_NAMESPACE)
-    logger.info("[SocketServer] auth sid=%s user_id=%s", sid, user_id)
+    logger.info("[SocketServer] auth sid={} user_id={}", sid, user_id)
 
 
 @sio.event(namespace=WORKSPACE_NAMESPACE)
@@ -324,7 +324,7 @@ async def token_refresh(sid: str, data: dict):
         return
     user_id = user.get("user_id") or user.get("uid", "")
     await _set_authenticated(sid, user_id)
-    logger.debug("[SocketServer] token_refresh sid=%s user_id=%s", sid, user_id)
+    logger.debug("[SocketServer] token_refresh sid={} user_id={}", sid, user_id)
 
 
 async def _require_auth(sid: str) -> bool:
@@ -332,7 +332,7 @@ async def _require_auth(sid: str) -> bool:
     user_id = await _get_authenticated(sid)
     if user_id is not None:
         return True
-    logger.warning("[SocketServer] Rejecting unauthenticated sid=%s", sid)
+    logger.warning("[SocketServer] Rejecting unauthenticated sid={}", sid)
     await sio.disconnect(sid, namespace=WORKSPACE_NAMESPACE)
     return False
 
@@ -346,12 +346,12 @@ async def register_workspace(sid: str, data: dict):
     try:
         payload = WorkspaceRegisterPayload.model_validate(data)
     except Exception as e:
-        logger.warning("[SocketServer] register_workspace invalid payload from sid=%s: %s", sid, e)
+        logger.warning("[SocketServer] register_workspace invalid payload from sid={}: {}", sid, e)
         await sio.emit("register_failure", {"reason": "invalid payload"}, room=sid, namespace=WORKSPACE_NAMESPACE)
         return
     auth_user_id = await _get_authenticated(sid)
     if auth_user_id is not None and payload.user_id != auth_user_id:
-        logger.warning("[SocketServer] register_workspace user_id mismatch sid=%s", sid)
+        logger.warning("[SocketServer] register_workspace user_id mismatch sid={}", sid)
         await sio.emit("register_failure", {"reason": "user_id mismatch"}, room=sid, namespace=WORKSPACE_NAMESPACE)
         await sio.disconnect(sid, namespace=WORKSPACE_NAMESPACE)
         return
@@ -374,10 +374,10 @@ async def register_workspace(sid: str, data: dict):
             status="active",
         )
     except Exception as e:
-        logger.debug("[SocketServer] Failed to store workspace record: %s", e)
+        logger.debug("[SocketServer] Failed to store workspace record: {}", e)
     await sio.emit("register_success", {"workspace_id": payload.workspace_id}, room=sid, namespace=WORKSPACE_NAMESPACE)
     logger.info(
-        "[SocketServer] Registered workspace_id=%s sid=%s repo_url=%s",
+        "[SocketServer] Registered workspace_id={} sid={} repo_url={}",
         payload.workspace_id,
         sid,
         payload.repo_url[:50] if payload.repo_url else "",
@@ -412,7 +412,7 @@ async def tool_response(sid: str, data: dict):
     try:
         payload = ToolResponseEvent.model_validate(data)
     except Exception as e:
-        logger.warning("[SocketServer] tool_response invalid payload from sid=%s: %s", sid, e)
+        logger.warning("[SocketServer] tool_response invalid payload from sid={}: {}", sid, e)
         return
     redis_client = await _get_async_redis()
     if not redis_client:
@@ -421,7 +421,7 @@ async def tool_response(sid: str, data: dict):
     channel = f"{RPC_RESPONSE_CHANNEL_PREFIX}{payload.correlation_id}"
     message = payload.model_dump(mode="json")
     await redis_client.publish(channel, json.dumps(message))
-    logger.debug("[SocketServer] Published tool_response correlation_id=%s", payload.correlation_id)
+    logger.debug("[SocketServer] Published tool_response correlation_id={}", payload.correlation_id)
 
 
 @sio.event(namespace=WORKSPACE_NAMESPACE)
@@ -446,11 +446,11 @@ async def disconnect(sid: str, _reason: Optional[str] = None):
         current_sid = await redis_client.get(fwd_key)
         if current_sid == sid:
             await redis_client.delete(fwd_key)
-            logger.info("[SocketServer] Unregistered workspace_id=%s on disconnect (sid=%s)", workspace_id, sid)
+            logger.info("[SocketServer] Unregistered workspace_id={} on disconnect (sid={})", workspace_id, sid)
         else:
             logger.info(
-                "[SocketServer] Skipped forward-map cleanup for workspace_id=%s on disconnect (sid=%s) "
-                "— already replaced by sid=%s",
+                "[SocketServer] Skipped forward-map cleanup for workspace_id={} on disconnect (sid={}) "
+                "— already replaced by sid={}",
                 workspace_id, sid, current_sid,
             )
         await redis_client.delete(rev_key)

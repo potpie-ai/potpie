@@ -4,15 +4,19 @@ Git Commit Tool
 Stages and commits changes in the repository worktree.
 """
 
+import json
 import os
-from typing import Dict, Any, Optional, List
-from pydantic import BaseModel, Field
+from typing import Dict, Any, Optional, List, Union
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from langchain_core.tools import StructuredTool
 
 from app.modules.projects.projects_service import ProjectService
 from app.modules.repo_manager import RepoManager
-from app.modules.repo_manager.sync_helper import get_or_create_worktree_path
+from app.modules.repo_manager.sync_helper import (
+    get_or_create_worktree_path,
+    get_or_create_edits_worktree_path,
+)
 from app.modules.code_provider.git_safe import safe_git_repo_operation, GitOperationError
 from app.modules.utils.logger import setup_logger
 
@@ -38,6 +42,19 @@ class GitCommitInput(BaseModel):
         None,
         description="Optional list of specific files to commit. If not provided, uses files from apply_changes when conversation_id is set; otherwise pass files explicitly (files_applied + files_deleted from apply_changes).",
     )
+
+    @field_validator("files", mode="before")
+    @classmethod
+    def coerce_files_from_json_string(cls, v):
+        """Accept a JSON-encoded string like '["a.py","b.py"]' in addition to a real list."""
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    return parsed
+            except (json.JSONDecodeError, ValueError):
+                pass
+        return v
 
 
 class GitCommitTool:
@@ -107,12 +124,27 @@ class GitCommitTool:
 
     def _get_worktree_path(
         self,
+        project_id: str,
         repo_name: str,
         branch: Optional[str],
         commit_id: Optional[str],
         user_id: Optional[str],
-    ) -> Optional[str]:
-        """Get the worktree path, cloning via prepare_for_parsing if missing."""
+        conversation_id: Optional[str] = None,
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Get the worktree path.
+
+        When ``conversation_id`` is provided, targets the edits worktree for
+        that conversation (``agent/edits-{conversation_id}`` branch).
+        Otherwise falls back to the base repo worktree via prepare_for_parsing.
+        """
+        if conversation_id:
+            return get_or_create_edits_worktree_path(
+                self.repo_manager,
+                project_id=project_id,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                sql_db=self.sql_db,
+            )
         return get_or_create_worktree_path(
             self.repo_manager, repo_name, branch, commit_id, user_id, self.sql_db
         )
@@ -147,14 +179,23 @@ class GitCommitTool:
             commit_id = details.get("commit_id")
             user_id = details.get("user_id")
 
-            # Get worktree path
-            worktree_path = self._get_worktree_path(
-                repo_name, branch, commit_id, user_id
+            # Get worktree path (edits worktree when conversation_id provided)
+            worktree_path, failure_reason = self._get_worktree_path(
+                project_id, repo_name, branch, commit_id, user_id, conversation_id
             )
             if not worktree_path:
+                error_msg = f"Worktree not found for project {project_id}. The repository must be parsed and available in the repo manager."
+                if failure_reason:
+                    reason_hint = {
+                        "no_ref": "missing branch or commit_id",
+                        "auth_failed": "all auth methods failed (GitHub App, OAuth, env token)",
+                        "clone_failed": "git clone failed",
+                        "worktree_add_failed": "git worktree add failed",
+                    }.get(failure_reason, failure_reason)
+                    error_msg += f" Reason: {reason_hint}."
                 return {
                     "success": False,
-                    "error": f"Worktree not found for project {project_id}. The repository must be parsed and available in the repo manager.",
+                    "error": error_msg,
                 }
 
             # Resolve files to stage: explicit list, or from apply_changes when conversation_id provided
@@ -181,14 +222,9 @@ class GitCommitTool:
             )
 
             def _commit_operation(repo):
-                # Stage only the resolved files (add stages both new/modified and deleted)
-                for file_path in files_to_stage:
-                    full_path = os.path.join(worktree_path, file_path)
-                    if not os.path.exists(full_path):
-                        logger.warning(
-                            f"GitCommitTool: File not on disk (may be deleted): {file_path}"
-                        )
-                    repo.git.add(file_path)
+                # Stage additions, modifications, and deletions for the given paths
+                if files_to_stage:
+                    repo.git.add("-A", "--", *files_to_stage)
 
                 # Check if there are changes to commit
                 diff = repo.git.diff("--cached", "--name-only")

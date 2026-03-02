@@ -179,7 +179,7 @@ MODEL_CONFIG_MAP = {
     # Z-AI / GLM Models
     "openrouter/z-ai/glm-5": {
         "provider": "zai",
-        "context_window": 128000,
+        "context_window": 200000,
         "auth_provider": "openrouter",
         "default_params": {"temperature": 0.3},
         "capabilities": {
@@ -193,7 +193,7 @@ MODEL_CONFIG_MAP = {
     },
     "openrouter/z-ai/glm-4.7": {
         "provider": "zai",
-        "context_window": 128000,
+        "context_window": 200000,
         "auth_provider": "openrouter",
         "default_params": {"temperature": 0.3},
         "capabilities": {
@@ -208,7 +208,7 @@ MODEL_CONFIG_MAP = {
     # Moonshot AI / Kimi (via OpenRouter)
     "openrouter/moonshotai/kimi-k2.5": {
         "provider": "moonshot",
-        "context_window": 128000,
+        "context_window": 256000,
         "auth_provider": "openrouter",
         "default_params": {"temperature": 0.3},
         "capabilities": {
@@ -223,7 +223,7 @@ MODEL_CONFIG_MAP = {
     # MiniMax (via OpenRouter)
     "openrouter/minimax/minimax-m2.5": {
         "provider": "minimax",
-        "context_window": 196608,
+        "context_window": 200000,
         "auth_provider": "openrouter",
         "default_params": {"temperature": 0.3},
         "capabilities": {

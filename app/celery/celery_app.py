@@ -154,7 +154,10 @@ def configure_celery(queue_prefix: str):
 
 configure_celery(queue_name)
 
-initialize_logfire_tracing()
+# Disable Pydantic AI instrumentation in Celery workers to avoid OpenTelemetry
+# "Token was created in a different Context" errors when async generators yield
+# during tool execution (prefork + asyncio contextvar mismatch).
+initialize_logfire_tracing(instrument_pydantic_ai=False)
 
 
 def configure_litellm_for_celery():

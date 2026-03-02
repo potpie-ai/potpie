@@ -55,6 +55,7 @@ class ChatMessageResponse(BaseModel):
     message: str
     citations: List[str]
     tool_calls: List[Any]
+    thinking: Optional[str] = None
 
 
 # Resolve forward references

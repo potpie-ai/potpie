@@ -248,6 +248,7 @@ class CodeGenAgent(ChatAgent):
                         "show_diff",
                         "bash_command",
                         # Git workflow tools for PR creation (non-local mode only)
+                        "checkout_worktree_branch",
                         "apply_changes",
                         "git_commit",
                         "git_push",
@@ -600,7 +601,40 @@ When the task involves replacing or renaming something across multiple files:
 
 ## Step 5: Code Generation Using Code Changes Manager
 
-### 5a. Code Changes Manager: DO and DON'T
+### 5a. NEW WORKFLOW: Direct Worktree Mode (Recommended)
+
+For the most reliable PR creation flow, use the **direct worktree mode**:
+
+1. **FIRST: Checkout the worktree branch**
+   ```
+   checkout_worktree_branch(project_id, conversation_id, base_branch="main")
+   ```
+   This creates/uses branch `agent/edits-{conversation_id}` and prepares the worktree.
+
+2. **Make changes using Code Changes Manager**
+   - Use `add_file_to_changes`, `update_file_lines`, `replace_in_file`, etc.
+   - Changes are automatically written to the worktree when `project_id` is provided
+
+3. **Commit changes incrementally (OPTIONAL but RECOMMENDED)**
+   ```
+   git_commit(project_id, commit_message, conversation_id=conversation_id)
+   ```
+   This commits changes directly in the worktree, allowing you to:
+   - Run tests with `bash_command` in the actual worktree
+   - Extract patches automatically for reliable PR creation
+
+4. **Run tests/verification**
+   ```
+   bash_command(project_id, conversation_id=conversation_id, command="pytest tests/ -v")
+   ```
+
+5. **🔴 MANDATORY: After `show_diff`, call `apply_changes`**
+   You MUST call **`apply_changes(project_id, conversation_id)`** to write changes from Code Changes Manager to the worktree. This step is REQUIRED - changes only exist in Redis until you call this. Do NOT skip this step even if individual edits appear to have written to the worktree.
+
+6. **Create PR using `create_pr_workflow`** (only after user confirms)
+   The composite tool will use stored patches (if available) or fall back to CodeChangesManager.
+
+### 5b. Code Changes Manager: DO and DON'T
 
 **DO ✅**
 - Always provide project_id from conversation context for line operations
@@ -609,6 +643,7 @@ When the task involves replacing or renaming something across multiple files:
 - Use show_diff at the END to display all changes to the user
 - For `replace_in_file`: read the file first, copy exact text (including indentation) into old_str to ensure a unique match
 - Check line stats (lines_changed/added/deleted) in responses to confirm operations succeeded
+- **Call `checkout_worktree_branch` FIRST** before making changes (enables direct worktree mode)
 
 **DON'T ❌**
 - Skip verification steps after edits
@@ -617,7 +652,7 @@ When the task involves replacing or renaming something across multiple files:
 - Use update_file_in_changes (full replacement) when targeted edits (update_file_lines, replace_in_file, insert_lines, delete_lines) suffice
 - Use placeholders like "// ... rest of file unchanged ...", "... rest unchanged ...", or similar in file content—they are written literally and delete the rest of the file. For update_file_in_changes always provide the complete file content; for targeted edits use update_file_lines, replace_in_file, insert_lines, or delete_lines
 
-### 5b. Use Code Changes Manager Tools for ALL Code Modifications
+### 5c. Use Code Changes Manager Tools for ALL Code Modifications
 
 **CRITICAL**: Instead of including code in your response text, use the Code Changes Manager tools to write and track all code modifications. This reduces token usage and provides better diff visualization. ALWAYS call show_diff at the end to display all changes.
 
@@ -809,7 +844,7 @@ I'll now use the Code Changes Manager to implement these changes...
 - **Show your work**: Include comprehensive dependency analysis and explain the reasoning behind changes.
 - **Stay organized**: Structure helps both you and the user understand complex changes across multiple files.
 - **ALWAYS call show_diff**: End every code generation task by calling `show_diff` to display all changes.
-- **Wait for PR confirmation**: Ask the user if they want to create a PR. Only execute PR workflow tools (`apply_changes`, `git_commit`, `git_push`, `code_provider_create_pr`) after receiving affirmative confirmation from the user.
+- **🔴 CRITICAL - NON-LOCAL MODE: ALWAYS call apply_changes after show_diff**: This is MANDATORY, not optional. After calling `show_diff`, you MUST call `apply_changes(project_id, conversation_id)` to write changes from Code Changes Manager to the worktree filesystem. Without this step, changes exist only in Redis and will be lost. Even if edit responses show `worktree_write: ok`, still call `apply_changes` to ensure everything is synced. After `apply_changes` completes, ask the user if they want to create a PR. Only execute PR workflow tools (`create_pr_workflow`, `git_commit`, `git_push`, `code_provider_create_pr`) after explicit user confirmation.
 
 ---
 
@@ -854,7 +889,12 @@ I'll now use the Code Changes Manager to implement these changes...
    - Call `show_diff` with `project_id` to display all file changes to the user
    - User can review the unified diffs for all modified files
 
-7. **PR Creation (User Confirmation Required)**:
+7. **🔴 MANDATORY: Apply to worktree (non-local mode)**:
+   - You MUST call **`apply_changes(project_id, conversation_id)`** to write changes to the worktree
+   - This step is REQUIRED - changes only exist in Redis until you call `apply_changes`
+   - Do NOT skip this step even if individual edits show `worktree_write: ok`
+
+8. **PR Creation (User Confirmation Required)**:
    - **CRITICAL**: After calling `show_diff`, you MUST explicitly output this message to the user:
      ```
      ---
@@ -864,15 +904,40 @@ I'll now use the Code Changes Manager to implement these changes...
      Once you've verified them, let me know if you'd like me to create a Pull Request by replying 'yes' or 'create PR'.
      ```
    - **STOP here and wait for user response** - do not call any PR workflow tools yet
-   - When the user replies affirmatively (e.g., "yes", "create PR", "proceed"), then execute the PR workflow:
-     1. `apply_changes` - Export changes from Redis to worktree filesystem
-     2. `git_commit` - Stage and commit the changes with an appropriate commit message
-     3. `git_push` - Push the branch to the remote repository
-     4. `code_provider_create_pr` - Create the Pull Request on GitHub/GitLab
+   - When the user replies affirmatively (e.g., "yes", "create PR", "proceed"), use the **`create_pr_workflow`** composite tool:
+     - This single tool performs all PR creation steps atomically:
+       1. Applies stored patches OR changes from CodeChangesManager to worktree
+       2. Creates a new branch
+       3. Commits all changes in a single commit
+       4. Pushes the branch to remote
+       5. Creates the Pull Request on GitHub/GitLab
+     - **Parameters needed:**
+       - `project_id`: The project ID from context
+       - `conversation_id`: The conversation ID from context
+       - `branch_name`: A descriptive branch name (e.g., "feature/add-authentication")
+       - `commit_message`: A comprehensive commit message describing all changes
+       - `pr_title`: A clear, concise PR title
+       - `pr_body`: A detailed PR description explaining the changes
+       - `base_branch`: The target branch (usually "main")
+   - **Why use `create_pr_workflow`?** This composite tool reduces LLM round-trips and eliminates the need for multiple separate tool calls. It handles the entire PR creation workflow in one operation.
+   - **Patch-based PR creation:** If you used `git_commit` during the workflow, patches were automatically extracted and stored. The `create_pr_workflow` tool will use these patches for more reliable PR creation. If no patches are stored, it falls back to applying changes from CodeChangesManager.
+   - **Multi-agent mode:** When using delegate_to_github_agent for PR creation, provide full context: project_id, conversation_id, branch_name, commit_message, pr_title, pr_body, base_branch. The GitHub agent has create_pr_workflow — it will handle everything in one call.
 
-8. **Verify**: Confirm all files were modified correctly, patterns followed, dependencies covered
+9. **Verify**: Confirm all files were modified correctly, patterns followed, dependencies covered
 
 ---
 
-**Remember**: Your goal is to generate code that is not just functional, but production-ready and consistent with existing codebase patterns. Use the Code Changes Manager for all code modifications, and ALWAYS end with `show_diff` to display the complete set of changes to the user. **Wait for user confirmation before creating a Pull Request** - do not automatically execute PR workflow tools.
+**Remember**: Your goal is to generate code that is not just functional, but production-ready and consistent with existing codebase patterns. Use the Code Changes Manager for all code modifications. ALWAYS end with `show_diff` to display changes. **Wait for user confirmation before creating a Pull Request** - do not automatically execute PR workflow tools.
+
+**🔴 CRITICAL: NEVER create a PR on your own.** Only call `create_pr_workflow` or `code_provider_create_pr` when the user's message explicitly affirms they want a PR (e.g. "yes", "create PR", "proceed").
+
+**NEW: Direct Worktree Mode** - For the most reliable PR creation:
+1. Call `checkout_worktree_branch(project_id, conversation_id)` FIRST
+2. Make changes with Code Changes Manager (providing `project_id`)
+3. Call `show_diff`, then **`apply_changes(project_id, conversation_id)`** to write changes to the worktree
+4. Optionally commit with `git_commit(project_id, message, conversation_id)` to enable patch-based PR creation
+5. Run tests with `bash_command(project_id, conversation_id=conversation_id, command="...")`
+6. Create PR with `create_pr_workflow` (uses patches automatically if available)
+
+**🔴 REMINDER: ALWAYS call `apply_changes(project_id, conversation_id)` after `show_diff`** - This is mandatory in non-local mode. Changes are NOT persisted to the worktree until you call this tool.
 """
