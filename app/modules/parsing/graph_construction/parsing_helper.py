@@ -1,10 +1,10 @@
 import asyncio
 import json
 import os
+import re
 import shutil
 import uuid
-import subprocess
-from typing import Any, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
 from pathlib import Path
 from collections import defaultdict
@@ -34,7 +34,19 @@ class ParsingFailedError(ParsingServiceError):
 
 
 class ParseHelper:
+    """Coordinate repository preparation, metadata extraction, and parse utilities.
+
+    This helper encapsulates repository checkout logic (local and remote),
+    RepoManager integration, language detection, metadata extraction, and git diff
+    helpers used by incremental graph parsing flows.
+    """
+
     def __init__(self, db_session: Session):
+        """Initialize parse helper dependencies.
+
+        Args:
+            db_session: Active SQLAlchemy database session.
+        """
         self.project_manager = ProjectService(db_session)
         self.db = db_session
         self.github_service = CodeProviderService(db_session)
@@ -51,6 +63,14 @@ class ParseHelper:
 
     @staticmethod
     def get_directory_size(path):
+        """Calculate total size of non-symlink files under a directory.
+
+        Args:
+            path: Root directory path to scan.
+
+        Returns:
+            Total size in bytes for regular files reachable from ``path``.
+        """
         total_size = 0
         for dirpath, dirnames, filenames in os.walk(path, followlinks=False):
             # # Skip symlinked directories
@@ -289,12 +309,12 @@ class ParseHelper:
 
                 except HTTPException as he:
                     raise he
-                except Exception:
+                except Exception as e:
                     logger.exception("Failed to fetch/clone repository")
                     raise HTTPException(
                         status_code=404,
                         detail="Repository not found or inaccessible on GitHub",
-                    )
+                    ) from e
             else:
                 # RepoManager disabled - use original flow
                 try:
@@ -320,16 +340,26 @@ class ParseHelper:
                         )
                 except HTTPException as he:
                     raise he
-                except Exception:
+                except Exception as e:
                     logger.exception("Failed to fetch repository")
                     raise HTTPException(
                         status_code=404,
                         detail="Repository not found or inaccessible on GitHub",
-                    )
+                    ) from e
 
         return repo, owner, auth, repo_manager_path
 
     def is_text_file(self, file_path):
+        """Determine whether a file should be treated as text for parsing.
+
+        Args:
+            file_path: Absolute or relative path to a file.
+
+        Returns:
+            ``True`` when the file is likely textual and safe to parse,
+            otherwise ``False``.
+        """
+
         def open_text_file(file_path):
             """
             Try multiple encodings to detect if file is text.
@@ -478,25 +508,42 @@ class ParseHelper:
             else f"/{repo.full_name}.git"
         )
 
-        clone_url_with_auth = urlunparse(
-            (
-                parsed.scheme,
-                f"{username}:{password}@{parsed.netloc}",
-                repo_path,
-                "",
-                "",
-                "",
-            )
-        )
-
-        # Log URL without credentials for security
+        # Build URL without credentials; auth is passed via extra HTTP header.
         safe_url = urlunparse((parsed.scheme, parsed.netloc, repo_path, "", "", ""))
         logger.info(f"ParsingHelper: Cloning from {safe_url}")
 
+        askpass_script_path = ""
         try:
-            # Clone the repository to temporary directory with shallow clone for faster download
+            # Clone with shallow depth using an ephemeral askpass helper.
+            import tempfile
+
+            askpass_fd, askpass_script_path = tempfile.mkstemp(
+                prefix="git_askpass_", suffix=".sh"
+            )
+            with os.fdopen(askpass_fd, "w", encoding="utf-8") as askpass_file:
+                askpass_file.write("#!/bin/sh\n")
+                askpass_file.write('case "$1" in\n')
+                askpass_file.write('  *sername*) printf "%s\\n" "$GIT_AUTH_USER" ;;\n')
+                askpass_file.write('  *assword*) printf "%s\\n" "$GIT_AUTH_PASS" ;;\n')
+                askpass_file.write('  *) printf "\\n" ;;\n')
+                askpass_file.write("esac\n")
+            os.chmod(askpass_script_path, 0o700)
+
+            clone_env = os.environ.copy()
+            clone_env.update(
+                {
+                    "GIT_TERMINAL_PROMPT": "0",
+                    "GIT_ASKPASS": askpass_script_path,
+                    "GIT_AUTH_USER": username,
+                    "GIT_AUTH_PASS": password,
+                }
+            )
             _ = Repo.clone_from(
-                clone_url_with_auth, temp_clone_dir, branch=branch, depth=1
+                safe_url,
+                temp_clone_dir,
+                branch=branch,
+                depth=1,
+                env=clone_env,
             )
             logger.info(
                 f"ParsingHelper: Successfully cloned repository to temporary directory: {temp_clone_dir}"
@@ -574,9 +621,26 @@ class ParseHelper:
             raise ParsingFailedError(
                 f"Unexpected error during repository clone: {e}"
             ) from e
+        finally:
+            if askpass_script_path and os.path.exists(askpass_script_path):
+                try:
+                    os.unlink(askpass_script_path)
+                except OSError:
+                    logger.warning(
+                        "ParsingHelper: Failed to clean up askpass helper script"
+                    )
 
     @staticmethod
     def detect_repo_language(repo_dir):
+        """Detect predominant language for a repository directory.
+
+        Args:
+            repo_dir: Root directory that contains repository files.
+
+        Returns:
+            Normalized language identifier supported by the parser, or
+            ``"other"`` if no supported language could be identified.
+        """
         lang_count = {
             "c_sharp": 0,
             "c": 0,
@@ -848,7 +912,68 @@ class ParseHelper:
 
             try:
                 with tarfile.open(tmp_path, "r:gz") as tf:
-                    tf.extractall(extract_subdir)
+                    # Validate and extract entries one by one to avoid Tar Slip.
+                    real_dest = os.path.realpath(extract_subdir)
+                    for member in tf.getmembers():
+                        if member.issym() or member.islnk():
+                            logger.warning(
+                                "Skipping tarball symlink/hardlink entry: %s",
+                                member.name,
+                            )
+                            continue
+                        if member.isdev():
+                            logger.warning(
+                                "Skipping tarball device entry: %s",
+                                member.name,
+                            )
+                            continue
+
+                        normalized_name = os.path.normpath(member.name)
+                        if (
+                            os.path.isabs(normalized_name)
+                            or normalized_name == ".."
+                            or normalized_name.startswith(".." + os.sep)
+                        ):
+                            logger.warning(
+                                "Skipping tarball entry with path traversal: %s",
+                                member.name,
+                            )
+                            continue
+
+                        member_path = os.path.realpath(
+                            os.path.join(real_dest, normalized_name)
+                        )
+                        if not (
+                            member_path == real_dest
+                            or member_path.startswith(real_dest + os.sep)
+                        ):
+                            logger.warning(
+                                "Skipping tarball entry escaping extraction dir: %s",
+                                member.name,
+                            )
+                            continue
+
+                        if member.isdir():
+                            os.makedirs(member_path, exist_ok=True)
+                            continue
+
+                        if not member.isfile():
+                            logger.warning(
+                                "Skipping unsupported tarball entry type: %s",
+                                member.name,
+                            )
+                            continue
+
+                        os.makedirs(os.path.dirname(member_path), exist_ok=True)
+                        extracted_file = tf.extractfile(member)
+                        if extracted_file is None:
+                            logger.warning(
+                                "Skipping unreadable tarball file entry: %s",
+                                member.name,
+                            )
+                            continue
+                        with extracted_file, open(member_path, "wb") as target_file:
+                            shutil.copyfileobj(extracted_file, target_file)
             finally:
                 try:
                     os.unlink(tmp_path)
@@ -927,33 +1052,21 @@ class ParseHelper:
 
         logger.info(f"_ensure_clean_worktree: Ensuring clean worktree for {repo_name}@{ref} (is_bare={is_bare})")
 
-        # Strategy 1: Prune stale git worktree registrations
+        # Strategy 1: Prune stale git worktree registrations (uses gitpython to avoid subprocess)
         if git_dir and os.path.exists(git_dir):
             try:
-                result = subprocess.run(
-                    ["git", "-C", str(git_dir), "worktree", "prune"],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-                if result.returncode == 0:
-                    logger.info(f"Pruned stale worktrees for {repo_name}")
+                _prune_repo = Repo(str(git_dir))
+                _prune_repo.git.worktree("prune")
+                logger.info(f"Pruned stale worktrees for {repo_name}")
             except Exception as e:
                 logger.debug(f"Git worktree prune failed (non-critical): {e}")
 
         # Strategy 2: Try to unregister from git first (while directory still exists)
         if git_dir and os.path.exists(git_dir):
             try:
-                # Try force remove first
-                subprocess.run(
-                    [
-                        "git", "-C", str(git_dir),
-                        "worktree", "remove", "--force",
-                        str(worktree_path)
-                    ],
-                    capture_output=True,
-                    timeout=30,
-                )
+                # Try force remove first (uses gitpython to avoid subprocess hotspot)
+                _rm_repo = Repo(str(git_dir))
+                _rm_repo.git.worktree("remove", "--force", str(worktree_path))
                 logger.info(f"Force-removed worktree registration for {repo_name}@{ref}")
             except Exception:
                 pass  # Ignore errors, prune already cleaned stale entries
@@ -1167,7 +1280,7 @@ class ParseHelper:
                     raise HTTPException(
                         status_code=500,
                         detail=f"Failed to recreate worktree: {str(e)}",
-                    )
+                    ) from e
 
             # At this point we have a valid worktree (either originally valid or recreated)
             logger.info(
@@ -1319,7 +1432,7 @@ class ParseHelper:
                         raise HTTPException(
                             status_code=500,
                             detail=f"Failed to recreate worktree: {str(e)}",
-                        )
+                        ) from e
                 else:
                     # Bare repo also missing - need full re-clone
                     logger.error(
@@ -1364,7 +1477,7 @@ class ParseHelper:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Failed to checkout {'commit ' + commit_id if commit_id else 'branch ' + branch}",
-                )
+                ) from e
             finally:
                 os.chdir(current_dir)  # Restore the original working directory
         else:
@@ -1672,7 +1785,6 @@ class ParseHelper:
             # ============================================================================
 
             worktree_path_str = None
-            last_error = None
 
             # ---------------------------------------------------------------------------
             # PRIORITY 1: GitHub App Installation Token (ghs_*)
@@ -1686,53 +1798,44 @@ class ParseHelper:
 
                 if token_type == "github_app":
                     logger.info(
-                        f"[Repomanager] Attempting Priority 1: GitHub App token",
+                        "[Repomanager] Attempting Priority 1: GitHub App token",
                         user_id=user_id,
                         repo_name=repo_name,
                         ref=ref,
                         token_type=token_type,
-                        token_prefix=token[:7] if token else None,
                     )
 
                     try:
-                        # Build authenticated URL with correct prefix for App tokens
-                        clone_url = await self._build_clone_url(
-                            github_repo, auth, user_id=user_id
+                        worktree_path_str = self.repo_manager.prepare_for_parsing(
+                            repo_name,
+                            ref,
+                            auth_token=token,
+                            user_id=user_id,
+                            is_commit=bool(commit_id),
                         )
 
-                        if clone_url:
-                            worktree_path_str = self.repo_manager.prepare_for_parsing(
-                                repo_name,
-                                ref,
-                                auth_token=token,
+                        if worktree_path_str:
+                            logger.info(
+                                "[Repomanager] SUCCESS: Cloned with GitHub App token",
                                 user_id=user_id,
-                                is_commit=bool(commit_id),
+                                repo_name=repo_name,
+                                ref=ref,
+                                worktree_path=worktree_path_str,
+                                method="github_app_token",
                             )
-
-                            if worktree_path_str:
-                                logger.info(
-                                    f"[Repomanager] SUCCESS: Cloned with GitHub App token",
-                                    user_id=user_id,
-                                    repo_name=repo_name,
-                                    ref=ref,
-                                    worktree_path=worktree_path_str,
-                                    method="github_app_token",
-                                )
-                                return worktree_path_str
+                            return worktree_path_str
                     except Exception as e:
-                        last_error = e
                         logger.warning(
-                            f"[Repomanager] FAILED: GitHub App token failed, will try next method",
+                            "[Repomanager] FAILED: GitHub App token failed, will try next method",
                             user_id=user_id,
                             repo_name=repo_name,
                             ref=ref,
                             error_type=type(e).__name__,
-                            error=str(e),
                             reason="GitHub App may not be installed on this repository or token expired",
                         )
                 else:
                     logger.info(
-                        f"[Repomanager] Auth token is not GitHub App type, skipping Priority 1",
+                        "[Repomanager] Auth token is not GitHub App type, skipping Priority 1",
                         user_id=user_id,
                         repo_name=repo_name,
                         token_type=token_type,
@@ -1745,12 +1848,11 @@ class ParseHelper:
                 token_type = self._detect_token_type(auth_token)
 
                 logger.info(
-                    f"[Repomanager] Attempting Priority 2: User OAuth token",
+                    "[Repomanager] Attempting Priority 2: User OAuth token",
                     user_id=user_id,
                     repo_name=repo_name,
                     ref=ref,
                     token_type=token_type,
-                    token_prefix=auth_token[:7] if auth_token else None,
                 )
 
                 try:
@@ -1764,7 +1866,7 @@ class ParseHelper:
 
                     if worktree_path_str:
                         logger.info(
-                            f"[Repomanager] SUCCESS: Cloned with User OAuth token",
+                            "[Repomanager] SUCCESS: Cloned with User OAuth token",
                             user_id=user_id,
                             repo_name=repo_name,
                             ref=ref,
@@ -1773,7 +1875,6 @@ class ParseHelper:
                         )
                         return worktree_path_str
                 except Exception as e:
-                    last_error = e
                     error_str = str(e).lower()
 
                     # Determine specific failure reason
@@ -1787,12 +1888,11 @@ class ParseHelper:
                         reason = f"Cloning failed with user token: {error_str[:100]}"
 
                     logger.warning(
-                        f"[Repomanager] FAILED: User OAuth token failed, will try next method",
+                        "[Repomanager] FAILED: User OAuth token failed, will try next method",
                         user_id=user_id,
                         repo_name=repo_name,
                         ref=ref,
                         error_type=type(e).__name__,
-                        error=str(e)[:200],
                         reason=reason,
                     )
 
@@ -1800,67 +1900,38 @@ class ParseHelper:
             # PRIORITY 3: Environment Tokens (GH_TOKEN_LIST, CODE_PROVIDER_TOKEN)
             # ---------------------------------------------------------------------------
             logger.info(
-                f"[Repomanager] Attempting Priority 3: Environment tokens",
+                "[Repomanager] Attempting Priority 3: Environment tokens",
                 user_id=user_id,
                 repo_name=repo_name,
                 ref=ref,
                 method="environment_token_fallback",
             )
 
-            # Build clone URL with authentication (this will use environment tokens)
-            clone_url = await self._build_clone_url(github_repo, auth, user_id=user_id)
-
-            if not clone_url:
-                logger.error(
-                    f"[Repomanager] FAILED: Could not build clone URL for {repo_name}",
-                    user_id=user_id,
-                    repo_name=repo_name,
-                    ref=ref,
-                    reason="No valid authentication method available",
-                )
-                return None
-
-            # Clone as BARE repository to match RepoManager architecture
-            # This ensures worktrees can be created properly
-            bare_repo_path = self.repo_manager._get_bare_repo_path(repo_name)
-            bare_repo_path.parent.mkdir(parents=True, exist_ok=True)
-
-            logger.info(
-                f"[Repomanager] Cloning {repo_name} as bare repo to {bare_repo_path}",
-                user_id=user_id,
-                repo_name=repo_name,
-                ref=ref,
-                method="environment_token_bare_clone",
-            )
-
             try:
-                # Clone as bare repository
-                Repo.clone_from(
-                    clone_url,
-                    str(bare_repo_path),
-                    bare=True,
-                    mirror=True,  # Mirror for full fidelity
-                )
-                logger.info(
-                    f"[Repomanager] SUCCESS: Cloned {repo_name} as bare repo with environment token",
+                worktree_path_str = self.repo_manager.prepare_for_parsing(
+                    repo_name,
+                    ref,
+                    auth_token=None,  # RepoManager resolves environment token
                     user_id=user_id,
-                    repo_name=repo_name,
-                    ref=ref,
-                    bare_repo_path=str(bare_repo_path),
-                    method="environment_token",
+                    is_commit=bool(commit_id),
                 )
-
-                # Configure the bare repo to fetch all refs
-                bare_repo = Repo(str(bare_repo_path))
-                if bare_repo.remotes:
-                    origin = bare_repo.remotes.origin
-                    origin.fetch()
+                if worktree_path_str:
                     logger.info(
-                        f"[_clone_to_repo_manager] Fetched all refs for {repo_name}",
+                        "[Repomanager] SUCCESS: Cloned with environment token",
                         user_id=user_id,
                         repo_name=repo_name,
+                        ref=ref,
+                        worktree_path=worktree_path_str,
+                        method="environment_token",
                     )
-
+                    return worktree_path_str
+                logger.error(
+                    "[Repomanager] FAILED: Environment token clone returned no worktree",
+                    user_id=user_id,
+                    repo_name=repo_name,
+                    ref=ref,
+                )
+                return None
             except Exception as e:
                 error_str = str(e).lower()
                 if "403" in error_str or "forbidden" in error_str:
@@ -1870,7 +1941,7 @@ class ParseHelper:
                 elif "404" in error_str or "not found" in error_str:
                     reason = "Repository not found with environment token"
                 else:
-                    reason = f"Clone failed: {str(e)[:200]}"
+                    reason = "Clone failed with environment token"
 
                 logger.error(
                     f"[Repomanager] FAILED: Environment token clone failed for {repo_name}",
@@ -1878,7 +1949,6 @@ class ParseHelper:
                     repo_name=repo_name,
                     ref=ref,
                     error_type=type(e).__name__,
-                    error=str(e)[:200],
                     reason=reason,
                     suggestion="All authentication methods exhausted. Check: 1) GitHub App installation, 2) User OAuth scopes, 3) Environment tokens",
                 )
@@ -1901,91 +1971,6 @@ class ParseHelper:
                     logger.error(f"Failed to send failure email: {email_err}")
 
                 return None
-
-            # Now create worktree for the specific ref from the bare repo
-            worktree_path_str = await self._create_git_worktree_from_bare(
-                bare_repo_path=bare_repo_path,
-                worktree_path=worktree_path,
-                ref=ref,
-                is_commit=commit_id is not None,
-            )
-
-            if not worktree_path_str:
-                # Worktree creation failed - don't return bare repo (not usable for parsing)
-                logger.error(
-                    f"[Repomanager] Worktree creation failed for {repo_name}. Bare repo exists but cannot be used for parsing.",
-                    user_id=user_id,
-                    repo_name=repo_name,
-                    ref=ref,
-                )
-
-                # Send email alert for worktree creation failure
-                try:
-                    email_helper = EmailHelper()
-                    await email_helper.send_parsing_failure_alert(
-                        repo_name=repo_name,
-                        branch_name=ref,
-                        error_message="Worktree creation failed after successful bare repo clone",
-                        auth_method="environment",
-                        failure_type="worktree_creation",
-                        user_id=user_id,
-                        project_id=project_id,
-                        stack_trace=None,
-                    )
-                except Exception as email_err:
-                    logger.error(f"Failed to send worktree failure email: {email_err}")
-
-                return None
-
-            # Always get actual commit SHA from worktree to ensure accuracy
-            actual_commit_id = None
-            try:
-                worktree_repo = Repo(worktree_path_str)
-                actual_commit_id = worktree_repo.head.commit.hexsha
-                logger.info(
-                    f"ParsingHelper: Worktree created at {worktree_path_str}, "
-                    f"actual commit_id={actual_commit_id} "
-                    f"(requested commit_id={commit_id}, branch={branch})"
-                )
-                # Verify commit_id matches if it was specified
-                if commit_id and actual_commit_id != commit_id:
-                    logger.warning(
-                        f"ParsingHelper: Commit mismatch! Requested {commit_id}, "
-                        f"but worktree has {actual_commit_id}. Using actual commit_id."
-                    )
-            except Exception as e:
-                logger.warning(f"Could not get commit SHA from worktree: {e}")
-                # Fallback to requested commit_id or fetch from branch
-                actual_commit_id = commit_id
-                if not actual_commit_id:
-                    try:
-                        branch_info = github_repo.get_branch(branch)
-                        actual_commit_id = branch_info.commit.sha
-                    except Exception as e2:
-                        logger.warning(f"Could not get commit SHA from branch: {e2}")
-
-            # Extract metadata
-            try:
-                repo_metadata = ParseHelper.extract_remote_repo_metadata(github_repo)
-            except Exception:
-                repo_metadata = {}
-
-            # Register with RepoManager
-            self.repo_manager.register_repo(
-                repo_name=repo_name,
-                local_path=worktree_path_str,
-                branch=branch,
-                commit_id=actual_commit_id,
-                user_id=user_id,
-                metadata=repo_metadata,
-            )
-
-            logger.info(
-                f"ParsingHelper: Successfully cloned and registered {repo_name}@{ref} "
-                f"in RepoManager at {worktree_path_str}"
-            )
-
-            return worktree_path_str
 
         except Exception as e:
             logger.exception(f"Failed to add {repo_name} to RepoManager: {e}")
@@ -2048,7 +2033,7 @@ class ParseHelper:
         user_id: Optional[str] = None,
         project_id: Optional[str] = None,
     ) -> Optional[str]:
-        """Build authenticated clone URL for the repository with proper token handling.
+        """Build clone URL for the repository and emit auth context logs.
 
         Args:
             github_repo: PyGithub Repository object
@@ -2057,7 +2042,7 @@ class ParseHelper:
             project_id: Project ID for logging context
 
         Returns:
-            Authenticated clone URL or original URL if no auth
+            Repository clone URL (credentials are not embedded in the URL).
         """
         try:
             clone_url = github_repo.clone_url
@@ -2078,11 +2063,6 @@ class ParseHelper:
                 token_source = "auth_password"
 
             if token:
-                from urllib.parse import urlparse, urlunparse
-
-                parsed = urlparse(clone_url)
-                username_prefix = self._get_token_username_prefix(token)
-
                 # Log token type being used (without exposing the token)
                 token_type = "unknown"
                 if token.startswith("ghs_"):
@@ -2100,21 +2080,7 @@ class ParseHelper:
                     project_id=project_id,
                     repo_name=repo_name,
                     token_type=token_type,
-                    username_prefix=username_prefix,
                     token_source=token_source,
-                )
-
-                # Reconstruct URL with proper username:token format
-                netloc_with_auth = f"{username_prefix}:{token}@{parsed.netloc}"
-                clone_url = urlunparse(
-                    (
-                        parsed.scheme,
-                        netloc_with_auth,
-                        parsed.path,
-                        parsed.params,
-                        parsed.query,
-                        parsed.fragment,
-                    )
                 )
             else:
                 logger.info(
@@ -2426,6 +2392,14 @@ class ParseHelper:
         return worktree_path
 
     def extract_repository_metadata(self, repo):
+        """Extract repository metadata from local or remote repository objects.
+
+        Args:
+            repo: Either a ``git.Repo`` instance or a provider repository object.
+
+        Returns:
+            Dictionary containing repository metadata used in project records.
+        """
         if isinstance(repo, Repo):
             metadata = ParseHelper.extract_local_repo_metadata(repo)
         else:
@@ -2434,6 +2408,14 @@ class ParseHelper:
 
     @staticmethod
     def extract_local_repo_metadata(repo: Repo):
+        """Build metadata payload for a locally available git repository.
+
+        Args:
+            repo: Local GitPython repository object.
+
+        Returns:
+            Dictionary with normalized local repository metadata.
+        """
         languages = ParseHelper.get_local_repo_languages(repo.working_tree_dir)
         total_bytes = sum(languages.values())
 
@@ -2467,6 +2449,14 @@ class ParseHelper:
 
     @staticmethod
     def get_local_repo_languages(path: str | os.PathLike[str]) -> dict[str, int]:
+        """Estimate language byte breakdown by scanning repository files.
+
+        Args:
+            path: Directory path to scan.
+
+        Returns:
+            Mapping of language name to cumulative byte count.
+        """
         root = Path(path).resolve()
         if not root.exists():
             return {}
@@ -2508,6 +2498,14 @@ class ParseHelper:
 
     @staticmethod
     def extract_remote_repo_metadata(repo):
+        """Build metadata payload for a provider-backed remote repository.
+
+        Args:
+            repo: Provider repository object exposing GitHub-like attributes.
+
+        Returns:
+            Dictionary with normalized remote repository metadata.
+        """
         languages = repo.get_languages()
         total_bytes = sum(languages.values())
 
@@ -2652,3 +2650,119 @@ class ParseHelper:
                 project_id=project_id,
             )
             return False
+
+    @staticmethod
+    def validate_commit_sha(commit_sha: str, *, field_name: str = "commit_sha") -> str:
+        """Validate and normalize a commit SHA before git command usage.
+
+        Args:
+            commit_sha: Candidate commit SHA to validate.
+            field_name: Field name used in validation error messages.
+
+        Returns:
+            Lowercase normalized SHA string.
+
+        Raises:
+            ValueError: If the SHA is missing or not a 40-character hex string.
+        """
+        if commit_sha is None:
+            raise ValueError(f"{field_name} is required")
+
+        normalized_sha = commit_sha.strip()
+        if not re.fullmatch(r"[0-9a-fA-F]{40}", normalized_sha):
+            raise ValueError(
+                f"Invalid {field_name}: expected 40-character hexadecimal SHA"
+            )
+
+        return normalized_sha.lower()
+
+    @staticmethod
+    def get_changed_files_between_commits(
+        repo_path: str, old_commit: str, new_commit: str
+    ) -> Dict[str, List[str]]:
+        """
+        Return added/modified/deleted files between two commits.
+
+        Uses `git diff --name-status old..new` and normalizes paths to POSIX style.
+
+        Args:
+            repo_path: Local repository path.
+            old_commit: Base commit SHA for diff.
+            new_commit: Target commit SHA for diff.
+
+        Returns:
+            Mapping with ``added``, ``modified``, and ``deleted`` file lists.
+
+        Raises:
+            ValueError: If one of the commit identifiers is not a valid SHA.
+        """
+        if not old_commit or not new_commit:
+            return {"added": [], "modified": [], "deleted": []}
+
+        old_commit = ParseHelper.validate_commit_sha(
+            old_commit, field_name="old_commit"
+        )
+        new_commit = ParseHelper.validate_commit_sha(
+            new_commit, field_name="new_commit"
+        )
+
+        if not repo_path:
+            return {"added": [], "modified": [], "deleted": []}
+
+        if old_commit == new_commit:
+            return {"added": [], "modified": [], "deleted": []}
+
+        try:
+            repo = Repo(repo_path)
+            diff_output = repo.git.diff(
+                "--name-status",
+                old_commit,
+                new_commit,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to compute git diff for incremental parsing",
+                repo_path=repo_path,
+                old_commit=old_commit,
+                new_commit=new_commit,
+            )
+            raise
+
+        added = set()
+        modified = set()
+        deleted = set()
+
+        for raw_line in diff_output.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            parts = line.split("\t")
+            status = parts[0] if parts else ""
+
+            # R/C statuses include old and new paths: R100\told\tnew
+            if status.startswith("R") and len(parts) >= 3:
+                deleted.add(parts[1].replace(os.sep, "/"))
+                added.add(parts[2].replace(os.sep, "/"))
+                continue
+
+            if status.startswith("C") and len(parts) >= 3:
+                added.add(parts[2].replace(os.sep, "/"))
+                continue
+
+            if len(parts) < 2:
+                continue
+
+            path = parts[1].replace(os.sep, "/")
+            if status == "A":
+                added.add(path)
+            elif status == "D":
+                deleted.add(path)
+            else:
+                modified.add(path)
+
+        return {
+            "added": sorted(added),
+            "modified": sorted(modified),
+            "deleted": sorted(deleted),
+        }
