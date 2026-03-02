@@ -1,10 +1,13 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import os
 import time
 from datetime import datetime, timezone
-from typing import AsyncGenerator, Callable, List, Optional, Dict, Union
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
@@ -39,7 +42,10 @@ from app.modules.intelligence.agents.context_config import (
     HISTORY_MESSAGE_CAP,
     get_history_token_budget,
 )
-from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
+from app.modules.intelligence.memory.chat_history_service import (
+    AsyncChatHistoryService,
+    ChatHistoryService,
+)
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.projects.projects_service import ProjectService
 from app.modules.repo_manager.sync_helper import ensure_repo_registered
@@ -48,8 +54,14 @@ from app.modules.utils.posthog_helper import PostHogClient
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.media.media_service import MediaService
-from app.modules.conversations.session.session_service import SessionService
-from app.modules.conversations.utils.redis_streaming import RedisStreamManager
+from app.modules.conversations.session.session_service import (
+    AsyncSessionService,
+    SessionService,
+)
+from app.modules.conversations.utils.redis_streaming import (
+    AsyncRedisStreamManager,
+    RedisStreamManager,
+)
 from app.celery.celery_app import celery_app
 from app.modules.conversations.exceptions import GenerationCancelled
 from .conversation_store import ConversationStore, StoreError
@@ -96,6 +108,9 @@ class ConversationService:
         media_service: MediaService,
         session_service: SessionService = None,
         redis_manager: RedisStreamManager = None,
+        async_redis_manager: AsyncRedisStreamManager = None,
+        async_session_service: AsyncSessionService = None,
+        async_history_manager: Optional[AsyncChatHistoryService] = None,
     ):
         self.db = db
         self.user_id = user_id
@@ -104,15 +119,17 @@ class ConversationService:
         self.message_store = message_store
         self.project_service = project_service
         self.history_manager = history_manager
+        self.async_history_manager = async_history_manager
         self.provider_service = provider_service
         self.tool_service = tools_service
         self.prompt_service = promt_service
         self.agent_service = agent_service
         self.custom_agent_service = custom_agent_service
         self.media_service = media_service
-        # Dependency injection for stop_generation
         self.session_service = session_service or SessionService()
         self.redis_manager = redis_manager or RedisStreamManager()
+        self.async_redis_manager = async_redis_manager
+        self.async_session_service = async_session_service
         self.celery_app = celery_app
 
         # Initialize repo manager if enabled
@@ -139,9 +156,15 @@ class ConversationService:
         db: Session,
         user_id: str,
         user_email: str,
+        async_db: Optional[AsyncSession] = None,
+        async_redis_manager: Optional[AsyncRedisStreamManager] = None,
+        async_session_service: Optional[AsyncSessionService] = None,
     ):
         project_service = ProjectService(db)
         history_manager = ChatHistoryService(db)
+        async_history_manager: Optional[AsyncChatHistoryService] = None
+        if async_db is not None:
+            async_history_manager = AsyncChatHistoryService(async_db)
         provider_service = ProviderService(db, user_id)
         tool_service = ToolService(db, user_id)
         prompt_service = PromptService(db)
@@ -169,6 +192,85 @@ class ConversationService:
             media_service,
             session_service,
             redis_manager,
+            async_redis_manager=async_redis_manager,
+            async_session_service=async_session_service,
+            async_history_manager=async_history_manager,
+        )
+
+    async def _history_get_session_history(
+        self, user_id: str, conversation_id: str
+    ):
+        """Dispatch to async or sync history manager for get_session_history."""
+        if self.async_history_manager:
+            return await self.async_history_manager.get_session_history(
+                user_id, conversation_id
+            )
+        return self.history_manager.get_session_history(user_id, conversation_id)
+
+    def _history_add_message_chunk(
+        self,
+        conversation_id: str,
+        content: str,
+        message_type: MessageType,
+        sender_id: Optional[str] = None,
+        citations: Optional[List[str]] = None,
+        tool_calls: Optional[List[Dict[str, Any]]] = None,
+        thinking: Optional[str] = None,
+    ) -> None:
+        """Dispatch to async or sync history manager for add_message_chunk."""
+        target = (
+            self.async_history_manager
+            if self.async_history_manager
+            else self.history_manager
+        )
+        target.add_message_chunk(
+            conversation_id,
+            content,
+            message_type,
+            sender_id,
+            citations,
+            tool_calls=tool_calls,
+            thinking=thinking,
+        )
+
+    async def _history_flush_message_buffer(
+        self,
+        conversation_id: str,
+        message_type: MessageType,
+        sender_id: Optional[str] = None,
+    ):
+        """Dispatch to async or sync history manager for flush_message_buffer."""
+        if self.async_history_manager:
+            return await self.async_history_manager.flush_message_buffer(
+                conversation_id, message_type, sender_id
+            )
+        return self.history_manager.flush_message_buffer(
+            conversation_id, message_type, sender_id
+        )
+
+    async def _history_save_partial_ai_message(
+        self,
+        conversation_id: str,
+        content: str,
+        citations: Optional[List[str]] = None,
+        tool_calls: Optional[List[Dict[str, Any]]] = None,
+        thinking: Optional[str] = None,
+    ):
+        """Dispatch to async or sync history manager for save_partial_ai_message."""
+        if self.async_history_manager:
+            return await self.async_history_manager.save_partial_ai_message(
+                conversation_id,
+                content,
+                citations,
+                tool_calls=tool_calls,
+                thinking=thinking,
+            )
+        return self.history_manager.save_partial_ai_message(
+            conversation_id,
+            content,
+            citations,
+            tool_calls=tool_calls,
+            thinking=thinking,
         )
 
     async def check_conversation_access(
@@ -586,6 +688,12 @@ class ConversationService:
     ):
         content = f"You can now ask questions about the {project_name} repository."
         try:
+            self._history_add_message_chunk(
+                conversation_id, content, MessageType.SYSTEM_GENERATED, user_id
+            )
+            await self._history_flush_message_buffer(
+                conversation_id, MessageType.SYSTEM_GENERATED, user_id
+            )
             await self.message_store.create_system_message(conversation_id, content)
             logger.info(
                 f"Added system message to conversation {conversation_id} for user {user_id}"
@@ -620,10 +728,10 @@ class ConversationService:
             )
             if access_level == ConversationAccessType.READ:
                 raise AccessTypeReadError("Access denied.")
-            self.history_manager.add_message_chunk(
+            self._history_add_message_chunk(
                 conversation_id, message.content, message_type, user_id
             )
-            message_id = self.history_manager.flush_message_buffer(
+            message_id = await self._history_flush_message_buffer(
                 conversation_id, message_type, user_id
             )
             logger.info(f"Stored message in conversation {conversation_id}")
@@ -1039,7 +1147,9 @@ class ConversationService:
         project_id = conversation.project_ids[0] if conversation.project_ids else None
 
         try:
-            history = self.history_manager.get_session_history(user_id, conversation_id)
+            history = await self._history_get_session_history(
+                user_id, conversation_id
+            )
             validated_history = [
                 (f"{msg.type}: {msg.content}" if msg.content else msg)
                 for msg in history
@@ -1141,12 +1251,13 @@ class ConversationService:
                     # Capture thinking content if present
                     if chunk.thinking:
                         accumulated_thinking = chunk.thinking
-                    self.history_manager.add_message_chunk(
+                    self._history_add_message_chunk(
                         conversation_id,
                         chunk.response,
                         MessageType.AI_GENERATED,
                         citations=chunk.citations,
                         tool_calls=accumulated_tool_calls if chunk.tool_calls else None,
+                        thinking=accumulated_thinking,
                     )
                     yield ChatMessageResponse(
                         message=chunk.response,
@@ -1157,9 +1268,8 @@ class ConversationService:
                         ],
                         thinking=chunk.thinking,
                     )
-                # Flush with thinking content if captured
-                self.history_manager.flush_message_buffer(
-                    conversation_id, MessageType.AI_GENERATED, thinking=accumulated_thinking
+                await self._history_flush_message_buffer(
+                    conversation_id, MessageType.AI_GENERATED
                 )
             else:
                 # Create enhanced ChatContext with multimodal support
@@ -1208,12 +1318,13 @@ class ConversationService:
                     # Capture thinking content if present
                     if chunk.thinking:
                         accumulated_thinking = chunk.thinking
-                    self.history_manager.add_message_chunk(
+                    self._history_add_message_chunk(
                         conversation_id,
                         chunk.response,
                         MessageType.AI_GENERATED,
                         citations=chunk.citations,
                         tool_calls=accumulated_tool_calls if chunk.tool_calls else None,
+                        thinking=accumulated_thinking,
                     )
                     yield ChatMessageResponse(
                         message=chunk.response,
@@ -1224,9 +1335,8 @@ class ConversationService:
                         ],
                         thinking=chunk.thinking,
                     )
-                # Flush with thinking content if captured
-                self.history_manager.flush_message_buffer(
-                    conversation_id, MessageType.AI_GENERATED, thinking=accumulated_thinking
+                await self._history_flush_message_buffer(
+                    conversation_id, MessageType.AI_GENERATED
                 )
 
             logger.info(
@@ -1610,7 +1720,14 @@ class ConversationService:
                 ActiveSessionErrorResponse,
             )
 
-            active_session = self.session_service.get_active_session(conversation_id)
+            if self.async_session_service:
+                active_session = await self.async_session_service.get_active_session(
+                    conversation_id
+                )
+            else:
+                active_session = self.session_service.get_active_session(
+                    conversation_id
+                )
 
             if isinstance(active_session, ActiveSessionErrorResponse):
                 # No active session found - this is okay, just return success
@@ -1629,13 +1746,25 @@ class ConversationService:
             )
 
         # Retrieve task_id before any mutation so we know whether we will revoke (and thus need to save from stream).
-        task_id = self.redis_manager.get_task_id(conversation_id, run_id)
+        if self.async_redis_manager:
+            task_id = await self.async_redis_manager.get_task_id(
+                conversation_id, run_id
+            )
+        else:
+            task_id = self.redis_manager.get_task_id(conversation_id, run_id)
         logger.info(
             f"Stop generation: conversation_id={conversation_id}, run_id={run_id}, task_id={task_id or 'none'}"
         )
 
         # Snapshot the stream before revoke so we have a consistent read (worker may be killed mid-write after revoke).
-        snapshot = self.redis_manager.get_stream_snapshot(conversation_id, run_id)
+        if self.async_redis_manager:
+            snapshot = await self.async_redis_manager.get_stream_snapshot(
+                conversation_id, run_id
+            )
+        else:
+            snapshot = self.redis_manager.get_stream_snapshot(
+                conversation_id, run_id
+            )
         content_len = len(snapshot.get("content") or "")
         citations_count = len(snapshot.get("citations") or [])
         tool_calls_count = len(snapshot.get("tool_calls") or [])
@@ -1646,7 +1775,12 @@ class ConversationService:
         )
 
         # Set cancellation flag and revoke the Celery task so it stops producing chunks.
-        self.redis_manager.set_cancellation(conversation_id, run_id)
+        if self.async_redis_manager:
+            await self.async_redis_manager.set_cancellation(
+                conversation_id, run_id
+            )
+        else:
+            self.redis_manager.set_cancellation(conversation_id, run_id)
         if task_id:
             try:
                 # Step 1: Try graceful revocation first (cooperative cancellation).
@@ -1661,7 +1795,14 @@ class ConversationService:
                 time.sleep(0.5)
 
                 # Check if task is still running via task status
-                task_status = self.redis_manager.get_task_status(conversation_id, run_id)
+                if self.async_redis_manager:
+                    task_status = await self.async_redis_manager.get_task_status(
+                        conversation_id, run_id
+                    )
+                else:
+                    task_status = self.redis_manager.get_task_status(
+                        conversation_id, run_id
+                    )
                 if task_status in ["running", "queued"]:
                     logger.info(
                         f"Task {task_id} still running after graceful revoke, using terminate"
@@ -1696,10 +1837,12 @@ class ConversationService:
                 else:
                     content_to_save = ""
                 if content_to_save:
-                    saved_message_id = self.history_manager.save_partial_ai_message(
+                    saved_message_id = await self._history_save_partial_ai_message(
                         conversation_id,
                         content=content_to_save,
                         citations=snapshot.get("citations"),
+                        tool_calls=snapshot.get("tool_calls"),
+                        thinking=snapshot.get("thinking"),
                     )
                     saved_partial = saved_message_id is not None
                     if saved_partial:
@@ -1721,11 +1864,13 @@ class ConversationService:
                 )
 
         # Always clear the session - publish end event and update status
-        # This ensures clients know the session is stopped and prevents stale sessions
-        # This is important even if there's no task_id - it clears any stale session data
-        # This will also handle the case where stop is called with a stale session_id
         try:
-            self.redis_manager.clear_session(conversation_id, run_id)
+            if self.async_redis_manager:
+                await self.async_redis_manager.clear_session(
+                    conversation_id, run_id
+                )
+            else:
+                self.redis_manager.clear_session(conversation_id, run_id)
         except Exception as e:
             logger.warning(
                 f"Failed to clear session for {conversation_id}:{run_id}: {str(e)}"

@@ -1,8 +1,9 @@
 from fastapi import Depends, Query, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
-from app.core.database import get_db
+from app.core.database import get_async_db, get_db
 from app.modules.auth.auth_service import AuthService
 from app.modules.code_provider.code_provider_controller import CodeProviderController
 from app.modules.utils.APIRouter import APIRouter
@@ -17,12 +18,15 @@ async def get_user_repos(
     offset: int = Query(0, ge=0, description="Number of repositories to skip"),
     user=Depends(AuthService.check_auth),
     db: Session = Depends(get_db),
+    async_db: AsyncSession = Depends(get_async_db),
 ):
     controller = CodeProviderController(db)
     
     # Get repos (controller handles search filtering internally)
     # We pass search=None initially to get all repos, then filter after adding demo repos
-    user_repo_list = await controller.get_user_repos(user=user, search=None)
+    user_repo_list = await controller.get_user_repos(
+        user=user, search=None, async_db=async_db
+    )
     
     # Add demo repos if not in development mode
     if not config_provider.get_is_development_mode():

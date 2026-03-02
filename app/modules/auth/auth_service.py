@@ -1,7 +1,7 @@
 import logging
 import os
 
-import requests
+import httpx
 from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -10,28 +10,84 @@ from firebase_admin.exceptions import FirebaseError
 
 load_dotenv(override=True)
 
+# Timeout for Firebase Identity Toolkit (default 30s read, 10s connect)
+LOGIN_TIMEOUT = httpx.Timeout(30.0, connect=10.0, read=30.0)
+
 
 class AuthService:
     def login(self, email, password):
+        """Sync login (e.g. for tests)."""
         log_prefix = "AuthService::login:"
         identity_tool_kit_id = os.getenv("GOOGLE_IDENTITY_TOOL_KIT_KEY")
         identity_url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={identity_tool_kit_id}"
 
-        user_auth_response = requests.post(
-            url=identity_url,
-            json={
-                "email": email,
-                "password": password,
-                "returnSecureToken": True,
-            },
-        )
+        with httpx.Client(timeout=LOGIN_TIMEOUT) as client:
+            try:
+                user_auth_response = client.post(
+                    url=identity_url,
+                    json={
+                        "email": email,
+                        "password": password,
+                        "returnSecureToken": True,
+                    },
+                )
+                user_auth_response.raise_for_status()
+                return user_auth_response.json()
+            except httpx.HTTPStatusError as e:
+                logging.warning(
+                    "%s upstream auth failed: status=%s", log_prefix, e.response.status_code
+                )
+                try:
+                    detail = e.response.json()
+                except Exception:
+                    detail = e.response.text or "Upstream auth error"
+                raise HTTPException(
+                    status_code=e.response.status_code,
+                    detail=detail,
+                )
+            except httpx.HTTPError as e:
+                logging.warning("%s upstream auth failed: httpx error", log_prefix)
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Upstream auth request failed",
+                ) from e
 
+    async def login_async(self, email, password):
+        """Non-blocking login using httpx. Use from FastAPI routes."""
+        log_prefix = "AuthService::login:"
+        identity_tool_kit_id = os.getenv("GOOGLE_IDENTITY_TOOL_KIT_KEY")
+        identity_url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={identity_tool_kit_id}"
+        response = None
         try:
-            user_auth_response.raise_for_status()
-            return user_auth_response.json()
-        except Exception as e:
-            logging.exception("%s %s", log_prefix, str(e))
-            raise Exception(user_auth_response.json())
+            async with httpx.AsyncClient(timeout=LOGIN_TIMEOUT) as client:
+                response = await client.post(
+                    identity_url,
+                    json={
+                        "email": email,
+                        "password": password,
+                        "returnSecureToken": True,
+                    },
+                )
+                response.raise_for_status()
+                return response.json()
+        except httpx.HTTPStatusError as e:
+            logging.warning(
+                "%s upstream auth failed: status=%s", log_prefix, e.response.status_code
+            )
+            try:
+                detail = e.response.json()
+            except Exception:
+                detail = e.response.text or "Upstream auth error"
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail=detail,
+            )
+        except httpx.HTTPError as e:
+            logging.warning("%s upstream auth failed: httpx error", log_prefix)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Upstream auth request failed",
+            ) from e
 
     def signup(self, email: str, password: str, name: str) -> tuple:
         try:

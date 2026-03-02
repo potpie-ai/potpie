@@ -3,6 +3,7 @@ import os
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
@@ -242,8 +243,10 @@ class CodeProviderController:
         logger = setup_logger(__name__)
         search_query = self._normalize_search_query(search)
 
-        # Fast path: check cache (sync Redis read is brief; consider moving to thread if needed)
-        cached_branches = self.branch_cache.get_branches(repo_name, search_query=None)
+        # Fast path: check cache (async Redis when available)
+        cached_branches = await self.branch_cache.get_branches_async(
+            repo_name, search_query=None
+        )
         if cached_branches is not None:
             logger.info(f"Found {len(cached_branches)} cached branches for {repo_name}")
             filtered_branches = self._filter_branches(cached_branches, search_query)
@@ -265,7 +268,12 @@ class CodeProviderController:
                 detail=f"Repository {repo_name} not found or error fetching branches: {str(e)}",
             )
 
-    async def get_user_repos(self, user: Dict[str, Any], search: Optional[str] = None) -> Dict[str, Any]:
+    async def get_user_repos(
+        self,
+        user: Dict[str, Any],
+        search: Optional[str] = None,
+        async_db: Optional[AsyncSession] = None,
+    ) -> Dict[str, Any]:
         """
         Get user repositories using the configured provider.
 
@@ -295,7 +303,9 @@ class CodeProviderController:
                 and config_provider.get_github_key()
             ):
                 github_service = GithubService(self.db)
-                result = await github_service.get_combined_user_repos(user["user_id"])
+                result = await github_service.get_combined_user_repos(
+                    user["user_id"], async_session=async_db
+                )
             else:
                 def _list_repos_sync():
                     provider = CodeProviderFactory.create_provider()

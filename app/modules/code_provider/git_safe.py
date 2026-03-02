@@ -258,17 +258,20 @@ def install_sigsegv_handler():
     """
     Install a signal handler for SIGSEGV to log crashes.
 
-    Note: This is a best-effort attempt. SIGSEGV handlers may not always
-    be reliable, but they can help with debugging.
+    Note: SIGSEGV handlers are extremely tricky — only async-signal-safe
+    functions may be called. Python's logging, exceptions, etc. are NOT safe.
+    We use os.write() and os._exit() which are async-signal-safe.
     """
 
     def sigsegv_handler(signum, frame):
-        logger.error(
-            f"Received SIGSEGV (signal {signum}) in process {os.getpid()}. "
-            "This may be related to GitPython/libgit2 operations in multiprocessing context."
-        )
-        # Re-raise to allow normal crash handling
-        raise SystemExit(1)
+        # ONLY use async-signal-safe functions: os.write(), os._exit()
+        # Do NOT use: logging, print, raise, sys.exit(), etc.
+        try:
+            msg = f"SIGSEGV (signal {signum}) in PID {os.getpid()} - GitPython/libgit2 fork issue\n"
+            os.write(2, msg.encode())  # Write to stderr (fd 2)
+        except Exception:
+            pass  # Ignore any errors — we're in a crash handler
+        os._exit(1)  # Immediately terminate without cleanup
 
     try:
         signal.signal(signal.SIGSEGV, sigsegv_handler)
