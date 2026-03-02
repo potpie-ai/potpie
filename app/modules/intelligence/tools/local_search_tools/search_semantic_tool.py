@@ -75,35 +75,41 @@ def search_semantic_tool(input_data: SearchSemanticInput) -> str:
         
         db = next(get_db())
         inference_service = InferenceService(db, user_id)
-        results = inference_service.query_vector_index(
-            project_id=input_data.project_id,
-            query=input_data.query,
-            node_ids=input_data.node_ids,
-            top_k=input_data.top_k,
-        )
-        
-        if not results:
-            return f"📋 No semantically similar code found for '{input_data.query}'. " \
-                   f"Ensure the project is parsed and knowledge graph is available."
-        
-        formatted = f"📋 **Found {len(results)} semantically similar result(s) for '{input_data.query}':**\n\n"
-        for i, r in enumerate(results[:input_data.top_k], 1):
-            file_path = r.get("file_path", "unknown")
-            start_line = r.get("start_line", 0) or 0
-            similarity = r.get("similarity", 0.0)
-            docstring = r.get("docstring", "")
-            name = r.get("name", "")
+        try:
+            results = inference_service.query_vector_index(
+                project_id=input_data.project_id,
+                query=input_data.query,
+                node_ids=input_data.node_ids,
+                top_k=input_data.top_k,
+            )
             
-            formatted += f"{i}. **{file_path}:{start_line}**"
-            if name:
-                formatted += f" - `{name}`"
-            formatted += f" (similarity: {similarity:.3f})\n"
+            if not results:
+                return f"📋 No semantically similar code found for '{input_data.query}'. " \
+                       f"Ensure the project is parsed and knowledge graph is available."
             
-            if docstring:
-                formatted += f"   {docstring[:200]}{'...' if len(docstring) > 200 else ''}\n"
-            formatted += "\n"
-        
-        return formatted
+            formatted = f"📋 **Found {len(results)} semantically similar result(s) for '{input_data.query}':**\n\n"
+            for i, r in enumerate(results[:input_data.top_k], 1):
+                file_path = r.get("file_path", "unknown")
+                start_line = r.get("start_line", 0) or 0
+                similarity = r.get("similarity", 0.0)
+                docstring = r.get("docstring", "")
+                name = r.get("name", "")
+                
+                formatted += f"{i}. **{file_path}:{start_line}**"
+                if name:
+                    formatted += f" - `{name}`"
+                formatted += f" (similarity: {similarity:.3f})\n"
+                
+                if docstring:
+                    formatted += f"   {docstring[:200]}{'...' if len(docstring) > 200 else ''}\n"
+                formatted += "\n"
+            
+            return formatted
+        finally:
+            try:
+                inference_service.close()
+            except Exception:
+                pass
     except Exception as e:
         logger.exception(f"Error in semantic search fallback: {e}")
         return (

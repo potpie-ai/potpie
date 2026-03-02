@@ -15,10 +15,15 @@ from app.core.database import get_db
 from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.code_provider.github.github_service import GithubService
-from app.modules.code_provider.local_repo.local_repo_service import LocalRepoService
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     GetCodeFromNodeIdTool,
 )
+
+# Lazy import to avoid loading GitPython at module import time
+# This prevents SIGSEGV in forked gunicorn workers
+def _get_local_repo_service():
+    from app.modules.code_provider.local_repo.local_repo_service import LocalRepoService
+    return LocalRepoService
 from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 from app.modules.projects.projects_service import ProjectService
@@ -72,6 +77,15 @@ class ChangeDetectionTool:
             neo4j_config["uri"],
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
+
+    def close(self) -> None:
+        """Close the Neo4j driver. Call when the tool is no longer needed."""
+        if hasattr(self, "neo4j_driver") and self.neo4j_driver is not None:
+            try:
+                self.neo4j_driver.close()
+            except Exception:
+                pass
+            self.neo4j_driver = None
 
     def _find_node_by_file_and_name(
         self, project_id: str, file_path: str, function_name: str
@@ -324,7 +338,7 @@ class ChangeDetectionTool:
 
     def traverse(self, identifier, project_id, neighbors_fn):
         neighbors_query = neighbors_fn(with_bodies=False)
-        with self.driver.session() as session:
+        with self.neo4j_driver.session() as session:
             return session.read_transaction(
                 self._traverse, identifier, project_id, neighbors_query
             )
@@ -649,7 +663,7 @@ class ChangeDetectionTool:
                     logger.info(
                         f"[CHANGE_DETECTION] Patches extracted: {len(patches_dict)} files with patches"
                     )
-            elif isinstance(code_service.service_instance, LocalRepoService):
+            elif isinstance(code_service.service_instance, _get_local_repo_service()):
                 logger.info("[CHANGE_DETECTION] Using LocalRepoService for diff")
                 patches_dict = code_service.service_instance.get_local_repo_diff(
                     repo_path, branch_name
@@ -672,7 +686,13 @@ class ChangeDetectionTool:
                 )
                 identifiers = []
                 node_ids = []
+                code_from_node_tool = None
+                inference_service = None
                 try:
+                    code_from_node_tool = GetCodeFromNodeIdTool(
+                        self.sql_db, self.user_id
+                    )
+                    inference_service = InferenceService(self.sql_db, "dummy")
                     identifiers = await self.get_updated_function_list(
                         patches_dict, project_id
                     )
@@ -705,9 +725,9 @@ class ChangeDetectionTool:
                                 else:
                                     # Last resort: try GetCodeFromNodeIdTool with identifier as-is
                                     # (in case the identifier IS the actual node_id format)
-                                    fallback_result = GetCodeFromNodeIdTool(
-                                        self.sql_db, self.user_id
-                                    ).run(project_id, identifier)
+                                    fallback_result = code_from_node_tool.run(
+                                        project_id, identifier
+                                    )
 
                                     # Check if result has an error or missing node_id
                                     if "error" in fallback_result:
@@ -723,9 +743,9 @@ class ChangeDetectionTool:
                     # Fetch code for node ids and store in a dict
                     node_code_dict = {}
                     for node_id in node_ids:
-                        node_code = GetCodeFromNodeIdTool(
-                            self.sql_db, self.user_id
-                        ).run(project_id, node_id)
+                        node_code = code_from_node_tool.run(
+                            project_id, node_id
+                        )
 
                         # Check for errors in the response
                         if "error" in node_code:
@@ -749,9 +769,9 @@ class ChangeDetectionTool:
                             "file_path": node_code["file_path"],
                         }
 
-                    entry_points = InferenceService(
-                        self.sql_db, "dummy"
-                    ).get_entry_points_for_nodes(node_ids, project_id)
+                    entry_points = inference_service.get_entry_points_for_nodes(
+                        node_ids, project_id
+                    )
 
                     changes_list = []
                     for node, entry_point in entry_points.items():
@@ -762,9 +782,9 @@ class ChangeDetectionTool:
                             )
                             continue
 
-                        entry_point_code = GetCodeFromNodeIdTool(
-                            self.sql_db, self.user_id
-                        ).run(project_id, entry_point[0])
+                        entry_point_code = code_from_node_tool.run(
+                            project_id, entry_point[0]
+                        )
 
                         # Check for errors in entry_point_code
                         if "error" in entry_point_code:
@@ -821,6 +841,17 @@ class ChangeDetectionTool:
                         f"[CHANGE_DETECTION] Exception in finally block - project_id: {project_id}, error: {type(e).__name__}: {str(e)}",
                         exc_info=True,
                     )
+                finally:
+                    if inference_service is not None:
+                        try:
+                            inference_service.close()
+                        except Exception:
+                            pass
+                    if code_from_node_tool is not None:
+                        try:
+                            code_from_node_tool.close()
+                        except Exception:
+                            pass
 
                 if len(identifiers) == 0:
                     logger.info(

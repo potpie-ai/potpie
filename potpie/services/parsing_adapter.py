@@ -98,6 +98,15 @@ class LibraryParsingService:
             self._search_service = SearchService(self.db)
         return self._search_service
 
+    def close(self) -> None:
+        """Close Neo4j-backed services (e.g. inference_service). Call when done with this instance."""
+        if self._inference_service is not None:
+            try:
+                self._inference_service.close()
+            except Exception:
+                pass
+            self._inference_service = None
+
     @contextmanager
     def _change_dir(self, path: str):
         """Context manager for temporary directory change."""
@@ -155,6 +164,7 @@ class LibraryParsingService:
 
         try:
             if cleanup_graph:
+                code_graph_service = None
                 try:
                     code_graph_service = CodeGraphService(
                         self._neo4j_config["uri"],
@@ -169,6 +179,12 @@ class LibraryParsingService:
                         extra={"project_id": project_id, "user_id": self.user_id},
                     )
                     raise ParsingError(f"Failed to cleanup graph: {e}") from e
+                finally:
+                    if code_graph_service is not None:
+                        try:
+                            code_graph_service.close()
+                        except Exception:
+                            pass
 
             repo_details = ParsingRequest(
                 repo_name=repo_name,

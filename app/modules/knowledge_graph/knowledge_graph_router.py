@@ -139,3 +139,8 @@ async def semantic_search(
     except Exception as e:
         logger.exception(f"Error in semantic search: {e}")
         raise HTTPException(status_code=500, detail=f"Semantic search failed: {str(e)}")
+    finally:
+        try:
+            inference_service.close()
+        except Exception:
+            pass
