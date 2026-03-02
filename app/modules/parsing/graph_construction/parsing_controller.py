@@ -344,6 +344,12 @@ class ParsingController:
         except Exception as e:
             logger.error(f"Error in parse_directory: {e}")
             raise HTTPException(status_code=500, detail="Internal server error")
+        finally:
+            if parsing_service is not None:
+                try:
+                    parsing_service.close()
+                except Exception:
+                    pass
 
     @staticmethod
     async def handle_new_project(
@@ -424,7 +430,6 @@ class ParsingController:
                 )
             parse_helper = ParseHelper(db)
             is_latest = await parse_helper.check_commit_status(project_id)
-
             return {"status": project_status, "latest": is_latest}
 
         except HTTPException:

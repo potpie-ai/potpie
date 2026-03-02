@@ -102,7 +102,6 @@ class ParsingResource(BaseResource):
                 neo4j_config,
                 raise_library_exceptions=True,
             )
-
             try:
                 result = await parsing_service.parse_directory(
                     repo_details=repo_details,
@@ -125,6 +124,12 @@ class ParsingResource(BaseResource):
                     project_id=project_id,
                     error_message=str(e),
                 )
+            finally:
+                if parsing_service is not None:
+                    try:
+                        parsing_service.close()
+                    except Exception:
+                        pass
 
         except ProjectNotFoundError:
             raise
@@ -191,6 +196,7 @@ class ParsingResource(BaseResource):
         )
 
         session = self._db_manager.get_session()
+        parsing_service = None
         try:
             parsing_service = ParsingService(session, user_id)
             await parsing_service.duplicate_graph(
@@ -206,6 +212,11 @@ class ParsingResource(BaseResource):
             session.rollback()
             raise ParsingError(f"Failed to duplicate graph: {e}") from e
         finally:
+            if parsing_service is not None:
+                try:
+                    parsing_service.close()
+                except Exception:
+                    pass
             session.close()
 
     async def cleanup_graph(self, project_id: str) -> None:
