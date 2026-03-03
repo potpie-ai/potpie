@@ -1,5 +1,5 @@
 import asyncio
-from typing import List
+from typing import Any, Dict, List
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
@@ -46,10 +46,12 @@ class GetNodesFromTags:
         self.sql_db = sql_db
         self.user_id = user_id
 
-    async def arun(self, tags: List[str], project_id: str) -> str:
+    async def arun(
+        self, tags: List[str], project_id: str
+    ) -> List[Dict[str, Any]]:
         return await asyncio.to_thread(self.run, tags, project_id)
 
-    def run(self, tags: List[str], project_id: str) -> str:
+    def run(self, tags: List[str], project_id: str) -> List[Dict[str, Any]]:
         """
         Get nodes from the knowledge graph based on the provided tags.
         Inputs for the fetch_nodes method:
