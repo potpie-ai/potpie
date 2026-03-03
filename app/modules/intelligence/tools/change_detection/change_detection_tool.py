@@ -575,7 +575,7 @@ class ChangeDetectionTool:
 
                 # GitBucket workaround: Use commits API to get diff
                 if provider_type == "gitbucket":
-                    logging.info(
+                    logger.info(
                         "[CHANGE_DETECTION] Using commits API for GitBucket diff"
                     )
 
@@ -604,8 +604,14 @@ class ChangeDetectionTool:
                                         f"[CHANGE_DETECTION] Reached common ancestor at commit {commit.sha[:7]}"
                                     )
                                     break
-                            except:
-                                pass
+                            except Exception:
+                                # Ignore errors while probing default-branch commit ancestry.
+                                # We continue collecting branch commit patches.
+                                logger.debug(
+                                    "[CHANGE_DETECTION] Failed to inspect default-branch ancestry for commit %s",
+                                    commit.sha[:7],
+                                    exc_info=True,
+                                )
 
                             # Get the commit details with files
                             logger.info(

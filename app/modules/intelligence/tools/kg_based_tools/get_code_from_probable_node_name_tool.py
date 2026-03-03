@@ -144,7 +144,7 @@ class GetCodeFromProbableNodeNameTool:
                     "error": f"Project with ID '{project_id}' not found in database"
                 }
 
-            return self._process_result(node_data, project, node_id)
+            return self._process_result(node_data, project, node_id, project_id)
         except Exception:
             logger.exception(
                 "Unexpected error in GetCodeFromProbableNodeNameTool",
@@ -167,7 +167,11 @@ class GetCodeFromProbableNodeNameTool:
         return self.sql_db.query(Project).filter(Project.id == project_id).first()
 
     def _process_result(
-        self, node_data: Dict[str, Any], project: Project, node_id: str
+        self,
+        node_data: Dict[str, Any],
+        project: Project,
+        node_id: str,
+        project_id: str,
     ) -> Dict[str, Any]:
         file_path = node_data["file_path"]
         start_line = node_data["start_line"]
