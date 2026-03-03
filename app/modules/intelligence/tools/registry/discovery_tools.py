@@ -11,6 +11,7 @@ from app.modules.intelligence.tools.tool_schema import OnyxTool
 
 from app.modules.intelligence.tools.registry.annotation_logging import (
     get_annotations_for_logging,
+    _invoke_inner_tool,
 )
 from app.modules.intelligence.tools.registry.exceptions import RegistryError
 from app.modules.utils.logger import setup_logger
@@ -117,6 +118,8 @@ def get_discovery_tools(
         Parameter named tool_args to avoid Pydantic/Onyx reserved 'args' handling.
         Phase 4: logs tool_call_annotations before invoke when log_tool_annotations=True.
         """
+        if not isinstance(tool_args, dict):
+            return {"error": "tool_args must be an object/dict"}
         if name not in allowed_names:
             return {"error": "Tool not in allowed set"}
         tools = resolver.tools_provider.get_tools(
@@ -134,7 +137,7 @@ def get_discovery_tools(
                 ann,
             )
         try:
-            out = tool.invoke(tool_args or {})
+            out = _invoke_inner_tool(tool, tool_args or {})
             return out
         except Exception as e:
             logger.exception("execute_tool: %s failed", name)
