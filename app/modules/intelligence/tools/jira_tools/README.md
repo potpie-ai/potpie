@@ -64,7 +64,7 @@ Core wrapper around the official Jira Python library. Handles:
 
 ### Tools
 
-Each tool is a LangChain StructuredTool that wraps a specific Jira operation:
+Each tool is a Onyx OnyxTool that wraps a specific Jira operation:
 
 - `get_jira_issue_tool.py` - Fetch issue details by key
 - `search_jira_issues_tool.py` - Search issues using JQL

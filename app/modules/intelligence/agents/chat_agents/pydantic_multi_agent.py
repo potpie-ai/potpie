@@ -2,7 +2,7 @@
 
 import re
 from typing import List, AsyncGenerator, Dict, Optional, Any, TYPE_CHECKING
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 
 from pydantic_ai import Agent
 
@@ -53,7 +53,7 @@ class PydanticMultiAgent(ChatAgent):
         self,
         llm_provider: ProviderService,
         config: AgentConfig,
-        tools: List[StructuredTool],
+        tools: List[OnyxTool],
         mcp_servers: List[dict] | None = None,
         delegate_agents: Optional[Dict[AgentType, AgentConfig]] = None,
         tools_provider: Optional[ToolService] = None,

@@ -5,7 +5,7 @@ These tools enable AI agents to search, read, create, update, and comment on Con
 """
 
 from sqlalchemy.orm import Session
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 
 from .get_confluence_spaces_tool import get_confluence_spaces_tool
 from .get_confluence_page_tool import get_confluence_page_tool
@@ -18,7 +18,7 @@ from .add_confluence_comment_tool import add_confluence_comment_tool
 from .confluence_client import check_confluence_integration_exists
 
 
-def get_all_confluence_tools(db: Session, user_id: str) -> list[StructuredTool]:
+def get_all_confluence_tools(db: Session, user_id: str) -> list[OnyxTool]:
     """
     Get all Confluence tools for a user.
 

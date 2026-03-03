@@ -361,9 +361,7 @@ kombu==5.6.2
     # via
     #   potpie (pyproject.toml)
     #   celery
-langchain==1.2.8
     # via potpie (pyproject.toml)
-langchain-core==1.2.8
     # via
     #   langchain
     #   langgraph

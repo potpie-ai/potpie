@@ -1,7 +1,7 @@
 import asyncio
 from typing import Dict, List
 
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from pydantic import BaseModel, Field
 
 from app.modules.parsing.knowledge_graph.inference_schema import QueryResponse
@@ -133,8 +133,8 @@ class KnowledgeGraphQueryTool:
         return asyncio.run(self.ask_multiple_knowledge_graph_queries(query_list))
 
 
-def get_ask_knowledge_graph_queries_tool(sql_db, user_id) -> StructuredTool:
-    return StructuredTool.from_function(
+def get_ask_knowledge_graph_queries_tool(sql_db, user_id) -> OnyxTool:
+    return OnyxTool.from_function(
         coroutine=KnowledgeGraphQueryTool(sql_db, user_id).arun,
         func=KnowledgeGraphQueryTool(sql_db, user_id).run,
         name="Ask Knowledge Graph Queries",

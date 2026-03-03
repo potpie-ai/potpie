@@ -1,6 +1,6 @@
 # Confluence Tools
 
-A collection of LangChain tools for interacting with Confluence Cloud via the REST API v2.
+A collection of Onyx tools for interacting with Confluence Cloud via the REST API v2.
 
 ## Overview
 
@@ -238,7 +238,7 @@ The `ConfluenceClient` class provides a low-level HTTP client for Confluence RES
 Each tool is implemented as:
 1. **Input Schema** (Pydantic BaseModel) - Validates parameters
 2. **Tool Class** - Contains business logic in `run()` method
-3. **Factory Function** - Creates LangChain `StructuredTool` instance
+3. **Factory Function** - Creates Onyx `OnyxTool` instance
 
 ### Integration Check
 All tools verify Confluence integration exists before executing:
@@ -269,7 +269,7 @@ get_tool = get_confluence_page_tool(db, user_id)
 create_tool = create_confluence_page_tool(db, user_id)
 ```
 
-### Integration with LangChain Agents
+### Integration with Onyx Agents
 ```python
 from langchain.agents import initialize_agent, AgentType
 

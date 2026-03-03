@@ -108,7 +108,7 @@ from app.modules.intelligence.tools.confluence_tools import (
 )
 from app.modules.intelligence.tools.web_tools.web_search_tool import web_search_tool
 from app.modules.intelligence.provider.provider_service import ProviderService
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from .todo_management_tool import create_todo_management_tools
 from .code_changes_manager import create_code_changes_management_tools
 from .requirement_verification_tool import create_requirement_verification_tools
@@ -153,7 +153,7 @@ class ToolService:
 
     def get_tools(
         self, tool_names: List[str], exclude_embedding_tools: bool = False
-    ) -> List[StructuredTool]:
+    ) -> List[OnyxTool]:
         """Get tools by name if they exist.
 
         Args:
@@ -162,7 +162,7 @@ class ToolService:
                                     Use this when project is in INFERRING status.
 
         Returns:
-            List of StructuredTool instances for the requested tool names
+            List of OnyxTool instances for the requested tool names
 
         Note: Tool filtering based on local_mode is handled in the agent
         (e.g., code_gen_agent.py) by specifying different tool lists.

@@ -6,7 +6,7 @@ logger = setup_logger(__name__)
 from typing import Dict, List, Optional
 
 from fastapi import HTTPException
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from pydantic import BaseModel, Field
 from tree_sitter_language_pack import get_parser
 import pathspec
@@ -835,12 +835,12 @@ class ChangeDetectionTool:
         return asyncio.run(self.get_code_changes(project_id))
 
 
-def get_change_detection_tool(user_id: str) -> StructuredTool:
+def get_change_detection_tool(user_id: str) -> OnyxTool:
     """
-    Get a list of LangChain Tool objects for use in agents.
+    Get a list of Onyx Tool objects for use in agents.
     """
     change_detection_tool = ChangeDetectionTool(next(get_db()), user_id)
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=change_detection_tool.arun,
         func=change_detection_tool.run,
         name="Get code changes",

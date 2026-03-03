@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, UserPromptPart, TextPart
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -27,7 +27,7 @@ class ChatHistoryService:
 
     def get_session_history(
         self, user_id: str, conversation_id: str
-    ) -> List[BaseMessage]:
+    ) -> List[ModelMessage]:
         try:
             messages = (
                 self.db.query(Message)
@@ -39,9 +39,11 @@ class ChatHistoryService:
             history = []
             for msg in messages:
                 if msg.type == MessageType.HUMAN:
-                    history.append(HumanMessage(content=msg.content))
+                    history.append(
+                        ModelRequest(parts=[UserPromptPart(content=msg.content)])
+                    )
                 else:
-                    history.append(AIMessage(content=msg.content))
+                    history.append(ModelResponse(parts=[TextPart(content=msg.content)]))
             logger.info(
                 f"Retrieved session history for conversation: {conversation_id}"
             )

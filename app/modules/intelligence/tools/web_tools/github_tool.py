@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional
 
 from github import Github
 from github.GithubException import UnknownObjectException
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -268,7 +268,7 @@ class GithubTool:
         return bool(os.getenv("GITHUB_APP_ID") and config_provider.get_github_key())
 
 
-def github_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
+def github_tool(sql_db: Session, user_id: str) -> Optional[OnyxTool]:
     # Initialize when either PAT-based credentials or App credentials are present
     if not (GithubTool._has_pat_credentials() or GithubTool._has_app_credentials()):
         logger.warning(
@@ -277,7 +277,7 @@ def github_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
         return None
 
     tool_instance = GithubTool(sql_db, user_id)
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=tool_instance.arun,
         func=tool_instance.run,
         name="GitHub Content Fetcher",

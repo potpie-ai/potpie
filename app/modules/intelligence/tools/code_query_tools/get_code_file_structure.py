@@ -4,7 +4,7 @@ from typing import Optional
 from urllib.parse import quote as url_quote
 
 import httpx
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -252,8 +252,8 @@ class GetCodeFileStructureTool:
             return "error fetching data"
 
 
-def get_code_file_structure_tool(db: Session) -> StructuredTool:
-    return StructuredTool(
+def get_code_file_structure_tool(db: Session) -> OnyxTool:
+    return OnyxTool(
         name="get_code_file_structure",
         description="""Retrieve the hierarchical file structure of a specified repository or subdirectory in a repository. Expecting 'project_id' as a required input and an optional 'path' to specify a subdirectory. If no path is provided, it will assume the root by default.
         For input :

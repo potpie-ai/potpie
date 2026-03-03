@@ -8,6 +8,7 @@ list, ensuring all output requirements are captured and verified before finalizi
 from contextvars import ContextVar
 from typing import List, Optional
 from pydantic import BaseModel, Field
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 
 
 class RequirementManager:
@@ -137,22 +138,11 @@ def get_requirements_tool() -> str:
         return f"❌ Error retrieving requirements: {str(e)}"
 
 
-# Create the structured tools
-class SimpleTool:
-    """Simple tool wrapper that mimics StructuredTool interface"""
-
-    def __init__(self, name: str, description: str, func, args_schema):
-        self.name = name
-        self.description = description
-        self.func = func
-        self.args_schema = args_schema
-
-
-def create_requirement_verification_tools() -> List[SimpleTool]:
+def create_requirement_verification_tools() -> List[OnyxTool]:
     """Create all requirement verification tools"""
 
     tools = [
-        SimpleTool(
+        OnyxTool(
             name="add_requirements",
             description="""CRITICAL: Document all output requirements at the START of complex tasks.
 
@@ -187,7 +177,7 @@ def create_requirement_verification_tools() -> List[SimpleTool]:
             func=add_requirements_tool,
             args_schema=AddRequirementsInput,
         ),
-        SimpleTool(
+        OnyxTool(
             name="delete_requirements",
             description="""Clear the requirements document completely.
 
@@ -200,7 +190,7 @@ def create_requirement_verification_tools() -> List[SimpleTool]:
             func=delete_requirements_tool,
             args_schema=None,
         ),
-        SimpleTool(
+        OnyxTool(
             name="get_requirements",
             description="""MANDATORY: Read the requirements document before finalizing your response.
 

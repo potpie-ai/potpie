@@ -1,6 +1,6 @@
 import asyncio
 from typing import Dict, Any, Optional
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from app.modules.intelligence.provider.provider_service import ProviderService
@@ -103,7 +103,7 @@ Here's what the agent shared:
 
 def think_tool(
     sql_db: Session, user_id: str, provider_service: Optional[ProviderService] = None
-) -> StructuredTool:
+) -> OnyxTool:
     """Create and return the think tool.
 
     Args:
@@ -113,7 +113,7 @@ def think_tool(
                          If not provided, a new instance will be created.
     """
     tool_instance = ThinkTool(sql_db, user_id, provider_service)
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=tool_instance.arun,
         func=tool_instance.run,
         name="think",

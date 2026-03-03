@@ -3,7 +3,7 @@
 from typing import Dict, Any, Optional, List
 import asyncio
 from pydantic import BaseModel, Field
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from sqlalchemy.orm import Session
 from app.modules.utils.logger import setup_logger
 
@@ -158,7 +158,7 @@ class CreateJiraIssueTool:
         )
 
 
-def create_jira_issue_tool(db: Session, user_id: str) -> StructuredTool:
+def create_jira_issue_tool(db: Session, user_id: str) -> OnyxTool:
     """
     Create a tool for creating Jira issues with user context.
 
@@ -167,10 +167,10 @@ def create_jira_issue_tool(db: Session, user_id: str) -> StructuredTool:
         user_id: The user ID to fetch their specific Jira integration
 
     Returns:
-        A configured StructuredTool for creating Jira issues
+        A configured OnyxTool for creating Jira issues
     """
     tool_instance = CreateJiraIssueTool(db, user_id)
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=tool_instance.arun,
         func=tool_instance.run,
         name="Create Jira Issue",

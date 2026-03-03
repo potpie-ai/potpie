@@ -4,7 +4,7 @@ from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from neo4j import GraphDatabase
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -119,9 +119,9 @@ class GetNodeNeighboursFromNodeIdTool:
             self.neo4j_driver.close()
 
 
-def get_node_neighbours_from_node_id_tool(sql_db: Session) -> StructuredTool:
+def get_node_neighbours_from_node_id_tool(sql_db: Session) -> OnyxTool:
     tool_instance = GetNodeNeighboursFromNodeIdTool(sql_db)
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=tool_instance.arun,
         func=tool_instance.run,
         name="Get Node Neighbours From Node ID",

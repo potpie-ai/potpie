@@ -3,7 +3,7 @@ import os
 from typing import Any, Dict, Optional
 
 from firecrawl import FirecrawlApp
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -99,7 +99,7 @@ class WebpageExtractorTool:
         return truncated_result
 
 
-def webpage_extractor_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
+def webpage_extractor_tool(sql_db: Session, user_id: str) -> Optional[OnyxTool]:
     if not os.getenv("FIRECRAWL_API_KEY"):
         logger.warning(
             "FIRECRAWL_API_KEY not set, webpage extractor tool will not be initialized"
@@ -107,7 +107,7 @@ def webpage_extractor_tool(sql_db: Session, user_id: str) -> Optional[Structured
         return None
 
     tool_instance = WebpageExtractorTool(sql_db, user_id)
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=tool_instance.arun,
         func=tool_instance.run,
         name="Webpage Content Extractor",

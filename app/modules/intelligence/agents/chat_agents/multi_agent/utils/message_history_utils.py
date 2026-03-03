@@ -83,7 +83,7 @@ def _history_strings_to_model_messages(
     """Convert history strings (e.g. 'human: ...' / 'ai: ...') to proper ModelMessage list.
 
     Conversation history is built in conversation_service as f'{msg.type}: {msg.content}'
-    (LangChain HumanMessage.type is 'human', AIMessage.type is 'ai'). We must preserve
+    (Human message type is 'human', AI message type is 'ai'). We must preserve
     user vs assistant roles so the LLM receives correct system / user / assistant mapping:
     - System = agent instructions (handled by PydanticAI).
     - User messages = ModelRequest with UserPromptPart.

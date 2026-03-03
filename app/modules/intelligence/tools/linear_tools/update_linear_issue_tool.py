@@ -1,7 +1,7 @@
 from typing import Dict, Any, Optional
 import asyncio
 from pydantic import BaseModel, Field
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from sqlalchemy.orm import Session
 
 from app.modules.intelligence.tools.linear_tools.linear_client import (
@@ -134,7 +134,7 @@ class UpdateLinearIssueTool:
         )
 
 
-def update_linear_issue_tool(db: Session, user_id: str) -> StructuredTool:
+def update_linear_issue_tool(db: Session, user_id: str) -> OnyxTool:
     """
     Create a tool for updating Linear issues with user context.
 
@@ -143,10 +143,10 @@ def update_linear_issue_tool(db: Session, user_id: str) -> StructuredTool:
         user_id: The user ID to fetch their specific Linear API key
 
     Returns:
-        A configured StructuredTool for updating Linear issues
+        A configured OnyxTool for updating Linear issues
     """
     tool_instance = UpdateLinearIssueTool(db, user_id)
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=tool_instance.arun,
         func=tool_instance.run,
         name="Update Linear Issue",

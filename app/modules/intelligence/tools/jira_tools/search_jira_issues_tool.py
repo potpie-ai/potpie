@@ -3,7 +3,7 @@
 from typing import Dict, Any
 import asyncio
 from pydantic import BaseModel, Field
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from sqlalchemy.orm import Session
 
 from app.modules.intelligence.tools.jira_tools.jira_client import (
@@ -105,7 +105,7 @@ class SearchJiraIssuesTool:
         return asyncio.run(self.arun(jql, max_results, include_comments))
 
 
-def search_jira_issues_tool(db: Session, user_id: str) -> StructuredTool:
+def search_jira_issues_tool(db: Session, user_id: str) -> OnyxTool:
     """
     Create a tool for searching Jira issues with user context.
 
@@ -114,10 +114,10 @@ def search_jira_issues_tool(db: Session, user_id: str) -> StructuredTool:
         user_id: The user ID to fetch their specific Jira integration
 
     Returns:
-        A configured StructuredTool for searching Jira issues
+        A configured OnyxTool for searching Jira issues
     """
     tool_instance = SearchJiraIssuesTool(db, user_id)
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=tool_instance.arun,
         func=tool_instance.run,
         name="Search Jira Issues",

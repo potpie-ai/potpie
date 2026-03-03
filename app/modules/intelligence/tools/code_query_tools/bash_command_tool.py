@@ -11,7 +11,7 @@ import shlex
 from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 
 from app.modules.projects.projects_service import ProjectService
 from app.modules.repo_manager import RepoManager
@@ -861,7 +861,7 @@ class BashCommandTool:
         )
 
 
-def bash_command_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
+def bash_command_tool(sql_db: Session, user_id: str) -> Optional[OnyxTool]:
     """
     Create bash command tool if repo manager is enabled.
 
@@ -877,7 +877,7 @@ def bash_command_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]
         logger.debug("BashCommandTool not created: RepoManager initialization failed")
         return None
 
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=tool_instance._arun,
         func=tool_instance._run,
         name="bash_command",

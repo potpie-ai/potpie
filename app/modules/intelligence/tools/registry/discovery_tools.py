@@ -1,16 +1,17 @@
 """Phase 3: Discovery meta-tools (search_tools, describe_tool, execute_tool) for deferred tool loading.
 
-Builds three LangChain StructuredTools scoped to an allow-list. The agent receives
+Builds three OnyxTools scoped to an allow-list. The agent receives
 these instead of the full tool list when use_tool_search_flow=True, then discovers
 tools via search_tools, gets full schema via describe_tool, and runs via execute_tool.
 """
 
 from typing import TYPE_CHECKING, Any, List, Optional, Tuple
 
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 
 from app.modules.intelligence.tools.registry.annotation_logging import (
     get_annotations_for_logging,
+    _invoke_inner_tool,
 )
 from app.modules.intelligence.tools.registry.exceptions import RegistryError
 from app.modules.utils.logger import setup_logger
@@ -31,7 +32,7 @@ def get_discovery_tools(
     local_mode: bool = False,
     exclude_embedding_tools: bool = False,
     log_tool_annotations: bool = True,
-) -> Tuple[StructuredTool, StructuredTool, StructuredTool]:
+) -> Tuple[OnyxTool, OnyxTool, OnyxTool]:
     """
     Build the three discovery meta-tools for an agent scoped to the given allow-list.
 
@@ -48,7 +49,7 @@ def get_discovery_tools(
 
     Returns:
         Tuple of (search_tools_tool, describe_tool_tool, execute_tool_tool) as
-        LangChain StructuredTool instances.
+        OnyxTool instances.
     """
     try:
         allowed_names = resolver.registry.resolve_allow_list(
@@ -114,9 +115,11 @@ def get_discovery_tools(
 
     def _execute_tool(name: str, tool_args: dict) -> Any:
         """Execute a tool by name with the given arguments. Only for tools in the allowed set.
-        Parameter named tool_args to avoid Pydantic/LangChain reserved 'args' handling.
+        Parameter named tool_args to avoid Pydantic/Onyx reserved 'args' handling.
         Phase 4: logs tool_call_annotations before invoke when log_tool_annotations=True.
         """
+        if not isinstance(tool_args, dict):
+            return {"error": "tool_args must be an object/dict"}
         if name not in allowed_names:
             return {"error": "Tool not in allowed set"}
         tools = resolver.tools_provider.get_tools(
@@ -134,23 +137,23 @@ def get_discovery_tools(
                 ann,
             )
         try:
-            out = tool.invoke(tool_args or {})
+            out = _invoke_inner_tool(tool, tool_args or {})
             return out
         except Exception as e:
             logger.exception("execute_tool: %s failed", name)
             return {"error": str(e)}
 
-    search_tools_tool = StructuredTool.from_function(
+    search_tools_tool = OnyxTool.from_function(
         func=_search_tools,
         name="search_tools",
         description="List available tools with short descriptions. Call this first to discover what tools you can use, then use describe_tool(name) to get full description and argument schema, then execute_tool(name, tool_args) to run a tool. Optional 'query' is reserved for future filtering.",
     )
-    describe_tool_tool = StructuredTool.from_function(
+    describe_tool_tool = OnyxTool.from_function(
         func=_describe_tool,
         name="describe_tool",
         description="Get the full description and JSON argument schema for a tool by name. Only works for tools in your allowed set; call search_tools first to see allowed names.",
     )
-    execute_tool_tool = StructuredTool.from_function(
+    execute_tool_tool = OnyxTool.from_function(
         func=_execute_tool,
         name="execute_tool",
         description="Execute a tool by name with the given arguments (tool_args dict). Only works for tools in your allowed set. Get the schema from describe_tool(name) first to build correct tool_args.",

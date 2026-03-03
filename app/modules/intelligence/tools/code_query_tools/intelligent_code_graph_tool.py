@@ -2,7 +2,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Set
 
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -437,7 +437,7 @@ class IntelligentCodeGraphTool:
 
 def get_intelligent_code_graph_tool(
     sql_db: Session, provider_service: ProviderService, user_id: str
-) -> StructuredTool:
+) -> OnyxTool:
     """Create and return the intelligent code graph tool"""
     tool = IntelligentCodeGraphTool(sql_db, provider_service, user_id)
 
@@ -454,7 +454,7 @@ def get_intelligent_code_graph_tool(
             5, description="Maximum depth of relationships to traverse (default: 5)."
         )
 
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=tool.arun,
         func=tool.run,
         name=tool.name,

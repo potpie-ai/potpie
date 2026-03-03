@@ -8,7 +8,7 @@ from app.modules.utils.logger import setup_logger
 logger = setup_logger(__name__)
 import asyncio
 from typing import Any, Dict
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -180,7 +180,7 @@ class GetConfluencePageTool:
         return asyncio.run(self.arun(page_id, body_format, get_draft))
 
 
-def get_confluence_page_tool(db: Session, user_id: str) -> StructuredTool:
+def get_confluence_page_tool(db: Session, user_id: str) -> OnyxTool:
     """
     Create a tool for getting a Confluence page with user context.
 
@@ -189,11 +189,11 @@ def get_confluence_page_tool(db: Session, user_id: str) -> StructuredTool:
         user_id: The user ID to fetch their specific Confluence integration
 
     Returns:
-        A configured StructuredTool for getting Confluence pages
+        A configured OnyxTool for getting Confluence pages
     """
     tool_instance = GetConfluencePageTool(db, user_id)
 
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=tool_instance.arun,
         func=tool_instance.run,
         name="Get Confluence Page",

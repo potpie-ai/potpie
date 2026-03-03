@@ -16,6 +16,7 @@ from pydantic_ai_todo import (
     create_todo_toolset,
 )
 from pydantic_ai_todo.types import Todo, TodoItem
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 
 
 # Context variable for todo storage - provides isolation per execution context
@@ -376,64 +377,56 @@ def get_available_tasks_tool() -> str:
 
 
 # SimpleTool for ToolService compatibility (name, description, func, args_schema)
-class SimpleTool:
-    def __init__(self, name: str, description: str, func, args_schema=None):
-        self.name = name
-        self.description = description
-        self.func = func
-        self.args_schema = args_schema
-
-
-def create_todo_management_tools() -> List[SimpleTool]:
+def create_todo_management_tools() -> List[OnyxTool]:
     """Create todo tools for ToolService (by-name lookup) and delegate agents.
 
     Tool names match pydantic-ai-todo: read_todos, write_todos, add_todo,
     update_todo_status, remove_todo, add_subtask, set_dependency, get_available_tasks.
     """
     return [
-        SimpleTool(
+        OnyxTool(
             name="read_todos",
             description="Read the current todo list. Use to check status before deciding what to work on next. Set hierarchical=True for tree view with subtasks.",
             func=read_todos_tool,
             args_schema=ReadTodosInput,
         ),
-        SimpleTool(
+        OnyxTool(
             name="write_todos",
             description="Bulk write/update the todo list. Replaces the entire list with the given items (each with content, status, active_form; optional id, parent_id, depends_on).",
             func=write_todos_tool,
             args_schema=WriteTodosInput,
         ),
-        SimpleTool(
+        OnyxTool(
             name="add_todo",
             description="Add a single new todo item. Use to add a task without replacing existing todos. Returns the new todo's ID.",
             func=add_todo_tool,
             args_schema=AddTodoInput,
         ),
-        SimpleTool(
+        OnyxTool(
             name="update_todo_status",
             description="Update an existing todo's status by ID. Status: pending, in_progress, completed, or blocked.",
             func=update_todo_status_tool,
             args_schema=UpdateTodoStatusInput,
         ),
-        SimpleTool(
+        OnyxTool(
             name="remove_todo",
             description="Remove a todo from the list by ID.",
             func=remove_todo_tool,
             args_schema=RemoveTodoInput,
         ),
-        SimpleTool(
+        OnyxTool(
             name="add_subtask",
             description="Add a subtask to an existing todo. The subtask is linked to its parent via parent_id.",
             func=add_subtask_tool,
             args_schema=AddSubtaskInput,
         ),
-        SimpleTool(
+        OnyxTool(
             name="set_dependency",
             description="Set a dependency: one task depends on another (must be completed first). Prevents cycles.",
             func=set_dependency_tool,
             args_schema=SetDependencyInput,
         ),
-        SimpleTool(
+        OnyxTool(
             name="get_available_tasks",
             description="Get tasks that can be worked on now (no incomplete dependencies). Blocked tasks are excluded.",
             func=get_available_tasks_tool,

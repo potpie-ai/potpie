@@ -8,7 +8,7 @@ import os
 from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_schema import OnyxTool
 
 from app.modules.projects.projects_service import ProjectService
 from app.modules.repo_manager import RepoManager
@@ -350,7 +350,7 @@ class GitPushTool:
         )
 
 
-def git_push_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
+def git_push_tool(sql_db: Session, user_id: str) -> Optional[OnyxTool]:
     """
     Create git push tool if repo manager is enabled.
 
@@ -366,7 +366,7 @@ def git_push_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
         logger.debug("GitPushTool not created: RepoManager initialization failed")
         return None
 
-    return StructuredTool.from_function(
+    return OnyxTool.from_function(
         coroutine=tool_instance._arun,
         func=tool_instance._run,
         name="git_push",
