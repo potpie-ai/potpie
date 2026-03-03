@@ -1,6 +1,6 @@
 """Phase 3: Discovery meta-tools (search_tools, describe_tool, execute_tool) for deferred tool loading.
 
-Builds three Onyx OnyxTools scoped to an allow-list. The agent receives
+Builds three OnyxTools scoped to an allow-list. The agent receives
 these instead of the full tool list when use_tool_search_flow=True, then discovers
 tools via search_tools, gets full schema via describe_tool, and runs via execute_tool.
 """
@@ -48,7 +48,7 @@ def get_discovery_tools(
 
     Returns:
         Tuple of (search_tools_tool, describe_tool_tool, execute_tool_tool) as
-        Onyx OnyxTool instances.
+        OnyxTool instances.
     """
     try:
         allowed_names = resolver.registry.resolve_allow_list(

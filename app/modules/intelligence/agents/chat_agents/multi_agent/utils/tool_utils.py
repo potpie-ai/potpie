@@ -293,7 +293,7 @@ def _adapt_func_for_from_schema(tool: Any) -> Any:
 
 
 def wrap_structured_tools(tools: Sequence[Any]) -> List[Tool]:
-    """Convert tool instances (OnyxTool, OnyxTool or similar) to PydanticAI Tool instances.
+    """Convert tool instances (OnyxTool or similar) to PydanticAI Tool instances.
     Tool names are sanitized to match API requirement ^[a-zA-Z0-9_-]+$.
     When a tool has args_schema (e.g. SimpleTool with a Pydantic model), the schema is
     inlined so APIs that require a 'type' key in every node (e.g. OpenAI) accept it.

@@ -91,7 +91,7 @@ def wrap_tool_for_annotation_logging(
     fails, logs with empty annotations dict and still invokes (best-effort).
     """
     raw_schema = getattr(tool, "args_schema", None)
-    # Onyx OnyxTool accepts only BaseModel subclass or JSON schema dict
+    # OnyxTool accepts only BaseModel subclass or JSON schema dict
     args_schema = None
     if isinstance(raw_schema, type) and issubclass(raw_schema, BaseModel):
         args_schema = raw_schema
