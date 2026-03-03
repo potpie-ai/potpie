@@ -4879,22 +4879,23 @@ def update_file_lines_tool(input_data: UpdateFileLinesInput) -> str:
             if result.get("success"):
                 context_str = ""
                 if result.get("updated_context"):
-                    context_start = result.get(
-                        "context_start_line", result["start_line"]
-                    )
+                    context_start = result.get("context_start_line", result["start_line"])
                     context_end = result.get("context_end_line", result["end_line"])
-                    context_str = (
-                        f"\nUpdated lines with context (lines {context_start}-{context_end}):\n"
-                        f"```{input_data.file_path}\n{result['updated_context']}\n```"
-                    )
+                    context_str = f"\nUpdated lines with context (lines {context_start}-{context_end}):\n```{input_data.file_path}\n{result['updated_context']}\n```"
                 return (
                     f"✅ Updated lines {result['start_line']}-{result['end_line']} in '{input_data.file_path}'\n\n"
                     + f"Replaced {result['lines_replaced']} lines with {result['lines_added']} new lines\n"
                     + f"Replaced content:\n```\n{result['replaced_content'][:200]}{'...' if len(result['replaced_content']) > 200 else ''}\n```"
                     + context_str
                 )
-
-            return f"❌ Error updating lines: {result.get('error', 'Unknown error')}"
+            else:
+                return f"❌ Error updating lines: {result.get('error', 'Unknown error')}"
+        except Exception:
+            logger.exception(
+                "Tool update_file_lines_tool: Error updating file lines",
+                file_path=input_data.file_path,
+            )
+            return "❌ Error updating file lines"
         finally:
             if db_gen is not None:
                 db_gen.close()
@@ -5366,7 +5367,7 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
                 else list(manager.changes.keys())
             )
             git_diffs = []
-    
+
             for file_path in files_to_diff:
                 if file_path not in manager.changes:
                     continue
@@ -5804,8 +5805,6 @@ def export_changes_tool(input_data: ExportChangesInput) -> str:
 
 
 # Create the structured tools
-
-
 # Tools to exclude when local_mode=True (VS Code extension). Extension handles diff/export/display itself.
 CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL: frozenset[str] = frozenset(
     {
