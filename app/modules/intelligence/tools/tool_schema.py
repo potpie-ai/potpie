@@ -1,3 +1,4 @@
+import inspect
 from typing import Any, Awaitable, Callable, Dict, Optional, Type, Union
 
 from pydantic import BaseModel, ConfigDict
@@ -43,12 +44,23 @@ class OnyxTool(BaseModel):
         )
 
     def run(self, *args: Any, **kwargs: Any) -> Any:
-        return self.func(*args, **kwargs)
+        result = self.func(*args, **kwargs)  # NOSONAR - trusted internal callable
+        if inspect.isawaitable(result):
+            raise RuntimeError(
+                f"OnyxTool '{self.name}' sync run received awaitable result; use arun()"
+            )
+        return result
 
     async def arun(self, *args: Any, **kwargs: Any) -> Any:
         if self.coroutine:
-            return await self.coroutine(*args, **kwargs)
-        return self.func(*args, **kwargs)
+            return await self.coroutine(
+                *args, **kwargs
+            )  # NOSONAR - trusted internal callable
+
+        result = self.func(*args, **kwargs)  # NOSONAR - trusted internal callable
+        if inspect.isawaitable(result):
+            return await result
+        return result
 
 
 class ToolRequest(BaseModel):
