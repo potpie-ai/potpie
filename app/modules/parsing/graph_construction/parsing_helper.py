@@ -2683,7 +2683,8 @@ class ParseHelper:
         """
         Return added/modified/deleted files between two commits.
 
-        Uses `git diff --name-status old..new` and normalizes paths to POSIX style.
+        Uses GitPython commit objects (instead of shell-like git invocations)
+        and normalizes all paths to POSIX style.
 
         Args:
             repo_path: Local repository path.
@@ -2714,11 +2715,9 @@ class ParseHelper:
 
         try:
             repo = Repo(repo_path)
-            diff_output = repo.git.diff(
-                "--name-status",
-                old_commit,
-                new_commit,
-            )
+            old_commit_obj = repo.commit(old_commit)
+            new_commit_obj = repo.commit(new_commit)
+            diff_entries = old_commit_obj.diff(new_commit_obj, R=True, C=True)
         except Exception:
             logger.exception(
                 "Failed to compute git diff for incremental parsing",
@@ -2732,34 +2731,38 @@ class ParseHelper:
         modified = set()
         deleted = set()
 
-        for raw_line in diff_output.splitlines():
-            line = raw_line.strip()
-            if not line:
+        for entry in diff_entries:
+            change_type = str(entry.change_type or "").upper()
+            old_path = entry.a_path.replace(os.sep, "/") if entry.a_path else None
+            new_path = entry.b_path.replace(os.sep, "/") if entry.b_path else None
+
+            if change_type == "A":
+                if new_path:
+                    added.add(new_path)
                 continue
 
-            parts = line.split("\t")
-            status = parts[0] if parts else ""
-
-            # R/C statuses include old and new paths: R100\told\tnew
-            if status.startswith("R") and len(parts) >= 3:
-                deleted.add(parts[1].replace(os.sep, "/"))
-                added.add(parts[2].replace(os.sep, "/"))
+            if change_type == "D":
+                if old_path:
+                    deleted.add(old_path)
                 continue
 
-            if status.startswith("C") and len(parts) >= 3:
-                added.add(parts[2].replace(os.sep, "/"))
+            if change_type == "R":
+                if old_path:
+                    deleted.add(old_path)
+                if new_path:
+                    added.add(new_path)
                 continue
 
-            if len(parts) < 2:
+            if change_type == "C":
+                if new_path:
+                    added.add(new_path)
                 continue
 
-            path = parts[1].replace(os.sep, "/")
-            if status == "A":
-                added.add(path)
-            elif status == "D":
-                deleted.add(path)
-            else:
-                modified.add(path)
+            # Treat remaining types (M/T/U/X/B/etc.) as modified.
+            if new_path:
+                modified.add(new_path)
+            elif old_path:
+                modified.add(old_path)
 
         return {
             "added": sorted(added),
