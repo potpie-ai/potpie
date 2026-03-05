@@ -1,6 +1,7 @@
 import asyncio
 import functools
 import os
+import re
 from typing import Dict, List, Literal, Optional
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -92,21 +93,56 @@ class SecretStorageHandler:
         return SecretStorageHandler._check_gcp_availability_once()
 
     @staticmethod
-    def get_encryption_key():
-        """Get Fernet encryption key for local storage."""
-        secret_key = os.environ.get("SECRET_ENCRYPTION_KEY")
-        if not secret_key:
+    def _build_key_ring() -> Dict[str, Fernet]:
+        """
+        Build a key ring mapping version label → Fernet instance.
+
+        The current active key is loaded from SECRET_ENCRYPTION_KEY. Its version
+        label is controlled by SECRET_ENCRYPTION_KEY_ACTIVE_VERSION (default "v1").
+        Old keys for backward-compatible decryption are loaded from explicitly
+        versioned env vars: SECRET_ENCRYPTION_KEY_v1, SECRET_ENCRYPTION_KEY_v2, …
+
+        Rotation procedure:
+          1. Generate a new Fernet key.
+          2. Move the old key:  SECRET_ENCRYPTION_KEY_v1=<old key>
+          3. Set the new key:   SECRET_ENCRYPTION_KEY=<new key>
+          4. Bump the label:    SECRET_ENCRYPTION_KEY_ACTIVE_VERSION=v2
+
+        Returns {"v1": Fernet(...), "v2": Fernet(...), ...}.
+        Raises HTTPException(500) if the active key is missing or invalid.
+        """
+        active_key = os.environ.get("SECRET_ENCRYPTION_KEY")
+        if not active_key:
             raise HTTPException(
                 status_code=500,
                 detail="SECRET_ENCRYPTION_KEY environment variable is not set",
             )
+
+        active_version = os.environ.get("SECRET_ENCRYPTION_KEY_ACTIVE_VERSION", "v1")
+        ring: Dict[str, Fernet] = {}
+
+        # Load all explicitly versioned old keys for backward-compatible decryption.
+        for env_key, env_val in os.environ.items():
+            match = re.match(r"^SECRET_ENCRYPTION_KEY_v(\d+)$", env_key)
+            if match and env_val:
+                label = f"v{match.group(1)}"
+                try:
+                    ring[label] = Fernet(env_val.encode("utf-8"))
+                except Exception:
+                    logger.warning(
+                        "SECRET_ENCRYPTION_KEY_%s is set but invalid — skipping", label
+                    )
+
+        # Active key always takes its designated slot.
         try:
-            return Fernet(secret_key.encode("utf-8"))
+            ring[active_version] = Fernet(active_key.encode("utf-8"))
         except Exception as e:
             raise HTTPException(
                 status_code=500,
                 detail=f"Invalid SECRET_ENCRYPTION_KEY: {str(e)}",
             )
+
+        return ring
 
     @staticmethod
     def format_secret_id(service, customer_id, service_type="ai_provider"):
@@ -122,19 +158,41 @@ class SecretStorageHandler:
 
     @staticmethod
     def encrypt_value(value):
-        """Encrypt a value for local storage."""
-        f = SecretStorageHandler.get_encryption_key()
-        encrypted = f.encrypt(value.encode("utf-8"))
-        return encrypted.decode("utf-8")
+        """Encrypt a value for local storage, prefixed with the active key version."""
+        active_version = os.environ.get("SECRET_ENCRYPTION_KEY_ACTIVE_VERSION", "v1")
+        ring = SecretStorageHandler._build_key_ring()
+        token = ring[active_version].encrypt(value.encode("utf-8")).decode("utf-8")
+        return f"{active_version}:{token}"
 
     @staticmethod
     def decrypt_value(encrypted_value):
-        """Decrypt a value from local storage."""
-        f = SecretStorageHandler.get_encryption_key()
-        try:
-            decrypted = f.decrypt(encrypted_value.encode("utf-8"))
-            return decrypted.decode("utf-8")
-        except InvalidToken:
+        """
+        Decrypt a value from local storage.
+
+        Supports versioned blobs (e.g. "v1:<token>") and legacy unversioned blobs
+        written before key rotation was introduced (treated as v1).
+        """
+        ring = SecretStorageHandler._build_key_ring()
+
+        # Parse optional version prefix.
+        if ":" in encrypted_value and encrypted_value.split(":", 1)[0] in ring:
+            version, token = encrypted_value.split(":", 1)
+            fernet = ring[version]
+            try:
+                return fernet.decrypt(token.encode("utf-8")).decode("utf-8")
+            except InvalidToken:
+                raise HTTPException(
+                    status_code=500, detail="Failed to decrypt value. Invalid token."
+                )
+        else:
+            # Legacy blob — no version prefix. Try every key in ring order until one works.
+            for fernet in ring.values():
+                try:
+                    return fernet.decrypt(encrypted_value.encode("utf-8")).decode(
+                        "utf-8"
+                    )
+                except InvalidToken:
+                    continue
             raise HTTPException(
                 status_code=500, detail="Failed to decrypt value. Invalid token."
             )
