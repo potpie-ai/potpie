@@ -291,6 +291,7 @@ class AnalyticsService:
             start_timestamp,
             attributes->>'gen_ai.usage.input_tokens' as input_tokens,
             attributes->>'gen_ai.usage.output_tokens' as output_tokens,
+            attributes->>'actual_cost' as actual_cost,
             attributes->>'gen_ai.response.model' as model,
             attributes->>'outcome' as outcome,
             span_name
@@ -328,6 +329,7 @@ class AnalyticsService:
                     "start_timestamp": ts,
                     "input_tokens": row.get("input_tokens") or row.get("Input_Tokens"),
                     "output_tokens": row.get("output_tokens") or row.get("Output_Tokens"),
+                    "actual_cost": row.get("actual_cost") or row.get("Actual_Cost"),
                     "model": row.get("model") or row.get("Model"),
                     "outcome": row.get("outcome") or row.get("Outcome"),
                     "span_name": row.get("span_name") or row.get("Span_Name"),
@@ -361,6 +363,7 @@ class AnalyticsService:
         FROM records
         WHERE
             attributes->>'user_id' = '{user_id}'
+            AND span_name = 'agent_run_usage'
             AND start_timestamp >= '{start_date.isoformat()}'
             AND start_timestamp <= '{end_date.isoformat()}T23:59:59Z'
         ORDER BY start_timestamp DESC
@@ -471,18 +474,20 @@ class AnalyticsService:
                 )
                 date_key = timestamp.strftime("%Y-%m-%d")
 
-                # Parse tokens and estimate cost.
-                # NOTE: These are fallback estimates — actual per-model pricing
-                # should come from OpenRouter response metadata when available.
-                # Default: $0.50/1M input tokens, $1.50/1M output tokens.
+                # Parse tokens and compute cost.
+                # Prefer actual_cost from agent_run_usage spans when available;
+                # otherwise fall back to approximate per-token estimates.
                 input_tokens = float(record.get('input_tokens') or 0)
                 output_tokens = float(record.get('output_tokens') or 0)
-
-                input_cost_per_million = float(os.getenv("LLM_INPUT_COST_PER_MILLION", "0.50"))
-                output_cost_per_million = float(os.getenv("LLM_OUTPUT_COST_PER_MILLION", "1.50"))
-                input_cost = (input_tokens / 1_000_000) * input_cost_per_million
-                output_cost = (output_tokens / 1_000_000) * output_cost_per_million
-                record_cost = input_cost + output_cost
+                actual_cost = float(record.get('actual_cost') or 0)
+                if actual_cost > 0:
+                    record_cost = actual_cost
+                else:
+                    input_cost_per_million = float(os.getenv("LLM_INPUT_COST_PER_MILLION", "0.50"))
+                    output_cost_per_million = float(os.getenv("LLM_OUTPUT_COST_PER_MILLION", "1.50"))
+                    input_cost = (input_tokens / 1_000_000) * input_cost_per_million
+                    output_cost = (output_tokens / 1_000_000) * output_cost_per_million
+                    record_cost = input_cost + output_cost
                 
                 total_cost += record_cost
                 total_tokens += input_tokens + output_tokens

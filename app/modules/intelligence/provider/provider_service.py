@@ -1108,6 +1108,13 @@ class ProviderService:
         params = self._build_llm_params(config)
         routing_provider = config.provider
 
+        # Environment for span attributes
+        env = (
+            os.getenv("LOGFIRE_ENVIRONMENT")
+            or os.getenv("ENV")
+            or "local"
+        ).strip()
+
         # Validate and filter images before processing
         if images:
             validated_images = self._validate_images_for_multimodal(images)

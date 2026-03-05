@@ -153,7 +153,7 @@ class StandardExecutionFlow:
                             message_history=message_history,
                             metadata=_build_run_metadata(ctx),
                         )
-                except (TimeoutError, anyio.WouldBlock, Exception) as mcp_error:
+                except (TimeoutError, anyio.WouldBlock) as mcp_error:
                     error_detail = f"{type(mcp_error).__name__}: {str(mcp_error)}"
                     logger.warning(
                         f"MCP server initialization failed in standard run: {error_detail}",
@@ -189,10 +189,7 @@ class StandardExecutionFlow:
                     f"Error in standard multi-agent run method: {str(e)}", exc_info=True
                 )
                 return ChatAgentResponse(
-                    response=(
-                        "An error occurred while processing your request: "
-                        f"{str(e)}"
-                    ),
+                    response="An internal error occurred while processing your request.",
                     tool_calls=[],
                     citations=[],
                 )
@@ -350,7 +347,6 @@ class StreamingExecutionFlow:
                     TimeoutError,
                     anyio.WouldBlock,
                     ModelHTTPError,
-                    Exception,
                 ) as mcp_error:
                     error_detail = f"{type(mcp_error).__name__}: {str(mcp_error)}"
                     error_str = str(mcp_error).lower()

@@ -703,7 +703,18 @@ def execute_regenerate_background(
                             return False  # Indicate cancellation
 
                 # Run the async regeneration on the worker's long-lived loop
-                completed = self.run_async(run_regeneration())
+                # Run the async regeneration on the worker's long-lived loop
+                # Convert asyncio.CancelledError to RuntimeError for Celery callback stability.
+                try:
+                    completed = self.run_async(run_regeneration())
+                except asyncio.CancelledError as e:
+                    logger.warning(
+                        "Regeneration run was cancelled (asyncio.CancelledError); "
+                        "re-raising as RuntimeError for Celery"
+                    )
+                    raise RuntimeError(
+                        "Regeneration stream was cancelled during execution"
+                    ) from e
 
                 # Collect OpenRouter usage and record cost in Logfire (for all outcomes)
                 usages = get_and_clear_usages()

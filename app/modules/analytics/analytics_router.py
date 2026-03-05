@@ -46,7 +46,7 @@ def _validate_date_range(
     today = date.today()
 
     # Reject future dates
-    if end_date > today:
+    if end_date is not None and end_date > today:   
         raise HTTPException(
             status_code=422,
             detail="end_date cannot be in the future.",
@@ -65,7 +65,7 @@ def _validate_date_range(
         )
 
     # Max 30-day range
-    if start_date and end_date and (end_date - start_date).days > 30:
+    if start_date and end_date and (end_date - start_date).days >= 30:
         raise HTTPException(
             status_code=422,
             detail="Date range must not exceed 30 days.",
