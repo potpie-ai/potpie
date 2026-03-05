@@ -168,22 +168,7 @@ def execute_agent_background(
                             # Check for cancellation (redundant with cooperative check in agent, but keeps early exit)
                             if redis_manager.check_cancellation(conversation_id, run_id):
                                 logger.info("Agent execution cancelled")
-                                try:
-                                    message_id = (
-                                        service.history_manager.flush_message_buffer(
-                                            conversation_id, MessageType.AI_GENERATED
-                                        )
-                                    )
-                                    if message_id:
-                                        logger.debug(
-                                            "Flushed partial AI response for cancelled task",
-                                            message_id=message_id,
-                                        )
-                                except Exception as e:
-                                    logger.warning(
-                                        "Failed to flush message buffer on cancellation",
-                                        error=str(e),
-                                    )
+                                # Do not flush here - stop_generation saves from Redis snapshot to avoid duplicates
                                 redis_manager.publish_event(
                                     conversation_id,
                                     run_id,
@@ -221,22 +206,7 @@ def execute_agent_background(
                         return True  # Indicate successful completion (loop finished)
                     except GenerationCancelled:
                         logger.info("Agent execution cancelled (GenerationCancelled)")
-                        try:
-                            message_id = (
-                                service.history_manager.flush_message_buffer(
-                                    conversation_id, MessageType.AI_GENERATED
-                                )
-                            )
-                            if message_id:
-                                logger.debug(
-                                    "Flushed partial AI response for cancelled task",
-                                    message_id=message_id,
-                                )
-                        except Exception as e:
-                            logger.warning(
-                                "Failed to flush message buffer on cancellation",
-                                error=str(e),
-                            )
+                        # Do not flush here - stop_generation saves from Redis snapshot to avoid duplicates
                         redis_manager.publish_event(
                             conversation_id,
                             run_id,
@@ -250,13 +220,11 @@ def execute_agent_background(
 
                     return True  # Indicate successful completion
 
-            # Run the async agent execution on the worker's long-lived loop
-            logger.info("Entering run_async (agent coroutine)")
-            completed = self.run_async(run_agent())
             # Run the async agent execution on the worker's long-lived loop.
             # Convert asyncio.CancelledError to RuntimeError so Celery's result callback
             # receives (failed, retval, runtime) instead of ExceptionInfo (avoids
             # "cannot unpack non-iterable ExceptionInfo object").
+            logger.info("Entering run_async (agent coroutine)")
             try:
                 completed = self.run_async(run_agent())
             except asyncio.CancelledError as e:
@@ -432,22 +400,7 @@ def execute_regenerate_background(
                         # Check for cancellation
                         if redis_manager.check_cancellation(conversation_id, run_id):
                             logger.info("Regenerate execution cancelled")
-
-                            # Flush any buffered AI response chunks before cancelling
-                            try:
-                                message_id = service.history_manager.flush_message_buffer(
-                                    conversation_id, MessageType.AI_GENERATED
-                                )
-                                if message_id:
-                                    logger.debug(
-                                        "Flushed partial AI response for cancelled regenerate",
-                                        message_id=message_id,
-                                    )
-                            except Exception as e:
-                                logger.warning(
-                                    "Failed to flush message buffer on cancellation",
-                                    error=str(e),
-                                )
+                            # Do not flush here - stop_generation saves from Redis snapshot to avoid duplicates
                             redis_manager.publish_event(
                                 conversation_id,
                                 run_id,
@@ -494,20 +447,7 @@ def execute_regenerate_background(
                     logger.info(
                         "Regenerate execution cancelled (GenerationCancelled)"
                     )
-                    try:
-                        message_id = service.history_manager.flush_message_buffer(
-                            conversation_id, MessageType.AI_GENERATED
-                        )
-                        if message_id:
-                            logger.debug(
-                                "Flushed partial AI response for cancelled regenerate",
-                                message_id=message_id,
-                            )
-                    except Exception as e:
-                        logger.warning(
-                            "Failed to flush message buffer on cancellation",
-                            error=str(e),
-                        )
+                    # Do not flush here - stop_generation saves from Redis snapshot to avoid duplicates
                     redis_manager.publish_event(
                         conversation_id,
                         run_id,

@@ -226,6 +226,21 @@ async def post_message(
     )
 
 
+@router.post("/conversations/{conversation_id}/stop", response_model=dict)
+async def stop_generation(
+    conversation_id: str,
+    session_id: Optional[str] = Query(None, description="Session ID to stop"),
+    db: Session = Depends(get_db),
+    async_db: AsyncSession = Depends(get_async_db),
+    user=Depends(get_api_key_user),
+):
+    """Stop streaming generation and persist partial response to the database."""
+    user_id = user["user_id"]
+    user_email = user.get("email") or None
+    controller = ConversationController(db, async_db, user_id, user_email)
+    return await controller.stop_generation(conversation_id, session_id)
+
+
 @router.post("/project/{project_id}/message/")
 async def create_conversation_and_message(
     project_id: str,
