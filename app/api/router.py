@@ -4,6 +4,7 @@ import os
 from typing import List, Optional
 
 from fastapi import Depends, Header, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -132,9 +133,22 @@ async def parse_directory(
 @router.get("/parsing-status/{project_id}")
 async def get_parsing_status(
     project_id: str,
+    request: Request,
+    stream: bool = Query(False, description="Whether to stream parsing status via SSE"),
     db: Session = Depends(get_db),
     user=Depends(get_api_key_user),
 ):
+    if stream:
+        await ParsingController.fetch_parsing_status(project_id, db, user)
+        return StreamingResponse(
+            ParsingController.stream_parsing_status(project_id, db, user, request),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+            },
+        )
+
     return await ParsingController.fetch_parsing_status(project_id, db, user)
 
 

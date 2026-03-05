@@ -1,15 +1,19 @@
 import asyncio
+import json
 import os
 from asyncio import create_task
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from dotenv import load_dotenv
 from fastapi import HTTPException
+import redis
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
+from app.core.config_provider import ConfigProvider
 from app.celery.tasks.parsing_tasks import process_parsing
 from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
@@ -41,6 +45,125 @@ load_dotenv(override=True)
 
 
 class ParsingController:
+    @staticmethod
+    def _format_sse_event(event_name: str, payload: Dict[str, Any]) -> str:
+        return f"event: {event_name}\ndata: {json.dumps(payload)}\n\n"
+
+    @staticmethod
+    async def stream_parsing_status(
+        project_id: str,
+        db: Session,
+        user: Dict[str, Any],
+        request: Any,
+        heartbeat_interval_seconds: float = 15.0,
+        max_stream_duration_seconds: float = 600.0,
+    ):
+        terminal_statuses = {
+            ProjectStatusEnum.READY.value,
+            ProjectStatusEnum.ERROR.value,
+        }
+
+        loop = asyncio.get_running_loop()
+        started_at = loop.time()
+        last_emitted_at = started_at
+        redis_client = redis.from_url(
+            ConfigProvider().get_redis_url(),
+            socket_connect_timeout=10,
+            socket_timeout=30,
+            decode_responses=False,
+        )
+        stream_key = f"parsing:stream:{project_id}"
+        last_id = "$"
+
+        try:
+            # Initial snapshot and access check
+            try:
+                initial_payload = await ParsingController.fetch_parsing_status(
+                    project_id, db, user
+                )
+                initial_payload["project_id"] = project_id
+                initial_payload["timestamp"] = datetime.now(timezone.utc).isoformat()
+                yield ParsingController._format_sse_event("status", initial_payload)
+                last_emitted_at = loop.time()
+
+                if initial_payload.get("status") in terminal_statuses:
+                    yield ParsingController._format_sse_event("complete", initial_payload)
+                    return
+            except HTTPException as e:
+                error_payload = {
+                    "project_id": project_id,
+                    "detail": e.detail,
+                    "status_code": e.status_code,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                yield ParsingController._format_sse_event("error", error_payload)
+                return
+            except Exception as e:
+                logger.error(f"Error in stream_parsing_status: {str(e)}")
+                error_payload = {
+                    "project_id": project_id,
+                    "detail": "Internal server error",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                yield ParsingController._format_sse_event("error", error_payload)
+                return
+
+            while True:
+                if await request.is_disconnected():
+                    break
+
+                elapsed = loop.time() - started_at
+                if elapsed >= max_stream_duration_seconds:
+                    timeout_payload = {
+                        "project_id": project_id,
+                        "detail": "Parsing status stream timed out",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }
+                    yield ParsingController._format_sse_event("error", timeout_payload)
+                    break
+
+                events = await asyncio.to_thread(
+                    lambda: redis_client.xread({stream_key: last_id}, block=5000, count=1)
+                )
+
+                if not events:
+                    now = loop.time()
+                    if now - last_emitted_at >= heartbeat_interval_seconds:
+                        heartbeat_payload = {
+                            "project_id": project_id,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }
+                        yield ParsingController._format_sse_event(
+                            "heartbeat", heartbeat_payload
+                        )
+                        last_emitted_at = now
+                    continue
+
+                for _, stream_events in events:
+                    for event_id, _ in stream_events:
+                        last_id = event_id
+
+                        status_payload = await ParsingController.fetch_parsing_status(
+                            project_id, db, user
+                        )
+                        status_payload["project_id"] = project_id
+                        status_payload["timestamp"] = datetime.now(
+                            timezone.utc
+                        ).isoformat()
+                        yield ParsingController._format_sse_event("status", status_payload)
+                        last_emitted_at = loop.time()
+
+                        if status_payload.get("status") in terminal_statuses:
+                            yield ParsingController._format_sse_event(
+                                "complete", status_payload
+                            )
+                            return
+        finally:
+            try:
+                await asyncio.to_thread(redis_client.close)
+            except Exception:
+                pass
+
     @staticmethod
     @validate_parsing_input
     async def parse_directory(

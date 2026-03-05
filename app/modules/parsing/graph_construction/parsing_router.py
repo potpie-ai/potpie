@@ -1,4 +1,5 @@
-from fastapi import Depends
+from fastapi import Depends, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -24,8 +25,23 @@ async def parse_directory(
 
 @router.get("/parsing-status/{project_id}")
 async def get_parsing_status(
-    project_id: str, db: Session = Depends(get_db), user=Depends(AuthService.check_auth)
+    project_id: str,
+    request: Request,
+    stream: bool = Query(False, description="Whether to stream parsing status via SSE"),
+    db: Session = Depends(get_db),
+    user=Depends(AuthService.check_auth),
 ):
+    if stream:
+        await ParsingController.fetch_parsing_status(project_id, db, user)
+        return StreamingResponse(
+            ParsingController.stream_parsing_status(project_id, db, user, request),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+            },
+        )
+
     return await ParsingController.fetch_parsing_status(project_id, db, user)
 
 
