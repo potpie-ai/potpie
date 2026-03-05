@@ -33,6 +33,8 @@ logger = setup_logger(__name__)
 
 
 class ParsingService:
+    """Orchestrate repository parsing, graph generation, and inference lifecycle."""
+
     def __init__(
         self,
         db: Session,
@@ -60,6 +62,35 @@ class ParsingService:
         self._neo4j_config = neo4j_config
         self._raise_library_exceptions = raise_library_exceptions
         self.repo_manager = RepoManager()
+
+    def _cleanup_graph_for_project(self, project_id: str, user_id: str) -> None:
+        """Delete existing graph/search state for a project.
+
+        Args:
+            project_id: Project identifier whose graph should be cleaned.
+            user_id: User identifier for structured logging context.
+
+        Raises:
+            ParsingServiceError: If graph cleanup fails and callers choose to escalate.
+        """
+        neo4j_config = self._get_neo4j_config()
+        try:
+            with CodeGraphService(
+                neo4j_config["uri"],
+                neo4j_config["username"],
+                neo4j_config["password"],
+                self.db,
+            ) as code_graph_service:
+                code_graph_service.cleanup_graph(str(project_id))
+        except Exception as exc:
+            logger.exception(
+                "Failed to cleanup project graph",
+                project_id=project_id,
+                user_id=user_id,
+            )
+            raise ParsingServiceError(
+                f"Failed to cleanup graph for project {project_id}: {exc}"
+            ) from exc
 
     @classmethod
     def create_from_config(
@@ -95,6 +126,14 @@ class ParsingService:
 
     @contextmanager
     def change_dir(self, path):
+        """Temporarily change process working directory within a context block.
+
+        Args:
+            path: Target directory path.
+
+        Yields:
+            None: Control returns to caller while the directory is active.
+        """
         old_dir = os.getcwd()
         os.chdir(path)
         try:
@@ -110,10 +149,28 @@ class ParsingService:
         project_id: str,
         cleanup_graph: bool = True,
     ):
+        """Parse a repository and refresh graph/inference artifacts for a project.
+
+        Args:
+            repo_details: Parsing input describing repository source and revision.
+            user_id: User identifier that owns the parse request.
+            user_email: Email address used for completion notifications.
+            project_id: Target project identifier.
+            cleanup_graph: Whether to clean previous graph before parsing.
+
+        Returns:
+            Dictionary containing parse completion message and project id.
+
+        Raises:
+            HTTPException: For API-facing parse failures when library exceptions are disabled.
+            ParsingServiceError: For library-mode parse failures.
+        """
         # Set up logging context with domain IDs
         with log_context(project_id=str(project_id), user_id=user_id):
             project_manager = ProjectService(self.db)
             extracted_dir = None
+            incremental_changed_files = None
+            incremental_files_to_delete = None
             try:
                 # Early check: if project is already inferring, return without re-running (avoids duplicate work and status update errors)
                 existing_project = await project_manager.get_project_from_db_by_id(
@@ -190,29 +247,25 @@ class ParsingService:
                             "id": project_id,
                         }
 
-                if cleanup_graph:
-                    neo4j_config = self._get_neo4j_config()
+                previous_commit_id = (
+                    existing_project.get("commit_id") if existing_project else None
+                )
+                incremental_candidate = bool(
+                    cleanup_graph
+                    and previous_commit_id
+                    and repo_details.commit_id
+                    and previous_commit_id != repo_details.commit_id
+                )
 
+                if cleanup_graph and not incremental_candidate:
                     try:
-                        code_graph_service = CodeGraphService(
-                            neo4j_config["uri"],
-                            neo4j_config["username"],
-                            neo4j_config["password"],
-                            self.db,
-                        )
-
-                        code_graph_service.cleanup_graph(str(project_id))
-                    except Exception:
-                        logger.exception(
-                            "Error in cleanup_graph",
-                            project_id=project_id,
-                            user_id=user_id,
-                        )
+                        self._cleanup_graph_for_project(str(project_id), user_id)
+                    except ParsingServiceError as exc:
                         if self._raise_library_exceptions:
-                            raise ParsingServiceError("Failed to cleanup graph")
+                            raise
                         raise HTTPException(
                             status_code=500, detail="Internal server error"
-                        )
+                        ) from exc
 
                 # Convert ParsingRequest to RepoDetails
                 repo_details_converted = RepoDetails(
@@ -237,7 +290,7 @@ class ParsingService:
                             "Using user's GitHub OAuth token for cloning",
                             user_id=user_id,
                             repo_name=repo_details.repo_name,
-                            token_prefix=user_token[:8] if len(user_token) > 8 else "short",
+                            has_user_token=True,
                         )
                     else:
                         logger.warning(
@@ -251,7 +304,7 @@ class ParsingService:
                         "Failed to fetch user GitHub token - falling back to environment tokens",
                         user_id=user_id,
                         repo_name=repo_details.repo_name,
-                        error=str(e),
+                        error_type=type(e).__name__,
                     )
                 (
                     repo,
@@ -267,36 +320,20 @@ class ParsingService:
                     project_id=project_id,
                     repo_manager_path=repo_manager_path,
                 )
-                if config_provider.get_is_development_mode():
-                    (
-                        extracted_dir,
-                        returned_project_id,
-                    ) = await self.parse_helper.setup_project_directory(
-                        repo,
-                        repo_details.branch_name,
-                        auth,
-                        repo_details,
-                        user_id,
-                        str(project_id),
-                        commit_id=repo_details.commit_id,
-                        repo_manager_path=repo_manager_path,
-                        auth_token=user_token,
-                    )
-                else:
-                    (
-                        extracted_dir,
-                        returned_project_id,
-                    ) = await self.parse_helper.setup_project_directory(
-                        repo,
-                        repo_details.branch_name,
-                        auth,
-                        repo_details,
-                        user_id,
-                        str(project_id),
-                        commit_id=repo_details.commit_id,
-                        repo_manager_path=repo_manager_path,
-                        auth_token=user_token,
-                    )
+                (
+                    extracted_dir,
+                    returned_project_id,
+                ) = await self.parse_helper.setup_project_directory(
+                    repo,
+                    repo_details.branch_name,
+                    auth,
+                    repo_details,
+                    user_id,
+                    str(project_id),
+                    commit_id=repo_details.commit_id,
+                    repo_manager_path=repo_manager_path,
+                    auth_token=user_token,
+                )
 
                 # setup_project_directory returns str | None, but project_id is int
                 # Keep original project_id since it's already set and used as int throughout
@@ -312,6 +349,43 @@ class ParsingService:
                         status_code=500, detail="Failed to set up project directory"
                     )
                 extracted_dir = str(extracted_dir)
+
+                if incremental_candidate and previous_commit_id and repo_details.commit_id:
+                    try:
+                        changed_files_map = ParseHelper.get_changed_files_between_commits(
+                            extracted_dir,
+                            previous_commit_id,
+                            repo_details.commit_id,
+                        )
+                        changed_files_to_parse = sorted(
+                            set(changed_files_map.get("added", []))
+                            | set(changed_files_map.get("modified", []))
+                        )
+                        incremental_changed_files = changed_files_to_parse
+                        incremental_files_to_delete = sorted(
+                            set(changed_files_to_parse)
+                            | set(changed_files_map.get("deleted", []))
+                        )
+                        logger.info(
+                            "Incremental parse candidate computed",
+                            project_id=project_id,
+                            previous_commit_id=previous_commit_id,
+                            current_commit_id=repo_details.commit_id,
+                            changed_files_count=len(changed_files_to_parse),
+                            deleted_files_count=len(
+                                changed_files_map.get("deleted", [])
+                            ),
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to compute incremental diff, falling back to full graph rebuild",
+                            project_id=project_id,
+                            previous_commit_id=previous_commit_id,
+                            current_commit_id=repo_details.commit_id,
+                        )
+                        self._cleanup_graph_for_project(str(project_id), user_id)
+                        incremental_changed_files = None
+                        incremental_files_to_delete = None
 
                 if repo is None or isinstance(repo, Repo):
                     # Local repo or cached repo without GitHub API access
@@ -354,21 +428,42 @@ class ParsingService:
                     },
                 )
                 await self.analyze_directory(
-                    extracted_dir, project_id, user_id, self.db, language, user_email
+                    extracted_dir,
+                    project_id,
+                    user_id,
+                    self.db,
+                    language,
+                    user_email,
+                    incremental_changed_files=incremental_changed_files,
+                    incremental_files_to_delete=incremental_files_to_delete,
                 )
                 message = "The project has been parsed successfully"
                 return {"message": message, "id": project_id}
 
             except ParsingServiceError as e:
                 message = str(f"{project_id} Failed during parsing: " + str(e))
-                await project_manager.update_project_status(
-                    project_id, ProjectStatusEnum.ERROR
-                )
-                if not self._raise_library_exceptions:
-                    await ParseWebhookHelper().send_slack_notification(
-                        project_id, message
+                try:
+                    await project_manager.update_project_status(
+                        project_id, ProjectStatusEnum.ERROR
                     )
-                    raise HTTPException(status_code=500, detail=message)
+                except Exception:
+                    logger.exception(
+                        "Failed to update project status after ParsingServiceError",
+                        project_id=project_id,
+                        user_id=user_id,
+                    )
+                if not self._raise_library_exceptions:
+                    try:
+                        await ParseWebhookHelper().send_slack_notification(
+                            project_id, message
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to send slack notification",
+                            project_id=project_id,
+                            user_id=user_id,
+                        )
+                    raise HTTPException(status_code=500, detail=message) from e
                 raise
 
             except Exception as e:
@@ -400,14 +495,28 @@ class ParsingService:
                     raise ParsingServiceError(
                         f"Parsing failed for project {project_id}: {e}"
                     ) from e
-                await ParseWebhookHelper().send_slack_notification(project_id, str(e))
+                try:
+                    await ParseWebhookHelper().send_slack_notification(
+                        project_id, str(e)
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to send slack notification",
+                        project_id=project_id,
+                        user_id=user_id,
+                    )
                 # Raise generic error with correlation ID for client
                 raise HTTPException(
                     status_code=500,
                     detail=f"Internal server error. Please contact support with project ID: {project_id}",
-                )
+                ) from e
 
     def create_neo4j_indices(self, graph_manager):
+        """Create required Neo4j indexes for node and relationship lookups.
+
+        Args:
+            graph_manager: Graph manager object that owns a Neo4j driver and index helpers.
+        """
         # Create existing indices from blar_graph
         graph_manager.create_entityId_index()
         graph_manager.create_node_id_index()
@@ -440,7 +549,27 @@ class ParsingService:
         db,
         language: str,
         user_email: str,
+        incremental_changed_files: list[str] | None = None,
+        incremental_files_to_delete: list[str] | None = None,
     ):
+        """Run graph construction and inference for an extracted repository directory.
+
+        Args:
+            extracted_dir: Repository path prepared for parsing.
+            project_id: Project identifier.
+            user_id: User identifier.
+            db: Database session used by graph services.
+            language: Predominant repository language.
+            user_email: Optional recipient for completion email.
+            incremental_changed_files: Changed files to parse for incremental updates.
+            incremental_files_to_delete: Files whose nodes should be deleted before insert.
+
+        Raises:
+            ValueError: If ``extracted_dir`` is not a valid string path.
+            FileNotFoundError: If ``extracted_dir`` does not exist.
+            HTTPException: If project does not exist and HTTP mode is enabled.
+            ParsingFailedError: If repository language is unsupported.
+        """
         logger.info(
             f"ParsingService: Parsing project {project_id}: Analyzing directory: {extracted_dir}"
         )
@@ -448,14 +577,14 @@ class ParsingService:
         # Validate that extracted_dir is a valid path
         if not isinstance(extracted_dir, str):
             error_msg = f"ParsingService: Invalid extracted_dir type: {type(extracted_dir)}, value: {extracted_dir}"
-            logger.bind(project_id=project_id, user_id=user_id).error(error_msg)
+            logger.error(error_msg, project_id=project_id, user_id=user_id)
             raise ValueError(
                 f"Expected string path, got {type(extracted_dir)}: {extracted_dir}"
             )
 
         if not os.path.exists(extracted_dir):
             error_msg = f"ParsingService: Directory does not exist: {extracted_dir}"
-            logger.bind(project_id=project_id, user_id=user_id).error(error_msg)
+            logger.error(error_msg, project_id=project_id, user_id=user_id)
             raise FileNotFoundError(f"Directory not found: {extracted_dir}")
 
         logger.info(
@@ -469,7 +598,7 @@ class ParsingService:
             branch_name = project_details.get("branch_name")
         else:
             error_msg = f"Project with ID {project_id} not found."
-            logger.bind(project_id=project_id, user_id=user_id).error(error_msg)
+            logger.error(error_msg, project_id=project_id, user_id=user_id)
             if self._raise_library_exceptions:
                 raise ParsingServiceError(error_msg)
             raise HTTPException(status_code=404, detail="Project not found.")
@@ -498,8 +627,35 @@ class ParsingService:
                     neo4j_config["password"],
                     db,
                 )
-
-                service.create_and_store_graph(extracted_dir, project_id, user_id)
+                if incremental_changed_files is not None or incremental_files_to_delete is not None:
+                    if service.has_legacy_md5_node_ids(project_id):
+                        logger.info(
+                            "[PARSING] Legacy node IDs detected; performing one-time full graph rebuild",
+                            project_id=project_id,
+                        )
+                        service.cleanup_graph(project_id)
+                        service.create_and_store_graph(extracted_dir, project_id, user_id)
+                    else:
+                        files_to_delete = sorted(
+                            set(incremental_files_to_delete or [])
+                            | set(incremental_changed_files or [])
+                        )
+                        if files_to_delete:
+                            service.delete_nodes_by_file_paths(project_id, files_to_delete)
+                        if incremental_changed_files:
+                            service.create_and_store_graph(
+                                extracted_dir,
+                                project_id,
+                                user_id,
+                                changed_files=incremental_changed_files,
+                            )
+                        else:
+                            logger.info(
+                                "[PARSING] Incremental mode with no added/modified files; skipping graph insert",
+                                project_id=project_id,
+                            )
+                else:
+                    service.create_and_store_graph(extracted_dir, project_id, user_id)
                 graph_gen_time = time.time() - graph_gen_start
                 logger.info(
                     f"[PARSING] Graph generation completed in {graph_gen_time:.2f}s",
@@ -617,94 +773,100 @@ class ParsingService:
                 "Repository doesn't consist of a language currently supported."
             )
 
+    async def duplicate_graph(self, old_repo_id: str, new_repo_id: str):
+        """Clone graph/search data from one repository id to another.
 
-async def duplicate_graph(self, old_repo_id: str, new_repo_id: str):
-    await self.search_service.clone_search_indices(old_repo_id, new_repo_id)
-    node_batch_size = 3000  # Fixed batch size for nodes
-    relationship_batch_size = 3000  # Fixed batch size for relationships
-    try:
-        # Step 1: Fetch and duplicate nodes in batches
-        with self.inference_service.driver.session() as session:
-            offset = 0
-            while True:
-                nodes_query = """
-                    MATCH (n:NODE {repoId: $old_repo_id})
-                    RETURN n.node_id AS node_id, n.text AS text, n.file_path AS file_path,
-                           n.start_line AS start_line, n.end_line AS end_line, n.name AS name,
-                           COALESCE(n.docstring, '') AS docstring,
-                           COALESCE(n.embedding, []) AS embedding,
-                           labels(n) AS labels
-                    SKIP $offset LIMIT $limit
-                    """
-                nodes_result = session.run(
-                    nodes_query,
-                    old_repo_id=old_repo_id,
-                    offset=offset,
-                    limit=node_batch_size,
-                )
-                nodes = [dict(record) for record in nodes_result]
+        Args:
+            old_repo_id: Source repository identifier.
+            new_repo_id: Destination repository identifier.
+        """
+        node_batch_size = 3000  # Fixed batch size for nodes
+        relationship_batch_size = 3000  # Fixed batch size for relationships
+        try:
+            await self.search_service.clone_search_indices(old_repo_id, new_repo_id)
+            # Step 1: Fetch and duplicate nodes in batches
+            with self.inference_service.driver.session() as session:
+                offset = 0
+                while True:
+                    nodes_query = """
+                        MATCH (n:NODE {repoId: $old_repo_id})
+                        RETURN n.node_id AS node_id, n.text AS text, n.file_path AS file_path,
+                               n.start_line AS start_line, n.end_line AS end_line, n.name AS name,
+                               COALESCE(n.docstring, '') AS docstring,
+                               COALESCE(n.embedding, []) AS embedding,
+                               labels(n) AS labels
+                        SKIP $offset LIMIT $limit
+                        """
+                    nodes_result = session.run(
+                        nodes_query,
+                        old_repo_id=old_repo_id,
+                        offset=offset,
+                        limit=node_batch_size,
+                    )
+                    nodes = [dict(record) for record in nodes_result]
 
-                if not nodes:
-                    break
+                    if not nodes:
+                        break
 
-                # Insert nodes under the new repo ID, preserving labels, docstring, and embedding
-                create_query = """
-                    UNWIND $batch AS node
-                    CALL apoc.create.node(node.labels, {
-                        repoId: $new_repo_id,
-                        node_id: node.node_id,
-                        text: node.text,
-                        file_path: node.file_path,
-                        start_line: node.start_line,
-                        end_line: node.end_line,
-                        name: node.name,
-                        docstring: node.docstring,
-                        embedding: node.embedding
-                    }) YIELD node AS new_node
-                    RETURN new_node
-                    """
-                session.run(create_query, new_repo_id=new_repo_id, batch=nodes)
-                offset += node_batch_size
+                    # Insert nodes under the new repo ID, preserving labels, docstring, and embedding
+                    create_query = """
+                        UNWIND $batch AS node
+                        CALL apoc.create.node(node.labels, {
+                            repoId: $new_repo_id,
+                            node_id: node.node_id,
+                            text: node.text,
+                            file_path: node.file_path,
+                            start_line: node.start_line,
+                            end_line: node.end_line,
+                            name: node.name,
+                            docstring: node.docstring,
+                            embedding: node.embedding
+                        }) YIELD node AS new_node
+                        RETURN new_node
+                        """
+                    session.run(create_query, new_repo_id=new_repo_id, batch=nodes)
+                    offset += node_batch_size
 
-        # Step 2: Fetch and duplicate relationships in batches
-        with self.inference_service.driver.session() as session:
-            offset = 0
-            while True:
-                relationships_query = """
-                    MATCH (n:NODE {repoId: $old_repo_id})-[r]->(m:NODE)
-                    RETURN n.node_id AS start_node_id, type(r) AS relationship_type, m.node_id AS end_node_id
-                    SKIP $offset LIMIT $limit
-                    """
-                relationships_result = session.run(
-                    relationships_query,
-                    old_repo_id=old_repo_id,
-                    offset=offset,
-                    limit=relationship_batch_size,
-                )
-                relationships = [dict(record) for record in relationships_result]
+            # Step 2: Fetch and duplicate relationships in batches
+            with self.inference_service.driver.session() as session:
+                offset = 0
+                while True:
+                    relationships_query = """
+                        MATCH (n:NODE {repoId: $old_repo_id})-[r]->(m:NODE)
+                        RETURN n.node_id AS start_node_id, type(r) AS relationship_type, m.node_id AS end_node_id
+                        SKIP $offset LIMIT $limit
+                        """
+                    relationships_result = session.run(
+                        relationships_query,
+                        old_repo_id=old_repo_id,
+                        offset=offset,
+                        limit=relationship_batch_size,
+                    )
+                    relationships = [dict(record) for record in relationships_result]
 
-                if not relationships:
-                    break
+                    if not relationships:
+                        break
 
-                relationship_query = """
-                    UNWIND $batch AS relationship
-                    MATCH (a:NODE {repoId: $new_repo_id, node_id: relationship.start_node_id}),
-                          (b:NODE {repoId: $new_repo_id, node_id: relationship.end_node_id})
-                    CALL apoc.create.relationship(a, relationship.relationship_type, {}, b) YIELD rel
-                    RETURN rel
-                    """
-                session.run(
-                    relationship_query, new_repo_id=new_repo_id, batch=relationships
-                )
-                offset += relationship_batch_size
+                    relationship_query = """
+                        UNWIND $batch AS relationship
+                        MATCH (a:NODE {repoId: $new_repo_id, node_id: relationship.start_node_id}),
+                              (b:NODE {repoId: $new_repo_id, node_id: relationship.end_node_id})
+                        CALL apoc.create.relationship(a, relationship.relationship_type, {}, b) YIELD rel
+                        RETURN rel
+                        """
+                    session.run(
+                        relationship_query, new_repo_id=new_repo_id, batch=relationships
+                    )
+                    offset += relationship_batch_size
 
-        logger.info(
-            f"Successfully duplicated graph from {old_repo_id} to {new_repo_id}"
-        )
+            logger.info(
+                f"Successfully duplicated graph from {old_repo_id} to {new_repo_id}"
+            )
 
-    except Exception:
-        logger.exception(
-            "Error duplicating graph",
-            old_repo_id=old_repo_id,
-            new_repo_id=new_repo_id,
-        )
+        except Exception:
+            logger.exception(
+                "Error duplicating graph",
+                old_repo_id=old_repo_id,
+                new_repo_id=new_repo_id,
+            )
+            raise

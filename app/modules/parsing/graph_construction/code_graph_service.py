@@ -1,8 +1,9 @@
 import hashlib
 import os
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Generator, Optional
 
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
@@ -15,29 +16,133 @@ logger = setup_logger(__name__)
 
 
 class CodeGraphService:
-    def __init__(self, neo4j_uri, neo4j_user, neo4j_password, db: Session):
-        self.driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
+    """Manage graph persistence and maintenance operations for repository parsing."""
+
+    def __init__(
+        self, neo4j_uri: str, neo4j_user: str, neo4j_password: str, db: Session
+    ) -> None:
+        """Initialize a Neo4j-backed graph service.
+
+        Args:
+            neo4j_uri: Neo4j connection URI.
+            neo4j_user: Neo4j username.
+            neo4j_password: Neo4j password.
+            db: Active SQLAlchemy session for secondary services.
+
+        Raises:
+            Exception: Re-raises any Neo4j driver initialization failure.
+        """
+        self.driver = None
+        try:
+            self.driver = GraphDatabase.driver(
+                neo4j_uri, auth=(neo4j_user, neo4j_password)
+            )
+        except Exception:
+            logger.exception("Failed to initialize Neo4j driver", uri=neo4j_uri)
+            raise
         self.db = db
 
+    def __enter__(self) -> "CodeGraphService":
+        """Enter context manager scope for deterministic driver cleanup."""
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Close the Neo4j driver when leaving context manager scope."""
+        self.close()
+
+    def _require_driver(self):
+        """Return the active Neo4j driver or raise if closed/uninitialized."""
+        if self.driver is None:
+            raise RuntimeError("Neo4j driver is not available")
+        return self.driver
+
+    @contextmanager
+    def _session(self) -> Generator:
+        """Yield a Neo4j session from the active driver.
+
+        Yields:
+            neo4j.Session: Open Neo4j session.
+        """
+        with self._require_driver().session() as session:
+            yield session
+
     @staticmethod
-    def generate_node_id(path: str, user_id: str):
-        # Concatenate path and signature
+    def generate_node_id(path: str, user_id: str) -> str:
+        """Generate deterministic node identifier scoped to a user.
+
+        Args:
+            path: Source path or node signature.
+            user_id: Owning user identifier.
+
+        Returns:
+            SHA-256 hex digest used as ``node_id``.
+        """
         combined_string = f"{user_id}:{path}"
-
-        # Create a SHA-1 hash of the combined string
-        hash_object = hashlib.md5()
+        hash_object = hashlib.sha256()
         hash_object.update(combined_string.encode("utf-8"))
-
-        # Get the hexadecimal representation of the hash
         node_id = hash_object.hexdigest()
-
         return node_id
 
-    def close(self):
-        self.driver.close()
+    def close(self) -> None:
+        """Close the Neo4j driver safely and idempotently."""
+        if self.driver is None:
+            return
 
-    def create_and_store_graph(self, repo_dir, project_id, user_id):
+        try:
+            self.driver.close()
+        finally:
+            self.driver = None
+
+    def delete_nodes_by_file_paths(self, project_id: str, file_paths: list[str]) -> None:
+        """Delete all graph nodes that belong to the provided file paths.
+
+        Args:
+            project_id: Project/repository identifier in the graph.
+            file_paths: Relative file paths to remove from graph storage.
+        """
+        normalized_paths = [
+            str(Path(file_path).as_posix()).removeprefix("./")
+            for file_path in file_paths
+            if file_path
+        ]
+        if not normalized_paths:
+            return
+
+        with self._session() as session:
+            session.run(
+                """
+                MATCH (n:NODE {repoId: $project_id})
+                WHERE n.file_path IN $file_paths
+                DETACH DELETE n
+                """,
+                project_id=project_id,
+                file_paths=normalized_paths,
+            )
+
+    def create_and_store_graph(
+        self,
+        repo_dir: str,
+        project_id: str,
+        user_id: str,
+        changed_files: Optional[list[str]] = None,
+    ) -> None:
+        """Parse repository structure and persist graph nodes/relationships in Neo4j.
+
+        Args:
+            repo_dir: Local repository directory to parse.
+            project_id: Project/repository identifier.
+            user_id: User identifier for node ID generation.
+            changed_files: Optional subset of changed files for incremental updates.
+        """
         graph_start_time = time.time()
+        changed_files_set = None
+        if changed_files:
+            changed_files_set = {
+                str(Path(file_path).as_posix()).removeprefix("./")
+                for file_path in changed_files
+                if file_path
+            }
+
         # Ensure repo_dir is a string and absolute path
         repo_dir = str(Path(repo_dir).resolve())
         logger.info(
@@ -50,9 +155,8 @@ class CodeGraphService:
         )
 
         # Step 1: Create RepoMap and parse repository
-        repo_map_start = time.time()
         logger.info(
-            f"[GRAPH GENERATION] Step 1/4: Initializing RepoMap parser",
+            "[GRAPH GENERATION] Step 1/4: Initializing RepoMap parser",
             project_id=project_id,
         )
         self.repo_map = RepoMap(
@@ -64,28 +168,52 @@ class CodeGraphService:
 
         parse_start = time.time()
         logger.info(
-            f"[GRAPH GENERATION] Step 2/4: Parsing repository structure",
+            "[GRAPH GENERATION] Step 2/4: Parsing repository structure",
             project_id=project_id,
         )
         nx_graph = self.repo_map.create_graph(repo_dir)
         parse_time = time.time() - parse_start
-        node_count = nx_graph.number_of_nodes()
-        relationship_count = nx_graph.number_of_edges()
+        total_node_count = nx_graph.number_of_nodes()
+        total_relationship_count = nx_graph.number_of_edges()
+        node_count = total_node_count
+        relationship_count = total_relationship_count
+        if changed_files_set:
+            node_count = sum(
+                1
+                for _, node_data in nx_graph.nodes(data=True)
+                if node_data.get("file") in changed_files_set
+            )
+            relationship_count = sum(
+                1
+                for source, target, _ in nx_graph.edges(data=True)
+                if (
+                    nx_graph.nodes[source].get("file") in changed_files_set
+                    or nx_graph.nodes[target].get("file") in changed_files_set
+                )
+            )
         logger.info(
-            f"[GRAPH GENERATION] Parsed repository: {node_count} nodes, {relationship_count} relationships in {parse_time:.2f}s",
+            f"[GRAPH GENERATION] Parsed repository: {total_node_count} nodes, {total_relationship_count} relationships in {parse_time:.2f}s",
             project_id=project_id,
-            node_count=node_count,
-            relationship_count=relationship_count,
+            node_count=total_node_count,
+            relationship_count=total_relationship_count,
             parse_time_seconds=parse_time,
         )
+        if changed_files_set:
+            logger.info(
+                "[GRAPH GENERATION] Incremental mode",
+                project_id=project_id,
+                changed_files_count=len(changed_files_set),
+                incremental_node_count=node_count,
+                incremental_relationship_count=relationship_count,
+            )
 
-        with self.driver.session() as session:
+        with self._session() as session:
             db_start_time = time.time()
 
             # Step 2: Create indices
             index_start = time.time()
             logger.info(
-                f"[GRAPH GENERATION] Step 3/4: Creating Neo4j indices",
+                "[GRAPH GENERATION] Step 3/4: Creating Neo4j indices",
                 project_id=project_id,
             )
             session.run(
@@ -103,18 +231,30 @@ class CodeGraphService:
 
             # Step 3: Batch insert nodes
             node_insert_start = time.time()
+            batch_size = 1000
+            
+            # Construct the list of nodes to process based on changed_files_set
+            if changed_files_set:
+                nodes_to_process = [
+                    (node_id, node_data)
+                    for node_id, node_data in nx_graph.nodes(data=True)
+                    if node_data.get("file") in changed_files_set
+                ]
+            else:
+                nodes_to_process = list(nx_graph.nodes(data=True))
+            
+            node_count = len(nodes_to_process)
             logger.info(
                 f"[GRAPH GENERATION] Step 4/4: Inserting {node_count} nodes into Neo4j",
                 project_id=project_id,
                 total_nodes=node_count,
             )
-            batch_size = 1000
             total_batches = (node_count + batch_size - 1) // batch_size
             nodes_inserted = 0
 
             for batch_idx, i in enumerate(range(0, node_count, batch_size), 1):
                 batch_start = time.time()
-                batch_nodes = list(nx_graph.nodes(data=True))[i : i + batch_size]
+                batch_nodes = nodes_to_process[i : i + batch_size]
                 nodes_to_create = []
 
                 for node_id, node_data in batch_nodes:
@@ -195,6 +335,14 @@ class CodeGraphService:
             # Pre-calculate common relationship types to avoid dynamic relationship creation
             rel_types = set()
             for source, target, data in nx_graph.edges(data=True):
+                if changed_files_set:
+                    source_file = nx_graph.nodes[source].get("file")
+                    target_file = nx_graph.nodes[target].get("file")
+                    if (
+                        source_file not in changed_files_set
+                        and target_file not in changed_files_set
+                    ):
+                        continue
                 rel_type = data.get("type", "REFERENCES")
                 rel_types.add(rel_type)
 
@@ -209,12 +357,26 @@ class CodeGraphService:
             total_rels_inserted = 0
 
             for rel_type in rel_types:
+                # Validate relationship type to prevent Cypher injection
+                if not rel_type.isidentifier():
+                    logger.warning(
+                        f"[GRAPH GENERATION] Skipping invalid relationship type: {rel_type!r}",
+                        project_id=project_id,
+                    )
+                    continue
                 rel_type_start = time.time()
                 # Filter edges by relationship type
                 type_edges = [
                     (s, t, d)
                     for s, t, d in nx_graph.edges(data=True)
                     if d.get("type", "REFERENCES") == rel_type
+                    and (
+                        not changed_files_set
+                        or (
+                            nx_graph.nodes[s].get("file") in changed_files_set
+                            or nx_graph.nodes[t].get("file") in changed_files_set
+                        )
+                    )
                 ]
 
                 type_batch_count = (len(type_edges) + batch_size - 1) // batch_size
@@ -231,7 +393,7 @@ class CodeGraphService:
                     batch_edges = type_edges[i : i + batch_size]
                     edges_to_create = []
 
-                    for source, target, data in batch_edges:
+                    for source, target, _data in batch_edges:
                         edges_to_create.append(
                             {
                                 "source_id": CodeGraphService.generate_node_id(
@@ -246,13 +408,19 @@ class CodeGraphService:
 
                     # Type-specific relationship creation in one transaction
                     insert_start = time.time()
-                    query = f"""
+                    query = """
                         UNWIND $edges AS edge
-                        MATCH (source:NODE {{node_id: edge.source_id, repoId: edge.repoId}})
-                        MATCH (target:NODE {{node_id: edge.target_id, repoId: edge.repoId}})
-                        CREATE (source)-[r:{rel_type} {{repoId: edge.repoId}}]->(target)
+                        MATCH (source:NODE {node_id: edge.source_id, repoId: edge.repoId})
+                        MATCH (target:NODE {node_id: edge.target_id, repoId: edge.repoId})
+                        CALL apoc.create.relationship(
+                            source,
+                            $rel_type,
+                            {repoId: edge.repoId},
+                            target
+                        ) YIELD rel
+                        RETURN count(rel) AS created_count
                     """
-                    session.run(query, edges=edges_to_create)
+                    session.run(query, edges=edges_to_create, rel_type=rel_type)
                     insert_time = time.time() - insert_start
                     batch_time = time.time() - batch_start
                     total_rels_inserted += len(edges_to_create)
@@ -299,8 +467,13 @@ class CodeGraphService:
                 relationships_inserted=total_rels_inserted,
             )
 
-    def cleanup_graph(self, project_id: str):
-        with self.driver.session() as session:
+    def cleanup_graph(self, project_id: str) -> None:
+        """Remove all graph data and search index state for a project.
+
+        Args:
+            project_id: Project/repository identifier.
+        """
+        with self._session() as session:
             session.run(
                 """
                 MATCH (n {repoId: $project_id})
@@ -313,26 +486,41 @@ class CodeGraphService:
         search_service = SearchService(self.db)
         search_service.delete_project_index(project_id)
 
-    async def get_node_by_id(self, node_id: str, project_id: str) -> Optional[Dict]:
-        with self.driver.session() as session:
+    def has_legacy_md5_node_ids(self, project_id: str) -> bool:
+        """Return whether the graph still contains legacy 32-char node ids."""
+        with self._session() as session:
             result = session.run(
                 """
-                MATCH (n:NODE {node_id: $node_id, repoId: $project_id})
-                RETURN n
+                MATCH (n:NODE {repoId: $project_id})
+                WHERE size(n.node_id) = 32
+                RETURN count(n) AS legacy_count
                 """,
-                node_id=node_id,
                 project_id=project_id,
             )
             record = result.single()
-            return dict(record["n"]) if record else None
+            legacy_count = record["legacy_count"] if record else 0
+            return bool(legacy_count)
 
-    def query_graph(self, query):
-        with self.driver.session() as session:
-            result = session.run(query)
+    def query_graph(
+        self, query: str, parameters: Optional[Dict[str, Any]] = None
+    ) -> list[Dict[str, Any]]:
+        """Execute an arbitrary Cypher query and return record dictionaries.
+
+        Args:
+            query: Cypher query string.
+            parameters: Optional parameter dictionary for query placeholders.
+
+        Returns:
+            List of row dictionaries from query results.
+        """
+        with self._session() as session:
+            result = session.run(query, parameters=parameters or {})
             return [record.data() for record in result]
 
 
 class SimpleIO:
+    """Minimal file IO adapter consumed by ``RepoMap`` parsing routines."""
+
     def read_text(self, fname):
         """
         Read file with multiple encoding fallbacks.
@@ -364,12 +552,17 @@ class SimpleIO:
         return ""
 
     def tool_error(self, message):
+        """Emit parser tool error message through the shared logger."""
         logger.error(f"Error: {message}")
 
     def tool_output(self, message):
+        """Emit parser tool output message through the shared logger."""
         logger.info(message)
 
 
 class SimpleTokenCounter:
+    """Approximate token counter used by RepoMap parsing."""
+
     def token_count(self, text):
+        """Return a whitespace-token approximation for the provided text."""
         return len(text.split())

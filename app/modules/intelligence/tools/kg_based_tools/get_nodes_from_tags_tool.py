@@ -1,5 +1,5 @@
 import asyncio
-from typing import List
+from typing import Any, Dict, List
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
@@ -46,10 +46,12 @@ class GetNodesFromTags:
         self.sql_db = sql_db
         self.user_id = user_id
 
-    async def arun(self, tags: List[str], project_id: str) -> str:
+    async def arun(
+        self, tags: List[str], project_id: str
+    ) -> List[Dict[str, Any]]:
         return await asyncio.to_thread(self.run, tags, project_id)
 
-    def run(self, tags: List[str], project_id: str) -> str:
+    def run(self, tags: List[str], project_id: str) -> List[Dict[str, Any]]:
         """
         Get nodes from the knowledge graph based on the provided tags.
         Inputs for the fetch_nodes method:
@@ -87,10 +89,14 @@ class GetNodesFromTags:
             raise ValueError(
                 f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
             )
-        tag_conditions = " OR ".join([f"'{tag}' IN n.tags" for tag in tags])
-        query = f"""MATCH (n:NODE)
-        WHERE ({tag_conditions}) AND n.repoId = '{project_id}'
-        RETURN n.file_path AS file_path, COALESCE(n.docstring, substring(n.text, 0, 500)) AS docstring, n.text AS text, n.node_id AS node_id, n.name AS name
+        query = """
+        MATCH (n:NODE)
+        WHERE any(tag IN $tags WHERE tag IN n.tags) AND n.repoId = $project_id
+        RETURN n.file_path AS file_path,
+               COALESCE(n.docstring, substring(n.text, 0, 500)) AS docstring,
+               n.text AS text,
+               n.node_id AS node_id,
+               n.name AS name
         """
         nodes = []
         # Properly manage the DB generator to ensure cleanup
@@ -104,7 +110,7 @@ class GetNodesFromTags:
                 neo4j_config["username"],
                 neo4j_config["password"],
                 db,
-            ).query_graph(query)
+            ).query_graph(query, {"tags": tags, "project_id": project_id})
         except Exception as e:
             import logging
 
