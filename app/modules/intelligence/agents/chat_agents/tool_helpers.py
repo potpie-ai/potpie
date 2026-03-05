@@ -219,8 +219,6 @@ def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
             )
         case "list_files_in_changes":
             return "Listing files in code changes"
-        case "search_content_in_changes":
-            return "Searching content in code changes"
         case "clear_file_from_changes":
             file_path = _get_file_path()
             return (
@@ -744,8 +742,6 @@ def get_tool_response_message(
                         f"Files listed successfully ({m.group(1)} file(s) in changes)"
                     )
             return "Files listed successfully"
-        case "search_content_in_changes":
-            return "Content search completed successfully"
         case "clear_file_from_changes":
             file_path = args.get("file_path") if args else None
             if file_path:
@@ -1095,14 +1091,6 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
                 filters.append(f"path: {path_pattern}")
             filter_text = f" ({', '.join(filters)})" if filters else ""
             return f"-> listing files in code changes{filter_text}\n"
-        case "search_content_in_changes":
-            pattern = args.get("pattern", "")
-            file_pattern = args.get("file_pattern", "")
-            return (
-                f"-> searching content in code changes: pattern '{pattern}'"
-                + (f" in files matching '{file_pattern}'" if file_pattern else "")
-                + "\n"
-            )
         case "clear_file_from_changes":
             file_path = args.get("file_path", "")
             return f"-> clearing file from code changes: {file_path}\n"
@@ -1544,7 +1532,6 @@ description:
             | "delete_file_in_changes"
             | "get_file_from_changes"
             | "list_files_in_changes"
-            | "search_content_in_changes"
             | "clear_file_from_changes"
             | "clear_all_changes"
             | "get_changes_summary"

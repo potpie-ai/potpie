@@ -90,7 +90,6 @@ TOOL_DEFINITIONS: Dict[str, dict] = {
     },
     "get_file_from_changes": {"tier": "medium", "category": "code_changes"},
     "list_files_in_changes": {"tier": "medium", "category": "code_changes"},
-    "search_content_in_changes": {"tier": "medium", "category": "code_changes"},
     "clear_file_from_changes": {
         "tier": "medium",
         "category": "code_changes",
@@ -280,7 +279,6 @@ CODE_GEN_BASE_TOOLS: List[str] = [
     "delete_file_in_changes",
     "get_file_from_changes",
     "list_files_in_changes",
-    "search_content_in_changes",
     "clear_file_from_changes",
     "clear_all_changes",
     "get_changes_summary",
@@ -356,7 +354,6 @@ EXECUTE_TOOLS: List[str] = [
     "delete_file_in_changes",
     "get_file_from_changes",
     "list_files_in_changes",
-    "search_content_in_changes",
     "clear_file_from_changes",
     "clear_all_changes",
     "get_changes_summary",

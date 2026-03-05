@@ -23,6 +23,7 @@ from app.modules.intelligence.tools.reasoning_manager import (
     _reset_reasoning_manager,
 )
 
+from app.modules.intelligence.tracing.logfire_tracer import should_instrument_pydantic_ai
 from ..chat_agent import (
     ChatAgent,
     ChatAgentResponse,
@@ -184,7 +185,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             "defer_model_check": True,
             "end_strategy": "exhaustive",
             "model_settings": {"max_tokens": 14000},
-            "instrument": True,
+            "instrument": should_instrument_pydantic_ai(),
             "history_processors": [self._history_processor],
         }
 

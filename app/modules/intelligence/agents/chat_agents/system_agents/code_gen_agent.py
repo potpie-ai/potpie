@@ -217,7 +217,6 @@ class CodeGenAgent(ChatAgent):
                 "delete_file_in_changes",
                 "get_file_from_changes",
                 "list_files_in_changes",
-                "search_content_in_changes",
                 "clear_file_from_changes",
                 "clear_all_changes",
                 "get_changes_summary",
@@ -701,9 +700,6 @@ For the most reliable PR creation flow, use the **direct worktree mode**:
 
 - **`list_files_in_changes`** - List all tracked files
   - Filter by change type or file path pattern
-
-- **`search_content_in_changes`** - Search for patterns in changes
-  - Grep-like functionality for finding code
 
 - **`get_changes_summary`** - Get overview of all changes
   - Shows file counts by change type

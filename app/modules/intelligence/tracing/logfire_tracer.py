@@ -107,6 +107,17 @@ def is_logfire_enabled() -> bool:
     return _LOGFIRE_INITIALIZED
 
 
+def should_instrument_pydantic_ai() -> bool:
+    """
+    Return whether pydantic_ai Agent should use OpenTelemetry instrumentation.
+
+    Returns False when running in a Celery worker process to avoid OTel contextvar
+    errors ('Token was created in a different Context') during async tool execution
+    with prefork workers. Set by worker_process_init in celery_app.
+    """
+    return os.getenv("CELERY_WORKER") != "1"
+
+
 def shutdown_logfire_tracing():
     """
     Shutdown Logfire tracing.
