@@ -202,6 +202,7 @@ class ProjectService:
 
     @staticmethod
     def _publish_project_status_event(project_id: str, status: str) -> None:
+        redis_client = None
         try:
             redis_url = ConfigProvider().get_redis_url()
             redis_client = redis.from_url(
@@ -224,12 +225,20 @@ class ProjectService:
                 approximate=True,
             )
             redis_client.expire(key, ConfigProvider.get_stream_ttl_secs())
-            redis_client.close()
         except Exception:
             logger.warning(
                 f"Failed to publish parsing status event for project {project_id}",
                 exc_info=True,
             )
+        finally:
+            if redis_client is not None:
+                try:
+                    redis_client.close()
+                except Exception:
+                    logger.warning(
+                        "Failed to close redis client for project status publish",
+                        exc_info=True,
+                    )
 
     async def get_project_from_db(
         self,

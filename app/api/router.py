@@ -139,9 +139,17 @@ async def get_parsing_status(
     user=Depends(get_api_key_user),
 ):
     if stream:
-        await ParsingController.fetch_parsing_status(project_id, db, user)
+        pre_fetched_status = await ParsingController.fetch_parsing_status(
+            project_id, db, user
+        )
         return StreamingResponse(
-            ParsingController.stream_parsing_status(project_id, db, user, request),
+            ParsingController.stream_parsing_status(
+                project_id,
+                db,
+                user,
+                request,
+                pre_fetched_status=pre_fetched_status,
+            ),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
