@@ -50,8 +50,8 @@ def _record_openrouter_cost_in_logfire(usages: List[dict], outcome: str) -> floa
             ):
                 pass
         except Exception:
-            # Non-fatal: we still return the cost
-            pass
+            # Non-fatal for the task, but surface instrumentation issues
+            logger.warning("Failed to record Logfire usage span", exc_info=True)
 
     return total_cost
 
@@ -384,12 +384,15 @@ def execute_agent_background(
 
                     logger.info("Background agent execution completed")
                 else:
+                    redis_manager.set_task_status(
+                        conversation_id, run_id, "cancelled"
+                    )
                     logger.info("Background agent execution cancelled")
 
                 # Return the completion status so on_success can check if it was cancelled
                 return completed
 
-            except Exception as e:
+            except Exception:
                 logger.exception(
                     "Background agent execution failed",
                     conversation_id=conversation_id,
@@ -771,6 +774,9 @@ def execute_regenerate_background(
 
                     logger.info("Background regenerate execution completed")
                 else:
+                    redis_manager.set_task_status(
+                        conversation_id, run_id, "cancelled"
+                    )
                     logger.info("Background regenerate execution cancelled")
 
                 # Return the completion status so on_success can check if it was cancelled

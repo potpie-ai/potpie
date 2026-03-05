@@ -1064,7 +1064,7 @@ class ProviderService:
                     )
                 else:
                     client = instructor.from_litellm(acompletion, mode=instructor.Mode.JSON)
-                    response = await client.chat.completions.create(
+                    parsed_response, completion = await client.chat.completions.create_with_completion(
                         model=params["model"],
                         messages=messages,
                         response_model=output_schema,
@@ -1073,8 +1073,8 @@ class ProviderService:
                         max_tokens=params.get("max_tokens"),
                         **request_kwargs,
                     )
-                _log_openrouter_usage(params.get("model", ""), response)
-                return response
+                    _log_openrouter_usage(params.get("model", ""), completion)
+                    return parsed_response
         except Exception as e:
             logger.exception("LLM call with structured output failed")
             raise e

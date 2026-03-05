@@ -184,6 +184,8 @@ class StandardExecutionFlow:
                     citations=[],
                 )
 
+            except GenerationCancelled:
+                raise
             except Exception as e:
                 logger.error(
                     f"Error in standard multi-agent run method: {str(e)}", exc_info=True
@@ -247,6 +249,8 @@ class MultimodalExecutionFlow:
                     citations=[],
                 )
 
+            except GenerationCancelled:
+                raise
             except Exception as e:
                 logger.error(
                     f"Error in multimodal multi-agent run method: {str(e)}",

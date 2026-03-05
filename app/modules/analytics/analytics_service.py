@@ -47,7 +47,7 @@ class AnalyticsService:
         Raises ``ValueError`` if the value contains characters outside the
         allowlist ``[A-Za-z0-9_\\-:.@]``.
         """
-        if not value or not _SAFE_ID_RE.match(value):
+        if not isinstance(value, str) or not value or not _SAFE_ID_RE.match(value):
             raise ValueError(
                 f"Invalid {name}: contains disallowed characters"
             )
@@ -210,9 +210,9 @@ class AnalyticsService:
                     min_timestamp=start_dt,
                     limit=1000,
                 )
-            except Exception as e:
-                logger.error("Error querying tokens by day: %s", e)
-                return []
+            except Exception:
+                logger.exception("Error querying tokens by day")
+                raise
 
         rows = self._extract_rows(raw)
         result = []
@@ -336,9 +336,9 @@ class AnalyticsService:
                 })
             logger.info("Retrieved %s LLM usage records", len(result))
             return result
-        except Exception as e:
-            logger.error("Error querying cost data: %s", e)
-            return []
+        except Exception:
+            logger.exception("Error querying cost data")
+            raise
 
     def _get_agent_data(
         self,
@@ -393,9 +393,9 @@ class AnalyticsService:
                 })
             logger.info("Retrieved %s execution records", len(result))
             return result
-        except Exception as e:
-            logger.error("Error querying agent data: %s", e)
-            return []
+        except Exception:
+            logger.exception("Error querying agent data")
+            raise
 
     def _get_conversation_data(
         self,
@@ -444,9 +444,9 @@ class AnalyticsService:
                 })
             logger.info("Retrieved %s conversation records", len(result))
             return result
-        except Exception as e:
-            logger.error("Error querying conversation data: %s", e)
-            return []
+        except Exception:
+            logger.exception("Error querying conversation data")
+            raise
 
     def _aggregate_analytics(
         self,
@@ -625,6 +625,6 @@ class AnalyticsService:
                 )
                 rows = self._extract_rows(raw)
                 return [RawSpan(**row) for row in rows]
-            except Exception as e:
-                logger.error("Error querying raw spans: %s", e)
-                return []
+            except Exception:
+                logger.exception("Error querying raw spans")
+                raise

@@ -1,7 +1,7 @@
 """FastAPI router for analytics endpoints."""
 
 import os
-from datetime import date
+from datetime import date, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -44,6 +44,8 @@ def _validate_date_range(
 ) -> None:
     """Raise 422 if the caller-supplied dates are invalid."""
     today = date.today()
+    effective_end = end_date or today
+    effective_start = start_date or (effective_end - timedelta(days=29))
 
     # Reject future dates
     if end_date is not None and end_date > today:   
@@ -58,14 +60,14 @@ def _validate_date_range(
         )
 
     # start must be <= end
-    if start_date and end_date and start_date > end_date:
+    if effective_start > effective_end:
         raise HTTPException(
             status_code=422,
             detail="start_date must be on or before end_date.",
         )
 
     # Max 30-day range
-    if start_date and end_date and (end_date - start_date).days >= 30:
+    if (effective_end - effective_start).days >= 30:
         raise HTTPException(
             status_code=422,
             detail="Date range must not exceed 30 days.",
