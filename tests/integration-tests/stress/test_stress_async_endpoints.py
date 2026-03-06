@@ -116,7 +116,13 @@ async def test_stress_active_session_no_5xx(
     stress_client: httpx.AsyncClient,
     setup_test_conversation_committed,
 ):
-    """GET /active-session under load: assert no 5xx (404/403 allowed when no active run)."""
+    """GET /active-session under load: assert no 5xx.
+
+    Stress-tests the 'no active session found' path: setup_test_conversation_committed
+    creates only a DB conversation (no Redis stream keys), so SessionService.get_active_session()
+    always returns no session and the endpoint returns 404. We assert no 5xx under load;
+    all responses are expected to be 404 (or 403 if access denied).
+    """
     conversation_id = setup_test_conversation_committed.id
     url = f"/api/v1/conversations/{conversation_id}/active-session"
     res = await _run_concurrent(
@@ -130,6 +136,12 @@ async def test_stress_active_session_no_5xx(
     assert bad_count == 0 and not res["errors"], (
         f"GET /active-session: {bad_count} 5xx, {len(res['errors'])} errors. "
         f"Status counts: {res['status_counts']}. Errors: {res['errors'][:5]}"
+    )
+    # Explicit: we only exercise the no-session path (404/403), never 2xx
+    ok_count = res["ok"]
+    assert ok_count == 0, (
+        f"Expected all 404/403 (no Redis keys). Got {ok_count} 2xx. "
+        f"Status counts: {res['status_counts']}"
     )
     if res["latencies_ms"]:
         res["latencies_ms"].sort()
