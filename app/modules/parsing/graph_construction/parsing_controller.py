@@ -136,10 +136,12 @@ class ParsingController:
         return ParsingController._status_payload_with_metadata(project_id, payload)
 
     @staticmethod
-    def _initial_stream_cursor(redis_client: redis.Redis, stream_key: str) -> str:
+    async def _initial_stream_cursor(redis_client: redis.Redis, stream_key: str) -> str:
         """Return a cursor anchored to current stream tail to avoid missing new events."""
         try:
-            latest_events = redis_client.xrevrange(stream_key, count=1)
+            latest_events = await asyncio.to_thread(
+                redis_client.xrevrange, stream_key, count=1
+            )
             if latest_events:
                 latest_id, _ = latest_events[0]
                 return (
@@ -262,7 +264,9 @@ class ParsingController:
             decode_responses=False,
         )
         stream_key = f"parsing:stream:{project_id}"
-        last_id = ParsingController._initial_stream_cursor(redis_client, stream_key)
+        last_id = await ParsingController._initial_stream_cursor(
+            redis_client, stream_key
+        )
 
         try:
             try:
