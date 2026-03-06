@@ -489,6 +489,7 @@ class ParsingController:
                             project_id=project_id,
                         )
 
+
             return {"status": project_status, "latest": is_latest}
 
         except HTTPException:

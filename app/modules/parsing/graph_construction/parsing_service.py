@@ -4,14 +4,24 @@ import time
 import traceback
 from asyncio import create_task
 from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
-from git import Repo
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.code_provider.github.github_service import GithubService
+
+# Lazy import for GitPython - import at module level causes SIGSEGV in forked workers
+if TYPE_CHECKING:
+    from git import Repo as RepoType
+
+
+def _get_repo_class():
+    """Lazy import git.Repo to avoid fork-safety issues."""
+    from git import Repo
+    return Repo
 from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.parsing.graph_construction.parsing_helper import (
     ParseHelper,
@@ -313,6 +323,7 @@ class ParsingService:
                     )
                 extracted_dir = str(extracted_dir)
 
+                Repo = _get_repo_class()
                 if repo is None or isinstance(repo, Repo):
                     # Local repo or cached repo without GitHub API access
                     # Use local language detection

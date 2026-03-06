@@ -1,9 +1,23 @@
 import asyncio
 import os
+import platform
+import multiprocessing
 
 # Set TOKENIZERS_PARALLELISM before any tokenizer imports to prevent fork warnings
 # This must be set before sentence-transformers or any HuggingFace tokenizers are used
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+# macOS: Force spawn instead of fork for multiprocessing.
+# GitPython/libgit2 has internal state that doesn't survive fork(),
+# causing SIGSEGV in forked worker processes.
+if platform.system() == "Darwin":
+    # Set before any multiprocessing is used
+    try:
+        multiprocessing.set_start_method("spawn", force=True)
+    except RuntimeError:
+        # Already set, which is fine
+        pass
+
 from urllib.parse import urlparse, urlunparse
 
 from dotenv import load_dotenv
@@ -81,6 +95,12 @@ except Exception:
 
 
 def configure_celery(queue_prefix: str):
+    # macOS: Use solo pool to avoid SIGSEGV from GitPython/libgit2 in forked workers.
+    # The prefork pool uses fork() which corrupts libgit2 internal state on macOS.
+    # Solo pool runs tasks in the main process (no forking).
+    # This can be overridden by command-line --pool= argument.
+    worker_pool = "solo" if platform.system() == "Darwin" else "prefork"
+    
     celery_app.conf.update(
         task_serializer="json",
         accept_content=["json"],
@@ -89,6 +109,8 @@ def configure_celery(queue_prefix: str):
         enable_utc=True,
         # Disable Celery's default logging hijacking so our intercept handler works
         worker_hijack_root_logger=False,
+        # Default pool setting (can be overridden by --pool command line arg)
+        worker_pool=worker_pool,
         task_routes={
             "app.celery.tasks.parsing_tasks.process_parsing": {
                 "queue": f"{queue_prefix}_process_repository"
@@ -111,7 +133,8 @@ def configure_celery(queue_prefix: str):
         worker_prefetch_multiplier=1,
         task_acks_late=True,
         task_track_started=True,
-        task_time_limit=5400,  # 90 minutes in seconds
+        # Hard time limit: worker is killed after this many seconds (default 90 min)
+        task_time_limit=int(os.getenv("CELERY_TASK_TIME_LIMIT", "5400")),
         # Add fair task distribution settings
         worker_max_tasks_per_child=200,  # Restart worker after 200 tasks to prevent memory leaks
         # Memory limit: Restart worker if using more than configured limit (in KB)
@@ -124,8 +147,8 @@ def configure_celery(queue_prefix: str):
         # If rate limiting is needed, apply it per-task using @task(rate_limit='...') decorator
         task_reject_on_worker_lost=False,  # Don't requeue tasks if worker dies (prevents infinite retry loops)
         broker_transport_options={
-            "visibility_timeout": 5400
-        },  # 45 minutes visibility timeout
+            "visibility_timeout": int(os.getenv("CELERY_TASK_TIME_LIMIT", "5400"))
+        },  # Match task_time_limit so unacked messages become visible again
     )
 
 
