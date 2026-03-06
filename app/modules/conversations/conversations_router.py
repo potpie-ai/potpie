@@ -291,7 +291,7 @@ class ConversationAPI:
             node_ids_list = parsed_node_ids or []
 
             # Start background task and return streaming response
-            return await start_celery_task_and_stream(
+            return start_celery_task_and_stream(
                 conversation_id=conversation_id,
                 run_id=run_id,
                 user_id=user_id,

@@ -303,15 +303,13 @@ class RedisStreamManager:
     def wait_for_task_start(
         self, conversation_id: str, run_id: str, timeout: int = 10
     ) -> bool:
-        """Wait for background task to be picked up by a worker (not just queued).
-
-        Returns True only when status is running, completed, or error; "queued" is
-        not considered started so the caller actually waits until a worker begins work.
-        """
+        """Wait for background task to signal it has started"""
         start_time = datetime.now()
         while (datetime.now() - start_time).total_seconds() < timeout:
             status = self.get_task_status(conversation_id, run_id)
-            if status in ["running", "completed", "error"]:
+            if status in ["queued", "running", "completed", "error"]:
                 return True
+            import time
+
             time.sleep(0.5)
         return False
