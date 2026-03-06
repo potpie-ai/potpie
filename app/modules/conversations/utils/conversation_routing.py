@@ -109,7 +109,7 @@ def redis_stream_generator(
         # Don't yield error events to match original behavior
 
 
-async def start_celery_task_and_stream(
+def start_celery_task_and_stream(
     conversation_id: str,
     run_id: str,
     user_id: str,
@@ -162,15 +162,11 @@ async def start_celery_task_and_stream(
 
     # Wait for background task to start (with health check)
     # Increased timeout to 30 seconds to handle queued tasks
-    # Run blocking wait off the event loop so concurrent requests are not serialized
     logger.info(
         f"Waiting for task to signal start (timeout=30s) for {conversation_id}:{run_id}"
     )
-    task_started = await asyncio.to_thread(
-        redis_manager.wait_for_task_start,
-        conversation_id,
-        run_id,
-        timeout=30,
+    task_started = redis_manager.wait_for_task_start(
+        conversation_id, run_id, timeout=30
     )
     logger.info(
         f"Task start check done for {conversation_id}:{run_id} (started={task_started})"
@@ -244,12 +240,8 @@ async def start_celery_task_and_wait(
     )
 
     # Wait for background task to start (with health check)
-    # Run blocking wait off the event loop
-    task_started = await asyncio.to_thread(
-        redis_manager.wait_for_task_start,
-        conversation_id,
-        run_id,
-        timeout=30,
+    task_started = redis_manager.wait_for_task_start(
+        conversation_id, run_id, timeout=30
     )
 
     if not task_started:
