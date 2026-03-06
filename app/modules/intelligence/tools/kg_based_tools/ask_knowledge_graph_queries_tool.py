@@ -1,9 +1,11 @@
 import asyncio
+import logging
 from typing import Dict, List
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
+from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.parsing.knowledge_graph.inference_schema import QueryResponse
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 from app.modules.projects.projects_service import ProjectService
@@ -26,6 +28,16 @@ class MultipleKnowledgeGraphQueriesInput(BaseModel):
     project_id: str = Field(
         description="The project id metadata for the project being evaluated"
     )
+
+
+class HydeVariant(BaseModel):
+    docstring: str = Field(
+        description="A hypothetical docstring that could describe code answering the query"
+    )
+
+
+class HydeResponse(BaseModel):
+    variants: List[HydeVariant]
 
 
 class KnowledgeGraphQueryTool:
@@ -54,6 +66,60 @@ class KnowledgeGraphQueryTool:
         self.user_id = user_id
         self.sql_db = sql_db
 
+    async def _hyde_expand_query(self, query: str) -> List[str]:
+        """
+        Expand a natural language query into multiple hypothetical docstrings (HyDE).
+
+        Returns a list of docstring-like variants to be used as queries against the
+        vector index. Always includes the original query as a fallback.
+        """
+        try:
+            provider_service = ProviderService(self.sql_db, self.user_id)
+
+            system_prompt = (
+                "You are an expert software engineer who writes high-quality, "
+                "concise docstrings for code. You will be given a natural language "
+                "question about a codebase, and you must invent 2-3 possible "
+                "docstrings or comments that could appear in the code that answers "
+                "this question."
+            )
+            user_prompt = f"""
+Question:
+{query}
+
+Rewrite this question as 2-3 possible docstrings or comments that might appear
+in the code implementing the answer. Focus on how the code would describe
+its own behavior, not on restating the question.
+"""
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
+
+            response = await provider_service.call_llm_with_structured_output(
+                messages=messages, output_schema=HydeResponse, config_type="inference"
+            )
+
+            if not isinstance(response, HydeResponse):
+                return [query]
+
+            variants: List[str] = []
+            for v in response.variants:
+                text = (v.docstring or "").strip()
+                if text:
+                    variants.append(text)
+
+            # Ensure we always have something, and always include the original query
+            if not variants:
+                return [query]
+            if query not in variants:
+                variants.append(query)
+
+            return variants
+        except Exception as e:
+            logging.warning(f"[HyDE] Failed to expand query '{query}': {e}")
+            return [query]
+
     async def ask_multiple_knowledge_graph_queries(
         self, queries: List[QueryRequest]
     ) -> Dict[str, str]:
@@ -61,23 +127,34 @@ class KnowledgeGraphQueryTool:
 
         async def process_query(query_request: QueryRequest) -> List[QueryResponse]:
             try:
-                # Call the query_vector_index method directly from InferenceService
-                results = inference_service.query_vector_index(
-                    query_request.project_id,
-                    query_request.query,
-                    query_request.node_ids,
-                )
-                return [
-                    QueryResponse(
-                        node_id=result.get("node_id"),
-                        docstring=result.get("docstring"),
-                        file_path=result.get("file_path"),
-                        start_line=result.get("start_line") or 0,
-                        end_line=result.get("end_line") or 0,
-                        similarity=result.get("similarity"),
+                # HyDE: expand the natural language query into hypothetical docstrings
+                expanded_queries = await self._hyde_expand_query(query_request.query)
+
+                merged_results: Dict[str, QueryResponse] = {}
+
+                for expanded_query in expanded_queries:
+                    results = inference_service.query_vector_index(
+                        query_request.project_id,
+                        expanded_query,
+                        query_request.node_ids,
                     )
-                    for result in results
-                ]
+                    for result in results:
+                        node_id = result.get("node_id")
+                        if not node_id:
+                            continue
+                        similarity = result.get("similarity") or 0.0
+                        existing = merged_results.get(node_id)
+                        if existing is None or similarity > (existing.similarity or 0.0):
+                            merged_results[node_id] = QueryResponse(
+                                node_id=result.get("node_id"),
+                                docstring=result.get("docstring"),
+                                file_path=result.get("file_path"),
+                                start_line=result.get("start_line") or 0,
+                                end_line=result.get("end_line") or 0,
+                                similarity=similarity,
+                            )
+
+                return list(merged_results.values())
             except Exception as e:
                 # Vector search may fail during INFERRING status (embeddings not ready)
                 # Return empty results gracefully instead of failing

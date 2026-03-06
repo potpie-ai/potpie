@@ -10,6 +10,9 @@ from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_model import Project
 from app.modules.intelligence.tools.tool_utils import truncate_dict_response
+from app.modules.intelligence.tools.context.context_compressor import (
+    ContextCompressor,
+)
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -77,8 +80,10 @@ class GetCodeFromMultipleNodeIdsTool:
             ]
             completed_tasks = await asyncio.gather(*tasks)
 
+            # Build result mapping and compress each node's code content
             result = {
-                node_id: result for node_id, result in zip(node_ids, completed_tasks)
+                node_id: ContextCompressor.compress_tool_result(result)
+                for node_id, result in zip(node_ids, completed_tasks)
             }
 
             # Truncate response if it exceeds character limits

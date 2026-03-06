@@ -10,6 +10,9 @@ from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_model import Project
 from app.modules.intelligence.tools.tool_utils import truncate_dict_response
+from app.modules.intelligence.tools.context.context_compressor import (
+    ContextCompressor,
+)
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -146,9 +149,12 @@ class GetCodeFromNodeIdTool:
             "docstring": docstring,
         }
 
+        # Compress low-signal tokens (comments/docstrings/extra whitespace) before truncation
+        compressed_result = ContextCompressor.compress_tool_result(result)
+
         # Truncate response if it exceeds character limits
-        truncated_result = truncate_dict_response(result)
-        if len(str(result)) > 80000:
+        truncated_result = truncate_dict_response(compressed_result)
+        if len(str(compressed_result)) > 80000:
             logger.warning(
                 f"get_code_from_node_id output truncated for node_id={node_id}, project_id={project.id}"
             )

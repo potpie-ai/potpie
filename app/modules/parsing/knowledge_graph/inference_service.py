@@ -1061,12 +1061,19 @@ class InferenceService:
 
                         # Pre-generate embeddings for all docstrings in batch
                         # This allows us to cache embeddings and reuse them in Neo4j update
-                        docstring_embeddings = {}
-                        for docstring_result in response.docstrings:
-                            embedding = self.generate_embedding(
+                        docstring_embeddings: Dict[str, List[float]] = {}
+                        if response.docstrings:
+                            texts = [
                                 docstring_result.docstring
-                            )
-                            docstring_embeddings[docstring_result.node_id] = embedding
+                                for docstring_result in response.docstrings
+                            ]
+                            embeddings = self._generate_embeddings_batch(texts)
+                            for docstring_result, embedding in zip(
+                                response.docstrings, embeddings
+                            ):
+                                docstring_embeddings[
+                                    docstring_result.node_id
+                                ] = embedding
 
                         for request, docstring_result in zip(
                             batch, response.docstrings
@@ -1353,8 +1360,33 @@ class InferenceService:
         return result
 
     def generate_embedding(self, text: str) -> List[float]:
+        """
+        Generate a single embedding.
+
+        Prefer using _generate_embeddings_batch when encoding many texts to
+        take advantage of SentenceTransformer's internal batching.
+        """
+        if text is None:
+            return []
         embedding = self.embedding_model.encode(text)
         return embedding.tolist()
+
+    def _generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
+        """
+        Generate embeddings for a batch of texts in a single call.
+
+        This is significantly faster than calling generate_embedding in a loop
+        because SentenceTransformer can optimize batching internally.
+        """
+        if not texts:
+            return []
+
+        # Normalize None values to empty strings to avoid encoder issues
+        cleaned_texts = [t if t is not None else "" for t in texts]
+        embeddings = self.embedding_model.encode(cleaned_texts)
+
+        # Convert to plain Python lists
+        return [emb.tolist() if hasattr(emb, "tolist") else list(emb) for emb in embeddings]
 
     def batch_update_neo4j_with_cached_inference(
         self, nodes: List[Dict[str, Any]], repo_id: str
@@ -1385,6 +1417,10 @@ class InferenceService:
         embeddings_generated = 0
         embeddings_reused = 0
 
+        # First collect nodes that still need embeddings so we can batch-encode them
+        nodes_needing_embeddings: List[Dict[str, Any]] = []
+        texts_to_embed: List[str] = []
+
         for node in nodes:
             cached_inference = node.get("cached_inference", {})
             if not cached_inference:
@@ -1393,22 +1429,40 @@ class InferenceService:
             docstring = cached_inference.get("docstring", "")
             tags = cached_inference.get("tags", [])
 
-            # Reuse cached embedding if available, otherwise generate new one
+            # Reuse cached embedding if available, otherwise mark for batch generation
             embedding = cached_inference.get("embedding_vector")
             if embedding is None:
-                embedding = self.generate_embedding(docstring)
-                embeddings_generated += 1
+                nodes_needing_embeddings.append(
+                    {"node": node, "docstring": docstring, "tags": tags}
+                )
+                texts_to_embed.append(docstring)
             else:
                 embeddings_reused += 1
+                batch_data.append(
+                    {
+                        "node_id": node["node_id"],
+                        "docstring": docstring,
+                        "embedding": embedding,
+                        "tags": tags,
+                    }
+                )
 
-            batch_data.append(
-                {
-                    "node_id": node["node_id"],
-                    "docstring": docstring,
-                    "embedding": embedding,
-                    "tags": tags,
-                }
-            )
+        # Batch-generate embeddings for nodes that were missing them
+        if texts_to_embed:
+            new_embeddings = self._generate_embeddings_batch(texts_to_embed)
+            for item, embedding in zip(nodes_needing_embeddings, new_embeddings):
+                node = item["node"]
+                docstring = item["docstring"]
+                tags = item["tags"]
+                embeddings_generated += 1
+                batch_data.append(
+                    {
+                        "node_id": node["node_id"],
+                        "docstring": docstring,
+                        "embedding": embedding,
+                        "tags": tags,
+                    }
+                )
 
         if not batch_data:
             return 0
@@ -1506,16 +1560,34 @@ class InferenceService:
         with self.driver.session() as session:
             batch_size = 300
             precomputed = precomputed_embeddings or {}
+            # Prepare docstring payloads and batch-generate any missing embeddings
+            node_ids: List[str] = []
+            docstring_texts: List[str] = []
+            embeddings: List[Optional[List[float]]] = []
+
+            for n in docstrings.docstrings:
+                node_ids.append(n.node_id)
+                docstring_texts.append(n.docstring)
+                embeddings.append(precomputed.get(n.node_id))
+
+            # Determine which indices still need embeddings
+            indices_needing_embeddings: List[int] = [
+                idx for idx, emb in enumerate(embeddings) if emb is None
+            ]
+            if indices_needing_embeddings:
+                texts_to_embed = [docstring_texts[idx] for idx in indices_needing_embeddings]
+                new_embeddings = self._generate_embeddings_batch(texts_to_embed)
+                for local_idx, global_idx in enumerate(indices_needing_embeddings):
+                    embeddings[global_idx] = new_embeddings[local_idx]
+
             docstring_list = [
                 {
-                    "node_id": n.node_id,
-                    "docstring": n.docstring,
-                    "tags": n.tags,
-                    # Reuse precomputed embedding if available, otherwise generate
-                    "embedding": precomputed.get(n.node_id)
-                    or self.generate_embedding(n.docstring),
+                    "node_id": node_ids[idx],
+                    "docstring": docstring_texts[idx],
+                    "tags": docstrings.docstrings[idx].tags,
+                    "embedding": embeddings[idx],
                 }
-                for n in docstrings.docstrings
+                for idx in range(len(node_ids))
             ]
             project = self.project_manager.get_project_from_db_by_id_sync(repo_id)
             repo_path = project.get("repo_path")
