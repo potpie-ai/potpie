@@ -1,10 +1,13 @@
 from datetime import datetime
+import json
 
 from fastapi import HTTPException
+import redis
 from sqlalchemy import String, cast
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.core.config_provider import ConfigProvider
 from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.utils.logger import setup_logger
@@ -201,6 +204,46 @@ class ProjectService:
             logger.exception(f"Error updating project status for {project_id}")
             self.db.rollback()
             raise
+
+    @staticmethod
+    def _publish_project_status_event(project_id: str, status: str) -> None:
+        redis_client = None
+        try:
+            redis_url = ConfigProvider().get_redis_url()
+            redis_client = redis.from_url(
+                redis_url,
+                socket_connect_timeout=5,
+                socket_timeout=10,
+                decode_responses=True,
+            )
+            key = f"parsing:stream:{project_id}"
+            event_data = {
+                "type": "status",   
+                "project_id": project_id,
+                "status": status,
+                "created_at": datetime.utcnow().isoformat(),
+            }
+            redis_client.xadd(
+                key,
+                {k: json.dumps(v) if isinstance(v, (dict, list)) else str(v) for k, v in event_data.items()},
+                maxlen=ConfigProvider.get_stream_maxlen(),
+                approximate=True,
+            )
+            redis_client.expire(key, ConfigProvider.get_stream_ttl_secs())
+        except Exception:
+            logger.warning(
+                f"Failed to publish parsing status event for project {project_id}",
+                exc_info=True,
+            )
+        finally:
+            if redis_client is not None:
+                try:
+                    redis_client.close()
+                except Exception:
+                    logger.warning(
+                        "Failed to close redis client for project status publish",
+                        exc_info=True,
+                    )
 
     async def get_project_from_db(
         self,
@@ -414,6 +457,11 @@ class ProjectService:
 
         if result > 0:
             db.commit()
+            status_value = kwargs.get("status")
+            if status_value:
+                ProjectService._publish_project_status_event(
+                    str(project_id), str(status_value)
+                )
             return result
 
         return None
