@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.core.config_provider import ConfigProvider
+from app.core.database import SessionLocal
 from app.celery.tasks.parsing_tasks import process_parsing
 from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
@@ -46,6 +47,7 @@ load_dotenv(override=True)
 
 class ParsingController:
     INTERNAL_SERVER_ERROR = "Internal server error"
+    STREAM_ERROR_MESSAGE = "Unable to stream parsing status"
     _background_tasks: set[asyncio.Task] = set()
 
     @staticmethod
@@ -124,17 +126,34 @@ class ParsingController:
     @staticmethod
     async def _fetch_stream_status_payload(
         project_id: str,
-        db: Session,
         user: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Fetch parsing status and enrich it for SSE delivery."""
-        payload = await ParsingController.fetch_parsing_status(project_id, db, user)
+        with SessionLocal() as status_db:
+            payload = await ParsingController.fetch_parsing_status(
+                project_id, status_db, user
+            )
         return ParsingController._status_payload_with_metadata(project_id, payload)
+
+    @staticmethod
+    def _initial_stream_cursor(redis_client: redis.Redis, stream_key: str) -> str:
+        """Return a cursor anchored to current stream tail to avoid missing new events."""
+        try:
+            latest_events = redis_client.xrevrange(stream_key, count=1)
+            if latest_events:
+                latest_id, _ = latest_events[0]
+                return (
+                    latest_id.decode()
+                    if isinstance(latest_id, bytes)
+                    else str(latest_id)
+                )
+        except Exception:
+            logger.exception("Failed to read initial parsing stream cursor")
+        return "0-0"
 
     @staticmethod
     async def _stream_status_updates(
         project_id: str,
-        db: Session,
         user: Dict[str, Any],
         request: Any,
         redis_client: redis.Redis,
@@ -166,7 +185,7 @@ class ParsingController:
             except Exception as e:
                 logger.exception("Error reading parsing status events")
                 error_payload = ParsingController._error_payload(
-                    project_id, str(e) or ParsingController.INTERNAL_SERVER_ERROR
+                    project_id, ParsingController.STREAM_ERROR_MESSAGE
                 )
                 yield ParsingController._format_sse_event("error", error_payload)
                 return
@@ -191,12 +210,17 @@ class ParsingController:
                     try:
                         status_payload = (
                             await ParsingController._fetch_stream_status_payload(
-                                project_id, db, user
+                                project_id, user
                             )
                         )
                     except HTTPException as e:
+                        client_detail = (
+                            str(e.detail)
+                            if e.status_code < 500
+                            else ParsingController.INTERNAL_SERVER_ERROR
+                        )
                         error_payload = ParsingController._error_payload(
-                            project_id, str(e.detail), e.status_code
+                            project_id, client_detail, e.status_code
                         )
                         yield ParsingController._format_sse_event("error", error_payload)
                         return
@@ -204,7 +228,7 @@ class ParsingController:
                         logger.exception("Error fetching parsing status while streaming")
                         error_payload = ParsingController._error_payload(
                             project_id,
-                            str(e) or ParsingController.INTERNAL_SERVER_ERROR,
+                            ParsingController.STREAM_ERROR_MESSAGE,
                         )
                         yield ParsingController._format_sse_event("error", error_payload)
                         return
@@ -238,7 +262,7 @@ class ParsingController:
             decode_responses=False,
         )
         stream_key = f"parsing:stream:{project_id}"
-        last_id = "$"
+        last_id = ParsingController._initial_stream_cursor(redis_client, stream_key)
 
         try:
             try:
@@ -249,7 +273,7 @@ class ParsingController:
                 else:
                     initial_payload = (
                         await ParsingController._fetch_stream_status_payload(
-                            project_id, db, user
+                            project_id, user
                         )
                     )
                 yield ParsingController._format_sse_event("status", initial_payload)
@@ -259,8 +283,13 @@ class ParsingController:
                     yield ParsingController._format_sse_event("complete", initial_payload)
                     return
             except HTTPException as e:
+                client_detail = (
+                    str(e.detail)
+                    if e.status_code < 500
+                    else ParsingController.INTERNAL_SERVER_ERROR
+                )
                 error_payload = ParsingController._error_payload(
-                    project_id, str(e.detail), e.status_code
+                    project_id, client_detail, e.status_code
                 )
                 yield ParsingController._format_sse_event("error", error_payload)
                 return
@@ -273,7 +302,6 @@ class ParsingController:
                 return
             async for event in ParsingController._stream_status_updates(
                 project_id,
-                db,
                 user,
                 request,
                 redis_client,
