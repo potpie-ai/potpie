@@ -26,11 +26,16 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TESTS_DIR = PROJECT_ROOT / "tests"
 
 
+BANNER_WIDTH = 72
+
+
 def run_pytest(
     *pytest_args: str,
     extra_env: dict[str, str] | None = None,
+    phase_name: str | None = None,
 ) -> int:
-    """Run pytest with project root as cwd; return exit code."""
+    """Run pytest with project root as cwd; return exit code.
+    Uses addopts from pyproject.toml (-v -ra --durations=5) for clearer output."""
     env = os.environ.copy()
     if extra_env:
         env.update(extra_env)
@@ -40,6 +45,11 @@ def run_pytest(
         cwd=PROJECT_ROOT,
         env=env,
     )
+    if phase_name is not None:
+        status = "FAILED" if result.returncode != 0 else "OK"
+        print(f"\n{'─' * BANNER_WIDTH}")
+        print(f"  Phase «{phase_name}» finished: {status} (exit code {result.returncode})")
+        print(f"{'─' * BANNER_WIDTH}\n")
     return result.returncode
 
 
@@ -79,24 +89,49 @@ def main() -> int:
     skip_real_parse = os.environ.get("SKIP_REAL_PARSE", "").strip().lower() in ("1", "true", "yes")
     run_stress = os.environ.get("RUN_STRESS", "").strip().lower() in ("1", "true", "yes")
 
+    def print_phase_banner(name: str) -> None:
+        print()
+        print("=" * BANNER_WIDTH)
+        print(f"  PHASE: {name}")
+        print("=" * BANNER_WIDTH)
+        print()
+        sys.stdout.flush()
+
     if args.unit_only:
-        code = run_pytest(str(TESTS_DIR / "unit"), "-m", "unit", *args.pytest_extra)
+        print_phase_banner("Unit")
+        code = run_pytest(
+            str(TESTS_DIR / "unit"), "-m", "unit",
+            *args.pytest_extra,
+            phase_name="Unit",
+        )
         return code
 
     if args.integration_only:
+        print_phase_banner("Integration")
         code = run_pytest(
             str(TESTS_DIR / "integration-tests"),
             "-m", "not stress and not real_parse and not github_live",
             *args.pytest_extra,
+            phase_name="Integration",
         )
         return code
 
     if args.real_parse_only:
-        code = run_pytest(TESTS_DIR, "-m", "real_parse", *args.pytest_extra)
+        print_phase_banner("Real parse")
+        code = run_pytest(
+            TESTS_DIR, "-m", "real_parse",
+            *args.pytest_extra,
+            phase_name="Real parse",
+        )
         return code
 
     if args.stress_only:
-        code = run_pytest(TESTS_DIR, "-m", "stress", *args.pytest_extra)
+        print_phase_banner("Stress")
+        code = run_pytest(
+            TESTS_DIR, "-m", "stress",
+            *args.pytest_extra,
+            phase_name="Stress",
+        )
         return code
 
     # Full run: unit → integration (no stress/real_parse) → real_parse (optional) → stress (optional)
@@ -116,11 +151,16 @@ def main() -> int:
         phases.append(("Stress", [str(TESTS_DIR), "-m", "stress"]))
 
     for name, pytest_args in phases:
-        print(f"\n{'='*60}\n  {name}\n{'='*60}\n")
-        code = run_pytest(*pytest_args, *args.pytest_extra)
+        print_phase_banner(name)
+        code = run_pytest(*pytest_args, *args.pytest_extra, phase_name=name)
         if code != 0:
             return code
 
+    print()
+    print("=" * BANNER_WIDTH)
+    print("  ALL PHASES PASSED")
+    print("=" * BANNER_WIDTH)
+    print()
     return 0
 
 

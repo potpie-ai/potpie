@@ -109,4 +109,4 @@ markers = [
     "real_parse: Real parsing tests requiring Postgres + Neo4j (exclude with -m 'not real_parse')",
 ]
 asyncio_mode = "auto"
-addopts = "-v --strict-markers --tb=short --disable-warnings"
+addopts = "-v --strict-markers --tb=short --disable-warnings -ra --durations=5"

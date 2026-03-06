@@ -32,9 +32,10 @@ WAIT_SECS = 1.2
 CONCURRENT_REQUESTS = 3
 # If requests were serialized we'd see ~ WAIT_SECS * CONCURRENT_REQUESTS.
 # With thread offload we expect ~ WAIT_SECS + overhead (DB, controller, etc.).
-# Allow up to 2x serial so CI/app overhead doesn't flake; still fails if fully serial.
+# Cap equals serial baseline so a fully-serial (broken) run fails the test.
+# On slow CI or heavy load, concurrent runs may exceed this; relax to e.g. 1.2 * SERIAL_WALL_SECS if needed.
 SERIAL_WALL_SECS = WAIT_SECS * CONCURRENT_REQUESTS
-MAX_WALL_SECS = SERIAL_WALL_SECS * 2.0  # Concurrent ~1.2s + overhead; serial would be 3.6s+
+MAX_WALL_SECS = SERIAL_WALL_SECS  # wall_secs must be < this; serial run would be ~SERIAL_WALL_SECS
 
 # Module where asyncio.to_thread is used (patch here to simulate "before" behavior)
 CONVERSATION_ROUTING_MODULE = "app.modules.conversations.utils.conversation_routing"

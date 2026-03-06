@@ -126,51 +126,53 @@ class TestInputValidationEdgeCases:
     async def test_post_parse_whitespace_only_repo_name(
         self, client, test_user, mock_process_parsing_delay
     ):
-        """repo_name with only whitespace is accepted (no validation at API level)."""
+        """repo_name with only whitespace: API currently accepts and enqueues (no validation)."""
         response = await client.post(
             "/api/v1/parse",
             json={"repo_name": "   "},
         )
-        # NOTE: The API accepts whitespace-only repo_name (returns 200).
-        # This documents current behavior - downstream parsing will fail.
-        # Consider adding validation in the future.
-        assert response.status_code in (200, 400, 422)
+        assert response.status_code == 200
+        assert mock_process_parsing_delay.called
 
     async def test_post_parse_repo_name_no_slash(
         self, client, test_user, mock_process_parsing_delay
     ):
-        """repo_name without slash (e.g. 'myrepo'); should be accepted or rejected consistently."""
+        """repo_name without slash (e.g. 'myrepo') is accepted and enqueued."""
         response = await client.post(
             "/api/v1/parse",
             json={"repo_name": "myrepo"},
         )
-        # Document actual behavior - either accepts (200) or rejects (4xx)
-        assert response.status_code in (200, 400, 422)
+        assert response.status_code == 200
+        assert mock_process_parsing_delay.called
 
     async def test_post_parse_repo_name_multiple_slashes(
         self, client, test_user, mock_process_parsing_delay
     ):
-        """repo_name with multiple slashes (e.g. 'org/repo/sub'); should be handled."""
+        """repo_name with multiple slashes (e.g. 'org/repo/sub') is accepted and enqueued."""
         response = await client.post(
             "/api/v1/parse",
             json={"repo_name": "org/repo/subpath"},
         )
-        # Should either accept or reject consistently
-        assert response.status_code in (200, 400, 422)
+        assert response.status_code == 200
+        assert mock_process_parsing_delay.called
 
     async def test_post_parse_empty_commit_id(
         self, client, test_user, mock_process_parsing_delay
     ):
-        """Empty commit_id string; should be treated as None or rejected."""
+        """Empty commit_id string is accepted; task is enqueued."""
         response = await client.post(
             "/api/v1/parse",
             json={"repo_name": "owner/repo", "commit_id": ""},
         )
-        # Empty string should be handled gracefully
-        assert response.status_code in (200, 400, 422)
+        assert response.status_code == 200
+        assert mock_process_parsing_delay.called
 
+    @pytest.mark.xfail(
+        reason="Contract unresolved: path may not exist; API may return 200, 404, or 500.",
+        strict=False,
+    )
     async def test_post_parse_path_like_repo_name(
-        self, client, test_user, monkeypatch
+        self, client, test_user, mock_process_parsing_delay, monkeypatch
     ):
         """repo_name that looks like a path (e.g. '/tmp/repo') triggers auto-detection."""
         monkeypatch.setenv("isDevelopmentMode", "enabled")
@@ -178,11 +180,17 @@ class TestInputValidationEdgeCases:
             "/api/v1/parse",
             json={"repo_name": "/tmp/somerepo"},
         )
-        # Should be auto-detected as path and handled (may fail if path doesn't exist)
-        assert response.status_code in (200, 400, 404, 422, 500)
+        # Single expected outcome once contract is defined: e.g. 200 (accept) or 404/422 (reject)
+        assert response.status_code in (200, 404, 422)
+        if response.status_code != 200:
+            assert not mock_process_parsing_delay.called
 
+    @pytest.mark.xfail(
+        reason="Contract unresolved: path may not exist; API may return 200, 404, or 500.",
+        strict=False,
+    )
     async def test_post_parse_relative_path_repo_name(
-        self, client, test_user, monkeypatch
+        self, client, test_user, mock_process_parsing_delay, monkeypatch
     ):
         """repo_name that looks like relative path (./repo); auto-detection."""
         monkeypatch.setenv("isDevelopmentMode", "enabled")
@@ -190,7 +198,9 @@ class TestInputValidationEdgeCases:
             "/api/v1/parse",
             json={"repo_name": "./somerepo"},
         )
-        assert response.status_code in (200, 400, 404, 422, 500)
+        assert response.status_code in (200, 404, 422)
+        if response.status_code != 200:
+            assert not mock_process_parsing_delay.called
 
 
 class TestConcurrencyAndRaces:

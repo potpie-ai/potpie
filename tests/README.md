@@ -42,6 +42,20 @@ SKIP_REAL_PARSE=1 ./scripts/run_tests.sh
 
 To add new tests later: add test files under `tests/unit/` or `tests/integration-tests/` with the appropriate marker (`unit`, `integration`, or `real_parse`). No changes to `scripts/run_tests.py` or `scripts/run_tests.sh` are required.
 
+## Output and debugging
+
+- **Phase banners:** When you run the full suite, each phase (Unit, Integration, etc.) is wrapped in clear `====` banners and ends with a `Phase «…» finished: OK/FAILED` line so you can quickly see which phase failed.
+- **Short summary (`-ra`):** Pytest is run with `-ra`, so you get a compact summary of all outcomes (failed, skipped, xfailed, etc.) at the end of each phase, not only when something fails.
+- **Slow tests (`--durations=5`):** The 5 slowest tests are listed at the end of each run so you can spot slow or flaky tests.
+- **Verbose (`-v`):** Each test is printed with its full node id (e.g. `tests/unit/parsing/test_parsing_schema.py::TestParsingRequest::test_valid_with_repo_name_only`), making it easy to re-run a single test:  
+  `uv run pytest tests/unit/parsing/test_parsing_schema.py::TestParsingRequest::test_valid_with_repo_name_only -v`
+
+To focus on a single failure, use `-x` (stop on first failure) and/or `-k 'test_name_pattern'`:
+
+```bash
+./scripts/run_tests.sh -- -x -k "test_parse"
+```
+
 ## Structure
 
 - **`unit/`** — Unit tests (schema, utils, helpers with mocks). Marked with `@pytest.mark.unit`.

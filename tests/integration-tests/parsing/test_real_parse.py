@@ -56,30 +56,26 @@ class TestRealParse:
             raise_library_exceptions=True,
         )
 
-        try:
-            result = await parsing_service.parse_directory(
-                repo_details=repo_details,
-                user_id=user_id,
-                user_email=user_email,
-                project_id=project_id,
-                cleanup_graph=True,
-            )
+        result = await parsing_service.parse_directory(
+            repo_details=repo_details,
+            user_id=user_id,
+            user_email=user_email,
+            project_id=project_id,
+            cleanup_graph=True,
+        )
 
-            assert result is not None, "parse_directory should return a result"
+        assert result is not None, "parse_directory should return a result"
 
-            project = await project_service.get_project_from_db_by_id(project_id)
-            assert project is not None, "Project should exist in DB after parsing"
+        project = await project_service.get_project_from_db_by_id(project_id)
+        assert project is not None, "Project should exist in DB after parsing"
 
-            status = project.get("status")
-            assert status in (
-                ProjectStatusEnum.READY.value,
-                ProjectStatusEnum.PARSED.value,
-                "ready",
-                "parsed",
-            ), f"Expected READY or PARSED status, got {status}"
-
-        finally:
-            parsing_service.close()
+        status = project.get("status")
+        assert status in (
+            ProjectStatusEnum.READY.value,
+            ProjectStatusEnum.PARSED.value,
+            "ready",
+            "parsed",
+        ), f"Expected READY or PARSED status, got {status}"
 
     async def test_parse_local_repo_detects_python(
         self,
@@ -127,16 +123,13 @@ class TestRealParse:
             raise_library_exceptions=True,
         )
 
-        try:
-            await parsing_service.parse_directory(
-                repo_details=repo_details,
-                user_id=user_id,
-                user_email=user_email,
-                project_id=project_id,
-                cleanup_graph=True,
-            )
-        finally:
-            parsing_service.close()
+        await parsing_service.parse_directory(
+            repo_details=repo_details,
+            user_id=user_id,
+            user_email=user_email,
+            project_id=project_id,
+            cleanup_graph=True,
+        )
 
         driver = GraphDatabase.driver(
             neo4j_config["uri"],

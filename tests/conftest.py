@@ -20,6 +20,8 @@ os.environ["defaultUsername"] = "test-user"
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
+from starlette.requests import Request
+from starlette.responses import Response
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker, Session
@@ -599,11 +601,18 @@ async def client(db_session: Session, async_db_session: AsyncSession):
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_async_db] = override_get_async_db
-    app.dependency_overrides[AuthService.check_auth] = lambda: {
-        # Align with integration tests that assume uid=test-user
-        "user_id": "test-user",
-        "email": "test@example.com",
-    }
+    async def override_check_auth(
+        request: Request,
+        res: Response,
+        credential=None,
+    ):
+        # Same signature as AuthService.check_auth so FastAPI can call as drop-in replacement.
+        return {
+            "user_id": "test-user",
+            "email": "test@example.com",
+        }
+
+    app.dependency_overrides[AuthService.check_auth] = override_check_auth
     app.dependency_overrides[UsageService.check_usage_limit] = lambda: True
     async with AsyncClient(
         transport=httpx.ASGITransport(app=app),
