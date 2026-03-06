@@ -14,7 +14,7 @@ pytestmark = pytest.mark.asyncio
 # THIS IS THE FIX: We are patching the name 'MediaService' exactly where it is used.
 @patch("app.modules.conversations.conversations_router.MediaService")
 async def test_post_message_successful_flow(
-    mock_media_service_class, client, db_session
+    mock_media_service_class, client, db_session, mock_redis_stream_manager
 ):
     """
     Tests the complete, successful flow of a user posting a new message
@@ -26,10 +26,8 @@ async def test_post_message_successful_flow(
     # Patch other external dependencies
     with patch(
         "app.celery.tasks.agent_tasks.execute_agent_background.delay"
-    ) as mock_celery_task, patch(
-        "app.modules.conversations.utils.redis_streaming.RedisStreamManager.wait_for_task_start",
-        return_value=True,
-    ):
+    ) as mock_celery_task:
+        mock_celery_task.return_value.id = "test-task-id-execute"
 
         # Configure the mock INSTANCE's methods. The __init__ is now completely skipped.
         mock_instance.upload_image = AsyncMock(
@@ -47,14 +45,16 @@ async def test_post_message_successful_flow(
         files = {"images": ("test_image.png", b"fake image data", "image/png")}
         data = {"content": "This is a test message."}
 
-        # Make the HTTP request
-        response = await client.post(
-            f"/api/v1/conversations/{conversation_id}/message/", files=files, data=data
-        )
-
-        # Assert outcomes
-        assert response.status_code == 200
-        assert "text/event-stream" in response.headers["content-type"]
+        # Make the HTTP request (streaming endpoint: don't consume full body)
+        async with client.stream(
+            "POST",
+            f"/api/v1/conversations/{conversation_id}/message/",
+            files=files,
+            data=data,
+        ) as response:
+            # Assert outcomes
+            assert response.status_code == 200
+            assert "text/event-stream" in response.headers["content-type"]
 
         # Assert calls on the mock INSTANCE
         mock_instance.upload_image.assert_called_once()
@@ -147,15 +147,16 @@ async def test_post_message_dispatches_celery_task_and_streams(
     # 2. ACT
     # The router initiates a streaming response, but we don't need to consume it.
     # We only care that the request was accepted and the mocks were called.
-    response = await client.post(
-        f"/api/v1/conversations/{conversation_id}/message/", data=form_data
-    )
+    async with client.stream(
+        "POST",
+        f"/api/v1/conversations/{conversation_id}/message/",
+        data=form_data,
+    ) as response:
+        # Part A: Verify the API response
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers["content-type"]
 
     # 3. ASSERT
-
-    # Part A: Verify the API response
-    assert response.status_code == 200
-    assert "text/event-stream" in response.headers["content-type"]
 
     # Part B: Verify the interaction with Redis
     # Check that our code tried to wait for the background task to start
