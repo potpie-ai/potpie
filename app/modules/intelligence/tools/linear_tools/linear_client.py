@@ -10,8 +10,8 @@ import httpx
 from sqlalchemy.orm import Session
 
 
-# Timeout for Linear GraphQL API (connect, read)
-LINEAR_REQUEST_TIMEOUT = httpx.Timeout(connect=10.0, read=30.0)
+# Timeout for Linear GraphQL API (default 30s, connect 10s, read 30s)
+LINEAR_REQUEST_TIMEOUT = httpx.Timeout(30.0, connect=10.0, read=30.0)
 
 
 class LinearClient:

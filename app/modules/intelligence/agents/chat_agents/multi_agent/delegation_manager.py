@@ -293,7 +293,7 @@ class DelegationManager:
             )
 
             chunk_count = 0
-            stream_start_time = asyncio.get_event_loop().time()
+            stream_start_time = asyncio.get_running_loop().time()
             last_chunk_time = stream_start_time
             # Align with AGENT_ITER_TIMEOUT from delegation_streamer (600s = 10 min)
             # Add buffer for cleanup and error handling
@@ -327,7 +327,7 @@ class DelegationManager:
 
                 while True:
                     loop_iteration += 1
-                    current_loop_time = asyncio.get_event_loop().time()
+                    current_loop_time = asyncio.get_running_loop().time()
 
                     # Heartbeat log every 10 seconds to show we're still in the loop
                     if current_loop_time - last_heartbeat_time >= heartbeat_interval:
@@ -342,14 +342,14 @@ class DelegationManager:
                         last_heartbeat_time = current_loop_time
 
                     if loop_iteration % 10 == 0:  # Log every 10 iterations
-                        elapsed = asyncio.get_event_loop().time() - stream_start_time
+                        elapsed = asyncio.get_running_loop().time() - stream_start_time
                         logger.debug(
                             f"[SUBAGENT STREAM] Chunk loop iteration #{loop_iteration} "
                             f"(agent_type={agent_type.value}, chunks={chunk_count}, elapsed={elapsed:.1f}s)"
                         )
 
                     # Check for overall timeout
-                    elapsed = asyncio.get_event_loop().time() - stream_start_time
+                    elapsed = asyncio.get_running_loop().time() - stream_start_time
                     if elapsed > stream_timeout:
                         logger.error(
                             f"[SUBAGENT STREAM] Stream timeout after {elapsed:.1f}s (agent_type={agent_type.value}, "
@@ -360,7 +360,7 @@ class DelegationManager:
 
                     # Get next chunk with timeout
                     # Note: Keep-alive messages during tool execution prevent this from timing out
-                    time_before_chunk = asyncio.get_event_loop().time()
+                    time_before_chunk = asyncio.get_running_loop().time()
                     time_since_last_chunk = time_before_chunk - last_chunk_time
                     if (
                         time_since_last_chunk > 5.0
@@ -381,9 +381,9 @@ class DelegationManager:
                             stream_gen.__anext__(), timeout=chunk_timeout
                         )
                         chunk_wait_time = (
-                            asyncio.get_event_loop().time() - time_before_chunk
+                            asyncio.get_running_loop().time() - time_before_chunk
                         )
-                        last_chunk_time = asyncio.get_event_loop().time()
+                        last_chunk_time = asyncio.get_running_loop().time()
                         if chunk_wait_time > 5.0:  # Log if wait was long
                             logger.info(
                                 f"[SUBAGENT STREAM] Received chunk after {chunk_wait_time:.2f}s wait "
@@ -396,7 +396,7 @@ class DelegationManager:
                             )
                     except StopAsyncIteration:
                         # Stream completed normally (or with yielded error from subagent)
-                        elapsed = asyncio.get_event_loop().time() - stream_start_time
+                        elapsed = asyncio.get_running_loop().time() - stream_start_time
                         logger.info(
                             f"[SUBAGENT STREAM] Stream completed normally after {elapsed:.1f}s "
                             f"(agent_type={agent_type.value}, cache_key={cache_key}, "
@@ -407,10 +407,10 @@ class DelegationManager:
                         break
                     except asyncio.TimeoutError:
                         time_since_last_chunk = (
-                            asyncio.get_event_loop().time() - last_chunk_time
+                            asyncio.get_running_loop().time() - last_chunk_time
                         )
                         elapsed_total = (
-                            asyncio.get_event_loop().time() - stream_start_time
+                            asyncio.get_running_loop().time() - stream_start_time
                         )
                         logger.warning(
                             f"[SUBAGENT STREAM] ⚠️ Chunk timeout after {chunk_timeout}s "
@@ -498,7 +498,7 @@ class DelegationManager:
 
             # If we broke out due to timeout, cache partial result
             if cache_key not in self._delegation_result_cache:
-                elapsed = asyncio.get_event_loop().time() - stream_start_time
+                elapsed = asyncio.get_running_loop().time() - stream_start_time
                 if elapsed >= stream_timeout or (
                     chunk_count > 0 and elapsed >= chunk_timeout
                 ):

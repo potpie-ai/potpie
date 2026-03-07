@@ -68,15 +68,30 @@ def _repair_truncated_tool_args_json(raw: str) -> dict | None:
 
 
 def handle_exception(tool_func):
-    @functools.wraps(tool_func)
-    def wrapper(*args, **kwargs):
-        try:
-            return tool_func(*args, **kwargs)
-        except Exception as e:
-            logger.error(f"Exception in tool function: {e}")
-            return "An internal error occurred. Please try again later."
+    # After _adapt_func_for_from_schema the wrapper is always async.
+    # Guard here as well in case handle_exception is called on a raw sync func.
+    if inspect.iscoroutinefunction(tool_func):
 
-    return wrapper
+        @functools.wraps(tool_func)
+        async def async_wrapper(*args, **kwargs):
+            try:
+                return await tool_func(*args, **kwargs)
+            except Exception as e:
+                logger.error(f"Exception in tool function: {e}")
+                return "An internal error occurred. Please try again later."
+
+        return async_wrapper
+    else:
+
+        @functools.wraps(tool_func)
+        def wrapper(*args, **kwargs):
+            try:
+                return tool_func(*args, **kwargs)
+            except Exception as e:
+                logger.error(f"Exception in tool function: {e}")
+                return "An internal error occurred. Please try again later."
+
+        return wrapper
 
 
 def create_tool_call_response(event: FunctionToolCallEvent) -> ToolCallResponse:
@@ -192,12 +207,15 @@ _TOOL_NAME_PATTERN = re.compile(r"[^a-zA-Z0-9_-]+")
 
 
 def sanitize_tool_name_for_api(name: str) -> str:
-    """Sanitize a tool name so it matches OpenAI-style API requirement: ^[a-zA-Z0-9_-]+$"""
+    """Sanitize a tool name so it matches OpenAI-style API requirement: ^[a-zA-Z0-9_-]+$.
+    Returns lowercase so tool names match registry keys (e.g. web_search_tool) and models
+    that normalize tool names; avoids mismatch when the model returns tool_calls."""
     if not name:
         return "unnamed_tool"
     sanitized = _TOOL_NAME_PATTERN.sub("_", name)
     sanitized = re.sub(r"_+", "_", sanitized).strip("_")
-    return sanitized or "unnamed_tool"
+    out = (sanitized or "unnamed_tool").lower()
+    return out
 
 
 def _inline_json_schema_refs(
@@ -254,7 +272,14 @@ def _adapt_func_for_from_schema(tool: Any) -> Any:
        validate kwargs via the args_schema and call func(**model.model_dump()). This
        ensures required fields are validated (clear errors instead of "missing N
        required positional arguments") when the model sends empty or malformed args.
+
+    The returned wrapper is always async. For sync tool funcs it uses asyncio.to_thread
+    which explicitly copies the current contextvars before dispatching the thread.
+    Python 3.13's loop.run_in_executor does NOT copy contextvars, so relying on
+    pydantic-ai's default run_in_executor path loses user_id / tunnel_url context.
     """
+    import asyncio as _asyncio
+
     raw_schema = getattr(tool, "args_schema", None)
     if not (isinstance(raw_schema, type) and issubclass(raw_schema, BaseModel)):
         return tool.func
@@ -272,22 +297,44 @@ def _adapt_func_for_from_schema(tool: Any) -> Any:
             and issubclass(annotation, BaseModel)
         ):
             model_cls = annotation
+            _is_async = inspect.iscoroutinefunction(tool.func)
+            _func = tool.func
 
-            def single_arg_wrapper(**kwargs: Any) -> Any:
-                return tool.func(model_cls(**kwargs))
+            if _is_async:
 
-            return single_arg_wrapper
+                async def _single_async(**kwargs: Any) -> Any:
+                    return await _func(model_cls(**kwargs))
+
+                return _single_async
+            else:
+
+                async def _single_sync(**kwargs: Any) -> Any:
+                    return await _asyncio.to_thread(_func, model_cls(**kwargs))
+
+                return _single_sync
+
     if len(params) >= 2:
-        # Multiple params (e.g. project_id, paths, with_line_numbers): validate
-        # kwargs with args_schema and call func(**validated) so missing/empty
-        # args produce a clear ValidationError instead of "missing N required positional arguments".
         model_cls = raw_schema
+        _is_async_multi = inspect.iscoroutinefunction(tool.func)
+        _func_multi = tool.func
 
-        def multi_arg_wrapper(**kwargs: Any) -> Any:
-            validated = model_cls(**kwargs)
-            return tool.func(**validated.model_dump())
+        if _is_async_multi:
 
-        return multi_arg_wrapper
+            async def _multi_async(**kwargs: Any) -> Any:
+                validated = model_cls(**kwargs)
+                return await _func_multi(**validated.model_dump())
+
+            return _multi_async
+        else:
+
+            async def _multi_sync(**kwargs: Any) -> Any:
+                validated = model_cls(**kwargs)
+                return await _asyncio.to_thread(
+                    lambda: _func_multi(**validated.model_dump())
+                )
+
+            return _multi_sync
+
     return tool.func
 
 

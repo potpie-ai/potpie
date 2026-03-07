@@ -7,7 +7,6 @@ import asyncio
 import json
 import logging
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from typing import Generator, Optional
 
 # TTL for run_id reservation lock (seconds). Reservation expires if stream not established.
@@ -326,9 +325,7 @@ async def start_celery_task_and_wait(
 
     try:
         # Run stream consumption in thread pool to avoid blocking event loop
-        loop = asyncio.get_event_loop()
-        with ThreadPoolExecutor() as executor:
-            events = await loop.run_in_executor(executor, collect_from_stream)
+        events = await asyncio.to_thread(collect_from_stream)
 
         # Process collected events
         for event in events:

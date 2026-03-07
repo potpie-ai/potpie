@@ -9,6 +9,36 @@ from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+
+def _patch_otel_detach_for_async_context() -> None:
+    """
+    Patch OpenTelemetry's ContextVarsRuntimeContext.detach to suppress ValueError
+    when the token was created in a different async context.
+
+    When pydantic_ai runs tool calls, async generators can yield and resume in a
+    different context; OTel then tries to detach a token that belongs to the
+    previous context and raises ValueError. This patch catches that and no-ops
+    so the request does not crash.
+    """
+    try:
+        from opentelemetry.context import contextvars_context
+    except ImportError:
+        return
+
+    _original_detach = contextvars_context.ContextVarsRuntimeContext.detach
+
+    def _detach_safe(self: Any, token: Any) -> None:
+        try:
+            _original_detach(self, token)
+        except ValueError as e:
+            if "was created in a different Context" in str(e):
+                pass  # Safe to ignore when context switched across async boundary
+            else:
+                raise
+
+    contextvars_context.ContextVarsRuntimeContext.detach = _detach_safe  # type: ignore[method-assign]
+    logger.debug("Patched OTel context detach for async context switching")
+
 # Global flag to track if Logfire is initialized
 _LOGFIRE_INITIALIZED = False
 
@@ -79,6 +109,7 @@ def initialize_logfire_tracing(
         logfire.configure(**config_kwargs)
 
         if instrument_pydantic_ai:
+            _patch_otel_detach_for_async_context()
             logfire.instrument_pydantic_ai()
             logger.info("Instrumented Pydantic AI for Logfire tracing")
         else:

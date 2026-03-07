@@ -1,6 +1,7 @@
 """Stream processor for handling agent run nodes and streaming events"""
 
 import asyncio
+import json
 import traceback
 from typing import AsyncGenerator, List, Optional, Any, Dict, Callable
 from pydantic_ai import Agent
@@ -11,6 +12,8 @@ from pydantic_ai.messages import (
     PartDeltaEvent,
     TextPartDelta,
     TextPart,
+    ToolCallPart,
+    ToolCallPartDelta,
 )
 from pydantic_ai.exceptions import ModelRetry, AgentRunError, UserError
 import anyio
@@ -27,6 +30,9 @@ from app.modules.intelligence.agents.chat_agent import (
     ChatAgentResponse,
     ToolCallResponse,
     ToolCallEventType,
+)
+from app.modules.intelligence.agents.chat_agents.tool_helpers import (
+    get_tool_call_info_content,
 )
 from app.modules.utils.logger import setup_logger
 
@@ -74,7 +80,7 @@ class StreamProcessor:
                     tool_calls=[],
                     citations=[],
                 )
-            if isinstance(event, PartDeltaEvent) and isinstance(
+            elif isinstance(event, PartDeltaEvent) and isinstance(
                 event.delta, TextPartDelta
             ):
                 # Accumulate TextPartDelta content for reasoning dump
@@ -84,6 +90,60 @@ class StreamProcessor:
                     tool_calls=[],
                     citations=[],
                 )
+            elif isinstance(event, PartStartEvent) and isinstance(
+                event.part, ToolCallPart
+            ):
+                # Stream tool call start (tool name + initial args) so frontend can show tool input streaming
+                part = event.part
+                try:
+                    args_dict = part.args_as_dict() if part.args else {}
+                except (ValueError, json.JSONDecodeError):
+                    args_dict = {}
+                args_str = (
+                    part.args
+                    if isinstance(part.args, str)
+                    else json.dumps(part.args or {}, default=str)
+                )
+                yield ChatAgentResponse(
+                    response="",
+                    tool_calls=[
+                        ToolCallResponse(
+                            call_id=part.tool_call_id or part.id or "",
+                            event_type=ToolCallEventType.CALL,
+                            tool_name=part.tool_name or "unknown",
+                            tool_response=get_tool_call_info_content(
+                                part.tool_name or "unknown", args_dict
+                            ),
+                            tool_call_details={"summary": args_str[:500]},
+                            stream_part=args_str if args_str else None,
+                            is_complete=False,
+                        )
+                    ],
+                    citations=[],
+                )
+            elif isinstance(event, PartDeltaEvent) and isinstance(
+                event.delta, ToolCallPartDelta
+            ):
+                # Stream tool call args delta so frontend can append and show tool input building up
+                delta = event.delta
+                args_delta = getattr(delta, "args_delta", None) or ""
+                call_id = getattr(delta, "tool_call_id", None) or ""
+                if args_delta and call_id:
+                    yield ChatAgentResponse(
+                        response="",
+                        tool_calls=[
+                            ToolCallResponse(
+                                call_id=call_id,
+                                event_type=ToolCallEventType.CALL,
+                                tool_name=getattr(delta, "tool_name_delta", None) or "",
+                                tool_response="",
+                                tool_call_details={},
+                                stream_part=args_delta,
+                                is_complete=False,
+                            )
+                        ],
+                        citations=[],
+                    )
 
     def handle_stream_error(
         self, error: Exception, context: str = "model request stream"
@@ -809,7 +869,7 @@ class StreamProcessor:
                                 f"[process_tool_call_node] Draining delegation stream for tool_call_id={tool_call_id[:8]}... "
                                 f"(tool_name={tool_name}, context_type={context_type})"
                             )
-                            drain_start_time = asyncio.get_event_loop().time()
+                            drain_start_time = asyncio.get_running_loop().time()
                             # Drain any remaining chunks from output queue
                             if tool_call_id in output_queues:
                                 output_queue = output_queues[tool_call_id]
@@ -829,7 +889,7 @@ class StreamProcessor:
                                         # Mark as drained after completion
                                         drained_streams.add(tool_call_id)
                                         drain_elapsed = (
-                                            asyncio.get_event_loop().time()
+                                            asyncio.get_running_loop().time()
                                             - drain_start_time
                                         )
                                         logger.info(
@@ -842,7 +902,7 @@ class StreamProcessor:
                                     await asyncio.sleep(0.05)
                                 else:
                                     drain_elapsed = (
-                                        asyncio.get_event_loop().time()
+                                        asyncio.get_running_loop().time()
                                         - drain_start_time
                                     )
                                     logger.warning(
@@ -940,7 +1000,7 @@ class StreamProcessor:
                         f"[process_tool_call_node] Draining final chunks from queue: {queue_key}"
                     )
                     output_queue = output_queues[queue_key]
-                    final_drain_start = asyncio.get_event_loop().time()
+                    final_drain_start = asyncio.get_running_loop().time()
                     total_final_chunks = 0
                     # Wait longer for final chunks
                     for attempt in range(20):  # Try up to 20 times
@@ -952,7 +1012,7 @@ class StreamProcessor:
                         if completed:
                             drained_streams.add(queue_key)
                             final_drain_elapsed = (
-                                asyncio.get_event_loop().time() - final_drain_start
+                                asyncio.get_running_loop().time() - final_drain_start
                             )
                             logger.info(
                                 f"[process_tool_call_node] Final drain completed for {queue_key}: "
@@ -963,7 +1023,7 @@ class StreamProcessor:
                         await asyncio.sleep(0.05)
                     else:
                         final_drain_elapsed = (
-                            asyncio.get_event_loop().time() - final_drain_start
+                            asyncio.get_running_loop().time() - final_drain_start
                         )
                         logger.warning(
                             f"[process_tool_call_node] ⚠️ Final drain incomplete for {queue_key} after 20 attempts: "
@@ -1021,7 +1081,7 @@ class StreamProcessor:
                         pending_keys = set(
                             cache_key for _, cache_key in delegation_cache_keys
                         )
-                        wait_start_time = asyncio.get_event_loop().time()
+                        wait_start_time = asyncio.get_running_loop().time()
 
                         while pending_keys and waited < max_wait:
                             # Check which cache keys have results
@@ -1042,7 +1102,7 @@ class StreamProcessor:
 
                             if not pending_keys:
                                 wait_elapsed = (
-                                    asyncio.get_event_loop().time() - wait_start_time
+                                    asyncio.get_running_loop().time() - wait_start_time
                                 )
                                 logger.info(
                                     f"[process_tool_call_node] All delegation cached results available, "
@@ -1055,7 +1115,7 @@ class StreamProcessor:
 
                             if int(waited) % 5 == 0:
                                 wait_elapsed = (
-                                    asyncio.get_event_loop().time() - wait_start_time
+                                    asyncio.get_running_loop().time() - wait_start_time
                                 )
                                 # Check task status for pending keys
                                 task_statuses = {}
@@ -1076,7 +1136,7 @@ class StreamProcessor:
 
                         if pending_keys:
                             wait_elapsed = (
-                                asyncio.get_event_loop().time() - wait_start_time
+                                asyncio.get_running_loop().time() - wait_start_time
                             )
                             logger.error(
                                 f"[process_tool_call_node] ⚠️ TIMEOUT waiting for {len(pending_keys)} cached results "

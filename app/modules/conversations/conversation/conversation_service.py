@@ -197,9 +197,7 @@ class ConversationService:
             async_history_manager=async_history_manager,
         )
 
-    async def _history_get_session_history(
-        self, user_id: str, conversation_id: str
-    ):
+    async def _history_get_session_history(self, user_id: str, conversation_id: str):
         """Dispatch to async or sync history manager for get_session_history."""
         if self.async_history_manager:
             return await self.async_history_manager.get_session_history(
@@ -459,7 +457,7 @@ class ConversationService:
         # Add timeout to prevent hanging
         try:
             await asyncio.wait_for(
-                asyncio.get_event_loop().run_in_executor(
+                asyncio.get_running_loop().run_in_executor(
                     None, self._ensure_repo_in_repo_manager_sync, project_id, user_id
                 ),
                 timeout=5.0,  # 5 second timeout to prevent hanging
@@ -551,7 +549,9 @@ class ConversationService:
                 return False  # local repo, always considered available
             # Check if the bare repo directory exists on disk.
             # If it does, worktree creation is fast — no loading message needed.
-            bare_repo_path = self.repo_manager._get_bare_repo_path(repo_name)  # noqa: SLF001
+            bare_repo_path = self.repo_manager._get_bare_repo_path(
+                repo_name
+            )  # noqa: SLF001
             return not bare_repo_path.exists()
         except Exception:
             logger.warning(
@@ -595,7 +595,9 @@ class ConversationService:
             )
 
             if not repo_name:
-                logger.warning(f"[clone_sync] Skipping project {project_id}: no repo_name")
+                logger.warning(
+                    f"[clone_sync] Skipping project {project_id}: no repo_name"
+                )
                 return
             if repo_path:
                 logger.info(
@@ -619,7 +621,9 @@ class ConversationService:
                 return  # already there
 
             if not ref:
-                logger.warning(f"[clone_sync] Skipping {repo_name}: no ref (branch or commit_id)")
+                logger.warning(
+                    f"[clone_sync] Skipping {repo_name}: no ref (branch or commit_id)"
+                )
                 return
 
             logger.info(
@@ -674,7 +678,7 @@ class ConversationService:
         if not self.repo_manager:
             return
         try:
-            await asyncio.get_event_loop().run_in_executor(
+            await asyncio.get_running_loop().run_in_executor(
                 None, self._clone_repo_if_missing_sync, project_id, user_id
             )
         except Exception as e:
@@ -786,7 +790,7 @@ class ConversationService:
                     )
                     # Only show loading message when a full clone is needed (bare repo missing).
                     # When the bare repo already exists, worktree creation is fast — no message.
-                    needs_clone = await asyncio.get_event_loop().run_in_executor(
+                    needs_clone = await asyncio.get_running_loop().run_in_executor(
                         None, self._needs_full_clone_sync, project_id_str
                     )
                     logger.info(
@@ -800,7 +804,7 @@ class ConversationService:
                         )
                     # Always run synchronously: creates bare repo + worktree if missing,
                     # or returns quickly if everything already exists.
-                    await asyncio.get_event_loop().run_in_executor(
+                    await asyncio.get_running_loop().run_in_executor(
                         None,
                         self._clone_repo_if_missing_sync,
                         project_id_str,
@@ -850,7 +854,10 @@ class ConversationService:
                             accumulated_thinking = chunk.thinking
 
                     yield ChatMessageResponse(
-                        message=full_message, citations=all_citations, tool_calls=[], thinking=accumulated_thinking
+                        message=full_message,
+                        citations=all_citations,
+                        tool_calls=[],
+                        thinking=accumulated_thinking,
                     )
 
         except AccessTypeReadError:
@@ -988,7 +995,10 @@ class ConversationService:
                         accumulated_thinking = chunk.thinking
 
                 yield ChatMessageResponse(
-                    message=full_message, citations=all_citations, tool_calls=[], thinking=accumulated_thinking
+                    message=full_message,
+                    citations=all_citations,
+                    tool_calls=[],
+                    thinking=accumulated_thinking,
                 )
 
         except AccessTypeReadError:
@@ -1147,9 +1157,7 @@ class ConversationService:
         project_id = conversation.project_ids[0] if conversation.project_ids else None
 
         try:
-            history = await self._history_get_session_history(
-                user_id, conversation_id
-            )
+            history = await self._history_get_session_history(user_id, conversation_id)
             validated_history = [
                 (f"{msg.type}: {msg.content}" if msg.content else msg)
                 for msg in history
@@ -1243,9 +1251,11 @@ class ConversationService:
                             tool_call_dict = (
                                 tool_call.model_dump()
                                 if hasattr(tool_call, "model_dump")
-                                else tool_call.dict()
-                                if hasattr(tool_call, "dict")
-                                else tool_call
+                                else (
+                                    tool_call.dict()
+                                    if hasattr(tool_call, "dict")
+                                    else tool_call
+                                )
                             )
                             accumulated_tool_calls.append(tool_call_dict)
                     # Capture thinking content if present
@@ -1310,9 +1320,11 @@ class ConversationService:
                             tool_call_dict = (
                                 tool_call.model_dump()
                                 if hasattr(tool_call, "model_dump")
-                                else tool_call.dict()
-                                if hasattr(tool_call, "dict")
-                                else tool_call
+                                else (
+                                    tool_call.dict()
+                                    if hasattr(tool_call, "dict")
+                                    else tool_call
+                                )
                             )
                             accumulated_tool_calls.append(tool_call_dict)
                     # Capture thinking content if present
@@ -1762,9 +1774,7 @@ class ConversationService:
                 conversation_id, run_id
             )
         else:
-            snapshot = self.redis_manager.get_stream_snapshot(
-                conversation_id, run_id
-            )
+            snapshot = self.redis_manager.get_stream_snapshot(conversation_id, run_id)
         content_len = len(snapshot.get("content") or "")
         citations_count = len(snapshot.get("citations") or [])
         tool_calls_count = len(snapshot.get("tool_calls") or [])
@@ -1776,9 +1786,7 @@ class ConversationService:
 
         # Set cancellation flag and revoke the Celery task so it stops producing chunks.
         if self.async_redis_manager:
-            await self.async_redis_manager.set_cancellation(
-                conversation_id, run_id
-            )
+            await self.async_redis_manager.set_cancellation(conversation_id, run_id)
         else:
             self.redis_manager.set_cancellation(conversation_id, run_id)
         if task_id:
@@ -1808,7 +1816,9 @@ class ConversationService:
                         f"Task {task_id} still running after graceful revoke, using terminate"
                     )
                     # Step 3: Use terminate with SIGTERM as fallback
-                    self.celery_app.control.revoke(task_id, terminate=True, signal="SIGTERM")
+                    self.celery_app.control.revoke(
+                        task_id, terminate=True, signal="SIGTERM"
+                    )
                     logger.info(
                         f"Sent SIGTERM to Celery task {task_id} for {conversation_id}:{run_id}"
                     )
@@ -1878,9 +1888,7 @@ class ConversationService:
         # Always clear the session - publish end event and update status
         try:
             if self.async_redis_manager:
-                await self.async_redis_manager.clear_session(
-                    conversation_id, run_id
-                )
+                await self.async_redis_manager.clear_session(conversation_id, run_id)
             else:
                 self.redis_manager.clear_session(conversation_id, run_id)
         except Exception as e:

@@ -225,7 +225,7 @@ class LocalRepoService:
             gitignore_spec = self._get_gitignore_spec(repo_root)
 
         try:
-            contents = await asyncio.get_event_loop().run_in_executor(
+            contents = await asyncio.get_running_loop().run_in_executor(
                 self.executor, self._get_contents, path
             )
 

@@ -1,12 +1,50 @@
 import asyncio
 from typing import Optional, List
 
+from sqlalchemy.orm import Session
+
 from app.celery.celery_app import celery_app
 from app.celery.tasks.base_task import BaseTask
 from app.modules.conversations.utils.redis_streaming import RedisStreamManager
+from app.modules.users.user_model import User
+from app.modules.users.user_service import UserService
 from app.modules.utils.logger import setup_logger, log_context
 
 logger = setup_logger(__name__)
+
+
+def _resolve_user_email_for_celery(db: Session, user_id: str) -> str:
+    """
+    Resolve user email using sync DB. Call from Celery task body before run_async();
+    do not call from inside the coroutine.
+    """
+    user = UserService(db).get_user_by_uid(user_id)
+    if not user:
+        direct_user = db.query(User).filter(User.uid == user_id).first()
+        if direct_user:
+            logger.warning(
+                "UserService.get_user_by_uid returned None but direct query found user: %s, email: %s",
+                direct_user.uid,
+                direct_user.email,
+            )
+            user = direct_user
+        else:
+            logger.warning(
+                "User not found in database for user_id: %s. Using empty string as fallback.",
+                user_id,
+            )
+            return ""
+    email = getattr(user, "email", None) or ""
+    if not email:
+        logger.warning(
+            "User found but email is None/empty for user_id: %s, user.uid: %s, email value: %r. Using empty string as fallback.",
+            user_id,
+            getattr(user, "uid", "N/A"),
+            getattr(user, "email", "N/A"),
+        )
+        return ""
+    logger.debug("Retrieved user email for user_id: %s", user_id)
+    return email
 
 
 @celery_app.task(
@@ -44,6 +82,8 @@ def execute_agent_background(
             logger.warning("Failed to set task status in Redis", error=str(e))
 
         try:
+            user_email = _resolve_user_email_for_celery(self.db, user_id)
+
             # Execute agent with Redis publishing
             async def run_agent():
                 import asyncio
@@ -52,7 +92,6 @@ def execute_agent_background(
                     ConversationService,
                 )
                 from app.modules.conversations.exceptions import GenerationCancelled
-                from app.modules.users.user_service import UserService
                 from app.modules.conversations.message.message_model import MessageType
                 from app.modules.conversations.message.message_schema import (
                     MessageRequest,
@@ -63,63 +102,12 @@ def execute_agent_background(
                 from app.modules.conversations.message.message_store import MessageStore
 
                 logger.info("run_agent: coroutine started, acquiring async_db")
-                # Use BaseTask's context manager to get a fresh, non-pooled async session
-                # This avoids asyncpg Future binding issues across tasks sharing the same event loop
                 async with self.async_db() as async_db:
-                    logger.info("run_agent: async_db acquired, resolving user (sync DB on main thread)")
-                    # Use a fresh sync session on the main thread only. We avoid run_in_executor
-                    # here because creating threads in a forked Celery worker can trigger
-                    # GitPython/libgit2 SIGSEGV in multiprocessing context.
-                    from app.modules.users.user_model import User
-                    from app.core.database import SessionLocal
-
-                    _db = SessionLocal()
-                    try:
-                        user = UserService(_db).get_user_by_uid(user_id)
-                    finally:
-                        _db.close()
-
-                    # Debug: Direct query to verify user exists
-                    if not user:
-                        _db2 = SessionLocal()
-                        try:
-                            direct_user = (
-                                _db2.query(User)
-                                .filter(User.uid == user_id)
-                                .first()
-                            )
-                        finally:
-                            _db2.close()
-                        if direct_user:
-                            logger.warning(
-                                f"UserService.get_user_by_uid returned None but direct query found user: {direct_user.uid}, email: {direct_user.email}"
-                            )
-                            user = direct_user
-                        else:
-                            logger.warning(
-                                f"User not found in database for user_id: {user_id}. Using empty string as fallback."
-                            )
-
-                    logger.info("run_agent: user resolved, creating ConversationService")
+                    logger.info(
+                        "run_agent: async_db acquired, creating ConversationService"
+                    )
                     conversation_store = ConversationStore(self.db, async_db)
                     message_store = MessageStore(self.db, async_db)
-
-                    # Handle missing user or email gracefully
-                    if not user:
-                        user_email = ""
-                    elif not user.email:
-                        logger.warning(
-                            f"User found but email is None/empty for user_id: {user_id}, "
-                            f"user.uid: {user.uid if user else 'N/A'}, "
-                            f"email value: {repr(user.email) if user else 'N/A'}. "
-                            f"Using empty string as fallback."
-                        )
-                        user_email = ""
-                    else:
-                        user_email = user.email
-                        logger.debug(
-                            f"Retrieved user email: {user_email} for user_id: {user_id}"
-                        )
 
                     service = ConversationService.create(
                         conversation_store=conversation_store,
@@ -138,7 +126,9 @@ def execute_agent_background(
                     )
 
                     # Publish start event when actual processing begins
-                    logger.info("run_agent: publishing start event, calling store_message")
+                    logger.info(
+                        "run_agent: publishing start event, calling store_message"
+                    )
                     redis_manager.publish_event(
                         conversation_id,
                         run_id,
@@ -166,7 +156,9 @@ def execute_agent_background(
                             check_cancelled=check_cancelled,
                         ):
                             # Check for cancellation (redundant with cooperative check in agent, but keeps early exit)
-                            if redis_manager.check_cancellation(conversation_id, run_id):
+                            if redis_manager.check_cancellation(
+                                conversation_id, run_id
+                            ):
                                 logger.info("Agent execution cancelled")
                                 # Do not flush here - stop_generation saves from Redis snapshot to avoid duplicates
                                 redis_manager.publish_event(
@@ -185,7 +177,9 @@ def execute_agent_background(
                             if chunk.tool_calls:
                                 for tool_call in chunk.tool_calls:
                                     if hasattr(tool_call, "model_dump"):
-                                        serialized_tool_calls.append(tool_call.model_dump())
+                                        serialized_tool_calls.append(
+                                            tool_call.model_dump()
+                                        )
                                     elif hasattr(tool_call, "dict"):
                                         serialized_tool_calls.append(tool_call.dict())
                                     else:
@@ -318,47 +312,21 @@ def execute_regenerate_background(
         logger.warning("Failed to set task status in Redis", error=str(e))
 
     try:
+        user_email = _resolve_user_email_for_celery(self.db, user_id)
+
         # Execute regeneration with Redis publishing
         async def run_regeneration():
             from app.modules.conversations.conversation.conversation_service import (
                 ConversationService,
             )
             from app.modules.conversations.exceptions import GenerationCancelled
-            from app.modules.users.user_service import UserService
             from app.modules.conversations.conversation.conversation_store import (
                 ConversationStore,
             )
             from app.modules.conversations.message.message_store import MessageStore
             from app.modules.conversations.message.message_model import MessageType
 
-            # Use BaseTask's context manager to get a fresh, non-pooled async session
             async with self.async_db() as async_db:
-                # Get user email for service creation (sync DB on main thread to avoid
-                # threads in forked worker — can trigger GitPython/libgit2 SIGSEGV).
-                from app.core.database import SessionLocal
-
-                _db = SessionLocal()
-                try:
-                    user = UserService(_db).get_user_by_uid(user_id)
-                finally:
-                    _db.close()
-                # Handle missing user or email gracefully
-                if not user:
-                    logger.warning(
-                        f"User not found for user_id: {user_id}. Using empty string as fallback."
-                    )
-                    user_email = ""
-                elif not user.email:
-                    logger.warning(
-                        f"User found but email is None/empty for user_id: {user_id}, user object: {user}, email value: {repr(user.email)}. Using empty string as fallback."
-                    )
-                    user_email = ""
-                else:
-                    user_email = user.email
-                    logger.debug(
-                        f"Retrieved user email: {user_email} for user_id: {user_id}"
-                    )
-
                 conversation_store = ConversationStore(self.db, async_db)
                 message_store = MessageStore(self.db, async_db)
 
@@ -444,9 +412,7 @@ def execute_regenerate_background(
 
                     return True  # Indicate successful completion
                 except GenerationCancelled:
-                    logger.info(
-                        "Regenerate execution cancelled (GenerationCancelled)"
-                    )
+                    logger.info("Regenerate execution cancelled (GenerationCancelled)")
                     # Do not flush here - stop_generation saves from Redis snapshot to avoid duplicates
                     redis_manager.publish_event(
                         conversation_id,

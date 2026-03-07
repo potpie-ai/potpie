@@ -3,7 +3,7 @@ import os
 import secrets
 import re
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, ClassVar, Dict, List, Optional, Tuple, TYPE_CHECKING
 from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
 
 import aiohttp
@@ -87,6 +87,20 @@ async def close_github_async_redis_cache() -> None:
 
 class GithubService:
     gh_token_list: List[str] = []
+    _shared_executor: ClassVar[Optional[ThreadPoolExecutor]] = None
+
+    @classmethod
+    def _get_executor(cls) -> ThreadPoolExecutor:
+        if cls._shared_executor is None:
+            cls._shared_executor = ThreadPoolExecutor(max_workers=10)
+        return cls._shared_executor
+
+    @classmethod
+    def shutdown_executor(cls) -> None:
+        """Shutdown the shared executor. Call from app shutdown to avoid thread leaks."""
+        if cls._shared_executor is not None:
+            cls._shared_executor.shutdown(wait=False)
+            cls._shared_executor = None
 
     @classmethod
     def initialize_tokens(cls):
@@ -108,7 +122,6 @@ class GithubService:
         self.redis = Redis.from_url(config_provider.get_redis_url())
         self.max_workers = 10
         self.max_depth = 4
-        self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
         self.is_development_mode = config_provider.get_is_development_mode()
 
     def get_github_repo_details(self, repo_name: str) -> Tuple[Github, Dict, str]:
@@ -1363,7 +1376,7 @@ class GithubService:
             )
 
         try:
-            github, repo = self.get_repo(repo_name)
+            github, repo = await asyncio.to_thread(self.get_repo, repo_name)
 
             # If path is provided, verify it exists
             if path:
@@ -1469,8 +1482,8 @@ class GithubService:
         }
 
         try:
-            contents = await asyncio.get_event_loop().run_in_executor(
-                self.executor, lambda: repo.get_contents(path, ref=ref)
+            contents = await asyncio.get_running_loop().run_in_executor(
+                self._get_executor(), lambda: repo.get_contents(path, ref=ref)
             )
 
             if not isinstance(contents, list):

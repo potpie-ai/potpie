@@ -251,8 +251,10 @@ class MainApp:
         try:
             from app.modules.code_provider.github.github_service import (
                 close_github_async_redis_cache,
+                GithubService,
             )
             await close_github_async_redis_cache()
+            GithubService.shutdown_executor()
         except Exception as e:
             logger.warning("Shutdown cleanup error: %s", e)
 
