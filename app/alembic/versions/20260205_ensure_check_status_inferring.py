@@ -20,6 +20,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 # Must match ProjectStatusEnum in app.modules.projects.projects_schema
 _ALLOWED_STATUSES = (
+    "created",
     "submitted",
     "cloned",
     "parsed",
@@ -45,5 +46,5 @@ def downgrade() -> None:
     op.create_check_constraint(
         "check_status",
         "projects",
-        "status IN ('submitted', 'cloned', 'parsed', 'processing', 'inferring', 'ready', 'error')",
+        "status IN ('created', 'submitted', 'cloned', 'parsed', 'processing', 'inferring', 'ready', 'error')",
     )

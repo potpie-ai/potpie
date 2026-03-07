@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 
 class ProjectStatusEnum(str, Enum):
+    CREATED = "created"
     SUBMITTED = "submitted"
     CLONED = "cloned"
     PARSED = "parsed"
