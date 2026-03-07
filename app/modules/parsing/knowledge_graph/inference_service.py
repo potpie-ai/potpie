@@ -188,19 +188,19 @@ class InferenceService:
                 # Verify the assignment worked
                 if not node.get("cached_inference"):
                     logger.error(
-                        f"CACHE BUG: cached_inference not set after assignment! node={node['node_id'][:8]}"
+                        f"CACHE BUG: cached_inference not set after assignment! node={(node.get('node_id', 'UNKNOWN') or '')[:8]}"
                     )
                 logger.debug(
-                    f"✅ CACHE HIT | node={node['node_id'][:8]} | "
-                    f"hash={content_hash[:12]} | type={node.get('node_type', 'UNKNOWN')}"
+                    f"✅ CACHE HIT | node={(node.get('node_id', 'UNKNOWN') or '')[:8]} | "
+                    f"hash={(content_hash or 'UNKNOWN')[:12]} | type={node.get('node_type', 'UNKNOWN')}"
                 )
             else:
                 # Cache miss - mark for caching after LLM inference
                 node["should_cache"] = True
                 cache_misses += 1
                 logger.debug(
-                    f"❌ CACHE MISS | node={node['node_id'][:8]} | "
-                    f"hash={content_hash[:12]} | type={node.get('node_type', 'UNKNOWN')}"
+                    f"❌ CACHE MISS | node={(node.get('node_id', 'UNKNOWN') or '')[:8]} | "
+                    f"hash={(content_hash or 'UNKNOWN')[:12]} | type={node.get('node_type', 'UNKNOWN')}"
                 )
 
         total_lookup_time = time.time() - lookup_start
@@ -503,7 +503,9 @@ class InferenceService:
                 all_tags.update(docstring.tags or [])
 
         # Create consolidated docstring
-        if len(all_docstrings) == 1:
+        if len(all_docstrings) == 0:
+            consolidated_text = ""
+        elif len(all_docstrings) == 1:
             consolidated_text = all_docstrings[0]
         else:
             # Combine multiple chunk descriptions intelligently
@@ -639,7 +641,7 @@ class InferenceService:
             # Handle large nodes by splitting
             if node_tokens > max_tokens:
                 logger.debug(
-                    f"Node {node['node_id'][:8]} exceeds token limit ({node_tokens}). Splitting..."
+                    f"Node {(node.get('node_id', 'UNKNOWN') or '')[:8]} exceeds token limit ({node_tokens}). Splitting..."
                 )
                 node_chunks = self.split_large_node(text, node["node_id"], max_tokens)
 
