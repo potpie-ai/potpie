@@ -149,18 +149,32 @@ class InferenceService:
             if not text:
                 continue
 
-            # Normalize text for consistent hashing
-            normalized_text = self._normalize_node_text(text, node_dict)
-            node["normalized_text"] = normalized_text
+            # Use pre-computed content_hash from graph if available
+            content_hash = node.get("content_hash")
 
-            # Check if content is cacheable
-            if not is_content_cacheable(normalized_text):
-                uncacheable_nodes += 1
-                continue
+            if not content_hash:
+                # Normalize text for consistent hashing
+                normalized_text = self._normalize_node_text(text, node_dict)
+                node["normalized_text"] = normalized_text
 
-            # Generate content hash
-            content_hash = generate_content_hash(normalized_text, node.get("node_type"))
-            node["content_hash"] = content_hash
+                # Check if content is cacheable
+                if not is_content_cacheable(normalized_text):
+                    uncacheable_nodes += 1
+                    continue
+
+                # Generate content hash
+                content_hash = generate_content_hash(
+                    normalized_text, node.get("node_type")
+                )
+                node["content_hash"] = content_hash
+            else:
+                # Hash already computed at graph construction time
+                normalized_text = self._normalize_node_text(text, node_dict)
+                node["normalized_text"] = normalized_text
+
+                if not is_content_cacheable(normalized_text):
+                    uncacheable_nodes += 1
+                    continue
 
             # Look up in cache
             node_lookup_start = time.time()
@@ -313,7 +327,7 @@ class InferenceService:
             while True:
                 result = session.run(
                     "MATCH (n:NODE {repoId: $repo_id}) "
-                    "RETURN n.node_id AS node_id, n.text AS text, n.file_path AS file_path, n.start_line AS start_line, n.end_line AS end_line, n.name AS name "
+                    "RETURN n.node_id AS node_id, n.text AS text, n.file_path AS file_path, n.start_line AS start_line, n.end_line AS end_line, n.name AS name, n.content_hash AS content_hash, n.type AS node_type "
                     "SKIP $offset LIMIT $limit",
                     repo_id=repo_id,
                     offset=offset,

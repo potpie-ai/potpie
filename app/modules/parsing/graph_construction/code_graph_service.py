@@ -8,6 +8,7 @@ from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
 
 from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
+from app.modules.parsing.utils.content_hash import generate_content_hash, is_content_cacheable
 from app.modules.search.search_service import SearchService
 from app.modules.utils.logger import setup_logger
 
@@ -35,6 +36,39 @@ class CodeGraphService:
 
     def close(self):
         self.driver.close()
+
+    def get_cached_node_hashes(self, session, project_id: str) -> Dict[str, dict]:
+        """
+        Retrieve content hashes and cached inference data from Neo4j for a project.
+
+        Used for cross-branch cache comparison: when a new branch is parsed,
+        we can check which nodes have the same content hash as an existing
+        project and reuse their inference results.
+
+        Returns:
+            Dict mapping content_hash -> {docstring, embedding, tags}
+        """
+        result = session.run(
+            """
+            MATCH (n:NODE {repoId: $project_id})
+            WHERE n.content_hash IS NOT NULL AND n.docstring IS NOT NULL
+            RETURN n.content_hash AS content_hash,
+                   n.docstring AS docstring,
+                   n.embedding AS embedding,
+                   n.tags AS tags
+            """,
+            project_id=project_id,
+        )
+        cache = {}
+        for record in result:
+            content_hash = record["content_hash"]
+            if content_hash and content_hash not in cache:
+                cache[content_hash] = {
+                    "docstring": record["docstring"],
+                    "embedding": record["embedding"],
+                    "tags": record["tags"],
+                }
+        return cache
 
     def create_and_store_graph(self, repo_dir, project_id, user_id):
         graph_start_time = time.time()
@@ -94,6 +128,12 @@ class CodeGraphService:
                 FOR (n:NODE) ON (n.node_id, n.repoId)
             """
             )
+            session.run(
+                """
+                CREATE INDEX content_hash_repo_idx IF NOT EXISTS
+                FOR (n:NODE) ON (n.content_hash, n.repoId)
+            """
+            )
             index_time = time.time() - index_start
             logger.info(
                 f"[GRAPH GENERATION] Created indices in {index_time:.2f}s",
@@ -130,6 +170,7 @@ class CodeGraphService:
                         labels.append(node_type)
 
                     # Prepare node data
+                    node_text = node_data.get("text", "")
                     processed_node = {
                         "name": node_data.get(
                             "name", node_id
@@ -141,9 +182,15 @@ class CodeGraphService:
                         "node_id": CodeGraphService.generate_node_id(node_id, user_id),
                         "entityId": user_id,
                         "type": node_type,
-                        "text": node_data.get("text", ""),
+                        "text": node_text,
                         "labels": labels,
                     }
+
+                    # Compute and store content hash for cache-based inference reuse
+                    if node_text and is_content_cacheable(node_text):
+                        processed_node["content_hash"] = generate_content_hash(
+                            node_text, node_type
+                        )
 
                     # Remove None values
                     processed_node = {
