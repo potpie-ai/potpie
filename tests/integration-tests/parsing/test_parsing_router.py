@@ -167,10 +167,6 @@ class TestInputValidationEdgeCases:
         assert response.status_code == 200
         assert mock_process_parsing_delay.called
 
-    @pytest.mark.xfail(
-        reason="Contract unresolved: path may not exist; API may return 200, 404, or 500.",
-        strict=False,
-    )
     async def test_post_parse_path_like_repo_name(
         self, client, test_user, mock_process_parsing_delay, monkeypatch
     ):
@@ -185,10 +181,6 @@ class TestInputValidationEdgeCases:
         if response.status_code != 200:
             assert not mock_process_parsing_delay.called
 
-    @pytest.mark.xfail(
-        reason="Contract unresolved: path may not exist; API may return 200, 404, or 500.",
-        strict=False,
-    )
     async def test_post_parse_relative_path_repo_name(
         self, client, test_user, mock_process_parsing_delay, monkeypatch
     ):

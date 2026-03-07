@@ -30,6 +30,13 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 # --- App and Model Imports ---
 from datetime import datetime, timedelta, timezone
 
+# Set Neo4j override before app load so tools that create a driver get valid config in CI/tests
+from app.core.config_provider import ConfigProvider
+
+ConfigProvider.set_neo4j_override(
+    {"uri": "bolt://localhost:7687", "username": "neo4j", "password": "test"}
+)
+
 from app.main import app
 from app.core.base_model import Base
 from app.core.database import get_db, get_async_db
