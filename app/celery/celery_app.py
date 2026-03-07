@@ -154,10 +154,10 @@ def configure_celery(queue_prefix: str):
 
 configure_celery(queue_name)
 
-# Disable Pydantic AI instrumentation in Celery workers to avoid OpenTelemetry
-# "Token was created in a different Context" errors when async generators yield
-# during tool execution (prefork + asyncio contextvar mismatch).
-initialize_logfire_tracing(instrument_pydantic_ai=False)
+# Pydantic AI instrumentation is enabled; base_task.run_async uses asyncio.run()
+# per task so each run has a fresh event loop and OTel context (no deferred
+# aclose() in wrong context). worker_process_init OTel detach patch remains as safety net.
+initialize_logfire_tracing(instrument_pydantic_ai=True)
 
 
 def configure_litellm_for_celery():
@@ -369,6 +369,49 @@ def configure_litellm_for_celery():
         logger.debug("LiteLLM not available, skipping configuration")
     except Exception as e:
         logger.warning(f"Failed to configure LiteLLM for Celery: {e}", exc_info=True)
+
+
+@worker_process_init.connect
+def _patch_otel_detach_for_async_context(sender, **kwargs):
+    """Patch OTel context.detach to silently handle 'Token was created in a different Context'.
+
+    Also sets CELERY_WORKER=1 so execution_flows skips MCP in workers (avoids anyio
+    cancel-scope / GeneratorExit issues when cancelling or with parallel tools).
+
+    Root cause: pydantic_ai's _call_tools is an async generator with a sync
+    'with tracer.start_as_current_span(...)' block that contains yield statements.
+    When those generators are not explicitly closed (e.g. due to a break or early
+    return), Python's asyncio defers their aclose() via loop.call_soon(). With
+    Celery's long-lived reused event loop, those stale callbacks run during the
+    NEXT agent run in a different OTel context, causing detach() to fail.
+
+    OTel's context.detach() already catches this ValueError and swallows it, but
+    uses logger.exception() which logs a full traceback at ERROR level on every
+    tool call — that's the actual performance hit. This patch intercepts the
+    ValueError one level below so the traceback is never formatted or logged.
+    """
+    os.environ["CELERY_WORKER"] = "1"
+    try:
+        from opentelemetry.context.contextvars_context import ContextVarsRuntimeContext
+
+        original_detach = ContextVarsRuntimeContext.detach
+
+        def _safe_detach(self, token):
+            try:
+                original_detach(self, token)
+            except ValueError as exc:
+                if "different Context" in str(exc):
+                    logger.debug(
+                        "OTel context detach skipped (async generator cleanup in wrong context): %s",
+                        exc,
+                    )
+                else:
+                    raise
+
+        ContextVarsRuntimeContext.detach = _safe_detach
+        logger.debug("Patched OTel ContextVarsRuntimeContext.detach for async context safety")
+    except Exception as exc:
+        logger.warning("Could not patch OTel detach (non-fatal): %s", exc)
 
 
 @worker_process_init.connect

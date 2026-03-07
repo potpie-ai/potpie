@@ -1,4 +1,5 @@
 import asyncio
+import os
 from typing import Optional, List
 
 from sqlalchemy.orm import Session
@@ -47,6 +48,25 @@ def _resolve_user_email_for_celery(db: Session, user_id: str) -> str:
     return email
 
 
+def _clear_pydantic_ai_http_client_cache() -> None:
+    """Clear pydantic_ai's globally cached async HTTP client(s).
+
+    In Celery workers we use asyncio.run() per task, so each task has a new event loop.
+    The cached httpx.AsyncClient is created on first use and tied to that task's loop.
+    Reusing it in a later task (different loop, previous loop closed) can cause the
+    model request stream to hang or yield no chunks. Clearing the cache at task start
+    forces the next model creation to get a fresh client bound to the current loop.
+    """
+    if os.getenv("CELERY_WORKER") != "1":
+        return
+    try:
+        from pydantic_ai.models import _cached_async_http_client
+
+        _cached_async_http_client.cache_clear()
+    except Exception as e:
+        logger.debug("Could not clear pydantic_ai HTTP client cache: %s", e)
+
+
 @celery_app.task(
     bind=True,
     base=BaseTask,
@@ -65,6 +85,12 @@ def execute_agent_background(
     tunnel_url: Optional[str] = None,
 ) -> None:
     """Execute an agent in the background and publish results to Redis streams"""
+    # Clear pydantic_ai's globally cached async HTTP client so this task gets a fresh
+    # client bound to this task's event loop. With asyncio.run() per task, the previous
+    # task's loop is closed, so reusing the cached client would use a client tied to a
+    # closed loop and can hang or yield no chunks (e.g. model request stream stuck).
+    _clear_pydantic_ai_http_client_cache()
+
     redis_manager = RedisStreamManager()
 
     # Set up logging context with domain IDs
@@ -172,7 +198,7 @@ def execute_agent_background(
                                 )
                                 return False  # Indicate cancellation
 
-                            # Publish chunk event
+                            # Publish chunk event (run in executor to avoid blocking the event loop)
                             serialized_tool_calls = []
                             if chunk.tool_calls:
                                 for tool_call in chunk.tool_calls:
@@ -185,17 +211,20 @@ def execute_agent_background(
                                     else:
                                         serialized_tool_calls.append(tool_call)
 
-                            redis_manager.publish_event(
-                                conversation_id,
-                                run_id,
-                                "chunk",
-                                {
-                                    "content": chunk.message or "",
-                                    "citations_json": chunk.citations or [],
-                                    "tool_calls_json": serialized_tool_calls,
-                                    "thinking": chunk.thinking,
-                                },
-                            )
+                            payload = {
+                                "content": chunk.message or "",
+                                "citations_json": chunk.citations or [],
+                                "tool_calls_json": serialized_tool_calls,
+                                "thinking": chunk.thinking,
+                            }
+
+                            def _publish_chunk():
+                                redis_manager.publish_event(
+                                    conversation_id, run_id, "chunk", payload
+                                )
+
+                            loop = asyncio.get_event_loop()
+                            await loop.run_in_executor(None, _publish_chunk)
 
                         return True  # Indicate successful completion (loop finished)
                     except GenerationCancelled:
@@ -214,7 +243,7 @@ def execute_agent_background(
 
                     return True  # Indicate successful completion
 
-            # Run the async agent execution on the worker's long-lived loop.
+            # Run the async agent execution in a fresh event loop (asyncio.run).
             # Convert asyncio.CancelledError to RuntimeError so Celery's result callback
             # receives (failed, retval, runtime) instead of ExceptionInfo (avoids
             # "cannot unpack non-iterable ExceptionInfo object").
@@ -298,6 +327,8 @@ def execute_regenerate_background(
     local_mode: bool = False,
 ) -> None:
     """Execute regeneration in the background and publish results to Redis streams"""
+    _clear_pydantic_ai_http_client_cache()
+
     redis_manager = RedisStreamManager()
 
     # Set up logging context with domain IDs
@@ -324,7 +355,6 @@ def execute_regenerate_background(
                 ConversationStore,
             )
             from app.modules.conversations.message.message_store import MessageStore
-            from app.modules.conversations.message.message_model import MessageType
 
             async with self.async_db() as async_db:
                 conversation_store = ConversationStore(self.db, async_db)
@@ -380,8 +410,9 @@ def execute_regenerate_background(
                             )
                             return False  # Indicate cancellation
 
-                        # Publish chunk event
-                        # Properly serialize tool calls before sending through Redis
+                        # Publish chunk event (run in executor to avoid blocking the event loop:
+                        # sync Redis would block consumption of the model stream and can trigger
+                        # "Model stream idle timeout" when the agent is streaming long code.)
                         serialized_tool_calls = []
                         if chunk.tool_calls:
                             for tool_call in chunk.tool_calls:
@@ -392,17 +423,20 @@ def execute_regenerate_background(
                                 else:
                                     serialized_tool_calls.append(tool_call)
 
-                        redis_manager.publish_event(
-                            conversation_id,
-                            run_id,
-                            "chunk",
-                            {
-                                "content": chunk.message or "",
-                                "citations_json": chunk.citations or [],
-                                "tool_calls_json": serialized_tool_calls,
-                                "thinking": chunk.thinking,
-                            },
-                        )
+                        payload = {
+                            "content": chunk.message or "",
+                            "citations_json": chunk.citations or [],
+                            "tool_calls_json": serialized_tool_calls,
+                            "thinking": chunk.thinking,
+                        }
+
+                        def _publish_chunk():
+                            redis_manager.publish_event(
+                                conversation_id, run_id, "chunk", payload
+                            )
+
+                        loop = asyncio.get_event_loop()
+                        await loop.run_in_executor(None, _publish_chunk)
 
                     # Log completion of regeneration
                     if has_chunks:
@@ -425,7 +459,7 @@ def execute_regenerate_background(
                     )
                     return False  # Indicate cancellation
 
-        # Run the async regeneration on the worker's long-lived loop
+        # Run the async regeneration in a fresh event loop (asyncio.run)
         completed = self.run_async(run_regeneration())
 
         # Only publish completion event if not cancelled

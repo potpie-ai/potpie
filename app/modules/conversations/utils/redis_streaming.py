@@ -32,6 +32,9 @@ class RedisStreamManager:
         self, conversation_id: str, run_id: str, event_type: str, payload: dict
     ):
         """Synchronous Redis stream publishing for Celery tasks"""
+        # #region agent log
+        _t0 = time.time()
+        # #endregion
         key = self.stream_key(conversation_id, run_id)
 
         def serialize_value(v):
@@ -66,7 +69,15 @@ class RedisStreamManager:
             # Refresh TTL
             self.redis_client.expire(key, self.stream_ttl)
 
-            logger.debug(f"Published {event_type} event to stream {key}")
+            # #region agent log
+            try:
+                _elapsed = time.time() - _t0
+                if _elapsed > 0.1:
+                    with open("/Users/nandan/Desktop/Dev/potpie/.cursor/debug-dec41d.log", "a") as _f:
+                        _f.write('{"sessionId":"dec41d","hypothesisId":"H1","location":"redis_streaming:publish_event","message":"publish_slow","data":{"event_type":"%s","elapsed":%.3f,"ts":%.3f}}\n' % (event_type, _elapsed, time.time()))
+            except Exception:
+                pass
+            # #endregion
         except Exception as e:
             logger.error(f"Failed to publish event to Redis stream {key}: {str(e)}")
             raise

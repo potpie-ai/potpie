@@ -49,7 +49,7 @@ def process_parsing(
                     "Parsing process completed", elapsed_seconds=round(elapsed_time, 2)
                 )
 
-            # Use BaseTask's long-lived event loop for consistency
+            # Run parsing in a fresh event loop (asyncio.run)
             self.run_async(run_parsing())
         except Exception:
             logger.exception("Error during parsing")

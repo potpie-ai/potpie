@@ -94,9 +94,6 @@ class ChatHistoryService:
                 self.message_buffer[conversation_id]["thinking"] = thinking
             else:
                 self.message_buffer[conversation_id]["thinking"] += thinking
-        logger.debug(
-            f"Added message chunk to buffer for conversation: {conversation_id}"
-        )
 
     def flush_message_buffer(
         self,

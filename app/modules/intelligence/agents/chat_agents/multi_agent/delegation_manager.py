@@ -253,6 +253,24 @@ class DelegationManager:
         subagent_error_occurred = False  # Track if subagent reported an error
 
         try:
+            # Re-initialize the code-changes manager context for this subagent task.
+            # asyncio.create_task copies ContextVars at task creation time, but the
+            # supervisor may have set them AFTER the task was created, or a previous
+            # subagent task may have overwritten them. Explicitly re-seeding ensures
+            # user_id / tunnel_url / conversation_id are always correct here.
+            from app.modules.intelligence.tools.code_changes_manager import (
+                _init_code_changes_manager,
+            )
+            _init_code_changes_manager(
+                conversation_id=current_context.conversation_id,
+                agent_id=getattr(current_context, "curr_agent_id", None),
+                user_id=getattr(current_context, "user_id", None),
+                tunnel_url=getattr(current_context, "tunnel_url", None),
+                local_mode=getattr(current_context, "local_mode", False),
+                repository=getattr(current_context, "repository", None),
+                branch=getattr(current_context, "branch", None),
+            )
+
             # Convert agent type string to AgentType enum
             agent_type = AgentType(agent_type_str)
 

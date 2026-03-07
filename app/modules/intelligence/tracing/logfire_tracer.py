@@ -62,9 +62,6 @@ def initialize_logfire_tracing(
         environment: Environment identifier (e.g., "development", "production", "staging", "testing")
         send_to_logfire: Whether to send traces to Logfire cloud (default: True)
         instrument_pydantic_ai: Whether to instrument Pydantic AI for tracing (default: True).
-            Set to False in Celery workers to avoid OpenTelemetry contextvar errors
-            ("Token was created in a different Context") when async generators yield
-            during tool execution with prefork workers.
 
     Returns:
         bool: True if initialization successful, False otherwise
@@ -136,17 +133,6 @@ def initialize_logfire_tracing(
 def is_logfire_enabled() -> bool:
     """Check if Logfire tracing is enabled and initialized."""
     return _LOGFIRE_INITIALIZED
-
-
-def should_instrument_pydantic_ai() -> bool:
-    """
-    Return whether pydantic_ai Agent should use OpenTelemetry instrumentation.
-
-    Returns False when running in a Celery worker process to avoid OTel contextvar
-    errors ('Token was created in a different Context') during async tool execution
-    with prefork workers. Set by worker_process_init in celery_app.
-    """
-    return os.getenv("CELERY_WORKER") != "1"
 
 
 def shutdown_logfire_tracing():
