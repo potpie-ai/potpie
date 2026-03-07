@@ -65,10 +65,17 @@ class TestGenerateContentHash:
 
     def test_includes_cache_version(self):
         """Hash should change if CACHE_VERSION changes (version is embedded)."""
+        import app.modules.parsing.utils.content_hash as ch
+
         code = "def test(): pass"
         hash1 = generate_content_hash(code)
-        # Verify the hash is deterministic
-        assert hash1 == generate_content_hash(code)
+        original_version = ch.CACHE_VERSION
+        try:
+            ch.CACHE_VERSION = "v999"
+            hash2 = generate_content_hash(code)
+        finally:
+            ch.CACHE_VERSION = original_version
+        assert hash1 != hash2
 
 
 class TestHasUnresolvedReferences:
@@ -95,7 +102,9 @@ class TestIsContentCacheable:
 
     def test_long_content_cacheable(self):
         """Substantial content should be cacheable."""
-        code = "def complex_function():\n" + "    x = 1\n" * 20
+        code = "def complex_function():\n" + "\n".join(
+            f"    value_{i} = {i}" for i in range(20)
+        )
         assert is_content_cacheable(code)
 
     def test_unresolved_references_not_cacheable(self):

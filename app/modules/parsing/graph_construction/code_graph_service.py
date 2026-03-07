@@ -46,7 +46,7 @@ class CodeGraphService:
         project and reuse their inference results.
 
         Returns:
-            Dict mapping content_hash -> {docstring, embedding, tags}
+            Dict mapping content_hash -> {docstring, embedding_vector, tags}
         """
         result = session.run(
             """
@@ -65,7 +65,7 @@ class CodeGraphService:
             if content_hash and content_hash not in cache:
                 cache[content_hash] = {
                     "docstring": record["docstring"],
-                    "embedding": record["embedding"],
+                    "embedding_vector": record["embedding"],
                     "tags": record["tags"],
                 }
         return cache

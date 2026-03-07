@@ -72,7 +72,7 @@ class TestInferenceCacheService:
         # No existing entry
         mock_db.query.return_value.filter.return_value.first.return_value = None
 
-        result = service.store_inference(
+        service.store_inference(
             content_hash="new_hash",
             inference_data={"docstring": "New doc", "tags": ["api"]},
             project_id="proj-1",
@@ -92,7 +92,7 @@ class TestInferenceCacheService:
         existing.access_count = 3
         mock_db.query.return_value.filter.return_value.first.return_value = existing
 
-        result = service.store_inference(
+        service.store_inference(
             content_hash="existing_hash",
             inference_data={"docstring": "Updated"},
         )
