@@ -1,4 +1,4 @@
-name: Tests
+name: Regression tests
 
 on:
   pull_request:
@@ -7,7 +7,7 @@ on:
     branches: [main, master]
 
 jobs:
-  test:
+  regression:
     runs-on: ubuntu-latest
     services:
       postgres:
