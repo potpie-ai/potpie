@@ -1,6 +1,4 @@
 import json
-import logging
-import os
 import re
 import sys
 
@@ -66,16 +64,36 @@ def production_log_sink(message):
         "message": filter_sensitive_data(str(record.get("message", ""))),
     }
 
-    extras = record.get("extra", {})
-    for key, value in extras.items():
+    raw_extras = record.get("extra", {})
+    sanitized_extras = {}
+    for key, value in raw_extras.items():
         if key != "name":
             if isinstance(value, (str, bytes)):
-                log_data[key] = filter_sensitive_data(str(value))
+                sanitized_extras[key] = filter_sensitive_data(str(value))
             else:
-                log_data[key] = value
+                sanitized_extras[key] = value
+    
+    if sanitized_extras:
+        log_data["extra"] = sanitized_extras
 
     if exception:
         log_data["exception"] = exception
 
     sys.stdout.write(json.dumps(log_data, default=str) + "\n")
     sys.stdout.flush()
+
+from contextlib import contextmanager
+import logging
+
+def configure_logging():
+    """Maintain compatibility with legacy startup code."""
+    pass
+
+def setup_logger(name):
+    """Returns a logger instance; maintaining compatibility."""
+    return logging.getLogger(name)
+
+@contextmanager
+def log_context(**kwargs):
+    """Stub to keep existing code working."""
+    yield
