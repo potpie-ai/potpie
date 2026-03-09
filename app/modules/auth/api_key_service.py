@@ -3,6 +3,7 @@ import os
 import secrets
 from typing import Optional
 
+from cryptography.fernet import Fernet, InvalidToken
 from fastapi import HTTPException
 from google.cloud import secretmanager
 from sqlalchemy import text
@@ -22,24 +23,29 @@ class APIKeyService:
     @staticmethod
     def get_client_and_project():
         """Get Secret Manager client and project ID based on environment."""
+        # Check if development mode is enabled
         is_dev_mode = os.getenv("isDevelopmentMode", "enabled") == "enabled"
         if is_dev_mode:
+            logger.info("Development mode enabled - skipping GCP Secret Manager")
+            return None, None
+
+        # Check if GCP Secret Manager is explicitly disabled
+        gcp_disabled = os.environ.get("GCP_SECRET_MANAGER_DISABLED", "false").lower()
+        if gcp_disabled in ("true", "1", "yes", "enabled"):
+            logger.info("GCP Secret Manager disabled via GCP_SECRET_MANAGER_DISABLED")
             return None, None
 
         project_id = os.environ.get("GCP_PROJECT")
         if not project_id:
-            raise HTTPException(
-                status_code=500, detail="GCP_PROJECT environment variable is not set"
-            )
+            logger.info("GCP_PROJECT not set - skipping GCP Secret Manager")
+            return None, None
 
         try:
             client = secretmanager.SecretManagerServiceClient()
             return client, project_id
         except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to initialize Secret Manager client: {str(e)}",
-            )
+            logger.warning(f"Failed to initialize Secret Manager client: {str(e)}")
+            return None, None
 
     @staticmethod
     def generate_api_key() -> str:
@@ -51,6 +57,42 @@ class APIKeyService:
     def hash_api_key(api_key: str) -> str:
         """Hash the API key for storage and comparison."""
         return hashlib.sha256(api_key.encode()).hexdigest()
+
+    @staticmethod
+    def get_encryption_key():
+        """Get Fernet encryption key for local storage."""
+        secret_key = os.environ.get("SECRET_ENCRYPTION_KEY")
+        if not secret_key:
+            raise HTTPException(
+                status_code=500,
+                detail="SECRET_ENCRYPTION_KEY environment variable is not set",
+            )
+        try:
+            return Fernet(secret_key.encode("utf-8"))
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Invalid SECRET_ENCRYPTION_KEY: {str(e)}",
+            )
+
+    @staticmethod
+    def encrypt_value(value: str) -> str:
+        """Encrypt a value for local storage."""
+        f = APIKeyService.get_encryption_key()
+        encrypted = f.encrypt(value.encode("utf-8"))
+        return encrypted.decode("utf-8")
+
+    @staticmethod
+    def decrypt_value(encrypted_value: str) -> str:
+        """Decrypt a value from local storage."""
+        f = APIKeyService.get_encryption_key()
+        try:
+            decrypted = f.decrypt(encrypted_value.encode("utf-8"))
+            return decrypted.decode("utf-8")
+        except InvalidToken:
+            raise HTTPException(
+                status_code=500, detail="Failed to decrypt API key. Invalid token."
+            )
 
     @staticmethod
     async def create_api_key(user_id: str, db: Session) -> str:
@@ -71,9 +113,11 @@ class APIKeyService:
             user_pref.preferences = pref
         db.commit()
         db.refresh(user_pref)
-        # Store actual key in Secret Manager
-        if os.getenv("isDevelopmentMode") != "enabled":
-            client, project_id = APIKeyService.get_client_and_project()
+        # Store actual key
+        client, project_id = APIKeyService.get_client_and_project()
+
+        if client and project_id:
+            # Store in Secret Manager
             secret_id = f"user-api-key-{user_id}"
             parent = f"projects/{project_id}"
 
@@ -92,10 +136,30 @@ class APIKeyService:
             except Exception as e:
                 # Rollback database changes if secret manager fails
                 if "api_key_hash" in user_pref.preferences:
-                    del user_pref.preferences["api_key_hash"]
+                    pref = user_pref.preferences.copy()
+                    del pref["api_key_hash"]
+                    user_pref.preferences = pref
                     db.commit()
                 raise HTTPException(
-                    status_code=500, detail=f"Failed to store API key: {str(e)}"
+                    status_code=500, detail=f"Failed to store API key in Secret Manager: {str(e)}"
+                )
+        else:
+            # Fallback to local encryption
+            try:
+                encrypted_key = APIKeyService.encrypt_value(api_key)
+                pref = user_pref.preferences.copy()
+                pref["encrypted_api_key"] = encrypted_key
+                user_pref.preferences = pref
+                db.commit()
+            except Exception as e:
+                # Rollback hash if encryption fails
+                if "api_key_hash" in user_pref.preferences:
+                    pref = user_pref.preferences.copy()
+                    del pref["api_key_hash"]
+                    user_pref.preferences = pref
+                    db.commit()
+                raise HTTPException(
+                    status_code=500, detail=f"Failed to store API key locally: {str(e)}"
                 )
 
         return api_key
@@ -145,19 +209,21 @@ class APIKeyService:
         if not user_pref:
             return False
 
-        if "api_key_hash" in user_pref.preferences:
-            # Create a new dictionary without the api_key_hash
+        if "api_key_hash" in user_pref.preferences or "encrypted_api_key" in user_pref.preferences:
+            # Create a new dictionary without the keys
             updated_preferences = user_pref.preferences.copy()
-            del updated_preferences["api_key_hash"]
+            if "api_key_hash" in updated_preferences:
+                del updated_preferences["api_key_hash"]
+            if "encrypted_api_key" in updated_preferences:
+                del updated_preferences["encrypted_api_key"]
             user_pref.preferences = updated_preferences
             db.commit()
 
-        # Delete from Secret Manager if not in dev mode
-        if os.getenv("isDevelopmentMode") != "enabled":
-            client, project_id = APIKeyService.get_client_and_project()
+        # Delete from Secret Manager if available
+        client, project_id = APIKeyService.get_client_and_project()
+        if client and project_id:
             secret_id = f"user-api-key-{user_id}"
             name = f"projects/{project_id}/secrets/{secret_id}"
-
             try:
                 client.delete_secret(request={"name": name})
             except Exception:
@@ -174,17 +240,26 @@ class APIKeyService:
         if not user_pref or "api_key_hash" not in user_pref.preferences:
             return None
 
-        if os.getenv("isDevelopmentMode") == "enabled":
-            return None  # In dev mode, we can't retrieve the actual key for security
-
+        # Try retrieving from Secret Manager first if available
         client, project_id = APIKeyService.get_client_and_project()
-        secret_id = f"user-api-key-{user_id}"
-        name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
+        if client and project_id:
+            secret_id = f"user-api-key-{user_id}"
+            name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
+            try:
+                response = client.access_secret_version(request={"name": name})
+                return response.payload.data.decode("UTF-8")
+            except Exception as e:
+                logger.warning(f"Failed to retrieve API key from Secret Manager: {str(e)}")
+                # If Secret Manager fails, we might still have it locally (fallback case)
+        
+        # Try retrieving from local storage
+        if "encrypted_api_key" in user_pref.preferences:
+            try:
+                encrypted_key = user_pref.preferences["encrypted_api_key"]
+                return APIKeyService.decrypt_value(encrypted_key)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500, detail=f"Failed to decrypt local API key: {str(e)}"
+                )
 
-        try:
-            response = client.access_secret_version(request={"name": name})
-            return response.payload.data.decode("UTF-8")
-        except Exception as e:
-            raise HTTPException(
-                status_code=500, detail=f"Failed to retrieve API key: {str(e)}"
-            )
+        return None
