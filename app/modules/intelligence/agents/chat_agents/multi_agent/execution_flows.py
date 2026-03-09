@@ -1,15 +1,13 @@
 """Execution flows for different agent execution modes"""
 
+import os
 import traceback
 from typing import AsyncGenerator, Any, Optional
 import anyio
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.usage import UsageLimits
 
-from .utils.message_history_utils import (
-    validate_and_fix_message_history,
-    prepare_multimodal_message_history,
-)
+from .utils.message_history_utils import prepare_multimodal_message_history
 from .utils.multimodal_utils import create_multimodal_user_content
 from app.modules.conversations.exceptions import GenerationCancelled
 from app.modules.intelligence.agents.chat_agent import ChatContext, ChatAgentResponse
@@ -102,9 +100,6 @@ class StandardExecutionFlow:
 
             # Create and run supervisor agent
             supervisor_agent = self.create_supervisor_agent(ctx)
-
-            # Validate message history before sending to model (single validation)
-            message_history = validate_and_fix_message_history(message_history)
 
             # Try to initialize MCP servers with timeout handling
             try:
@@ -237,15 +232,99 @@ class StreamingExecutionFlow:
         supervisor_agent = self.create_supervisor_agent(ctx)
 
         try:
-            # Try to initialize MCP servers with timeout handling
-            try:
-                # Use prepare_multimodal_message_history to get compressed history if available
-                message_history = await prepare_multimodal_message_history(
-                    ctx, self.history_processor
-                )
-                message_history = validate_and_fix_message_history(message_history)
+            # In Celery workers, skip MCP to avoid anyio cancel-scope issues: run_mcp_servers()
+            # uses anyio; when the user cancels or parallel tools run, a different asyncio task
+            # can exit the cancel scope than the one that entered it, causing
+            # "Attempted to exit cancel scope in a different task than it was entered in".
+            use_mcp = os.getenv("CELERY_WORKER") != "1"
 
-                async with supervisor_agent.run_mcp_servers():
+            if use_mcp:
+                # Try to initialize MCP servers with timeout handling
+                try:
+                    # Use prepare_multimodal_message_history to get compressed history if available
+                    message_history = await prepare_multimodal_message_history(
+                        ctx, self.history_processor
+                    )
+
+                    async with supervisor_agent.run_mcp_servers():
+                        async with supervisor_agent.iter(
+                            user_prompt=ctx.query,
+                            message_history=message_history,
+                            usage_limits=UsageLimits(
+                                request_limit=None
+                            ),  # No request limit for long-running tasks
+                        ) as run:
+                            # Store the supervisor run so delegation functions can access its message history
+                            self.current_supervisor_run_ref["run"] = run
+                            try:
+                                async for (
+                                    response
+                                ) in self.stream_processor.process_agent_run_nodes(
+                                    run, "multi-agent", current_context=ctx
+                                ):
+                                    yield response
+                            finally:
+                                # Clear the reference when done
+                                self.current_supervisor_run_ref["run"] = None
+
+                except (
+                    TimeoutError,
+                    anyio.WouldBlock,
+                    ModelHTTPError,
+                    Exception,
+                ) as mcp_error:
+                    error_detail = f"{type(mcp_error).__name__}: {str(mcp_error)}"
+                    error_str = str(mcp_error).lower()
+
+                    # Check for specific error types
+                    if isinstance(mcp_error, ModelHTTPError):
+                        error_body = getattr(mcp_error, "body", None) or {}
+                        if isinstance(error_body, dict):
+                            # Support both top-level "message" (OpenAI-style) and nested "error.message"
+                            error_message = error_body.get("message", "")
+                            if not error_message:
+                                err_obj = error_body.get("error")
+                                if isinstance(err_obj, dict):
+                                    error_message = err_obj.get("message", "")
+                        else:
+                            error_message = str(error_body)
+
+                        # Check for duplicate tool_result error
+                        if (
+                            "tool_result" in error_message.lower()
+                            and "multiple" in error_message.lower()
+                        ):
+                            logger.error(
+                                f"Duplicate tool_result error detected in ModelHTTPError: {error_message}. "
+                                f"This indicates pydantic_ai's message history has duplicate tool results. "
+                                f"This may be caused by retries or error recovery. The message history may need to be cleared."
+                            )
+                        # Check for token limit error
+                        elif (
+                            "too long" in error_message.lower()
+                            or "maximum" in error_message.lower()
+                        ):
+                            logger.error(
+                                f"Token limit exceeded: {error_message}. "
+                                f"Message history is too large. Consider reducing history size or starting a new conversation."
+                            )
+
+                    logger.warning(
+                        f"MCP server initialization failed in stream: {error_detail}",
+                        exc_info=True,
+                    )
+                    # Check if it's a JSON parsing error
+                    if "json" in error_str or "parse" in error_str:
+                        logger.error(
+                            f"JSON parsing error during MCP server initialization in stream - MCP server may be returning malformed or incomplete JSON. Full traceback:\n{traceback.format_exc()}"
+                        )
+                    logger.info("Continuing without MCP servers...")
+
+                    # Fallback without MCP servers - use compressed history if available
+                    message_history = await prepare_multimodal_message_history(
+                        ctx, self.history_processor
+                    )
+
                     async with supervisor_agent.iter(
                         user_prompt=ctx.query,
                         message_history=message_history,
@@ -266,64 +345,11 @@ class StreamingExecutionFlow:
                             # Clear the reference when done
                             self.current_supervisor_run_ref["run"] = None
 
-            except (
-                TimeoutError,
-                anyio.WouldBlock,
-                ModelHTTPError,
-                Exception,
-            ) as mcp_error:
-                error_detail = f"{type(mcp_error).__name__}: {str(mcp_error)}"
-                error_str = str(mcp_error).lower()
-
-                # Check for specific error types
-                if isinstance(mcp_error, ModelHTTPError):
-                    error_body = getattr(mcp_error, "body", None) or {}
-                    if isinstance(error_body, dict):
-                        # Support both top-level "message" (OpenAI-style) and nested "error.message"
-                        error_message = error_body.get("message", "")
-                        if not error_message:
-                            err_obj = error_body.get("error")
-                            if isinstance(err_obj, dict):
-                                error_message = err_obj.get("message", "")
-                    else:
-                        error_message = str(error_body)
-
-                    # Check for duplicate tool_result error
-                    if (
-                        "tool_result" in error_message.lower()
-                        and "multiple" in error_message.lower()
-                    ):
-                        logger.error(
-                            f"Duplicate tool_result error detected in ModelHTTPError: {error_message}. "
-                            f"This indicates pydantic_ai's message history has duplicate tool results. "
-                            f"This may be caused by retries or error recovery. The message history may need to be cleared."
-                        )
-                    # Check for token limit error
-                    elif (
-                        "too long" in error_message.lower()
-                        or "maximum" in error_message.lower()
-                    ):
-                        logger.error(
-                            f"Token limit exceeded: {error_message}. "
-                            f"Message history is too large. Consider reducing history size or starting a new conversation."
-                        )
-
-                logger.warning(
-                    f"MCP server initialization failed in stream: {error_detail}",
-                    exc_info=True,
-                )
-                # Check if it's a JSON parsing error
-                if "json" in error_str or "parse" in error_str:
-                    logger.error(
-                        f"JSON parsing error during MCP server initialization in stream - MCP server may be returning malformed or incomplete JSON. Full traceback:\n{traceback.format_exc()}"
-                    )
-                logger.info("Continuing without MCP servers...")
-
-                # Fallback without MCP servers - use compressed history if available
+            else:
+                # Celery worker: skip MCP to avoid anyio cancel-scope / GeneratorExit issues
                 message_history = await prepare_multimodal_message_history(
                     ctx, self.history_processor
                 )
-                message_history = validate_and_fix_message_history(message_history)
 
                 async with supervisor_agent.iter(
                     user_prompt=ctx.query,
@@ -332,7 +358,6 @@ class StreamingExecutionFlow:
                         request_limit=None
                     ),  # No request limit for long-running tasks
                 ) as run:
-                    # Store the supervisor run so delegation functions can access its message history
                     self.current_supervisor_run_ref["run"] = run
                     try:
                         async for (
@@ -342,7 +367,6 @@ class StreamingExecutionFlow:
                         ):
                             yield response
                     finally:
-                        # Clear the reference when done
                         self.current_supervisor_run_ref["run"] = None
 
         except GenerationCancelled:
@@ -359,7 +383,7 @@ class StreamingExecutionFlow:
                 if "'" in error_str:
                     parts = error_str.split("'")
                     if len(parts) >= 2:
-                        tool_name = parts[1]
+                        tool_name = parts[1].strip()
 
                 logger.warning(
                     f"Tool '{tool_name}' exceeded max retries in multi-agent stream. "
@@ -420,9 +444,6 @@ class MultimodalStreamingExecutionFlow:
             message_history = await prepare_multimodal_message_history(
                 ctx, self.history_processor
             )
-
-            # Validate message history before sending to model
-            message_history = validate_and_fix_message_history(message_history)
 
             # Create supervisor agent
             supervisor_agent = self.create_supervisor_agent(ctx)

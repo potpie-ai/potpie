@@ -1,6 +1,8 @@
+import asyncio
 import os
 
 from posthog import Posthog
+
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -18,28 +20,37 @@ class PostHogClient:
         else:
             self.posthog = None
 
-    def send_event(self, user_id: str, event_name: str, properties: dict):
+    def _capture_sync(self, user_id: str, event_name: str, properties: dict) -> None:
+        """Sync capture (Posthog SDK is sync-only)."""
+        if self.posthog is None:
+            return
+        try:
+            self.posthog.capture(
+                user_id,
+                event=event_name,
+                properties=properties,
+            )
+        except Exception:
+            # Do not log raw user_id to avoid leaking identifiers
+            logger.exception(
+                "Failed to send PostHog event",
+                event_name=event_name,
+            )
+
+    def send_event(self, user_id: str, event_name: str, properties: dict) -> None:
         """
-        Sends a custom event to PostHog in the stage and production environment.
-        Args:
-            user_id (str): The ID of the user performing the action.
-            event_name (str): The name of the event to track.
-            properties (dict): Additional properties related to the event.
+        Sends a custom event to PostHog. When called from async context, runs
+        in a thread (fire-and-forget) to avoid blocking the event loop.
         """
         if self.environment != "production":
             return
-
-        if self.posthog is not None:  # Ensure posthog is initialized
-            try:
-                self.posthog.capture(
-                    user_id,  # User's unique identifier
-                    event=event_name,  # The event name
-                    properties=properties,  # Additional event metadata
-                )
-            except Exception:
-                # Log as error with context - event send failures should be investigated
-                logger.exception(
-                    "Failed to send PostHog event",
-                    user_id=user_id,
-                    event_name=event_name,
-                )
+        try:
+            loop = asyncio.get_running_loop()
+            # Fire-and-forget: run sync capture in thread pool
+            loop.run_in_executor(
+                None,
+                lambda: self._capture_sync(user_id, event_name, properties),
+            )
+        except RuntimeError:
+            # No running event loop (sync context)
+            self._capture_sync(user_id, event_name, properties)

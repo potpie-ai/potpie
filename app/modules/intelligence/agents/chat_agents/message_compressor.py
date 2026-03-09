@@ -18,6 +18,7 @@ from pydantic_ai.messages import (
 )
 
 from .message_helpers import (
+    ensure_history_ends_with_model_request,
     extract_tool_call_ids,
     is_llm_response_message,
     is_tool_call_message,
@@ -207,10 +208,24 @@ def strip_problematic_tool_calls(
     return ModelResponse(parts=kept_parts, model_name=msg.model_name)
 
 
+def sanitize_message_history_for_pydantic_ai(
+    messages: List[ModelMessage],
+) -> List[ModelMessage]:
+    """Return message history valid for PydanticAI: tool pairing fixed and list ends with ModelRequest.
+
+    Single entry point for the history contract. Use wherever history is passed to the agent/graph.
+    """
+    validated = validate_and_fix_tool_pairing(messages)
+    return ensure_history_ends_with_model_request(validated)
+
+
 def validate_and_fix_tool_pairing(
     messages: List[ModelMessage],
 ) -> List[ModelMessage]:
-    """Ensure every tool_use has a tool_result in the next message; remove or fix broken pairs."""
+    """Ensure every tool_use has a tool_result in the next message; remove or fix broken pairs.
+
+    Does not guarantee 'ends with ModelRequest'; use sanitize_message_history_for_pydantic_ai for that.
+    """
     if not messages:
         return messages
 

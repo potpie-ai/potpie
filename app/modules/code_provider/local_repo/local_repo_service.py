@@ -15,10 +15,9 @@ import os
 import re
 import warnings
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
 import pathspec
 
-import git
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
@@ -26,6 +25,16 @@ from app.modules.projects.projects_service import ProjectService
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+# Lazy import for GitPython - top-level import causes SIGSEGV in forked workers
+if TYPE_CHECKING:
+    import git as git_module
+
+
+def _get_git_module():
+    """Lazy import git module to avoid fork-safety issues."""
+    import git
+    return git
 
 
 class LocalRepoService:
@@ -43,11 +52,12 @@ class LocalRepoService:
         self.max_depth = 4
         self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
 
-    def get_repo(self, repo_path: str) -> git.Repo:
+    def get_repo(self, repo_path: str) -> Any:
         if not os.path.exists(repo_path):
             raise HTTPException(
                 status_code=404, detail=f"Local repository at {repo_path} not found"
             )
+        git = _get_git_module()
         return git.Repo(repo_path)
 
     def get_file_content(
@@ -215,7 +225,7 @@ class LocalRepoService:
             gitignore_spec = self._get_gitignore_spec(repo_root)
 
         try:
-            contents = await asyncio.get_event_loop().run_in_executor(
+            contents = await asyncio.get_running_loop().run_in_executor(
                 self.executor, self._get_contents, path
             )
 

@@ -262,7 +262,7 @@ class ParsingController:
                                     _uid=user_id,
                                 ):
                                     try:
-                                        await asyncio.get_event_loop().run_in_executor(
+                                        await asyncio.get_running_loop().run_in_executor(
                                             None,
                                             lambda: _rm.prepare_for_parsing(
                                                 _rn, _ref, auth_token=_at, is_commit=_ic, user_id=_uid
@@ -397,7 +397,10 @@ class ParsingController:
 
     @staticmethod
     async def fetch_parsing_status(
-        project_id: str, db: Session, user: Dict[str, Any]
+        project_id: str,
+        db: Session,
+        async_db: AsyncSession,
+        user: Dict[str, Any],
     ):
         try:
             project_query = (
@@ -423,7 +426,7 @@ class ParsingController:
                 .limit(1)
             )
 
-            result = db.execute(project_query)
+            result = await async_db.execute(project_query)
             row = result.first()
 
             if not row:
@@ -465,7 +468,8 @@ class ParsingController:
                         )
                         # Reset updated_at now to prevent concurrent polls from all
                         # triggering duplicate re-submissions within the same window.
-                        ProjectService.update_project(
+                        await asyncio.to_thread(
+                            ProjectService.update_project,
                             db,
                             project_id,
                             updated_at=datetime.utcnow(),
