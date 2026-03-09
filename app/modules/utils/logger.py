@@ -1,15 +1,16 @@
 import json
 import re
 import sys
+import logging
+from contextlib import contextmanager
 
 # Define sensitive patterns for redaction
-# Concatenating strings prevents SonarQube false positives for hardcoded credentials
 _P_WORD = "pass" + "word"
 _A_KEY = "api" + "_" + "key"
 
 SENSITIVE_PATTERNS = [
-    (re.compile(rf'{_P_WORD}=[\'"]([^\'"]+)[\'"]'), f'{_P_WORD}=********'),
-    (re.compile(rf'{_A_KEY}=[\'"]([^\'"]+)[\'"]'), f'{_A_KEY}=********'),
+    (re.compile(rf'{_P_WORD}=[\'"]([^\'"]+)[\'"]', re.IGNORECASE), f'{_P_WORD}=********'),
+    (re.compile(rf'{_A_KEY}=[\'"]([^\'"]+)[\'"]', re.IGNORECASE), f'{_A_KEY}=********'),
 ]
 
 def filter_sensitive_data(text: str) -> str:
@@ -51,7 +52,6 @@ def production_log_sink(message):
                 else str(exc.get("type", "Exception"))
             ),
             "value": filter_sensitive_data(str(exc.get("value", ""))),
-            # FIX: Apply truncation before sensitive data filtering
             "traceback": filter_sensitive_data(_truncate_traceback(raw_traceback, num_lines=10)),
         }
 
@@ -68,30 +68,39 @@ def production_log_sink(message):
     sanitized_extras = {}
     for key, value in raw_extras.items():
         if key != "name":
-            if isinstance(value, (str, bytes)):
-                sanitized_extras[key] = filter_sensitive_data(str(value))
-            else:
-                sanitized_extras[key] = value
+            sanitized_extras[key] = filter_sensitive_data(str(value)) if isinstance(value, (str, bytes)) else value
     
     if sanitized_extras:
         log_data["extra"] = sanitized_extras
-
     if exception:
         log_data["exception"] = exception
 
     sys.stdout.write(json.dumps(log_data, default=str) + "\n")
     sys.stdout.flush()
 
-from contextlib import contextmanager
-import logging
+# --- COMPATIBILITY STUBS & PIPELINE WIRING ---
 
-def configure_logging():
-    """Maintain compatibility with legacy startup code."""
-    pass
+class SinkHandler(logging.Handler):
+    """Bridges standard logging to the production_log_sink."""
+    def emit(self, record):
+        # We pass the formatted record string to the sink
+        production_log_sink(self.format(record))
+
+def configure_logging(level=logging.INFO):
+    """Configures the root logger to route through the production sink."""
+    root = logging.getLogger()
+    root.setLevel(level)
+    # Clear existing handlers
+    for handler in root.handlers[:]:
+        root.removeHandler(handler)
+    # Add our production sink handler
+    root.addHandler(SinkHandler())
 
 def setup_logger(name):
-    """Returns a logger instance; maintaining compatibility."""
-    return logging.getLogger(name)
+    """Returns a logger instance; propagates to root to ensure sink usage."""
+    logger = logging.getLogger(name)
+    logger.propagate = True
+    return logger
 
 @contextmanager
 def log_context(**kwargs):
