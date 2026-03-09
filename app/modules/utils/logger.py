@@ -1,10 +1,30 @@
+import json
+import logging
+import os
+import re
+import sys
+
+# Define sensitive patterns for redaction
+SENSITIVE_PATTERNS = [
+    (re.compile(r'password=[\'"]([^\'"]+)[\'"]'), 'password=********'),
+    (re.compile(r'api_key=[\'"]([^\'"]+)[\'"]'), 'api_key=********'),
+]
+
+def filter_sensitive_data(text: str) -> str:
+    """Filter sensitive data from log messages."""
+    if not isinstance(text, str):
+        return text
+    filtered = text
+    for pattern, replacement in SENSITIVE_PATTERNS:
+        filtered = pattern.sub(replacement, filtered)
+    return filtered
+
 def _truncate_traceback(traceback_str: str, num_lines: int = 10) -> str:
     """Helper to truncate traceback to the last N lines."""
     if not traceback_str:
         return ""
     lines = traceback_str.splitlines()
     if len(lines) > num_lines:
-        # Keeping the last N lines is usually best for identifying the root cause
         return "..." + "\n" + "\n".join(lines[-num_lines:])
     return traceback_str
 
