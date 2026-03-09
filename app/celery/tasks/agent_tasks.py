@@ -446,7 +446,9 @@ def execute_regenerate_background(
 
                     return True  # Indicate successful completion
                 except GenerationCancelled:
-                    logger.info("Regenerate execution cancelled (GenerationCancelled)")
+                    logger.info(
+                        "Regenerate execution cancelled (GenerationCancelled)"
+                    )
                     # Do not flush here - stop_generation saves from Redis snapshot to avoid duplicates
                     redis_manager.publish_event(
                         conversation_id,

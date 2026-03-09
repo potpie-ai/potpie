@@ -21,6 +21,7 @@ from .agent_instructions import (
 )
 from .utils.context_utils import create_supervisor_task_description
 from app.modules.intelligence.agents.chat_agent import ChatContext
+from app.modules.intelligence.tracing.logfire_tracer import should_instrument_pydantic_ai
 from ..agent_config import AgentConfig, TaskConfig
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.utils.logger import setup_logger
@@ -876,7 +877,7 @@ Subagents DON'T get your history. Provide comprehensive context:
             # NOTE: No history_processors for delegate agents - they start fresh with empty
             # history and don't need token management. The history processor's tool pairing
             # logic can also break OpenAI's message format requirements.
-            instrument=True,
+            instrument=should_instrument_pydantic_ai(),
         )
         self._agent_instances[cache_key] = agent
         return agent
@@ -969,7 +970,7 @@ Subagents DON'T get your history. Provide comprehensive context:
                 cast(ModelSettings, model_settings) if model_settings else None
             ),
             mcp_servers=self.create_mcp_servers(),
-            instrument=True,
+            instrument=should_instrument_pydantic_ai(),
             instructions=instructions,
             output_retries=3,
             output_type=str,
