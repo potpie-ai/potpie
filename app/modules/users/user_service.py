@@ -143,16 +143,19 @@ class UserService:
         Get a user by their email address.
         Returns the full User object or None if not found.
         """
-        try:
-            # Use an optimized query that only fetches the user once
-            user = self.db.query(User).filter(User.email == email).first()
-            return user
-        except SQLAlchemyError as e:
-            logger.error(f"Database error fetching user by email {email}: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Unexpected error fetching user by email {email}: {e}")
-            return None
+        import asyncio
+
+        def _query():
+            try:
+                return self.db.query(User).filter(User.email == email).first()
+            except SQLAlchemyError as e:
+                logger.error(f"Database error fetching user by email {email}: {e}")
+                return None
+            except Exception as e:
+                logger.error(f"Unexpected error fetching user by email {email}: {e}")
+                return None
+
+        return await asyncio.get_running_loop().run_in_executor(None, _query)
 
     def get_user_ids_by_emails(self, emails: List[str]) -> List[str]:
         logger.info(f"DEBUG: get_user_ids_by_emails called for emails: {emails}")

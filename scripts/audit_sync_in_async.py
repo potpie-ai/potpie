@@ -53,6 +53,34 @@ def get_async_functions_with_ranges(tree: ast.AST) -> list[tuple[str, int, int]]
     return result
 
 
+def get_nested_sync_def_ranges(tree: ast.AST) -> list[tuple[int, int]]:
+    """Return (start, end) line ranges for sync `def` nodes nested inside async defs.
+
+    These are the run_in_executor helper pattern: a sync inner function defined
+    inside an async function and passed to run_in_executor. Sync DB calls inside
+    such helpers are intentional and should not be flagged as blocking.
+    """
+    ranges = []
+
+    def _walk(node: ast.AST, inside_async: bool) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.AsyncFunctionDef):
+                _walk(child, inside_async=True)
+            elif isinstance(child, ast.FunctionDef):
+                if inside_async:
+                    end = getattr(child, "end_lineno", child.lineno)
+                    ranges.append((child.lineno, end))
+                    # Don't recurse further; nested async inside sync-inside-async
+                    # is unusual and we treat conservatively.
+                else:
+                    _walk(child, inside_async=False)
+            else:
+                _walk(child, inside_async=inside_async)
+
+    _walk(tree, inside_async=False)
+    return ranges
+
+
 def line_contains_sync_db(line: str) -> list[str]:
     """If line contains sync DB usage (not async_db), return list of pattern names found."""
     found = []
@@ -62,6 +90,10 @@ def line_contains_sync_db(line: str) -> list[str]:
     # Sync session method calls: self.db.X, db.X, session.X (exclude async_db)
     if "async_db." in line or "async_db)" in line:
         return []
+    # Exclude lines that are already properly awaited async session calls
+    # e.g. "await self.session.execute(...)" or "result = await session.commit()"
+    if "await self.session." in line or "await session." in line:
+        return []
     for pattern in [".query(", ".add(", ".commit(", ".rollback(", ".execute(", ".refresh(", ".flush("]:
         if pattern not in line:
             continue
@@ -69,6 +101,10 @@ def line_contains_sync_db(line: str) -> list[str]:
         if "self.db" in line or " db." in line or " db)" in line or "session." in line:
             # Exclude set.add / list.append etc: require db or session before the method
             if pattern == ".add(" and "db.add(" not in line and "self.db.add(" not in line and "session.add(" not in line:
+                continue
+            # AsyncSession.add() is sync by design (no I/O); only .commit()/.flush() do I/O.
+            # Exclude self.session.add() — it's the standard SQLAlchemy async add pattern.
+            if pattern == ".add(" and "self.session.add(" in line:
                 continue
             found.append(pattern)
     return found
@@ -100,11 +136,21 @@ def audit_file(path: Path, app_dir: Path) -> list[dict]:
     except ValueError:
         rel_str = ""
 
+    # Build a set of line numbers that are inside nested sync defs (run_in_executor helpers).
+    nested_sync_ranges = get_nested_sync_def_ranges(tree)
+    nested_sync_lines: set[int] = set()
+    for ns_start, ns_end in nested_sync_ranges:
+        nested_sync_lines.update(range(ns_start, ns_end + 1))
+
     issues = []
     for name, start, end in async_funcs:
         if (rel_str, name) in SKIP_FUNCTIONS:
             continue
         for i in range(start - 1, min(end, len(lines))):
+            lineno = i + 1
+            # Skip lines inside nested sync defs — those are run_in_executor helpers.
+            if lineno in nested_sync_lines:
+                continue
             line = lines[i]
             patterns = line_contains_sync_db(line)
             if not patterns:

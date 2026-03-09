@@ -65,15 +65,17 @@ def _async_wrap_sync_tool(sync_func: Callable[..., T]):
     Code changes manager tools do sync Redis, Socket.IO, and HTTP I/O. When run on
     the event loop they block streaming (e.g. thinking parts). Running in executor
     ensures the loop stays responsive.
+
+    asyncio.to_thread is used instead of loop.run_in_executor so that the current
+    contextvars snapshot (including user_id, tunnel_url, etc.) is propagated to the
+    thread. Python 3.13's run_in_executor does NOT copy contextvars automatically.
     """
 
     async def async_wrapper(*args: object, **kwargs: object) -> T:
-        loop = asyncio.get_event_loop()
-
         def _run() -> T:
             return sync_func(*args, **kwargs)
 
-        return await loop.run_in_executor(None, _run)
+        return await asyncio.to_thread(_run)
 
     # Copy __signature__ directly so inspect.signature() returns the original
     # function's signature (needed by _adapt_func_for_from_schema to detect the
