@@ -153,10 +153,6 @@ class TestCheckCommitStatus:
     async def test_branch_based_match_returns_true(self, db_session):
         """When no requested_commit_id, branch-based: latest commit matches stored, returns True."""
         helper = ParseHelper(db_session)
-        mock_branch = MagicMock()
-        mock_branch.commit.sha = "abc123"
-        mock_repo = MagicMock()
-        mock_repo.get_branch.return_value = mock_branch
         with patch.object(
             helper.project_manager,
             "get_project_from_db_by_id",
@@ -166,23 +162,17 @@ class TestCheckCommitStatus:
                 "project_name": "owner/repo",
                 "branch_name": "main",
             },
-        ), patch.object(
-            helper.github_service,
-            "get_repo",
-            return_value=(None, mock_repo),
+        ), patch(
+            "app.modules.parsing.graph_construction.parsing_helper._fetch_github_branch_head_sha_http",
+            return_value="abc123",
         ):
             result = await helper.check_commit_status("proj-123")
         assert result is True
-        mock_repo.get_branch.assert_called_once_with("main")
 
     @pytest.mark.asyncio
     async def test_branch_based_mismatch_returns_false(self, db_session):
         """When no requested_commit_id, branch-based: latest commit differs from stored, returns False."""
         helper = ParseHelper(db_session)
-        mock_branch = MagicMock()
-        mock_branch.commit.sha = "latest999"
-        mock_repo = MagicMock()
-        mock_repo.get_branch.return_value = mock_branch
         with patch.object(
             helper.project_manager,
             "get_project_from_db_by_id",
@@ -192,17 +182,16 @@ class TestCheckCommitStatus:
                 "project_name": "owner/repo",
                 "branch_name": "main",
             },
-        ), patch.object(
-            helper.github_service,
-            "get_repo",
-            return_value=(None, mock_repo),
+        ), patch(
+            "app.modules.parsing.graph_construction.parsing_helper._fetch_github_branch_head_sha_http",
+            return_value="latest999",
         ):
             result = await helper.check_commit_status("proj-123")
         assert result is False
 
     @pytest.mark.asyncio
     async def test_github_exception_returns_false(self, db_session):
-        """When get_repo/get_branch raises, returns False."""
+        """When _fetch_github_branch_head_sha_http raises or returns None, returns False."""
         helper = ParseHelper(db_session)
         with patch.object(
             helper.project_manager,
@@ -213,9 +202,8 @@ class TestCheckCommitStatus:
                 "project_name": "owner/repo",
                 "branch_name": "main",
             },
-        ), patch.object(
-            helper.github_service,
-            "get_repo",
+        ), patch(
+            "app.modules.parsing.graph_construction.parsing_helper._fetch_github_branch_head_sha_http",
             side_effect=Exception("GitHub API error"),
         ):
             result = await helper.check_commit_status("proj-123")
