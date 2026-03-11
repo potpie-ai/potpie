@@ -32,13 +32,12 @@ WAIT_SECS = 1.2
 CONCURRENT_REQUESTS = 3
 # If requests were serialized we'd see ~ WAIT_SECS * CONCURRENT_REQUESTS.
 # With thread offload we expect ~ WAIT_SECS + overhead (DB, controller, etc.).
-# Serial baseline: if requests were fully serialized we'd see ~ SERIAL_WALL_SECS.
-# Allow 2x so test is stable on CI/loaded machines; still fails if fully serial (would be ~SERIAL_WALL_SECS).
+# Require wall time below 90% of serial so that serialized (blocking) behavior fails.
 SERIAL_WALL_SECS = WAIT_SECS * CONCURRENT_REQUESTS
-MAX_WALL_SECS = SERIAL_WALL_SECS * 2.0
+MAX_WALL_SECS = SERIAL_WALL_SECS * 0.9
 
-# Module where asyncio.to_thread is used (patch here to simulate "before" behavior)
-CONVERSATION_ROUTING_MODULE = "app.modules.conversations.utils.conversation_routing"
+# Module where asyncio.to_thread is used in production (router calls start_celery_task_and_stream via to_thread)
+CONVERSATIONS_ROUTER_MODULE = "app.modules.conversations.conversations_router"
 
 
 @pytest.fixture
@@ -154,7 +153,7 @@ async def test_concurrent_stream_timing_before_vs_after(
 
     # "Before": wait runs on event loop (blocking) → requests serialize
     monkeypatch.setattr(
-        f"{CONVERSATION_ROUTING_MODULE}.asyncio.to_thread",
+        f"{CONVERSATIONS_ROUTER_MODULE}.asyncio.to_thread",
         blocking_to_thread,
     )
     wall_before, resp_before = await _run_concurrent_requests(
@@ -165,7 +164,7 @@ async def test_concurrent_stream_timing_before_vs_after(
 
     # "After": restore real to_thread so wait runs in thread pool → requests concurrent
     monkeypatch.setattr(
-        f"{CONVERSATION_ROUTING_MODULE}.asyncio.to_thread",
+        f"{CONVERSATIONS_ROUTER_MODULE}.asyncio.to_thread",
         real_to_thread,
     )
 

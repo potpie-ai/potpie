@@ -16,6 +16,8 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 os.environ["isDevelopmentMode"] = "enabled"
 os.environ["defaultUsername"] = "test-user"
+# So app bootstrap (when loaded by client fixture) does not exit
+os.environ.setdefault("ENV", "development")
 
 import pytest
 import pytest_asyncio
@@ -33,21 +35,27 @@ from datetime import datetime, timedelta, timezone
 # Set Neo4j override before app load so tools that create a driver get valid config in CI/tests
 from app.core.config_provider import ConfigProvider
 
+# Use env for Neo4j test config (no hard-coded credentials). real_parse tests require NEO4J_* set.
 ConfigProvider.set_neo4j_override(
-    {"uri": "bolt://localhost:7687", "username": "neo4j", "password": "test"}
+    {
+        "uri": os.environ.get("NEO4J_URI", "bolt://localhost:7687"),
+        "username": os.environ.get("NEO4J_USERNAME", "neo4j"),
+        "password": os.environ.get("NEO4J_PASSWORD", ""),
+    }
 )
 
-from app.main import app
+# app.main and database are imported only inside the client fixture so pure unit tests
+# (e.g. parsing schema, content_hash) can run without Postgres.
 from app.core.base_model import Base
-from app.core.database import get_db, get_async_db
-from app.modules.auth.auth_service import AuthService
+# Register all ORM models with Base so relationship() names (e.g. MessageAttachment) resolve
+# when any test uses db_session (e.g. auth unit tests with test_user).
+import app.core.models  # noqa: F401
 from app.modules.auth.auth_provider_model import (
     UserAuthProvider,
     PendingProviderLink,
     OrganizationSSOConfig,
     AuthAuditLog,
 )
-from app.modules.usage.usage_service import UsageService
 from app.modules.users.user_model import User
 from app.modules.projects.projects_model import Project
 from app.modules.conversations.conversation.conversation_model import (
@@ -132,7 +140,8 @@ def setup_test_database():
 
 @pytest.fixture(scope="function")
 def db_session(setup_test_database) -> Session:
-    """Provides a standard synchronous SQLAlchemy session for tests."""
+    """Provides a synchronous SQLAlchemy session for tests.
+    Uses real commits so both sync and async app code see the same data (client uses both get_db and get_async_db)."""
     engine = create_engine(os.getenv("DATABASE_URL"))
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     session = SessionLocal()
@@ -144,7 +153,8 @@ def db_session(setup_test_database) -> Session:
 
 @pytest_asyncio.fixture(scope="function")
 async def async_db_session(setup_test_database) -> AsyncSession:
-    """Provides an async SQLAlchemy session for tests."""
+    """Provides an async SQLAlchemy session for tests.
+    Uses same DB as db_session; fixture commits are visible to both."""
     ASYNC_DB_URL = os.getenv("DATABASE_URL").replace(
         "postgresql://", "postgresql+asyncpg://"
     )
@@ -599,6 +609,10 @@ def github_service_with_fake_redis(monkeypatch, db_session: Session):
 @pytest_asyncio.fixture
 async def client(db_session: Session, async_db_session: AsyncSession):
     """The main FastAPI test client with all necessary dependency overrides."""
+    from app.main import app
+    from app.core.database import get_db, get_async_db
+    from app.modules.auth.auth_service import AuthService
+    from app.modules.usage.usage_service import UsageService
 
     def override_get_db():
         yield db_session

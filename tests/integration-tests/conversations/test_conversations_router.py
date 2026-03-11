@@ -1,5 +1,8 @@
 import pytest
 from unittest.mock import patch, AsyncMock, MagicMock, ANY
+
+
+pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 from app.modules.conversations.conversation.conversation_model import Conversation
 from app.modules.conversations.message.message_model import Message, MessageType
 from app.modules.media.media_schema import AttachmentUploadResponse, AttachmentType
@@ -8,7 +11,6 @@ from sqlalchemy.orm import Session
 from app.modules.projects.projects_model import Project
 
 
-pytestmark = pytest.mark.asyncio
 
 
 # THIS IS THE FIX: We are patching the name 'MediaService' exactly where it is used.
@@ -752,9 +754,7 @@ async def test_get_task_status_403_for_nonexistent(client, db_session: Session):
 # ---------------------------------------------------------------------------
 async def test_get_conversations_list_empty_for_new_user(client, db_session: Session):
     """GET /conversations returns empty list when user has no conversations."""
-    # Don't use setup_test_conversation_committed fixture - just test with base auth
-    # The test-user from auth mock may already have conversations from other tests,
-    # so we test with high start offset to get empty result
+    # Don't use setup_test_conversation_committed; use high offset so we get empty result (shared DB)
     response = await client.get("/api/v1/conversations?start=9999&limit=10")
 
     assert response.status_code == 200
@@ -770,8 +770,7 @@ async def test_get_conversation_messages_empty_when_no_messages(
     client, db_session: Session, setup_test_conversation_committed: Conversation
 ):
     """GET /conversations/{id}/messages returns empty list when no messages exist."""
-    # The fixture creates a conversation but no messages by default
-    # (messages may be added by other tests, so use pagination to test empty case)
+    # Fixture creates a conversation but no messages; use high offset for empty result (shared DB)
     conversation_id = setup_test_conversation_committed.id
     response = await client.get(
         f"/api/v1/conversations/{conversation_id}/messages?start=9999&limit=10"

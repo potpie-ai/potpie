@@ -239,9 +239,12 @@ async def start_celery_task_and_wait(
         f"Started agent task {task_result.id} for {conversation_id}:{run_id} (non-streaming)"
     )
 
-    # Wait for background task to start (with health check)
-    task_started = redis_manager.wait_for_task_start(
-        conversation_id, run_id, timeout=30
+    # Wait for background task to start in thread so event loop is not blocked
+    task_started = await asyncio.to_thread(
+        redis_manager.wait_for_task_start,
+        conversation_id,
+        run_id,
+        timeout=30,
     )
 
     if not task_started:

@@ -27,6 +27,7 @@ TESTS_DIR = PROJECT_ROOT / "tests"
 
 
 BANNER_WIDTH = 72
+PHASE_REAL_PARSE = "Real parse"
 
 
 def run_pytest(
@@ -117,11 +118,11 @@ def main() -> int:
         return code
 
     if args.real_parse_only:
-        print_phase_banner("Real parse")
+        print_phase_banner(PHASE_REAL_PARSE)
         code = run_pytest(
             TESTS_DIR, "-m", "real_parse",
             *args.pytest_extra,
-            phase_name="Real parse",
+            phase_name=PHASE_REAL_PARSE,
         )
         return code
 
@@ -146,7 +147,7 @@ def main() -> int:
         ),
     ]
     if not skip_real_parse:
-        phases.append(("Real parse", [str(TESTS_DIR), "-m", "real_parse"]))
+        phases.append((PHASE_REAL_PARSE, [str(TESTS_DIR), "-m", "real_parse"]))
     if run_stress:
         phases.append(("Stress", [str(TESTS_DIR), "-m", "stress"]))
 

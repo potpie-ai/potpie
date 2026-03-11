@@ -41,6 +41,56 @@ async def stress_client(client: httpx.AsyncClient):
     yield client
 
 
+async def _do_one_request(
+    client: httpx.AsyncClient,
+    method: str,
+    full_url: str,
+    headers: dict,
+    data: dict | None,
+    timeout: float,
+    stream: bool,
+) -> tuple[float | None, int | None, str | None]:
+    """Execute a single request; return (elapsed_ms, status_code, error_string or None)."""
+    start = time.monotonic()
+    try:
+        if stream:
+            async with client.stream(
+                method, full_url, headers=headers, data=data, timeout=timeout
+            ) as r:
+                status = r.status_code
+                async for _ in r.aiter_bytes():
+                    break
+        elif data:
+            r = await client.request(
+                method, full_url, headers=headers, data=data, timeout=timeout
+            )
+            status = r.status_code
+        else:
+            r = await client.get(full_url, headers=headers, timeout=timeout)
+            status = r.status_code
+        elapsed = (time.monotonic() - start) * 1000
+        return (elapsed, status, None)
+    except Exception as e:
+        return (None, None, f"{type(e).__name__}:{e!s}")
+
+
+def _record_result(
+    elapsed: float | None,
+    status: int | None,
+    err: str | None,
+    status_counts: dict[int, int],
+    latencies_ms: list[float],
+    errors: list[str],
+) -> None:
+    """Update status_counts, latencies_ms, and errors from one request result."""
+    if err:
+        errors.append(err)
+        return
+    status_counts[status] = status_counts.get(status, 0) + 1
+    if status and 200 <= status < 300 and elapsed is not None:
+        latencies_ms.append(elapsed)
+
+
 async def _run_concurrent(
     client: httpx.AsyncClient,
     method: str,
@@ -52,7 +102,6 @@ async def _run_concurrent(
     data: dict | None = None,
 ) -> dict[str, Any]:
     """Run count concurrent requests × rounds. Return ok, fail, status_counts, latencies_ms, errors."""
-    # Client from conftest has base_url="http://test"; relative path is sufficient
     full_url = url
     headers = getattr(client, "headers", {}) or {}
 
@@ -61,43 +110,22 @@ async def _run_concurrent(
     errors: list[str] = []
 
     for _ in range(rounds):
-        async def one(_i: int) -> tuple[float | None, int | None, str | None]:
-            start = time.monotonic()
-            try:
-                if stream:
-                    async with client.stream(
-                        method, full_url, headers=headers, data=data, timeout=timeout
-                    ) as r:
-                        status = r.status_code
-                        async for _ in r.aiter_bytes():
-                            break
-                else:
-                    if data:
-                        r = await client.request(
-                            method, full_url, headers=headers, data=data, timeout=timeout
-                        )
-                    else:
-                        r = await client.get(full_url, headers=headers, timeout=timeout)
-                    status = r.status_code
-                elapsed = (time.monotonic() - start) * 1000
-                return (elapsed, status, None)
-            except Exception as e:
-                return (None, None, f"{type(e).__name__}:{e!s}")
-
         results = await asyncio.gather(
-            *[one(i) for i in range(count)], return_exceptions=True
+            *[
+                _do_one_request(
+                    client, method, full_url, headers, data, timeout, stream
+                )
+                for _ in range(count)
+            ],
+            return_exceptions=True,
         )
         for r in results:
             if isinstance(r, Exception):
                 errors.append(str(r))
-                continue
-            elapsed, status, err = r
-            if err:
-                errors.append(err)
-                continue
-            status_counts[status] = status_counts.get(status, 0) + 1
-            if status and 200 <= status < 300 and elapsed is not None:
-                latencies_ms.append(elapsed)
+            else:
+                _record_result(
+                    r[0], r[1], r[2], status_counts, latencies_ms, errors
+                )
 
     total = count * rounds
     ok = sum(c for s, c in status_counts.items() if s and 200 <= s < 300)
