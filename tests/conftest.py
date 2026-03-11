@@ -35,7 +35,9 @@ from datetime import datetime, timedelta, timezone
 # Set Neo4j override before app load so tools that create a driver get valid config in CI/tests
 from app.core.config_provider import ConfigProvider
 
-# Use env for Neo4j test config (no hard-coded credentials). real_parse tests require NEO4J_* set.
+# Ensure Neo4j config is "complete" in test/CI so tools that create a driver don't raise
+# (no real connection required for most tests). real_parse tests require real NEO4J_* set.
+os.environ.setdefault("NEO4J_PASSWORD", "test")
 ConfigProvider.set_neo4j_override(
     {
         "uri": os.environ.get("NEO4J_URI", "bolt://localhost:7687"),
@@ -606,10 +608,18 @@ def github_service_with_fake_redis(monkeypatch, db_session: Session):
     return service
 
 
+@pytest.fixture
+def app():
+    """Expose the FastAPI app so tests can set dependency overrides (e.g. get_async_session_service)."""
+    from app.main import app as _app
+    return _app
+
+
 @pytest_asyncio.fixture
-async def client(db_session: Session, async_db_session: AsyncSession):
+async def client(app, db_session: Session, async_db_session: AsyncSession):
     """The main FastAPI test client with all necessary dependency overrides."""
-    from app.main import app
+    from unittest.mock import AsyncMock
+
     from app.core.database import get_db, get_async_db
     from app.modules.auth.auth_service import AuthService
     from app.modules.usage.usage_service import UsageService
@@ -635,6 +645,26 @@ async def client(db_session: Session, async_db_session: AsyncSession):
 
     app.dependency_overrides[AuthService.check_auth] = override_check_auth
     app.dependency_overrides[UsageService.check_usage_limit] = lambda: True
+
+    # Provide a mock async Redis stream manager so conversation endpoints don't return 503
+    # when app.state.async_redis_stream_manager is not set (e.g. in CI).
+    if getattr(app.state, "async_redis_stream_manager", None) is None:
+        mock_async_redis = MagicMock()
+        mock_async_redis.wait_for_task_start = AsyncMock(return_value=True)
+        mock_async_redis.set_task_status = AsyncMock()
+        mock_async_redis.publish_event = AsyncMock()
+        mock_async_redis.set_task_id = AsyncMock()
+        mock_async_redis.stream_key = lambda cid, rid: f"chat:stream:{cid}:{rid}"
+        mock_async_redis.get_task_status = AsyncMock(return_value=MagicMock(isActive=False))
+        mock_async_redis.redis_client = MagicMock()
+        mock_async_redis.redis_client.set = AsyncMock(return_value=True)
+        mock_async_redis.redis_client.exists = AsyncMock(return_value=False)
+        mock_async_redis.redis_client.delete = AsyncMock(return_value=None)
+        async def _mock_consume():
+            yield MagicMock(dict= lambda: {"type": "end"})
+        mock_async_redis.consume_stream = _mock_consume
+        app.state.async_redis_stream_manager = mock_async_redis
+
     async with AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url="http://test",

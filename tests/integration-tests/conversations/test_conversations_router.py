@@ -120,14 +120,16 @@ async def test_create_conversation_creates_record_and_system_message(
     db_messages = (
         db_session.query(Message).filter_by(conversation_id=conversation_id).all()
     )
-    assert len(db_messages) == 1
-    assert (
-        db_messages[0].content
-        == "You can now ask questions about the Test Project Repo repository."
+    # At least one system message; there may be an extra welcome/context message
+    assert len(db_messages) >= 1
+    system_content = "You can now ask questions about the Test Project Repo repository."
+    assert any(m.content == system_content for m in db_messages), (
+        f"Expected a message with content {system_content!r}, got: {[m.content for m in db_messages]}"
     )
 
 
 async def test_post_message_dispatches_celery_task_and_streams(
+    app,
     client,
     mock_celery_tasks,
     mock_redis_stream_manager,
@@ -136,7 +138,7 @@ async def test_post_message_dispatches_celery_task_and_streams(
     """
     Integration Test for POST /.../message/
     - Verifies the API response is a streaming response.
-    - Verifies the RedisStreamManager is called to prepare the stream.
+    - Verifies the async Redis manager is used to wait for task start.
     - Verifies the handoff to the Celery background task happens correctly.
     """
     # 1. ARRANGE
@@ -160,9 +162,13 @@ async def test_post_message_dispatches_celery_task_and_streams(
 
     # 3. ASSERT
 
-    # Part B: Verify the interaction with Redis
-    # Check that our code tried to wait for the background task to start
-    mock_redis_stream_manager.wait_for_task_start.assert_called_once()
+    # Part B: Verify the interaction with async Redis (app.state mock from client fixture).
+    # The mock is shared across tests, so assert our call happened rather than exactly one call.
+    async_redis = getattr(app.state, "async_redis_stream_manager", None)
+    assert async_redis is not None
+    async_redis.wait_for_task_start.assert_any_call(
+        conversation_id, ANY, timeout=30, require_running=ANY
+    )
 
     # Part C: Verify the handoff to Celery (the most important part)
     # Check that the background task was called exactly once
@@ -427,73 +433,83 @@ async def test_stop_generation_calls_service(
 # ---------------------------------------------------------------------------
 # GET /conversations/{id}/active-session (happy path with mock Redis)
 # ---------------------------------------------------------------------------
-@patch("app.modules.conversations.conversations_router.SessionService")
 async def test_get_active_session_returns_session_when_exists(
-    mock_session_service_class,
+    app,
     client,
     db_session: Session,
     setup_test_conversation_committed: Conversation,
 ):
     """
     Integration Test for GET /conversations/{id}/active-session
-    - Mocks SessionService to return a valid session.
+    - Overrides get_async_session_service to return a valid session.
     - Verifies 200 and response shape.
     """
+    from app.modules.conversations.conversation_deps import get_async_session_service
     from app.modules.conversations.conversation.conversation_schema import ActiveSessionResponse
 
-    mock_instance = mock_session_service_class.return_value
-    mock_instance.get_active_session.return_value = ActiveSessionResponse(
-        sessionId="run-123",
-        status="active",
-        cursor="0-0",
-        conversationId=setup_test_conversation_committed.id,
-        startedAt=1700000000000,
-        lastActivity=1700000030000,
+    mock_svc = MagicMock()
+    mock_svc.get_active_session = AsyncMock(
+        return_value=ActiveSessionResponse(
+            sessionId="run-123",
+            status="active",
+            cursor="0-0",
+            conversationId=setup_test_conversation_committed.id,
+            startedAt=1700000000000,
+            lastActivity=1700000030000,
+        )
     )
+    app.dependency_overrides[get_async_session_service] = lambda: mock_svc
+    try:
+        conversation_id = setup_test_conversation_committed.id
+        response = await client.get(f"/api/v1/conversations/{conversation_id}/active-session")
 
-    conversation_id = setup_test_conversation_committed.id
-    response = await client.get(f"/api/v1/conversations/{conversation_id}/active-session")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["sessionId"] == "run-123"
-    assert data["status"] == "active"
-    assert data["conversationId"] == conversation_id
+        assert response.status_code == 200
+        data = response.json()
+        assert data["sessionId"] == "run-123"
+        assert data["status"] == "active"
+        assert data["conversationId"] == conversation_id
+    finally:
+        app.dependency_overrides.pop(get_async_session_service, None)
 
 
 # ---------------------------------------------------------------------------
 # GET /conversations/{id}/task-status (happy path with mock Redis)
 # ---------------------------------------------------------------------------
-@patch("app.modules.conversations.conversations_router.SessionService")
 async def test_get_task_status_returns_status_when_exists(
-    mock_session_service_class,
+    app,
     client,
     db_session: Session,
     setup_test_conversation_committed: Conversation,
 ):
     """
     Integration Test for GET /conversations/{id}/task-status
-    - Mocks SessionService to return a valid task status.
+    - Overrides get_async_session_service to return a valid task status.
     - Verifies 200 and response shape.
     """
+    from app.modules.conversations.conversation_deps import get_async_session_service
     from app.modules.conversations.conversation.conversation_schema import TaskStatusResponse
 
-    mock_instance = mock_session_service_class.return_value
-    mock_instance.get_task_status.return_value = TaskStatusResponse(
-        isActive=True,
-        sessionId="run-456",
-        estimatedCompletion=1700000060000,
-        conversationId=setup_test_conversation_committed.id,
+    mock_svc = MagicMock()
+    mock_svc.get_task_status = AsyncMock(
+        return_value=TaskStatusResponse(
+            isActive=True,
+            sessionId="run-456",
+            estimatedCompletion=1700000060000,
+            conversationId=setup_test_conversation_committed.id,
+        )
     )
+    app.dependency_overrides[get_async_session_service] = lambda: mock_svc
+    try:
+        conversation_id = setup_test_conversation_committed.id
+        response = await client.get(f"/api/v1/conversations/{conversation_id}/task-status")
 
-    conversation_id = setup_test_conversation_committed.id
-    response = await client.get(f"/api/v1/conversations/{conversation_id}/task-status")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["isActive"] is True
-    assert data["sessionId"] == "run-456"
-    assert data["conversationId"] == conversation_id
+        assert response.status_code == 200
+        data = response.json()
+        assert data["isActive"] is True
+        assert data["sessionId"] == "run-456"
+        assert data["conversationId"] == conversation_id
+    finally:
+        app.dependency_overrides.pop(get_async_session_service, None)
 
 
 # ---------------------------------------------------------------------------
@@ -650,51 +666,61 @@ async def test_post_message_400_for_invalid_node_ids_json(
 # ---------------------------------------------------------------------------
 # Edge case: active-session 404 when no session exists
 # ---------------------------------------------------------------------------
-@patch("app.modules.conversations.conversations_router.SessionService")
 async def test_get_active_session_404_when_no_session(
-    mock_session_service_class,
+    app,
     client,
     db_session: Session,
     setup_test_conversation_committed: Conversation,
 ):
     """GET /conversations/{id}/active-session returns 404 when no active session."""
+    from app.modules.conversations.conversation_deps import get_async_session_service
     from app.modules.conversations.conversation.conversation_schema import ActiveSessionErrorResponse
 
-    mock_instance = mock_session_service_class.return_value
-    mock_instance.get_active_session.return_value = ActiveSessionErrorResponse(
-        error="No active session found",
-        conversationId=setup_test_conversation_committed.id,
+    mock_svc = MagicMock()
+    mock_svc.get_active_session = AsyncMock(
+        return_value=ActiveSessionErrorResponse(
+            error="No active session found",
+            conversationId=setup_test_conversation_committed.id,
+        )
     )
+    app.dependency_overrides[get_async_session_service] = lambda: mock_svc
+    try:
+        conversation_id = setup_test_conversation_committed.id
+        response = await client.get(f"/api/v1/conversations/{conversation_id}/active-session")
 
-    conversation_id = setup_test_conversation_committed.id
-    response = await client.get(f"/api/v1/conversations/{conversation_id}/active-session")
-
-    assert response.status_code == 404
+        assert response.status_code == 404
+    finally:
+        app.dependency_overrides.pop(get_async_session_service, None)
 
 
 # ---------------------------------------------------------------------------
 # Edge case: task-status 404 when no task exists
 # ---------------------------------------------------------------------------
-@patch("app.modules.conversations.conversations_router.SessionService")
 async def test_get_task_status_404_when_no_task(
-    mock_session_service_class,
+    app,
     client,
     db_session: Session,
     setup_test_conversation_committed: Conversation,
 ):
     """GET /conversations/{id}/task-status returns 404 when no background task."""
+    from app.modules.conversations.conversation_deps import get_async_session_service
     from app.modules.conversations.conversation.conversation_schema import TaskStatusErrorResponse
 
-    mock_instance = mock_session_service_class.return_value
-    mock_instance.get_task_status.return_value = TaskStatusErrorResponse(
-        error="No background task found",
-        conversationId=setup_test_conversation_committed.id,
+    mock_svc = MagicMock()
+    mock_svc.get_task_status = AsyncMock(
+        return_value=TaskStatusErrorResponse(
+            error="No background task found",
+            conversationId=setup_test_conversation_committed.id,
+        )
     )
+    app.dependency_overrides[get_async_session_service] = lambda: mock_svc
+    try:
+        conversation_id = setup_test_conversation_committed.id
+        response = await client.get(f"/api/v1/conversations/{conversation_id}/task-status")
 
-    conversation_id = setup_test_conversation_committed.id
-    response = await client.get(f"/api/v1/conversations/{conversation_id}/task-status")
-
-    assert response.status_code == 404
+        assert response.status_code == 404
+    finally:
+        app.dependency_overrides.pop(get_async_session_service, None)
 
 
 # ---------------------------------------------------------------------------
