@@ -95,6 +95,31 @@ class ToolResolver:
             len(names),
             len(tools),
         )
+        # #region agent log
+        try:
+            _dp = "/Users/nandan/Desktop/Dev/potpie/.cursor/debug-65030d.log"
+            with open(_dp, "a") as _f:
+                _f.write(
+                    __import__("json").dumps(
+                        {
+                            "sessionId": "65030d",
+                            "location": "resolver.py:get_tools_for_agent",
+                            "message": "tool_resolver resolved",
+                            "data": {
+                                "allow_list_id": allow_list_id,
+                                "resolved_names_count": len(names),
+                                "tools_returned_count": len(tools),
+                                "first_names": names[:5] if names else [],
+                            },
+                            "timestamp": int(__import__("time").time() * 1000),
+                            "hypothesisId": "A",
+                        }
+                    )
+                    + "\n"
+                )
+        except Exception:
+            pass
+        # #endregion
         return tools
 
     def get_discovery_tools_for_agent(

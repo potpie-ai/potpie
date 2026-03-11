@@ -9,6 +9,8 @@ class ToolCallEventType(Enum):
     RESULT = "result"
     DELEGATION_CALL = "delegation_call"  # Supervisor delegating to specialist
     DELEGATION_RESULT = "delegation_result"  # Specialist completing task
+    # Streaming: model is writing the tool call (name/args) token-by-token
+    TOOL_CALL_REQUEST_DELTA = "tool_call_request_delta"
 
 
 class ToolCallResponse(BaseModel):

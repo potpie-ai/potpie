@@ -15,10 +15,15 @@ from app.core.database import get_db
 from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.code_provider.github.github_service import GithubService
-from app.modules.code_provider.local_repo.local_repo_service import LocalRepoService
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     GetCodeFromNodeIdTool,
 )
+
+# Lazy import to avoid loading GitPython at module import time
+# This prevents SIGSEGV in forked gunicorn workers
+def _get_local_repo_service():
+    from app.modules.code_provider.local_repo.local_repo_service import LocalRepoService
+    return LocalRepoService
 from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 from app.modules.projects.projects_service import ProjectService
@@ -649,7 +654,7 @@ class ChangeDetectionTool:
                     logger.info(
                         f"[CHANGE_DETECTION] Patches extracted: {len(patches_dict)} files with patches"
                     )
-            elif isinstance(code_service.service_instance, LocalRepoService):
+            elif isinstance(code_service.service_instance, _get_local_repo_service()):
                 logger.info("[CHANGE_DETECTION] Using LocalRepoService for diff")
                 patches_dict = code_service.service_instance.get_local_repo_diff(
                     repo_path, branch_name
