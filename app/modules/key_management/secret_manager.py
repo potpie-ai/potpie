@@ -48,13 +48,13 @@ class SecretStorageHandler:
             )
 
         # Skip GCP entirely when disabled (e.g. dev without GCP credentials)
-        gcp_enabled = os.environ.get("GCP_SECRET_MANAGER_ENABLED", "true").lower()
-        if gcp_enabled in ("false", "0", "no", "disabled"):
+        gcp_disabled = os.environ.get("GCP_SECRET_MANAGER_DISABLED", "false").lower()
+        if gcp_disabled in ("true", "1", "yes", "enabled"):
             SecretStorageHandler._gcp_available = False
             SecretStorageHandler._gcp_client = None
             SecretStorageHandler._gcp_project_id = None
             logger.debug(
-                "GCP Secret Manager disabled via GCP_SECRET_MANAGER_ENABLED"
+                "GCP Secret Manager disabled via GCP_SECRET_MANAGER_DISABLED"
             )
             return None, None
 

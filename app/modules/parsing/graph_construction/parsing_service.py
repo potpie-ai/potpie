@@ -181,7 +181,7 @@ class ParsingService:
                                     try:
                                         github_service = GithubService(self.db)
                                         user_token = github_service.get_github_oauth_token(user_id)
-                                        loop = asyncio.get_event_loop()
+                                        loop = asyncio.get_running_loop()
                                         await loop.run_in_executor(
                                             None,
                                             lambda: self.repo_manager.prepare_for_parsing(

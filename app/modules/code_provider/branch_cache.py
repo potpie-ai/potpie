@@ -1,10 +1,18 @@
 """Redis cache utility for repository branches."""
 
+import asyncio
 import json
+from typing import Any, Dict, List, Optional
+
 import redis
-from typing import Optional, List, Dict, Any
+
 from app.core.config_provider import config_provider
 from app.modules.utils.logger import setup_logger
+
+try:
+    import redis.asyncio as redis_async
+except ImportError:
+    redis_async = None  # type: ignore[assignment]
 
 logger = setup_logger(__name__)
 
@@ -13,18 +21,55 @@ class BranchCache:
     """Redis cache manager for repository branches."""
 
     def __init__(self):
-        """Initialize Redis client."""
-        try:
-            redis_url = config_provider.get_redis_url()
-            self.redis_client = redis.from_url(redis_url, decode_responses=True)
-            # Test connection
-            self.redis_client.ping()
-            self.available = True
-            logger.info("BranchCache: ✅ Redis connection established and available")
-        except Exception as e:
-            logger.warning(f"BranchCache: Redis not available - {str(e)}")
+        """Initialize Redis client (sync and optional async for FastAPI routes)."""
+        redis_url = config_provider.get_redis_url()
+        if not redis_url:
+            logger.warning("BranchCache: Redis URL not configured")
             self.redis_client = None
             self.available = False
+        else:
+            try:
+                self.redis_client = redis.from_url(redis_url, decode_responses=True)
+                # Test connection
+                self.redis_client.ping()
+                self.available = True
+                logger.info("BranchCache: ✅ Redis connection established and available")
+            except Exception as e:
+                logger.warning(f"BranchCache: Redis not available - {str(e)}")
+                self.redis_client = None
+                self.available = False
+
+        self._async_redis_client: Any = None
+        if redis_async is not None and self.available and config_provider.get_redis_url():
+            try:
+                self._async_redis_client = redis_async.from_url(
+                    config_provider.get_redis_url(), decode_responses=True
+                )
+            except Exception as e:
+                logger.warning(
+                    "BranchCache: async Redis unavailable, using sync fallback: %s",
+                    e,
+                )
+                self._async_redis_client = None
+
+    async def aclose(self) -> None:
+        """
+        Close Redis client connections. Call from route teardown or app shutdown
+        to avoid connection leaks when BranchCache is long-lived.
+        """
+        if self._async_redis_client is not None:
+            try:
+                await self._async_redis_client.aclose()
+            except Exception as e:
+                logger.warning("BranchCache: error closing async Redis client: %s", e)
+            self._async_redis_client = None
+        if self.redis_client is not None:
+            try:
+                self.redis_client.close()
+            except Exception as e:
+                logger.warning("BranchCache: error closing sync Redis client: %s", e)
+            self.redis_client = None
+        self.available = False
 
     def _get_cache_key(self, repo_name: str, search_query: Optional[str] = None) -> str:
         """
@@ -80,6 +125,37 @@ class BranchCache:
         except Exception as e:
             logger.warning(f"BranchCache: Error reading from cache: {str(e)}")
             return None
+
+    async def get_branches_async(
+        self, repo_name: str, search_query: Optional[str] = None
+    ) -> Optional[List[str]]:
+        """
+        Get cached branches for a repository (non-blocking when async Redis is available).
+        """
+        if self._async_redis_client:
+            try:
+                cache_key = self._get_cache_key(repo_name, search_query)
+                cached_data = await self._async_redis_client.get(cache_key)
+                if cached_data:
+                    branches = json.loads(cached_data)
+                    logger.info(
+                        f"BranchCache: ✅ CACHE HIT for {repo_name} (async) "
+                        f"(search={search_query or 'none'}, branches={len(branches)})"
+                    )
+                    return branches
+                logger.info(
+                    f"BranchCache: ❌ CACHE MISS for {repo_name} (async) "
+                    f"(search={search_query or 'none'}, key={cache_key})"
+                )
+                return None
+            except Exception as e:
+                logger.warning(
+                    "BranchCache: Error reading from cache (async): %s", e
+                )
+                return None
+        return await asyncio.to_thread(
+            self.get_branches, repo_name, search_query
+        )
 
     def set_branches(
         self,
@@ -240,7 +316,7 @@ class BranchCache:
                     try:
                         branches = json.loads(cached_data)
                         branch_count = len(branches)
-                    except:
+                    except Exception:
                         pass
 
                 cache_info["keys"].append(

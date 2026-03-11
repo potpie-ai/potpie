@@ -1,12 +1,70 @@
 import asyncio
+import os
 from typing import Optional, List
+
+from sqlalchemy.orm import Session
 
 from app.celery.celery_app import celery_app
 from app.celery.tasks.base_task import BaseTask
 from app.modules.conversations.utils.redis_streaming import RedisStreamManager
+from app.modules.users.user_model import User
+from app.modules.users.user_service import UserService
 from app.modules.utils.logger import setup_logger, log_context
 
 logger = setup_logger(__name__)
+
+
+def _resolve_user_email_for_celery(db: Session, user_id: str) -> str:
+    """
+    Resolve user email using sync DB. Call from Celery task body before run_async();
+    do not call from inside the coroutine.
+    """
+    user = UserService(db).get_user_by_uid(user_id)
+    if not user:
+        direct_user = db.query(User).filter(User.uid == user_id).first()
+        if direct_user:
+            logger.warning(
+                "UserService.get_user_by_uid returned None but direct query found user: %s, email: %s",
+                direct_user.uid,
+                direct_user.email,
+            )
+            user = direct_user
+        else:
+            logger.warning(
+                "User not found in database for user_id: %s. Using empty string as fallback.",
+                user_id,
+            )
+            return ""
+    email = getattr(user, "email", None) or ""
+    if not email:
+        logger.warning(
+            "User found but email is None/empty for user_id: %s, user.uid: %s, email value: %r. Using empty string as fallback.",
+            user_id,
+            getattr(user, "uid", "N/A"),
+            getattr(user, "email", "N/A"),
+        )
+        return ""
+    logger.debug("Retrieved user email for user_id: %s", user_id)
+    return email
+
+
+def _clear_pydantic_ai_http_client_cache() -> None:
+    """Clear pydantic_ai's globally cached async HTTP client(s).
+
+    In Celery workers we use asyncio.run() per task, so each task has a new event loop.
+    The cached httpx.AsyncClient is created on first use and tied to that task's loop.
+    Reusing it in a later task (different loop, previous loop closed) can cause the
+    model request stream to hang or yield no chunks. Clearing the cache at task start
+    forces the next model creation to get a fresh client bound to the current loop.
+    """
+    if os.getenv("CELERY_WORKER") != "1":
+        return
+    try:
+        from pydantic_ai.models import _cached_async_http_client
+
+        _cached_async_http_client.cache_clear()
+    except Exception as e:
+        logger.debug("Could not clear pydantic_ai HTTP client cache: %s", e)
 
 
 @celery_app.task(
@@ -27,6 +85,12 @@ def execute_agent_background(
     tunnel_url: Optional[str] = None,
 ) -> None:
     """Execute an agent in the background and publish results to Redis streams"""
+    # Clear pydantic_ai's globally cached async HTTP client so this task gets a fresh
+    # client bound to this task's event loop. With asyncio.run() per task, the previous
+    # task's loop is closed, so reusing the cached client would use a client tied to a
+    # closed loop and can hang or yield no chunks (e.g. model request stream stuck).
+    _clear_pydantic_ai_http_client_cache()
+
     redis_manager = RedisStreamManager()
 
     # Set up logging context with domain IDs
@@ -44,6 +108,8 @@ def execute_agent_background(
             logger.warning("Failed to set task status in Redis", error=str(e))
 
         try:
+            user_email = _resolve_user_email_for_celery(self.db, user_id)
+
             # Execute agent with Redis publishing
             async def run_agent():
                 import asyncio
@@ -52,7 +118,6 @@ def execute_agent_background(
                     ConversationService,
                 )
                 from app.modules.conversations.exceptions import GenerationCancelled
-                from app.modules.users.user_service import UserService
                 from app.modules.conversations.message.message_model import MessageType
                 from app.modules.conversations.message.message_schema import (
                     MessageRequest,
@@ -63,63 +128,12 @@ def execute_agent_background(
                 from app.modules.conversations.message.message_store import MessageStore
 
                 logger.info("run_agent: coroutine started, acquiring async_db")
-                # Use BaseTask's context manager to get a fresh, non-pooled async session
-                # This avoids asyncpg Future binding issues across tasks sharing the same event loop
                 async with self.async_db() as async_db:
-                    logger.info("run_agent: async_db acquired, resolving user (sync DB on main thread)")
-                    # Use a fresh sync session on the main thread only. We avoid run_in_executor
-                    # here because creating threads in a forked Celery worker can trigger
-                    # GitPython/libgit2 SIGSEGV in multiprocessing context.
-                    from app.modules.users.user_model import User
-                    from app.core.database import SessionLocal
-
-                    _db = SessionLocal()
-                    try:
-                        user = UserService(_db).get_user_by_uid(user_id)
-                    finally:
-                        _db.close()
-
-                    # Debug: Direct query to verify user exists
-                    if not user:
-                        _db2 = SessionLocal()
-                        try:
-                            direct_user = (
-                                _db2.query(User)
-                                .filter(User.uid == user_id)
-                                .first()
-                            )
-                        finally:
-                            _db2.close()
-                        if direct_user:
-                            logger.warning(
-                                f"UserService.get_user_by_uid returned None but direct query found user: {direct_user.uid}, email: {direct_user.email}"
-                            )
-                            user = direct_user
-                        else:
-                            logger.warning(
-                                f"User not found in database for user_id: {user_id}. Using empty string as fallback."
-                            )
-
-                    logger.info("run_agent: user resolved, creating ConversationService")
+                    logger.info(
+                        "run_agent: async_db acquired, creating ConversationService"
+                    )
                     conversation_store = ConversationStore(self.db, async_db)
                     message_store = MessageStore(self.db, async_db)
-
-                    # Handle missing user or email gracefully
-                    if not user:
-                        user_email = ""
-                    elif not user.email:
-                        logger.warning(
-                            f"User found but email is None/empty for user_id: {user_id}, "
-                            f"user.uid: {user.uid if user else 'N/A'}, "
-                            f"email value: {repr(user.email) if user else 'N/A'}. "
-                            f"Using empty string as fallback."
-                        )
-                        user_email = ""
-                    else:
-                        user_email = user.email
-                        logger.debug(
-                            f"Retrieved user email: {user_email} for user_id: {user_id}"
-                        )
 
                     service = ConversationService.create(
                         conversation_store=conversation_store,
@@ -138,7 +152,9 @@ def execute_agent_background(
                     )
 
                     # Publish start event when actual processing begins
-                    logger.info("run_agent: publishing start event, calling store_message")
+                    logger.info(
+                        "run_agent: publishing start event, calling store_message"
+                    )
                     redis_manager.publish_event(
                         conversation_id,
                         run_id,
@@ -166,24 +182,11 @@ def execute_agent_background(
                             check_cancelled=check_cancelled,
                         ):
                             # Check for cancellation (redundant with cooperative check in agent, but keeps early exit)
-                            if redis_manager.check_cancellation(conversation_id, run_id):
+                            if redis_manager.check_cancellation(
+                                conversation_id, run_id
+                            ):
                                 logger.info("Agent execution cancelled")
-                                try:
-                                    message_id = (
-                                        service.history_manager.flush_message_buffer(
-                                            conversation_id, MessageType.AI_GENERATED
-                                        )
-                                    )
-                                    if message_id:
-                                        logger.debug(
-                                            "Flushed partial AI response for cancelled task",
-                                            message_id=message_id,
-                                        )
-                                except Exception as e:
-                                    logger.warning(
-                                        "Failed to flush message buffer on cancellation",
-                                        error=str(e),
-                                    )
+                                # Do not flush here - stop_generation saves from Redis snapshot to avoid duplicates
                                 redis_manager.publish_event(
                                     conversation_id,
                                     run_id,
@@ -195,48 +198,38 @@ def execute_agent_background(
                                 )
                                 return False  # Indicate cancellation
 
-                            # Publish chunk event
+                            # Publish chunk event (run in executor to avoid blocking the event loop)
                             serialized_tool_calls = []
                             if chunk.tool_calls:
                                 for tool_call in chunk.tool_calls:
                                     if hasattr(tool_call, "model_dump"):
-                                        serialized_tool_calls.append(tool_call.model_dump())
+                                        serialized_tool_calls.append(
+                                            tool_call.model_dump()
+                                        )
                                     elif hasattr(tool_call, "dict"):
                                         serialized_tool_calls.append(tool_call.dict())
                                     else:
                                         serialized_tool_calls.append(tool_call)
 
-                            redis_manager.publish_event(
-                                conversation_id,
-                                run_id,
-                                "chunk",
-                                {
-                                    "content": chunk.message or "",
-                                    "citations_json": chunk.citations or [],
-                                    "tool_calls_json": serialized_tool_calls,
-                                    "thinking": chunk.thinking,
-                                },
-                            )
+                            payload = {
+                                "content": chunk.message or "",
+                                "citations_json": chunk.citations or [],
+                                "tool_calls_json": serialized_tool_calls,
+                                "thinking": chunk.thinking,
+                            }
+
+                            def _publish_chunk():
+                                redis_manager.publish_event(
+                                    conversation_id, run_id, "chunk", payload
+                                )
+
+                            loop = asyncio.get_event_loop()
+                            await loop.run_in_executor(None, _publish_chunk)
 
                         return True  # Indicate successful completion (loop finished)
                     except GenerationCancelled:
                         logger.info("Agent execution cancelled (GenerationCancelled)")
-                        try:
-                            message_id = (
-                                service.history_manager.flush_message_buffer(
-                                    conversation_id, MessageType.AI_GENERATED
-                                )
-                            )
-                            if message_id:
-                                logger.debug(
-                                    "Flushed partial AI response for cancelled task",
-                                    message_id=message_id,
-                                )
-                        except Exception as e:
-                            logger.warning(
-                                "Failed to flush message buffer on cancellation",
-                                error=str(e),
-                            )
+                        # Do not flush here - stop_generation saves from Redis snapshot to avoid duplicates
                         redis_manager.publish_event(
                             conversation_id,
                             run_id,
@@ -250,13 +243,11 @@ def execute_agent_background(
 
                     return True  # Indicate successful completion
 
-            # Run the async agent execution on the worker's long-lived loop
-            logger.info("Entering run_async (agent coroutine)")
-            completed = self.run_async(run_agent())
-            # Run the async agent execution on the worker's long-lived loop.
+            # Run the async agent execution in a fresh event loop (asyncio.run).
             # Convert asyncio.CancelledError to RuntimeError so Celery's result callback
             # receives (failed, retval, runtime) instead of ExceptionInfo (avoids
             # "cannot unpack non-iterable ExceptionInfo object").
+            logger.info("Entering run_async (agent coroutine)")
             try:
                 completed = self.run_async(run_agent())
             except asyncio.CancelledError as e:
@@ -336,6 +327,8 @@ def execute_regenerate_background(
     local_mode: bool = False,
 ) -> None:
     """Execute regeneration in the background and publish results to Redis streams"""
+    _clear_pydantic_ai_http_client_cache()
+
     redis_manager = RedisStreamManager()
 
     # Set up logging context with domain IDs
@@ -350,47 +343,20 @@ def execute_regenerate_background(
         logger.warning("Failed to set task status in Redis", error=str(e))
 
     try:
+        user_email = _resolve_user_email_for_celery(self.db, user_id)
+
         # Execute regeneration with Redis publishing
         async def run_regeneration():
             from app.modules.conversations.conversation.conversation_service import (
                 ConversationService,
             )
             from app.modules.conversations.exceptions import GenerationCancelled
-            from app.modules.users.user_service import UserService
             from app.modules.conversations.conversation.conversation_store import (
                 ConversationStore,
             )
             from app.modules.conversations.message.message_store import MessageStore
-            from app.modules.conversations.message.message_model import MessageType
 
-            # Use BaseTask's context manager to get a fresh, non-pooled async session
             async with self.async_db() as async_db:
-                # Get user email for service creation (sync DB on main thread to avoid
-                # threads in forked worker — can trigger GitPython/libgit2 SIGSEGV).
-                from app.core.database import SessionLocal
-
-                _db = SessionLocal()
-                try:
-                    user = UserService(_db).get_user_by_uid(user_id)
-                finally:
-                    _db.close()
-                # Handle missing user or email gracefully
-                if not user:
-                    logger.warning(
-                        f"User not found for user_id: {user_id}. Using empty string as fallback."
-                    )
-                    user_email = ""
-                elif not user.email:
-                    logger.warning(
-                        f"User found but email is None/empty for user_id: {user_id}, user object: {user}, email value: {repr(user.email)}. Using empty string as fallback."
-                    )
-                    user_email = ""
-                else:
-                    user_email = user.email
-                    logger.debug(
-                        f"Retrieved user email: {user_email} for user_id: {user_id}"
-                    )
-
                 conversation_store = ConversationStore(self.db, async_db)
                 message_store = MessageStore(self.db, async_db)
 
@@ -432,22 +398,7 @@ def execute_regenerate_background(
                         # Check for cancellation
                         if redis_manager.check_cancellation(conversation_id, run_id):
                             logger.info("Regenerate execution cancelled")
-
-                            # Flush any buffered AI response chunks before cancelling
-                            try:
-                                message_id = service.history_manager.flush_message_buffer(
-                                    conversation_id, MessageType.AI_GENERATED
-                                )
-                                if message_id:
-                                    logger.debug(
-                                        "Flushed partial AI response for cancelled regenerate",
-                                        message_id=message_id,
-                                    )
-                            except Exception as e:
-                                logger.warning(
-                                    "Failed to flush message buffer on cancellation",
-                                    error=str(e),
-                                )
+                            # Do not flush here - stop_generation saves from Redis snapshot to avoid duplicates
                             redis_manager.publish_event(
                                 conversation_id,
                                 run_id,
@@ -459,8 +410,9 @@ def execute_regenerate_background(
                             )
                             return False  # Indicate cancellation
 
-                        # Publish chunk event
-                        # Properly serialize tool calls before sending through Redis
+                        # Publish chunk event (run in executor to avoid blocking the event loop:
+                        # sync Redis would block consumption of the model stream and can trigger
+                        # "Model stream idle timeout" when the agent is streaming long code.)
                         serialized_tool_calls = []
                         if chunk.tool_calls:
                             for tool_call in chunk.tool_calls:
@@ -471,17 +423,20 @@ def execute_regenerate_background(
                                 else:
                                     serialized_tool_calls.append(tool_call)
 
-                        redis_manager.publish_event(
-                            conversation_id,
-                            run_id,
-                            "chunk",
-                            {
-                                "content": chunk.message or "",
-                                "citations_json": chunk.citations or [],
-                                "tool_calls_json": serialized_tool_calls,
-                                "thinking": chunk.thinking,
-                            },
-                        )
+                        payload = {
+                            "content": chunk.message or "",
+                            "citations_json": chunk.citations or [],
+                            "tool_calls_json": serialized_tool_calls,
+                            "thinking": chunk.thinking,
+                        }
+
+                        def _publish_chunk():
+                            redis_manager.publish_event(
+                                conversation_id, run_id, "chunk", payload
+                            )
+
+                        loop = asyncio.get_event_loop()
+                        await loop.run_in_executor(None, _publish_chunk)
 
                     # Log completion of regeneration
                     if has_chunks:
@@ -494,20 +449,7 @@ def execute_regenerate_background(
                     logger.info(
                         "Regenerate execution cancelled (GenerationCancelled)"
                     )
-                    try:
-                        message_id = service.history_manager.flush_message_buffer(
-                            conversation_id, MessageType.AI_GENERATED
-                        )
-                        if message_id:
-                            logger.debug(
-                                "Flushed partial AI response for cancelled regenerate",
-                                message_id=message_id,
-                            )
-                    except Exception as e:
-                        logger.warning(
-                            "Failed to flush message buffer on cancellation",
-                            error=str(e),
-                        )
+                    # Do not flush here - stop_generation saves from Redis snapshot to avoid duplicates
                     redis_manager.publish_event(
                         conversation_id,
                         run_id,
@@ -519,7 +461,7 @@ def execute_regenerate_background(
                     )
                     return False  # Indicate cancellation
 
-        # Run the async regeneration on the worker's long-lived loop
+        # Run the async regeneration in a fresh event loop (asyncio.run)
         completed = self.run_async(run_regeneration())
 
         # Only publish completion event if not cancelled

@@ -39,7 +39,7 @@ async_engine = create_async_engine(
     max_overflow=10,
     pool_timeout=30,
     pool_recycle=1800,
-    pool_pre_ping=False,  # Disabled: causes event loop issues in Celery workers
+    pool_pre_ping=True,  # Check connection liveness before use (safe with asyncio.run per task)
     echo=False,
 )
 

@@ -3,6 +3,13 @@ Pure stateless helpers for message classification and extraction.
 
 Used by history_processor and message_compressor for inspecting
 ModelMessage / ModelRequest / ModelResponse and tool call/result parts.
+
+History contract (valid for PydanticAI / Anthropic API):
+- Processed history must end with a ModelRequest (PydanticAI requirement).
+- Every tool_use must have a tool_result in the immediately next message (Anthropic API).
+- No duplicate tool_result per tool_call_id.
+All code that passes history to the agent/graph must use sanitize_message_history_for_pydantic_ai
+(message_compressor) or ensure_history_ends_with_model_request after validate_and_fix_tool_pairing.
 """
 
 import json
@@ -251,3 +258,20 @@ def extract_system_prompt_from_messages(messages: List[ModelMessage]) -> str:
                     elif content:
                         system_prompts.append(str(content))
     return "\n".join(system_prompts)
+
+
+def ensure_history_ends_with_model_request(
+    messages: List[ModelMessage],
+) -> List[ModelMessage]:
+    """Ensure the message list ends with a ModelRequest (user turn).
+
+    PydanticAI requires processed history to end with a ModelRequest before each
+    model call. Use this after truncation/pairing/summarization so the list
+    always satisfies that contract. If the last message is already a ModelRequest,
+    the list is returned unchanged; otherwise an empty UserPromptPart is appended.
+    """
+    if not messages:
+        return messages
+    if isinstance(messages[-1], ModelRequest):
+        return messages
+    return [*messages, ModelRequest(parts=[UserPromptPart(content="")])]

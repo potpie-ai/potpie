@@ -217,7 +217,6 @@ class CodeGenAgent(ChatAgent):
                 "delete_file_in_changes",
                 "get_file_from_changes",
                 "list_files_in_changes",
-                "search_content_in_changes",
                 "clear_file_from_changes",
                 "clear_all_changes",
                 "get_changes_summary",
@@ -267,6 +266,31 @@ class CodeGenAgent(ChatAgent):
                 t for t in tools if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL
             ]
 
+        # #region agent log
+        try:
+            _dp = "/Users/nandan/Desktop/Dev/potpie/.cursor/debug-65030d.log"
+            with open(_dp, "a") as _f:
+                _f.write(
+                    __import__("json").dumps(
+                        {
+                            "sessionId": "65030d",
+                            "location": "code_gen_agent.py:_build_agent",
+                            "message": "code_gen tools built",
+                            "data": {
+                                "tools_count": len(tools),
+                                "tool_resolver_set": self.tool_resolver is not None,
+                                "local_mode": local_mode,
+                                "first_tool_names": [getattr(t, "name", str(t)) for t in tools[:6]],
+                            },
+                            "timestamp": int(__import__("time").time() * 1000),
+                            "hypothesisId": "B",
+                        }
+                    )
+                    + "\n"
+                )
+        except Exception:
+            pass
+        # #endregion
         # Verify excluded tools are not present in local_mode
         if local_mode:
             show_diff_found = any(tool.name == "show_diff" for tool in tools)
@@ -701,9 +725,6 @@ For the most reliable PR creation flow, use the **direct worktree mode**:
 
 - **`list_files_in_changes`** - List all tracked files
   - Filter by change type or file path pattern
-
-- **`search_content_in_changes`** - Search for patterns in changes
-  - Grep-like functionality for finding code
 
 - **`get_changes_summary`** - Get overview of all changes
   - Shows file counts by change type
