@@ -71,6 +71,15 @@ class ParsingService:
         self._raise_library_exceptions = raise_library_exceptions
         self.repo_manager = RepoManager()
 
+    def close(self) -> None:
+        """Close Neo4j-backed services (e.g. inference_service). Call when done with this instance."""
+        if hasattr(self, "inference_service") and self.inference_service is not None:
+            try:
+                self.inference_service.close()
+            except Exception:
+                pass
+            self.inference_service = None
+
     @classmethod
     def create_from_config(
         cls,
@@ -202,7 +211,7 @@ class ParsingService:
 
                 if cleanup_graph:
                     neo4j_config = self._get_neo4j_config()
-
+                    code_graph_service = None
                     try:
                         code_graph_service = CodeGraphService(
                             neo4j_config["uri"],
@@ -210,7 +219,6 @@ class ParsingService:
                             neo4j_config["password"],
                             self.db,
                         )
-
                         code_graph_service.cleanup_graph(str(project_id))
                     except Exception:
                         logger.exception(
@@ -223,6 +231,12 @@ class ParsingService:
                         raise HTTPException(
                             status_code=500, detail="Internal server error"
                         )
+                    finally:
+                        if code_graph_service is not None:
+                            try:
+                                code_graph_service.close()
+                            except Exception:
+                                pass
 
                 # Convert ParsingRequest to RepoDetails
                 repo_details_converted = RepoDetails(

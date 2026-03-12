@@ -96,15 +96,17 @@ class GetNodesFromTags:
         # Properly manage the DB generator to ensure cleanup
         gen = get_db()
         db = None
+        code_graph_service = None
         try:
             db = next(gen)
             neo4j_config = ConfigProvider().get_neo4j_config()
-            nodes = CodeGraphService(
+            code_graph_service = CodeGraphService(
                 neo4j_config["uri"],
                 neo4j_config["username"],
                 neo4j_config["password"],
                 db,
-            ).query_graph(query)
+            )
+            nodes = code_graph_service.query_graph(query)
         except Exception as e:
             import logging
 
@@ -113,6 +115,11 @@ class GetNodesFromTags:
             )
             return []
         finally:
+            if code_graph_service is not None:
+                try:
+                    code_graph_service.close()
+                except Exception:
+                    pass
             # Close the generator to trigger its finally block, which closes the DB session
             if gen:
                 try:
