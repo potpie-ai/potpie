@@ -40,7 +40,7 @@ ENV NEW_RELIC_CONFIG_FILE=/app/newrelic.ini
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Expose the port that the app runs on
-EXPOSE 8001
+EXPOSE 8003
 
 # Define environment variable
 ENV PYTHONUNBUFFERED=1
