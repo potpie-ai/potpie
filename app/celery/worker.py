@@ -1,8 +1,4 @@
-# Celery worker entrypoint.
-# Run with the queues that agent/parsing tasks use, e.g.:
-#   celery -A app.celery.celery_app worker -l info -Q staging_agent_tasks,staging_process_repository
-# Or: ./scripts/run_celery_worker.sh
-# (Without -Q the worker only consumes the default "celery" queue and agent tasks never run here.)
+# Import the module containing the task
 from app.celery.celery_app import celery_app, logger
 from app.celery.tasks.parsing_tasks import (
     process_parsing,  # Ensure the task is imported
