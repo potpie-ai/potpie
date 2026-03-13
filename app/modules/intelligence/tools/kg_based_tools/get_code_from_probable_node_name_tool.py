@@ -218,9 +218,23 @@ class GetCodeFromProbableNodeNameTool:
         except ValueError:
             return file_path
 
-    def __del__(self):
-        if hasattr(self, "neo4j_driver"):
-            self.neo4j_driver.close()
+    def close(self) -> None:
+        """Close the Neo4j driver. Call when the tool is no longer needed."""
+        if hasattr(self, "neo4j_driver") and self.neo4j_driver is not None:
+            try:
+                self.neo4j_driver.close()
+            except Exception as e:
+                logger.exception("Failed to close Neo4j driver in GetCodeFromProbableNodeNameTool: %s", e)
+            finally:
+                self.neo4j_driver = None
+
+    def __del__(self) -> None:
+        if hasattr(self, "neo4j_driver") and self.neo4j_driver is not None:
+            try:
+                self.neo4j_driver.close()
+            except Exception:
+                pass
+            self.neo4j_driver = None
 
 
 def get_code_from_probable_node_name_tool(

@@ -14,7 +14,7 @@ dependencies = [
     "boto3>=1.40.67",
     "celery>=5.5.3",
     "chardet>=5.2.0",
-    "cryptography>=46.0.3",
+    "cryptography>=46.0.5",
     "email-inspector>=0.1.4",
     "fastapi>=0.121.0",
     "firebase-admin>=7.1.0",
@@ -39,12 +39,12 @@ dependencies = [
     "nltk>=3.9.2",
     "openai>=2.7.1",
     "pathspec>=0.12.1",
-    "pillow>=12.0.0",
+    "pillow>=12.1.1",
     "postgres>=4.0",
     "posthog>=6.9.0",
     "protobuf>=6.33.5",
     "psycopg-binary>=3.2.12",
-    "pydantic-ai>=1.11.1",
+    "pydantic-ai>=1.56.0",
     "pydantic-ai-todo>=0.1.6",
     "pydantic[email]>=2.12.4",
     "pygithub>=2.8.1",
@@ -96,7 +96,7 @@ skips = ["B101", "B601"]                # Skip assert_used and shell injection w
 exclude = ["tests", "app/alembic"]
 
 [tool.pytest.ini_options]
-testpaths = ["app/modules/auth/tests"]
+testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
@@ -104,6 +104,9 @@ markers = [
     "unit: Unit tests",
     "integration: Integration tests",
     "asyncio: Async tests",
+    "github_live: marks tests that hit the live GitHub API",
+    "stress: Stress tests (exclude with -m 'not stress')",
+    "real_parse: Real parsing tests requiring Postgres + Neo4j (exclude with -m 'not real_parse')",
 ]
 asyncio_mode = "auto"
-addopts = "-v --strict-markers --tb=short --disable-warnings"
+addopts = "-v --strict-markers --tb=short --disable-warnings -ra --durations=5"

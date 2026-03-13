@@ -4,15 +4,30 @@ import os
 import shutil
 import uuid
 import subprocess
-from typing import Any, Optional, Tuple
+from typing import Any, Optional, Tuple, TYPE_CHECKING
 from urllib.parse import urlparse, urlunparse
 from pathlib import Path
 from collections import defaultdict
+import urllib.request
+import urllib.error
 
 
 from fastapi import HTTPException
-from git import GitCommandError, InvalidGitRepositoryError, Repo
 from sqlalchemy.orm import Session
+
+# Lazy import for GitPython to avoid SIGSEGV in forked processes (gunicorn workers).
+# GitPython/libgit2 has internal state that doesn't survive fork().
+# These will be imported on first use inside functions that need them.
+if TYPE_CHECKING:
+    from git import Repo as RepoType
+    from git import GitCommandError as GitCommandErrorType
+    from git import InvalidGitRepositoryError as InvalidGitRepositoryErrorType
+
+
+def _get_git_imports():
+    """Lazy import git module to avoid fork-safety issues."""
+    from git import GitCommandError, InvalidGitRepositoryError, Repo
+    return GitCommandError, InvalidGitRepositoryError, Repo
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
@@ -23,6 +38,32 @@ from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+
+def _fetch_github_branch_head_sha_http(repo_name: str, branch_name: str) -> Optional[str]:
+    """
+    Fetch the HEAD commit SHA for a GitHub branch using only HTTP (no GitPython/PyGithub).
+    Safe to call from forked processes (gunicorn workers) where GitPython causes SIGSEGV.
+    """
+    try:
+        url = f"https://api.github.com/repos/{repo_name}/branches/{branch_name}"
+        token_list = os.getenv("GH_TOKEN_LIST", "").strip()
+        token = os.getenv("CODE_PROVIDER_TOKEN")
+        if token_list:
+            parts = [p.strip() for p in token_list.replace("\n", ",").split(",") if p.strip()]
+            if parts:
+                token = token or parts[0]
+        if not token:
+            token = os.getenv("CODE_PROVIDER_TOKEN")
+        req = urllib.request.Request(url)
+        req.add_header("Accept", "application/vnd.github.v3+json")
+        if token:
+            req.add_header("Authorization", f"Bearer {token}")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode())
+        return (data.get("commit") or {}).get("sha")
+    except Exception:
+        return None
 
 
 class ParsingServiceError(Exception):
@@ -107,6 +148,7 @@ class ParseHelper:
                     status_code=400,
                     detail="Local repository does not exist on the given path",
                 )
+            _, _, Repo = _get_git_imports()
             repo = Repo(repo_details.repo_path)
             logger.info(
                 f"ParsingHelper: clone_or_copy_repository created local Repo object for path: {repo_details.repo_path}"
@@ -130,6 +172,7 @@ class ParseHelper:
                     # Verify this is the correct worktree for the commit_id
                     actual_commit_id = None
                     try:
+                        _, _, Repo = _get_git_imports()
                         worktree_repo = Repo(cached_repo_path)
                         actual_commit_id = worktree_repo.head.commit.hexsha
                         logger.info(
@@ -188,6 +231,7 @@ class ParseHelper:
 
                     # Try to create a GitPython Repo from cached path (now we have real git repos)
                     try:
+                        _, InvalidGitRepositoryError, Repo = _get_git_imports()
                         repo = Repo(cached_repo_path)
                         logger.info(
                             f"ParsingHelper: Created Repo object from cached path {cached_repo_path}"
@@ -269,6 +313,7 @@ class ParseHelper:
                         # We now use git clone, so we have a real git repo
                         # Try to create Repo object from cloned path
                         try:
+                            _, InvalidGitRepositoryError, Repo = _get_git_imports()
                             repo = Repo(repo_manager_path)
                             logger.info(
                                 f"ParsingHelper: Cloned repo to RepoManager at {repo_manager_path}"
@@ -495,6 +540,7 @@ class ParseHelper:
 
         try:
             # Clone the repository to temporary directory with shallow clone for faster download
+            GitCommandError, _, Repo = _get_git_imports()
             _ = Repo.clone_from(
                 clone_url_with_auth, temp_clone_dir, branch=branch, depth=1
             )
@@ -982,6 +1028,7 @@ class ParseHelper:
             else:
                 # For regular repos (legacy), create worktree directly
                 logger.info(f"Using legacy worktree creation for regular repo at {git_dir}")
+                _, _, Repo = _get_git_imports()
                 regular_repo = Repo(str(git_dir))
                 worktree_path_str = await self._create_git_worktree(
                     base_repo=regular_repo,
@@ -1193,6 +1240,7 @@ class ParseHelper:
                     # Fallback: try to get from git
                     if not latest_commit_sha:
                         try:
+                            _, _, Repo = _get_git_imports()
                             git_repo = Repo(repo_manager_path)
                             latest_commit_sha = git_repo.head.commit.hexsha
                         except Exception:
@@ -1209,10 +1257,12 @@ class ParseHelper:
                 if repo is None:
                     # No repo object available (cached without API access)
                     repo_metadata = {}
-                elif isinstance(repo, Repo):
-                    repo_metadata = ParseHelper.extract_local_repo_metadata(repo)
                 else:
-                    repo_metadata = ParseHelper.extract_remote_repo_metadata(repo)
+                    _, _, Repo = _get_git_imports()
+                    if isinstance(repo, Repo):
+                        repo_metadata = ParseHelper.extract_local_repo_metadata(repo)
+                    else:
+                        repo_metadata = ParseHelper.extract_remote_repo_metadata(repo)
             except Exception as e:
                 logger.warning(f"Could not extract repo metadata: {e}")
                 repo_metadata = {}
@@ -1280,6 +1330,7 @@ class ParseHelper:
                                         latest_commit_sha = repo_info["commit_id"]
                                 if not latest_commit_sha:
                                     try:
+                                        _, _, Repo = _get_git_imports()
                                         git_repo = Repo(repo_manager_path)
                                         latest_commit_sha = git_repo.head.commit.hexsha
                                     except Exception:
@@ -1290,6 +1341,7 @@ class ParseHelper:
                                 logger.warning(f"Could not determine commit SHA: {e}")
                             latest_commit_sha = latest_commit_sha or commit_id or "unknown"
                         try:
+                            _, _, Repo = _get_git_imports()
                             if repo is None:
                                 repo_metadata = {}
                             elif isinstance(repo, Repo):
@@ -1345,6 +1397,7 @@ class ParseHelper:
                     ),
                 )
 
+        GitCommandError, _, Repo = _get_git_imports()
         if isinstance(repo_details, Repo):
             extracted_dir = repo_details.working_tree_dir
             try:
@@ -1574,6 +1627,7 @@ class ParseHelper:
                 )
 
                 try:
+                    _, _, Repo = _get_git_imports()
                     base_repo = Repo(base_repo_path)
 
                     # Fetch latest to ensure we have the commit
@@ -1596,6 +1650,7 @@ class ParseHelper:
                         # Always get actual commit SHA from worktree to ensure accuracy
                         actual_commit_id = None
                         try:
+                            _, _, Repo = _get_git_imports()
                             worktree_repo = Repo(worktree_path_str)
                             actual_commit_id = worktree_repo.head.commit.hexsha
                             logger.info(
@@ -1851,6 +1906,7 @@ class ParseHelper:
                 )
 
                 # Configure the bare repo to fetch all refs
+                _, _, Repo = _get_git_imports()
                 bare_repo = Repo(str(bare_repo_path))
                 if bare_repo.remotes:
                     origin = bare_repo.remotes.origin
@@ -1940,6 +1996,7 @@ class ParseHelper:
             # Always get actual commit SHA from worktree to ensure accuracy
             actual_commit_id = None
             try:
+                _, _, Repo = _get_git_imports()
                 worktree_repo = Repo(worktree_path_str)
                 actual_commit_id = worktree_repo.head.commit.hexsha
                 logger.info(
@@ -2137,7 +2194,7 @@ class ParseHelper:
 
     async def _create_git_worktree(
         self,
-        base_repo: Repo,
+        base_repo: Any,
         worktree_path: Path,
         ref: str,
         is_commit: bool,
@@ -2154,6 +2211,7 @@ class ParseHelper:
         Returns:
             Path to the worktree, or None if creation failed
         """
+        GitCommandError, _, _ = _get_git_imports()
         try:
             # Remove existing worktree if it exists
             if worktree_path.exists():
@@ -2224,6 +2282,7 @@ class ParseHelper:
         """
         try:
             # Open the bare repository
+            GitCommandError, _, Repo = _get_git_imports()
             bare_repo = Repo(str(bare_repo_path))
 
             # Remove existing worktree if it exists
@@ -2284,13 +2343,14 @@ class ParseHelper:
             )
             return None
 
-    def _initialize_base_repo(self, base_repo_path: Path, extracted_dir: str) -> Repo:
+    def _initialize_base_repo(self, base_repo_path: Path, extracted_dir: str) -> Any:
         """
         Initialize or get the base git repository.
 
         If the base repo doesn't exist, initialize it and copy the extracted repo.
         If it exists, return the existing repo.
         """
+        GitCommandError, InvalidGitRepositoryError, Repo = _get_git_imports()
 
         # Check if base repo already exists and is a valid git repo
         if base_repo_path.exists():
@@ -2330,7 +2390,7 @@ class ParseHelper:
         return base_repo
 
     def _create_worktree(
-        self, base_repo: Repo, ref: str, is_commit: bool, extracted_dir: str
+        self, base_repo: Any, ref: str, is_commit: bool, extracted_dir: str
     ) -> Path:
         """
         Create a git worktree for the given ref.
@@ -2344,7 +2404,7 @@ class ParseHelper:
         Returns:
             Path to the worktree
         """
-        from git import GitCommandError
+        GitCommandError, _, _ = _get_git_imports()
 
         # Generate worktree path
         base_path = Path(base_repo.working_tree_dir or base_repo.git_dir)
@@ -2433,7 +2493,7 @@ class ParseHelper:
         return metadata
 
     @staticmethod
-    def extract_local_repo_metadata(repo: Repo):
+    def extract_local_repo_metadata(repo: Any):
         languages = ParseHelper.get_local_repo_languages(repo.working_tree_dir)
         total_bytes = sum(languages.values())
 
@@ -2622,17 +2682,12 @@ class ParseHelper:
                 )
                 return False
 
-            # Run blocking GitHub API (get_repo, get_branch) in thread pool to avoid blocking the event loop
-            def _fetch_latest_commit_sync() -> Optional[str]:
-                _github, repo = self.github_service.get_repo(repo_name)
-                branch = repo.get_branch(branch_name)
-                return branch.commit.sha
-
+            # Use HTTP-only GitHub API to avoid GitPython/libgit2 in forked gunicorn workers (SIGSEGV)
             logger.info(
                 f"check_commit_status: Branch-based parse - getting repo info for {repo_name}"
             )
             latest_commit_id = await asyncio.to_thread(
-                _fetch_latest_commit_sync
+                _fetch_github_branch_head_sha_http, repo_name, branch_name
             )
 
             # Compare current commit with latest commit

@@ -18,7 +18,10 @@ from langchain_core.tools import StructuredTool
 
 from app.modules.projects.projects_service import ProjectService
 from app.modules.repo_manager import RepoManager
-from app.modules.repo_manager.sync_helper import get_or_create_worktree_path
+from app.modules.repo_manager.sync_helper import (
+    get_or_create_worktree_path,
+    get_or_create_edits_worktree_path,
+)
 from app.modules.intelligence.tools.code_changes_manager import CodeChangesManager
 from app.modules.utils.logger import setup_logger
 
@@ -150,14 +153,17 @@ class ApplyChangesTool:
 
     def _get_worktree_path(
         self,
-        repo_name: str,
-        branch: Optional[str],
-        commit_id: Optional[str],
+        project_id: str,
+        conversation_id: str,
         user_id: Optional[str],
-    ) -> Optional[str]:
-        """Get the worktree path, cloning via prepare_for_parsing if missing."""
-        return get_or_create_worktree_path(
-            self.repo_manager, repo_name, branch, commit_id, user_id, self.sql_db
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Get the edits worktree path for this conversation. Returns (path, failure_reason)."""
+        return get_or_create_edits_worktree_path(
+            self.repo_manager,
+            project_id=project_id,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            sql_db=self.sql_db,
         )
 
     def _run(
@@ -180,19 +186,25 @@ class ApplyChangesTool:
 
             # Get project details
             details = self._get_project_details(project_id)
-            repo_name = details["project_name"]
-            branch = details.get("branch_name")
-            commit_id = details.get("commit_id")
             user_id = details.get("user_id")
 
-            # Get worktree path
-            worktree_path = self._get_worktree_path(
-                repo_name, branch, commit_id, user_id
+            # Get edits worktree path for this conversation
+            worktree_path, failure_reason = self._get_worktree_path(
+                project_id, conversation_id, user_id
             )
             if not worktree_path:
+                error_msg = f"Worktree not found for project {project_id}. The repository must be parsed and available in the repo manager."
+                if failure_reason:
+                    reason_hint = {
+                        "no_ref": "missing branch or commit_id",
+                        "auth_failed": "all auth methods failed (GitHub App, OAuth, env token)",
+                        "clone_failed": "git clone failed",
+                        "worktree_add_failed": "git worktree add failed",
+                    }.get(failure_reason, failure_reason)
+                    error_msg += f" Reason: {reason_hint}."
                 return {
                     "success": False,
-                    "error": f"Worktree not found for project {project_id}. The repository must be parsed and available in the repo manager.",
+                    "error": error_msg,
                     "files_applied": [],
                     "files_deleted": [],
                     "files_skipped": [],

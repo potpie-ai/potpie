@@ -23,6 +23,7 @@ from app.modules.intelligence.tools.reasoning_manager import (
     _reset_reasoning_manager,
 )
 
+from app.modules.intelligence.tracing.logfire_tracer import should_instrument_pydantic_ai
 from ..chat_agent import (
     ChatAgent,
     ChatAgentResponse,
@@ -154,6 +155,7 @@ You are an AI assistant that helps users with code analysis and tasks. Follow th
 
 ## Tool Usage Best Practices
 
+- Use available tools to gather information before generating responses
 - Use `fetch_file` with `with_line_numbers=true` for precise code references
 - Use `ask_knowledge_graph_queries` for semantic code search
 - Use `get_code_file_structure` to understand project layout
@@ -183,7 +185,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             "defer_model_check": True,
             "end_strategy": "exhaustive",
             "model_settings": {"max_tokens": 14000},
-            "instrument": True,
+            "instrument": should_instrument_pydantic_ai(),
             "history_processors": [self._history_processor],
         }
 
@@ -919,6 +921,14 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                     logger.info(
                                         f"Reasoning content saved with hash: {reasoning_hash}"
                                     )
+                                # Yield thinking content at the end of stream
+                                if reasoning_manager.content:
+                                    yield ChatAgentResponse(
+                                        response="",
+                                        tool_calls=[],
+                                        citations=[],
+                                        thinking=reasoning_manager.content,
+                                    )
 
             except (TimeoutError, anyio.WouldBlock, Exception) as mcp_error:
                 logger.warning(f"MCP server initialization failed: {mcp_error}")
@@ -1087,6 +1097,14 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                 if reasoning_hash:
                                     logger.info(
                                         f"Reasoning content saved with hash: {reasoning_hash}"
+                                    )
+                                # Yield thinking content at the end of stream
+                                if reasoning_manager.content:
+                                    yield ChatAgentResponse(
+                                        response="",
+                                        tool_calls=[],
+                                        citations=[],
+                                        thinking=reasoning_manager.content,
                                     )
 
                 except (ModelRetry, AgentRunError, UserError) as pydantic_error:

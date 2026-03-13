@@ -11,6 +11,9 @@ from app.modules.auth.auth_schema import AuthProviderCreate
 from app.modules.auth.auth_provider_model import UserAuthProvider, PendingProviderLink
 
 
+pytestmark = pytest.mark.unit
+
+
 class TestUnifiedAuthService:
     """Test UnifiedAuthService methods"""
 
@@ -55,11 +58,31 @@ class TestUnifiedAuthService:
         assert provider is not None
         assert provider.provider_type == "firebase_github"
 
-    def test_get_provider_not_found(self, db_session, test_user):
-        """Test getting non-existent provider"""
-        service = UnifiedAuthService(db_session)
-        provider = service.get_provider(test_user.uid, "sso_google")
+    def test_get_provider_not_found(self, db_session):
+        """Test getting non-existent provider (isolated user with no sso_google)."""
+        from app.modules.users.user_model import User
+        from app.modules.auth.auth_provider_model import UserAuthProvider
 
+        user = User(
+            uid="test-user-no-sso",
+            email="nosso@example.com",
+            display_name="No SSO",
+            email_verified=True,
+            created_at=datetime.now(timezone.utc),
+        )
+        db_session.add(user)
+        db_session.add(
+            UserAuthProvider(
+                user_id=user.uid,
+                provider_type="firebase_github",
+                provider_uid="gh-1",
+                is_primary=True,
+                linked_at=datetime.now(timezone.utc),
+            )
+        )
+        db_session.commit()
+        service = UnifiedAuthService(db_session)
+        provider = service.get_provider(user.uid, "sso_google")
         assert provider is None
 
     def test_add_provider_first(self, db_session, test_user):
@@ -243,21 +266,40 @@ class TestUnifiedAuthService:
         assert response.user_id == test_user_with_github.uid
 
     @pytest.mark.asyncio
-    async def test_authenticate_or_create_needs_linking(
-        self, db_session, test_user_with_github
-    ):
-        """Test authentication creates pending link for new provider"""
-        service = UnifiedAuthService(db_session)
+    async def test_authenticate_or_create_needs_linking(self, db_session):
+        """Test authentication creates pending link for new provider (isolated user with only GitHub)."""
+        from app.modules.users.user_model import User
 
+        # User with only firebase_github so sso_google auth yields needs_linking
+        user_github_only = User(
+            uid="test-user-github-only",
+            email="githubonly@example.com",
+            display_name="GitHub Only",
+            email_verified=True,
+            created_at=datetime.now(timezone.utc),
+        )
+        db_session.add(user_github_only)
+        db_session.add(
+            UserAuthProvider(
+                user_id=user_github_only.uid,
+                provider_type="firebase_github",
+                provider_uid="github-xyz",
+                is_primary=True,
+                linked_at=datetime.now(timezone.utc),
+            )
+        )
+        db_session.commit()
+
+        service = UnifiedAuthService(db_session)
         user, response = await service.authenticate_or_create(
-            email="test@example.com",
+            email="githubonly@example.com",
             provider_type="sso_google",
             provider_uid="google-new-456",
-            display_name="Test User",
+            display_name="GitHub Only",
             email_verified=True,
         )
 
-        assert user.uid == test_user_with_github.uid
+        assert user.uid == user_github_only.uid
         assert response.status == "needs_linking"
         assert response.linking_token is not None
         assert "firebase_github" in response.existing_providers

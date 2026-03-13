@@ -12,7 +12,10 @@ from langchain_core.tools import StructuredTool
 
 from app.modules.projects.projects_service import ProjectService
 from app.modules.repo_manager import RepoManager
-from app.modules.repo_manager.sync_helper import get_or_create_worktree_path
+from app.modules.repo_manager.sync_helper import (
+    get_or_create_worktree_path,
+    get_or_create_edits_worktree_path,
+)
 from app.modules.code_provider.git_safe import safe_git_repo_operation, GitOperationError
 from app.modules.utils.logger import setup_logger
 
@@ -34,6 +37,10 @@ class GitPushInput(BaseModel):
     force: bool = Field(
         default=False,
         description="Whether to force push (use with caution)"
+    )
+    conversation_id: Optional[str] = Field(
+        None,
+        description="Optional conversation ID. When provided, pushes from the edits worktree branch (agent/edits-{conversation_id}) instead of the base project branch.",
     )
 
 
@@ -104,15 +111,88 @@ class GitPushTool:
 
     def _get_worktree_path(
         self,
+        project_id: str,
         repo_name: str,
         branch: Optional[str],
         commit_id: Optional[str],
         user_id: Optional[str],
-    ) -> Optional[str]:
-        """Get the worktree path, cloning via prepare_for_parsing if missing."""
+        conversation_id: Optional[str] = None,
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Get the worktree path.
+
+        When ``conversation_id`` is provided, uses the edits worktree for that
+        conversation.  Otherwise falls back to the base repo worktree.
+        """
+        if conversation_id:
+            return get_or_create_edits_worktree_path(
+                self.repo_manager,
+                project_id=project_id,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                sql_db=self.sql_db,
+            )
         return get_or_create_worktree_path(
             self.repo_manager, repo_name, branch, commit_id, user_id, self.sql_db
         )
+
+    def _get_auth_token(self, repo_name: str) -> Optional[str]:
+        """Get authentication token using priority chain (same as sync_helper).
+
+        Priority 1: GitHub App token
+        Priority 2: User OAuth token from DB
+        Priority 3: Environment token (via repo_manager)
+        """
+        # Priority 1: Try GitHub App token if available
+        try:
+            from app.modules.code_provider.provider_factory import (
+                CodeProviderFactory,
+            )
+
+            provider = CodeProviderFactory.create_github_app_provider(repo_name)
+            if (
+                provider
+                and hasattr(provider, "client")
+                and hasattr(provider.client, "_Github__requester")
+            ):
+                requester = provider.client._Github__requester
+                if hasattr(requester, "auth") and requester.auth:
+                    token = requester.auth.token
+                    logger.info(
+                        f"GitPushTool: Using GitHub App token for {repo_name}"
+                    )
+                    return token
+        except Exception:
+            pass
+
+        # Priority 2: Get User OAuth token from DB
+        if self.sql_db and self.user_id:
+            try:
+                from app.modules.code_provider.github.github_service import (
+                    GithubService,
+                )
+
+                token = GithubService(self.sql_db).get_github_oauth_token(
+                    self.user_id
+                )
+                if token:
+                    logger.info(
+                        f"GitPushTool: Using user OAuth token for {repo_name}"
+                    )
+                    return token
+            except Exception:
+                pass
+
+        # Priority 3: Environment token (via repo_manager)
+        if self.repo_manager:
+            token = self.repo_manager._get_github_token()
+            if token:
+                logger.info(
+                    f"GitPushTool: Using environment token for {repo_name}"
+                )
+                return token
+
+        logger.warning("GitPushTool: No authentication token found")
+        return None
 
     def _run(
         self,
@@ -120,6 +200,7 @@ class GitPushTool:
         remote: str = "origin",
         branch: Optional[str] = None,
         force: bool = False,
+        conversation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Push the current branch to remote."""
         try:
@@ -137,14 +218,23 @@ class GitPushTool:
             commit_id = details.get("commit_id")
             user_id = details.get("user_id")
 
-            # Get worktree path
-            worktree_path = self._get_worktree_path(
-                repo_name, project_branch, commit_id, user_id
+            # Get worktree path (edits worktree when conversation_id provided)
+            worktree_path, failure_reason = self._get_worktree_path(
+                project_id, repo_name, project_branch, commit_id, user_id, conversation_id
             )
             if not worktree_path:
+                error_msg = f"Worktree not found for project {project_id}. The repository must be parsed and available in the repo manager."
+                if failure_reason:
+                    reason_hint = {
+                        "no_ref": "missing branch or commit_id",
+                        "auth_failed": "all auth methods failed (GitHub App, OAuth, env token)",
+                        "clone_failed": "git clone failed",
+                        "worktree_add_failed": "git worktree add failed",
+                    }.get(failure_reason, failure_reason)
+                    error_msg += f" Reason: {reason_hint}."
                 return {
                     "success": False,
-                    "error": f"Worktree not found for project {project_id}. The repository must be parsed and available in the repo manager.",
+                    "error": error_msg,
                 }
 
             def _push_operation(repo):
@@ -166,28 +256,54 @@ class GitPushTool:
                 except Exception:
                     remote_url = "unknown"
 
-                logger.info(
-                    f"GitPushTool: Pushing {current_branch} to {remote} "
-                    f"(force: {force})"
-                )
+                # Inject auth URL for push (App -> OAuth -> env); restore in finally
+                auth_token = self._get_auth_token(repo_name)
+                auth_url = None
+                plain_url = None
+                if auth_token and self.repo_manager:
+                    try:
+                        plain_url = (
+                            repo.git.remote("get-url", remote).strip().rstrip("/")
+                        )
+                        auth_url = self.repo_manager._build_authenticated_url(
+                            plain_url, auth_token, repo_name=repo_name
+                        )
+                        if auth_url:
+                            auth_url = auth_url.rstrip("/")
+                        if auth_url:
+                            repo.git.remote("set-url", remote, auth_url)
+                    except Exception as e:
+                        logger.warning(f"GitPushTool: Could not set auth URL: {e}")
 
-                # Push to remote
-                push_args = [remote, current_branch]
-                if force:
-                    push_args.append("--force")
-                else:
-                    push_args.append("--set-upstream")
+                try:
+                    logger.info(
+                        f"GitPushTool: Pushing {current_branch} to {remote} "
+                        f"(force: {force})"
+                    )
 
-                push_info = repo.git.push(*push_args)
+                    # Push to remote
+                    push_args = [remote, current_branch]
+                    if force:
+                        push_args.append("--force")
+                    else:
+                        push_args.append("--set-upstream")
 
-                return {
-                    "success": True,
-                    "branch": current_branch,
-                    "remote": remote,
-                    "remote_url": remote_url,
-                    "message": f"Successfully pushed {current_branch} to {remote}",
-                    "push_output": push_info,
-                }
+                    push_info = repo.git.push(*push_args)
+
+                    return {
+                        "success": True,
+                        "branch": current_branch,
+                        "remote": remote,
+                        "remote_url": remote_url,
+                        "message": f"Successfully pushed {current_branch} to {remote}",
+                        "push_output": push_info,
+                    }
+                finally:
+                    if auth_url and plain_url and self.repo_manager:
+                        try:
+                            repo.git.remote("set-url", remote, plain_url)
+                        except Exception:
+                            pass
 
             # Execute push with safe git operation wrapper
             result = safe_git_repo_operation(
@@ -224,12 +340,13 @@ class GitPushTool:
         remote: str = "origin",
         branch: Optional[str] = None,
         force: bool = False,
+        conversation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Async wrapper for _run."""
         import asyncio
 
         return await asyncio.to_thread(
-            self._run, project_id, remote, branch, force
+            self._run, project_id, remote, branch, force, conversation_id
         )
 
 

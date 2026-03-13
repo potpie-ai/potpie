@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -42,6 +42,8 @@ class MessageResponse(BaseModel):
     citations: Optional[List[str]] = None
     has_attachments: bool = False
     attachments: Optional[List[AttachmentInfo]] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
+    thinking: Optional[str] = None
 
     class Config:
         from_attributes = True

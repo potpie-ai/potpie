@@ -15,7 +15,10 @@ from langchain_core.tools import StructuredTool
 
 from app.modules.projects.projects_service import ProjectService
 from app.modules.repo_manager import RepoManager
-from app.modules.repo_manager.sync_helper import get_or_create_worktree_path
+from app.modules.repo_manager.sync_helper import (
+    get_or_create_worktree_path,
+    get_or_create_edits_worktree_path,
+)
 from app.modules.utils.gvisor_runner import run_command_isolated, CommandResult
 from app.modules.utils.logger import setup_logger
 
@@ -441,6 +444,10 @@ class BashCommandToolInput(BaseModel):
         None,
         description="Optional subdirectory within the repo to run the command. If not specified, runs from repo root.",
     )
+    conversation_id: Optional[str] = Field(
+        None,
+        description="Optional conversation ID. When provided, commands run against the edits worktree (agent/edits-{conversation_id}) so they see files written by CodeChangesManager.",
+    )
 
 
 class BashCommandTool:
@@ -549,12 +556,27 @@ class BashCommandTool:
 
     def _get_worktree_path(
         self,
+        project_id: str,
         repo_name: str,
         branch: Optional[str],
         commit_id: Optional[str],
         user_id: Optional[str],
-    ) -> Optional[str]:
-        """Get the worktree path, cloning via prepare_for_parsing if missing."""
+        conversation_id: Optional[str] = None,
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Get the worktree path.
+
+        When ``conversation_id`` is provided, uses the edits worktree so commands
+        see files already written by CodeChangesManager.  Otherwise falls back to
+        the base repo worktree.
+        """
+        if conversation_id:
+            return get_or_create_edits_worktree_path(
+                self.repo_manager,
+                project_id=project_id,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                sql_db=self.sql_db,
+            )
         return get_or_create_worktree_path(
             self.repo_manager, repo_name, branch, commit_id, user_id, self.sql_db
         )
@@ -564,6 +586,7 @@ class BashCommandTool:
         project_id: str,
         command: str,
         working_directory: Optional[str] = None,
+        conversation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Execute bash command in the repository worktree."""
         try:
@@ -583,14 +606,23 @@ class BashCommandTool:
             commit_id = details.get("commit_id")
             user_id = details.get("user_id")
 
-            # Get worktree path (with user_id for security)
-            worktree_path = self._get_worktree_path(
-                repo_name, branch, commit_id, user_id
+            # Get worktree path (edits worktree when conversation_id provided)
+            worktree_path, failure_reason = self._get_worktree_path(
+                project_id, repo_name, branch, commit_id, user_id, conversation_id
             )
             if not worktree_path:
+                error_msg = f"Worktree not found for project {project_id}. The repository must be parsed and available in the repo manager."
+                if failure_reason:
+                    reason_hint = {
+                        "no_ref": "missing branch or commit_id",
+                        "auth_failed": "all auth methods failed (GitHub App, OAuth, env token)",
+                        "clone_failed": "git clone failed",
+                        "worktree_add_failed": "git worktree add failed",
+                    }.get(failure_reason, failure_reason)
+                    error_msg += f" Reason: {reason_hint}."
                 return {
                     "success": False,
-                    "error": f"Worktree not found for project {project_id}. The repository must be parsed and available in the repo manager.",
+                    "error": error_msg,
                     "output": "",
                     "exit_code": -1,
                 }
@@ -819,12 +851,13 @@ class BashCommandTool:
         project_id: str,
         command: str,
         working_directory: Optional[str] = None,
+        conversation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Async wrapper for _run."""
         import asyncio
 
         return await asyncio.to_thread(
-            self._run, project_id, command, working_directory
+            self._run, project_id, command, working_directory, conversation_id
         )
 
 

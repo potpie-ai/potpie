@@ -161,9 +161,22 @@ class GetCodeFromMultipleNodeIdsTool:
         except ValueError:
             return file_path
 
+    def close(self) -> None:
+        """Close the Neo4j driver. Call when the tool is no longer needed."""
+        if hasattr(self, "neo4j_driver") and self.neo4j_driver is not None:
+            try:
+                self.neo4j_driver.close()
+            except Exception:
+                pass
+            self.neo4j_driver = None
+
     def __del__(self):
-        if hasattr(self, "neo4j_driver"):
-            self.neo4j_driver.close()
+        if hasattr(self, "neo4j_driver") and self.neo4j_driver is not None:
+            try:
+                self.neo4j_driver.close()
+            except Exception:
+                pass
+            self.neo4j_driver = None
 
 
 def get_code_from_multiple_node_ids_tool(

@@ -59,6 +59,15 @@ def _execute_via_socket(
             return out
         except TunnelConnectionError as exc:
             last_error = exc.last_error or str(exc)
+            # Do NOT retry on timeout: the extension may have completed the operation
+            # and the response was lost. Retrying would emit a duplicate tool_call,
+            # causing double execution (e.g. replace_in_file runs twice, second fails).
+            if last_error == "timeout":
+                logger.warning(
+                    "[_execute_via_socket] Attempt %d failed (timeout) — not retrying to avoid duplicate execution",
+                    attempt,
+                )
+                return None
             if attempt <= _SOCKET_MAX_RETRIES:
                 delay = _SOCKET_RETRY_DELAY_SECS * attempt
                 logger.warning(
@@ -68,7 +77,21 @@ def _execute_via_socket(
                     last_error,
                     delay,
                 )
+                # #region agent log
+                try:
+                    with open("/Users/nandan/Desktop/Dev/potpie/.cursor/debug-dec41d.log", "a") as _f:
+                        _f.write('{"sessionId":"dec41d","hypothesisId":"H3,H5","location":"tunnel_utils:before_sleep","message":"before_time_sleep","data":{"attempt":%d,"delay":%.1f,"ts":%.3f}}\n' % (attempt, delay, time.time()))
+                except Exception:
+                    pass
+                # #endregion
                 time.sleep(delay)
+                # #region agent log
+                try:
+                    with open("/Users/nandan/Desktop/Dev/potpie/.cursor/debug-dec41d.log", "a") as _f:
+                        _f.write('{"sessionId":"dec41d","hypothesisId":"H3,H5","location":"tunnel_utils:after_sleep","message":"after_time_sleep","data":{"attempt":%d,"ts":%.3f}}\n' % (attempt, time.time()))
+                except Exception:
+                    pass
+                # #endregion
             else:
                 logger.warning(
                     "[_execute_via_socket] All %d attempts failed (last: %s)",

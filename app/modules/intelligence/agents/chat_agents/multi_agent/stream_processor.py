@@ -1,6 +1,7 @@
 """Stream processor for handling agent run nodes and streaming events"""
 
 import asyncio
+import json
 import traceback
 from typing import AsyncGenerator, List, Optional, Any, Dict, Callable
 from pydantic_ai import Agent
@@ -11,6 +12,10 @@ from pydantic_ai.messages import (
     PartDeltaEvent,
     TextPartDelta,
     TextPart,
+    ThinkingPart,
+    ThinkingPartDelta,
+    ToolCallPart,
+    ToolCallPartDelta,
 )
 from pydantic_ai.exceptions import ModelRetry, AgentRunError, UserError
 import anyio
@@ -28,6 +33,9 @@ from app.modules.intelligence.agents.chat_agent import (
     ToolCallResponse,
     ToolCallEventType,
 )
+from app.modules.intelligence.agents.chat_agents.tool_helpers import (
+    get_tool_call_info_content,
+)
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -35,6 +43,50 @@ logger = setup_logger(__name__)
 # Tool name constants
 TOOL_NAME_SHOW_UPDATED_FILE = "show_updated_file"
 TOOL_NAME_SHOW_DIFF = "show_diff"
+
+# If no chunk is received for this many seconds, treat the model stream as stuck and fail
+# (avoids 5+ minute hangs when the provider hangs or is extremely slow)
+MODEL_STREAM_IDLE_TIMEOUT_SECONDS = 180
+
+
+async def _stream_events_with_idle_timeout(stream: Any, idle_timeout_seconds: float):
+    """Wrap the raw model event stream so we raise TimeoutError if no *event* for idle_timeout_seconds.
+
+    Idle is measured on events from the model, not on yielded text chunks. This avoids false
+    timeouts when the model sends many non-text events (e.g. ThinkingPartDelta, ToolCallPartDelta)
+    that we consume but do not yield as ChatAgentResponse.
+    """
+    it = stream.__aiter__()
+    while True:
+        try:
+            next_event = await asyncio.wait_for(it.__anext__(), timeout=idle_timeout_seconds)
+        except StopAsyncIteration:
+            break
+        except asyncio.TimeoutError:
+            raise TimeoutError(
+                f"Model stream idle timeout (no event for {idle_timeout_seconds:.0f}s)"
+            ) from None
+        yield next_event
+
+
+async def _stream_with_idle_timeout(
+    stream: AsyncGenerator[ChatAgentResponse, None],
+    idle_timeout_seconds: float,
+) -> AsyncGenerator[ChatAgentResponse, None]:
+    """Wrap an async stream so we raise TimeoutError if no item for idle_timeout_seconds."""
+    it = stream.__aiter__()
+    chunks_received = 0
+    while True:
+        try:
+            next_val = await asyncio.wait_for(it.__anext__(), timeout=idle_timeout_seconds)
+        except StopAsyncIteration:
+            break
+        except asyncio.TimeoutError:
+            raise TimeoutError(
+                f"Model stream idle timeout (no chunk for {idle_timeout_seconds:.0f}s)"
+            ) from None
+        chunks_received += 1
+        yield next_val
 
 
 class StreamProcessor:
@@ -65,8 +117,25 @@ class StreamProcessor:
         )
 
         reasoning_manager = _get_reasoning_manager()
+        events_seen = 0
+        chunks_yielded = 0
+        in_thinking = False
+        # Track current tool call for request deltas (model writing tool name/args)
+        current_tool_call_id: str = ""
+        current_tool_name: str = ""
         async for event in request_stream:
+            events_seen += 1
             if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                if in_thinking:
+                    in_thinking = False
+                    chunks_yielded += 1
+                    close_tag = "</" + "think>"
+                    yield ChatAgentResponse(
+                        response=close_tag,
+                        tool_calls=[],
+                        citations=[],
+                    )
+                chunks_yielded += 1
                 # Accumulate TextPart content for reasoning dump
                 reasoning_manager.append_content(event.part.content)
                 yield ChatAgentResponse(
@@ -74,9 +143,10 @@ class StreamProcessor:
                     tool_calls=[],
                     citations=[],
                 )
-            if isinstance(event, PartDeltaEvent) and isinstance(
+            elif isinstance(event, PartDeltaEvent) and isinstance(
                 event.delta, TextPartDelta
             ):
+                chunks_yielded += 1
                 # Accumulate TextPartDelta content for reasoning dump
                 reasoning_manager.append_content(event.delta.content_delta)
                 yield ChatAgentResponse(
@@ -84,11 +154,118 @@ class StreamProcessor:
                     tool_calls=[],
                     citations=[],
                 )
+            # Stream thinking as part of the response string inside <think></think>
+            elif isinstance(event, PartStartEvent) and isinstance(
+                event.part, ThinkingPart
+            ):
+                in_thinking = True
+                chunks_yielded += 1
+                reasoning_manager.append_content(event.part.content or "")
+                open_tag = "<think>"
+                content = event.part.content or ""
+                yield ChatAgentResponse(
+                    response=open_tag + content,
+                    tool_calls=[],
+                    citations=[],
+                )
+            elif isinstance(event, PartDeltaEvent) and isinstance(
+                event.delta, ThinkingPartDelta
+            ):
+                chunks_yielded += 1
+                delta = event.delta.content_delta or ""
+                reasoning_manager.append_content(delta)
+                yield ChatAgentResponse(
+                    response=delta,
+                    tool_calls=[],
+                    citations=[],
+                )
+            # Stream tool call start (tool name + initial args) so frontend can show tool input
+            elif isinstance(event, PartStartEvent) and isinstance(
+                event.part, ToolCallPart
+            ):
+                part = event.part
+                current_tool_call_id = getattr(part, "tool_call_id", None) or getattr(
+                    part, "id", None
+                ) or ""
+                current_tool_name = getattr(part, "tool_name", None) or "unknown"
+                chunks_yielded += 1
+                try:
+                    args_dict = part.args_as_dict() if part.args else {}
+                except (ValueError, json.JSONDecodeError):
+                    args_dict = {}
+                args_str = (
+                    part.args
+                    if isinstance(part.args, str)
+                    else json.dumps(part.args or {}, default=str)
+                )
+                yield ChatAgentResponse(
+                    response="",
+                    tool_calls=[
+                        ToolCallResponse(
+                            call_id=current_tool_call_id,
+                            event_type=ToolCallEventType.CALL,
+                            tool_name=current_tool_name,
+                            tool_response=get_tool_call_info_content(
+                                current_tool_name, args_dict
+                            ),
+                            tool_call_details={"summary": args_str[:500]},
+                            stream_part=args_str if args_str else None,
+                            is_complete=False,
+                        )
+                    ],
+                    citations=[],
+                )
+            elif isinstance(event, PartDeltaEvent) and isinstance(
+                event.delta, ToolCallPartDelta
+            ):
+                delta = event.delta
+                if getattr(delta, "tool_call_id", None):
+                    current_tool_call_id = delta.tool_call_id or current_tool_call_id
+                if getattr(delta, "tool_name_delta", None):
+                    current_tool_name = (current_tool_name or "") + (
+                        delta.tool_name_delta or ""
+                    )
+                args_delta = getattr(delta, "args_delta", None)
+                stream_part = (
+                    args_delta if isinstance(args_delta, str) else str(args_delta)
+                ) if args_delta is not None else ""
+                if getattr(delta, "tool_name_delta", None) and delta.tool_name_delta:
+                    stream_part = (delta.tool_name_delta or "") + stream_part
+                if stream_part:
+                    chunks_yielded += 1
+                    yield ChatAgentResponse(
+                        response="",
+                        tool_calls=[
+                            ToolCallResponse(
+                                call_id=current_tool_call_id,
+                                event_type=ToolCallEventType.TOOL_CALL_REQUEST_DELTA,
+                                tool_name=current_tool_name,
+                                tool_response="",
+                                tool_call_details={},
+                                stream_part=stream_part,
+                                is_complete=False,
+                            )
+                        ],
+                        citations=[],
+                    )
 
     def handle_stream_error(
         self, error: Exception, context: str = "model request stream"
     ) -> Optional[ChatAgentResponse]:
         """Handle streaming errors and return appropriate response"""
+        # Network/API errors (e.g. connection lost during stream)
+        try:
+            from openai import APIError as OpenAIAPIError
+            if isinstance(error, OpenAIAPIError):
+                logger.warning(
+                    f"Model API connection error in {context}: {error}. "
+                    "Often caused by network drops, timeouts, or proxy/load balancer limits."
+                )
+                return self.create_error_response(
+                    "*The connection to the model was lost. You can try again.*"
+                )
+        except ImportError:
+            pass
         if isinstance(error, (ModelRetry, AgentRunError, UserError)):
             logger.warning(f"Pydantic-ai error in {context}: {error}")
             return self.create_error_response(
@@ -126,6 +303,28 @@ class StreamProcessor:
             return self.create_error_response(
                 "*An unexpected error occurred. Continuing...*"
             )
+
+    @staticmethod
+    def _is_retryable_stream_error(error: Exception) -> bool:
+        """True if the error is a transient connection/network error worth retrying.
+
+        Never retry TimeoutError (our idle timeout) or AssertionError: pydantic_ai's
+        ModelRequestNode.stream() may only be called once per node. Retrying would
+        re-enter node.stream() and raise "stream() should only be called once per node".
+        """
+        if isinstance(error, (TimeoutError, AssertionError)):
+            return False
+        try:
+            from openai import APIError as OpenAIAPIError
+            if isinstance(error, OpenAIAPIError):
+                return True
+        except ImportError:
+            pass
+        err_str = str(error).lower()
+        return any(
+            p in err_str
+            for p in ("connection lost", "connection error", "network", "eof", "timeout")
+        )
 
     @staticmethod
     async def consume_queue_chunks(
@@ -253,31 +452,63 @@ class StreamProcessor:
             )
 
             if is_model_request:
-                # Stream tokens from the model's request
+                # Stream tokens from the model's request. We do not retry on stream errors:
+                # node.stream(ctx) may only be called once per node; a second call raises
+                # AssertionError "stream() should only be called once per node".
                 logger.info(
                     f"[{context}] Starting model request stream (model_request #{node_counts['model_request']})"
                 )
+                error_response = None
                 try:
                     async with node.stream(run.ctx) as request_stream:
                         chunk_count = 0
-                        async for chunk in self.yield_text_stream_events(
-                            request_stream, context
-                        ):
-                            chunk_count += 1
-                            check = getattr(current_context, "check_cancelled", None)
-                            if callable(check) and check():
-                                raise GenerationCancelled()
-                            yield chunk
-                        logger.info(
-                            f"[{context}] Finished model request stream: yielded {chunk_count} chunks"
-                        )
+                        try:
+                            event_stream = _stream_events_with_idle_timeout(
+                                request_stream, MODEL_STREAM_IDLE_TIMEOUT_SECONDS
+                            )
+                            text_stream = self.yield_text_stream_events(
+                                event_stream, context
+                            )
+                            async for chunk in text_stream:
+                                chunk_count += 1
+                                check = getattr(current_context, "check_cancelled", None)
+                                if callable(check) and check():
+                                    raise GenerationCancelled()
+                                yield chunk
+                            logger.info(
+                                f"[{context}] Finished model request stream: yielded {chunk_count} chunks"
+                            )
+                        except Exception as e:
+                            if isinstance(e, GenerationCancelled):
+                                raise
+                            # Drain stream so pydantic_ai can set _result when we exit the context;
+                            # otherwise the next node.run() raises "You must finish streaming before calling run()".
+                            try:
+                                drain_it = request_stream.__aiter__()
+                                while True:
+                                    try:
+                                        await asyncio.wait_for(drain_it.__anext__(), timeout=10.0)
+                                    except StopAsyncIteration:
+                                        break
+                                    except asyncio.TimeoutError:
+                                        logger.warning(
+                                            f"[{context}] Drain after stream error timed out (10s), exiting"
+                                        )
+                                        break
+                            except Exception:
+                                pass
+                            error_response = self.handle_stream_error(
+                                e, f"{context} model request stream"
+                            )
                 except Exception as e:
+                    if isinstance(e, GenerationCancelled):
+                        raise
                     error_response = self.handle_stream_error(
                         e, f"{context} model request stream"
                     )
-                    if error_response:
-                        yield error_response
-                    continue
+                if error_response:
+                    yield error_response
+                continue
 
             elif is_call_tools:
                 # Handle tool calls and results
@@ -768,7 +999,7 @@ class StreamProcessor:
                                 f"[process_tool_call_node] Draining delegation stream for tool_call_id={tool_call_id[:8]}... "
                                 f"(tool_name={tool_name}, context_type={context_type})"
                             )
-                            drain_start_time = asyncio.get_event_loop().time()
+                            drain_start_time = asyncio.get_running_loop().time()
                             # Drain any remaining chunks from output queue
                             if tool_call_id in output_queues:
                                 output_queue = output_queues[tool_call_id]
@@ -788,7 +1019,7 @@ class StreamProcessor:
                                         # Mark as drained after completion
                                         drained_streams.add(tool_call_id)
                                         drain_elapsed = (
-                                            asyncio.get_event_loop().time()
+                                            asyncio.get_running_loop().time()
                                             - drain_start_time
                                         )
                                         logger.info(
@@ -801,7 +1032,7 @@ class StreamProcessor:
                                     await asyncio.sleep(0.05)
                                 else:
                                     drain_elapsed = (
-                                        asyncio.get_event_loop().time()
+                                        asyncio.get_running_loop().time()
                                         - drain_start_time
                                     )
                                     logger.warning(
@@ -899,7 +1130,7 @@ class StreamProcessor:
                         f"[process_tool_call_node] Draining final chunks from queue: {queue_key}"
                     )
                     output_queue = output_queues[queue_key]
-                    final_drain_start = asyncio.get_event_loop().time()
+                    final_drain_start = asyncio.get_running_loop().time()
                     total_final_chunks = 0
                     # Wait longer for final chunks
                     for attempt in range(20):  # Try up to 20 times
@@ -911,7 +1142,7 @@ class StreamProcessor:
                         if completed:
                             drained_streams.add(queue_key)
                             final_drain_elapsed = (
-                                asyncio.get_event_loop().time() - final_drain_start
+                                asyncio.get_running_loop().time() - final_drain_start
                             )
                             logger.info(
                                 f"[process_tool_call_node] Final drain completed for {queue_key}: "
@@ -922,7 +1153,7 @@ class StreamProcessor:
                         await asyncio.sleep(0.05)
                     else:
                         final_drain_elapsed = (
-                            asyncio.get_event_loop().time() - final_drain_start
+                            asyncio.get_running_loop().time() - final_drain_start
                         )
                         logger.warning(
                             f"[process_tool_call_node] ⚠️ Final drain incomplete for {queue_key} after 20 attempts: "
@@ -980,7 +1211,7 @@ class StreamProcessor:
                         pending_keys = set(
                             cache_key for _, cache_key in delegation_cache_keys
                         )
-                        wait_start_time = asyncio.get_event_loop().time()
+                        wait_start_time = asyncio.get_running_loop().time()
 
                         while pending_keys and waited < max_wait:
                             # Check which cache keys have results
@@ -1001,7 +1232,7 @@ class StreamProcessor:
 
                             if not pending_keys:
                                 wait_elapsed = (
-                                    asyncio.get_event_loop().time() - wait_start_time
+                                    asyncio.get_running_loop().time() - wait_start_time
                                 )
                                 logger.info(
                                     f"[process_tool_call_node] All delegation cached results available, "
@@ -1014,7 +1245,7 @@ class StreamProcessor:
 
                             if int(waited) % 5 == 0:
                                 wait_elapsed = (
-                                    asyncio.get_event_loop().time() - wait_start_time
+                                    asyncio.get_running_loop().time() - wait_start_time
                                 )
                                 # Check task status for pending keys
                                 task_statuses = {}
@@ -1035,7 +1266,7 @@ class StreamProcessor:
 
                         if pending_keys:
                             wait_elapsed = (
-                                asyncio.get_event_loop().time() - wait_start_time
+                                asyncio.get_running_loop().time() - wait_start_time
                             )
                             logger.error(
                                 f"[process_tool_call_node] ⚠️ TIMEOUT waiting for {len(pending_keys)} cached results "
@@ -1066,6 +1297,14 @@ class StreamProcessor:
             UserError,
         ) as pydantic_error:
             error_str = str(pydantic_error)
+            # If a tool exceeded max retries, propagate the exception so the underlying
+            # pydantic-ai stream/run can fail cleanly (avoids leaving the run in an
+            # inconsistent state which triggers "_next_node" errors).
+            if (
+                "exceeded max retries" in error_str.lower()
+                and "tool" in error_str.lower()
+            ):
+                raise
             # Check for duplicate tool_result error specifically
             if "tool_result" in error_str.lower() and "multiple" in error_str.lower():
                 logger.error(

@@ -1,9 +1,23 @@
 import asyncio
 import os
+import platform
+import multiprocessing
 
 # Set TOKENIZERS_PARALLELISM before any tokenizer imports to prevent fork warnings
 # This must be set before sentence-transformers or any HuggingFace tokenizers are used
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+# macOS: Force spawn instead of fork for multiprocessing.
+# GitPython/libgit2 has internal state that doesn't survive fork(),
+# causing SIGSEGV in forked worker processes.
+if platform.system() == "Darwin":
+    # Set before any multiprocessing is used
+    try:
+        multiprocessing.set_start_method("spawn", force=True)
+    except RuntimeError:
+        # Already set, which is fine
+        pass
+
 from urllib.parse import urlparse, urlunparse
 
 from dotenv import load_dotenv
@@ -81,6 +95,12 @@ except Exception:
 
 
 def configure_celery(queue_prefix: str):
+    # macOS: Use solo pool to avoid SIGSEGV from GitPython/libgit2 in forked workers.
+    # The prefork pool uses fork() which corrupts libgit2 internal state on macOS.
+    # Solo pool runs tasks in the main process (no forking).
+    # This can be overridden by command-line --pool= argument.
+    worker_pool = "solo" if platform.system() == "Darwin" else "prefork"
+    
     celery_app.conf.update(
         task_serializer="json",
         accept_content=["json"],
@@ -89,6 +109,8 @@ def configure_celery(queue_prefix: str):
         enable_utc=True,
         # Disable Celery's default logging hijacking so our intercept handler works
         worker_hijack_root_logger=False,
+        # Default pool setting (can be overridden by --pool command line arg)
+        worker_pool=worker_pool,
         task_routes={
             "app.celery.tasks.parsing_tasks.process_parsing": {
                 "queue": f"{queue_prefix}_process_repository"
@@ -111,7 +133,8 @@ def configure_celery(queue_prefix: str):
         worker_prefetch_multiplier=1,
         task_acks_late=True,
         task_track_started=True,
-        task_time_limit=5400,  # 90 minutes in seconds
+        # Hard time limit: worker is killed after this many seconds (default 90 min)
+        task_time_limit=int(os.getenv("CELERY_TASK_TIME_LIMIT", "5400")),
         # Add fair task distribution settings
         worker_max_tasks_per_child=200,  # Restart worker after 200 tasks to prevent memory leaks
         # Memory limit: Restart worker if using more than configured limit (in KB)
@@ -124,14 +147,17 @@ def configure_celery(queue_prefix: str):
         # If rate limiting is needed, apply it per-task using @task(rate_limit='...') decorator
         task_reject_on_worker_lost=False,  # Don't requeue tasks if worker dies (prevents infinite retry loops)
         broker_transport_options={
-            "visibility_timeout": 5400
-        },  # 45 minutes visibility timeout
+            "visibility_timeout": int(os.getenv("CELERY_TASK_TIME_LIMIT", "5400"))
+        },  # Match task_time_limit so unacked messages become visible again
     )
 
 
 configure_celery(queue_name)
 
-initialize_logfire_tracing()
+# Pydantic AI instrumentation is enabled; base_task.run_async uses asyncio.run()
+# per task so each run has a fresh event loop and OTel context (no deferred
+# aclose() in wrong context). worker_process_init OTel detach patch remains as safety net.
+initialize_logfire_tracing(instrument_pydantic_ai=True)
 
 
 def configure_litellm_for_celery():
@@ -343,6 +369,49 @@ def configure_litellm_for_celery():
         logger.debug("LiteLLM not available, skipping configuration")
     except Exception as e:
         logger.warning(f"Failed to configure LiteLLM for Celery: {e}", exc_info=True)
+
+
+@worker_process_init.connect
+def _patch_otel_detach_for_async_context(sender, **kwargs):
+    """Patch OTel context.detach to silently handle 'Token was created in a different Context'.
+
+    Also sets CELERY_WORKER=1 so execution_flows skips MCP in workers (avoids anyio
+    cancel-scope / GeneratorExit issues when cancelling or with parallel tools).
+
+    Root cause: pydantic_ai's _call_tools is an async generator with a sync
+    'with tracer.start_as_current_span(...)' block that contains yield statements.
+    When those generators are not explicitly closed (e.g. due to a break or early
+    return), Python's asyncio defers their aclose() via loop.call_soon(). With
+    Celery's long-lived reused event loop, those stale callbacks run during the
+    NEXT agent run in a different OTel context, causing detach() to fail.
+
+    OTel's context.detach() already catches this ValueError and swallows it, but
+    uses logger.exception() which logs a full traceback at ERROR level on every
+    tool call — that's the actual performance hit. This patch intercepts the
+    ValueError one level below so the traceback is never formatted or logged.
+    """
+    os.environ["CELERY_WORKER"] = "1"
+    try:
+        from opentelemetry.context.contextvars_context import ContextVarsRuntimeContext
+
+        original_detach = ContextVarsRuntimeContext.detach
+
+        def _safe_detach(self, token):
+            try:
+                original_detach(self, token)
+            except ValueError as exc:
+                if "different Context" in str(exc):
+                    logger.debug(
+                        "OTel context detach skipped (async generator cleanup in wrong context): %s",
+                        exc,
+                    )
+                else:
+                    raise
+
+        ContextVarsRuntimeContext.detach = _safe_detach
+        logger.debug("Patched OTel ContextVarsRuntimeContext.detach for async context safety")
+    except Exception as exc:
+        logger.warning("Could not patch OTel detach (non-fatal): %s", exc)
 
 
 @worker_process_init.connect

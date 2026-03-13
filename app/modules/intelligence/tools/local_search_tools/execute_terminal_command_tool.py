@@ -38,7 +38,10 @@ def execute_terminal_command_tool(input_data: ExecuteTerminalCommandInput) -> st
     """Execute a shell command on the user's local machine via the VS Code extension (Socket.IO).
 
     This tool executes commands directly on the user's local machine through the VS Code extension.
-    Commands run within the workspace directory with security restrictions.
+    The terminal opens at the root of the current repository. Commands run within the workspace
+    directory with security restrictions.
+    Important: Don't try random path prefix if you want to run commands, run pwd (or equivalent) to get the current working directory.
+    You'll be running commands on user machine, some commands might be installed and other's not
 
     **Sync Mode (default):**
     - Returns immediate results
@@ -78,7 +81,9 @@ def execute_terminal_command_tool(input_data: ExecuteTerminalCommandInput) -> st
     )
 
     if result:
-        logger.info("✅ [execute_terminal_command] Executed via workspace socket (Socket.IO)")
+        logger.info(
+            "✅ [execute_terminal_command] Executed via workspace socket (Socket.IO)"
+        )
 
         # For async mode, return session info
         if input_data.mode == "async" and result.get("session_id"):
@@ -136,7 +141,9 @@ def execute_terminal_command_tool(input_data: ExecuteTerminalCommandInput) -> st
         )
     elif error_type == "tunnel_expired":
         # Workspace registration was expired and cleaned up
-        logger.warning("⚠️ [execute_terminal_command] Workspace socket registration expired and was cleaned up")
+        logger.warning(
+            "⚠️ [execute_terminal_command] Workspace socket registration expired and was cleaned up"
+        )
         return (
             f"❌ **Workspace socket registration expired**\n\n"
             f"The extension registration has expired and has been cleaned up.\n\n"

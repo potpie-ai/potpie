@@ -45,8 +45,8 @@ class GetLinearIssueTool:
             # Get the user-specific client
             client = await get_linear_client_for_user(self.user_id, self.db)
 
-            # Fetch the issue
-            issue = client.get_issue(issue_id)
+            # Fetch the issue (async to avoid blocking the event loop)
+            issue = await client.get_issue_async(issue_id)
 
             return {
                 "id": issue["id"],

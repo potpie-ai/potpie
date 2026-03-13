@@ -9,6 +9,8 @@ class ToolCallEventType(Enum):
     RESULT = "result"
     DELEGATION_CALL = "delegation_call"  # Supervisor delegating to specialist
     DELEGATION_RESULT = "delegation_result"  # Specialist completing task
+    # Streaming: model is writing the tool call (name/args) token-by-token
+    TOOL_CALL_REQUEST_DELTA = "tool_call_request_delta"
 
 
 class ToolCallResponse(BaseModel):
@@ -38,6 +40,9 @@ class ToolCallResponse(BaseModel):
         description="Whether this tool call response is complete (False for streaming parts)",
     )
 
+    class Config:
+        use_enum_values = True
+
 
 class ChatAgentResponse(BaseModel):
     response: str = Field(
@@ -48,6 +53,10 @@ class ChatAgentResponse(BaseModel):
     citations: List[str] = Field(
         ...,
         description="List of file names extracted from context and referenced in the response",
+    )
+    thinking: Optional[str] = Field(
+        default=None,
+        description="Reasoning/thinking content from the model",
     )
 
 
