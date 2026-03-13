@@ -31,6 +31,7 @@ dependencies = [
     "joblib>=1.5.2",
     "kombu>=5.5.4",
     "langchain>=1.0.3",
+    "langchain-core>=1.2.11",
     "litellm>=1.80",
     "tornado>=6.5.5",
     "langgraph>=1.0.10",
