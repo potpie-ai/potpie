@@ -435,7 +435,7 @@ newrelic==11.5.0
     # via potpie (pyproject.toml)
 nexus-rpc==1.2.0
     # via temporalio
-nltk==3.9.2
+nltk==3.9.3
     # via potpie (pyproject.toml)
 numpy==2.4.2
     # via
