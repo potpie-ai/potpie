@@ -144,12 +144,18 @@ class QnAAgent(ChatAgent):
                 f"Code context of the node_ids in query:\n {code_results}"
             )
 
-        file_structure = (
-            await self.tools_provider.file_structure_tool.fetch_repo_structure(
-                ctx.project_id
+        # Avoid redundant file structure fetches if already present in history or additional_context
+        # This reduces token usage and latency for follow-up questions
+        file_structure_marker = "File Structure of the project:"
+        if file_structure_marker not in ctx.additional_context and not any(
+            file_structure_marker in h for h in ctx.history
+        ):
+            file_structure = (
+                await self.tools_provider.file_structure_tool.fetch_repo_structure(
+                    ctx.project_id
+                )
             )
-        )
-        ctx.additional_context += f"File Structure of the project:\n {file_structure}"
+            ctx.additional_context += f"{file_structure_marker}\n {file_structure}"
 
         return ctx
 
