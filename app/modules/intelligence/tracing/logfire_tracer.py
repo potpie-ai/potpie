@@ -54,6 +54,38 @@ _LOGFIRE_ATTR_MAX_LEN = 1000
 
 logger = setup_logger(__name__)
 
+
+def _patch_otel_detach_for_async_context() -> None:
+    """
+    Patch OpenTelemetry's ContextVarsRuntimeContext.detach to suppress ValueError
+    when the token was created in a different async context.
+
+    When pydantic_ai runs tool calls, async generators can yield and resume in a
+    different context; OTel then tries to detach a token that belongs to the
+    previous context and raises ValueError. This patch catches that and no-ops
+    so the request does not crash.
+    """
+    try:
+        from opentelemetry.context import contextvars_context
+    except ImportError:
+        return
+
+    _original_detach = contextvars_context.ContextVarsRuntimeContext.detach
+
+    def _detach_safe(self: Any, token: Any) -> None:
+        try:
+            _original_detach(self, token)
+        except ValueError as e:
+            if "was created in a different Context" in str(e):
+                # Safe to ignore when context switched across async boundary
+                pass
+            else:
+                raise
+
+    contextvars_context.ContextVarsRuntimeContext.detach = _detach_safe  # type: ignore[method-assign]
+    logger.debug("Patched OTel context detach for async context switching")
+
+
 # Global flag to track if Logfire is initialized
 _LOGFIRE_INITIALIZED = False
 
@@ -63,6 +95,7 @@ def initialize_logfire_tracing(
     token: Optional[str] = None,
     environment: Optional[str] = None,
     send_to_logfire: bool = True,
+    instrument_pydantic_ai: bool = True,
 ) -> bool:
     """
     Initialize Logfire tracing for the application.
@@ -75,6 +108,7 @@ def initialize_logfire_tracing(
         token: Logfire API token. If None, reads from LOGFIRE_TOKEN env var
         environment: Environment identifier (e.g., "development", "production", "staging", "testing")
         send_to_logfire: Whether to send traces to Logfire cloud (default: True)
+        instrument_pydantic_ai: Whether to instrument Pydantic AI for tracing (default: True).
 
     Returns:
         bool: True if initialization successful, False otherwise
@@ -131,8 +165,14 @@ def initialize_logfire_tracing(
         )
         logfire.configure(**config_kwargs)
 
-        logfire.instrument_pydantic_ai()
-        logger.info("Instrumented Pydantic AI for Logfire tracing")
+        if instrument_pydantic_ai:
+            _patch_otel_detach_for_async_context()
+            logfire.instrument_pydantic_ai()
+            logger.info("Instrumented Pydantic AI for Logfire tracing")
+        else:
+            logger.debug(
+                "Skipped Pydantic AI instrumentation (avoids OTel contextvar errors in Celery prefork)"
+            )
 
         logfire.instrument_litellm()
         logger.info("Instrumented LiteLLM for Logfire tracing")
@@ -153,6 +193,17 @@ def initialize_logfire_tracing(
 def is_logfire_enabled() -> bool:
     """Check if Logfire tracing is enabled and initialized."""
     return _LOGFIRE_INITIALIZED
+
+
+def should_instrument_pydantic_ai() -> bool:
+    """
+    Return whether pydantic_ai Agent should use OpenTelemetry instrumentation.
+
+    This must stay enabled globally so that Pydantic AI emits agent_run spans
+    for analytics. Use LOGFIRE_ENABLED=false to disable tracing entirely.
+    """
+    enabled = os.getenv("LOGFIRE_ENABLED", "true").lower()
+    return enabled not in ("false", "0", "no")
 
 
 @contextmanager
@@ -183,7 +234,8 @@ def logfire_trace_metadata(**kwargs: Any):
     # Don't rely on our private _LOGFIRE_INITIALIZED flag here — in some
     # processes Logfire may have been configured elsewhere (or via env)
     # so we just best-effort call set_baggage if kwargs are provided.
-    if not kwargs:
+    if not kwargs or not _LOGFIRE_INITIALIZED:
+        # No metadata or Logfire not initialized – no-op
         yield
         return
 
