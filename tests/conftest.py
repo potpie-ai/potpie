@@ -161,6 +161,9 @@ def mock_celery_tasks(monkeypatch):
     """Mocks the .delay() method of Celery tasks for conversation tests."""
     mock_execute = MagicMock()
     mock_regenerate = MagicMock()
+    # App stores task_result.id in Redis; Redis cannot encode MagicMock
+    mock_execute.return_value.id = "fake-task-id-123"
+    mock_regenerate.return_value.id = "fake-regenerate-id-123"
     monkeypatch.setattr(
         "app.celery.tasks.agent_tasks.execute_agent_background.delay", mock_execute
     )
@@ -173,14 +176,39 @@ def mock_celery_tasks(monkeypatch):
 
 @pytest.fixture
 def mock_redis_stream_manager(monkeypatch):
-    """Mocks the RedisStreamManager for conversation streaming tests."""
+    """Mocks the RedisStreamManager for conversation streaming tests.
+    
+    Patches:
+    - redis_streaming (original module where RedisStreamManager is defined)
+    - conversation_routing (uses RedisStreamManager at module level)
+    - redis_stream_generator to yield immediately (prevents infinite hang)
+    """
     mock_manager = MagicMock(spec=RedisStreamManager)
     mock_manager.wait_for_task_start.return_value = True
     mock_manager.redis_client = MagicMock()
     mock_manager.redis_client.exists.return_value = False
+    mock_manager.set_task_status = MagicMock()
+    mock_manager.set_task_id = MagicMock()
+    mock_manager.publish_event = MagicMock()
+    mock_manager.consume_stream = MagicMock(return_value=iter([{"type": "end"}]))
+
+    # Patch in the modules where RedisStreamManager is imported at module level
     monkeypatch.setattr(
         "app.modules.conversations.utils.redis_streaming.RedisStreamManager",
         lambda: mock_manager,
+    )
+    monkeypatch.setattr(
+        "app.modules.conversations.utils.conversation_routing.RedisStreamManager",
+        lambda: mock_manager,
+    )
+
+    # Patch redis_stream_generator to yield once and return (prevents infinite hang)
+    def mock_redis_stream_generator(conversation_id, run_id, cursor=None):
+        yield '{"message": "", "citations": [], "tool_calls": []}'
+
+    monkeypatch.setattr(
+        "app.modules.conversations.utils.conversation_routing.redis_stream_generator",
+        mock_redis_stream_generator,
     )
     return mock_manager
 

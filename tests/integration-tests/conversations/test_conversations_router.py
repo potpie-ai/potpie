@@ -11,10 +11,13 @@ from app.modules.projects.projects_model import Project
 pytestmark = pytest.mark.asyncio
 
 
-# THIS IS THE FIX: We are patching the name 'MediaService' exactly where it is used.
 @patch("app.modules.conversations.conversations_router.MediaService")
 async def test_post_message_successful_flow(
-    mock_media_service_class, client, db_session
+    mock_media_service_class,
+    client,
+    db_session,
+    mock_celery_tasks,
+    mock_redis_stream_manager,
 ):
     """
     Tests the complete, successful flow of a user posting a new message
@@ -23,42 +26,34 @@ async def test_post_message_successful_flow(
     # Get the mock INSTANCE that is created when the router code calls MediaService(db).
     mock_instance = mock_media_service_class.return_value
 
-    # Patch other external dependencies
-    with patch(
-        "app.celery.tasks.agent_tasks.execute_agent_background.delay"
-    ) as mock_celery_task, patch(
-        "app.modules.conversations.utils.redis_streaming.RedisStreamManager.wait_for_task_start",
-        return_value=True,
-    ):
-
-        # Configure the mock INSTANCE's methods. The __init__ is now completely skipped.
-        mock_instance.upload_image = AsyncMock(
-            return_value=AttachmentUploadResponse(
-                id="fake_attachment_id",
-                attachment_type=AttachmentType.IMAGE,
-                file_name="test_image.png",
-                mime_type="image/png",
-                file_size=1000,
-            )
+    # Configure the mock INSTANCE's methods
+    mock_instance.upload_image = AsyncMock(
+        return_value=AttachmentUploadResponse(
+            id="fake_attachment_id",
+            attachment_type=AttachmentType.IMAGE,
+            file_name="test_image.png",
+            mime_type="image/png",
+            file_size=1000,
         )
+    )
 
-        # Prepare request data
-        conversation_id = "some_conversation_id"
-        files = {"images": ("test_image.png", b"fake image data", "image/png")}
-        data = {"content": "This is a test message."}
+    # Prepare request data
+    conversation_id = "some_conversation_id"
+    files = {"images": ("test_image.png", b"fake image data", "image/png")}
+    data = {"content": "This is a test message."}
 
-        # Make the HTTP request
-        response = await client.post(
-            f"/api/v1/conversations/{conversation_id}/message/", files=files, data=data
-        )
+    # Make the HTTP request
+    response = await client.post(
+        f"/api/v1/conversations/{conversation_id}/message", files=files, data=data
+    )
 
-        # Assert outcomes
-        assert response.status_code == 200
-        assert "text/event-stream" in response.headers["content-type"]
+    # Assert outcomes
+    assert response.status_code == 200
+    assert "text/event-stream" in response.headers["content-type"]
 
-        # Assert calls on the mock INSTANCE
-        mock_instance.upload_image.assert_called_once()
-        mock_celery_task.assert_called_once()
+    # Assert calls on the mock INSTANCE
+    mock_instance.upload_image.assert_called_once()
+    mock_celery_tasks["execute"].assert_called_once()
 
 
 # We only need to mock the true external boundaries of the ConversationService
@@ -91,7 +86,7 @@ async def test_create_conversation_creates_record_and_system_message(
     }
 
     # 2. ACT
-    response = await client.post("/api/v1/conversations/", json=request_data)
+    response = await client.post("/api/v1/conversations", json=request_data)
 
     # 3. ASSERT
     if response.status_code != 200:
@@ -148,7 +143,7 @@ async def test_post_message_dispatches_celery_task_and_streams(
     # The router initiates a streaming response, but we don't need to consume it.
     # We only care that the request was accepted and the mocks were called.
     response = await client.post(
-        f"/api/v1/conversations/{conversation_id}/message/", data=form_data
+        f"/api/v1/conversations/{conversation_id}/message", data=form_data
     )
 
     # 3. ASSERT
@@ -195,7 +190,7 @@ async def test_delete_conversation_removes_from_database(
     assert conversation_before is not None
 
     # 2. ACT
-    response = await client.delete(f"/api/v1/conversations/{conversation_id}/")
+    response = await client.delete(f"/api/v1/conversations/{conversation_id}")
 
     # 3. ASSERT
     assert response.status_code == 200
@@ -226,7 +221,7 @@ async def test_rename_conversation_updates_title_in_database(
 
     # 2. ACT
     response = await client.patch(
-        f"/api/v1/conversations/{conversation_id}/rename/", json=request_data
+        f"/api/v1/conversations/{conversation_id}/rename", json=request_data
     )
 
     # 3. ASSERT
@@ -266,7 +261,7 @@ async def test_regenerate_message_dispatches_regenerate_celery_task(
 
     # 2. ACT
     response = await client.post(
-        f"/api/v1/conversations/{conversation_id}/regenerate/", json=request_data
+        f"/api/v1/conversations/{conversation_id}/regenerate", json=request_data
     )
 
     # 3. ASSERT

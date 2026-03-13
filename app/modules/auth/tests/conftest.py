@@ -1,12 +1,27 @@
 """
-Pytest fixtures for auth tests
+Pytest fixtures for auth tests.
+
+Uses PostgreSQL (from POSTGRES_SERVER in .env) because app models use
+PostgreSQL-specific types (e.g. JSONB). SQLite cannot run these tests.
 """
+
+import os
+import urllib.parse
 
 import pytest
 from datetime import datetime, timedelta, timezone
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker, Session
+from fastapi.testclient import TestClient
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Import app so all models are registered on Base (required for create_all + relationships)
+from app.main import app
+from app.core.database import get_db
+from app.modules.auth.auth_service import AuthService
 
 from app.core.base_model import Base
 from app.modules.users.user_model import User
@@ -18,28 +33,78 @@ from app.modules.auth.auth_provider_model import (
 )
 
 
-@pytest.fixture(scope="function")
-def db_session():
-    """Create a test database session"""
-    # Use in-memory SQLite for testing
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+@pytest.fixture(scope="session")
+def auth_test_database():
+    """Create and tear down a dedicated Postgres test database for auth tests."""
+    main_db_url = os.getenv("POSTGRES_SERVER")
+    if not main_db_url:
+        pytest.skip(
+            "POSTGRES_SERVER not set. Auth tests require PostgreSQL (models use JSONB)."
+        )
 
-    # Create all tables
+    parsed = urllib.parse.urlparse(main_db_url)
+    main_db_name = parsed.path.lstrip("/")
+    if not main_db_name or "test" in main_db_name:
+        pytest.skip(
+            f"POSTGRES_SERVER database name looks like a test DB: {main_db_name!r}"
+        )
+
+    test_db_name = f"{main_db_name}_test"
+    test_db_url = parsed._replace(path=f"/{test_db_name}").geturl()
+    default_db_url = parsed._replace(path="/postgres").geturl()
+
+    with create_engine(default_db_url, isolation_level="AUTOCOMMIT").connect() as conn:
+        conn.execute(text(f"DROP DATABASE IF EXISTS {test_db_name} WITH (FORCE)"))
+        conn.execute(text(f"CREATE DATABASE {test_db_name}"))
+
+    engine = create_engine(test_db_url)
     Base.metadata.create_all(bind=engine)
+    os.environ["DATABASE_URL"] = test_db_url
+    yield test_db_url
+    with create_engine(default_db_url, isolation_level="AUTOCOMMIT").connect() as conn:
+        conn.execute(text(f"DROP DATABASE IF EXISTS {test_db_name} WITH (FORCE)"))
 
-    # Create session
-    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = TestingSessionLocal()
 
-    yield session
+@pytest.fixture(scope="function")
+def db_session(auth_test_database) -> Session:
+    """Create a test database session using the Postgres test database.
+    Each test runs in a transaction that is rolled back, so tests are isolated.
+    """
+    test_db_url = os.getenv("DATABASE_URL")
+    engine = create_engine(test_db_url)
+    connection = engine.connect()
+    transaction = connection.begin()
+    session = sessionmaker(autocommit=False, autoflush=False, bind=connection)()
+    try:
+        yield session
+    finally:
+        session.close()
+        transaction.rollback()
+        connection.close()
 
-    # Cleanup
-    session.close()
-    Base.metadata.drop_all(bind=engine)
+
+@pytest.fixture
+def client(db_session):
+    """FastAPI test client using the full app with DB and auth overrides.
+    Auth router only uses get_db; we override that and check_auth for protected routes.
+    """
+    def override_get_db():
+        yield db_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[AuthService.check_auth] = lambda: {
+        "user_id": "test-user-123",
+        "email": "test@example.com",
+    }
+    with TestClient(app) as c:
+        yield c
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def auth_token(test_user):
+    """Token string for Authorization header; check_auth is overridden to return test_user."""
+    return "mock-firebase-token"
 
 
 @pytest.fixture

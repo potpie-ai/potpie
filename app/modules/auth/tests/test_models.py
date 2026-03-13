@@ -3,7 +3,7 @@ Unit tests for auth models
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.modules.auth.auth_provider_model import (
     UserAuthProvider,
@@ -209,7 +209,7 @@ class TestPendingProviderLink:
         db_session.add(link)
         db_session.commit()
 
-        assert link.expires_at < datetime.utcnow()
+        assert link.expires_at < datetime.now(timezone.utc)
 
     def test_cascade_delete_with_user(self, db_session, test_user, pending_link):
         """Test pending links are deleted when user is deleted"""
