@@ -82,7 +82,6 @@ dev = [
     "pylint>=4.0.2",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
-    "pytest-cov>=6.0.0",
     "ruff>=0.14.3",
 ]
 
@@ -97,7 +96,7 @@ skips = ["B101", "B601"]                # Skip assert_used and shell injection w
 exclude = ["tests", "app/alembic"]
 
 [tool.pytest.ini_options]
-testpaths = ["app/modules/auth/tests"]
+testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
@@ -105,17 +104,9 @@ markers = [
     "unit: Unit tests",
     "integration: Integration tests",
     "asyncio: Async tests",
+    "github_live: marks tests that hit the live GitHub API",
+    "stress: Stress tests (exclude with -m 'not stress')",
+    "real_parse: Real parsing tests requiring Postgres + Neo4j (exclude with -m 'not real_parse')",
 ]
 asyncio_mode = "auto"
-addopts = "-v --strict-markers --tb=short --disable-warnings"
-
-[tool.coverage.run]
-source = ["app"]
-omit = ["app/alembic/*", "*/tests/*"]
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-]
-show_missing = true
+addopts = "-v --strict-markers --tb=short --disable-warnings -ra --durations=5"

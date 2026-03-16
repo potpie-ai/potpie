@@ -14,6 +14,9 @@ from app.modules.auth.auth_provider_model import (
 from app.modules.users.user_model import User
 
 
+pytestmark = pytest.mark.unit
+
+
 class TestUserModel:
     """Test User model enhancements"""
 
@@ -30,9 +33,19 @@ class TestUserModel:
         assert primary.provider_type == "firebase_github"
         assert primary.is_primary == True
 
-    def test_get_primary_provider_none(self, db_session, test_user):
-        """Test get_primary_provider when user has no providers"""
-        primary = test_user.get_primary_provider()
+    def test_get_primary_provider_none(self, db_session):
+        """Test get_primary_provider when user has no providers (isolated user)."""
+        user_no_providers = User(
+            uid="test-user-no-providers",
+            email="noprov@example.com",
+            display_name="No Providers",
+            email_verified=True,
+            created_at=datetime.now(timezone.utc),
+        )
+        db_session.add(user_no_providers)
+        db_session.commit()
+        db_session.refresh(user_no_providers)
+        primary = user_no_providers.get_primary_provider()
         assert primary is None
 
     def test_has_provider(self, db_session, test_user_with_github):
@@ -49,7 +62,7 @@ class TestUserModel:
             email_verified=True,
             organization="company.com",
             organization_name="Test Company",
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         db_session.add(user)
         db_session.commit()
@@ -69,7 +82,7 @@ class TestUserAuthProvider:
             provider_uid="google-123",
             provider_data={"email": "test@example.com"},
             is_primary=True,
-            linked_at=datetime.utcnow(),
+            linked_at=datetime.now(timezone.utc),
         )
         db_session.add(provider)
         db_session.commit()
@@ -85,7 +98,7 @@ class TestUserAuthProvider:
             user_id=test_user_with_github.uid,
             provider_type="firebase_github",  # Same as existing
             provider_uid="different-uid",
-            linked_at=datetime.utcnow(),
+            linked_at=datetime.now(timezone.utc),
         )
         db_session.add(duplicate)
 
@@ -99,7 +112,7 @@ class TestUserAuthProvider:
             user_id=test_user.uid,  # Different user
             provider_type="firebase_github",
             provider_uid="github-123",  # Same as existing
-            linked_at=datetime.utcnow(),
+            linked_at=datetime.now(timezone.utc),
         )
         db_session.add(duplicate)
 
@@ -171,7 +184,7 @@ class TestPendingProviderLink:
             provider_uid="google-789",
             provider_data={"email": "test@example.com"},
             token="unique-token-123",
-            expires_at=datetime.utcnow() + timedelta(minutes=15),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
             ip_address="127.0.0.1",
             user_agent="Mozilla/5.0",
         )
@@ -189,7 +202,7 @@ class TestPendingProviderLink:
             provider_uid="azure-123",
             provider_data={},
             token=pending_link.token,  # Same token
-            expires_at=datetime.utcnow() + timedelta(minutes=15),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
         )
         db_session.add(duplicate)
 
@@ -204,7 +217,7 @@ class TestPendingProviderLink:
             provider_uid="google-789",
             provider_data={},
             token="token-123",
-            expires_at=datetime.utcnow() - timedelta(minutes=1),  # Expired
+            expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),  # Expired
         )
         db_session.add(link)
         db_session.commit()
@@ -241,7 +254,7 @@ class TestOrganizationSSOConfig:
             },
             enforce_sso=True,
             allow_other_providers=False,
-            configured_at=datetime.utcnow(),
+            configured_at=datetime.now(timezone.utc),
             is_active=True,
         )
         db_session.add(config)
@@ -257,7 +270,7 @@ class TestOrganizationSSOConfig:
             domain=org_sso_config.domain,  # Same domain
             sso_provider="azure",
             sso_config={},
-            configured_at=datetime.utcnow(),
+            configured_at=datetime.now(timezone.utc),
         )
         db_session.add(duplicate)
 
@@ -276,7 +289,7 @@ class TestOrganizationSSOConfig:
             domain="inactive.com",
             sso_provider="google",
             sso_config={},
-            configured_at=datetime.utcnow(),
+            configured_at=datetime.now(timezone.utc),
             is_active=False,
         )
         db_session.add(inactive)
@@ -303,7 +316,7 @@ class TestAuthAuditLog:
             status="success",
             ip_address="127.0.0.1",
             user_agent="Mozilla/5.0",
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         db_session.add(log)
         db_session.commit()
@@ -321,7 +334,7 @@ class TestAuthAuditLog:
             status="failure",
             error_message="Invalid token",
             ip_address="192.168.1.1",
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         db_session.add(log)
         db_session.commit()
@@ -340,7 +353,7 @@ class TestAuthAuditLog:
                 "custom_field": "value",
                 "nested": {"key": "value"},
             },
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         db_session.add(log)
         db_session.commit()
@@ -348,47 +361,69 @@ class TestAuthAuditLog:
         assert isinstance(log.extra_data, dict)
         assert log.extra_data["custom_field"] == "value"
 
-    def test_query_by_event_type(self, db_session, test_user):
-        """Test querying logs by event type"""
-        # Create multiple logs
+    def test_query_by_event_type(self, db_session):
+        """Test querying logs by event type (isolated user so only this test's logs)."""
+        user = User(
+            uid="test-user-event-type",
+            email="eventtype@example.com",
+            display_name="Event Type",
+            email_verified=True,
+            created_at=datetime.now(timezone.utc),
+        )
+        db_session.add(user)
+        db_session.commit()
+
         for event in ["login", "login", "link_provider"]:
             log = AuthAuditLog(
-                user_id=test_user.uid,
+                user_id=user.uid,
                 event_type=event,
                 status="success",
-                created_at=datetime.utcnow(),
+                created_at=datetime.now(timezone.utc),
             )
             db_session.add(log)
         db_session.commit()
 
-        # Query login events
-        login_logs = db_session.query(AuthAuditLog).filter_by(
-            event_type="login"
-        ).all()
-
+        login_logs = (
+            db_session.query(AuthAuditLog)
+            .filter_by(event_type="login", user_id=user.uid)
+            .all()
+        )
         assert len(login_logs) == 2
 
-    def test_query_by_time_range(self, db_session, test_user):
-        """Test querying logs by time range"""
+    def test_query_by_time_range(self, db_session):
+        """Test querying logs by time range (isolated user so only this test's logs)."""
+        user = User(
+            uid="test-user-time-range",
+            email="timerange@example.com",
+            display_name="Time Range",
+            email_verified=True,
+            created_at=datetime.now(timezone.utc),
+        )
+        db_session.add(user)
+        db_session.commit()
+
         old_log = AuthAuditLog(
-            user_id=test_user.uid,
+            user_id=user.uid,
             event_type="login",
             status="success",
-            created_at=datetime.utcnow() - timedelta(days=2),
+            created_at=datetime.now(timezone.utc) - timedelta(days=2),
         )
         recent_log = AuthAuditLog(
-            user_id=test_user.uid,
+            user_id=user.uid,
             event_type="login",
             status="success",
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
         db_session.add_all([old_log, recent_log])
         db_session.commit()
 
-        # Query last 24 hours
-        cutoff = datetime.utcnow() - timedelta(hours=24)
-        recent_logs = db_session.query(AuthAuditLog).filter(
-            AuthAuditLog.created_at >= cutoff
-        ).all()
-
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        recent_logs = (
+            db_session.query(AuthAuditLog)
+            .filter(
+                AuthAuditLog.created_at >= cutoff,
+                AuthAuditLog.user_id == user.uid,
+            )
+            .all()
+        )
         assert len(recent_logs) == 1

@@ -1,7 +1,8 @@
 from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from app.core.database import get_db
+from app.core.database import get_async_db, get_db
 from app.modules.auth.auth_service import AuthService
 from app.modules.parsing.graph_construction.parsing_controller import ParsingController
 from app.modules.parsing.graph_construction.parsing_schema import (
@@ -24,9 +25,14 @@ async def parse_directory(
 
 @router.get("/parsing-status/{project_id}")
 async def get_parsing_status(
-    project_id: str, db: Session = Depends(get_db), user=Depends(AuthService.check_auth)
+    project_id: str,
+    db: Session = Depends(get_db),
+    async_db: AsyncSession = Depends(get_async_db),
+    user=Depends(AuthService.check_auth),
 ):
-    return await ParsingController.fetch_parsing_status(project_id, db, user)
+    return await ParsingController.fetch_parsing_status(
+        project_id, db, async_db, user
+    )
 
 
 @router.post("/parsing-status")

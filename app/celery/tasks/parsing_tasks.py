@@ -25,6 +25,7 @@ def process_parsing(
     # Set up logging context with domain IDs
     with log_context(project_id=project_id, user_id=user_id):
         logger.info("Task received: Starting parsing process")
+        parsing_service = None
         try:
             parsing_service = ParsingService(
                 self.db, user_id, raise_library_exceptions=True
@@ -49,11 +50,17 @@ def process_parsing(
                     "Parsing process completed", elapsed_seconds=round(elapsed_time, 2)
                 )
 
-            # Use BaseTask's long-lived event loop for consistency
+            # Run parsing in a fresh event loop (asyncio.run)
             self.run_async(run_parsing())
         except Exception:
             logger.exception("Error during parsing")
             raise
+        finally:
+            if parsing_service is not None:
+                try:
+                    parsing_service.close()
+                except Exception:
+                    pass
 
 
 logger.info("Parsing tasks module loaded")

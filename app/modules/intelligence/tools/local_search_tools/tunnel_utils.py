@@ -77,7 +77,21 @@ def _execute_via_socket(
                     last_error,
                     delay,
                 )
+                # #region agent log
+                try:
+                    with open("/Users/nandan/Desktop/Dev/potpie/.cursor/debug-dec41d.log", "a") as _f:
+                        _f.write('{"sessionId":"dec41d","hypothesisId":"H3,H5","location":"tunnel_utils:before_sleep","message":"before_time_sleep","data":{"attempt":%d,"delay":%.1f,"ts":%.3f}}\n' % (attempt, delay, time.time()))
+                except Exception:
+                    pass
+                # #endregion
                 time.sleep(delay)
+                # #region agent log
+                try:
+                    with open("/Users/nandan/Desktop/Dev/potpie/.cursor/debug-dec41d.log", "a") as _f:
+                        _f.write('{"sessionId":"dec41d","hypothesisId":"H3,H5","location":"tunnel_utils:after_sleep","message":"after_time_sleep","data":{"attempt":%d,"ts":%.3f}}\n' % (attempt, time.time()))
+                except Exception:
+                    pass
+                # #endregion
             else:
                 logger.warning(
                     "[_execute_via_socket] All %d attempts failed (last: %s)",

@@ -788,6 +788,31 @@ Subagents DON'T get your history. Provide comprehensive context:
             local_mode,
             len(final_tools),
         )
+        # #region agent log
+        try:
+            _dp = "/Users/nandan/Desktop/Dev/potpie/.cursor/debug-65030d.log"
+            with open(_dp, "a") as _f:
+                _f.write(
+                    __import__("json").dumps(
+                        {
+                            "sessionId": "65030d",
+                            "location": "agent_factory.py:build_supervisor_agent_tools",
+                            "message": "supervisor tools built",
+                            "data": {
+                                "local_mode": local_mode,
+                                "use_tool_search_flow": use_tool_search_flow,
+                                "final_tools_count": len(final_tools),
+                                "first_tool_names": [t.name for t in final_tools[:8]],
+                            },
+                            "timestamp": int(__import__("time").time() * 1000),
+                            "hypothesisId": "B,D",
+                        }
+                    )
+                    + "\n"
+                )
+        except Exception:
+            pass
+        # #endregion
         return final_tools
 
     def create_delegate_agent(self, agent_type: AgentType, ctx: ChatContext) -> Agent:
@@ -913,6 +938,31 @@ Subagents DON'T get your history. Provide comprehensive context:
         )
 
         model_settings = self._build_thinking_model_settings()
+        # #region agent log
+        try:
+            _dp = "/Users/nandan/Desktop/Dev/potpie/.cursor/debug-65030d.log"
+            with open(_dp, "a") as _f:
+                _f.write(
+                    __import__("json").dumps(
+                        {
+                            "sessionId": "65030d",
+                            "location": "agent_factory.py:create_supervisor_agent",
+                            "message": "supervisor Agent() created",
+                            "data": {
+                                "tools_count": len(tools),
+                                "chat_model": chat_model,
+                                "use_tool_search_flow": use_tool_search_flow,
+                                "tool_names_sample": [t.name for t in tools[:8]],
+                            },
+                            "timestamp": int(__import__("time").time() * 1000),
+                            "hypothesisId": "B,C,E",
+                        }
+                    )
+                    + "\n"
+                )
+        except Exception:
+            pass
+        # #endregion
         supervisor_agent = Agent(
             model=self.llm_provider.get_pydantic_model(),
             tools=tools,

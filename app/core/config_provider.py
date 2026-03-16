@@ -20,10 +20,11 @@ class ConfigProvider:
     _neo4j_override: dict | None = None  # Class-level override for library usage
 
     def __init__(self):
+        # Default URI so Neo4j driver never receives None (raises "URI scheme b'' is not supported")
         self.neo4j_config = {
-            "uri": os.getenv("NEO4J_URI"),
-            "username": os.getenv("NEO4J_USERNAME"),
-            "password": os.getenv("NEO4J_PASSWORD"),
+            "uri": os.getenv("NEO4J_URI") or "bolt://localhost:7687",
+            "username": os.getenv("NEO4J_USERNAME") or "",
+            "password": os.getenv("NEO4J_PASSWORD") or "",
         }
         self.github_key = os.getenv("GITHUB_PRIVATE_KEY")
         self.is_development_mode = os.getenv("isDevelopmentMode", "disabled")
