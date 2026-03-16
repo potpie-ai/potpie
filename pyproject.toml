@@ -82,6 +82,7 @@ dev = [
     "pylint>=4.0.2",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
+    "pytest-cov>=6.0.0",
     "ruff>=0.14.3",
 ]
 
@@ -110,3 +111,14 @@ markers = [
 ]
 asyncio_mode = "auto"
 addopts = "-v --strict-markers --tb=short --disable-warnings -ra --durations=5"
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/alembic/*", "*/tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+]
+show_missing = true
