@@ -136,8 +136,6 @@ class TestIntegrationsServiceDbToSchema:
         mock_integration.created_by = "user-s2"
         mock_integration.created_at = None
         mock_integration.updated_at = None
-        type(mock_integration).created_at = property(lambda s: None)
-        type(mock_integration).updated_at = property(lambda s: None)
 
         schema = service._db_to_schema(mock_integration)
         assert schema.auth_data.access_token is None
