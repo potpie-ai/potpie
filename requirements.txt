@@ -50,7 +50,7 @@ attrs==25.4.0
     #   cyclopts
     #   jsonschema
     #   referencing
-authlib==1.6.6
+authlib==1.6.9
     # via
     #   potpie (pyproject.toml)
     #   fastmcp
@@ -363,19 +363,22 @@ kombu==5.6.2
     #   celery
 langchain==1.2.8
     # via potpie (pyproject.toml)
-langchain-core==1.2.8
+langchain-core==1.2.19
     # via
+    #   potpie (pyproject.toml)
     #   langchain
     #   langgraph
     #   langgraph-checkpoint
     #   langgraph-prebuilt
-langgraph==1.0.7
-    # via langchain
+langgraph==1.0.10
+    # via
+    #   potpie (pyproject.toml)
+    #   langchain
 langgraph-checkpoint==4.0.0
     # via
     #   langgraph
     #   langgraph-prebuilt
-langgraph-prebuilt==1.0.7
+langgraph-prebuilt==1.0.8
     # via langgraph
 langgraph-sdk==0.3.3
     # via langgraph
@@ -435,7 +438,7 @@ newrelic==11.5.0
     # via potpie (pyproject.toml)
 nexus-rpc==1.2.0
     # via temporalio
-nltk==3.9.2
+nltk==3.9.3
     # via potpie (pyproject.toml)
 numpy==2.4.2
     # via
@@ -642,7 +645,7 @@ pygments==2.19.2
     # via
     #   potpie (pyproject.toml)
     #   rich
-pyjwt==2.11.0
+pyjwt==2.12.1
     # via
     #   potpie (pyproject.toml)
     #   firebase-admin
@@ -829,8 +832,10 @@ tokenizers==0.22.2
     #   transformers
 torch==2.10.0
     # via sentence-transformers
-tornado==6.5.4
-    # via flower
+tornado==6.5.5
+    # via
+    #   potpie (pyproject.toml)
+    #   flower
 tqdm==4.67.3
     # via
     #   potpie (pyproject.toml)
