@@ -624,6 +624,11 @@ async def client(app, db_session: Session, async_db_session: AsyncSession):
     from app.modules.auth.auth_service import AuthService
     from app.modules.usage.usage_service import UsageService
 
+    # IntegrationsService builds SentryOAuthV2 on init, which raises if credentials missing.
+    # Set dummy values so /integrations/connected and /integrations/list can run in tests.
+    os.environ.setdefault("SENTRY_CLIENT_ID", "test-sentry-client-id")
+    os.environ.setdefault("SENTRY_CLIENT_SECRET", "test-sentry-client-secret")
+
     def override_get_db():
         yield db_session
 
