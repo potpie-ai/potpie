@@ -10,6 +10,7 @@ Single entry point to run the full test suite. Used by developers and CI.
 Usage:
   uv run python scripts/run_tests.py
   uv run python scripts/run_tests.py --unit-only
+  uv run python scripts/run_tests.py --coverage   # or -c (term + htmlcov/)
   SKIP_REAL_PARSE=1 uv run python scripts/run_tests.py
 """
 
@@ -34,6 +35,9 @@ def run_pytest(
     *pytest_args: str,
     extra_env: dict[str, str] | None = None,
     phase_name: str | None = None,
+    coverage: bool = False,
+    coverage_append: bool = False,
+    coverage_final: bool = False,
 ) -> int:
     """Run pytest with project root as cwd; return exit code.
     Uses addopts from pyproject.toml (-v -ra --durations=5) for clearer output."""
@@ -41,6 +45,12 @@ def run_pytest(
     if extra_env:
         env.update(extra_env)
     cmd = [sys.executable, "-m", "pytest", *pytest_args]
+    if coverage:
+        cmd.extend(["--cov=app", "--cov-report=term-missing"])
+        if coverage_append:
+            cmd.append("--cov-append")
+        if coverage_final:
+            cmd.append("--cov-report=html")
     result = subprocess.run(
         cmd,
         cwd=PROJECT_ROOT,
@@ -81,6 +91,12 @@ def main() -> int:
         help="Run only stress tests.",
     )
     parser.add_argument(
+        "--coverage",
+        "-c",
+        action="store_true",
+        help="Run tests with coverage (term + html report in htmlcov/).",
+    )
+    parser.add_argument(
         "pytest_extra",
         nargs="*",
         help="Extra arguments passed to pytest (e.g. -x, -k 'test_foo').",
@@ -104,7 +120,11 @@ def main() -> int:
             str(TESTS_DIR / "unit"), "-m", "unit",
             *args.pytest_extra,
             phase_name="Unit",
+            coverage=args.coverage,
+            coverage_final=True,
         )
+        if code == 0 and args.coverage:
+            print(f"HTML report: file://{PROJECT_ROOT / 'htmlcov' / 'index.html'}")
         return code
 
     if args.integration_only:
@@ -114,7 +134,11 @@ def main() -> int:
             "-m", "not stress and not real_parse and not github_live",
             *args.pytest_extra,
             phase_name="Integration",
+            coverage=args.coverage,
+            coverage_final=True,
         )
+        if code == 0 and args.coverage:
+            print(f"HTML report: file://{PROJECT_ROOT / 'htmlcov' / 'index.html'}")
         return code
 
     if args.real_parse_only:
@@ -123,7 +147,11 @@ def main() -> int:
             TESTS_DIR, "-m", "real_parse",
             *args.pytest_extra,
             phase_name=PHASE_REAL_PARSE,
+            coverage=args.coverage,
+            coverage_final=True,
         )
+        if code == 0 and args.coverage:
+            print(f"HTML report: file://{PROJECT_ROOT / 'htmlcov' / 'index.html'}")
         return code
 
     if args.stress_only:
@@ -132,7 +160,11 @@ def main() -> int:
             TESTS_DIR, "-m", "stress",
             *args.pytest_extra,
             phase_name="Stress",
+            coverage=args.coverage,
+            coverage_final=True,
         )
+        if code == 0 and args.coverage:
+            print(f"HTML report: file://{PROJECT_ROOT / 'htmlcov' / 'index.html'}")
         return code
 
     # Full run: unit → integration (no stress/real_parse) → real_parse (optional) → stress (optional)
@@ -151,9 +183,18 @@ def main() -> int:
     if run_stress:
         phases.append(("Stress", [str(TESTS_DIR), "-m", "stress"]))
 
-    for name, pytest_args in phases:
+    for i, (name, pytest_args) in enumerate(phases):
         print_phase_banner(name)
-        code = run_pytest(*pytest_args, *args.pytest_extra, phase_name=name)
+        is_first = i == 0
+        is_last = i == len(phases) - 1
+        code = run_pytest(
+            *pytest_args,
+            *args.pytest_extra,
+            phase_name=name,
+            coverage=args.coverage,
+            coverage_append=args.coverage and not is_first,
+            coverage_final=args.coverage and is_last,
+        )
         if code != 0:
             return code
 
@@ -162,6 +203,8 @@ def main() -> int:
     print("  ALL PHASES PASSED")
     print("=" * BANNER_WIDTH)
     print()
+    if args.coverage:
+        print(f"HTML report: file://{PROJECT_ROOT / 'htmlcov' / 'index.html'}")
     return 0
 
 

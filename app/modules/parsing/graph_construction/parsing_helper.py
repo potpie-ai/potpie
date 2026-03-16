@@ -1090,6 +1090,9 @@ class ParseHelper:
             f"repo_details type: {type(repo_details).__name__}, repo_manager_path: {repo_manager_path}"
         )
 
+        # Resolve Repo (GitPython) for isinstance checks; lazy import to avoid fork-safety issues.
+        _, _, Repo = _get_git_imports()
+
         if repo_manager_path:
             # RepoManager-cached remote repo - DON'T set repo_path (it's a cached remote, not true local)
             repo_path = None
