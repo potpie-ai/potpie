@@ -8,6 +8,7 @@ which mounts the real app and overrides DB + auth dependencies.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
 
@@ -17,6 +18,7 @@ from app.modules.users.user_model import User
 
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
+
 
 @pytest.fixture
 def mock_google_sso(monkeypatch):
@@ -34,6 +36,124 @@ def mock_google_sso(monkeypatch):
         return _VerifiedUserInfo()
 
     monkeypatch.setattr(UnifiedAuthService, "verify_sso_token", _fake_verify_sso_token)
+
+
+class TestSignupValidation:
+    """Test POST /api/v1/signup request validation."""
+
+    async def test_signup_missing_uid(self, client, db_session):
+        """Signup without uid returns 400."""
+        response = await client.post(
+            "/api/v1/signup",
+            json={
+                "email": "test@example.com",
+                "displayName": "Test",
+                "emailVerified": True,
+            },
+        )
+        assert response.status_code == 400
+        data = response.json()
+        assert "uid" in data.get("error", "").lower() or "missing" in data.get("error", "").lower()
+
+    async def test_signup_missing_email(self, client, db_session):
+        """Signup without email returns 400."""
+        response = await client.post(
+            "/api/v1/signup",
+            json={
+                "uid": "firebase-uid-123",
+                "displayName": "Test",
+                "emailVerified": True,
+            },
+        )
+        assert response.status_code == 400
+        data = response.json()
+        assert "email" in data.get("error", "").lower() or "missing" in data.get("error", "").lower()
+
+
+class TestLoginEndpoint:
+    """Test POST /api/v1/login"""
+
+    async def test_login_success(self, client):
+        """Test successful login with mocked auth service"""
+        mock_response = {"idToken": "mock-token-123", "refreshToken": "refresh-123"}
+
+        with patch(
+            "app.modules.auth.auth_router.auth_handler.login_async",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            response = await client.post(
+                "/api/v1/login",
+                json={"email": "test@example.com", "password": "password123"},
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["token"] == "mock-token-123"
+
+    async def test_login_invalid_credentials(self, client):
+        """Test login with invalid credentials"""
+        from fastapi import HTTPException
+
+        with patch(
+            "app.modules.auth.auth_router.auth_handler.login_async",
+            new_callable=AsyncMock,
+            side_effect=HTTPException(status_code=401, detail="Invalid credentials"),
+        ):
+            response = await client.post(
+                "/api/v1/login",
+                json={"email": "test@example.com", "password": "wrongpassword"},
+            )
+
+            assert response.status_code == 401
+
+    async def test_login_value_error(self, client):
+        """Test login with ValueError (invalid email/password format)"""
+        with patch(
+            "app.modules.auth.auth_router.auth_handler.login_async",
+            new_callable=AsyncMock,
+            side_effect=ValueError("Invalid email format"),
+        ):
+            response = await client.post(
+                "/api/v1/login",
+                json={"email": "invalid", "password": "pass"},
+            )
+
+            assert response.status_code == 401
+            assert "Invalid email or password" in response.json()["error"]
+
+
+class TestCustomTokenEndpoint:
+    """Test POST /api/v1/auth/custom-token"""
+
+    async def test_custom_token_success(self, client, auth_token, test_user):
+        """Test creating custom token for authenticated user"""
+        with patch(
+            "app.modules.auth.auth_router.AuthService.create_custom_token",
+            return_value="custom-token-xyz",
+        ):
+            response = await client.post(
+                "/api/v1/auth/custom-token",
+                headers={"Authorization": f"Bearer {auth_token}"},
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["customToken"] == "custom-token-xyz"
+
+    async def test_custom_token_failure(self, client, auth_token, test_user):
+        """Test custom token creation failure"""
+        with patch(
+            "app.modules.auth.auth_router.AuthService.create_custom_token",
+            return_value=None,
+        ):
+            response = await client.post(
+                "/api/v1/auth/custom-token",
+                headers={"Authorization": f"Bearer {auth_token}"},
+            )
+
+            assert response.status_code == 500
+            assert "Failed" in response.json()["error"]
 
 
 class TestSSOLoginEndpoint:

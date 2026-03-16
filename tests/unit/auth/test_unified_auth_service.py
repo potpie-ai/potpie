@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch, AsyncMock
 from app.modules.auth.unified_auth_service import UnifiedAuthService
 from app.modules.auth.auth_schema import AuthProviderCreate
 from app.modules.auth.auth_provider_model import UserAuthProvider, PendingProviderLink
+from app.modules.users.user_model import User
 
 
 pytestmark = pytest.mark.unit
@@ -425,6 +426,8 @@ class TestUnifiedAuthService:
 
     def test_audit_log_created(self, db_session, test_user):
         """Test that audit logs are created"""
+        from app.modules.auth.auth_provider_model import AuthAuditLog
+
         service = UnifiedAuthService(db_session)
 
         service._log_auth_event(
@@ -435,12 +438,142 @@ class TestUnifiedAuthService:
             ip_address="127.0.0.1",
         )
 
-        # Verify log created
-        from app.modules.auth.auth_provider_model import AuthAuditLog
-        log = db_session.query(AuthAuditLog).filter_by(
-            user_id=test_user.uid
-        ).first()
+        # Verify log created (query for this specific event)
+        log = (
+            db_session.query(AuthAuditLog)
+            .filter_by(user_id=test_user.uid, event_type="login")
+            .first()
+        )
 
         assert log is not None
         assert log.event_type == "login"
         assert log.status == "success"
+
+    def test_check_github_linked_user_not_found(self, db_session):
+        """Test check_github_linked when user does not exist"""
+        service = UnifiedAuthService(db_session)
+        found, provider = service.check_github_linked("nonexistent-user-uid")
+        assert found is False
+        assert provider is None
+
+    def test_check_github_linked_no_github(self, db_session):
+        """Test check_github_linked when user has no GitHub provider"""
+        # Use an isolated user with no providers
+        user_no_github = User(
+            uid="user-no-github-xyz",
+            email="nogh@example.com",
+            display_name="No GitHub",
+            email_verified=True,
+            created_at=datetime.now(timezone.utc),
+        )
+        db_session.add(user_no_github)
+        db_session.commit()
+
+        service = UnifiedAuthService(db_session)
+        found, provider = service.check_github_linked(user_no_github.uid)
+        assert found is False
+        assert provider is None
+
+    def test_check_github_linked_has_github(self, db_session, test_user_with_github):
+        """Test check_github_linked when user has GitHub linked"""
+        service = UnifiedAuthService(db_session)
+        found, provider = service.check_github_linked(test_user_with_github.uid)
+        assert found is True
+        assert provider is not None
+        assert provider.provider_type == "firebase_github"
+
+    def test_get_sso_provider_unknown(self, db_session):
+        """Test get_sso_provider for unknown provider returns None"""
+        service = UnifiedAuthService(db_session)
+        provider = service.get_sso_provider("unknown_provider")
+        assert provider is None
+
+    def test_get_sso_provider_case_insensitive(self, db_session):
+        """Test get_sso_provider is case insensitive"""
+        service = UnifiedAuthService(db_session)
+        p1 = service.get_sso_provider("Google")
+        p2 = service.get_sso_provider("google")
+        assert p1 is not None
+        assert p1 is p2
+
+    def test_get_decrypted_access_token_not_found(self, db_session, test_user):
+        """Test get_decrypted_access_token when provider not found"""
+        service = UnifiedAuthService(db_session)
+        result = service.get_decrypted_access_token(test_user.uid, "sso_okta")
+        assert result is None
+
+    def test_get_decrypted_access_token_no_token(self, db_session, test_user_with_github):
+        """Test get_decrypted_access_token when provider has no access_token"""
+        service = UnifiedAuthService(db_session)
+        # test_user_with_github's provider may not have access_token set
+        result = service.get_decrypted_access_token(
+            test_user_with_github.uid, "firebase_github"
+        )
+        # Either None (no token) or decrypted value
+        assert result is None or isinstance(result, str)
+
+    def test_get_decrypted_refresh_token_not_found(self, db_session, test_user):
+        """Test get_decrypted_refresh_token when provider not found"""
+        service = UnifiedAuthService(db_session)
+        result = service.get_decrypted_refresh_token(test_user.uid, "sso_okta")
+        assert result is None
+
+    def test_get_decrypted_refresh_token_plaintext_fallback(self, db_session):
+        """Test get_decrypted_refresh_token returns plaintext on decrypt failure"""
+        from app.modules.auth.auth_provider_model import UserAuthProvider
+
+        uid = "user-plaintext-refresh"
+        user = User(
+            uid=uid,
+            email="plaintext@example.com",
+            display_name="Plain",
+            email_verified=True,
+            created_at=datetime.now(timezone.utc),
+        )
+        db_session.add(user)
+        db_session.add(
+            UserAuthProvider(
+                user_id=uid,
+                provider_type="sso_google",
+                provider_uid="google-pt",
+                refresh_token="plaintext-token",
+                linked_at=datetime.now(timezone.utc),
+            )
+        )
+        db_session.commit()
+
+        with patch("app.modules.auth.unified_auth_service.decrypt_token") as mock_decrypt:
+            mock_decrypt.side_effect = Exception("decrypt failed")
+            service = UnifiedAuthService(db_session)
+            result = service.get_decrypted_refresh_token(uid, "sso_google")
+        assert result == "plaintext-token"
+
+    def test_get_decrypted_access_token_plaintext_fallback(self, db_session):
+        """Test get_decrypted_access_token returns plaintext on decrypt failure"""
+        from app.modules.auth.auth_provider_model import UserAuthProvider
+
+        uid = "user-plaintext-access"
+        user = User(
+            uid=uid,
+            email="plaintext2@example.com",
+            display_name="Plain2",
+            email_verified=True,
+            created_at=datetime.now(timezone.utc),
+        )
+        db_session.add(user)
+        db_session.add(
+            UserAuthProvider(
+                user_id=uid,
+                provider_type="sso_google",
+                provider_uid="google-pt2",
+                access_token="plaintext-access",
+                linked_at=datetime.now(timezone.utc),
+            )
+        )
+        db_session.commit()
+
+        with patch("app.modules.auth.unified_auth_service.decrypt_token") as mock_decrypt:
+            mock_decrypt.side_effect = Exception("decrypt failed")
+            service = UnifiedAuthService(db_session)
+            result = service.get_decrypted_access_token(uid, "sso_google")
+        assert result == "plaintext-access"

@@ -96,6 +96,22 @@ The `test_real_parse.py` test runs `ParsingService.parse_directory` with:
 
 This test catches regressions in core parsing logic that mocked tests miss. If Postgres or Neo4j is unavailable, the test is **skipped**.
 
+## Coverage
+
+Run with coverage: `./scripts/run_tests.sh --coverage` (or `-c`). Report is in `htmlcov/index.html`.
+
+Current coverage is ~28-29%. Target: 50%. The app is large (many modules under `app/`). The suite focuses on critical paths: auth, API keys, secrets, conversations, projects, and parsing. To **increase coverage the most**, add unit/integration tests for the biggest uncovered files (by “missing” lines in the report), for example:
+
+| Area              | File / module              | Impact |
+|-------------------|----------------------------|--------|
+| Celery tasks      | `agent_tasks.py`           | High   |
+| Conversations     | `conversation_service.py`  | High   |
+| Key management    | `secret_manager.py` (router/handlers) | High |
+| Auth              | `unified_auth_service.py`, `auth_router.py` | Medium |
+| Code provider     | `github_service.py`, `code_provider_service.py` | High |
+
+Excluded from coverage: `app/alembic/*`, `*/tests/*`, and the Celery worker entrypoint (`app/celery/worker.py`), which is not run by pytest.
+
 ## Markers
 
 - `unit` — Unit tests

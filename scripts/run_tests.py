@@ -6,6 +6,8 @@ Single entry point to run the full test suite. Used by developers and CI.
 - Uses pytest discovery and markers only; no test file paths. New tests under
   tests/unit/ or tests/integration-tests/ are picked up automatically.
 - Control via env or flags: SKIP_REAL_PARSE=1, RUN_STRESS=1, or --unit-only, etc.
+- With --coverage, the final phase enforces minimum 50% (fail_under in pyproject.toml).
+  PRs that lower coverage below 50% will fail the run.
 
 Usage:
   uv run python scripts/run_tests.py
@@ -51,6 +53,10 @@ def run_pytest(
             cmd.append("--cov-append")
         if coverage_final:
             cmd.append("--cov-report=html")
+        else:
+            # Don't fail on coverage in intermediate phases (unit-only ~30%).
+            # Final phase uses fail_under from pyproject.toml (50%).
+            cmd.append("--cov-fail-under=0")
     result = subprocess.run(
         cmd,
         cwd=PROJECT_ROOT,
