@@ -58,6 +58,25 @@ def _resolve_user_email_for_celery(db: Session, user_id: str) -> str:
     return email
 
 
+def _clear_pydantic_ai_http_client_cache() -> None:
+    """Clear pydantic_ai's globally cached async HTTP client(s).
+
+    In Celery workers we use asyncio.run() per task, so each task has a new event loop.
+    The cached httpx.AsyncClient is created on first use and tied to that task's loop.
+    Reusing it in a later task (different loop, previous loop closed) can cause the
+    model request stream to hang or yield no chunks. Clearing the cache at task start
+    forces the next model creation to get a fresh client bound to the current loop.
+    """
+    if os.getenv("CELERY_WORKER") != "1":
+        return
+    try:
+        from pydantic_ai.models import _cached_async_http_client
+
+        _cached_async_http_client.cache_clear()
+    except Exception as e:
+        logger.debug("Could not clear pydantic_ai HTTP client cache: %s", e)
+
+
 def _record_openrouter_cost_in_logfire(usages: List[dict], outcome: str) -> float:
     """
     Compute total OpenRouter cost from usages and record as Logfire span attribute.
