@@ -478,9 +478,10 @@ class ParseHelper:
         This method clones to a temporary directory, filters text files using is_text_file(),
         and copies only text files to the final directory to prevent binary file parsing errors.
         """
+        GitCommandError, _, RepoCls = _get_git_imports()
         repo_name = (
             repo.working_tree_dir
-            if isinstance(repo, Repo)
+            if isinstance(repo, RepoCls)
             else getattr(repo, "full_name", "unknown")
         )
 
@@ -540,8 +541,7 @@ class ParseHelper:
 
         try:
             # Clone the repository to temporary directory with shallow clone for faster download
-            GitCommandError, _, Repo = _get_git_imports()
-            _ = Repo.clone_from(
+            _ = RepoCls.clone_from(
                 clone_url_with_auth, temp_clone_dir, branch=branch, depth=1
             )
             logger.info(
@@ -1091,7 +1091,9 @@ class ParseHelper:
         )
 
         # Resolve Repo (GitPython) for isinstance checks; lazy import to avoid fork-safety issues.
-        _, _, Repo = _get_git_imports()
+        # Use RepoCls alias so this function never assigns to Repo (avoids UnboundLocalError when
+        # Repo is used in branches before later assignments in the same function).
+        _, _, RepoCls = _get_git_imports()
 
         if repo_manager_path:
             # RepoManager-cached remote repo - DON'T set repo_path (it's a cached remote, not true local)
@@ -1103,7 +1105,7 @@ class ParseHelper:
             logger.info(
                 f"ParsingHelper: Detected RepoManager-cached remote repository {full_name}"
             )
-        elif isinstance(repo, Repo):
+        elif isinstance(repo, RepoCls):
             # Local repository - use full path from Repo object
             repo_path = repo.working_tree_dir
             full_name = repo_path.split("/")[
@@ -1112,7 +1114,7 @@ class ParseHelper:
             logger.info(
                 f"ParsingHelper: Detected local repository at {repo_path} with name {full_name}"
             )
-        elif isinstance(repo_details, Repo):
+        elif isinstance(repo_details, RepoCls):
             # Alternative: repo_details is the Repo object (non-dev mode)
             repo_path = repo_details.working_tree_dir
             full_name = repo_path.split("/")[-1]
@@ -1243,8 +1245,8 @@ class ParseHelper:
                     # Fallback: try to get from git
                     if not latest_commit_sha:
                         try:
-                            _, _, Repo = _get_git_imports()
-                            git_repo = Repo(repo_manager_path)
+                            _, _, RepoCls = _get_git_imports()
+                            git_repo = RepoCls(repo_manager_path)
                             latest_commit_sha = git_repo.head.commit.hexsha
                         except Exception:
                             # Last resort: get from GitHub API if repo is not a local git repo
@@ -1261,8 +1263,8 @@ class ParseHelper:
                     # No repo object available (cached without API access)
                     repo_metadata = {}
                 else:
-                    _, _, Repo = _get_git_imports()
-                    if isinstance(repo, Repo):
+                    _, _, RepoCls = _get_git_imports()
+                    if isinstance(repo, RepoCls):
                         repo_metadata = ParseHelper.extract_local_repo_metadata(repo)
                     else:
                         repo_metadata = ParseHelper.extract_remote_repo_metadata(repo)
@@ -1333,8 +1335,8 @@ class ParseHelper:
                                         latest_commit_sha = repo_info["commit_id"]
                                 if not latest_commit_sha:
                                     try:
-                                        _, _, Repo = _get_git_imports()
-                                        git_repo = Repo(repo_manager_path)
+                                        _, _, RepoCls = _get_git_imports()
+                                        git_repo = RepoCls(repo_manager_path)
                                         latest_commit_sha = git_repo.head.commit.hexsha
                                     except Exception:
                                         if hasattr(repo, "get_branch"):
@@ -1344,10 +1346,10 @@ class ParseHelper:
                                 logger.warning(f"Could not determine commit SHA: {e}")
                             latest_commit_sha = latest_commit_sha or commit_id or "unknown"
                         try:
-                            _, _, Repo = _get_git_imports()
+                            _, _, RepoCls = _get_git_imports()
                             if repo is None:
                                 repo_metadata = {}
-                            elif isinstance(repo, Repo):
+                            elif isinstance(repo, RepoCls):
                                 repo_metadata = ParseHelper.extract_local_repo_metadata(repo)
                             else:
                                 repo_metadata = ParseHelper.extract_remote_repo_metadata(repo)
@@ -1400,8 +1402,8 @@ class ParseHelper:
                     ),
                 )
 
-        GitCommandError, _, Repo = _get_git_imports()
-        if isinstance(repo_details, Repo):
+        GitCommandError, _, RepoCls = _get_git_imports()
+        if isinstance(repo_details, RepoCls):
             extracted_dir = repo_details.working_tree_dir
             try:
                 current_dir = os.getcwd()
@@ -2489,7 +2491,8 @@ class ParseHelper:
         return worktree_path
 
     def extract_repository_metadata(self, repo):
-        if isinstance(repo, Repo):
+        _, _, RepoCls = _get_git_imports()
+        if isinstance(repo, RepoCls):
             metadata = ParseHelper.extract_local_repo_metadata(repo)
         else:
             metadata = ParseHelper.extract_remote_repo_metadata(repo)
