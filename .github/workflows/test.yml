@@ -50,11 +50,21 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --no-cache
 
-      - name: Run test suite
+      - name: Run test suite with coverage
         env:
           SKIP_REAL_PARSE: "1"
           POSTGRES_SERVER: "postgresql://postgres:postgres@localhost:5432/postgres"
           ENV: "development"
           REDISHOST: "localhost"
           REDISPORT: "6379"
-        run: uv run python scripts/run_tests.py
+          SENTRY_CLIENT_ID: "ci-dummy"
+          SENTRY_CLIENT_SECRET: "ci-dummy"
+        run: uv run python scripts/run_tests.py --coverage
+
+      - name: Upload coverage report (artifact)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: htmlcov/
+          retention-days: 7
