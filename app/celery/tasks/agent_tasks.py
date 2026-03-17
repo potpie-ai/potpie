@@ -165,14 +165,13 @@ def execute_agent_background(
                 f"Starting background agent execution with tunnel_url={tunnel_url}, "
                 f"local_mode={local_mode}, conversation_id={conversation_id}"
             )
-
-            # Set task status to indicate task has started
-            redis_manager.set_task_status(conversation_id, run_id, "running")
-
-            # Collect OpenRouter usage so we can send it in the end event (API will log it)
-            init_usage_context()
-
             try:
+                # Set task status to indicate task has started
+                redis_manager.set_task_status(conversation_id, run_id, "running")
+
+                # Collect OpenRouter usage so we can send it in the end event (API will log it)
+                init_usage_context()
+
                 user_email = _resolve_user_email_for_celery(self.db, user_id)
 
                 # Execute agent with Redis publishing
@@ -544,14 +543,13 @@ def execute_regenerate_background(
         # Set up logging context with domain IDs
         with log_context(conversation_id=conversation_id, user_id=user_id, run_id=run_id):
             logger.info("Starting background regenerate execution")
-
-            # Set task status to indicate task has started
-            redis_manager.set_task_status(conversation_id, run_id, "running")
-
-            # Collect OpenRouter usage so we can record cost in Logfire
-            init_usage_context()
-
             try:
+                # Set task status to indicate task has started
+                redis_manager.set_task_status(conversation_id, run_id, "running")
+
+                # Collect OpenRouter usage so we can record cost in Logfire
+                init_usage_context()
+
                 user_email = _resolve_user_email_for_celery(self.db, user_id)
 
                 # Execute regeneration with Redis publishing
