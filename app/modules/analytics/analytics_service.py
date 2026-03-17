@@ -143,7 +143,7 @@ class AnalyticsService:
         if end_date is None:
             end_date = today
         if start_date is None:
-            start_date = end_date - timedelta(days=30)
+            start_date = end_date - timedelta(days=29)
         # Clamp: start must not be after end
         if start_date > end_date:
             start_date = end_date
@@ -200,7 +200,6 @@ class AnalyticsService:
           AND attributes->>'openinference.span.kind' = 'LLM'
         GROUP BY 1, 2
         ORDER BY 1 DESC
-        LIMIT 1000
         """
 
         with LogfireQueryClient(read_token=self.read_token) as client:
@@ -208,7 +207,6 @@ class AnalyticsService:
                 raw = client.query_json_rows(
                     sql=query,
                     min_timestamp=start_dt,
-                    limit=1000,
                 )
             except Exception:
                 logger.exception("Error querying tokens by day")
@@ -297,19 +295,17 @@ class AnalyticsService:
             span_name
         FROM records
         WHERE
-            attributes->>'openinference.span.kind' = 'LLM'
+            attributes->>'openinference.span.kind' IN ('LLM', 'agent_run_usage')
             AND attributes->>'user_id' = '{user_id}'
             AND start_timestamp >= '{start_date.isoformat()}'
             AND start_timestamp <= '{end_date.isoformat()}T23:59:59Z'
         ORDER BY start_timestamp DESC
-        LIMIT 10000
         """
 
         try:
             raw = client.query_json_rows(
                 sql=query,
                 min_timestamp=start_dt,
-                limit=10000,
             )
             rows = self._extract_rows(raw)
             if not rows:
@@ -358,6 +354,7 @@ class AnalyticsService:
             attributes->>'agent_id' as agent_id,
             attributes->>'run_id' as run_id,
             attributes->>'conversation_id' as conversation_id,
+            attributes->>'outcome' as outcome,
             span_name,
             duration_ms
         FROM records
@@ -367,14 +364,12 @@ class AnalyticsService:
             AND start_timestamp >= '{start_date.isoformat()}'
             AND start_timestamp <= '{end_date.isoformat()}T23:59:59Z'
         ORDER BY start_timestamp DESC
-        LIMIT 10000
         """
 
         try:
             raw = client.query_json_rows(
                 sql=query,
                 min_timestamp=start_dt,
-                limit=10000,
             )
             rows = self._extract_rows(raw)
             if not rows:
@@ -388,6 +383,7 @@ class AnalyticsService:
                     "agent_id": row.get("agent_id") or row.get("Agent_Id"),
                     "run_id": row.get("run_id") or row.get("Run_Id"),
                     "conversation_id": row.get("conversation_id") or row.get("Conversation_Id"),
+                    "outcome": row.get("outcome") or row.get("Outcome"),
                     "span_name": row.get("span_name") or row.get("Span_Name"),
                     "duration_ms": row.get("duration_ms") or row.get("Duration_Ms"),
                 })
@@ -421,14 +417,12 @@ class AnalyticsService:
             AND start_timestamp >= '{start_date.isoformat()}'
             AND start_timestamp <= '{end_date.isoformat()}T23:59:59Z'
         ORDER BY start_timestamp DESC
-        LIMIT 10000
         """
 
         try:
             raw = client.query_json_rows(
                 sql=query,
                 min_timestamp=start_dt,
-                limit=10000,
             )
             rows = self._extract_rows(raw)
             if not rows:
@@ -464,7 +458,6 @@ class AnalyticsService:
         daily_costs_map = defaultdict(lambda: {"cost": 0.0, "run_count": 0, "tokens": 0})
         total_cost = 0.0
         total_tokens = 0
-        outcomes_count = defaultdict(int)
 
         for record in cost_data:
             try:
@@ -494,11 +487,6 @@ class AnalyticsService:
                 daily_costs_map[date_key]["cost"] += record_cost
                 daily_costs_map[date_key]["tokens"] += input_tokens + output_tokens
                 daily_costs_map[date_key]["run_count"] += 1
-
-                # Track outcomes – value may be None even when key exists.
-                # Use 'unknown' for missing data so we don't inflate success metrics.
-                outcome = record.get('outcome') or 'unknown'
-                outcomes_count[str(outcome)] += 1
             except (ValueError, TypeError) as e:
                 logger.debug(f"Skipping invalid cost record: {e}")
                 continue
@@ -514,13 +502,24 @@ class AnalyticsService:
             for date, data in sorted(daily_costs_map.items())
         ]
 
-        # Calculate LLM call stats
-        total_llm_calls = sum(outcomes_count.values())
-        if total_llm_calls == 0:
-            total_llm_calls = len(cost_data)
+        # Calculate LLM call stats from cost data
+        total_llm_calls = len(cost_data)
+
+        # Track agent run outcomes based on agent_run_usage spans
+        outcomes_count = defaultdict(int)
+        for record in agent_data:
+            raw_outcome = (record.get('outcome') or '').strip().lower()
+            if not raw_outcome:
+                normalized = 'unknown'
+            elif raw_outcome in ('success', 'completed'):
+                normalized = 'success'
+            else:
+                normalized = raw_outcome
+            outcomes_count[normalized] += 1
+
+        total_agent_runs = sum(outcomes_count.values()) or len(agent_data)
         success_count = outcomes_count.get('success', 0)
-        # Only report a meaningful rate when we have explicit outcome data
-        success_rate = success_count / total_llm_calls if total_llm_calls > 0 and outcomes_count else 0.0
+        success_rate = success_count / total_agent_runs if total_agent_runs else 0.0
 
         # Calculate average duration
         durations = [
@@ -571,7 +570,7 @@ class AnalyticsService:
                 success_rate=round(success_rate, 4),
             ),
             daily_costs=daily_costs,
-            agent_runs_by_outcome=dict(outcomes_count) if outcomes_count else {"unknown": total_llm_calls},
+            agent_runs_by_outcome=dict(outcomes_count) if outcomes_count else {"unknown": total_agent_runs},
             conversation_stats=conversation_stats,
         )
 

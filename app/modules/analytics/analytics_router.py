@@ -244,8 +244,9 @@ class AnalyticsAPI:
         end_date: Optional[date] = _END_DATE_QUERY,
         user=Depends(AuthService.check_auth),
     ):
-        env = (os.getenv("ENV") or os.getenv("LOGFIRE_ENVIRONMENT") or "").strip().lower()
-        if env not in ("local", "development", "dev"):
+        env = (os.getenv("ENV") or "").strip().lower()
+        debug_flag = (os.getenv("ANALYTICS_DEBUG") or "").strip()
+        if env not in ("local", "development", "dev") and debug_flag != "1":
             raise HTTPException(
                 status_code=403,
                 detail="Debug endpoint is only available in local/development environment.",
