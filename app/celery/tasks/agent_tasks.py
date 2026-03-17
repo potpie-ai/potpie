@@ -6,9 +6,13 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     logfire = None  # type: ignore[assignment]
 
+from sqlalchemy.orm import Session
+
 from app.celery.celery_app import celery_app
 from app.celery.tasks.base_task import BaseTask
 from app.modules.conversations.utils.redis_streaming import RedisStreamManager
+from app.modules.users.user_model import User
+from app.modules.users.user_service import UserService
 from app.modules.utils.logger import setup_logger, log_context
 from app.modules.intelligence.tracing.logfire_tracer import logfire_trace_metadata
 from app.modules.intelligence.provider.openrouter_usage_context import (
@@ -18,6 +22,40 @@ from app.modules.intelligence.provider.openrouter_usage_context import (
 )
 
 logger = setup_logger(__name__)
+
+
+def _resolve_user_email_for_celery(db: Session, user_id: str) -> str:
+    """
+    Resolve user email using sync DB. Call from Celery task body before run_async();
+    do not call from inside the coroutine.
+    """
+    user = UserService(db).get_user_by_uid(user_id)
+    if not user:
+        direct_user = db.query(User).filter(User.uid == user_id).first()
+        if direct_user:
+            logger.warning(
+                "UserService.get_user_by_uid returned None but direct query found user: %s, email: %s",
+                direct_user.uid,
+                direct_user.email,
+            )
+            user = direct_user
+        else:
+            logger.warning(
+                "User not found in database for user_id: %s. Using empty string as fallback.",
+                user_id,
+            )
+            return ""
+    email = getattr(user, "email", None) or ""
+    if not email:
+        logger.warning(
+            "User found but email is None/empty for user_id: %s, user.uid: %s, email value: %r. Using empty string as fallback.",
+            user_id,
+            getattr(user, "uid", "N/A"),
+            getattr(user, "email", "N/A"),
+        )
+        return ""
+    logger.debug("Retrieved user email for user_id: %s", user_id)
+    return email
 
 
 def _record_openrouter_cost_in_logfire(usages: List[dict], outcome: str) -> float:
