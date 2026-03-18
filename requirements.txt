@@ -122,11 +122,6 @@ cryptography==46.0.5
     #   authlib
     #   google-auth
     #   pyjwt
-    #   secretstorage
-cuda-bindings==12.9.4
-    # via torch
-cuda-pathfinder==1.4.3
-    # via cuda-bindings
 cyclopts==4.5.1
     # via fastmcp
 diskcache==5.6.3
@@ -239,9 +234,7 @@ googleapis-common-protos==1.72.0
     #   opentelemetry-exporter-otlp-proto-http
     #   xai-sdk
 greenlet==3.3.1
-    # via
-    #   potpie (pyproject.toml)
-    #   sqlalchemy
+    # via potpie (pyproject.toml)
 grep-ast==0.9.0
     # via potpie (pyproject.toml)
 griffelib==2.0.0
@@ -326,10 +319,6 @@ jaraco-context==6.1.0
     # via keyring
 jaraco-functools==4.4.0
     # via keyring
-jeepney==0.9.0
-    # via
-    #   keyring
-    #   secretstorage
 jinja2==3.1.6
     # via
     #   instructor
@@ -428,45 +417,6 @@ numpy==2.4.2
     #   scipy
     #   sentence-transformers
     #   transformers
-nvidia-cublas-cu12==12.8.4.1
-    # via
-    #   nvidia-cudnn-cu12
-    #   nvidia-cusolver-cu12
-    #   torch
-nvidia-cuda-cupti-cu12==12.8.90
-    # via torch
-nvidia-cuda-nvrtc-cu12==12.8.93
-    # via torch
-nvidia-cuda-runtime-cu12==12.8.90
-    # via torch
-nvidia-cudnn-cu12==9.10.2.21
-    # via torch
-nvidia-cufft-cu12==11.3.3.83
-    # via torch
-nvidia-cufile-cu12==1.13.1.3
-    # via torch
-nvidia-curand-cu12==10.3.9.90
-    # via torch
-nvidia-cusolver-cu12==11.7.3.90
-    # via torch
-nvidia-cusparse-cu12==12.5.8.93
-    # via
-    #   nvidia-cusolver-cu12
-    #   torch
-nvidia-cusparselt-cu12==0.7.1
-    # via torch
-nvidia-nccl-cu12==2.27.5
-    # via torch
-nvidia-nvjitlink-cu12==12.8.93
-    # via
-    #   nvidia-cufft-cu12
-    #   nvidia-cusolver-cu12
-    #   nvidia-cusparse-cu12
-    #   torch
-nvidia-nvshmem-cu12==3.4.5
-    # via torch
-nvidia-nvtx-cu12==12.8.90
-    # via torch
 openai==2.16.0
     # via
     #   potpie (pyproject.toml)
@@ -523,6 +473,8 @@ opentelemetry-semantic-conventions==0.60b1
     #   opentelemetry-sdk
 opentelemetry-util-http==0.60b1
     # via opentelemetry-instrumentation-httpx
+orjson==3.11.7
+ormsgpack==1.12.2
 packaging==25.0
     # via
     #   fastmcp
@@ -736,9 +688,11 @@ requests==2.32.5
     #   posthog
     #   pydantic-ai-slim
     #   pygithub
+    #   requests-toolbelt
     #   resend
     #   tiktoken
     #   xai-sdk
+requests-toolbelt==1.0.0
 resend==2.21.0
     # via potpie (pyproject.toml)
 rich==14.3.2
@@ -772,8 +726,6 @@ scipy==1.17.0
     # via
     #   scikit-learn
     #   sentence-transformers
-secretstorage==3.5.0
-    # via keyring
 sentence-transformers==5.2.2
     # via potpie (pyproject.toml)
 sentry-sdk==2.52.0
@@ -865,8 +817,6 @@ tree-sitter-language-pack==0.13.0
     #   grep-ast
 tree-sitter-yaml==0.7.2
     # via tree-sitter-language-pack
-triton==3.6.0
-    # via torch
 typer==0.24.1
     # via
     #   instructor
@@ -882,12 +832,9 @@ types-requests==2.32.4.20260107
     # via cohere
 typing-extensions==4.15.0
     # via
-    #   aiosignal
     #   alembic
     #   anthropic
-    #   anyio
     #   cohere
-    #   exceptiongroup
     #   fastapi
     #   google-genai
     #   groq
@@ -907,11 +854,9 @@ typing-extensions==4.15.0
     #   pydantic-core
     #   pydocket
     #   pygithub
-    #   referencing
     #   resend
     #   sentence-transformers
     #   sqlalchemy
-    #   starlette
     #   temporalio
     #   torch
     #   typing-inspection
@@ -935,6 +880,7 @@ urllib3==2.6.3
     #   requests
     #   sentry-sdk
     #   types-requests
+uuid-utils==0.14.0
 uuid6==2025.0.1
     # via potpie (pyproject.toml)
 uvicorn==0.40.0
@@ -964,7 +910,9 @@ wsproto==1.3.2
     # via simple-websocket
 xai-sdk==1.6.1
     # via pydantic-ai-slim
+xxhash==3.6.0
 yarl==1.22.0
     # via aiohttp
 zipp==3.23.0
     # via importlib-metadata
+zstandard==0.25.0
