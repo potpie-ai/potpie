@@ -1,6 +1,7 @@
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, and_
 from app.modules.parsing.models.inference_cache_model import InferenceCache
 from app.modules.utils.logger import setup_logger
 
@@ -48,6 +49,49 @@ class InferenceCacheService:
 
         logger.debug(f"Cache miss for content_hash: {content_hash}")
         return None
+
+    def batch_get_cached_inferences(
+        self, content_hashes: List[str]
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Batch lookup multiple content hashes in a single query.
+
+        Args:
+            content_hashes: List of content hashes to look up
+
+        Returns:
+            Dict mapping content_hash -> inference data (only for hits)
+        """
+        if not content_hashes:
+            return {}
+
+        entries = (
+            self.db.query(InferenceCache)
+            .filter(InferenceCache.content_hash.in_(content_hashes))
+            .all()
+        )
+
+        # Batch update access tracking
+        hit_hashes = set()
+        for entry in entries:
+            entry.access_count += 1
+            entry.last_accessed = func.now()
+            hit_hashes.add(entry.content_hash)
+
+        if hit_hashes:
+            self.db.commit()
+
+        result: Dict[str, Dict[str, Any]] = {}
+        for entry in entries:
+            data = entry.inference_data.copy() if entry.inference_data else {}
+            if entry.embedding_vector:
+                data["embedding_vector"] = entry.embedding_vector
+            result[entry.content_hash] = data
+
+        logger.debug(
+            f"Batch cache lookup: {len(result)}/{len(content_hashes)} hits"
+        )
+        return result
 
     def store_inference(
         self,
@@ -127,6 +171,112 @@ class InferenceCacheService:
 
         return cache_entry
 
+    def batch_store_inferences(
+        self,
+        entries: List[Dict[str, Any]],
+    ) -> Tuple[int, int]:
+        """
+        Batch store multiple inference results. Skips entries with existing hashes.
+
+        Args:
+            entries: List of dicts with keys: content_hash, inference_data,
+                     project_id, node_type, content_length, embedding_vector, tags
+
+        Returns:
+            Tuple of (stored_count, skipped_count)
+        """
+        if not entries:
+            return 0, 0
+
+        hashes = [e["content_hash"] for e in entries]
+        existing = set(
+            self.db.query(InferenceCache.content_hash)
+            .filter(InferenceCache.content_hash.in_(hashes))
+            .all()
+        )
+
+        stored = 0
+        skipped = len(existing)
+
+        for entry in entries:
+            h = entry["content_hash"]
+            if h in existing:
+                continue
+
+            self.db.add(
+                InferenceCache(
+                    content_hash=h,
+                    project_id=entry.get("project_id"),
+                    node_type=entry.get("node_type"),
+                    content_length=entry.get("content_length"),
+                    inference_data=entry["inference_data"],
+                    embedding_vector=entry.get("embedding_vector"),
+                    tags=entry.get("tags"),
+                )
+            )
+            stored += 1
+
+        if stored > 0:
+            try:
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+                stored = 0
+
+        logger.debug(
+            f"Batch store: {stored} stored, {skipped} skipped (already exist)"
+        )
+        return stored, skipped
+
+    def invalidate_cache(
+        self, content_hashes: List[str]
+    ) -> int:
+        """
+        Delete cache entries by content hashes.
+
+        Args:
+            content_hashes: List of hashes to invalidate
+
+        Returns:
+            Number of entries deleted
+        """
+        if not content_hashes:
+            return 0
+
+        count = (
+            self.db.query(InferenceCache)
+            .filter(InferenceCache.content_hash.in_(content_hashes))
+            .delete(synchronize_session=False)
+        )
+        self.db.commit()
+
+        logger.info(f"Invalidated {count} cache entries")
+        return count
+
+    def invalidate_cache_by_project(
+        self, project_id: str
+    ) -> int:
+        """
+        Delete all cache entries associated with a project.
+
+        Args:
+            project_id: Project ID to invalidate
+
+        Returns:
+            Number of entries deleted
+        """
+        count = (
+            self.db.query(InferenceCache)
+            .filter(InferenceCache.project_id == project_id)
+            .delete(synchronize_session=False)
+        )
+        self.db.commit()
+
+        logger.info(
+            f"Invalidated {count} cache entries for project {project_id}"
+        )
+        return count
+
     def get_cache_stats(self, project_id: Optional[str] = None) -> Dict[str, Any]:
         """Get cache statistics for monitoring."""
         query = self.db.query(InferenceCache)
@@ -145,4 +295,116 @@ class InferenceCacheService:
             "average_access_count": (
                 total_access_count / total_entries if total_entries > 0 else 0
             ),
+        }
+
+    def get_detailed_cache_stats(
+        self, project_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get detailed cache statistics including hit rate tracking
+        and per-node-type breakdown.
+
+        Args:
+            project_id: Optional project filter
+
+        Returns:
+            Detailed stats dict
+        """
+        base_query = self.db.query(InferenceCache)
+        if project_id:
+            base_query = base_query.filter(InferenceCache.project_id == project_id)
+
+        total = base_query.count()
+        total_access = (
+            base_query.with_entities(func.sum(InferenceCache.access_count)).scalar()
+            or 0
+        )
+
+        # Per-node-type counts
+        type_stats = (
+            base_query.with_entities(
+                InferenceCache.node_type,
+                func.count(InferenceCache.id),
+                func.sum(InferenceCache.access_count),
+            )
+            .group_by(InferenceCache.node_type)
+            .all()
+        )
+
+        # Entries accessed more than once (useful cache entries)
+        reused = (
+            base_query.filter(InferenceCache.access_count > 1).count()
+        )
+
+        # Total storage size estimate
+        total_content_length = (
+            base_query.with_entities(func.sum(InferenceCache.content_length)).scalar()
+            or 0
+        )
+
+        return {
+            "total_entries": total,
+            "total_access_count": total_access,
+            "average_access_count": (
+                total_access / total if total > 0 else 0
+            ),
+            "reused_entries": reused,
+            "reuse_rate": (reused / total * 100) if total > 0 else 0,
+            "node_type_breakdown": [
+                {
+                    "node_type": nt or "unknown",
+                    "count": cnt,
+                    "total_access": int(acc or 0),
+                }
+                for nt, cnt, acc in type_stats
+            ],
+            "total_content_length": total_content_length,
+        }
+
+    def diff_hashes(
+        self,
+        current_hashes: List[str],
+        previous_hashes: Optional[List[str]] = None,
+        project_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Compare current content hashes against previous state or cached entries
+        to determine which nodes need re-inference (branch-aware caching).
+
+        Args:
+            current_hashes: Content hashes of the current code state
+            previous_hashes: Optional previous hashes for direct comparison.
+                             If None, uses cache entries as the "previous" state.
+            project_id: Optional project filter when previous_hashes is None
+
+        Returns:
+            Dict with: unchanged_hashes, new_hashes, removed_hashes, changed_hashes
+        """
+        current_set = set(current_hashes)
+
+        if previous_hashes is not None:
+            previous_set = set(previous_hashes)
+        else:
+            # Use existing cache as the "previous" state
+            q = self.db.query(InferenceCache.content_hash)
+            if project_id:
+                q = q.filter(InferenceCache.project_id == project_id)
+            previous_set = {row[0] for row in q.all()}
+
+        unchanged = current_set & previous_set
+        new = current_set - previous_set
+        removed = previous_set - current_set
+        # "changed" means new hashes that aren't in cache yet
+        changed = new
+
+        logger.info(
+            f"Hash diff: {len(unchanged)} unchanged, "
+            f"{len(new)} new, {len(removed)} removed"
+        )
+
+        return {
+            "unchanged_hashes": list(unchanged),
+            "new_hashes": list(new),
+            "removed_hashes": list(removed),
+            "changed_hashes": list(changed),
         }
