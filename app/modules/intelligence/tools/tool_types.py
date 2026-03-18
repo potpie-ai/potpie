@@ -42,7 +42,7 @@ class PotpieTool:
         description: Optional[str] = None,
         args_schema: Optional[Union[Type[BaseModel], dict]] = None,
         coroutine: Optional[Callable] = None,
-        **kwargs: Any,
+        **_kwargs: Any,  # accepted for API compatibility; not used
     ) -> "PotpieTool":
         """Create a PotpieTool from a callable (mirrors StructuredTool.from_function)."""
         if func is None and coroutine is None:
@@ -63,7 +63,7 @@ class PotpieTool:
                 try:
                     running_loop = asyncio.get_running_loop()
                 except RuntimeError:
-                    pass
+                    pass  # No running loop — safe to call asyncio.run directly.
 
                 if running_loop is not None:
                     # Inside a running loop — spin up a thread with its own loop.
@@ -81,8 +81,14 @@ class PotpieTool:
             coroutine=coroutine,
         )
 
-    def invoke(self, input_data: Union[dict, Any], **kwargs: Any) -> Any:
-        """Invoke the tool synchronously with dict input."""
+    def invoke(self, input_data: Union[dict, Any], **_kwargs: Any) -> Any:
+        """Invoke the tool synchronously with dict input.
+
+        ``**_kwargs`` are accepted for API-compatibility with LangChain's
+        Runnable interface (e.g. ``config``, ``run_manager``) but are not
+        forwarded to the underlying function to avoid polluting tool call-sites
+        that do not expect them.
+        """
         if isinstance(input_data, dict):
             return self._call(**input_data)
         return self.func(input_data)
@@ -101,11 +107,10 @@ class PotpieTool:
                 params = [p for p in sig.parameters.values() if p.name != "self"]
                 if len(params) == 1:
                     annotation = params[0].annotation
-                    if (
-                        annotation is not inspect.Parameter.empty
-                        and isinstance(annotation, type)
-                        and issubclass(annotation, BaseModel)
-                    ):
+                    if annotation is inspect.Parameter.empty:
+                        # Unannotated single param — build from args_schema.
+                        return self.func(schema(**kwargs))
+                    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
                         return self.func(annotation(**kwargs))
             except (TypeError, ValueError):
                 pass
@@ -130,10 +135,6 @@ class BaseMessage:
 class HumanMessage(BaseMessage):
     """Represents a message from the human/user."""
 
-    pass
-
 
 class AIMessage(BaseMessage):
     """Represents a message from the AI assistant."""
-
-    pass
