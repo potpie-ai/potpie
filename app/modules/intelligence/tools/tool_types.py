@@ -4,6 +4,8 @@ Replaces langchain_core.tools.StructuredTool and langchain_core.messages.*
 with minimal, dependency-free equivalents that preserve the same interface.
 """
 
+import asyncio
+import concurrent.futures
 import inspect
 from typing import Any, Callable, Optional, Type, Union
 
@@ -52,20 +54,22 @@ class PotpieTool:
         if description is None:
             description = inspect.getdoc(effective_func) or ""
 
-        # If only coroutine provided, create a sync wrapper
+        # If only coroutine provided, create a sync wrapper that detects whether
+        # a running event loop exists and adapts accordingly.
         if func is None and coroutine is not None:
-            import asyncio
 
             def _sync_wrapper(*args: Any, **kw: Any) -> Any:
+                running_loop: Optional[asyncio.AbstractEventLoop] = None
                 try:
-                    loop = asyncio.get_running_loop()
-                    import concurrent.futures
-
-                    with concurrent.futures.ThreadPoolExecutor() as pool:
-                        fut = pool.submit(asyncio.run, coroutine(*args, **kw))
-                        return fut.result()
+                    running_loop = asyncio.get_running_loop()
                 except RuntimeError:
-                    return asyncio.run(coroutine(*args, **kw))
+                    pass
+
+                if running_loop is not None:
+                    # Inside a running loop — spin up a thread with its own loop.
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        return pool.submit(asyncio.run, coroutine(*args, **kw)).result()
+                return asyncio.run(coroutine(*args, **kw))
 
             func = _sync_wrapper
 
@@ -85,7 +89,13 @@ class PotpieTool:
 
     def _call(self, **kwargs: Any) -> Any:
         """Call func, adapting for single-BaseModel-arg signature if needed."""
-        if self.args_schema is not None and isinstance(self.args_schema, type) and issubclass(self.args_schema, BaseModel):
+        schema = self.args_schema
+        is_basemodel_schema = (
+            schema is not None
+            and isinstance(schema, type)
+            and issubclass(schema, BaseModel)
+        )
+        if is_basemodel_schema:
             try:
                 sig = inspect.signature(self.func)
                 params = [p for p in sig.parameters.values() if p.name != "self"]
