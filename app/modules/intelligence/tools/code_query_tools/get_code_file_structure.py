@@ -4,7 +4,7 @@ from typing import Optional
 from urllib.parse import quote as url_quote
 
 import httpx
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_types import PotpieTool as StructuredTool
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 

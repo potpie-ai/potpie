@@ -4,7 +4,7 @@ from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_types import PotpieTool as StructuredTool
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
 

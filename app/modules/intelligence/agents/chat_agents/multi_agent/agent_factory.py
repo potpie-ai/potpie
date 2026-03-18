@@ -3,7 +3,7 @@
 from typing import List, Dict, Callable, Any, cast
 from pydantic_ai import Agent, Tool, ModelSettings
 from pydantic_ai.mcp import MCPServerStreamableHTTP
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_types import PotpieTool as StructuredTool
 
 from .utils.delegation_utils import AgentType
 from .utils.tool_utils import (

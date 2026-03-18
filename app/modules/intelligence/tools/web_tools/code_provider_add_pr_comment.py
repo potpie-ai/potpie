@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from github import Github
 from github.GithubException import GithubException
 from sqlalchemy.orm import Session
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_types import PotpieTool as StructuredTool
 
 from app.modules.code_provider.provider_factory import CodeProviderFactory
 

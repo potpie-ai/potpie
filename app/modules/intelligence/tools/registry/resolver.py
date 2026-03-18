@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING, List
 
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_types import PotpieTool as StructuredTool
 
 from app.modules.intelligence.tools.registry.annotation_logging import (
     wrap_tool_for_annotation_logging,
