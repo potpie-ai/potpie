@@ -1,7 +1,7 @@
 import asyncio
 from typing import Any, Dict
 
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_types import PotpieTool as StructuredTool
 from neo4j import GraphDatabase
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session

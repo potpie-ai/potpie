@@ -9,7 +9,7 @@ import inspect
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from pydantic import BaseModel
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_types import PotpieTool as StructuredTool
 
 from app.modules.utils.logger import setup_logger
 

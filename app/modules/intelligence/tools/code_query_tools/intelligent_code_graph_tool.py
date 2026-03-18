@@ -2,7 +2,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Set
 
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_types import PotpieTool as StructuredTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 

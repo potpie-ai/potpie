@@ -3,7 +3,7 @@ import os
 from typing import Any, Dict, Optional
 
 from firecrawl import FirecrawlApp
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_types import PotpieTool as StructuredTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 

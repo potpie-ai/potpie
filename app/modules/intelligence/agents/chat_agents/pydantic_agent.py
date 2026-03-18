@@ -52,7 +52,7 @@ from app.modules.intelligence.agents.chat_agents.multi_agent.utils.tool_utils im
     wrap_structured_tools,
 )
 from pydantic_ai.exceptions import ModelRetry, AgentRunError, UserError
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.tool_types import PotpieTool as StructuredTool
 
 logger = setup_logger(__name__)
 
