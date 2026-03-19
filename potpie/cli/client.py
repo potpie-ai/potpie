@@ -33,18 +33,34 @@ class PotpieClient:
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
-        self._api_key = api_key or os.environ.get("POTPIE_API_KEY") or os.environ.get("INTERNAL_ADMIN_SECRET", "")
-        self._user_id = user_id or os.environ.get("POTPIE_USER_ID", "defaultuser")
+        self._api_key = api_key or os.environ.get("POTPIE_API_KEY") or os.environ.get("INTERNAL_ADMIN_SECRET") or ""
+        self._user_id = user_id or os.environ.get("POTPIE_USER_ID") or ""
         self._client = httpx.Client(base_url=self.base_url, timeout=self.timeout)
 
     def _headers(self) -> dict[str, str]:
-        """Build authentication headers for API requests."""
+        """Build authentication headers for API requests.
+
+        Only includes headers when values are explicitly provided
+        to avoid sending empty or placeholder credentials.
+        """
         headers: dict[str, str] = {}
         if self._api_key:
             headers["x-api-key"] = self._api_key
         if self._user_id:
             headers["x-user-id"] = self._user_id
         return headers
+
+    def ensure_auth(self) -> None:
+        """Validate that API credentials are configured.
+
+        Raises:
+            RuntimeError: If no API key is available.
+        """
+        if not self._api_key:
+            raise RuntimeError(
+                "No API key configured. Set POTPIE_API_KEY or INTERNAL_ADMIN_SECRET "
+                "environment variable, or pass --api-key to the CLI."
+            )
 
     def close(self) -> None:
         self._client.close()

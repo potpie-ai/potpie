@@ -92,11 +92,11 @@ def cmd_start(args: argparse.Namespace) -> None:
 
     # Wait for health
     console.print("\n  Waiting for server to be ready...", end="")
-    client = PotpieClient()
+    client = _get_client(args)
     for _ in range(30):
         if client.is_alive():
             console.print(" [green]✓ Ready![/green]")
-            console.print(f"\n  Server running at [bold]http://localhost:8001[/bold]")
+            console.print(f"\n  Server running at [bold]{client.base_url}[/bold]")
             return
         time.sleep(2)
         console.print(".", end="")
@@ -130,8 +130,24 @@ def cmd_stop(args: argparse.Namespace) -> None:
 def cmd_parse(args: argparse.Namespace) -> None:
     """Parse a repository."""
     client = _get_client(args)
-    repo_path = args.repo_path
-    branch = args.branch
+    repo_path = args.repo_path.strip()
+    branch = args.branch.strip()
+
+    # Input validation
+    if not repo_path:
+        console.print("[red]Error:[/red] Repository path cannot be empty.")
+        sys.exit(1)
+
+    if not branch:
+        console.print("[red]Error:[/red] Branch name cannot be empty.")
+        sys.exit(1)
+
+    # Check if local path exists (skip for remote repos like owner/repo)
+    if os.path.sep in repo_path or repo_path.startswith((".", "/")):
+        local_path = Path(repo_path)
+        if not local_path.exists():
+            console.print(f"[red]Error:[/red] Local path '{repo_path}' does not exist.")
+            sys.exit(1)
 
     if not client.is_alive():
         console.print("[red]Error:[/red] Potpie server is not running. Run [bold]potpie start[/bold] first.")
