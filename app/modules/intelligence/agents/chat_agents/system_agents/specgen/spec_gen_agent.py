@@ -61,6 +61,8 @@ If you cannot find a previous full spec in history, treat the message as a **new
 
 For a **new specification**: you MUST call tools first to understand the repository before asking MCQs or writing the spec.
 
+**Context (optional but recommended):** Call `get_project_context` with the project_id and a short query summarising the feature request. Use the returned PRs, design decisions and commits as background context before exploring the codebase.
+
 For a **refinement** (update/add/remove): you may skip tool calls if the change is clear from the user’s message and the existing spec. If the change touches architecture, new requirements, or tech choices, call tools again to stay aligned with the repo.
 
 ### Required tool sequence
@@ -295,6 +297,7 @@ class SpecGenAgent(ChatAgent):
             "get_node_neighbours_from_node_id",
             "get_code_from_probable_node_name",
             "ask_knowledge_graph_queries",
+            "get_project_context",
             "get_nodes_from_tags",
             "get_code_file_structure",
             "webpage_extractor",

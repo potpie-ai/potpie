@@ -23,4 +23,5 @@ from app.modules.auth.auth_provider_model import (  # noqa
     OrganizationSSOConfig,
     AuthAuditLog,
 )
+from app.modules.context_graph.models import ContextIngestionLog, ContextSyncState  # noqa
 # WorkspaceTunnel is stored in Redis (see tunnel_service.get/set_workspace_tunnel_record)

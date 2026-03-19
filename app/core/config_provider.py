@@ -73,6 +73,18 @@ class ConfigProvider:
             return ConfigProvider._neo4j_override
         return self.neo4j_config
 
+    def get_context_graph_config(self) -> dict:
+        """Get context graph (Graphiti) config and feature flag.
+
+        Used by context_graph module: client, ingestion, and get_project_context tool.
+        """
+        return {
+            "enabled": os.getenv("CONTEXT_GRAPH_ENABLED", "false").lower() == "true",
+            "neo4j_uri": os.getenv("GRAPHITI_NEO4J_URI"),
+            "neo4j_user": os.getenv("GRAPHITI_NEO4J_USER"),
+            "neo4j_password": os.getenv("GRAPHITI_NEO4J_PASSWORD"),
+        }
+
     def get_github_key(self):
         """Return GitHub App private key, with literal \\n converted to newlines.
 

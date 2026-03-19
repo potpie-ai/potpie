@@ -27,6 +27,9 @@ from app.modules.intelligence.tools.code_query_tools.intelligent_code_graph_tool
 from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import (
     get_ask_knowledge_graph_queries_tool,
 )
+from app.modules.intelligence.tools.context_tools.get_project_context_tool import (
+    get_project_context_tool,
+)
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_multiple_node_ids_tool import (
     get_code_from_multiple_node_ids_tool,
     GetCodeFromMultipleNodeIdsTool,
@@ -202,6 +205,7 @@ class ToolService:
             "ask_knowledge_graph_queries": get_ask_knowledge_graph_queries_tool(
                 self.db, self.user_id
             ),
+            "get_project_context": get_project_context_tool(self.db, self.user_id),
             "get_nodes_from_tags": get_nodes_from_tags_tool(self.db, self.user_id),
             "get_code_graph_from_node_id": get_code_graph_from_node_id_tool(self.db),
             "change_detection": get_change_detection_tool(self.user_id),

@@ -108,6 +108,8 @@ class WebhookEventHandler:
             return self._process_linear_webhook(event_type, payload, integration)
         elif integration_type.lower() == "sentry":
             return self._process_sentry_webhook(event_type, payload, integration)
+        elif integration_type.lower() == "github":
+            return self._process_github_webhook(event_type, payload, integration)
         else:
             # Generic processing for unknown integration types
             return self._process_generic_webhook(event_type, payload, integration)
@@ -163,6 +165,49 @@ class WebhookEventHandler:
             result["project_data"] = payload.get("data", {})
 
         return result
+
+    def _process_github_webhook(
+        self, event_type: str, payload: Dict[str, Any], integration: Any
+    ) -> Dict[str, Any]:
+        """Process GitHub webhook events (e.g. PR merged → context graph ingestion)."""
+        self.logger.info(f"Processing GitHub webhook: {event_type}")
+        from app.core.config_provider import config_provider
+        from app.modules.projects.projects_model import Project
+
+        if not config_provider.get_context_graph_config().get("enabled"):
+            return {"integration_type": "github", "event_type": event_type, "webhook_data": payload}
+
+        action = payload.get("action")
+        pr = payload.get("pull_request")
+        if (
+            event_type == "pull_request"
+            and action == "closed"
+            and pr
+            and pr.get("merged")
+        ):
+            repo = payload.get("repository", {})
+            repo_name = repo.get("full_name") if isinstance(repo, dict) else None
+            if not repo_name:
+                return {"processed": False, "reason": "no repo_name in payload"}
+            projects = (
+                self.db.query(Project)
+                .filter(
+                    Project.repo_name == repo_name,
+                    Project.is_deleted == False,  # noqa: E712
+                )
+                .all()
+            )
+            from app.modules.context_graph.tasks import ingest_pr_from_webhook
+
+            for project in projects:
+                ingest_pr_from_webhook.delay(project.id, pr)
+                self.logger.info(
+                    "Enqueued context graph ingestion for project %s (PR #%s)",
+                    project.id,
+                    pr.get("number"),
+                )
+
+        return {"integration_type": "github", "event_type": event_type, "webhook_data": payload}
 
     def _process_generic_webhook(
         self, event_type: str, payload: Dict[str, Any], integration: Any

@@ -21,6 +21,7 @@ dependencies = [
     "firecrawl-py>=4.6.0",
     "flower>=2.0.1",
     "gitpython>=3.1.45",
+    "graphiti-core>=0.28",
     "google-cloud-secret-manager>=2.25.0",
     "google-cloud-storage>=3.5.0",
     "grep-ast>=0.6.0",
