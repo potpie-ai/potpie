@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-from potpie.cli.client import PotpieClient
+from potpie.cli.client import PotpieClient, API_PREFIX
 
 
 class TestPotpieClientInit:
@@ -23,6 +23,29 @@ class TestPotpieClientInit:
     def test_strips_trailing_slash(self):
         client = PotpieClient(base_url="http://localhost:8001/")
         assert client.base_url == "http://localhost:8001"
+
+    def test_explicit_api_key(self):
+        client = PotpieClient(api_key="test-key")
+        assert client._api_key == "test-key"
+
+    def test_explicit_user_id(self):
+        client = PotpieClient(user_id="test-user")
+        assert client._user_id == "test-user"
+
+
+class TestHeaders:
+    """Test authentication header generation."""
+
+    def test_headers_include_api_key(self):
+        client = PotpieClient(api_key="my-key", user_id="my-user")
+        headers = client._headers()
+        assert headers["x-api-key"] == "my-key"
+        assert headers["x-user-id"] == "my-user"
+
+    def test_headers_empty_api_key(self):
+        client = PotpieClient(api_key="", user_id="")
+        headers = client._headers()
+        assert "x-api-key" not in headers
 
 
 class TestIsAlive:
@@ -62,3 +85,10 @@ class TestPollParsing:
         client = PotpieClient()
         with pytest.raises(TimeoutError):
             client.poll_parsing("test-id", interval=0.01, max_wait=0.05)
+
+
+class TestAPIPrefix:
+    """Test that API prefix is correctly configured."""
+
+    def test_api_prefix_value(self):
+        assert API_PREFIX == "/api/v1"

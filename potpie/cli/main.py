@@ -157,8 +157,9 @@ def cmd_parse(args: argparse.Namespace) -> None:
     console.print(f"  Project ID: [bold cyan]{project_id}[/bold cyan]")
     console.print()
 
-    # Poll until complete
+    # Poll until complete (with timeout)
     console.print("  Parsing", end="")
+    max_wait = 600.0
     try:
         start_time = time.monotonic()
         while True:
@@ -178,13 +179,14 @@ def cmd_parse(args: argparse.Namespace) -> None:
                 console.print(f"  Status: {status}")
                 sys.exit(1)
 
+            if time.monotonic() - start_time > max_wait:
+                console.print(f"\n[yellow]  Timed out after {max_wait:.0f}s.[/yellow]")
+                console.print(f"  Check status with: [bold]potpie status {project_id}[/bold]")
+                sys.exit(1)
+
             console.print(".", end="", highlight=False)
             time.sleep(3)
 
-    except TimeoutError:
-        console.print(f"\n[yellow]  Timed out waiting for parsing to complete.[/yellow]")
-        console.print(f"  Check status with: [bold]potpie status {project_id}[/bold]")
-        sys.exit(1)
     except KeyboardInterrupt:
         console.print(f"\n[yellow]  Interrupted. Parsing continues in background.[/yellow]")
         console.print(f"  Check status with: [bold]potpie status {project_id}[/bold]")
@@ -206,7 +208,7 @@ def cmd_status(args: argparse.Namespace) -> None:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
 
-    state = status.get("status", "unknown")
+    state = status.get("status", "unknown").lower()
     style = "green" if state in ("ready", "completed", "parsed") else "yellow" if state == "processing" else "red"
 
     console.print(f"  Project: [bold]{project_id}[/bold]")
@@ -315,8 +317,12 @@ def cmd_chat(args: argparse.Namespace) -> None:
         console.print(f"[red]Error creating conversation:[/red] {e}")
         sys.exit(1)
 
+    branch = getattr(args, "branch", None)
+
     console.print(Panel.fit("💬 Potpie Chat", style="bold magenta"))
     console.print(f"  Project: [bold]{project_id}[/bold]")
+    if branch:
+        console.print(f"  Branch:  [bold]{branch}[/bold]")
     console.print(f"  Agent:   [bold]{agent}[/bold]")
     console.print(f"  Session: [dim]{conversation_id}[/dim]")
     console.print()
@@ -413,6 +419,7 @@ examples:
     chat_cmd = sub.add_parser("chat", help="Start interactive chat")
     chat_cmd.add_argument("project_id", help="Project ID to chat about")
     chat_cmd.add_argument("--agent", default="codebase_qna_agent", help="Agent to use (default: codebase_qna_agent)")
+    chat_cmd.add_argument("--branch", default=None, help="Branch context (informational, displayed in session header)")
 
     return parser
 

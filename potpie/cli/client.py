@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any, Generator
 
@@ -9,6 +10,7 @@ import httpx
 
 DEFAULT_BASE_URL = "http://localhost:8001"
 DEFAULT_TIMEOUT = 30.0
+API_PREFIX = "/api/v1"
 
 
 class PotpieClient:
@@ -16,12 +18,33 @@ class PotpieClient:
 
     All methods raise ``httpx.HTTPStatusError`` on non-2xx responses
     so callers can handle errors uniformly.
+
+    Authentication in development mode requires an API key. The client
+    reads ``POTPIE_API_KEY`` from the environment, or falls back to
+    the ``INTERNAL_ADMIN_SECRET`` env var used by the server.
     """
 
-    def __init__(self, base_url: str = DEFAULT_BASE_URL, timeout: float = DEFAULT_TIMEOUT) -> None:
+    def __init__(
+        self,
+        base_url: str = DEFAULT_BASE_URL,
+        timeout: float = DEFAULT_TIMEOUT,
+        api_key: str | None = None,
+        user_id: str | None = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self._api_key = api_key or os.environ.get("POTPIE_API_KEY") or os.environ.get("INTERNAL_ADMIN_SECRET", "")
+        self._user_id = user_id or os.environ.get("POTPIE_USER_ID", "defaultuser")
         self._client = httpx.Client(base_url=self.base_url, timeout=self.timeout)
+
+    def _headers(self) -> dict[str, str]:
+        """Build authentication headers for API requests."""
+        headers: dict[str, str] = {}
+        if self._api_key:
+            headers["x-api-key"] = self._api_key
+        if self._user_id:
+            headers["x-user-id"] = self._user_id
+        return headers
 
     def close(self) -> None:
         self._client.close()
@@ -63,12 +86,12 @@ class PotpieClient:
             API response dict containing the project_id.
         """
         resp = self._client.post(
-            "/api/v1/parse",
+            f"{API_PREFIX}/parse",
             json={
                 "repo_path": repo_path,
                 "branch_name": branch_name,
             },
-            headers={"isDevelopmentMode": "enabled"},
+            headers=self._headers(),
         )
         resp.raise_for_status()
         return resp.json()
@@ -83,8 +106,8 @@ class PotpieClient:
             Dict with at least a ``status`` key.
         """
         resp = self._client.get(
-            f"/api/v1/parsing-status/{project_id}",
-            headers={"isDevelopmentMode": "enabled"},
+            f"{API_PREFIX}/parsing-status/{project_id}",
+            headers=self._headers(),
         )
         resp.raise_for_status()
         return resp.json()
@@ -129,8 +152,8 @@ class PotpieClient:
     def list_projects(self) -> list[dict[str, Any]]:
         """List all projects."""
         resp = self._client.get(
-            "/api/v1/projects/list",
-            headers={"isDevelopmentMode": "enabled"},
+            f"{API_PREFIX}/projects/list",
+            headers=self._headers(),
         )
         resp.raise_for_status()
         return resp.json()
@@ -142,8 +165,8 @@ class PotpieClient:
     def list_agents(self) -> list[dict[str, Any]]:
         """List available agents."""
         resp = self._client.get(
-            "/api/v1/list-available-agents",
-            headers={"isDevelopmentMode": "enabled"},
+            f"{API_PREFIX}/list-available-agents",
+            headers=self._headers(),
         )
         resp.raise_for_status()
         return resp.json()
@@ -156,26 +179,23 @@ class PotpieClient:
         self,
         project_id: str,
         agent_id: str,
-        title: str = "CLI Chat",
     ) -> dict[str, Any]:
         """Create a new conversation.
 
         Args:
             project_id: The parsed project to converse about.
-            agent_id: Agent identifier (e.g. ``"qna_agent"``).
-            title: Human-readable conversation title.
+            agent_id: Agent identifier (e.g. ``"codebase_qna_agent"``).
 
         Returns:
             Dict containing the ``conversation_id``.
         """
         resp = self._client.post(
-            "/api/v1/conversations/",
+            f"{API_PREFIX}/conversations/",
             json={
                 "project_ids": [project_id],
-                "agent_id": agent_id,
-                "title": title,
+                "agent_ids": [agent_id],
             },
-            headers={"isDevelopmentMode": "enabled"},
+            headers=self._headers(),
         )
         resp.raise_for_status()
         return resp.json()
@@ -196,9 +216,9 @@ class PotpieClient:
         """
         with self._client.stream(
             "POST",
-            f"/api/v1/conversations/{conversation_id}/message/",
+            f"{API_PREFIX}/conversations/{conversation_id}/message/",
             json={"content": content, "node_ids": []},
-            headers={"isDevelopmentMode": "enabled"},
+            headers=self._headers(),
             timeout=300.0,
         ) as resp:
             resp.raise_for_status()
