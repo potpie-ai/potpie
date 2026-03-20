@@ -19,6 +19,10 @@ Usage:
   # One-shot (single sample then exit)
   uv run python scripts/neo4j_monitor.py --once
 
+  # Use staging Neo4j (STAGE_NEO4J_URI, STAGE_NEO4J_USERNAME, STAGE_NEO4J_PASSWORD in .env)
+  uv run python scripts/neo4j_monitor.py --staging
+  uv run python scripts/neo4j_monitor.py --staging --once
+
 Press Ctrl+C to stop.
 """
 
@@ -97,17 +101,34 @@ def main() -> int:
         action="store_true",
         help="Print one sample and exit",
     )
+    parser.add_argument(
+        "--staging",
+        action="store_true",
+        help="Use staging Neo4j (STAGE_NEO4J_URI, STAGE_NEO4J_USERNAME, STAGE_NEO4J_PASSWORD)",
+    )
     args = parser.parse_args()
 
-    uri = os.getenv("NEO4J_URI")
-    user = os.getenv("NEO4J_USERNAME")
-    password = os.getenv("NEO4J_PASSWORD")
+    if args.staging:
+        uri = os.getenv("STAGE_NEO4J_URI") or os.getenv("NEO4J_URI")
+        user = os.getenv("STAGE_NEO4J_USERNAME") or os.getenv("NEO4J_USERNAME")
+        password = os.getenv("STAGE_NEO4J_PASSWORD") or os.getenv("NEO4J_PASSWORD")
+    else:
+        uri = os.getenv("NEO4J_URI")
+        user = os.getenv("NEO4J_USERNAME")
+        password = os.getenv("NEO4J_PASSWORD")
     server_pid_str = os.getenv("SERVER_PID")
     server_pid = int(server_pid_str) if server_pid_str and server_pid_str.isdigit() else None
 
     if not uri or not user or not password:
-        print("ERROR: Set NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD in .env", file=sys.stderr)
+        print(
+            "ERROR: Set NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD in .env"
+            " (or STAGE_NEO4J_URI, STAGE_NEO4J_USERNAME, STAGE_NEO4J_PASSWORD for --staging)",
+            file=sys.stderr,
+        )
         return 1
+
+    if args.staging:
+        print("Using staging Neo4j (STAGE_NEO4J_*).", file=sys.stderr)
 
     from neo4j import GraphDatabase
     try:

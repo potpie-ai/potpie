@@ -17,11 +17,18 @@ logger = setup_logger(__name__)
 
 # Max PRs to process per backfill run (resume on next run via cursor)
 BACKFILL_BATCH_SIZE = 100
+# Max default-branch commits to ingest per project per backfill
+BACKFILL_COMMIT_LIMIT = 100
+# Cap comments/review comments per PR to avoid huge payloads
+MAX_COMMENTS_PER_PR = 50
+MAX_REVIEW_COMMENTS_PER_PR = 100
 
 
 def _pr_to_payload(pr: Any) -> Dict[str, Any]:
-    """Build a dict compatible with format_github_pr_episode from a PyGithub PullRequest."""
-    return {
+    """Build a dict compatible with format_github_pr_episode from a PyGithub PullRequest.
+    Enriches with issue comments, review comments, and commit messages when available.
+    """
+    payload = {
         "number": pr.number,
         "title": pr.title or "",
         "body": pr.body or "",
@@ -35,44 +42,151 @@ def _pr_to_payload(pr: Any) -> Dict[str, Any]:
         "author": pr.user.login if pr.user else "unknown",
         "files": [],  # Optional; omit for backfill to avoid extra API calls
     }
+    try:
+        comments = []
+        for c in list(pr.get_issue_comments())[:MAX_COMMENTS_PER_PR]:
+            comments.append({
+                "body": c.body or "",
+                "user": {"login": c.user.login} if c.user else {},
+                "created_at": c.created_at.isoformat() if c.created_at else None,
+            })
+        payload["comments"] = comments
+    except Exception as e:
+        logger.debug("Context graph backfill: could not fetch issue comments for PR %s: %s", pr.number, e)
+        payload["comments"] = []
+    try:
+        review_comments = []
+        for c in list(pr.get_review_comments())[:MAX_REVIEW_COMMENTS_PER_PR]:
+            review_comments.append({
+                "body": c.body or "",
+                "user": {"login": c.user.login} if c.user else {},
+                "path": getattr(c, "path", None),
+                "created_at": c.created_at.isoformat() if c.created_at else None,
+            })
+        payload["review_comments"] = review_comments
+    except Exception as e:
+        logger.debug("Context graph backfill: could not fetch review comments for PR %s: %s", pr.number, e)
+        payload["review_comments"] = []
+    try:
+        commit_messages = []
+        for c in pr.get_commits():
+            msg = (c.commit.message or "").strip().split("\n")[0] if c.commit else ""
+            author = (c.author.login if c.author else None) or (c.commit.author.name if c.commit and c.commit.author else "") or "?"
+            commit_messages.append({"sha": c.sha[:12] if c.sha else "?", "message": msg, "author": author})
+            if len(commit_messages) >= 50:
+                break
+        payload["commit_messages"] = commit_messages
+    except Exception as e:
+        logger.debug("Context graph backfill: could not fetch commits for PR %s: %s", pr.number, e)
+        payload["commit_messages"] = []
+    return payload
 
 
 async def _backfill_async(
     task: BaseTask,
     project_id: str,
     pr_payloads: List[Dict[str, Any]],
+    commit_payloads: List[Dict[str, Any]] | None = None,
+    default_branch: str = "main",
 ) -> None:
-    """Run inside run_async: ingest each PR and update sync_state."""
-    if not pr_payloads:
-        return
+    """Run inside run_async: ingest each PR, then each commit, and update sync_state.
+    Commits after each ingest to avoid long transactions and connection timeouts.
+    """
+    now = datetime.utcnow()
     async with task.async_db() as db:
-        for pr in pr_payloads:
-            try:
-                await ingest_episode(
-                    db,
-                    project_id=project_id,
-                    source_type="github_pr",
-                    source_id=f"pr_{pr['number']}_merged",
-                    payload=pr,
-                    event_type="merged",
+        try:
+            for pr in pr_payloads:
+                try:
+                    await ingest_episode(
+                        db,
+                        project_id=project_id,
+                        source_type="github_pr",
+                        source_id=f"pr_{pr['number']}_merged",
+                        payload=pr,
+                        event_type="merged",
+                    )
+                    await db.commit()
+                except Exception as e:
+                    await db.rollback()
+                    logger.warning(
+                        "Context graph backfill: failed to ingest pr %s: %s",
+                        pr.get("number"),
+                        e,
+                    )
+            if commit_payloads:
+                for commit in commit_payloads:
+                    try:
+                        sha = commit.get("sha", "")[:12] or "unknown"
+                        await ingest_episode(
+                            db,
+                            project_id=project_id,
+                            source_type="github_commit",
+                            source_id=f"commit_{sha}",
+                            payload=commit,
+                            event_type=None,
+                            branch_name=default_branch,
+                        )
+                        await db.commit()
+                    except Exception as e:
+                        await db.rollback()
+                        logger.warning(
+                            "Context graph backfill: failed to ingest commit %s: %s",
+                            sha,
+                            e,
+                        )
+            # Update sync_state for github_pr and github_commit
+            await db.execute(
+                update(ContextSyncState)
+                .where(
+                    ContextSyncState.project_id == project_id,
+                    ContextSyncState.source_type == "github_pr",
                 )
-            except Exception as e:
-                logger.warning(
-                    "Context graph backfill: failed to ingest pr %s: %s",
-                    pr.get("number"),
-                    e,
-                )
-        # Update sync_state cursor and status
-        now = datetime.utcnow()
-        await db.execute(
-            update(ContextSyncState)
-            .where(
-                ContextSyncState.project_id == project_id,
-                ContextSyncState.source_type == "github_pr",
+                .values(last_synced_at=now, status="idle", error=None, updated_at=now)
             )
-            .values(last_synced_at=now, status="idle", error=None, updated_at=now)
-        )
-        await db.commit()
+            if commit_payloads:
+                await db.execute(
+                    update(ContextSyncState)
+                    .where(
+                        ContextSyncState.project_id == project_id,
+                        ContextSyncState.source_type == "github_commit",
+                    )
+                    .values(last_synced_at=now, status="idle", error=None, updated_at=now)
+                )
+            await db.commit()
+        except Exception:
+            try:
+                await db.rollback()
+            except Exception as rb_e:
+                logger.warning("Context graph backfill: rollback on error failed: %s", rb_e)
+            raise
+
+
+def _commit_to_payload(c: Any) -> Dict[str, Any]:
+    """Build a dict for format_github_commit_episode from a PyGithub Commit."""
+    sha = (getattr(c, "sha", "") or "")[:12] or "unknown"
+    commit = getattr(c, "commit", None)
+    message = ""
+    author_name = "unknown"
+    author_date = None
+    if commit:
+        message = (getattr(commit, "message", "") or "").strip().split("\n")[0] or "(no message)"
+        author = getattr(commit, "author", None)
+        if author:
+            author_name = getattr(author, "name", None) or getattr(author, "email", None) or "unknown"
+            author_date = getattr(author, "date", None)
+            if author_date and hasattr(author_date, "isoformat"):
+                author_date = author_date.isoformat()
+    login = getattr(c, "author", None) and getattr(c.author, "login", None)
+    return {
+        "sha": sha,
+        "message": message,
+        "author": login or author_name,
+        "commit": {
+            "message": message,
+            "author": {"name": author_name, "date": author_date},
+        },
+        "created_at": author_date,
+    }
 
 
 @celery_app.task(
@@ -81,7 +195,7 @@ async def _backfill_async(
     name="app.modules.context_graph.tasks.context_graph_backfill_project",
 )
 def context_graph_backfill_project(self: BaseTask, project_id: str) -> None:
-    """Backfill GitHub PRs for one project into the context graph."""
+    """Backfill GitHub PRs (with comments, review comments, commit messages) and default-branch commits."""
     if not config_provider.get_context_graph_config().get("enabled"):
         return
     project = self.db.query(Project).filter(Project.id == project_id).first()
@@ -90,26 +204,34 @@ def context_graph_backfill_project(self: BaseTask, project_id: str) -> None:
         return
     repo_name = project.repo_name
 
-    # Ensure sync_state row exists (so we can update it in async part)
-    sync_row = (
-        self.db.query(ContextSyncState)
-        .filter(ContextSyncState.project_id == project_id, ContextSyncState.source_type == "github_pr")
-        .first()
-    )
-    if not sync_row:
-        self.db.add(
-            ContextSyncState(project_id=project_id, source_type="github_pr", status="idle")
+    # Ensure sync_state rows exist for github_pr and github_commit
+    for source_type in ("github_pr", "github_commit"):
+        sync_row = (
+            self.db.query(ContextSyncState)
+            .filter(
+                ContextSyncState.project_id == project_id,
+                ContextSyncState.source_type == source_type,
+            )
+            .first()
         )
-        self.db.commit()
+        if not sync_row:
+            self.db.add(
+                ContextSyncState(project_id=project_id, source_type=source_type, status="idle")
+            )
+    self.db.commit()
 
-    # Sync: fetch merged PRs (blocking I/O before run_async)
     pr_payloads: List[Dict[str, Any]] = []
+    commit_payloads: List[Dict[str, Any]] = []
+    default_branch = getattr(project, "branch_name", None) or "main"
     try:
         from app.modules.code_provider.github.github_service import GithubService
 
         gh = GithubService(self.db)
         github = gh.get_github_app_client(repo_name)
         repo = github.get_repo(repo_name)
+        default_branch = getattr(repo, "default_branch", None) or default_branch
+
+        # Fetch merged PRs with comments, review comments, and commit messages
         pulls = repo.get_pulls(state="closed")
         count = 0
         for pr in pulls:
@@ -119,14 +241,34 @@ def context_graph_backfill_project(self: BaseTask, project_id: str) -> None:
             count += 1
             if count >= BACKFILL_BATCH_SIZE:
                 break
+
+        # Fetch recent commits on default branch
+        try:
+            for c in repo.get_commits(sha=default_branch)[:BACKFILL_COMMIT_LIMIT]:
+                commit_payloads.append(_commit_to_payload(c))
+        except Exception as e:
+            logger.warning(
+                "Context graph backfill: could not fetch commits for %s (branch %s): %s",
+                repo_name,
+                default_branch,
+                e,
+            )
     except Exception as e:
-        logger.exception("Context graph backfill: failed to fetch PRs for %s: %s", repo_name, e)
+        logger.exception("Context graph backfill: failed to fetch GitHub data for %s: %s", repo_name, e)
         return
 
-    if not pr_payloads:
+    if not pr_payloads and not commit_payloads:
         return
 
-    self.run_async(_backfill_async(self, project_id, pr_payloads))
+    self.run_async(
+        _backfill_async(
+            self,
+            project_id,
+            pr_payloads,
+            commit_payloads=commit_payloads or None,
+            default_branch=default_branch,
+        )
+    )
 
 
 @celery_app.task(

@@ -27,6 +27,9 @@ Usage:
     uv run python scripts/neo4j_leak_test.py --api --profile parse --iterations 30
   # Optional: REPO_NAME=owner/repo BRANCH_NAME=main (default: octocat/Hello-World, main)
 
+  # Staging: default BASE_URL to https://stage-api.potpie.ai (set AUTH_HEADER, PROJECT_ID for semantic-search)
+  AUTH_HEADER="Bearer <token>" uv run python scripts/neo4j_leak_test.py --api --staging --profile parse --iterations 20
+
   # Optional: sample another process (e.g. backend) memory in API mode
   SERVER_PID=12345 uv run python scripts/neo4j_leak_test.py --api --iterations 50
 
@@ -221,12 +224,17 @@ def run_api_mode(
 
     rss_samples: list[float] = []
     errors = 0
+    first_error_status: int | None = None
+    first_error_body: str | None = None
 
     with httpx.Client(timeout=timeout) as client:
         for i in range(iterations):
             r = client.post(url, json=payload, headers=headers)
             if r.status_code not in (200, 201, 202):
                 errors += 1
+                if first_error_status is None:
+                    first_error_status = r.status_code
+                    first_error_body = (r.text or "")[:500]
             if server_pid is not None:
                 rss = get_rss_mb(server_pid)
                 if rss is not None:
@@ -237,6 +245,10 @@ def run_api_mode(
 
     if errors > 0:
         print(f"FAIL: {errors}/{iterations} requests failed (check auth and params).")
+        if first_error_status is not None:
+            print(f"  First error: HTTP {first_error_status}")
+            if first_error_body:
+                print(f"  Body (first 500 chars): {first_error_body!r}")
         return False
     if not rss_samples:
         print("INFO: Set SERVER_PID to sample server process memory.")
@@ -289,20 +301,41 @@ def main() -> int:
         action="store_true",
         help="In direct mode, sample Neo4j connection count each iteration",
     )
+    parser.add_argument(
+        "--staging",
+        action="store_true",
+        help="Use staging: BASE_URL=https://stage-api.potpie.ai (API) or STAGE_NEO4J_* (direct)",
+    )
     args = parser.parse_args()
 
     if args.api:
         args.direct = False
 
     if args.direct:
+        if args.staging:
+            for key, stage_key in (
+                ("NEO4J_URI", "STAGE_NEO4J_URI"),
+                ("NEO4J_USERNAME", "STAGE_NEO4J_USERNAME"),
+                ("NEO4J_PASSWORD", "STAGE_NEO4J_PASSWORD"),
+            ):
+                val = os.getenv(stage_key)
+                if val is not None:
+                    os.environ[key] = val
         ok = run_direct_mode(args.iterations, args.neo4j_connections)
     else:
-        base_url = os.getenv("BASE_URL", "http://localhost:8001")
-        auth = os.getenv("AUTH_HEADER", "").strip()
+        base_url = os.getenv("BASE_URL") or (
+            "https://stage-api.potpie.ai" if args.staging else "http://localhost:8001"
+        )
+        auth = (
+            (os.getenv("STAGE_AUTH_HEADER") or os.getenv("AUTH_HEADER") or "").strip()
+        )
         server_pid_str = os.getenv("SERVER_PID")
         server_pid = int(server_pid_str) if server_pid_str else None
         if not auth:
-            print("ERROR: In API mode set AUTH_HEADER (and optionally SERVER_PID)")
+            print(
+                "ERROR: In API mode set AUTH_HEADER (or STAGE_AUTH_HEADER for --staging)"
+                " and optionally SERVER_PID"
+            )
             return 1
         if args.profile == "semantic-search":
             project_id = os.getenv("PROJECT_ID", "")

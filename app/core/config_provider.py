@@ -76,13 +76,14 @@ class ConfigProvider:
     def get_context_graph_config(self) -> dict:
         """Get context graph (Graphiti) config and feature flag.
 
-        Used by context_graph module: client, ingestion, and get_project_context tool.
+        Uses the same Neo4j instance as the code graph (no separate instance).
         """
+        neo4j = self.get_neo4j_config()
         return {
             "enabled": os.getenv("CONTEXT_GRAPH_ENABLED", "false").lower() == "true",
-            "neo4j_uri": os.getenv("GRAPHITI_NEO4J_URI"),
-            "neo4j_user": os.getenv("GRAPHITI_NEO4J_USER"),
-            "neo4j_password": os.getenv("GRAPHITI_NEO4J_PASSWORD"),
+            "neo4j_uri": neo4j.get("uri"),
+            "neo4j_user": neo4j.get("username"),
+            "neo4j_password": neo4j.get("password"),
         }
 
     def get_github_key(self):

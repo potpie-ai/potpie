@@ -72,11 +72,13 @@ class GetProjectContextTool:
         parts = []
         if branch:
             parts.append(f"branch:{branch}")
-        if query:
-            parts.append(query)
+        if query and str(query).strip():
+            parts.append(str(query).strip())
         if file_paths:
             parts.extend(file_paths)
-        search_text = " ".join(parts) if parts else project_id
+        # When no query: use a broad fallback so Graphiti returns recent PR/commit context.
+        # Searching by project_id (UUID) would match nothing in episode text.
+        search_text = " ".join(parts) if parts else "pull request merged commit recent changes"
         limit = limit or 10
 
         client = ContextGraphClient()

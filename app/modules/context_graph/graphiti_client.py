@@ -1,6 +1,6 @@
 """Thin async wrapper around Graphiti for the context graph.
 
-Uses a dedicated Neo4j instance (GRAPHITI_NEO4J_*) and respects CONTEXT_GRAPH_ENABLED.
+Uses the same Neo4j instance as the code graph (NEO4J_URI). Respects CONTEXT_GRAPH_ENABLED.
 Callers in Celery tasks must use BaseTask.run_async(coro); agent tools may use asyncio.run().
 """
 

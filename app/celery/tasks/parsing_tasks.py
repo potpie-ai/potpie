@@ -52,6 +52,13 @@ def process_parsing(
 
             # Run parsing in a fresh event loop (asyncio.run)
             self.run_async(run_parsing())
+
+            # On success: enqueue context graph backfill so new repo gets PR/commit context
+            from app.core.config_provider import config_provider
+            if config_provider.get_context_graph_config().get("enabled"):
+                from app.modules.context_graph.tasks import context_graph_backfill_project
+                context_graph_backfill_project.delay(project_id)
+                logger.info("Enqueued context graph backfill for project %s", project_id)
         except Exception:
             logger.exception("Error during parsing")
             raise

@@ -20,6 +20,9 @@ from app.core.database import SessionLocal, engine
 from app.core.models import *  # noqa #necessary for models to not give import errors
 from app.modules.auth.auth_router import auth_router
 from app.modules.code_provider.github.github_router import router as github_router
+from app.modules.context_graph.context_graph_router import (
+    router as context_graph_router,
+)
 from app.modules.conversations.conversations_router import (
     router as conversations_router,
 )
@@ -185,6 +188,9 @@ class MainApp:
         )
         self.app.include_router(
             knowledge_graph_router, prefix="/api/v1", tags=["Knowledge Graph"]
+        )
+        self.app.include_router(
+            context_graph_router, prefix="/api/v1", tags=["Context Graph"]
         )
 
     def add_health_check(self):

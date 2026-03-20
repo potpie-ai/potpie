@@ -15,11 +15,11 @@ We use **[Graphiti](https://github.com/getzep/graphiti)** (Zep's temporal knowle
 - **Two write paths** — ETL backfill and live triggers send episodes to Graphiti with deduplication checks.
 - **One agent tool** — `get_project_context(project_id, file_paths?, query?, limit?)` calls `graphiti.search(query=..., group_id=project_id)` — a hard namespace filter, not text matching.
 
-Graphiti gives us: bi-temporal modeling, hybrid retrieval (semantic + BM25 + RRF reranking), edge invalidation, and sub-second search. We use a **separate Neo4j instance** for Graphiti so it never clashes with the existing code graph.
+Graphiti gives us: bi-temporal modeling, hybrid retrieval (semantic + BM25 + RRF reranking), edge invalidation, and sub-second search. We use the **same Neo4j instance** as the code graph (no separate instance). Graphiti and the code graph coexist via different node labels and scoping (`group_id` vs `repoId`).
 
 ```
 ETL (backfill history)  ──┐
-                           ├──→  Graphiti (group_id = project_id) → Neo4j (context)  ←──→  get_project_context() → Agent
+                           ├──→  Graphiti (group_id = project_id) → Neo4j (shared)  ←──→  get_project_context() → Agent
 Triggers (live updates)  ──┘
       ↕
  Postgres (context_sync_state + context_ingestion_log)
@@ -27,14 +27,14 @@ Triggers (live updates)  ──┘
 
 ---
 
-## 3) Two-graph system in Neo4j
+## 3) Two-graph system in Neo4j (single instance)
 
-Potpie already has a **code graph** in Neo4j. We add a **context graph** in a **separate Neo4j instance** so the two never mix.
+Potpie already has a **code graph** in Neo4j. We add a **context graph** (Graphiti) in the **same Neo4j instance**. No separate instance: both graphs share `NEO4J_URI` and coexist via different node labels and scoping.
 
 | | Code Graph (existing) | Context Graph (Graphiti) |
 |---|---|---|
 | **Purpose** | Structure: what exists, who calls whom | History: what happened, what was decided |
-| **Neo4j** | Existing instance (Community Edition) | Separate instance for Graphiti |
+| **Neo4j** | Same instance (NEO4J_URI) | Same instance (NEO4J_URI) |
 | **Schema** | Our schema (NODE, FILE, etc.) | Graphiti's schema (EntityNode, EpisodicNode, CommunityNode) |
 | **Scoping** | `repoId` = project_id | **`group_id` = project_id** — native graph namespace, not text filter |
 | **Write path** | Parsing pipeline (CodeGraphService) | ETL backfill + live triggers → episode formatter → dedup check → Graphiti |
@@ -50,11 +50,9 @@ Graphiti's `group_id` is a **first-class namespacing feature** ([docs](https://h
 - **#1012**: `group_id` doesn't work with `AnthropicClient` LLM provider (still open). Potpie defaults to OpenAI, so not a blocker. If switching to Anthropic, verify this is fixed first.
 - **#1249**: BM25 search with *multiple* `group_ids` only filters by the last one. Not relevant — we always query with a single `group_id`.
 
-### Neo4j cost: two instances vs one
+### Single Neo4j instance (no separate instance)
 
-Neo4j Community Edition (which we use) does **not** support multiple named databases. Graphiti's schema (`EntityNode`, `EpisodicNode`, `CommunityNode`) would collide with our code graph schema (`FILE`, `CLASS`, `FUNCTION`) if co-located in the same DB.
-
-**Decision:** Two separate Neo4j instances for Phase 1 (safe, isolated). Evaluate at Phase 3 whether migrating to Neo4j Enterprise (multi-database support) or a lighter graph DB (FalkorDB, which Graphiti also supports) reduces cost.
+We **do not** run a separate Neo4j for Graphiti. The context graph uses the **same** Neo4j as the code graph (`NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`). Graphiti uses its own node labels (e.g. Entity, Episode, Community) and `group_id`; the code graph uses FILE, CLASS, FUNCTION and `repoId`. Queries are label- and scope-specific, so the two graphs coexist in one instance without schema collision.
 
 ### Multiple branches: same graph, branch in episode text
 
@@ -124,7 +122,7 @@ flowchart TB
         TM[Bi-temporal writer\n+ edge invalidation]
         SR[Hybrid search\ngroup_id namespace filter]
         GI --> EX --> TM
-        TM --> NeoCtx[(Neo4j instance\ncontext graph)]
+        TM --> NeoCtx[(Neo4j\nshared with code graph)]
         SR --> NeoCtx
     end
 
@@ -292,9 +290,9 @@ results = await graphiti.search(
 
 | Phase | Scope |
 |---|---|
-| **1** | `pip install graphiti-core`. Create `context_sync_state` + `context_ingestion_log` Postgres tables (Alembic). Stand up separate Neo4j instance for Graphiti. Episode format + dedup + ingest for GitHub PR (opened/merged) and commit, using `group_id=project_id`. ETL backfill Celery job (with one-time trigger for existing projects). Webhook handler for PR merge events. `get_project_context` tool with `group_id` namespace filter. Add tool to spec gen agent. |
+| **1** | `pip install graphiti-core`. Create `context_sync_state` + `context_ingestion_log` Postgres tables (Alembic). Use **existing** Neo4j (NEO4J_URI). Episode format + dedup + ingest for GitHub PR (opened/merged) and commit, using `group_id=project_id`. ETL backfill Celery job (with one-time trigger for existing projects). Webhook handler for PR merge events. `get_project_context` tool with `group_id` namespace filter. Add tool to spec gen agent. |
 | **2** | Episode formats and ETL backfill for Jira/Linear and Confluence/docs. Agent tool post-hooks (create/update ticket or PR → agent-action episode). **Custom entity types** (Pydantic models: PullRequest, Ticket, Document) for typed extraction and `node_labels` filtering. |
-| **3** | Tune search quality, recency bias, caps. Observability (what context is returned, latency, cost per episode ingest). Evaluate Neo4j cost: Enterprise multi-DB vs FalkorDB (which Graphiti also supports) vs keeping two instances. |
+| **3** | Tune search quality, recency bias, caps. Observability (what context is returned, latency, cost per episode ingest). Evaluate Neo4j load; FalkorDB (Graphiti-supported) option if needed. |
 | **4** | Sentry/Slack episodes. Redis cache for hot project context. Custom edge types for cross-source linking (PR resolves Ticket). Evaluate forking Graphiti only if file-path traversal or bulk operations need it. |
 
 ---
@@ -319,7 +317,7 @@ These were investigated by reviewing Graphiti's documentation, source code, API 
 **3 touchpoints:** (1) New tool file implementing `StructuredTool` wrapping `graphiti.search()`. (2) Register in `ToolService._initialize_tools()`. (3) Add to `SpecGenAgent._build_agent()` tool list + prompt step saying "Call `get_project_context` to understand recent changes before asking MCQs." Project ID flows via existing `ChatContext`.
 
 ### Q6: Can we use one Neo4j instance for both graphs?
-**Not with Community Edition.** Neo4j Community doesn't support multiple named databases. Graphiti's schema (`EntityNode`, `EpisodicNode`, `CommunityNode`) would collide with our code graph schema (`FILE`, `CLASS`, `FUNCTION`). **Decision: two instances for Phase 1.** Evaluate Enterprise multi-DB or FalkorDB (which Graphiti also supports) at Phase 3.
+**Yes.** We use a **single** Neo4j instance. Graphiti and the code graph coexist: different node labels (Entity/Episode/Community vs FILE/CLASS/FUNCTION) and scoping (`group_id` vs `repoId`). Same `NEO4J_URI`; no separate instance required.
 
 ### Q7: Should we use custom entity/edge types?
 **Yes, but Phase 2, not Phase 1.** Graphiti supports Pydantic-model entity types (e.g., `PullRequest(pr_number, author, status)`) and edge types (e.g., `Resolves`). These enable `node_labels` / `edge_types` search filtering. Phase 1 uses plain episodes with `source_description` for type inference. Phase 2 adds typed entities for richer extraction and filtering.
@@ -346,7 +344,7 @@ These were investigated by reviewing Graphiti's documentation, source code, API 
 | LLM extraction cost (backfill) | Small model in Graphiti config; off-peak batch ETL; rate-limited Celery queue; dedup prevents re-ingestion. |
 | Stale data | Live triggers + versioned source_id for state changes. Graphiti edge invalidation for superseded facts. |
 | API rate limits (ETL) | Incremental sync via `context_sync_state.last_synced_at`; backoff; failure state tracking. |
-| Two Neo4j instances = 2x cost | Evaluate Enterprise multi-DB or FalkorDB at Phase 3. |
+| Neo4j shared by both graphs | Single instance; monitor load. FalkorDB option at Phase 3 if needed. |
 | Backfill not triggered for existing projects | One-time migration job queues all existing projects on rollout. |
 | Rollback complexity | `context_ingestion_log` serves as episode manifest for targeted deletion. |
 | Anthropic provider incompatibility | Default to OpenAI for Graphiti LLM. Track bug #1012. |

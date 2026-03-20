@@ -67,6 +67,7 @@ class QnAAgent(ChatAgent):
                 "get_node_neighbours_from_node_id",
                 "get_code_from_probable_node_name",
                 "ask_knowledge_graph_queries",
+                "get_project_context",
                 "get_nodes_from_tags",
                 "get_code_file_structure",
                 "webpage_extractor",
@@ -234,6 +235,7 @@ Follow this structured approach to explore the codebase:
    - Use `web_search_tool` for domain knowledge
    - Read docstrings, README files using `fetch_file`
    - Use `webpage_extractor` for external documentation
+   - For questions about recent changes, design decisions, or PRs: use `get_project_context` with the project_id and a short query to retrieve relevant PRs, commits, and discussion context from the context graph.
 
 2. **Locate relevant code**:
    - Use `ask_knowledge_graph_queries` to find where functionality resides

@@ -107,7 +107,13 @@ class BaseTask(Task):
             exc_info=einfo.exc_info if einfo else None,
         )
         if self._db:
-            self._db.close()
+            try:
+                self._db.close()
+            except Exception as close_exc:
+                logger.warning(
+                    "Task failure: could not close DB session (connection may be dead): %s",
+                    close_exc,
+                )
             self._db = None
 
     def on_retry(self, exc, task_id, args, kwargs, einfo):
