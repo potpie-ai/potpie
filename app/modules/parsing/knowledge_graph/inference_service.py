@@ -584,7 +584,7 @@ class InferenceService:
         Uses normalized_text if available, otherwise normalizes on the fly.
         """
         batch_start_time = time.time()
-        node_dict = {node["node_id"]: node for node in nodes}
+        node_dict = {node.get("node_id"): node for node in nodes if node.get("node_id")}
 
         # Filter to nodes that need LLM inference:
         # - No cache hit (cached_inference not set)
@@ -680,7 +680,7 @@ class InferenceService:
 
             current_batch.append(
                 DocstringRequest(
-                    node_id=node["node_id"],
+                    node_id=node.get("node_id", ""),
                     text=text,
                     metadata={
                         "should_cache": node.get("should_cache", False),
@@ -909,7 +909,7 @@ class InferenceService:
         nodes_to_index = [
             {
                 "project_id": repo_id,
-                "node_id": node["node_id"],
+                "node_id": node.get("node_id"),
                 "name": node.get("name", ""),
                 "file_path": node.get("file_path", ""),
                 "content": f"{node.get('name', '')} {node.get('file_path', '')}",
@@ -945,7 +945,7 @@ class InferenceService:
             project_id=repo_id,
         )
 
-        node_dict = {node["node_id"]: node for node in nodes}
+        node_dict = {node.get("node_id"): node for node in nodes if node.get("node_id")}
         cache_stats = {
             "cache_hits": 0,
             "cache_misses": 0,
@@ -1408,7 +1408,8 @@ class InferenceService:
                 if project and isinstance(project, dict)
                 else None
             )
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Could not fetch project info for repo {repo_id}: {e}")
             repo_path = None
         is_local_repo = True if repo_path else False
 
@@ -1435,7 +1436,7 @@ class InferenceService:
 
             batch_data.append(
                 {
-                    "node_id": node["node_id"],
+                    "node_id": node.get("node_id"),
                     "docstring": docstring,
                     "embedding": embedding,
                     "tags": tags,
@@ -1503,7 +1504,7 @@ class InferenceService:
             project = self.project_manager.get_project_from_db_by_id_sync(
                 node.get("project_id", "")
             )
-            repo_path = project.get("repo_path") if project else None
+            repo_path = project.get("repo_path") if project and isinstance(project, dict) else None
             is_local_repo = True if repo_path else False
 
             session.run(
@@ -1515,13 +1516,13 @@ class InferenceService:
                 """
                 + ("" if is_local_repo else ", n.text = null, n.signature = null"),
                 repo_id=node.get("project_id", ""),
-                node_id=node["node_id"],
+                node_id=node.get("node_id", ""),
                 docstring=docstring,
                 embedding=embedding,
                 tags=tags,
             )
 
-        logger.debug(f"Updated Neo4j with cached inference for node {node['node_id']}")
+        logger.debug(f"Updated Neo4j with cached inference for node {node.get('node_id', 'unknown')}")
 
     def update_neo4j_with_docstrings(
         self,
@@ -1556,7 +1557,7 @@ class InferenceService:
                 for n in docstrings.docstrings
             ]
             project = self.project_manager.get_project_from_db_by_id_sync(repo_id)
-            repo_path = project.get("repo_path")
+            repo_path = project.get("repo_path") if project and isinstance(project, dict) else None
             is_local_repo = True if repo_path else False
             for i in range(0, len(docstring_list), batch_size):
                 batch = docstring_list[i : i + batch_size]
