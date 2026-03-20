@@ -163,7 +163,7 @@ class PotpieClient:
         """
         response = self._session.post(
             self._url(f"conversations/{conversation_id}/message"),
-            data={"content": content},
+            json={"content": content},
             params={"stream": "false" if not stream else "true"},
             timeout=120,
         )

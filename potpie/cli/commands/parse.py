@@ -50,7 +50,7 @@ def parse_repo(
     print(f"Project ID : {project_id}")
     print(f"Status     : {status}")
 
-    if status.lower() == "ready":
+    if str(status or "").lower() == "ready":
         print("Repository is already parsed and ready.")
         return
 

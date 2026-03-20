@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
 from pathlib import Path
+
+PIDFILE = Path.home() / ".potpie" / "potpie.pids"
 
 
 def _find_project_root() -> Path:
@@ -14,13 +17,18 @@ def _find_project_root() -> Path:
     for parent in [current, *current.parents]:
         if (parent / "pyproject.toml").exists():
             return parent
-    # Fallback: cwd
-    return Path.cwd()
+    raise FileNotFoundError(
+        "Could not find pyproject.toml — run potpie from inside the project directory."
+    )
 
 
 def start_server() -> None:
     """Start the Potpie server using the project's start script."""
-    project_root = _find_project_root()
+    try:
+        project_root = _find_project_root()
+    except FileNotFoundError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
     start_script = project_root / "scripts" / "start.sh"
 
     if start_script.exists():
@@ -56,19 +64,28 @@ def _start_directly(project_root: Path) -> None:
         "--log-level", "info",
         "app.main:app",
     ]
-    celery_queue = os.getenv("CELERY_QUEUE_NAME", "default")
+    celery_queue = os.getenv("CELERY_QUEUE_NAME", "staging")
     celery_cmd = [
         sys.executable, "-m", "celery",
         "-A", "app.celery.celery_app", "worker",
         "--loglevel=info",
-        f"-Q", f"{celery_queue}_process_repository,{celery_queue}_agent_tasks",
+        "-Q", (
+            f"{celery_queue}_process_repository,"
+            f"{celery_queue}_agent_tasks,"
+            f"{celery_queue}_external-event"
+        ),
         "-E", "--concurrency=1", "--pool=solo",
     ]
 
     print("Starting Potpie server (gunicorn)…")
-    subprocess.Popen(gunicorn_cmd, cwd=str(project_root), env=env)  # noqa: S603 — fixed command, no user input
+    gunicorn_proc = subprocess.Popen(gunicorn_cmd, cwd=str(project_root), env=env)  # noqa: S603 — fixed command, no user input
 
     print("Starting Celery worker…")
-    subprocess.Popen(celery_cmd, cwd=str(project_root), env=env)  # noqa: S603 — fixed command, no user input
+    celery_proc = subprocess.Popen(celery_cmd, cwd=str(project_root), env=env)  # noqa: S603 — fixed command, no user input
+
+    PIDFILE.parent.mkdir(parents=True, exist_ok=True)
+    PIDFILE.write_text(
+        json.dumps({"gunicorn": gunicorn_proc.pid, "celery": celery_proc.pid})
+    )
 
     print("Potpie services started. Use 'potpie stop' to stop them.")

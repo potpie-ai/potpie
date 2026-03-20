@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import json
+import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
+
+PIDFILE = Path.home() / ".potpie" / "potpie.pids"
 
 
 def _find_project_root() -> Path:
@@ -13,12 +18,18 @@ def _find_project_root() -> Path:
     for parent in [current, *current.parents]:
         if (parent / "pyproject.toml").exists():
             return parent
-    return Path.cwd()
+    raise FileNotFoundError(
+        "Could not find pyproject.toml — run potpie from inside the project directory."
+    )
 
 
 def stop_server() -> None:
     """Stop the Potpie server using the project's stop script."""
-    project_root = _find_project_root()
+    try:
+        project_root = _find_project_root()
+    except FileNotFoundError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
     stop_script = project_root / "scripts" / "stop.sh"
 
     if stop_script.exists():
@@ -39,19 +50,27 @@ def stop_server() -> None:
         _stop_directly()
 
 
-_ALLOWED_PROCESS_NAMES = frozenset({"gunicorn", "celery"})
-
-
 def _stop_directly() -> None:
-    """Stop gunicorn and celery processes directly."""
+    """Stop gunicorn and celery processes using saved PIDs."""
     print("Stopping Potpie services…")
-    for process_name in _ALLOWED_PROCESS_NAMES:
-        result = subprocess.run(  # noqa: S603 — hardcoded allowlist, no user input
-            ["pkill", "-f", process_name],
-            capture_output=True,
-        )
-        if result.returncode == 0:
-            print(f"  Stopped {process_name}")
-        else:
-            print(f"  No {process_name} process found")
+    if not PIDFILE.exists():
+        print("No PID file found — services may not be running.", file=sys.stderr)
+        return
+
+    try:
+        pids = json.loads(PIDFILE.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        print(f"Error reading PID file: {exc}", file=sys.stderr)
+        return
+
+    for name, pid in pids.items():
+        try:
+            os.kill(pid, signal.SIGTERM)
+            print(f"  Stopped {name} (PID {pid})")
+        except ProcessLookupError:
+            print(f"  No {name} process found (PID {pid})")
+        except OSError as exc:
+            print(f"  Error stopping {name} (PID {pid}): {exc}", file=sys.stderr)
+
+    PIDFILE.unlink(missing_ok=True)
     print("Done.")

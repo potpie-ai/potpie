@@ -61,7 +61,7 @@ def start_chat(
         sys.exit(1)
 
     print(f"Conversation started (ID: {conversation_id})")
-    print(f"Type your message and press Enter. Type 'exit' or 'quit' to end.\n")
+    print("Type your message and press Enter. Type 'exit' or 'quit' to end.\n")
 
     while True:
         try:
