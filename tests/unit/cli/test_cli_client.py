@@ -43,20 +43,20 @@ def _mock_response(json_data, status_code: int = 200) -> MagicMock:
 class TestPotpieClientInit:
     def test_default_base_url(self):
         client = PotpieClient()
-        assert client.base_url == "http://localhost:8001"  # NOSONAR — localhost dev server
+        assert client.base_url == "http://localhost:8001"
 
     def test_custom_base_url(self):
-        client = PotpieClient("http://localhost:9999")  # NOSONAR — localhost test fixture
-        assert client.base_url == "http://localhost:9999"  # NOSONAR
+        client = PotpieClient("http://localhost:9999")
+        assert client.base_url == "http://localhost:9999"
 
     def test_trailing_slash_stripped(self):
-        client = PotpieClient("http://localhost:8001/")  # NOSONAR — localhost test fixture
-        assert client.base_url == "http://localhost:8001"  # NOSONAR
+        client = PotpieClient("http://localhost:8001/")
+        assert client.base_url == "http://localhost:8001"
 
     def test_url_helper(self):
-        client = PotpieClient("http://localhost:8001")  # NOSONAR — localhost test fixture
-        assert client._url("parse") == "http://localhost:8001/api/v1/parse"  # NOSONAR
-        assert client._url("/parse") == "http://localhost:8001/api/v1/parse"  # NOSONAR
+        client = PotpieClient("http://localhost:8001")
+        assert client._url("parse") == "http://localhost:8001/api/v1/parse"
+        assert client._url("/parse") == "http://localhost:8001/api/v1/parse"
 
 
 # ---------------------------------------------------------------------------

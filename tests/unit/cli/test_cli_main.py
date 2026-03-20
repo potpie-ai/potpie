@@ -58,8 +58,8 @@ class TestBuildParser:
 
     def test_url_flag(self):
         parser = _build_parser()
-        args = parser.parse_args(["--url", "http://localhost:9000", "list-agents"])  # NOSONAR — localhost test fixture
-        assert args.url == "http://localhost:9000"  # NOSONAR
+        args = parser.parse_args(["--url", "http://localhost:9000", "list-agents"])
+        assert args.url == "http://localhost:9000"
 
     def test_no_command_exits(self):
         with pytest.raises(SystemExit) as exc_info:
@@ -111,24 +111,24 @@ class TestMainDispatch:
 
     def test_url_flag_passed_to_commands(self):
         with patch("potpie.cli.commands.list_agents.list_agents") as mock_fn:
-            main(["--url", "http://myserver:9000", "list-agents"])  # NOSONAR — test fixture URL
-        mock_fn.assert_called_once_with(base_url="http://myserver:9000")  # NOSONAR
+            main(["--url", "http://myserver:9000", "list-agents"])
+        mock_fn.assert_called_once_with(base_url="http://myserver:9000")
 
     def test_url_flag_passed_to_parse(self, tmp_path):
         with patch("potpie.cli.commands.parse.parse_repo") as mock_fn:
-            main(["--url", "http://myserver:9000", "parse", str(tmp_path)])  # NOSONAR — test fixture URL
+            main(["--url", "http://myserver:9000", "parse", str(tmp_path)])
         mock_fn.assert_called_once_with(
-            str(tmp_path), branch="main", base_url="http://myserver:9000"  # NOSONAR
+            str(tmp_path), branch="main", base_url="http://myserver:9000"
         )
 
     def test_url_flag_passed_to_chat(self):
         with patch("potpie.cli.commands.chat.start_chat") as mock_fn:
-            main(["--url", "http://myserver:9000", "chat", "proj-1", "--agent", "agent"])  # NOSONAR — test fixture URL
+            main(["--url", "http://myserver:9000", "chat", "proj-1", "--agent", "agent"])
         mock_fn.assert_called_once_with(
-            "proj-1", agent_id="agent", base_url="http://myserver:9000"  # NOSONAR
+            "proj-1", agent_id="agent", base_url="http://myserver:9000"
         )
 
     def test_url_flag_passed_to_list_projects(self):
         with patch("potpie.cli.commands.list_projects.list_projects") as mock_fn:
-            main(["--url", "http://myserver:9000", "list-projects"])  # NOSONAR — test fixture URL
-        mock_fn.assert_called_once_with(base_url="http://myserver:9000")  # NOSONAR
+            main(["--url", "http://myserver:9000", "list-projects"])
+        mock_fn.assert_called_once_with(base_url="http://myserver:9000")
