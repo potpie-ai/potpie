@@ -38,7 +38,7 @@ def stop_server() -> None:
             sys.exit(1)
         print("Stopping Potpie server…")
         try:
-            subprocess.run(  # noqa: S603 — trusted script from project tree
+            subprocess.run(  # noqa: S603 # NOSONAR — trusted script from project tree, no shell, fixed args
                 ["bash", str(stop_script)],
                 cwd=str(project_root),
                 check=True,

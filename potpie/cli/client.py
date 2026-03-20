@@ -15,7 +15,7 @@ import requests
 
 # Local-only default; override via POTPIE_BASE_URL env var.
 # HTTP is intentional here — this CLI targets localhost for development.
-DEFAULT_BASE_URL = os.getenv("POTPIE_BASE_URL", "http://localhost:8001")  # noqa: S5332
+DEFAULT_BASE_URL = os.getenv("POTPIE_BASE_URL", "http://localhost:8001")  # noqa: S5332 # NOSONAR — localhost-only dev server, http is intentional
 DEFAULT_TIMEOUT = 30
 PARSE_POLL_INTERVAL = 5  # seconds between status polls
 PARSE_READY_STATUSES = {"ready"}

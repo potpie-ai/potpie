@@ -37,7 +37,7 @@ def start_server() -> None:
             sys.exit(1)
         print("Starting Potpie server…")
         try:
-            subprocess.run(  # noqa: S603 — trusted script from project tree
+            subprocess.run(  # noqa: S603 # NOSONAR — trusted script from project tree, no shell, fixed args
                 ["bash", str(start_script)],
                 cwd=str(project_root),
                 check=True,
@@ -78,10 +78,10 @@ def _start_directly(project_root: Path) -> None:
     ]
 
     print("Starting Potpie server (gunicorn)…")
-    gunicorn_proc = subprocess.Popen(gunicorn_cmd, cwd=str(project_root), env=env)  # noqa: S603 — fixed command, no user input
+    gunicorn_proc = subprocess.Popen(gunicorn_cmd, cwd=str(project_root), env=env)  # noqa: S603 # NOSONAR — fixed args, no shell, no user input
 
     print("Starting Celery worker…")
-    celery_proc = subprocess.Popen(celery_cmd, cwd=str(project_root), env=env)  # noqa: S603 — fixed command, no user input
+    celery_proc = subprocess.Popen(celery_cmd, cwd=str(project_root), env=env)  # noqa: S603 # NOSONAR — fixed args, no shell, no user input
 
     PIDFILE.parent.mkdir(parents=True, exist_ok=True)
     PIDFILE.write_text(
