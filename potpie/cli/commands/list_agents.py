@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import sys
 
 from potpie.cli.client import PotpieClient, PotpieClientError
@@ -14,7 +13,7 @@ def list_agents(base_url: str | None = None) -> None:
     Args:
         base_url: Override the server URL (default: ``http://localhost:8001``).
     """
-    client = PotpieClient(base_url or os.getenv("POTPIE_BASE_URL", "http://localhost:8001"))
+    client = PotpieClient(base_url) if base_url else PotpieClient()
 
     try:
         agents = client.list_agents(list_system_agents=True)

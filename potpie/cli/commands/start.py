@@ -24,9 +24,12 @@ def start_server() -> None:
     start_script = project_root / "scripts" / "start.sh"
 
     if start_script.exists():
+        if not start_script.is_file():
+            print(f"Error: {start_script} is not a regular file.", file=sys.stderr)
+            sys.exit(1)
         print("Starting Potpie server…")
         try:
-            subprocess.run(
+            subprocess.run(  # noqa: S603 — trusted script from project tree
                 ["bash", str(start_script)],
                 cwd=str(project_root),
                 check=True,
@@ -43,12 +46,13 @@ def _start_directly(project_root: Path) -> None:
     """Start gunicorn and celery directly without the shell script."""
     env = {**os.environ, "isDevelopmentMode": os.getenv("isDevelopmentMode", "enabled")}
 
+    bind_address = os.getenv("POTPIE_BIND_ADDRESS", "127.0.0.1:8001")
     gunicorn_cmd = [
         sys.executable, "-m", "gunicorn",
         "--worker-class", "uvicorn.workers.UvicornWorker",
         "--workers", "1",
         "--timeout", "1800",
-        "--bind", "0.0.0.0:8001",
+        "--bind", bind_address,
         "--log-level", "info",
         "app.main:app",
     ]
@@ -62,9 +66,9 @@ def _start_directly(project_root: Path) -> None:
     ]
 
     print("Starting Potpie server (gunicorn)…")
-    subprocess.Popen(gunicorn_cmd, cwd=str(project_root), env=env)
+    subprocess.Popen(gunicorn_cmd, cwd=str(project_root), env=env)  # noqa: S603 — fixed command, no user input
 
     print("Starting Celery worker…")
-    subprocess.Popen(celery_cmd, cwd=str(project_root), env=env)
+    subprocess.Popen(celery_cmd, cwd=str(project_root), env=env)  # noqa: S603 — fixed command, no user input
 
     print("Potpie services started. Use 'potpie stop' to stop them.")

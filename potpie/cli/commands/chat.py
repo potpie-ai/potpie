@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 from typing import Any, Dict
 
@@ -46,7 +45,7 @@ def start_chat(
         print("Error: agent must be specified.", file=sys.stderr)
         sys.exit(1)
 
-    client = PotpieClient(base_url or os.getenv("POTPIE_BASE_URL", "http://localhost:8001"))
+    client = PotpieClient(base_url) if base_url else PotpieClient()
 
     print(f"Creating conversation for project '{project_id}' with agent '{agent_id}'…")
 

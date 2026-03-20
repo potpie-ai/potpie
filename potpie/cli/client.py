@@ -1,13 +1,21 @@
-"""HTTP client for communicating with the local Potpie server."""
+"""HTTP client for communicating with the local Potpie server.
+
+Security note: This client is designed exclusively for local development use.
+It communicates with a Potpie server running on the same machine via HTTP.
+For production deployments, use the hosted Potpie service at https://potpie.ai.
+"""
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any, Dict, Iterator, List, Optional
 
 import requests
 
-DEFAULT_BASE_URL = "http://localhost:8001"
+# Local-only default; override via POTPIE_BASE_URL env var.
+# HTTP is intentional here — this CLI targets localhost for development.
+DEFAULT_BASE_URL = os.getenv("POTPIE_BASE_URL", "http://localhost:8001")  # noqa: S5332
 DEFAULT_TIMEOUT = 30
 PARSE_POLL_INTERVAL = 5  # seconds between status polls
 PARSE_READY_STATUSES = {"ready"}

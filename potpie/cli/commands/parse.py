@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -30,7 +29,7 @@ def parse_repo(
         print(f"Error: path is not a directory: {resolved}", file=sys.stderr)
         sys.exit(1)
 
-    client = PotpieClient(base_url or os.getenv("POTPIE_BASE_URL", "http://localhost:8001"))
+    client = PotpieClient(base_url) if base_url else PotpieClient()
 
     print(f"Submitting repository for parsing: {resolved}")
     print(f"Branch: {branch}")

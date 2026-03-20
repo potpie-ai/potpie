@@ -22,9 +22,12 @@ def stop_server() -> None:
     stop_script = project_root / "scripts" / "stop.sh"
 
     if stop_script.exists():
+        if not stop_script.is_file():
+            print(f"Error: {stop_script} is not a regular file.", file=sys.stderr)
+            sys.exit(1)
         print("Stopping Potpie server…")
         try:
-            subprocess.run(
+            subprocess.run(  # noqa: S603 — trusted script from project tree
                 ["bash", str(stop_script)],
                 cwd=str(project_root),
                 check=True,
@@ -36,11 +39,14 @@ def stop_server() -> None:
         _stop_directly()
 
 
+_ALLOWED_PROCESS_NAMES = frozenset({"gunicorn", "celery"})
+
+
 def _stop_directly() -> None:
     """Stop gunicorn and celery processes directly."""
     print("Stopping Potpie services…")
-    for process_name in ("gunicorn", "celery"):
-        result = subprocess.run(
+    for process_name in _ALLOWED_PROCESS_NAMES:
+        result = subprocess.run(  # noqa: S603 — hardcoded allowlist, no user input
             ["pkill", "-f", process_name],
             capture_output=True,
         )
