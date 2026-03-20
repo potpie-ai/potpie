@@ -149,18 +149,32 @@ class InferenceService:
             if not text:
                 continue
 
-            # Normalize text for consistent hashing
-            normalized_text = self._normalize_node_text(text, node_dict)
-            node["normalized_text"] = normalized_text
+            # Use pre-computed content_hash from graph if available
+            content_hash = node.get("content_hash")
 
-            # Check if content is cacheable
-            if not is_content_cacheable(normalized_text):
-                uncacheable_nodes += 1
-                continue
+            if not content_hash:
+                # Normalize text for consistent hashing
+                normalized_text = self._normalize_node_text(text, node_dict)
+                node["normalized_text"] = normalized_text
 
-            # Generate content hash
-            content_hash = generate_content_hash(normalized_text, node.get("node_type"))
-            node["content_hash"] = content_hash
+                # Check if content is cacheable
+                if not is_content_cacheable(normalized_text):
+                    uncacheable_nodes += 1
+                    continue
+
+                # Generate content hash
+                content_hash = generate_content_hash(
+                    normalized_text, node.get("node_type")
+                )
+                node["content_hash"] = content_hash
+            else:
+                # Hash already computed at graph construction time
+                normalized_text = self._normalize_node_text(text, node_dict)
+                node["normalized_text"] = normalized_text
+
+                if not is_content_cacheable(normalized_text):
+                    uncacheable_nodes += 1
+                    continue
 
             # Look up in cache
             node_lookup_start = time.time()
@@ -174,19 +188,19 @@ class InferenceService:
                 # Verify the assignment worked
                 if not node.get("cached_inference"):
                     logger.error(
-                        f"CACHE BUG: cached_inference not set after assignment! node={node['node_id'][:8]}"
+                        f"CACHE BUG: cached_inference not set after assignment! node={(node.get('node_id', 'UNKNOWN') or '')[:8]}"
                     )
                 logger.debug(
-                    f"✅ CACHE HIT | node={node['node_id'][:8]} | "
-                    f"hash={content_hash[:12]} | type={node.get('node_type', 'UNKNOWN')}"
+                    f"✅ CACHE HIT | node={(node.get('node_id', 'UNKNOWN') or '')[:8]} | "
+                    f"hash={(content_hash or 'UNKNOWN')[:12]} | type={node.get('node_type', 'UNKNOWN')}"
                 )
             else:
                 # Cache miss - mark for caching after LLM inference
                 node["should_cache"] = True
                 cache_misses += 1
                 logger.debug(
-                    f"❌ CACHE MISS | node={node['node_id'][:8]} | "
-                    f"hash={content_hash[:12]} | type={node.get('node_type', 'UNKNOWN')}"
+                    f"❌ CACHE MISS | node={(node.get('node_id', 'UNKNOWN') or '')[:8]} | "
+                    f"hash={(content_hash or 'UNKNOWN')[:12]} | type={node.get('node_type', 'UNKNOWN')}"
                 )
 
         total_lookup_time = time.time() - lookup_start
@@ -313,7 +327,7 @@ class InferenceService:
             while True:
                 result = session.run(
                     "MATCH (n:NODE {repoId: $repo_id}) "
-                    "RETURN n.node_id AS node_id, n.text AS text, n.file_path AS file_path, n.start_line AS start_line, n.end_line AS end_line, n.name AS name "
+                    "RETURN n.node_id AS node_id, n.text AS text, n.file_path AS file_path, n.start_line AS start_line, n.end_line AS end_line, n.name AS name, n.content_hash AS content_hash, n.type AS node_type "
                     "SKIP $offset LIMIT $limit",
                     repo_id=repo_id,
                     offset=offset,
@@ -489,7 +503,9 @@ class InferenceService:
                 all_tags.update(docstring.tags or [])
 
         # Create consolidated docstring
-        if len(all_docstrings) == 1:
+        if len(all_docstrings) == 0:
+            consolidated_text = ""
+        elif len(all_docstrings) == 1:
             consolidated_text = all_docstrings[0]
         else:
             # Combine multiple chunk descriptions intelligently
@@ -625,7 +641,7 @@ class InferenceService:
             # Handle large nodes by splitting
             if node_tokens > max_tokens:
                 logger.debug(
-                    f"Node {node['node_id'][:8]} exceeds token limit ({node_tokens}). Splitting..."
+                    f"Node {(node.get('node_id', 'UNKNOWN') or '')[:8]} exceeds token limit ({node_tokens}). Splitting..."
                 )
                 node_chunks = self.split_large_node(text, node["node_id"], max_tokens)
 

@@ -658,6 +658,8 @@ async def duplicate_graph(self, old_repo_id: str, new_repo_id: str):
                            n.start_line AS start_line, n.end_line AS end_line, n.name AS name,
                            COALESCE(n.docstring, '') AS docstring,
                            COALESCE(n.embedding, []) AS embedding,
+                           n.content_hash AS content_hash,
+                           n.text AS node_text,
                            labels(n) AS labels
                     SKIP $offset LIMIT $limit
                     """
@@ -684,7 +686,9 @@ async def duplicate_graph(self, old_repo_id: str, new_repo_id: str):
                         end_line: node.end_line,
                         name: node.name,
                         docstring: node.docstring,
-                        embedding: node.embedding
+                        embedding: node.embedding,
+                        content_hash: node.content_hash,
+                        text: node.node_text
                     }) YIELD node AS new_node
                     RETURN new_node
                     """
