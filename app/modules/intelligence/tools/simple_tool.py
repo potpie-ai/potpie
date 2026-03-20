@@ -73,6 +73,10 @@ class SimpleTool:
 
     def invoke(self, tool_input: Dict[str, Any], **kwargs: Any) -> Any:
         """Invoke the tool synchronously with a kwargs dict."""
+        if kwargs:
+            raise ValueError(
+                f"Tool '{self.name}' invoke() received unexpected keyword arguments: {list(kwargs.keys())}"
+            )
         if not callable(self.func):
             raise TypeError(f"Tool '{self.name}' has no callable func")
         if tool_input is None:

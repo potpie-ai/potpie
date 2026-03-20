@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -12,12 +12,12 @@ class BaseMessage:
 
 @dataclass
 class HumanMessage(BaseMessage):
-    type: str = "human"
+    type: str = field(init=False, default="human")
 
 
 @dataclass
 class AIMessage(BaseMessage):
-    type: str = "ai"
+    type: str = field(init=False, default="ai")
 
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError

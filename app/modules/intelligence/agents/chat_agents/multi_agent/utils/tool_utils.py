@@ -295,7 +295,7 @@ def _adapt_func_for_from_schema(tool: Any) -> Any:
 
     # Prefer the native async coroutine when available; fall back to func
     effective_func = coroutine if callable(coroutine) else tool.func
-    _is_async = callable(coroutine) or inspect.iscoroutinefunction(tool.func)
+    _is_async = inspect.iscoroutinefunction(coroutine) or inspect.iscoroutinefunction(tool.func)
 
     try:
         sig = inspect.signature(effective_func)
