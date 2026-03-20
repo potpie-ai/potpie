@@ -37,14 +37,20 @@ def start_server() -> None:
             sys.exit(1)
         print("Starting Potpie server…")
         try:
-            subprocess.run(  # noqa: S603
+            proc = subprocess.Popen(  # noqa: S603
                 ["bash", str(start_script)],
                 cwd=str(project_root),
-                check=True,
             )
-        except subprocess.CalledProcessError as exc:
-            print(f"Error: start script exited with code {exc.returncode}", file=sys.stderr)
-            sys.exit(exc.returncode)
+            PIDFILE.parent.mkdir(parents=True, exist_ok=True)
+            PIDFILE.write_text(json.dumps({"shell": proc.pid}))
+            ret = proc.wait()
+            if ret != 0:
+                print(f"Error: start script exited with code {ret}", file=sys.stderr)
+                PIDFILE.unlink(missing_ok=True)
+                sys.exit(ret)
+        except OSError as exc:
+            print(f"Error: failed to run start script: {exc}", file=sys.stderr)
+            sys.exit(1)
     else:
         # Fallback: start gunicorn and celery directly
         _start_directly(project_root)
@@ -81,7 +87,12 @@ def _start_directly(project_root: Path) -> None:
     gunicorn_proc = subprocess.Popen(gunicorn_cmd, cwd=str(project_root), env=env)  # noqa: S603
 
     print("Starting Celery worker…")
-    celery_proc = subprocess.Popen(celery_cmd, cwd=str(project_root), env=env)  # noqa: S603
+    try:
+        celery_proc = subprocess.Popen(celery_cmd, cwd=str(project_root), env=env)  # noqa: S603
+    except Exception as exc:
+        print(f"Error starting Celery worker: {exc}", file=sys.stderr)
+        gunicorn_proc.kill()
+        sys.exit(1)
 
     PIDFILE.parent.mkdir(parents=True, exist_ok=True)
     PIDFILE.write_text(

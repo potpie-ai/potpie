@@ -251,7 +251,7 @@ class TestPotpieClientSendMessage:
 
         assert result["message"] == "Hello!"
         _, kwargs = mock_post.call_args
-        assert kwargs["data"]["content"] == "What does this code do?"
+        assert kwargs["json"]["content"] == "What does this code do?"
         assert kwargs["params"]["stream"] == "false"
 
     def test_send_message_stream_true(self):

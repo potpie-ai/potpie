@@ -27,9 +27,9 @@ def stop_server() -> None:
     """Stop the Potpie server using the project's stop script."""
     try:
         project_root = _find_project_root()
-    except FileNotFoundError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        sys.exit(1)
+    except FileNotFoundError:
+        _stop_directly()
+        return
     stop_script = project_root / "scripts" / "stop.sh"
 
     if stop_script.exists():
@@ -63,7 +63,12 @@ def _stop_directly() -> None:
         print(f"Error reading PID file: {exc}", file=sys.stderr)
         return
 
+    all_stopped = True
     for name, pid in pids.items():
+        if not isinstance(pid, int) or pid <= 0:
+            print(f"  Skipping {name}: invalid PID {pid!r}", file=sys.stderr)
+            all_stopped = False
+            continue
         try:
             os.kill(pid, signal.SIGTERM)
             print(f"  Stopped {name} (PID {pid})")
@@ -71,6 +76,10 @@ def _stop_directly() -> None:
             print(f"  No {name} process found (PID {pid})")
         except OSError as exc:
             print(f"  Error stopping {name} (PID {pid}): {exc}", file=sys.stderr)
+            all_stopped = False
 
-    PIDFILE.unlink(missing_ok=True)
-    print("Done.")
+    if all_stopped:
+        PIDFILE.unlink(missing_ok=True)
+        print("Done.")
+    else:
+        print("Some processes could not be stopped; PID file retained.", file=sys.stderr)
