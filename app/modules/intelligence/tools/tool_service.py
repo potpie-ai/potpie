@@ -108,7 +108,7 @@ from app.modules.intelligence.tools.confluence_tools import (
 )
 from app.modules.intelligence.tools.web_tools.web_search_tool import web_search_tool
 from app.modules.intelligence.provider.provider_service import ProviderService
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.simple_tool import SimpleTool as StructuredTool
 from .todo_management_tool import create_todo_management_tools
 from .code_changes_manager import create_code_changes_management_tools
 from .requirement_verification_tool import create_requirement_verification_tools

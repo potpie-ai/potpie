@@ -8,7 +8,7 @@ import os
 from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.simple_tool import SimpleTool as StructuredTool
 
 from app.modules.projects.projects_service import ProjectService
 from app.modules.repo_manager import RepoManager

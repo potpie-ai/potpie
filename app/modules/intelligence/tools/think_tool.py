@@ -1,6 +1,6 @@
 import asyncio
 from typing import Dict, Any, Optional
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.simple_tool import SimpleTool as StructuredTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from app.modules.intelligence.provider.provider_service import ProviderService
