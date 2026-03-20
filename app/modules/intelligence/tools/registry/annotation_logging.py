@@ -5,11 +5,11 @@ StructuredTools for pre-invoke logging (direct path). Discovery path calls
 get_annotations_for_logging from discovery_tools._execute_tool.
 """
 
-import inspect
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from pydantic import BaseModel
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.simple_tool import SimpleTool as StructuredTool
+from app.modules.intelligence.tools.simple_tool import _invoke_func
 
 from app.modules.utils.logger import setup_logger
 
@@ -23,10 +23,8 @@ logger = setup_logger(__name__)
 def _invoke_inner_tool(tool: Any, kwargs: Dict[str, Any]) -> Any:
     """Invoke the inner tool's func with the given kwargs.
 
-    If the tool's func takes a single parameter typed as a BaseModel (e.g. input_data: SearchTextInput),
-    we build that model from kwargs and call func(model). Otherwise we call func(**kwargs).
-    This matches the adaptation done in tool_utils._adapt_func_for_from_schema so that tools
-    wrapped for annotation logging work when the executor passes **kwargs from the schema.
+    Delegates to the shared _invoke_func helper for the single-Pydantic-model
+    argument pattern. Falls back to tool.invoke() if no callable func is present.
     """
     func = getattr(tool, "func", None)
     if not callable(func):
@@ -34,27 +32,8 @@ def _invoke_inner_tool(tool: Any, kwargs: Dict[str, Any]) -> Any:
             return tool.invoke(kwargs)
         raise TypeError(f"Tool {getattr(tool, 'name', tool)} has no invoke or func")
 
-    raw_schema = getattr(tool, "args_schema", None)
-    if not (isinstance(raw_schema, type) and issubclass(raw_schema, BaseModel)):
-        return func(**kwargs)
-
-    try:
-        sig = inspect.signature(func)
-    except (TypeError, ValueError):
-        return func(**kwargs)
-
-    params = [p for p in sig.parameters.values() if p.name != "self"]
-    if len(params) != 1:
-        return func(**kwargs)
-    param = params[0]
-    annotation = param.annotation
-    if annotation is inspect.Parameter.empty:
-        return func(**kwargs)
-    if not (isinstance(annotation, type) and issubclass(annotation, BaseModel)):
-        return func(**kwargs)
-
-    model_cls = annotation
-    return func(model_cls(**kwargs))
+    args_schema = getattr(tool, "args_schema", None)
+    return _invoke_func(func, args_schema, kwargs)
 
 
 # Annotation keys we log (only those set on metadata)

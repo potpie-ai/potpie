@@ -5,7 +5,7 @@ Tool for getting users in a Jira project (for assignment purposes).
 import asyncio
 from typing import Any, Dict, Optional
 
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.simple_tool import SimpleTool as StructuredTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 

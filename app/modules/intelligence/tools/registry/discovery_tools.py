@@ -7,7 +7,7 @@ tools via search_tools, gets full schema via describe_tool, and runs via execute
 
 from typing import TYPE_CHECKING, Any, List, Optional, Tuple
 
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.simple_tool import SimpleTool as StructuredTool
 
 from app.modules.intelligence.tools.registry.annotation_logging import (
     get_annotations_for_logging,

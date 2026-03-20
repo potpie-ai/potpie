@@ -6,7 +6,7 @@ logger = setup_logger(__name__)
 from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.simple_tool import SimpleTool as StructuredTool
 from sqlalchemy.orm import Session
 
 from app.modules.intelligence.provider.provider_service import ProviderService

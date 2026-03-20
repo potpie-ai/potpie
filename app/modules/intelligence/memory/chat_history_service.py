@@ -1,7 +1,24 @@
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from dataclasses import dataclass, field
+
+
+@dataclass
+class BaseMessage:
+    content: str
+    type: str = ""
+
+
+@dataclass
+class HumanMessage(BaseMessage):
+    type: str = field(init=False, default="human")
+
+
+@dataclass
+class AIMessage(BaseMessage):
+    type: str = field(init=False, default="ai")
+
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession

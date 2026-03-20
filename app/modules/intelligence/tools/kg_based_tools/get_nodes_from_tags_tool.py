@@ -1,7 +1,7 @@
 import asyncio
 from typing import List
 
-from langchain_core.tools import StructuredTool
+from app.modules.intelligence.tools.simple_tool import SimpleTool as StructuredTool
 from pydantic import BaseModel, Field
 
 from app.core.config_provider import ConfigProvider

@@ -277,16 +277,30 @@ def _adapt_func_for_from_schema(tool: Any) -> Any:
     which explicitly copies the current contextvars before dispatching the thread.
     Python 3.13's loop.run_in_executor does NOT copy contextvars, so relying on
     pydantic-ai's default run_in_executor path loses user_id / tunnel_url context.
+
+    When the tool has a coroutine (async function), it is preferred over func for the
+    async path so that tools providing both sync and async implementations use the
+    native async version.
     """
     import asyncio as _asyncio
 
     raw_schema = getattr(tool, "args_schema", None)
+    coroutine = getattr(tool, "coroutine", None)
+
     if not (isinstance(raw_schema, type) and issubclass(raw_schema, BaseModel)):
+        # No schema adaptation needed — prefer native async coroutine over sync func
+        if callable(coroutine):
+            return coroutine
         return tool.func
+
+    # Prefer the native async coroutine when available; fall back to func
+    effective_func = coroutine if callable(coroutine) else tool.func
+    _is_async = inspect.iscoroutinefunction(coroutine) or inspect.iscoroutinefunction(tool.func)
+
     try:
-        sig = inspect.signature(tool.func)
+        sig = inspect.signature(effective_func)
     except (TypeError, ValueError):
-        return tool.func
+        return effective_func
     params = [p for p in sig.parameters.values() if p.name != "self"]
     if len(params) == 1:
         param = params[0]
@@ -297,8 +311,7 @@ def _adapt_func_for_from_schema(tool: Any) -> Any:
             and issubclass(annotation, BaseModel)
         ):
             model_cls = annotation
-            _is_async = inspect.iscoroutinefunction(tool.func)
-            _func = tool.func
+            _func = effective_func
 
             if _is_async:
 
@@ -315,10 +328,9 @@ def _adapt_func_for_from_schema(tool: Any) -> Any:
 
     if len(params) >= 2:
         model_cls = raw_schema
-        _is_async_multi = inspect.iscoroutinefunction(tool.func)
-        _func_multi = tool.func
+        _func_multi = effective_func
 
-        if _is_async_multi:
+        if _is_async:
 
             async def _multi_async(**kwargs: Any) -> Any:
                 validated = model_cls(**kwargs)
@@ -335,7 +347,7 @@ def _adapt_func_for_from_schema(tool: Any) -> Any:
 
             return _multi_sync
 
-    return tool.func
+    return effective_func
 
 
 def wrap_structured_tools(tools: Sequence[Any]) -> List[Tool]:
