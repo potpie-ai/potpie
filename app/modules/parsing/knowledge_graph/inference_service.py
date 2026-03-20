@@ -643,7 +643,7 @@ class InferenceService:
                 logger.debug(
                     f"Node {(node.get('node_id', 'UNKNOWN') or '')[:8]} exceeds token limit ({node_tokens}). Splitting..."
                 )
-                node_chunks = self.split_large_node(text, node["node_id"], max_tokens)
+                node_chunks = self.split_large_node(text, node.get("node_id", ""), max_tokens)
 
                 for chunk in node_chunks:
                     chunk_tokens = self.num_tokens_from_string(chunk["text"], model)
@@ -1135,9 +1135,25 @@ class InferenceService:
                             response, batch
                         )
                         if processed_response:
-                            # Pass pre-generated embeddings to avoid regenerating
+                            # Build content_hash mapping from batch requests for Neo4j storage
+                            # Chunk nodes map to their parent's hash; regular nodes use their own
+                            content_hashes = {}
+                            for req in batch:
+                                meta = req.metadata or {}
+                                ch = meta.get("content_hash")
+                                if ch:
+                                    node_key = (
+                                        meta.get("parent_node_id", req.node_id)
+                                        if meta.get("is_chunk")
+                                        else req.node_id
+                                    )
+                                    content_hashes[node_key] = ch
+                            # Pass pre-generated embeddings and content hashes
                             self.update_neo4j_with_docstrings(
-                                repo_id, processed_response, docstring_embeddings
+                                repo_id,
+                                processed_response,
+                                docstring_embeddings,
+                                content_hashes,
                             )
                         neo4j_update_time = time.time() - neo4j_update_start
 
@@ -1423,6 +1439,7 @@ class InferenceService:
                     "docstring": docstring,
                     "embedding": embedding,
                     "tags": tags,
+                    "content_hash": node.get("content_hash"),
                 }
             )
 
@@ -1446,7 +1463,8 @@ class InferenceService:
                     MATCH (n:NODE {repoId: $repo_id, node_id: item.node_id})
                     SET n.docstring = item.docstring,
                         n.embedding = item.embedding,
-                        n.tags = item.tags
+                        n.tags = item.tags,
+                        n.content_hash = item.content_hash
                     """
                     + ("" if is_local_repo else ", n.text = null, n.signature = null"),
                     batch=batch,
@@ -1510,6 +1528,7 @@ class InferenceService:
         repo_id: str,
         docstrings: DocstringResponse,
         precomputed_embeddings: Optional[Dict[str, List[float]]] = None,
+        content_hashes: Optional[Dict[str, str]] = None,
     ):
         """
         Update Neo4j with docstrings and embeddings.
@@ -1518,10 +1537,12 @@ class InferenceService:
             repo_id: Project/repo ID
             docstrings: DocstringResponse with results
             precomputed_embeddings: Optional dict of node_id -> embedding to avoid regenerating
+            content_hashes: Optional dict of node_id -> content_hash to store alongside inference
         """
         with self.driver.session() as session:
             batch_size = 300
             precomputed = precomputed_embeddings or {}
+            hashes = content_hashes or {}
             docstring_list = [
                 {
                     "node_id": n.node_id,
@@ -1530,6 +1551,7 @@ class InferenceService:
                     # Reuse precomputed embedding if available, otherwise generate
                     "embedding": precomputed.get(n.node_id)
                     or self.generate_embedding(n.docstring),
+                    "content_hash": hashes.get(n.node_id),
                 }
                 for n in docstrings.docstrings
             ]
@@ -1544,7 +1566,8 @@ class InferenceService:
                     MATCH (n:NODE {repoId: $repo_id, node_id: item.node_id})
                     SET n.docstring = item.docstring,
                         n.embedding = item.embedding,
-                        n.tags = item.tags
+                        n.tags = item.tags,
+                        n.content_hash = item.content_hash
                     """
                     + ("" if is_local_repo else "REMOVE n.text, n.signature"),
                     batch=batch,

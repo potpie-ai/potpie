@@ -64,11 +64,13 @@ class TestCrossBranchCacheReuse:
     def test_modified_code_different_hash(self):
         """Modified code in a new branch should produce a different hash."""
         code_v1 = (
-            "def process(data):\n"
+            "def process(data: list) -> list:\n"
+            "    \"\"\"Apply transformation to each element in the input list.\"\"\"\n"
             "    return [x * 2 for x in data]\n"
         )
         code_v2 = (
-            "def process(data):\n"
+            "def process(data: list) -> list:\n"
+            "    \"\"\"Apply transformation to each element in the input list.\"\"\"\n"
             "    return [x * 3 for x in data]  # Changed multiplier\n"
         )
         hash_v1 = generate_content_hash(code_v1, "FUNCTION")
@@ -102,13 +104,23 @@ class TestCrossBranchCacheReuse:
         """
         # Unchanged function
         unchanged_code = (
-            "def helper(x):\n"
+            "def helper(x: str) -> str:\n"
+            "    \"\"\"Normalize a string by stripping whitespace and converting to lowercase.\"\"\"\n"
             "    return x.strip().lower()\n"
-            "    # normalize input string\n"
         )
         # Modified function
-        original_code = "def main():\n    print('hello')\n    return 0\n"
-        modified_code = "def main():\n    print('goodbye')\n    return 1\n"
+        original_code = (
+            "def main() -> int:\n"
+            "    \"\"\"Entry point: print greeting and return success exit code.\"\"\"\n"
+            "    print('hello')\n"
+            "    return 0\n"
+        )
+        modified_code = (
+            "def main() -> int:\n"
+            "    \"\"\"Entry point: print farewell and return non-zero exit code.\"\"\"\n"
+            "    print('goodbye')\n"
+            "    return 1\n"
+        )
 
         # Build cache from original branch
         cache = {}
