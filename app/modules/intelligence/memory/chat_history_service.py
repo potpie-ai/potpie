@@ -18,6 +18,7 @@ class HumanMessage(BaseMessage):
 @dataclass
 class AIMessage(BaseMessage):
     type: str = "ai"
+
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
