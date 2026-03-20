@@ -108,15 +108,11 @@ Returns:
         self.user_id = user_id
         self.project_service = ProjectService(sql_db)
 
-        # Initialize repo manager if enabled
+        # Initialize repo manager when available
         self.repo_manager = None
         try:
-            repo_manager_enabled = (
-                os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
-            )
-            if repo_manager_enabled:
-                self.repo_manager = RepoManager()
-                logger.info("CreatePRWorkflowTool: RepoManager initialized")
+            self.repo_manager = RepoManager()
+            logger.info("CreatePRWorkflowTool: RepoManager initialized")
         except Exception as e:
             logger.warning(f"CreatePRWorkflowTool: Failed to initialize RepoManager: {e}")
 
@@ -970,7 +966,7 @@ Returns:
             if not self.repo_manager:
                 return {
                     "success": False,
-                    "error": "Repo manager not enabled",
+                    "error": "Repo manager is not available",
                     "step": "init",
                 }
 
@@ -1144,19 +1140,10 @@ def create_pr_workflow_tool(
     sql_db: Session, user_id: str
 ) -> Optional[StructuredTool]:
     """
-    Create the composite PR workflow tool if repo manager is enabled.
+    Create the composite PR workflow tool when RepoManager is available.
 
-    Returns None if repo manager is not enabled.
+    Returns None if RepoManager cannot be initialized.
     """
-    repo_manager_enabled = (
-        os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
-    )
-    if not repo_manager_enabled:
-        logger.debug(
-            "CreatePRWorkflowTool not created: REPO_MANAGER_ENABLED is false"
-        )
-        return None
-
     tool_instance = CreatePRWorkflowTool(sql_db, user_id)
     if not tool_instance.repo_manager:
         logger.debug(

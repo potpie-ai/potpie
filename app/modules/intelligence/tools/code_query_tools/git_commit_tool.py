@@ -102,12 +102,8 @@ class GitCommitTool:
         # Initialize repo manager if enabled
         self.repo_manager = None
         try:
-            repo_manager_enabled = (
-                os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
-            )
-            if repo_manager_enabled:
-                self.repo_manager = RepoManager()
-                logger.info("GitCommitTool: RepoManager initialized")
+            self.repo_manager = RepoManager()
+            logger.info("GitCommitTool: RepoManager initialized")
         except Exception as e:
             logger.warning(f"GitCommitTool: Failed to initialize RepoManager: {e}")
 
@@ -162,7 +158,7 @@ class GitCommitTool:
             if not self.repo_manager:
                 return {
                     "success": False,
-                    "error": "Repo manager is not enabled. Git commit requires a local worktree.",
+                    "error": "Repo manager is not available. Git commit requires a local worktree.",
                 }
 
             # Validate commit message
@@ -293,15 +289,10 @@ class GitCommitTool:
 
 def git_commit_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
     """
-    Create git commit tool if repo manager is enabled.
+    Create git commit tool when RepoManager is available.
 
-    Returns None if repo manager is not enabled.
+    Returns None if RepoManager cannot be initialized.
     """
-    repo_manager_enabled = os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
-    if not repo_manager_enabled:
-        logger.debug("GitCommitTool not created: REPO_MANAGER_ENABLED is false")
-        return None
-
     tool_instance = GitCommitTool(sql_db, user_id)
     if not tool_instance.repo_manager:
         logger.debug("GitCommitTool not created: RepoManager initialization failed")

@@ -533,12 +533,8 @@ class BashCommandTool:
         # Initialize repo manager if enabled
         self.repo_manager = None
         try:
-            repo_manager_enabled = (
-                os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
-            )
-            if repo_manager_enabled:
-                self.repo_manager = RepoManager()
-                logger.info("BashCommandTool: RepoManager initialized")
+            self.repo_manager = RepoManager()
+            logger.info("BashCommandTool: RepoManager initialized")
         except Exception as e:
             logger.warning(f"BashCommandTool: Failed to initialize RepoManager: {e}")
 
@@ -594,7 +590,7 @@ class BashCommandTool:
             if not self.repo_manager:
                 return {
                     "success": False,
-                    "error": "Repo manager is not enabled. Bash commands require a local worktree.",
+                    "error": "Repo manager is not available. Bash commands require a local worktree.",
                     "output": "",
                     "exit_code": -1,
                 }
@@ -738,7 +734,7 @@ class BashCommandTool:
             # SECURITY: Don't pass environment variables - they will be filtered by gVisor runner
             # but we don't want to pass them at all to prevent any exposure
             safe_env = {
-                "PATH": "/usr/local/bin:/usr/bin:/bin",
+                "PATH": "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin",
                 "HOME": "/tmp",
                 "USER": "sandbox",
                 "SHELL": "/bin/sh",
@@ -863,15 +859,10 @@ class BashCommandTool:
 
 def bash_command_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
     """
-    Create bash command tool if repo manager is enabled.
+    Create bash command tool when RepoManager is available.
 
-    Returns None if repo manager is not enabled.
+    Returns None if RepoManager cannot be initialized.
     """
-    repo_manager_enabled = os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
-    if not repo_manager_enabled:
-        logger.debug("BashCommandTool not created: REPO_MANAGER_ENABLED is false")
-        return None
-
     tool_instance = BashCommandTool(sql_db, user_id)
     if not tool_instance.repo_manager:
         logger.debug("BashCommandTool not created: RepoManager initialization failed")

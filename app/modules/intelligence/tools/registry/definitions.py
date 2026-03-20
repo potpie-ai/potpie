@@ -6,8 +6,8 @@ from app.modules.intelligence.tools.registry.schema import AllowListDefinition
 
 # Tools that ToolService may omit when optional deps/config are missing (e.g. API keys).
 # Registry keeps them for allow-lists; do not warn "registry has names not in ToolService".
-# Also includes tools gated on REPO_MANAGER_ENABLED (bash_command, apply_changes,
-# git_commit, git_push) which are absent from ToolService when the flag is off.
+# Also includes repo-manager-backed tools (bash_command, apply_changes, git_commit,
+# git_push) which may be absent from ToolService when RepoManager isn't available.
 OPTIONAL_TOOL_NAMES: FrozenSet[str] = frozenset(
     {
         "webpage_extractor",

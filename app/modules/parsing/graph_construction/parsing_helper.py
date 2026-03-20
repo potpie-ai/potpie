@@ -1866,88 +1866,50 @@ class ParseHelper:
                 ref=ref,
                 method="environment_token_fallback",
             )
-
-            # Build clone URL with authentication (this will use environment tokens)
-            clone_url = await self._build_clone_url(github_repo, auth, user_id=user_id)
-
-            if not clone_url:
-                logger.error(
-                    f"[Repomanager] FAILED: Could not build clone URL for {repo_name}",
-                    user_id=user_id,
-                    repo_name=repo_name,
-                    ref=ref,
-                    reason="No valid authentication method available",
-                )
-                return None
-
-            # Clone as BARE repository to match RepoManager architecture
-            # This ensures worktrees can be created properly
-            bare_repo_path = self.repo_manager._get_bare_repo_path(repo_name)
-            bare_repo_path.parent.mkdir(parents=True, exist_ok=True)
-
-            logger.info(
-                f"[Repomanager] Cloning {repo_name} as bare repo to {bare_repo_path}",
-                user_id=user_id,
-                repo_name=repo_name,
-                ref=ref,
-                method="environment_token_bare_clone",
-            )
-
             try:
-                # Clone as bare repository
-                Repo.clone_from(
-                    clone_url,
-                    str(bare_repo_path),
-                    bare=True,
-                    mirror=True,  # Mirror for full fidelity
-                )
-                logger.info(
-                    f"[Repomanager] SUCCESS: Cloned {repo_name} as bare repo with environment token",
+                worktree_path_str = self.repo_manager.prepare_for_parsing(
+                    repo_name,
+                    ref,
+                    auth_token=None,
                     user_id=user_id,
-                    repo_name=repo_name,
-                    ref=ref,
-                    bare_repo_path=str(bare_repo_path),
-                    method="environment_token",
+                    is_commit=bool(commit_id),
                 )
-
-                # Configure the bare repo to fetch all refs
-                _, _, Repo = _get_git_imports()
-                bare_repo = Repo(str(bare_repo_path))
-                if bare_repo.remotes:
-                    origin = bare_repo.remotes.origin
-                    origin.fetch()
+                if worktree_path_str:
                     logger.info(
-                        f"[_clone_to_repo_manager] Fetched all refs for {repo_name}",
+                        f"[Repomanager] SUCCESS: Cloned with environment/provider credentials",
                         user_id=user_id,
                         repo_name=repo_name,
+                        ref=ref,
+                        worktree_path=worktree_path_str,
+                        method="environment_token",
                     )
-
+                    return worktree_path_str
             except Exception as e:
                 error_str = str(e).lower()
                 if "403" in error_str or "forbidden" in error_str:
-                    reason = "Environment token lacks access to repository (check GH_TOKEN_LIST)"
+                    reason = "Environment/provider credentials lack access to repository"
                 elif "401" in error_str or "unauthorized" in error_str:
-                    reason = "Environment token is invalid or expired"
+                    reason = "Environment/provider credentials are invalid or expired"
                 elif "404" in error_str or "not found" in error_str:
-                    reason = "Repository not found with environment token"
+                    reason = "Repository not found with environment/provider credentials"
                 else:
                     reason = f"Clone failed: {str(e)[:200]}"
 
                 logger.error(
-                    f"[Repomanager] FAILED: Environment token clone failed for {repo_name}",
+                    f"[Repomanager] FAILED: Environment/provider credential clone failed for {repo_name}",
                     user_id=user_id,
                     repo_name=repo_name,
                     ref=ref,
                     error_type=type(e).__name__,
                     error=str(e)[:200],
                     reason=reason,
-                    suggestion="All authentication methods exhausted. Check: 1) GitHub App installation, 2) User OAuth scopes, 3) Environment tokens",
+                    suggestion="All authentication methods exhausted. Check provider credentials and repository access",
                 )
 
-                # Send email alert for final auth failure
                 try:
                     email_helper = EmailHelper()
                     import traceback
+
                     await email_helper.send_parsing_failure_alert(
                         repo_name=repo_name,
                         branch_name=ref,
@@ -1962,92 +1924,6 @@ class ParseHelper:
                     logger.error(f"Failed to send failure email: {email_err}")
 
                 return None
-
-            # Now create worktree for the specific ref from the bare repo
-            worktree_path_str = await self._create_git_worktree_from_bare(
-                bare_repo_path=bare_repo_path,
-                worktree_path=worktree_path,
-                ref=ref,
-                is_commit=commit_id is not None,
-            )
-
-            if not worktree_path_str:
-                # Worktree creation failed - don't return bare repo (not usable for parsing)
-                logger.error(
-                    f"[Repomanager] Worktree creation failed for {repo_name}. Bare repo exists but cannot be used for parsing.",
-                    user_id=user_id,
-                    repo_name=repo_name,
-                    ref=ref,
-                )
-
-                # Send email alert for worktree creation failure
-                try:
-                    email_helper = EmailHelper()
-                    await email_helper.send_parsing_failure_alert(
-                        repo_name=repo_name,
-                        branch_name=ref,
-                        error_message="Worktree creation failed after successful bare repo clone",
-                        auth_method="environment",
-                        failure_type="worktree_creation",
-                        user_id=user_id,
-                        project_id=project_id,
-                        stack_trace=None,
-                    )
-                except Exception as email_err:
-                    logger.error(f"Failed to send worktree failure email: {email_err}")
-
-                return None
-
-            # Always get actual commit SHA from worktree to ensure accuracy
-            actual_commit_id = None
-            try:
-                _, _, Repo = _get_git_imports()
-                worktree_repo = Repo(worktree_path_str)
-                actual_commit_id = worktree_repo.head.commit.hexsha
-                logger.info(
-                    f"ParsingHelper: Worktree created at {worktree_path_str}, "
-                    f"actual commit_id={actual_commit_id} "
-                    f"(requested commit_id={commit_id}, branch={branch})"
-                )
-                # Verify commit_id matches if it was specified
-                if commit_id and actual_commit_id != commit_id:
-                    logger.warning(
-                        f"ParsingHelper: Commit mismatch! Requested {commit_id}, "
-                        f"but worktree has {actual_commit_id}. Using actual commit_id."
-                    )
-            except Exception as e:
-                logger.warning(f"Could not get commit SHA from worktree: {e}")
-                # Fallback to requested commit_id or fetch from branch
-                actual_commit_id = commit_id
-                if not actual_commit_id:
-                    try:
-                        branch_info = github_repo.get_branch(branch)
-                        actual_commit_id = branch_info.commit.sha
-                    except Exception as e2:
-                        logger.warning(f"Could not get commit SHA from branch: {e2}")
-
-            # Extract metadata
-            try:
-                repo_metadata = ParseHelper.extract_remote_repo_metadata(github_repo)
-            except Exception:
-                repo_metadata = {}
-
-            # Register with RepoManager
-            self.repo_manager.register_repo(
-                repo_name=repo_name,
-                local_path=worktree_path_str,
-                branch=branch,
-                commit_id=actual_commit_id,
-                user_id=user_id,
-                metadata=repo_metadata,
-            )
-
-            logger.info(
-                f"ParsingHelper: Successfully cloned and registered {repo_name}@{ref} "
-                f"in RepoManager at {worktree_path_str}"
-            )
-
-            return worktree_path_str
 
         except Exception as e:
             logger.exception(f"Failed to add {repo_name} to RepoManager: {e}")

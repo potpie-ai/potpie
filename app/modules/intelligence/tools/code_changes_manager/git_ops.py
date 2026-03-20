@@ -25,7 +25,7 @@ def write_change_to_worktree(
     Write a single file change directly to the edits worktree (non-local mode only).
 
     Best-effort: never raises. Redis remains the source of truth.
-    No-op when REPO_MANAGER_ENABLED=false or local_mode=True.
+    No-op when local_mode=True.
 
     Args:
         project_id: Project ID used to locate the edits worktree
@@ -136,9 +136,6 @@ def commit_file_and_extract_patch(
                 "success": False,
                 "error": "commit_file_and_extract_patch is not available in local mode",
             }
-
-        if os.getenv("REPO_MANAGER_ENABLED", "false").lower() != "true":
-            return {"success": False, "error": "REPO_MANAGER_ENABLED is not set to true"}
 
         conversation_id = _get_conversation_id()
         if not conversation_id:
@@ -283,9 +280,6 @@ def commit_all_files_and_extract_patches(
                 "success": False,
                 "error": "commit_all_files_and_extract_patches is not available in local mode",
             }
-
-        if os.getenv("REPO_MANAGER_ENABLED", "false").lower() != "true":
-            return {"success": False, "error": "REPO_MANAGER_ENABLED is not set to true"}
 
         conversation_id = _get_conversation_id()
         if not conversation_id:

@@ -143,10 +143,34 @@ class RepoManager(IRepoManager):
         import re
 
         sanitized = re.sub(r"oauth2:[^@]+@", "oauth2:***@", error_msg)
+        sanitized = re.sub(r"token:[^@]+@", "token:***@", sanitized)
+        sanitized = re.sub(r"x-access-token:[^@]+@", "x-access-token:***@", sanitized)
+        sanitized = re.sub(r"https?://[^:/\s]+:[^@]+@", "https://***:***@", sanitized)
         sanitized = re.sub(r"ghp_[a-zA-Z0-9]{36}", "***", sanitized)
         return sanitized
 
     # ========== GIT AUTHENTICATION ==========
+
+    def _get_provider_type(self) -> str:
+        """Get normalized code provider type from environment."""
+        return os.getenv("CODE_PROVIDER", "github").strip().lower()
+
+    def _derive_gitbucket_url(self, repo_name: str) -> str:
+        """Derive GitBucket git clone URL from repo_name and configured base URL."""
+        if repo_name.endswith(".git"):
+            repo_name = repo_name[:-4]
+
+        # Prefer explicit clone base URL; fallback to API URL by stripping /api/v3.
+        clone_base = (
+            os.getenv("CODE_PROVIDER_BASE_URL")
+            or os.getenv("GITBUCKET_BASE_URL")
+            or "http://localhost:8080"
+        ).strip()
+        clone_base = clone_base.rstrip("/")
+        if clone_base.endswith("/api/v3"):
+            clone_base = clone_base[:-7]
+
+        return f"{clone_base}/{repo_name}.git"
 
     def _derive_github_url(self, repo_name: str) -> str:
         """Derive GitHub URL from repo_name using GITHUB_BASE_URL."""
@@ -156,6 +180,13 @@ class RepoManager(IRepoManager):
         github_base = os.getenv("GITHUB_BASE_URL", "github.com")
 
         return f"https://{github_base}/{repo_name}.git"
+
+    def _derive_repo_url(self, repo_name: str) -> str:
+        """Derive clone URL for the configured code provider."""
+        provider_type = self._get_provider_type()
+        if provider_type == "gitbucket":
+            return self._derive_gitbucket_url(repo_name)
+        return self._derive_github_url(repo_name)
 
     def _get_github_token(self) -> Optional[str]:
         """Get GitHub token from environment or token pool."""
@@ -172,6 +203,17 @@ class RepoManager(IRepoManager):
                 return token
 
         return None
+
+    def _get_provider_token(self) -> Optional[str]:
+        """Get provider token for the configured code provider."""
+        provider_type = self._get_provider_type()
+        if provider_type == "gitbucket":
+            return (
+                os.getenv("CODE_PROVIDER_TOKEN")
+                or os.getenv("GITBUCKET_TOKEN")
+                or os.getenv("GITBUCKET_PASSWORD")
+            )
+        return self._get_github_token()
 
     @staticmethod
     def _get_token_username_prefix(token: str) -> str:
@@ -206,7 +248,7 @@ class RepoManager(IRepoManager):
         repo_name: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> str:
-        """Build authenticated URL with correct username prefix based on token type.
+        """Build authenticated URL for configured provider.
 
         Args:
             repo_url: The repository URL to authenticate
@@ -217,12 +259,28 @@ class RepoManager(IRepoManager):
         Returns:
             Authenticated URL with proper username:token@ format
         """
+        provider_type = self._get_provider_type()
+        parsed = urlparse(repo_url.rstrip("/"))
+
+        # For GitBucket clone endpoints, prefer basic auth from env credentials.
+        if provider_type == "gitbucket":
+            username = os.getenv("GITBUCKET_USERNAME")
+            password = os.getenv("GITBUCKET_PASSWORD")
+            if username and password and parsed.scheme in ("https", "http"):
+                host = parsed.hostname or parsed.netloc
+                if parsed.port:
+                    host = f"{host}:{parsed.port}"
+                safe_user = quote(username.strip(), safe="")
+                safe_pass = quote(password.strip(), safe="")
+                return parsed._replace(
+                    netloc=f"{safe_user}:{safe_pass}@{host}"
+                ).geturl().rstrip("/")
+
         if not auth_token:
             return repo_url
 
         auth_token = auth_token.strip()
         repo_url = repo_url.rstrip("/")
-
         parsed = urlparse(repo_url)
 
         if parsed.scheme not in ("https", "http"):
@@ -233,8 +291,10 @@ class RepoManager(IRepoManager):
             )
             return repo_url
 
-        # Determine username prefix based on token type
+        # Determine username prefix based on token type/provider.
         username_prefix = self._get_token_username_prefix(auth_token)
+        if provider_type == "gitbucket":
+            username_prefix = "token"
 
         # Log token type (without exposing token)
         token_type = "unknown"
@@ -760,28 +820,31 @@ class RepoManager(IRepoManager):
             self._validate_ref(ref)
 
         bare_repo_path = self._get_bare_repo_path(repo_name)
+        provider_type = self._get_provider_type()
 
         # Derive URL if not provided
         if repo_url is None:
-            repo_url = self._derive_github_url(repo_name)
-            logger.info(f"Derived GitHub URL: {repo_url}")
+            repo_url = self._derive_repo_url(repo_name)
+            logger.info(f"Derived {provider_type} clone URL: {repo_url}")
 
         # Get auth token
-        github_token = auth_token or self._get_github_token()
+        provider_token = auth_token or self._get_provider_token()
 
-        if github_token:
+        if provider_token:
             # Determine token type for clearer logging
             token_type = "unknown"
             token_source = "environment"
-            if github_token.startswith("ghs_"):
+            if provider_token.startswith("ghs_"):
                 token_type = "github_app"
                 token_source = "github_app"
-            elif github_token.startswith("gho_"):
+            elif provider_token.startswith("gho_"):
                 token_type = "user_oauth"
                 token_source = "user_provided"
-            elif github_token.startswith("ghp_") or github_token.startswith("github_pat_"):
+            elif provider_token.startswith("ghp_") or provider_token.startswith("github_pat_"):
                 token_type = "pat"
                 token_source = "environment" if not auth_token else "user_provided"
+            elif provider_type == "gitbucket":
+                token_type = "gitbucket_token"
 
             if auth_token:
                 # Token was explicitly passed (from auth flow)
@@ -791,7 +854,7 @@ class RepoManager(IRepoManager):
                     user_id=user_id,
                     token_type=token_type,
                     token_source=token_source,
-                    token_prefix=github_token[:8] if len(github_token) > 8 else "short",
+                    token_prefix=provider_token[:8] if len(provider_token) > 8 else "short",
                 )
             else:
                 # Environment token will be used
@@ -801,23 +864,23 @@ class RepoManager(IRepoManager):
                     user_id=user_id,
                     token_type=token_type,
                     token_source="environment",
-                    token_prefix=github_token[:8] if len(github_token) > 8 else "short",
+                    token_prefix=provider_token[:8] if len(provider_token) > 8 else "short",
                 )
         else:
             logger.warning(
-                f"No GitHub token available for cloning {repo_name}. Will attempt unauthenticated access (public repos only)."
+                f"No {provider_type} token available for cloning {repo_name}. Will attempt unauthenticated access."
             )
 
         clone_url = self._build_authenticated_url(
-            repo_url, github_token, repo_name=repo_name, user_id=user_id
+            repo_url, provider_token, repo_name=repo_name, user_id=user_id
         )
 
         if bare_repo_path.exists() and (bare_repo_path / "HEAD").exists():
             logger.info(f"Bare repo already exists: {repo_name}")
             if ref:
-                self._fetch_ref(bare_repo_path, ref, github_token, repo_url)
+                self._fetch_ref(bare_repo_path, ref, provider_token, repo_url)
             self._update_bare_repo_metadata(
-                repo_name, repo_url, bool(github_token), user_id
+                repo_name, repo_url, bool(provider_token), user_id
             )
             return bare_repo_path
 
@@ -845,12 +908,20 @@ class RepoManager(IRepoManager):
                     "Authentication failed" in error_msg
                     or "Permission denied" in error_msg
                 ):
+                    provider_label = "GitBucket" if provider_type == "gitbucket" else "GitHub"
+                    token_hint = (
+                        "  1. GitBucket token/credentials are valid\n"
+                        "  2. Token/user has access to this repository\n"
+                        "  3. GitBucket clone URL/base URL is configured correctly\n"
+                    ) if provider_type == "gitbucket" else (
+                        "  1. GitHub token is valid\n"
+                        "  2. Token has 'repo' scope\n"
+                        "  3. You have access to this repository\n"
+                    )
                     raise RuntimeError(
-                        f"Git authentication failed for '{repo_name}'.\n"
+                        f"{provider_label} authentication failed for '{repo_name}'.\n"
                         f"Please check:\n"
-                        f"  1. GitHub token is valid\n"
-                        f"  2. Token has 'repo' scope\n"
-                        f"  3. You have access to this repository\n"
+                        f"{token_hint}"
                         f"Error: {sanitized_error}"
                     )
                 else:
@@ -859,12 +930,12 @@ class RepoManager(IRepoManager):
             logger.info(f"Successfully cloned bare repo: {repo_name}")
 
             if ref:
-                self._fetch_ref(bare_repo_path, ref, github_token, repo_url)
+                self._fetch_ref(bare_repo_path, ref, provider_token, repo_url)
 
             self._update_bare_repo_metadata(
                 repo_name,
                 repo_url=repo_url,
-                auth_used=bool(github_token),
+                auth_used=bool(provider_token),
                 user_id=user_id,
             )
 

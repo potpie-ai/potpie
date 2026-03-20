@@ -15,6 +15,7 @@ Usage:
 """
 
 import os
+import shutil
 import subprocess
 import platform
 from pathlib import Path
@@ -494,6 +495,14 @@ def _run_with_docker_gvisor(
     if safe_env:
         for key, value in safe_env.items():
             docker_cmd.extend(["-e", f"{key}={value}"])
+
+    # Mount host binaries that are not in busybox but are whitelisted (e.g. rg, ag, ack)
+    _EXTRA_HOST_BINARIES = ["rg", "ag", "ack"]
+    for binary in _EXTRA_HOST_BINARIES:
+        host_path = shutil.which(binary)
+        if host_path:
+            docker_cmd.extend(["-v", f"{host_path}:/usr/local/bin/{binary}:ro"])
+            logger.debug(f"[GVISOR] Mounting host binary {binary} from {host_path}")
 
     # Use a minimal Linux image (alpine or busybox)
     # We'll use busybox as it's very small

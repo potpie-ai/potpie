@@ -131,12 +131,8 @@ class ApplyChangesTool:
         # Initialize repo manager if enabled
         self.repo_manager = None
         try:
-            repo_manager_enabled = (
-                os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
-            )
-            if repo_manager_enabled:
-                self.repo_manager = RepoManager()
-                logger.info("ApplyChangesTool: RepoManager initialized")
+            self.repo_manager = RepoManager()
+            logger.info("ApplyChangesTool: RepoManager initialized")
         except Exception as e:
             logger.warning(f"ApplyChangesTool: Failed to initialize RepoManager: {e}")
 
@@ -178,7 +174,7 @@ class ApplyChangesTool:
             if not self.repo_manager:
                 return {
                     "success": False,
-                    "error": "Repo manager is not enabled. Apply changes requires a local worktree.",
+                    "error": "Repo manager is not available. Apply changes requires a local worktree.",
                     "files_applied": [],
                     "files_deleted": [],
                     "files_skipped": [],
@@ -356,15 +352,10 @@ class ApplyChangesTool:
 
 def apply_changes_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
     """
-    Create apply changes tool if repo manager is enabled.
+    Create apply changes tool when RepoManager is available.
 
-    Returns None if repo manager is not enabled.
+    Returns None if RepoManager cannot be initialized.
     """
-    repo_manager_enabled = os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
-    if not repo_manager_enabled:
-        logger.debug("ApplyChangesTool not created: REPO_MANAGER_ENABLED is false")
-        return None
-
     tool_instance = ApplyChangesTool(sql_db, user_id)
     if not tool_instance.repo_manager:
         logger.debug("ApplyChangesTool not created: RepoManager initialization failed")

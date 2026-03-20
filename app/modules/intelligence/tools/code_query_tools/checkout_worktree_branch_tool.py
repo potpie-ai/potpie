@@ -91,12 +91,8 @@ Example:
         # Initialize repo manager if enabled
         self.repo_manager = None
         try:
-            repo_manager_enabled = (
-                os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
-            )
-            if repo_manager_enabled:
-                self.repo_manager = RepoManager()
-                logger.info("CheckoutWorktreeBranchTool: RepoManager initialized")
+            self.repo_manager = RepoManager()
+            logger.info("CheckoutWorktreeBranchTool: RepoManager initialized")
         except Exception as e:
             logger.warning(
                 f"CheckoutWorktreeBranchTool: Failed to initialize RepoManager: {e}"
@@ -127,7 +123,7 @@ Example:
             if not self.repo_manager:
                 return {
                     "success": False,
-                    "error": "Repo manager not enabled. Set REPO_MANAGER_ENABLED=true",
+                    "error": "Repo manager is not available. Checkout requires a local worktree.",
                 }
 
             # Get project details
@@ -289,19 +285,10 @@ def checkout_worktree_branch_tool(
     sql_db: Session, user_id: str
 ) -> Optional[StructuredTool]:
     """
-    Create the checkout worktree branch tool if repo manager is enabled.
+    Create the checkout worktree branch tool when RepoManager is available.
 
-    Returns None if repo manager is not enabled.
+    Returns None if RepoManager cannot be initialized.
     """
-    repo_manager_enabled = (
-        os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
-    )
-    if not repo_manager_enabled:
-        logger.debug(
-            "CheckoutWorktreeBranchTool not created: REPO_MANAGER_ENABLED is false"
-        )
-        return None
-
     tool_instance = CheckoutWorktreeBranchTool(sql_db, user_id)
     if not tool_instance.repo_manager:
         logger.debug(

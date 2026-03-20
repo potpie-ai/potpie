@@ -129,6 +129,11 @@ class ParsingService:
         project_id: str,
         cleanup_graph: bool = True,
     ):
+        def _env_enabled(var_name: str) -> bool:
+            """Parse common boolean-ish env values."""
+            val = os.getenv(var_name, "")
+            return val.strip().lower() in {"1", "true", "enabled", "yes", "on"}
+
         # Set up logging context with domain IDs
         with log_context(project_id=str(project_id), user_id=user_id):
             project_manager = ProjectService(self.db)
@@ -167,10 +172,8 @@ class ParsingService:
                         await project_manager.update_project_status(
                             project_id, ProjectStatusEnum.READY
                         )
-                        # Ensure worktree exists in repo manager when enabled
-                        if self.repo_manager and os.getenv(
-                            "REPO_MANAGER_ENABLED", "false"
-                        ).lower() == "true":
+                        # Ensure worktree exists in RepoManager
+                        if self.repo_manager:
                             repo_name = existing_project.get("project_name")
                             branch = existing_project.get("branch_name")
                             commit_id_val = existing_project.get("commit_id")
@@ -336,6 +339,24 @@ class ParsingService:
                         status_code=500, detail="Failed to set up project directory"
                     )
                 extracted_dir = str(extracted_dir)
+
+                # Optional short-circuit: once RepoManager validated a usable worktree path,
+                # mark the project READY immediately and skip heavy analysis.
+                if (
+                    repo_manager_path
+                    and _env_enabled("PARSING_SHORT_CIRCUIT_REPOMANAGER")
+                ):
+                    await self.project_service.update_project_status(
+                        project_id, ProjectStatusEnum.READY
+                    )
+                    logger.info(
+                        "ParsingService: Short-circuited after RepoManager worktree setup; marked project READY",
+                        project_id=project_id,
+                    )
+                    return {
+                        "message": "Project marked READY after RepoManager setup",
+                        "id": project_id,
+                    }
 
                 Repo = _get_repo_class()
                 if repo is None or isinstance(repo, Repo):

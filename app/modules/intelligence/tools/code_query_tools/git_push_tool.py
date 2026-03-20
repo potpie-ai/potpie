@@ -89,12 +89,8 @@ class GitPushTool:
         # Initialize repo manager if enabled
         self.repo_manager = None
         try:
-            repo_manager_enabled = (
-                os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
-            )
-            if repo_manager_enabled:
-                self.repo_manager = RepoManager()
-                logger.info("GitPushTool: RepoManager initialized")
+            self.repo_manager = RepoManager()
+            logger.info("GitPushTool: RepoManager initialized")
         except Exception as e:
             logger.warning(f"GitPushTool: Failed to initialize RepoManager: {e}")
 
@@ -208,7 +204,7 @@ class GitPushTool:
             if not self.repo_manager:
                 return {
                     "success": False,
-                    "error": "Repo manager is not enabled. Git push requires a local worktree.",
+                    "error": "Repo manager is not available. Git push requires a local worktree.",
                 }
 
             # Get project details
@@ -352,15 +348,10 @@ class GitPushTool:
 
 def git_push_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
     """
-    Create git push tool if repo manager is enabled.
+    Create git push tool when RepoManager is available.
 
-    Returns None if repo manager is not enabled.
+    Returns None if RepoManager cannot be initialized.
     """
-    repo_manager_enabled = os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
-    if not repo_manager_enabled:
-        logger.debug("GitPushTool not created: REPO_MANAGER_ENABLED is false")
-        return None
-
     tool_instance = GitPushTool(sql_db, user_id)
     if not tool_instance.repo_manager:
         logger.debug("GitPushTool not created: RepoManager initialization failed")
