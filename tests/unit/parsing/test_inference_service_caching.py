@@ -239,7 +239,7 @@ class TestBatchUpdateNeo4jWithCachedInference:
     def test_node_without_cached_inference_skipped(self):
         """Nodes lacking cached_inference are silently skipped."""
         nodes = [{"node_id": "bare-node", "content_hash": "abc"}]
-        count, session_ctx = self._run_batch_update(nodes)
+        count, _session_ctx = self._run_batch_update(nodes)
         assert count == 0
 
 

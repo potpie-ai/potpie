@@ -5,11 +5,13 @@ Provides the same interface used throughout this codebase:
   - Constructor: SimpleTool(name, description, func, args_schema, coroutine)
   - Factory:     SimpleTool.from_function(func, name, description, args_schema, coroutine)
   - invoke():    SimpleTool.invoke(input_dict) for direct synchronous execution
+  - ainvoke():   SimpleTool.ainvoke(input_dict) for async execution (uses coroutine if set)
 
 The wrap_structured_tools() helper in multi_agent/utils/tool_utils.py converts
 SimpleTool instances to pydantic-ai Tool objects for agent execution.
 """
 
+import asyncio
 import inspect
 import logging
 from typing import Any, Callable, Dict, Optional, Type
@@ -76,6 +78,28 @@ class SimpleTool:
         if tool_input is None:
             tool_input = {}
         return _invoke_func(self.func, self.args_schema, tool_input)
+
+    async def ainvoke(self, tool_input: Dict[str, Any], **kwargs: Any) -> Any:
+        """Invoke the tool asynchronously with a kwargs dict.
+
+        Uses self.coroutine if set, otherwise falls back to running self.func
+        in a thread pool via asyncio.to_thread so sync tools are non-blocking.
+        """
+        if tool_input is None:
+            tool_input = {}
+        if callable(self.coroutine):
+            if isinstance(self.args_schema, type) and issubclass(
+                self.args_schema, BaseModel
+            ):
+                model_cls = _has_single_pydantic_param(self.coroutine)
+                if model_cls is not None:
+                    return await self.coroutine(model_cls(**tool_input))
+            return await self.coroutine(**tool_input)
+        if callable(self.func):
+            return await asyncio.to_thread(
+                _invoke_func, self.func, self.args_schema, tool_input
+            )
+        raise TypeError(f"Tool '{self.name}' has no callable func or coroutine")
 
     @classmethod
     def from_function(
