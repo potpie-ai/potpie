@@ -413,7 +413,7 @@ class TestStartCommand:
 
         mock_run.assert_called_once()
         args = mock_run.call_args[0][0]
-        assert "bash" in args
+        assert any("bash" in a for a in args)
         assert str(script) in args
 
     def test_start_falls_back_to_direct_when_no_script(self, tmp_path):
@@ -422,6 +422,7 @@ class TestStartCommand:
         # No scripts/start.sh in tmp_path
         with patch("potpie.cli.commands.start._find_project_root", return_value=tmp_path):
             with patch("subprocess.Popen") as mock_popen:
+                mock_popen.return_value.pid = 12345
                 start_server()
 
         assert mock_popen.call_count == 2  # gunicorn + celery
@@ -442,7 +443,7 @@ class TestStopCommand:
 
         mock_run.assert_called_once()
         args = mock_run.call_args[0][0]
-        assert "bash" in args
+        assert any("bash" in a for a in args)
         assert str(script) in args
 
     def test_stop_falls_back_to_pkill_when_no_script(self, tmp_path):

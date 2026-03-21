@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import json
-import os
-import signal
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -23,6 +21,15 @@ def _find_project_root() -> Path:
     )
 
 
+def _get_bash() -> str:
+    """Return the absolute path to bash, or exit if not found."""
+    bash = shutil.which("bash")
+    if not bash:
+        print("Error: bash not found on PATH.", file=sys.stderr)
+        sys.exit(1)
+    return bash
+
+
 def stop_server() -> None:
     """Stop the Potpie server using the project's stop script."""
     try:
@@ -36,10 +43,16 @@ def stop_server() -> None:
         if not stop_script.is_file():
             print(f"Error: {stop_script} is not a regular file.", file=sys.stderr)
             sys.exit(1)
-        print("Stopping Potpie server…")
         try:
-            subprocess.run(  # noqa: S603
-                ["bash", str(stop_script)],
+            stop_script.resolve().relative_to(project_root.resolve())
+        except ValueError:
+            print("Error: stop script is outside the project root.", file=sys.stderr)
+            sys.exit(1)
+        print("Stopping Potpie server…")
+        bash = _get_bash()
+        try:
+            subprocess.run(  # noqa: S603 # NOSONAR
+                [bash, str(stop_script)],
                 cwd=str(project_root),
                 check=True,
             )
@@ -51,35 +64,17 @@ def stop_server() -> None:
 
 
 def _stop_directly() -> None:
-    """Stop gunicorn and celery processes using saved PIDs."""
+    """Stop gunicorn and celery processes using pkill."""
     print("Stopping Potpie services…")
-    if not PIDFILE.exists():
-        print("No PID file found — services may not be running.", file=sys.stderr)
-        return
-
-    try:
-        pids = json.loads(PIDFILE.read_text())
-    except (json.JSONDecodeError, OSError) as exc:
-        print(f"Error reading PID file: {exc}", file=sys.stderr)
-        return
-
-    all_stopped = True
-    for name, pid in pids.items():
-        if not isinstance(pid, int) or pid <= 0:
-            print(f"  Skipping {name}: invalid PID {pid!r}", file=sys.stderr)
-            all_stopped = False
-            continue
+    pkill = shutil.which("pkill") or "pkill"
+    for service in ("gunicorn", "celery"):
         try:
-            os.kill(pid, signal.SIGTERM)
-            print(f"  Stopped {name} (PID {pid})")
-        except ProcessLookupError:
-            print(f"  No {name} process found (PID {pid})")
+            subprocess.run(  # noqa: S603 # NOSONAR
+                [pkill, "-f", service],
+                check=False,
+            )
+            print(f"  Sent SIGTERM to {service} processes.")
         except OSError as exc:
-            print(f"  Error stopping {name} (PID {pid}): {exc}", file=sys.stderr)
-            all_stopped = False
-
-    if all_stopped:
-        PIDFILE.unlink(missing_ok=True)
-        print("Done.")
-    else:
-        print("Some processes could not be stopped; PID file retained.", file=sys.stderr)
+            print(f"  Error stopping {service}: {exc}", file=sys.stderr)
+    PIDFILE.unlink(missing_ok=True)
+    print("Done.")
