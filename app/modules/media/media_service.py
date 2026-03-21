@@ -6,6 +6,9 @@ import base64
 from PIL import Image
 import boto3
 from botocore.exceptions import ClientError
+from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
+from azure.core.exceptions import ResourceNotFoundError as AzureResourceNotFoundError
+from datetime import datetime, timezone, timedelta
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, UploadFile
 from uuid6 import uuid7
@@ -67,6 +70,7 @@ class MediaService:
         self.bucket_name = None
         self.object_storage_descriptor: dict[str, Any] | None = None
         self.s3_client = None
+        self.azure_client: BlobServiceClient | None = None
 
         if self.is_multimodal_enabled:
             descriptor = config_provider.get_object_storage_descriptor()
@@ -94,12 +98,30 @@ class MediaService:
             raise MediaServiceError("Object storage descriptor not configured")
 
         try:
-            client_kwargs = dict(self.object_storage_descriptor["client_kwargs"])
-            self.s3_client = boto3.client("s3", **client_kwargs)
-            self.s3_client.head_bucket(Bucket=self.bucket_name)
-            logger.info(
-                f"Initialized boto3 client for provider {self.storage_provider.value} (bucket={self.bucket_name})"
-            )
+            if self.storage_provider == StorageProvider.AZURE:
+                azure_kwargs = self.object_storage_descriptor["azure_client_kwargs"]
+                account_name = azure_kwargs["account_name"]
+                account_key = azure_kwargs["account_key"]
+                conn_str = (
+                    f"DefaultEndpointsProtocol=https;"
+                    f"AccountName={account_name};"
+                    f"AccountKey={account_key};"
+                    f"EndpointSuffix=core.windows.net"
+                )
+                self.azure_client = BlobServiceClient.from_connection_string(conn_str)
+                # Verify container is accessible
+                container = self.azure_client.get_container_client(self.bucket_name)
+                container.get_container_properties()
+                logger.info(
+                    f"Initialized Azure BlobServiceClient (container={self.bucket_name})"
+                )
+            else:
+                client_kwargs = dict(self.object_storage_descriptor["client_kwargs"])
+                self.s3_client = boto3.client("s3", **client_kwargs)
+                self.s3_client.head_bucket(Bucket=self.bucket_name)
+                logger.info(
+                    f"Initialized boto3 client for provider {self.storage_provider.value} (bucket={self.bucket_name})"
+                )
         except Exception as e:
             logger.error(f"Failed to initialize object storage client: {e}")
             raise MediaServiceError(f"Failed to initialize object storage: {e}")
@@ -417,23 +439,33 @@ class MediaService:
     async def _upload_to_cloud(
         self, storage_path: str, file_data: bytes, mime_type: str
     ) -> None:
-        """Upload file to the configured object storage bucket via boto3."""
+        """Upload file to the configured object storage bucket."""
         self._require_cloud_storage("upload")
-        if not self.s3_client or not self.bucket_name:
-            raise MediaServiceError("Object storage client not initialized for upload")
 
         try:
             logger.info(
                 f"Uploading object -> provider={self.storage_provider.value} bucket={self.bucket_name} key={storage_path} content_type={mime_type}"
             )
-            md5_b64 = base64.b64encode(hashlib.md5(file_data).digest()).decode("utf-8")
-            self.s3_client.put_object(
-                Bucket=self.bucket_name,
-                Key=storage_path,
-                Body=file_data,
-                ContentType=mime_type,
-                ContentMD5=md5_b64,
-            )
+            if self.storage_provider == StorageProvider.AZURE:
+                if not self.azure_client or not self.bucket_name:
+                    raise MediaServiceError("Azure client not initialized for upload")
+                blob = self.azure_client.get_blob_client(
+                    container=self.bucket_name, blob=storage_path
+                )
+                blob.upload_blob(
+                    file_data, overwrite=True, content_settings={"content_type": mime_type}
+                )
+            else:
+                if not self.s3_client or not self.bucket_name:
+                    raise MediaServiceError("S3 client not initialized for upload")
+                md5_b64 = base64.b64encode(hashlib.md5(file_data).digest()).decode("utf-8")
+                self.s3_client.put_object(
+                    Bucket=self.bucket_name,
+                    Key=storage_path,
+                    Body=file_data,
+                    ContentType=mime_type,
+                    ContentMD5=md5_b64,
+                )
             logger.info(f"Uploaded object to {self.bucket_name}:{storage_path}")
         except Exception as e:
             logger.error(f"Failed to upload to object storage: {e}")
@@ -460,17 +492,25 @@ class MediaService:
                 raise HTTPException(status_code=404, detail="Attachment not found")
 
             self._require_cloud_storage("download")
-            if not self.s3_client or not self.bucket_name:
-                raise MediaServiceError(
-                    "Object storage client not initialized for download"
-                )
 
             try:
-                response = self.s3_client.get_object(
-                    Bucket=self.bucket_name,
-                    Key=attachment.storage_path,
-                )
-                return response["Body"].read()
+                if self.storage_provider == StorageProvider.AZURE:
+                    if not self.azure_client or not self.bucket_name:
+                        raise MediaServiceError("Azure client not initialized for download")
+                    blob = self.azure_client.get_blob_client(
+                        container=self.bucket_name, blob=attachment.storage_path
+                    )
+                    return blob.download_blob().readall()
+                else:
+                    if not self.s3_client or not self.bucket_name:
+                        raise MediaServiceError("S3 client not initialized for download")
+                    response = self.s3_client.get_object(
+                        Bucket=self.bucket_name,
+                        Key=attachment.storage_path,
+                    )
+                    return response["Body"].read()
+            except AzureResourceNotFoundError:
+                raise HTTPException(status_code=404, detail="Attachment not found in storage")
             except ClientError as e:
                 error_code = e.response.get("Error", {}).get("Code")
                 if error_code == "NoSuchKey":
@@ -495,19 +535,34 @@ class MediaService:
                 raise HTTPException(status_code=404, detail="Attachment not found")
 
             self._require_cloud_storage("signed URL")
-            if not self.s3_client or not self.bucket_name:
-                raise MediaServiceError(
-                    "Object storage client not initialized for signed URL"
-                )
 
-            return self.s3_client.generate_presigned_url(
-                "get_object",
-                Params={
-                    "Bucket": self.bucket_name,
-                    "Key": attachment.storage_path,
-                },
-                ExpiresIn=expiration_minutes * 60,
-            )
+            if self.storage_provider == StorageProvider.AZURE:
+                if not self.azure_client or not self.bucket_name:
+                    raise MediaServiceError("Azure client not initialized for signed URL")
+                azure_kwargs = self.object_storage_descriptor["azure_client_kwargs"]
+                sas_token = generate_blob_sas(
+                    account_name=azure_kwargs["account_name"],
+                    container_name=self.bucket_name,
+                    blob_name=attachment.storage_path,
+                    account_key=azure_kwargs["account_key"],
+                    permission=BlobSasPermissions(read=True),
+                    expiry=datetime.now(timezone.utc) + timedelta(minutes=expiration_minutes),
+                )
+                return (
+                    f"https://{azure_kwargs['account_name']}.blob.core.windows.net"
+                    f"/{self.bucket_name}/{attachment.storage_path}?{sas_token}"
+                )
+            else:
+                if not self.s3_client or not self.bucket_name:
+                    raise MediaServiceError("S3 client not initialized for signed URL")
+                return self.s3_client.generate_presigned_url(
+                    "get_object",
+                    Params={
+                        "Bucket": self.bucket_name,
+                        "Key": attachment.storage_path,
+                    },
+                    ExpiresIn=expiration_minutes * 60,
+                )
 
         except HTTPException:
             raise
@@ -526,18 +581,31 @@ class MediaService:
 
             try:
                 self._require_cloud_storage("delete")
-                if not self.s3_client or not self.bucket_name:
-                    raise MediaServiceError(
-                        "Object storage client not initialized for delete"
-                    )
 
                 try:
-                    self.s3_client.delete_object(
-                        Bucket=self.bucket_name,
-                        Key=attachment.storage_path,
-                    )
-                    logger.info(
-                        f"Deleted object from {self.bucket_name}:{attachment.storage_path}"
+                    if self.storage_provider == StorageProvider.AZURE:
+                        if not self.azure_client or not self.bucket_name:
+                            raise MediaServiceError("Azure client not initialized for delete")
+                        blob = self.azure_client.get_blob_client(
+                            container=self.bucket_name, blob=attachment.storage_path
+                        )
+                        blob.delete_blob()
+                        logger.info(
+                            f"Deleted object from {self.bucket_name}:{attachment.storage_path}"
+                        )
+                    else:
+                        if not self.s3_client or not self.bucket_name:
+                            raise MediaServiceError("S3 client not initialized for delete")
+                        self.s3_client.delete_object(
+                            Bucket=self.bucket_name,
+                            Key=attachment.storage_path,
+                        )
+                        logger.info(
+                            f"Deleted object from {self.bucket_name}:{attachment.storage_path}"
+                        )
+                except AzureResourceNotFoundError:
+                    logger.warning(
+                        f"File not found in container={self.bucket_name} blob={attachment.storage_path}; continuing with DB delete"
                     )
                 except ClientError as e:
                     if e.response.get("Error", {}).get("Code") == "NoSuchKey":

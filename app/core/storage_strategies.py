@@ -82,7 +82,7 @@ class GCSStorageStrategy(StorageBackendStrategy):
 
 
 class AzureStorageStrategy(StorageBackendStrategy):
-    """Azure Blob Storage strategy (future implementation)"""
+    """Azure Blob Storage strategy using azure-storage-blob SDK"""
 
     def get_descriptor(self, config_provider) -> Dict[str, Any]:
         azure_account_name = os.getenv("AZURE_ACCOUNT_NAME")
@@ -97,10 +97,9 @@ class AzureStorageStrategy(StorageBackendStrategy):
         return {
             "provider": "azure",
             "bucket_name": azure_container_name,
-            "client_kwargs": {
-                "aws_access_key_id": azure_account_name,
-                "aws_secret_access_key": azure_account_key,
-                "endpoint_url": f"https://{azure_account_name}.blob.core.windows.net",
+            "azure_client_kwargs": {
+                "account_name": azure_account_name,
+                "account_key": azure_account_key,
             },
         }
 
