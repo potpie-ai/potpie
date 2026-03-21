@@ -553,7 +553,8 @@ class ParsingService:
                     project_id=project_id,
                     inference_time_seconds=inference_time,
                 )
-                self.inference_service.log_graph_stats(project_id)
+                if self.inference_service is not None:
+                    self.inference_service.log_graph_stats(project_id)
 
                 # Step 3: Final status update
                 final_status_start = time.time()
@@ -621,7 +622,8 @@ class ParsingService:
                     status_update_time_seconds=status_update_time + final_status_time,
                 )
                 logger.info(f"DEBUGNEO4J: After update project status {project_id}")
-                self.inference_service.log_graph_stats(project_id)
+                if self.inference_service is not None:
+                    self.inference_service.log_graph_stats(project_id)
             finally:
                 if service is not None:
                     service.close()
@@ -629,7 +631,8 @@ class ParsingService:
                     "[PARSING] Cleaned up graph service",
                     project_id=project_id,
                 )
-                self.inference_service.log_graph_stats(project_id)
+                if self.inference_service is not None:
+                    self.inference_service.log_graph_stats(project_id)
         else:
             await self.project_service.update_project_status(
                 project_id, ProjectStatusEnum.ERROR
@@ -637,7 +640,8 @@ class ParsingService:
             if not self._raise_library_exceptions:
                 await ParseWebhookHelper().send_slack_notification(project_id, "Other")
             logger.info(f"DEBUGNEO4J: After update project status {project_id}")
-            self.inference_service.log_graph_stats(project_id)
+            if self.inference_service is not None:
+                self.inference_service.log_graph_stats(project_id)
             raise ParsingFailedError(
                 "Repository doesn't consist of a language currently supported."
             )

@@ -349,14 +349,15 @@ class InferenceService:
             offset = 0
             while True:
                 result = session.run(
-                    f"""
+                    """
                     MATCH (f:FUNCTION)
-                    WHERE f.repoId = '{repo_id}'
+                    WHERE f.repoId = $repo_id
                     AND NOT ()-[:CALLS]->(f)
                     AND (f)-[:CALLS]->()
                     RETURN f.node_id as node_id
                     SKIP $offset LIMIT $limit
                     """,
+                    repo_id=repo_id,
                     offset=offset,
                     limit=batch_size,
                 )
@@ -1341,6 +1342,14 @@ class InferenceService:
                 f"Batch exceeds token limit: {total_tokens} > {MAX_CONTEXT_TOKENS}. "
                 f"Batch size: {len(batch)} nodes. Splitting batch..."
             )
+            # Guard against infinite recursion: a single node that exceeds the limit
+            # cannot be split further, so skip it rather than looping forever.
+            if len(batch) <= 1:
+                logger.warning(
+                    f"Single node exceeds token limit ({total_tokens}). Skipping node."
+                )
+                return DocstringResponse(docstrings=[])
+
             # Split batch in half and process recursively
             mid = len(batch) // 2
             batch1 = batch[:mid]
@@ -1385,6 +1394,8 @@ class InferenceService:
         return result
 
     def generate_embedding(self, text: str) -> List[float]:
+        if not text:
+            return []
         embedding = self.embedding_model.encode(text)
         return embedding.tolist()
 
@@ -1453,24 +1464,30 @@ class InferenceService:
         )
 
         # Single Neo4j session for all updates
-        with self.driver.session() as session:
-            # Process in batches of 300 for optimal performance
-            batch_size = 300
-            for i in range(0, len(batch_data), batch_size):
-                batch = batch_data[i : i + batch_size]
-                session.run(
-                    """
-                    UNWIND $batch AS item
-                    MATCH (n:NODE {repoId: $repo_id, node_id: item.node_id})
-                    SET n.docstring = item.docstring,
-                        n.embedding = item.embedding,
-                        n.tags = item.tags,
-                        n.content_hash = item.content_hash
-                    """
-                    + ("" if is_local_repo else ", n.text = null, n.signature = null"),
-                    batch=batch,
-                    repo_id=repo_id,
-                )
+        try:
+            with self.driver.session() as session:
+                # Process in batches of 300 for optimal performance
+                batch_size = 300
+                for i in range(0, len(batch_data), batch_size):
+                    batch = batch_data[i : i + batch_size]
+                    session.run(
+                        """
+                        UNWIND $batch AS item
+                        MATCH (n:NODE {repoId: $repo_id, node_id: item.node_id})
+                        SET n.docstring = item.docstring,
+                            n.embedding = item.embedding,
+                            n.tags = item.tags,
+                            n.content_hash = item.content_hash
+                        """
+                        + ("" if is_local_repo else ", n.text = null, n.signature = null"),
+                        batch=batch,
+                        repo_id=repo_id,
+                    )
+        except Exception as e:
+            logger.error(
+                f"Failed to batch update Neo4j with cached inference for repo {repo_id}: {e}"
+            )
+            return 0
 
         logger.info(
             f"Batch updated {len(batch_data)} cached nodes in Neo4j "
@@ -1540,54 +1557,62 @@ class InferenceService:
             precomputed_embeddings: Optional dict of node_id -> embedding to avoid regenerating
             content_hashes: Optional dict of node_id -> content_hash to store alongside inference
         """
-        with self.driver.session() as session:
-            batch_size = 300
-            precomputed = precomputed_embeddings or {}
-            hashes = content_hashes or {}
-            docstring_list = [
-                {
-                    "node_id": n.node_id,
-                    "docstring": n.docstring,
-                    "tags": n.tags,
-                    # Reuse precomputed embedding if available, otherwise generate
-                    "embedding": precomputed.get(n.node_id)
-                    or self.generate_embedding(n.docstring),
-                    "content_hash": hashes.get(n.node_id),
-                }
-                for n in docstrings.docstrings
-            ]
-            project = self.project_manager.get_project_from_db_by_id_sync(repo_id)
-            repo_path = project.get("repo_path") if project and isinstance(project, dict) else None
-            is_local_repo = True if repo_path else False
-            for i in range(0, len(docstring_list), batch_size):
-                batch = docstring_list[i : i + batch_size]
-                session.run(
-                    """
-                    UNWIND $batch AS item
-                    MATCH (n:NODE {repoId: $repo_id, node_id: item.node_id})
-                    SET n.docstring = item.docstring,
-                        n.embedding = item.embedding,
-                        n.tags = item.tags,
-                        n.content_hash = item.content_hash
-                    """
-                    + ("" if is_local_repo else "REMOVE n.text, n.signature"),
-                    batch=batch,
-                    repo_id=repo_id,
-                )
+        try:
+            with self.driver.session() as session:
+                batch_size = 300
+                precomputed = precomputed_embeddings or {}
+                hashes = content_hashes or {}
+                docstring_list = [
+                    {
+                        "node_id": n.node_id,
+                        "docstring": n.docstring,
+                        "tags": n.tags,
+                        # Reuse precomputed embedding if available, otherwise generate
+                        "embedding": precomputed.get(n.node_id)
+                        or self.generate_embedding(n.docstring),
+                        "content_hash": hashes.get(n.node_id),
+                    }
+                    for n in docstrings.docstrings
+                ]
+                project = self.project_manager.get_project_from_db_by_id_sync(repo_id)
+                repo_path = project.get("repo_path") if project and isinstance(project, dict) else None
+                is_local_repo = True if repo_path else False
+                for i in range(0, len(docstring_list), batch_size):
+                    batch = docstring_list[i : i + batch_size]
+                    session.run(
+                        """
+                        UNWIND $batch AS item
+                        MATCH (n:NODE {repoId: $repo_id, node_id: item.node_id})
+                        SET n.docstring = item.docstring,
+                            n.embedding = item.embedding,
+                            n.tags = item.tags,
+                            n.content_hash = item.content_hash
+                        """
+                        + ("" if is_local_repo else "REMOVE n.text, n.signature"),
+                        batch=batch,
+                        repo_id=repo_id,
+                    )
+        except Exception as e:
+            logger.error(
+                f"Failed to update Neo4j with docstrings for repo {repo_id}: {e}"
+            )
 
     def create_vector_index(self):
-        with self.driver.session() as session:
-            session.run(
-                """
-                CREATE VECTOR INDEX docstring_embedding IF NOT EXISTS
-                FOR (n:NODE)
-                ON (n.embedding)
-                OPTIONS {indexConfig: {
-                    `vector.dimensions`: 384,
-                    `vector.similarity_function`: 'cosine'
-                }}
-                """
-            )
+        try:
+            with self.driver.session() as session:
+                session.run(
+                    """
+                    CREATE VECTOR INDEX docstring_embedding IF NOT EXISTS
+                    FOR (n:NODE)
+                    ON (n.embedding)
+                    OPTIONS {indexConfig: {
+                        `vector.dimensions`: 384,
+                        `vector.similarity_function`: 'cosine'
+                    }}
+                    """
+                )
+        except Exception as e:
+            logger.error(f"Failed to create vector index: {e}")
 
     async def run_inference(self, repo_id: str):
         run_inference_start = time.time()

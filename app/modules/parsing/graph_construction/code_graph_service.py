@@ -48,27 +48,33 @@ class CodeGraphService:
         Returns:
             Dict mapping content_hash -> {docstring, embedding_vector, tags}
         """
-        result = session.run(
-            """
-            MATCH (n:NODE {repoId: $project_id})
-            WHERE n.content_hash IS NOT NULL AND n.docstring IS NOT NULL
-            RETURN n.content_hash AS content_hash,
-                   n.docstring AS docstring,
-                   n.embedding AS embedding,
-                   n.tags AS tags
-            """,
-            project_id=project_id,
-        )
-        cache = {}
-        for record in result:
-            content_hash = record["content_hash"]
-            if content_hash and content_hash not in cache:
-                cache[content_hash] = {
-                    "docstring": record["docstring"],
-                    "embedding_vector": record["embedding"],
-                    "tags": record["tags"],
-                }
-        return cache
+        try:
+            result = session.run(
+                """
+                MATCH (n:NODE {repoId: $project_id})
+                WHERE n.content_hash IS NOT NULL AND n.docstring IS NOT NULL
+                RETURN n.content_hash AS content_hash,
+                       n.docstring AS docstring,
+                       n.embedding AS embedding,
+                       n.tags AS tags
+                """,
+                project_id=project_id,
+            )
+            cache = {}
+            for record in result:
+                content_hash = record["content_hash"]
+                if content_hash and content_hash not in cache:
+                    cache[content_hash] = {
+                        "docstring": record["docstring"],
+                        "embedding_vector": record["embedding"],
+                        "tags": record["tags"],
+                    }
+            return cache
+        except Exception as e:
+            logger.warning(
+                f"Failed to fetch cached node hashes for project {project_id}: {e}"
+            )
+            return {}
 
     def create_and_store_graph(self, repo_dir, project_id, user_id):
         graph_start_time = time.time()
