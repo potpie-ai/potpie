@@ -6,7 +6,7 @@ from typing import Any, Dict
 
 from dotenv import load_dotenv
 from fastapi import HTTPException
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -404,7 +404,6 @@ class ParsingController:
     @staticmethod
     async def fetch_parsing_status(
         project_id: str,
-        db: Session,
         async_db: AsyncSession,
         user: Dict[str, Any],
     ):
@@ -441,7 +440,7 @@ class ParsingController:
                 )
 
             project_status = row.status
-            parse_helper = ParseHelper(db)
+            parse_helper = ParseHelper(async_db)
             is_latest = await parse_helper.check_commit_status(project_id)
 
             # Auto-recover: if a project has been stuck in "submitted" with no active
@@ -474,12 +473,12 @@ class ParsingController:
                         )
                         # Reset updated_at now to prevent concurrent polls from all
                         # triggering duplicate re-submissions within the same window.
-                        await asyncio.to_thread(
-                            ProjectService.update_project,
-                            db,
-                            project_id,
-                            updated_at=datetime.utcnow(),
+                        await async_db.execute(
+                            update(Project)
+                            .where(Project.id == project_id)
+                            .values(updated_at=datetime.utcnow())
                         )
+                        await async_db.commit()
                         process_parsing.delay(
                             repo_details.model_dump(),
                             user["user_id"],
