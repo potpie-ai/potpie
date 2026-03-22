@@ -131,7 +131,10 @@ def production_log_sink(message):
                 else str(exc.get("type", "Exception"))
             ),
             "value": filter_sensitive_data(str(exc.get("value", ""))),
-            "traceback": filter_sensitive_data(str(exc.get("traceback", ""))),
+            "traceback": filter_sensitive_data(
+                "
+".join(str(exc.get("traceback", "")).splitlines()[:10])
+            ),
         }
 
     # Build flat JSON structure - easier for log parsers
