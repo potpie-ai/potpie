@@ -15,6 +15,7 @@ from langchain_core.tools import StructuredTool
 
 from app.modules.projects.projects_service import ProjectService
 from app.modules.repo_manager import RepoManager
+from app.modules.utils.colgrep_index import colgrep_xdg_data_home
 from app.modules.repo_manager.sync_helper import (
     get_or_create_worktree_path,
     get_or_create_edits_worktree_path,
@@ -87,6 +88,7 @@ ALLOWED_COMMANDS = {
     "ag",  # The Silver Searcher
     "rg",  # ripgrep
     "ack",  # ack-grep
+    "colgrep",  # semantic code search (indexes built during parsing)
 }
 
 # SECURITY: Commands that are ALWAYS blocked (write/modify operations)
@@ -740,6 +742,8 @@ class BashCommandTool:
                 "SHELL": "/bin/sh",
                 "LANG": "C",
                 "TERM": "dumb",
+                # Match ColGREP index location used during parsing (under REPOS_BASE_PATH).
+                "XDG_DATA_HOME": str(colgrep_xdg_data_home()),
             }
 
             # Execute command with gVisor isolation

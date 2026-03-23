@@ -3,14 +3,25 @@ set -e
 
 source .env
 
-# Set up Service Account Credentials
-export GOOGLE_APPLICATION_CREDENTIALS="./service-account.json"
-
-# Check if the credentials file exists
-if [ ! -f "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
-    echo "Error: Service Account Credentials file not found at $GOOGLE_APPLICATION_CREDENTIALS"
-    echo "Please ensure the service-account.json file is in the current directory if you are working outside developmentMode"
+# GCP / Google client libs: export only a path that exists.
+# - service-account.json: optional dedicated GCP key (Secret Manager, GCS, etc.)
+# - firebase_service_account.json: same as GETTING_STARTED.md / FirebaseSetup — valid as ADC for same project
+_repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+if [ -f "${_repo_root}/service-account.json" ]; then
+    export GOOGLE_APPLICATION_CREDENTIALS="${_repo_root}/service-account.json"
+elif [ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ] && [ -f "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
+    export GOOGLE_APPLICATION_CREDENTIALS
+elif [ -f "${_repo_root}/firebase_service_account.json" ]; then
+    export GOOGLE_APPLICATION_CREDENTIALS="${_repo_root}/firebase_service_account.json"
+elif [ "${isDevelopmentMode:-disabled}" = "enabled" ]; then
+    unset GOOGLE_APPLICATION_CREDENTIALS 2>/dev/null || true
+else
+    unset GOOGLE_APPLICATION_CREDENTIALS 2>/dev/null || true
+    echo "Warning: No Google credentials file found (expected ${_repo_root}/service-account.json or ${_repo_root}/firebase_service_account.json)."
+    echo "  For local dev without GCP, set isDevelopmentMode=enabled in .env."
+    echo "  Or set GOOGLE_APPLICATION_CREDENTIALS in .env to a valid key path."
 fi
+unset _repo_root
 
 
 echo "Starting Docker Compose..."

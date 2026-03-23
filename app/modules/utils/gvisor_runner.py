@@ -496,8 +496,8 @@ def _run_with_docker_gvisor(
         for key, value in safe_env.items():
             docker_cmd.extend(["-e", f"{key}={value}"])
 
-    # Mount host binaries that are not in busybox but are whitelisted (e.g. rg, ag, ack)
-    _EXTRA_HOST_BINARIES = ["rg", "ag", "ack"]
+    # Mount host binaries that are not in busybox but are whitelisted (e.g. rg, ag, colgrep)
+    _EXTRA_HOST_BINARIES = ["rg", "ag", "ack", "colgrep"]
     for binary in _EXTRA_HOST_BINARIES:
         host_path = shutil.which(binary)
         if host_path:

@@ -1,8 +1,28 @@
 # Use an official Python runtime as a parent image
 FROM python:3.11-slim
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y git procps wget curl gnupg2 ca-certificates supervisor && rm -rf /var/lib/apt/lists/*
+# Install system dependencies (ripgrep: agent bash_command whitelist; xz-utils: extract colgrep)
+RUN apt-get update && apt-get install -y \
+    git procps wget curl gnupg2 ca-certificates supervisor ripgrep xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# ColGREP CLI (semantic search); indices use XDG_DATA_HOME under REPOS_BASE_PATH (see colgrep_index).
+# Prebuilt Linux asset is x86_64-only in upstream releases; skip on other architectures.
+ARG COLGREP_VERSION=1.1.3
+RUN set -eux; \
+    ARCH="$(dpkg --print-architecture)"; \
+    if [ "$ARCH" = "amd64" ]; then \
+      curl -fsSL -o /tmp/colgrep.tar.xz \
+        "https://github.com/lightonai/next-plaid/releases/download/v${COLGREP_VERSION}/colgrep-x86_64-unknown-linux-gnu.tar.xz"; \
+      tar -xJf /tmp/colgrep.tar.xz -C /tmp; \
+      mv "/tmp/colgrep-x86_64-unknown-linux-gnu/colgrep" /usr/local/bin/colgrep; \
+      rm -rf /tmp/colgrep-x86_64-unknown-linux-gnu; \
+      chmod +x /usr/local/bin/colgrep; \
+      rm -f /tmp/colgrep.tar.xz; \
+      colgrep --version; \
+    else \
+      echo "Skipping ColGREP install: no prebuilt binary for $ARCH (install manually or use amd64 image)"; \
+    fi
 
 # Set the working directory in the container
 WORKDIR /app

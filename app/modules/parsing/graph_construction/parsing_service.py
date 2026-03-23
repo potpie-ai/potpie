@@ -33,6 +33,7 @@ from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
 from app.modules.repo_manager import RepoManager
+from app.modules.utils.colgrep_index import build_colgrep_index
 from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.logger import log_context, setup_logger
 from app.modules.utils.parse_webhook_helper import ParseWebhookHelper
@@ -339,6 +340,12 @@ class ParsingService:
                         status_code=500, detail="Failed to set up project directory"
                     )
                 extracted_dir = str(extracted_dir)
+
+                await asyncio.to_thread(
+                    build_colgrep_index,
+                    extracted_dir,
+                    self.repo_manager.repos_base_path,
+                )
 
                 # Optional short-circuit: once RepoManager validated a usable worktree path,
                 # mark the project READY immediately and skip heavy analysis.
