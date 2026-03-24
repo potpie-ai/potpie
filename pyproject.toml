@@ -87,6 +87,9 @@ dev = [
     "ruff>=0.14.3",
 ]
 
+[project.scripts]
+potpie = "potpie.cli.main:main"
+
 [tool.setuptools.packages.find]
 include = ["potpie*", "app*"]
 
