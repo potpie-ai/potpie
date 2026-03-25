@@ -63,7 +63,9 @@ def context_graph_backfill_project(self, project_id: str) -> dict:
     name="app.modules.context_graph.tasks.context_graph_ingest_pr",
     queue="context-graph-etl",
 )
-def context_graph_ingest_pr(self, project_id: str, pr_number: int) -> dict:
+def context_graph_ingest_pr(
+    self, project_id: str, pr_number: int, is_live_bridge: bool = True
+) -> dict:
     container = build_container_for_session(self.db)
     resolved = container.projects.resolve(project_id)
     if not resolved:
@@ -83,5 +85,5 @@ def context_graph_ingest_pr(self, project_id: str, pr_number: int) -> dict:
         structural=container.structural,
         project_id=project_id,
         pr_number=pr_number,
-        is_live_bridge=True,
+        is_live_bridge=is_live_bridge,
     )

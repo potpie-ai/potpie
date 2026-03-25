@@ -1,8 +1,8 @@
-"""Context graph HTTP API (standalone service)."""
+"""Context graph HTTP API (standalone service + host-injected dependencies)."""
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Callable, Optional, Protocol
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -22,8 +22,6 @@ from application.use_cases.query_context import (
     search_project_context,
 )
 from bootstrap.container import ContextEngineContainer
-
-context_router = APIRouter()
 
 
 class SyncRequest(BaseModel):
@@ -66,28 +64,62 @@ class SearchQuery(BaseModel):
     node_labels: Optional[list[str]] = None
 
 
-@context_router.post("/sync")
-def post_sync(
-    payload: Optional[SyncRequest] = None,
-    _: None = Depends(require_api_key),
-    container: ContextEngineContainer = Depends(get_container_or_503),
-    db: Session = Depends(get_db),
-):
+class ContextMutationHandlers(Protocol):
+    """Host-provided mutations (e.g. Celery enqueue) instead of inline use cases."""
+
+    def handle_sync(
+        self,
+        payload: Optional[SyncRequest],
+        container: ContextEngineContainer,
+        db: Session,
+    ) -> dict[str, Any]:
+        ...
+
+    def handle_ingest_pr(
+        self,
+        body: IngestPrRequest,
+        container: ContextEngineContainer,
+        db: Session,
+    ) -> dict[str, Any]:
+        ...
+
+
+def _require_project_access(
+    container: ContextEngineContainer, project_id: str
+) -> None:
+    if container.projects.resolve(project_id) is None:
+        raise HTTPException(status_code=404, detail="Unknown project_id")
+
+
+def _inline_sync(
+    payload: Optional[SyncRequest],
+    container: ContextEngineContainer,
+    db: Session,
+) -> dict[str, Any]:
     if not container.settings.is_enabled():
         raise HTTPException(
             status_code=503,
             detail="Context graph is not enabled. Set CONTEXT_GRAPH_ENABLED=true.",
         )
     mapping = payload.project_ids if payload and payload.project_ids else None
-    results = []
+    results: list[dict[str, Any]] = []
     projects = container.projects
     if not hasattr(projects, "known_project_ids"):
-        raise HTTPException(500, detail="Project resolution does not support listing IDs")
+        raise HTTPException(
+            status_code=500,
+            detail="Project resolution does not support listing IDs",
+        )
     ids = mapping or projects.known_project_ids()  # type: ignore[union-attr]
     for pid in ids:
         resolved = container.projects.resolve(pid)
         if not resolved:
-            results.append({"status": "skipped", "project_id": pid, "reason": "unknown_project_id"})
+            results.append(
+                {
+                    "status": "skipped",
+                    "project_id": pid,
+                    "reason": "unknown_project_id",
+                }
+            )
             continue
         out = backfill_project_context(
             settings=container.settings,
@@ -102,18 +134,18 @@ def post_sync(
     return {"status": "success", "results": results}
 
 
-@context_router.post("/ingest-pr")
-def post_ingest_pr(
+def _inline_ingest_pr(
     body: IngestPrRequest,
-    _: None = Depends(require_api_key),
-    container: ContextEngineContainer = Depends(get_container_or_503),
-    db: Session = Depends(get_db),
-):
+    container: ContextEngineContainer,
+    db: Session,
+) -> dict[str, Any]:
     if not container.settings.is_enabled():
-        raise HTTPException(status_code=503, detail="Context graph is not enabled.")
+        raise HTTPException(
+            status_code=503, detail="Context graph is not enabled."
+        )
     resolved = container.projects.resolve(body.project_id)
     if not resolved:
-        raise HTTPException(404, detail="Unknown project_id")
+        raise HTTPException(status_code=404, detail="Unknown project_id")
     return ingest_single_pull_request(
         settings=container.settings,
         projects=container.projects,
@@ -127,55 +159,105 @@ def post_ingest_pr(
     )
 
 
-@context_router.post("/query/change-history")
-def post_change_history(
-    body: ChangeHistoryQuery,
-    _: None = Depends(require_api_key),
-    container: ContextEngineContainer = Depends(get_container_or_503),
-):
-    return get_change_history(
-        container.structural,
-        body.project_id,
-        function_name=body.function_name,
-        file_path=body.file_path,
-        limit=body.limit,
-    )
+def create_context_router(
+    *,
+    require_auth: Callable[..., Any],
+    get_container: Callable[..., ContextEngineContainer],
+    get_db: Callable[..., Any],
+    mutation_handlers: ContextMutationHandlers | None = None,
+    enforce_project_access: bool = False,
+) -> APIRouter:
+    """Build context API routes with injected FastAPI dependencies."""
+
+    router = APIRouter()
+
+    @router.post("/sync")
+    def post_sync(
+        payload: Optional[SyncRequest] = None,
+        _: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+        db: Session = Depends(get_db),
+    ):
+        if mutation_handlers is not None:
+            return mutation_handlers.handle_sync(payload, container, db)
+        return _inline_sync(payload, container, db)
+
+    @router.post("/ingest-pr")
+    def post_ingest_pr(
+        body: IngestPrRequest,
+        _: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+        db: Session = Depends(get_db),
+    ):
+        if mutation_handlers is not None:
+            return mutation_handlers.handle_ingest_pr(body, container, db)
+        return _inline_ingest_pr(body, container, db)
+
+    @router.post("/query/change-history")
+    def post_change_history(
+        body: ChangeHistoryQuery,
+        _: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+    ):
+        if enforce_project_access:
+            _require_project_access(container, body.project_id)
+        return get_change_history(
+            container.structural,
+            body.project_id,
+            function_name=body.function_name,
+            file_path=body.file_path,
+            limit=body.limit,
+        )
+
+    @router.post("/query/file-owners")
+    def post_file_owners(
+        body: FileOwnersQuery,
+        _: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+    ):
+        if enforce_project_access:
+            _require_project_access(container, body.project_id)
+        return get_file_owners(
+            container.structural, body.project_id, body.file_path, body.limit
+        )
+
+    @router.post("/query/decisions")
+    def post_decisions(
+        body: DecisionsQuery,
+        _: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+    ):
+        if enforce_project_access:
+            _require_project_access(container, body.project_id)
+        return get_decisions(
+            container.structural,
+            body.project_id,
+            file_path=body.file_path,
+            function_name=body.function_name,
+            limit=body.limit,
+        )
+
+    @router.post("/query/search")
+    def post_search(
+        body: SearchQuery,
+        _: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+    ):
+        if enforce_project_access:
+            _require_project_access(container, body.project_id)
+        return search_project_context(
+            container.episodic,
+            body.project_id,
+            body.query,
+            limit=body.limit,
+            node_labels=body.node_labels,
+        )
+
+    return router
 
 
-@context_router.post("/query/file-owners")
-def post_file_owners(
-    body: FileOwnersQuery,
-    _: None = Depends(require_api_key),
-    container: ContextEngineContainer = Depends(get_container_or_503),
-):
-    return get_file_owners(container.structural, body.project_id, body.file_path, body.limit)
-
-
-@context_router.post("/query/decisions")
-def post_decisions(
-    body: DecisionsQuery,
-    _: None = Depends(require_api_key),
-    container: ContextEngineContainer = Depends(get_container_or_503),
-):
-    return get_decisions(
-        container.structural,
-        body.project_id,
-        file_path=body.file_path,
-        function_name=body.function_name,
-        limit=body.limit,
-    )
-
-
-@context_router.post("/query/search")
-def post_search(
-    body: SearchQuery,
-    _: None = Depends(require_api_key),
-    container: ContextEngineContainer = Depends(get_container_or_503),
-):
-    return search_project_context(
-        container.episodic,
-        body.project_id,
-        body.query,
-        limit=body.limit,
-        node_labels=body.node_labels,
-    )
+context_router = create_context_router(
+    require_auth=require_api_key,
+    get_container=get_container_or_503,
+    get_db=get_db,
+)

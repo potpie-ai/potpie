@@ -10,7 +10,7 @@ Architecture reference: [github-intelligence-layer-architecture.md](./github-int
 
 | Area | Status |
 |------|--------|
-| `app/modules/context_graph/` | Only `context_graph_router.py` (partial — imports missing modules). No other files. |
+| `app/modules/context_graph/` | Partial / incomplete module layout (historical snapshot for this plan). |
 | Graphiti integration | Not installed. No `graphiti-core` in dependencies. |
 | Entity schemas | Do not exist. |
 | Episode formatters | Do not exist. |
@@ -19,7 +19,7 @@ Architecture reference: [github-intelligence-layer-architecture.md](./github-int
 | Postgres models / migrations | No `context_sync_state`, `context_ingestion_log`, or `raw_events` tables. |
 | Agent tools | No `context_tools/` directory. |
 | Config | No `get_context_graph_config()` on `ConfigProvider`. No `CONTEXT_GRAPH_ENABLED` env var handling. |
-| Router mounting | `context_graph_router` not included in `app/main.py`. |
+| Router mounting | Context graph HTTP routes not included in `app/main.py`. |
 | Celery queues | `scripts/start.sh` does not consume `context-graph-etl` or `external-event`. |
 | GitHub provider | `get_pull_request(include_diff=True)` exists. **No** methods for PR commits, review comments, or issue comments. |
 | Webhook handler | GitHub webhooks reach Celery (`external-event` queue) but handler is a generic echo — no PR merge processing. |
@@ -44,7 +44,7 @@ Architecture reference: [github-intelligence-layer-architecture.md](./github-int
 **Files:** `app/modules/context_graph/__init__.py`, `app/main.py`
 
 - Create `__init__.py` (can be empty or docstring).
-- Add `include_router(context_graph_router.router)` in `app/main.py`.
+- Add `include_router` for context graph routes in `app/main.py` (e.g. `potpie_context_engine_router` at `/api/v1/context`).
 
 ### 0.3 — Postgres models
 
@@ -81,7 +81,7 @@ Three SQLAlchemy models:
 
 - Add `CONTEXT_GRAPH_ENABLED=false` with comment.
 
-**Deliverable:** `POST /api/v1/context-graph/sync-all` returns 503 correctly when disabled; module imports without errors; tables exist after migration.
+**Deliverable:** `POST /api/v1/context/sync` returns 503 correctly when disabled; module imports without errors; tables exist after migration.
 
 ---
 
@@ -261,11 +261,11 @@ Steps:
 
 Queue: `context-graph-etl`.
 
-### 5.4 — Fix `context_graph_router.py`
+### 5.4 — Context graph HTTP sync (Potpie)
 
-Existing router imports from `tasks` which now exists. Verify it works with the selective sync (`project_ids` filter) we already added.
+`POST /api/v1/context/sync` (mounted via `context_engine_http.py`) enqueues Celery backfill. Verify selective sync (`project_ids` filter) works.
 
-**Deliverable:** Backfill from UI works end-to-end: Sources → Sync now → Celery task → GitHub API → episodes in Graphiti → logged in Postgres.
+**Deliverable:** Backfill works end-to-end: sync request → Celery task → GitHub API → episodes in Graphiti → logged in Postgres.
 
 ---
 
@@ -481,11 +481,11 @@ M9 depends on M5 (backfill task exists).
 | File | Milestone | Change |
 |------|-----------|--------|
 | `app/core/config_provider.py` | M0 | Add `get_context_graph_config()` |
-| `app/main.py` | M0 | Mount context graph router |
+| `app/main.py` | M0 | Mount context graph HTTP routes (`/api/v1/context/*`) |
 | `pyproject.toml` | M0 | Add `graphiti-core` dependency |
 | `scripts/start.sh` | M0, M8 | Add `context-graph-etl` and `external-event` queues |
 | `.env.template` | M0 | Add `CONTEXT_GRAPH_ENABLED` |
-| `app/modules/context_graph/context_graph_router.py` | M5 | Fix imports (now modules exist) |
+| `app/modules/context_graph/context_engine_http.py` | M5 | Mount `POST /api/v1/context/*` (sync, ingest, queries) |
 | `app/modules/code_provider/base/code_provider_interface.py` | M3 | Add PR commit/comment abstract methods |
 | `app/modules/code_provider/github/github_provider.py` | M3 | Implement PR commit/comment methods |
 | `app/modules/event_bus/handlers/webhook_handler.py` | M8 | Add GitHub PR merge handling |

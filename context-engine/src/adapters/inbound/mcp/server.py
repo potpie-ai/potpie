@@ -6,6 +6,7 @@ import logging
 
 from mcp.server.fastmcp import FastMCP
 
+from adapters.inbound.mcp.project_access import assert_mcp_project_allowed
 from adapters.outbound.graphiti.episodic import GraphitiEpisodicAdapter
 from adapters.outbound.neo4j.structural import Neo4jStructuralAdapter
 from adapters.outbound.settings_env import EnvContextEngineSettings
@@ -31,6 +32,7 @@ def context_get_change_history(
     limit: int = 10,
 ) -> list[dict]:
     """Return PR-linked change history for a project (Neo4j structural graph)."""
+    assert_mcp_project_allowed(project_id)
     if not _settings.is_enabled():
         return []
     return get_change_history(
@@ -45,6 +47,7 @@ def context_get_change_history(
 @mcp.tool()
 def context_get_file_owners(project_id: str, file_path: str, limit: int = 5) -> list[dict]:
     """Return likely file owners from PR touch history."""
+    assert_mcp_project_allowed(project_id)
     if not _settings.is_enabled():
         return []
     return get_file_owners(_structural, project_id, file_path, limit)
@@ -58,6 +61,7 @@ def context_get_decisions(
     limit: int = 20,
 ) -> list[dict]:
     """Return design decisions linked to code nodes."""
+    assert_mcp_project_allowed(project_id)
     if not _settings.is_enabled():
         return []
     return get_decisions(
@@ -77,6 +81,7 @@ def context_search(
     node_labels: str | None = None,
 ) -> list[dict]:
     """Semantic search over Graphiti episodic entities. node_labels: comma-separated optional."""
+    assert_mcp_project_allowed(project_id)
     labels = None
     if node_labels:
         labels = [x.strip() for x in node_labels.split(",") if x.strip()]

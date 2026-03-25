@@ -46,7 +46,9 @@ from app.modules.search.search_router import router as search_router
 from app.modules.tunnel.tunnel_router import router as tunnel_router
 from app.modules.usage.usage_router import router as usage_router
 from app.modules.users.user_router import router as user_router
-from app.modules.context_graph.context_graph_router import router as context_graph_router
+from app.modules.context_graph.context_engine_http import (
+    potpie_context_engine_router,
+)
 from app.modules.users.user_service import UserService
 from app.modules.utils.firebase_setup import FirebaseSetup
 from app.modules.utils.logger import configure_logging, setup_logger
@@ -190,7 +192,9 @@ class MainApp:
             knowledge_graph_router, prefix="/api/v1", tags=["Knowledge Graph"]
         )
         self.app.include_router(
-            context_graph_router, prefix="/api/v1", tags=["Context Graph"]
+            potpie_context_engine_router,
+            prefix="/api/v1/context",
+            tags=["Context Graph API"],
         )
 
     def add_health_check(self):

@@ -1,4 +1,4 @@
-"""Wrap Potpie's code provider object as SourceControlPort."""
+"""Adapt Potpie's code provider (GitHub) to context-engine SourceControlPort."""
 
 from __future__ import annotations
 
