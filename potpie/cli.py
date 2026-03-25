@@ -125,7 +125,7 @@ def cmd_start(args):
         cmd.append("--build")
 
     print(f"   Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=False)
+    result = subprocess.run(cmd, capture_output=False, check=False)  # Safe: known strings, not user input
 
     if result.returncode == 0:
         print("\n✅ PotPie server started!")
@@ -150,7 +150,7 @@ def cmd_stop(args):
     if args.volumes:
         cmd.append("-v")
 
-    result = subprocess.run(cmd)
+    result = subprocess.run(cmd, check=False)  # Safe: known strings, not user input
     if result.returncode == 0:
         print("✅ PotPie server stopped.")
     else:
@@ -271,7 +271,7 @@ def cmd_chat(args):
         # Interactive loop
         while True:
             try:
-                user_input = input("You: ").strip()
+                user_input = input("You: ").strip()[:4000]  # Limit input length
             except (EOFError, KeyboardInterrupt):
                 print("\n👋 Goodbye!")
                 break
