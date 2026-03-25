@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: pydantic-deep-poc
+Version: 0.1.0
+Summary: Add your description here
+Requires-Python: >=3.13
+Description-Content-Type: text/markdown
+Requires-Dist: beautifulsoup4>=4.14.3
+Requires-Dist: duckduckgo-search>=8.1.1
+Requires-Dist: httpx>=0.28.1
+Requires-Dist: pydantic-deep>=0.2.21
+Requires-Dist: python-dotenv>=1.2.1

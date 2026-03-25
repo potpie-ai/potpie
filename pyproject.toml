@@ -258,3 +258,8 @@ show_missing = true
 # Enforce minimum coverage on PRs: full run (unit+integration) must be >= 49%.
 # Unit-only phase ~30%; run_tests.py passes --cov-fail-under=0 for non-final phases.
 fail_under = 49
+
+[tool.uv.workspace]
+members = [
+    "pydantic_deep_poc",
+]

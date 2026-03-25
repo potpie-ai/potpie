@@ -1,0 +1,5 @@
+beautifulsoup4>=4.14.3
+duckduckgo-search>=8.1.1
+httpx>=0.28.1
+pydantic-deep>=0.2.21
+python-dotenv>=1.2.1

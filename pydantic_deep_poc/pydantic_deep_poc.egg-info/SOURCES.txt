@@ -1,0 +1,7 @@
+README.md
+pyproject.toml
+pydantic_deep_poc.egg-info/PKG-INFO
+pydantic_deep_poc.egg-info/SOURCES.txt
+pydantic_deep_poc.egg-info/dependency_links.txt
+pydantic_deep_poc.egg-info/requires.txt
+pydantic_deep_poc.egg-info/top_level.txt
