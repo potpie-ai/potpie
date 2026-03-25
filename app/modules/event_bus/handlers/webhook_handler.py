@@ -9,6 +9,7 @@ from typing import Any, Dict
 from sqlalchemy.orm import Session
 
 from app.modules.integrations.integrations_service import IntegrationsService
+from app.modules.projects.projects_model import Project
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -108,6 +109,8 @@ class WebhookEventHandler:
             return self._process_linear_webhook(event_type, payload, integration)
         elif integration_type.lower() == "sentry":
             return self._process_sentry_webhook(event_type, payload, integration)
+        elif integration_type.lower() == "github":
+            return self._process_github_webhook(event_type, payload, integration)
         else:
             # Generic processing for unknown integration types
             return self._process_generic_webhook(event_type, payload, integration)
@@ -174,4 +177,60 @@ class WebhookEventHandler:
             "integration_type": "generic",
             "event_type": event_type,
             "webhook_data": payload,
+        }
+
+    def _process_github_webhook(
+        self, event_type: str, payload: Dict[str, Any], integration: Any
+    ) -> Dict[str, Any]:
+        """Process GitHub pull_request merged events into context graph."""
+        action = payload.get("action")
+        pull_request = payload.get("pull_request") or {}
+        merged = bool(pull_request.get("merged"))
+        if event_type != "pull_request" or action != "closed" or not merged:
+            return {
+                "integration_type": "github",
+                "event_type": event_type,
+                "processed": False,
+                "reason": "not_merged_pull_request_event",
+            }
+
+        repository = payload.get("repository") or {}
+        repo_name = repository.get("full_name")
+        pr_number = pull_request.get("number")
+        if not repo_name or not pr_number:
+            return {
+                "integration_type": "github",
+                "event_type": event_type,
+                "processed": False,
+                "reason": "missing_repo_or_pr_number",
+            }
+
+        project = (
+            self.db.query(Project)
+            .filter(
+                Project.repo_name == repo_name,
+                Project.status == "ready",
+            )
+            .order_by(Project.updated_at.desc())
+            .first()
+        )
+        if not project:
+            return {
+                "integration_type": "github",
+                "event_type": event_type,
+                "processed": False,
+                "reason": "no_ready_project_for_repo",
+                "repo_name": repo_name,
+            }
+
+        from app.modules.context_graph.tasks import context_graph_ingest_pr
+
+        context_graph_ingest_pr.delay(project.id, int(pr_number))
+        return {
+            "integration_type": "github",
+            "event_type": event_type,
+            "processed": True,
+            "project_id": project.id,
+            "repo_name": repo_name,
+            "pr_number": int(pr_number),
         }

@@ -2,6 +2,7 @@ from typing import Any, Dict
 
 from app.celery.celery_app import celery_app
 from app.celery.tasks.base_task import BaseTask
+from app.core.config_provider import config_provider
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
 from app.modules.utils.logger import setup_logger, log_context
@@ -52,6 +53,15 @@ def process_parsing(
 
             # Run parsing in a fresh event loop (asyncio.run)
             self.run_async(run_parsing())
+
+            if config_provider.get_context_graph_config().get("enabled"):
+                from app.modules.context_graph.tasks import context_graph_backfill_project
+
+                context_graph_backfill_project.delay(project_id)
+                logger.info(
+                    "Enqueued context graph backfill after parsing",
+                    project_id=project_id,
+                )
         except Exception:
             logger.exception("Error during parsing")
             raise

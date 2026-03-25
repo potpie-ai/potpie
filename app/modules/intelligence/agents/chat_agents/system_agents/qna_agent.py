@@ -63,6 +63,7 @@ class QnAAgent(ChatAgent):
 
         tools = self.tools_provider.get_tools(
             [
+                "get_project_context",
                 "get_code_from_multiple_node_ids",
                 "get_node_neighbours_from_node_id",
                 "get_code_from_probable_node_name",
@@ -136,6 +137,28 @@ class QnAAgent(ChatAgent):
             return PydanticRagAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
+        # Temporary hard requirement: fetch context-graph signal first.
+        # This ensures QnA starts from historical intent/decision context.
+        try:
+            project_context_tool = self.tools_provider.tools.get("get_project_context")
+            if project_context_tool:
+                payload = {
+                    "project_id": ctx.project_id,
+                    "query": ctx.query,
+                    "limit": 8,
+                    "node_labels": ["PullRequest", "Decision", "Issue", "Feature"],
+                }
+                if hasattr(project_context_tool, "ainvoke"):
+                    context_rows = await project_context_tool.ainvoke(payload)
+                else:
+                    context_rows = project_context_tool.invoke(payload)
+                ctx.additional_context += (
+                    f"\nProject context (via get_project_context, pre-fetched):\n"
+                    f"{context_rows}\n"
+                )
+        except Exception:
+            logger.exception("Failed prefetching project context for QnA agent")
+
         if ctx.node_ids and len(ctx.node_ids) > 0:
             code_results = await self.tools_provider.get_code_from_multiple_node_ids_tool.run_multiple(
                 ctx.project_id, ctx.node_ids
@@ -154,12 +177,14 @@ class QnAAgent(ChatAgent):
         return ctx
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
-        return await self._build_agent(ctx).run(ctx)
+        enriched_ctx = await self._enriched_context(ctx)
+        return await self._build_agent(enriched_ctx).run(enriched_ctx)
 
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-        async for chunk in self._build_agent(ctx).run_stream(ctx):
+        enriched_ctx = await self._enriched_context(ctx)
+        async for chunk in self._build_agent(enriched_ctx).run_stream(enriched_ctx):
             yield chunk
 
 
@@ -229,6 +254,11 @@ For **simple questions**: You may skip tool usage, but always be thorough.
 Follow this structured approach to explore the codebase:
 
 ### 2a. Build Contextual Understanding
+
+0. **Mandatory first tool call**:
+   - ALWAYS call `get_project_context` first for every user query.
+   - Use `project_id`, `query=<user query>`, `limit=8`, and node labels including `PullRequest` and `Decision`.
+   - Use this output as the first layer of context before other tools.
 
 1. **Understand feature context**:
    - Use `web_search_tool` for domain knowledge

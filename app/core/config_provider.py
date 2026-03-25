@@ -235,5 +235,21 @@ class ConfigProvider:
         """Get code provider password (for Basic Auth)."""
         return os.getenv("CODE_PROVIDER_PASSWORD")
 
+    def get_context_graph_config(self) -> dict:
+        """Get context graph configuration from environment variables."""
+        enabled = os.getenv("CONTEXT_GRAPH_ENABLED", "false").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+        neo4j = self.get_neo4j_config()
+        return {
+            "enabled": enabled,
+            "neo4j_uri": neo4j.get("uri"),
+            "neo4j_user": neo4j.get("username"),
+            "neo4j_password": neo4j.get("password"),
+        }
+
 
 config_provider = ConfigProvider()

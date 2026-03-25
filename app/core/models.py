@@ -3,6 +3,11 @@ from app.modules.conversations.conversation.conversation_model import (  # noqa
 )
 from app.modules.conversations.message.message_model import Message  # noqa
 from app.modules.integrations.integration_model import Integration  # noqa
+from app.modules.context_graph.models import (  # noqa
+    ContextSyncState,
+    ContextIngestionLog,
+    RawEvent,
+)
 from app.modules.media.media_model import MessageAttachment  # noqa
 from app.modules.intelligence.prompts.prompt_model import (  # noqa
     AgentPromptMapping,

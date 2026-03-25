@@ -1526,6 +1526,116 @@ async def linear_webhook(
         )
 
 
+def verify_github_webhook_signature(
+    signature_header: Optional[str], payload: bytes, webhook_secret: str
+) -> bool:
+    """Verify GitHub webhook HMAC SHA-256 signature."""
+    if not webhook_secret:
+        # If no secret is configured, skip verification (dev-friendly)
+        return True
+    if not signature_header:
+        return False
+    if not signature_header.startswith("sha256="):
+        return False
+    expected = "sha256=" + hmac.new(
+        webhook_secret.encode("utf-8"), payload, hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature_header)
+
+
+@router.post("/github/webhook")
+async def github_webhook(request: Request) -> Dict[str, Any]:
+    """Handle GitHub webhook requests and publish to event bus."""
+    try:
+        logger.info("GitHub webhook received")
+        logger.info("Request details", method=request.method, url=str(request.url))
+        sanitized_headers = sanitize_headers(dict(request.headers))
+        logger.debug("Request headers", headers=sanitized_headers)
+
+        query_params = dict(request.query_params)
+        params_summary = get_params_summary(query_params)
+        logger.info(
+            "Query parameters",
+            params_keys=params_summary["keys"],
+            params_count=params_summary["count"],
+        )
+        logger.debug("Query parameters", params_summary=params_summary)
+
+        raw_body = await request.body()
+        if not raw_body:
+            raise HTTPException(status_code=400, detail="Empty webhook payload")
+
+        body_text = raw_body.decode("utf-8")
+        body_summary = get_body_summary(body_text)
+        logger.info("Request body received", body_length=body_summary["length"])
+        logger.debug("Request body preview", body_preview=body_summary["preview"])
+
+        try:
+            webhook_data = json.loads(body_text)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+        # Optional signature verification: if GITHUB_WEBHOOK_SECRET is configured,
+        # require X-Hub-Signature-256 to match.
+        config = Config(".env")
+        github_webhook_secret = config("GITHUB_WEBHOOK_SECRET", default="")
+        signature_header = request.headers.get("X-Hub-Signature-256")
+        if github_webhook_secret and not verify_github_webhook_signature(
+            signature_header, raw_body, github_webhook_secret
+        ):
+            logger.warning("GitHub webhook signature verification failed")
+            raise HTTPException(status_code=403, detail="Invalid webhook signature")
+
+        event_type = request.headers.get("X-GitHub-Event") or "github.unknown"
+
+        # We keep integration_id lightweight because webhook processing for github
+        # uses repo_name lookup inside WebhookEventHandler.
+        repo = webhook_data.get("repository", {}) if isinstance(webhook_data, dict) else {}
+        repo_name = repo.get("full_name") if isinstance(repo, dict) else None
+        integration_id = (
+            query_params.get("integration_id")
+            or request.headers.get("X-Integration-ID")
+            or (f"github:{repo_name}" if repo_name else "github:webhook")
+        )
+
+        from app.modules.event_bus import CeleryEventBus
+        from app.celery.celery_app import celery_app
+
+        event_bus = CeleryEventBus(celery_app)
+        event_id = await event_bus.publish_webhook_event(
+            integration_id=integration_id,
+            integration_type="github",
+            event_type=event_type,
+            payload=webhook_data,
+            headers=dict(request.headers),
+            source_ip=request.client.host if request.client else None,
+        )
+
+        logger.info(
+            "GitHub webhook event published",
+            event_id=event_id,
+            event_type=event_type,
+            integration_id=integration_id,
+            repo_name=repo_name,
+        )
+        return {
+            "status": "success",
+            "message": "GitHub webhook published to event bus",
+            "event_id": event_id,
+            "event_type": event_type,
+            "integration_id": integration_id,
+            "repo_name": repo_name,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error processing GitHub webhook")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process GitHub webhook: {str(e)}",
+        )
+
+
 def verify_jira_webhook_jwt(
     authorization_header: Optional[str], client_secret: str
 ) -> tuple[bool, Optional[Dict[str, Any]]]:

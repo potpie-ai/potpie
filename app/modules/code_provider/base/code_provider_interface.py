@@ -146,6 +146,39 @@ class ICodeProvider(ABC):
         """Get pull request details with optional diff."""
         pass
 
+    def get_pull_request_commits(
+        self, repo_name: str, pr_number: int
+    ) -> List[Dict[str, Any]]:
+        """
+        Get pull request commits.
+
+        Default implementation returns an empty list so providers that do not
+        support this endpoint remain backward compatible.
+        """
+        return []
+
+    def get_pull_request_review_comments(
+        self, repo_name: str, pr_number: int, limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """
+        Get pull request review comments.
+
+        Default implementation returns an empty list so providers that do not
+        support this endpoint remain backward compatible.
+        """
+        return []
+
+    def get_pull_request_issue_comments(
+        self, repo_name: str, pr_number: int, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """
+        Get pull request issue comments.
+
+        Default implementation returns an empty list so providers that do not
+        support this endpoint remain backward compatible.
+        """
+        return []
+
     @abstractmethod
     def create_pull_request(
         self,
