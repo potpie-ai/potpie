@@ -39,15 +39,27 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 def load_config() -> dict:
     """Load CLI configuration."""
     if CONFIG_FILE.exists():
-        with open(CONFIG_FILE) as f:
-            return json.load(f)
+        try:
+            with open(CONFIG_FILE) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError, IOError) as e:
+            print(f"⚠️  Config file is invalid/unreadable: {e}")
+            print("   Using empty configuration.")
+            return {}
     return {}
 
 
 def save_config(config: dict):
     """Save CLI configuration."""
+    import os
+    
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with open(CONFIG_FILE, "w") as f:
+    # Set secure permissions for config directory
+    os.chmod(CONFIG_DIR, 0o700)
+    
+    # Write config file with secure permissions
+    fd = os.open(CONFIG_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as f:
         json.dump(config, f, indent=2)
 
 
@@ -159,13 +171,38 @@ def cmd_stop(args):
 
 
 def cmd_status(args):
-    """Check server status."""
+    """Check server status and project details."""
     client = PotPieClient()
     try:
-        # Try to list projects as a health check
+        # Check server health
         result = client.request("GET", "/projects/list")
         print(f"✅ Server is running at {client.base_url}")
-        print(f"   Projects: {len(result) if isinstance(result, list) else 'N/A'}")
+        
+        if isinstance(result, list):
+            print(f"📊 Projects: {len(result)}")
+            
+            # Show project details if requested
+            if args.project_id:
+                for project in result:
+                    if project.get("project_id") == args.project_id or project.get("name") == args.project_id:
+                        print(f"\n📋 Project: {project.get('name', args.project_id)}")
+                        print(f"   ID: {project.get('project_id')}")
+                        print(f"   Status: {project.get('status', 'unknown')}")
+                        print(f"   Created: {project.get('created_at', 'N/A')}")
+                        print(f"   Updated: {project.get('updated_at', 'N/A')}")
+                        break
+                else:
+                    print(f"\n❌ Project not found: {args.project_id}")
+            else:
+                # Show summary
+                status_counts = {}
+                for project in result:
+                    status = project.get('status', 'unknown')
+                    status_counts[status] = status_counts.get(status, 0) + 1
+                
+                print(f"   Status summary: {', '.join([f'{k}: {v}' for k, v in status_counts.items()])}")
+        else:
+            print(f"   Projects: N/A")
     except SystemExit:
         pass
     finally:
@@ -257,6 +294,22 @@ def cmd_chat(args):
     print(f"💬 Starting chat session")
     print(f"   Project: {project_id}")
     print(f"   Agent: {agent_id}")
+
+    # Preflight check: verify project exists and is ready
+    try:
+        project_result = client.request("GET", f"/projects/{project_id}")
+        project_status = project_result.get("status", "unknown")
+        
+        if project_status not in ("ready", "completed", "success"):
+            print(f"\n❌ Project is not ready for chatting.")
+            print(f"   Current status: {project_status}")
+            print(f"   Please wait for parsing to complete or check with: potpie status")
+            return
+    except Exception as e:
+        print(f"\n❌ Failed to verify project: {e}")
+        print(f"   Project ID may be invalid or server unavailable.")
+        return
+
     print(f"   Type 'quit' or Ctrl+C to exit.\n")
 
     # Create conversation
@@ -368,9 +421,12 @@ def cmd_config(args):
 
     if args.set_key:
         config = load_config()
+        # Mask key in output for security
+        masked_key = args.set_key[:4] + "..." + args.set_key[-4:] if len(args.set_key) > 8 else "***"
         config["api_key"] = args.set_key
         save_config(config)
-        print("✅ API key saved.")
+        print(f"✅ API key saved ({masked_key}).")
+        print("   Note: API keys are stored with file permissions 600.")
 
     if not args.set_url and not args.set_key:
         config = load_config()
@@ -378,10 +434,13 @@ def cmd_config(args):
         print(f"  Server URL: {config.get('base_url', DEFAULT_BASE_URL)}")
         key = config.get("api_key", DEFAULT_API_KEY)
         if key:
-            print(f"  API Key: {key[:8]}...")
+            # Show masked API key for security
+            masked_key = key[:4] + "..." + key[-4:] if len(key) > 8 else "***"
+            print(f"  API Key: {masked_key}")
         else:
             print(f"  API Key: (not set)")
         print(f"\n  Config file: {CONFIG_FILE}")
+        print(f"  Config permissions: {oct(CONFIG_FILE.stat().st_mode)[-3:] if CONFIG_FILE.exists() else 'N/A'}")
 
 
 # ─── Main ────────────────────────────────────────────────────────────────────
@@ -407,6 +466,7 @@ def main():
 
     # status
     p_status = subparsers.add_parser("status", help="Check server status")
+    p_status.add_argument("project_id", nargs="?", help="Optional project ID to show details")
     p_status.set_defaults(func=cmd_status)
 
     # parse
