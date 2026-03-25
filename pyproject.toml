@@ -247,6 +247,9 @@ omit = [
     "app/celery/tasks/base_task.py",
 ]
 
+[project.scripts]
+potpie = "potpie.cli:main"
+
 [tool.coverage.report]
 exclude_lines = [
     "pragma: no cover",
