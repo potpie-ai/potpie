@@ -5,9 +5,11 @@ import time
 from typing import Any, Dict, List, Optional
 
 import tiktoken
+from grep_ast import filename_to_lang
 from neo4j import GraphDatabase
 from sentence_transformers import SentenceTransformer
 from sqlalchemy.orm import Session
+from tree_sitter_language_pack import get_parser
 
 from app.core.config_provider import config_provider
 from app.core.database import get_db
@@ -415,61 +417,168 @@ class InferenceService:
                 for record in result
             }
 
-    def split_large_node(
-        self, node_text: str, node_id: str, max_tokens: int
-    ) -> List[Dict[str, Any]]:
-        """
-        Split large nodes into processable chunks with context preservation.
+    _CLASS_LIKE_TYPES = frozenset({
+        "class_definition", "class_declaration",
+        "interface_declaration", "impl_item", "module",
+    })
 
-        Uses incremental token counting for O(n) performance instead of O(n²).
+    _BODY_TYPES = frozenset({
+        "block", "class_body", "declaration_list",
+        "statement_block", "field_declaration_list",
+    })
+
+    @staticmethod
+    def _expand_class_node(node, class_types, body_types) -> List[tuple]:
+        """Return (start_line, end_line) ranges for a node.
+
+        For class-like nodes the header and each body member are returned
+        as separate ranges.  For everything else a single range is returned.
         """
-        model = "gpt-4"
-        max_chunk_tokens = max_tokens // 2  # Reserve space for prompt
+        if node.type not in class_types:
+            return [(node.start_point[0], node.end_point[0])]
+        body = None
+        for child in node.children:
+            if child.type in body_types:
+                body = child
+                break
+        if body is None or len(body.children) < 2:
+            return [(node.start_point[0], node.end_point[0])]
+        ranges: List[tuple] = []
+        if body.start_point[0] > node.start_point[0]:
+            ranges.append((node.start_point[0], body.start_point[0] - 1))
+        for member in body.children:
+            ranges.append((member.start_point[0], member.end_point[0]))
+        return ranges
+
+    def _extract_ast_segments(
+        self, node_text: str, file_path: Optional[str] = None
+    ) -> Optional[List[str]]:
+        """Parse node_text with tree-sitter and return AST-boundary segments.
+
+        Returns None when parsing is not possible or the text contains only
+        a single segment (in which case the caller falls back to line-based
+        splitting).
+        """
+        if not file_path or not (lang := filename_to_lang(file_path)):
+            return None
+        try:
+            parser = get_parser(lang)
+        except Exception:
+            return None
+
+        tree = parser.parse(bytes(node_text, "utf-8"))
+        root = tree.root_node
+        if not root.children:
+            return None
+
+        ranges: List[tuple] = []
+        expand = self._expand_class_node
+        ct, bt = self._CLASS_LIKE_TYPES, self._BODY_TYPES
+        for child in root.children:
+            ranges.extend(expand(child, ct, bt))
+
+        if len(ranges) < 2:
+            return None
 
         lines = node_text.split("\n")
-        chunks = []
-        current_chunk_lines = []
-        current_tokens = 0
+        total = len(lines)
+        seg_ranges: List[tuple] = []
+        last_end = 0
 
-        # Token overhead for newlines (approximately 1 token per newline)
-        NEWLINE_OVERHEAD = 1
+        for start, end in ranges:
+            incl_end = end + 1
+            if start > last_end and last_end > 0:
+                if any(lines[i].strip() for i in range(last_end, start)):
+                    if seg_ranges:
+                        seg_ranges[-1] = (seg_ranges[-1][0], start)
+                    else:
+                        seg_ranges.append((last_end, start))
+            seg_ranges.append((start, incl_end))
+            last_end = incl_end
+
+        if last_end < total and any(lines[i].strip() for i in range(last_end, total)):
+            if seg_ranges:
+                seg_ranges[-1] = (seg_ranges[-1][0], total)
+
+        if len(seg_ranges) < 2:
+            return None
+        return ["\n".join(lines[s:e]) for s, e in seg_ranges]
+
+    @staticmethod
+    def _make_chunk(text: str, node_id: str, index: int) -> Dict[str, Any]:
+        return {
+            "text": text,
+            "node_id": f"{node_id}_chunk_{index}",
+            "is_chunk": True,
+            "parent_node_id": node_id,
+            "chunk_index": index,
+        }
+
+    def _split_by_lines(
+        self, node_text: str, node_id: str, max_chunk_tokens: int,
+        model: str = "gpt-4",
+    ) -> List[Dict[str, Any]]:
+        """Split node_text into chunks by accumulating lines until the
+        token budget is reached.  Fallback when AST splitting is unavailable.
+        """
+        lines = node_text.split("\n")
+        chunks: List[Dict[str, Any]] = []
+        buf: List[str] = []
+        cur_tokens = 0
 
         for line in lines:
-            # Count tokens for just this line (O(1) per line instead of O(n))
-            line_tokens = self.num_tokens_from_string(line, model)
-
-            # Estimate total: current + new line + newline overhead
-            estimated_total = current_tokens + line_tokens + NEWLINE_OVERHEAD
-
-            if estimated_total > max_chunk_tokens and current_chunk_lines:
-                # Save current chunk and start new one
-                chunks.append(
-                    {
-                        "text": "\n".join(current_chunk_lines),
-                        "node_id": f"{node_id}_chunk_{len(chunks)}",
-                        "is_chunk": True,
-                        "parent_node_id": node_id,
-                        "chunk_index": len(chunks),
-                    }
-                )
-                current_chunk_lines = [line]
-                current_tokens = line_tokens
+            line_tokens = self.num_tokens_from_string(line, model) + 1
+            if cur_tokens + line_tokens > max_chunk_tokens and buf:
+                chunks.append(self._make_chunk("\n".join(buf), node_id, len(chunks)))
+                buf = [line]
+                cur_tokens = line_tokens
             else:
-                current_chunk_lines.append(line)
-                current_tokens = estimated_total
+                buf.append(line)
+                cur_tokens += line_tokens
 
-        # Add final chunk
-        if current_chunk_lines:
-            chunks.append(
-                {
-                    "text": "\n".join(current_chunk_lines),
-                    "node_id": f"{node_id}_chunk_{len(chunks)}",
-                    "is_chunk": True,
-                    "parent_node_id": node_id,
-                    "chunk_index": len(chunks),
-                }
-            )
+        if buf:
+            chunks.append(self._make_chunk("\n".join(buf), node_id, len(chunks)))
+        return chunks
 
+    def split_large_node(
+        self, node_text: str, node_id: str, max_tokens: int,
+        model: str = "gpt-4", file_path: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Split a large node into processable chunks, preferring AST
+        boundaries.  Falls back to line-based splitting when parsing fails.
+        """
+        budget = max_tokens // 2
+        segments = self._extract_ast_segments(node_text, file_path)
+
+        if not segments:
+            return self._split_by_lines(node_text, node_id, budget, model)
+
+        chunks: List[Dict[str, Any]] = []
+        buf: List[str] = []
+        buf_tokens = 0
+
+        for seg in segments:
+            seg_tokens = self.num_tokens_from_string(seg, model)
+
+            if seg_tokens > budget:
+                if buf:
+                    chunks.append(self._make_chunk("\n".join(buf), node_id, len(chunks)))
+                    buf, buf_tokens = [], 0
+                for sc in self._split_by_lines(seg, node_id, budget, model):
+                    sc["node_id"] = f"{node_id}_chunk_{len(chunks)}"
+                    sc["chunk_index"] = len(chunks)
+                    chunks.append(sc)
+                continue
+
+            if buf_tokens + seg_tokens > budget and buf:
+                chunks.append(self._make_chunk("\n".join(buf), node_id, len(chunks)))
+                buf, buf_tokens = [], 0
+
+            buf.append(seg)
+            buf_tokens += seg_tokens
+
+        if buf:
+            chunks.append(self._make_chunk("\n".join(buf), node_id, len(chunks)))
         return chunks
 
     def consolidate_chunk_responses(
@@ -627,7 +736,13 @@ class InferenceService:
                 logger.debug(
                     f"Node {node['node_id'][:8]} exceeds token limit ({node_tokens}). Splitting..."
                 )
-                node_chunks = self.split_large_node(text, node["node_id"], max_tokens)
+                node_chunks = self.split_large_node(
+                    text,
+                    node["node_id"],
+                    max_tokens,
+                    model=model,
+                    file_path=node.get("file_path"),
+                )
 
                 for chunk in node_chunks:
                     chunk_tokens = self.num_tokens_from_string(chunk["text"], model)
