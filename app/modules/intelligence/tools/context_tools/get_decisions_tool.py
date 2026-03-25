@@ -2,12 +2,13 @@ import asyncio
 from typing import Any, Optional
 
 from langchain_core.tools import StructuredTool
-from neo4j import GraphDatabase
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.core.config_provider import config_provider
+from app.modules.context_graph.wiring import PotpieContextEngineSettings
 from app.modules.projects.projects_model import Project
+from adapters.outbound.neo4j.structural import Neo4jStructuralAdapter
+from application.use_cases.query_context import get_decisions as ce_get_decisions
 
 
 class GetDecisionsInput(BaseModel):
@@ -21,11 +22,8 @@ class GetDecisionsTool:
     def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db
         self.user_id = user_id
-        neo4j = config_provider.get_neo4j_config()
-        self.driver = GraphDatabase.driver(
-            neo4j.get("uri"),
-            auth=(neo4j.get("username"), neo4j.get("password")),
-        )
+        self._settings = PotpieContextEngineSettings()
+        self._structural = Neo4jStructuralAdapter(self._settings)
 
     def _assert_project_access(self, project_id: str) -> None:
         project = self.sql_db.query(Project).filter(Project.id == project_id).first()
@@ -49,30 +47,15 @@ class GetDecisionsTool:
         limit: int = 20,
     ) -> list[dict[str, Any]]:
         self._assert_project_access(project_id)
-
-        query = """
-        MATCH (n:NODE {repoId: $project_id})
-        WHERE ($file_path IS NULL OR n.file_path = $file_path)
-          AND ($function_name IS NULL OR toLower(coalesce(n.name, '')) CONTAINS toLower($function_name))
-        OPTIONAL MATCH (n)-[:HAS_DECISION]->(d:Entity)
-        OPTIONAL MATCH (n)-[:MODIFIED_IN]->(pr:Entity)
-        WHERE d IS NOT NULL AND 'Decision' IN labels(d)
-        RETURN DISTINCT
-            coalesce(d.decision_made, d.name, d.summary) AS decision_made,
-            coalesce(d.alternatives_rejected, '') AS alternatives_rejected,
-            coalesce(d.rationale, d.summary, '') AS rationale,
-            coalesce(pr.pr_number, pr.number) AS pr_number
-        LIMIT $limit
-        """
-        with self.driver.session() as session:
-            res = session.run(
-                query,
-                project_id=project_id,
-                file_path=file_path,
-                function_name=function_name,
-                limit=max(1, min(limit, 100)),
-            )
-            return [record.data() for record in res]
+        if not self._settings.is_enabled():
+            return []
+        return ce_get_decisions(
+            self._structural,
+            project_id,
+            file_path=file_path,
+            function_name=function_name,
+            limit=limit,
+        )
 
 
 def get_decisions_tool(sql_db: Session, user_id: str) -> StructuredTool:

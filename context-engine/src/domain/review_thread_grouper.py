@@ -71,4 +71,7 @@ def group_review_threads(flat_comments: list[dict[str, Any]]) -> list[dict[str, 
             }
         )
 
-    return sorted(threads, key=lambda t: _sort_key({"created_at": t["comments"][0].get("created_at"), "id": t["thread_id"]}))
+    return sorted(
+        threads,
+        key=lambda t: _sort_key({"created_at": t["comments"][0].get("created_at"), "id": t["thread_id"]}),
+    )

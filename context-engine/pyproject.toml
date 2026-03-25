@@ -5,18 +5,37 @@ build-backend = "hatchling.build"
 [project]
 name = "context-engine"
 version = "0.1.0"
-description = "Context graph API, webhooks, CLI, and MCP adapters (scaffold)."
+description = "Context graph API, webhooks, CLI, and MCP (hexagonal)."
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.115.0",
     "httpx>=0.28.0",
     "mcp>=1.0.0",
     "typer>=0.15.0",
     "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.0",
 ]
 
 [project.optional-dependencies]
+postgres = [
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.2",
+]
+graph = [
+    "graphiti-core>=0.28.0",
+    "neo4j>=5.28.0",
+]
+github = [
+    "pygithub>=2.8.0",
+]
+all = [
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.2",
+    "graphiti-core>=0.28.0",
+    "neo4j>=5.28.0",
+    "pygithub>=2.8.0",
+]
 dev = [
     "pytest>=8.0.0",
     "ruff>=0.8.0",
@@ -33,7 +52,7 @@ packages = ["src/domain", "src/application", "src/adapters", "src/bootstrap"]
 include = ["src/domain", "src/application", "src/adapters", "src/bootstrap"]
 
 [tool.ruff]
-target-version = "py313"
+target-version = "py310"
 src = ["src", "tests"]
 
 [tool.pytest.ini_options]

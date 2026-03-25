@@ -1,0 +1,149 @@
+"""Backfill merged PRs for one project."""
+
+from __future__ import annotations
+
+import logging
+import time
+from datetime import datetime
+from typing import Any
+
+from application.services.pr_bundle import fetch_full_pr
+from application.use_cases.ingest_merged_pr import ingest_merged_pull_request
+from domain.ports.episodic_graph import EpisodicGraphPort
+from domain.ports.ingestion_ledger import IngestionLedgerPort
+from domain.ports.project_resolution import ProjectResolutionPort
+from domain.ports.settings import ContextEngineSettingsPort
+from domain.ports.source_control import SourceControlPort
+from domain.ports.structural_graph import StructuralGraphPort
+
+logger = logging.getLogger(__name__)
+
+SOURCE_TYPE = "github_pr"
+MAX_PER_RUN = 100
+
+
+def backfill_project_context(
+    settings: ContextEngineSettingsPort,
+    projects: ProjectResolutionPort,
+    source: SourceControlPort,
+    ledger: IngestionLedgerPort,
+    episodic: EpisodicGraphPort,
+    structural: StructuralGraphPort,
+    project_id: str,
+    rate_limit_sleep_s: float = 0.5,
+) -> dict[str, Any]:
+    if not settings.is_enabled():
+        return {
+            "status": "skipped",
+            "project_id": project_id,
+            "reason": "context_graph_disabled",
+        }
+
+    resolved = projects.resolve(project_id)
+    if not resolved or not resolved.repo_name:
+        return {
+            "status": "skipped",
+            "project_id": project_id,
+            "reason": "project_not_found_or_missing_repo",
+        }
+    if not resolved.ready:
+        return {
+            "status": "skipped",
+            "project_id": project_id,
+            "reason": "project_not_ready",
+        }
+
+    repo_name = resolved.repo_name
+    sync = ledger.get_or_create_sync_state(project_id, SOURCE_TYPE)
+    cursor = sync.last_synced_at
+    latest_merged_at: datetime | None = cursor
+    ledger.update_sync_state_running(project_id, SOURCE_TYPE)
+
+    ingested = 0
+    skipped = 0
+    failed = 0
+
+    try:
+        for pr in source.iter_closed_pulls(repo_name):
+            if ingested + skipped >= MAX_PER_RUN:
+                break
+            if not pr.merged_at:
+                continue
+            if cursor is not None and pr.merged_at <= cursor:
+                continue
+
+            source_id = f"pr_{pr.number}_merged"
+            try:
+                payload = fetch_full_pr(source, repo_name, pr.number)
+                result = ingest_merged_pull_request(
+                    ledger=ledger,
+                    episodic=episodic,
+                    structural=structural,
+                    project_id=project_id,
+                    repo_name=repo_name,
+                    pr_data=payload["pr_data"],
+                    commits=payload["commits"],
+                    review_threads=payload["review_threads"],
+                    linked_issues=payload["linked_issues"],
+                    issue_comments=payload["issue_comments"],
+                )
+
+                merged_at = pr.merged_at.isoformat() if pr.merged_at else None
+                bridge_result = structural.write_bridges(
+                    project_id=project_id,
+                    pr_entity_key=result.pr_entity_key,
+                    pr_number=pr.number,
+                    repo_name=repo_name,
+                    files_with_patches=payload["pr_data"].get("files", []),
+                    review_threads=payload["review_threads"],
+                    merged_at=merged_at,
+                    is_live=False,
+                )
+                ledger.update_bridge_status(
+                    project_id,
+                    SOURCE_TYPE,
+                    source_id,
+                    entity_key=result.pr_entity_key,
+                    bridge_result=bridge_result,
+                    error=None,
+                )
+                ingested += 1
+                latest_merged_at = pr.merged_at
+                time.sleep(rate_limit_sleep_s)
+            except Exception as exc:
+                failed += 1
+                ledger.update_bridge_status(
+                    project_id,
+                    SOURCE_TYPE,
+                    source_id,
+                    entity_key=f"github:pr:{repo_name}:{pr.number}",
+                    bridge_result=None,
+                    error=str(exc),
+                )
+                logger.exception(
+                    "Failed ingesting PR #%s for project %s",
+                    pr.number,
+                    project_id,
+                )
+
+        ledger.update_sync_state_success(project_id, SOURCE_TYPE, latest_merged_at)
+        return {
+            "status": "success",
+            "project_id": project_id,
+            "repo_name": repo_name,
+            "ingested": ingested,
+            "skipped": skipped,
+            "failed": failed,
+            "last_synced_at": latest_merged_at.isoformat() if latest_merged_at else None,
+        }
+    except Exception as exc:
+        ledger.update_sync_state_error(project_id, SOURCE_TYPE, str(exc))
+        logger.exception("Context graph backfill failed for project %s", project_id)
+        return {
+            "status": "error",
+            "project_id": project_id,
+            "repo_name": repo_name,
+            "error": str(exc),
+            "ingested": ingested,
+            "failed": failed,
+        }

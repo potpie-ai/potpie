@@ -71,10 +71,14 @@ def build_pr_episode(
 
     issue_comment_lines = []
     for c in issue_comments or []:
-        issue_comment_lines.append(f"- {(c.get('user') or {}).get('login')}: {(c.get('body') or '').strip()}")
+        user = c.get("user") or {}
+        login = user.get("login") if isinstance(user, dict) else None
+        issue_comment_lines.append(f"- {login}: {(c.get('body') or '').strip()}")
     issue_comments_section = "\n".join(issue_comment_lines) if issue_comment_lines else "- None"
 
-    labels_text = ", ".join(l.get("name", "") if isinstance(l, dict) else str(l) for l in labels if l) or "None"
+    labels_text = (
+        ", ".join(lb.get("name", "") if isinstance(lb, dict) else str(lb) for lb in labels if lb) or "None"
+    )
     milestone_text = (
         milestone.get("title")
         if isinstance(milestone, dict)

@@ -1,14 +1,14 @@
-"""Unit tests for context-graph deterministic parsers."""
+"""Unit tests for context-graph deterministic parsers (re-export from context-engine)."""
 
 import pytest
 
-from app.modules.context_graph.deterministic_extractors import (
+from domain.deterministic_extractors import (
     extract_feature_from_labels,
     extract_issue_refs,
     extract_ticket_from_branch,
     parse_diff_hunks,
 )
-from app.modules.context_graph.review_thread_grouper import group_review_threads
+from domain.review_thread_grouper import group_review_threads
 
 pytestmark = pytest.mark.unit
 

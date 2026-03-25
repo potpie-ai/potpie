@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "context-engine[all]",
     "aiohttp>=3.13.3",
     "alembic>=1.17.1",
     "anthropic>=0.72.0",
@@ -74,6 +75,7 @@ dependencies = [
     "uvicorn>=0.38.0",
     "greenlet>=3.3.0",
     "graphiti-core>=0.28.2",
+    "griffe>=2.0.1",
 ]
 
 [dependency-groups]
@@ -258,3 +260,6 @@ show_missing = true
 # Enforce minimum coverage on PRs: full run (unit+integration) must be >= 49%.
 # Unit-only phase ~30%; run_tests.py passes --cov-fail-under=0 for non-final phases.
 fail_under = 49
+
+[tool.uv.sources]
+context-engine = { path = "context-engine", editable = true }

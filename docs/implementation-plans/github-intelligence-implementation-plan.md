@@ -146,7 +146,7 @@ Constants:
 
 ### 2.3 — Unit tests
 
-**New file:** `tests/unit/context_graph/test_extractors.py`
+**New file:** `tests/unit/context_graph/test_context_graph_domain.py`
 
 - Test each extractor with known inputs and edge cases.
 - Test review thread grouping with mock comment lists.
@@ -464,7 +464,7 @@ M9 depends on M5 (backfill task exists).
 | `app/modules/context_graph/graphiti_client.py` | M1 |
 | `app/modules/context_graph/deterministic_extractors.py` | M2 |
 | `app/modules/context_graph/review_thread_grouper.py` | M2 |
-| `tests/unit/context_graph/test_extractors.py` | M2 |
+| `tests/unit/context_graph/test_context_graph_domain.py` | M2 |
 | `app/modules/context_graph/episode_formatters.py` | M4 |
 | `app/modules/context_graph/github_pr_fetcher.py` | M5 |
 | `app/modules/context_graph/ingestion_service.py` | M5 |
