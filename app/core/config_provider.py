@@ -244,11 +244,18 @@ class ConfigProvider:
             "on",
         )
         neo4j = self.get_neo4j_config()
+        raw_max = os.getenv("CONTEXT_GRAPH_BACKFILL_MAX_PRS_PER_RUN", "100").strip()
+        try:
+            backfill_max = int(raw_max)
+        except ValueError:
+            backfill_max = 100
+        backfill_max = max(1, min(backfill_max, 500))
         return {
             "enabled": enabled,
             "neo4j_uri": neo4j.get("uri"),
             "neo4j_user": neo4j.get("username"),
             "neo4j_password": neo4j.get("password"),
+            "backfill_max_prs_per_run": backfill_max,
         }
 
 

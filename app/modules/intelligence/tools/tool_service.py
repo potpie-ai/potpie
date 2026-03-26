@@ -66,6 +66,8 @@ from app.modules.intelligence.tools.context_tools import (
     get_change_history_tool,
     get_file_owner_tool,
     get_decisions_tool,
+    get_pr_diff_tool,
+    get_pr_review_context_tool,
     get_project_context_tool,
 )
 from app.modules.intelligence.tools.tool_schema import ToolInfo, ToolInfoWithParameters
@@ -259,6 +261,8 @@ class ToolService:
             "get_change_history": get_change_history_tool(self.db, self.user_id),
             "get_file_owner": get_file_owner_tool(self.db, self.user_id),
             "get_decisions": get_decisions_tool(self.db, self.user_id),
+            "get_pr_diff": get_pr_diff_tool(self.db, self.user_id),
+            "get_pr_review_context": get_pr_review_context_tool(self.db, self.user_id),
             "get_project_context": get_project_context_tool(self.db, self.user_id),
         }
 

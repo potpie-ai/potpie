@@ -150,6 +150,43 @@ TOOL_DEFINITIONS: Dict[str, dict] = {
     "analyze_code_structure": {"tier": "medium", "category": "analysis"},
     "intelligent_code_graph": {"tier": "high", "category": "analysis"},
     "change_detection": {"tier": "medium", "category": "analysis"},
+    # Context graph (Neo4j / GitHub intelligence)
+    "get_project_context": {
+        "tier": "medium",
+        "category": "search",
+        "read_only": True,
+        "idempotent": True,
+    },
+    "get_decisions": {
+        "tier": "medium",
+        "category": "search",
+        "read_only": True,
+        "idempotent": True,
+    },
+    "get_pr_review_context": {
+        "tier": "medium",
+        "category": "search",
+        "read_only": True,
+        "idempotent": True,
+    },
+    "get_pr_diff": {
+        "tier": "medium",
+        "category": "search",
+        "read_only": True,
+        "idempotent": True,
+    },
+    "get_change_history": {
+        "tier": "medium",
+        "category": "search",
+        "read_only": True,
+        "idempotent": True,
+    },
+    "get_file_owner": {
+        "tier": "medium",
+        "category": "search",
+        "read_only": True,
+        "idempotent": True,
+    },
     # Integrations
     "get_linear_issue": {"tier": "high", "category": "integration_linear"},
     "update_linear_issue": {"tier": "high", "category": "integration_linear"},
@@ -296,6 +333,12 @@ CODE_GEN_BASE_TOOLS: List[str] = [
 ]
 
 CODE_GEN_ADD_WHEN_NON_LOCAL: List[str] = [
+    "get_project_context",
+    "get_decisions",
+    "get_pr_review_context",
+    "get_pr_diff",
+    "get_change_history",
+    "get_file_owner",
     "get_code_from_multiple_node_ids",
     "get_node_neighbours_from_node_id",
     "get_code_from_probable_node_name",
@@ -320,6 +363,12 @@ GENERAL_PURPOSE_TOOLS: List[str] = [
 # Todo/requirement tools are included here so we have a single source; do not also pass
 # create_todo_management_toolset() as a toolset or we get "read_todos" name conflicts with MCP.
 SUPERVISOR_TOOLS: List[str] = [
+    "get_project_context",
+    "get_decisions",
+    "get_pr_review_context",
+    "get_pr_diff",
+    "get_change_history",
+    "get_file_owner",
     "fetch_file",
     "get_code_file_structure",
     "web_search_tool",
@@ -341,6 +390,12 @@ SUPERVISOR_TOOLS: List[str] = [
 EXECUTE_TOOLS: List[str] = [
     "webpage_extractor",
     "web_search_tool",
+    "get_project_context",
+    "get_decisions",
+    "get_pr_review_context",
+    "get_pr_diff",
+    "get_change_history",
+    "get_file_owner",
     "ask_knowledge_graph_queries",
     "execute_terminal_command",
     "terminal_session_output",

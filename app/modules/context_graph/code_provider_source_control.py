@@ -46,4 +46,4 @@ class CodeProviderSourceControl:
         if client is None:
             return iter(())
         repo = client.get_repo(repo_name)
-        return iter(repo.get_pulls(state="closed", sort="updated", direction="asc"))
+        return iter(repo.get_pulls(state="closed", sort="updated", direction="desc"))

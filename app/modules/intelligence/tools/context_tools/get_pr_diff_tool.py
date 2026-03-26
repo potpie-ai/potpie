@@ -8,17 +8,20 @@ from sqlalchemy.orm import Session
 from app.modules.context_graph.wiring import PotpieContextEngineSettings
 from app.modules.projects.projects_model import Project
 from adapters.outbound.neo4j.structural import Neo4jStructuralAdapter
-from application.use_cases.query_context import get_decisions as ce_get_decisions
+from application.use_cases.query_context import get_pr_diff as ce_get_pr_diff
 
 
-class GetDecisionsInput(BaseModel):
+class GetPrDiffInput(BaseModel):
     project_id: str = Field(description="Project ID (UUID)")
-    file_path: Optional[str] = Field(default=None, description="Optional file path filter")
-    function_name: Optional[str] = Field(default=None, description="Optional function/class filter")
-    limit: int = Field(default=20, description="Max decisions to return")
+    pr_number: int = Field(ge=1, description="GitHub pull request number")
+    file_path: Optional[str] = Field(
+        default=None,
+        description="Optional repository-relative file path filter",
+    )
+    limit: int = Field(default=30, description="Max file diff rows to return")
 
 
-class GetDecisionsTool:
+class GetPrDiffTool:
     def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db
         self.user_id = user_id
@@ -33,41 +36,40 @@ class GetDecisionsTool:
     async def arun(
         self,
         project_id: str,
+        pr_number: int,
         file_path: Optional[str] = None,
-        function_name: Optional[str] = None,
-        limit: int = 20,
+        limit: int = 30,
     ) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(self.run, project_id, file_path, function_name, limit)
+        return await asyncio.to_thread(self.run, project_id, pr_number, file_path, limit)
 
     def run(
         self,
         project_id: str,
+        pr_number: int,
         file_path: Optional[str] = None,
-        function_name: Optional[str] = None,
-        limit: int = 20,
+        limit: int = 30,
     ) -> list[dict[str, Any]]:
         self._assert_project_access(project_id)
         if not self._settings.is_enabled():
             return []
-        return ce_get_decisions(
+        return ce_get_pr_diff(
             self._structural,
             project_id,
+            pr_number,
             file_path=file_path,
-            function_name=function_name,
             limit=limit,
         )
 
 
-def get_decisions_tool(sql_db: Session, user_id: str) -> StructuredTool:
-    instance = GetDecisionsTool(sql_db, user_id)
+def get_pr_diff_tool(sql_db: Session, user_id: str) -> StructuredTool:
+    instance = GetPrDiffTool(sql_db, user_id)
     return StructuredTool.from_function(
         coroutine=instance.arun,
         func=instance.run,
-        name="get_decisions",
+        name="get_pr_diff",
         description=(
-            "Get design decisions: from code nodes (HAS_DECISION) and from PR review threads / "
-            "PR conversation linked in the context graph. Use file_path to narrow to a path; "
-            "omit filters for a mix of code-linked and PR-linked decisions."
+            "Get file-level diff snippets for a PR from context graph structural edges. "
+            "Returns file_path, patch_excerpt, additions, deletions, and status."
         ),
-        args_schema=GetDecisionsInput,
+        args_schema=GetPrDiffInput,
     )

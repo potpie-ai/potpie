@@ -1,3 +1,13 @@
+import asyncio
+from typing import AsyncGenerator, Optional
+
+from adapters.outbound.neo4j.structural import Neo4jStructuralAdapter
+from application.use_cases.query_context import (
+    get_change_history as ce_get_change_history,
+    get_decisions as ce_get_decisions,
+)
+
+from app.modules.context_graph.wiring import PotpieContextEngineSettings
 from app.modules.intelligence.agents.chat_agents.agent_config import (
     AgentConfig,
     TaskConfig,
@@ -14,9 +24,8 @@ from app.modules.intelligence.agents.multi_agent_config import MultiAgentConfig
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
-from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
-from typing import AsyncGenerator, Optional
 from app.modules.utils.logger import setup_logger
+from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 
 logger = setup_logger(__name__)
 
@@ -64,6 +73,10 @@ class QnAAgent(ChatAgent):
         tools = self.tools_provider.get_tools(
             [
                 "get_project_context",
+                "get_decisions",
+                "get_pr_review_context",
+                "get_pr_diff",
+                "get_change_history",
                 "get_code_from_multiple_node_ids",
                 "get_node_neighbours_from_node_id",
                 "get_code_from_probable_node_name",
@@ -158,6 +171,37 @@ class QnAAgent(ChatAgent):
                 )
         except Exception:
             logger.exception("Failed prefetching project context for QnA agent")
+
+        # Neo4j structural layer (PR-linked decisions, change history) — same DB Graphiti uses for
+        # episodes, but not returned by semantic search alone. Without this, the model only sees
+        # Graphiti snippets unless it happens to call get_decisions / get_change_history.
+        try:
+            cg_settings = PotpieContextEngineSettings()
+            if cg_settings.is_enabled() and ctx.project_id:
+                structural = Neo4jStructuralAdapter(cg_settings)
+
+                def _structural_snapshot() -> tuple[list, list]:
+                    dec = ce_get_decisions(
+                        structural, ctx.project_id, limit=12
+                    )
+                    hist = ce_get_change_history(
+                        structural,
+                        ctx.project_id,
+                        limit=6,
+                    )
+                    return dec, hist
+
+                decisions_preview, change_hist_preview = await asyncio.to_thread(
+                    _structural_snapshot
+                )
+                ctx.additional_context += (
+                    "\nContext graph — structural (Neo4j) pre-fetch "
+                    "(code-linked + PR review/conversation decisions; recent PR↔code rows):\n"
+                    f"- get_decisions-style rows (limit 12): {decisions_preview}\n"
+                    f"- get_change_history-style rows (limit 6): {change_hist_preview}\n"
+                )
+        except Exception:
+            logger.exception("Failed prefetching structural context graph for QnA agent")
 
         if ctx.node_ids and len(ctx.node_ids) > 0:
             code_results = await self.tools_provider.get_code_from_multiple_node_ids_tool.run_multiple(
@@ -259,6 +303,13 @@ Follow this structured approach to explore the codebase:
    - ALWAYS call `get_project_context` first for every user query.
    - Use `project_id`, `query=<user query>`, `limit=8`, and node labels including `PullRequest` and `Decision`.
    - Use this output as the first layer of context before other tools.
+   - Note: the run may also include a **structural (Neo4j) pre-fetch** in additional context (decision rows + change-history rows); treat it as ground truth alongside Graphiti search.
+
+0b. **PR discussions and design rationale** (when the question is about *why*, reviewer debate, or decisions on a known PR number):
+   - Call `get_pr_review_context` with `project_id` and `pr_number` to load full review-thread text linked to that PR.
+   - Call `get_pr_diff` with `project_id` + `pr_number` (and optional `file_path`) for concrete file-level patch excerpts.
+   - Call `get_decisions` with optional `file_path` / `function_name` when the question ties decisions to specific code locations.
+   - Call `get_change_history` with optional `file_path` / `function_name` to see which PRs touched code and short decision headlines (including PR review threads merged into the `decisions` list).
 
 1. **Understand feature context**:
    - Use `web_search_tool` for domain knowledge

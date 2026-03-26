@@ -14,6 +14,8 @@ from application.use_cases.query_context import (
     get_change_history,
     get_decisions,
     get_file_owners,
+    get_pr_diff,
+    get_pr_review_context,
     search_project_context,
 )
 
@@ -69,6 +71,39 @@ def context_get_decisions(
         project_id,
         file_path=file_path,
         function_name=function_name,
+        limit=limit,
+    )
+
+
+@mcp.tool()
+def context_get_pr_review_context(project_id: str, pr_number: int) -> dict:
+    """Return a PR's title/summary plus linked review-thread discussions (Decision nodes)."""
+    if not _settings.is_enabled():
+        return {
+            "found": False,
+            "pr_number": pr_number,
+            "pr_title": None,
+            "pr_summary": None,
+            "review_threads": [],
+        }
+    return get_pr_review_context(_structural, project_id, pr_number)
+
+
+@mcp.tool()
+def context_get_pr_diff(
+    project_id: str,
+    pr_number: int,
+    file_path: str | None = None,
+    limit: int = 30,
+) -> list[dict]:
+    """Return file-level PR diff excerpts captured during ingestion."""
+    if not _settings.is_enabled():
+        return []
+    return get_pr_diff(
+        _structural,
+        project_id,
+        pr_number,
+        file_path=file_path,
         limit=limit,
     )
 

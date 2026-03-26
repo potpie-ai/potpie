@@ -40,6 +40,9 @@ class PotpieContextEngineSettings(ContextEngineSettingsPort):
         c = self._cp.get_neo4j_config()
         return c.get("password")
 
+    def backfill_max_prs_per_run(self) -> int:
+        return int(self._cp.get_context_graph_config().get("backfill_max_prs_per_run", 100))
+
 
 class SqlalchemyProjectResolution(ProjectResolutionPort):
     def __init__(self, db: Session) -> None:

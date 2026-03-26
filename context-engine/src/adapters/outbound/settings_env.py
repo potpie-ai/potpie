@@ -22,3 +22,11 @@ class EnvContextEngineSettings(ContextEngineSettingsPort):
 
     def neo4j_password(self) -> str | None:
         return os.getenv("NEO4J_PASSWORD")
+
+    def backfill_max_prs_per_run(self) -> int:
+        raw = os.getenv("CONTEXT_GRAPH_BACKFILL_MAX_PRS_PER_RUN", "100").strip()
+        try:
+            n = int(raw)
+        except ValueError:
+            n = 100
+        return max(1, min(n, 500))

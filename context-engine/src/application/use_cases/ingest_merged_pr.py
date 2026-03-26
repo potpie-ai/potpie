@@ -61,17 +61,20 @@ def ingest_merged_pull_request(
         reference_time=episode["reference_time"],
     )
 
-    stamp_counts: dict[str, int] = {}
-    if episode_uuid:
-        stamp_counts = structural.stamp_pr_entities(
-            project_id=project_id,
-            episode_uuid=episode_uuid,
-            repo_name=repo_name,
-            pr_number=pr_number,
-            commits=commits,
-            review_threads=review_threads,
-            author=pr_data.get("author"),
-        )
+    # Always stamp structural graph (PR entity, review threads, conversation) even if Graphiti
+    # returned no episode UUID — otherwise write_bridges runs with no Decision / PR linkage data.
+    stamp_counts = structural.stamp_pr_entities(
+        project_id=project_id,
+        episode_uuid=episode_uuid or "",
+        repo_name=repo_name,
+        pr_number=pr_number,
+        commits=commits,
+        review_threads=review_threads,
+        pr_data=pr_data,
+        author=pr_data.get("author"),
+        pr_title=pr_data.get("title"),
+        issue_comments=issue_comments or [],
+    )
 
     payload = {
         "pr_data": pr_data,

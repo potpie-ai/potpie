@@ -27,7 +27,10 @@ class StructuralGraphPort(Protocol):
         pr_number: int,
         commits: list[dict[str, Any]],
         review_threads: list[dict[str, Any]],
-        author: str | None,
+        pr_data: dict[str, Any] | None = None,
+        author: str | None = None,
+        pr_title: str | None = None,
+        issue_comments: list[dict[str, Any]] | None = None,
     ) -> dict[str, int]:
         ...
 
@@ -53,6 +56,18 @@ class StructuralGraphPort(Protocol):
         project_id: str,
         file_path: str | None,
         function_name: str | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        ...
+
+    def get_pr_review_context(self, project_id: str, pr_number: int) -> dict[str, Any]:
+        ...
+
+    def get_pr_diff(
+        self,
+        project_id: str,
+        pr_number: int,
+        file_path: str | None,
         limit: int,
     ) -> list[dict[str, Any]]:
         ...

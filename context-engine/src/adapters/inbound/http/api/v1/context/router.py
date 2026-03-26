@@ -19,6 +19,8 @@ from application.use_cases.query_context import (
     get_change_history,
     get_decisions,
     get_file_owners,
+    get_pr_diff,
+    get_pr_review_context,
     search_project_context,
 )
 from bootstrap.container import ContextEngineContainer
@@ -55,6 +57,18 @@ class DecisionsQuery(BaseModel):
     file_path: Optional[str] = None
     function_name: Optional[str] = None
     limit: int = 20
+
+
+class PrReviewContextQuery(BaseModel):
+    project_id: str
+    pr_number: int = Field(ge=1, description="GitHub pull request number")
+
+
+class PrDiffQuery(BaseModel):
+    project_id: str
+    pr_number: int = Field(ge=1, description="GitHub pull request number")
+    file_path: Optional[str] = None
+    limit: int = 30
 
 
 class SearchQuery(BaseModel):
@@ -234,6 +248,34 @@ def create_context_router(
             body.project_id,
             file_path=body.file_path,
             function_name=body.function_name,
+            limit=body.limit,
+        )
+
+    @router.post("/query/pr-review-context")
+    def post_pr_review_context(
+        body: PrReviewContextQuery,
+        _: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+    ):
+        if enforce_project_access:
+            _require_project_access(container, body.project_id)
+        return get_pr_review_context(
+            container.structural, body.project_id, body.pr_number
+        )
+
+    @router.post("/query/pr-diff")
+    def post_pr_diff(
+        body: PrDiffQuery,
+        _: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+    ):
+        if enforce_project_access:
+            _require_project_access(container, body.project_id)
+        return get_pr_diff(
+            container.structural,
+            body.project_id,
+            body.pr_number,
+            file_path=body.file_path,
             limit=body.limit,
         )
 

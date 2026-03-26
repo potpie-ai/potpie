@@ -7,13 +7,16 @@ import concurrent.futures
 import logging
 import threading
 from datetime import datetime
-from typing import Any, Callable, Optional
+from collections.abc import Coroutine
+from typing import Any, Callable, Optional, TypeVar
 
 from domain.entity_schema import EDGE_TYPE_MAP, EDGE_TYPES, ENTITY_TYPES
 from domain.ports.episodic_graph import EpisodicGraphPort
 from domain.ports.settings import ContextEngineSettingsPort
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 
 class GraphitiEpisodicAdapter(EpisodicGraphPort):
@@ -43,9 +46,20 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
     def _get_graphiti(self):
         if not self._enabled or self._init_error:
             return None
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
         client = getattr(self._thread_local, "graphiti", None)
-        if client is not None:
+        client_loop = getattr(self._thread_local, "graphiti_loop", None)
+        if client is not None and client_loop is current_loop:
             return client
+        if client is not None and client_loop is not current_loop:
+            # Graphiti/Neo4j async internals are loop-bound; do not reuse
+            # a client that was created under another event loop.
+            self._thread_local.graphiti = None
+            self._thread_local.graphiti_loop = None
         try:
             from graphiti_core import Graphiti
 
@@ -58,6 +72,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
 
             client = Graphiti(uri=uri, user=user, password=password)
             self._thread_local.graphiti = client
+            self._thread_local.graphiti_loop = current_loop
             return client
         except Exception as exc:
             self._init_error = str(exc)
@@ -68,14 +83,41 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
     def enabled(self) -> bool:
         return self._enabled and self._init_error is None
 
-    def _sync_run(self, factory: Callable[[], Any]) -> Any:
+    async def _close_graphiti_for_running_loop(self) -> None:
+        """Close driver before the ephemeral asyncio.run loop shuts down.
+
+        If we skip this, Neo4j async transports may try to schedule cleanup on a
+        loop that asyncio.run() has already closed → RuntimeError: Event loop is closed.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        client = getattr(self._thread_local, "graphiti", None)
+        client_loop = getattr(self._thread_local, "graphiti_loop", None)
+        if client is None or client_loop is not loop:
+            return
+        try:
+            await client.close()
+        except Exception as exc:
+            logger.debug("Graphiti close after sync run: %s", exc)
+        self._thread_local.graphiti = None
+        self._thread_local.graphiti_loop = None
+
+    def _sync_run(self, factory: Callable[[], Coroutine[Any, Any, _T]]) -> _T:
+        async def _wrapped() -> _T:
+            try:
+                return await factory()
+            finally:
+                await self._close_graphiti_for_running_loop()
+
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(factory())
+            return asyncio.run(_wrapped())
 
         def _worker():
-            return asyncio.run(factory())
+            return asyncio.run(_wrapped())
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             return pool.submit(_worker).result()

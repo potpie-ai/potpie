@@ -155,4 +155,5 @@ class PyGithubSourceControl(SourceControlPort):
 
     def iter_closed_pulls(self, repo_name: str) -> Iterator[Any]:
         repo = self._client.get_repo(repo_name)
-        return iter(repo.get_pulls(state="closed", sort="updated", direction="asc"))
+        # Newest-first so each backfill run fills recent context first; older PRs in later runs.
+        return iter(repo.get_pulls(state="closed", sort="updated", direction="desc"))

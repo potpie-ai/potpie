@@ -19,7 +19,6 @@ from domain.ports.structural_graph import StructuralGraphPort
 logger = logging.getLogger(__name__)
 
 SOURCE_TYPE = "github_pr"
-MAX_PER_RUN = 100
 
 
 def backfill_project_context(
@@ -59,17 +58,19 @@ def backfill_project_context(
     latest_merged_at: datetime | None = cursor
     ledger.update_sync_state_running(project_id, SOURCE_TYPE)
 
+    max_per_run = settings.backfill_max_prs_per_run()
     ingested = 0
     skipped = 0
     failed = 0
 
     try:
         for pr in source.iter_closed_pulls(repo_name):
-            if ingested + skipped >= MAX_PER_RUN:
+            if ingested >= max_per_run:
                 break
             if not pr.merged_at:
                 continue
             if cursor is not None and pr.merged_at <= cursor:
+                skipped += 1
                 continue
 
             source_id = f"pr_{pr.number}_merged"
@@ -134,6 +135,7 @@ def backfill_project_context(
             "ingested": ingested,
             "skipped": skipped,
             "failed": failed,
+            "max_prs_per_run": max_per_run,
             "last_synced_at": latest_merged_at.isoformat() if latest_merged_at else None,
         }
     except Exception as exc:

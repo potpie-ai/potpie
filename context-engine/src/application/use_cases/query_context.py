@@ -53,6 +53,40 @@ def get_decisions(
     )
 
 
+def get_pr_review_context(
+    structural: StructuralGraphPort,
+    project_id: str,
+    pr_number: int,
+) -> dict[str, Any]:
+    if pr_number < 1:
+        return {
+            "found": False,
+            "pr_number": pr_number,
+            "pr_title": None,
+            "pr_summary": None,
+            "review_threads": [],
+        }
+    return structural.get_pr_review_context(project_id, pr_number)
+
+
+def get_pr_diff(
+    structural: StructuralGraphPort,
+    project_id: str,
+    pr_number: int,
+    *,
+    file_path: Optional[str] = None,
+    limit: int = 30,
+) -> list[dict[str, Any]]:
+    if pr_number < 1:
+        return []
+    return structural.get_pr_diff(
+        project_id=project_id,
+        pr_number=pr_number,
+        file_path=file_path,
+        limit=max(1, min(limit, 200)),
+    )
+
+
 def search_project_context(
     episodic: EpisodicGraphPort,
     project_id: str,
