@@ -94,7 +94,7 @@ class ConversationAPI:
         user=Depends(AuthService.check_auth),
     ):
         user_agent = request.headers.get("user-agent", "")
-        local_mode = user_agent == "Potpie-VSCode-Extension/1.0.1"
+        local_mode = "Potpie-VSCode-Extension" in user_agent
 
         user_id = user["user_id"]
         await UsageService.check_usage_limit(user_id, async_db)
@@ -184,7 +184,7 @@ class ConversationAPI:
     ):
         # Check User-Agent header for local mode (same as regenerate_last_message)
         user_agent = http_request.headers.get("user-agent", "")
-        local_mode = user_agent == "Potpie-VSCode-Extension/1.0.1"
+        local_mode = "Potpie-VSCode-Extension" in user_agent
 
         # Validate message content
         if content == "" or content is None or content.isspace():
@@ -319,7 +319,7 @@ class ConversationAPI:
     ):
         # Check User-Agent header for local mode (same as post_message)
         user_agent = http_request.headers.get("user-agent", "")
-        local_mode = user_agent == "Potpie-VSCode-Extension/1.0.1"
+        local_mode = "Potpie-VSCode-Extension" in user_agent
 
         user_id = user["user_id"]
         await UsageService.check_usage_limit(user_id, async_db)

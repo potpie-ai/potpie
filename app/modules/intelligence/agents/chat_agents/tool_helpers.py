@@ -1,4 +1,5 @@
 import re
+import json
 from typing import Any, Dict, List
 
 # Import todo management for streaming todo list state
@@ -282,6 +283,90 @@ def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
             return "Adding comment to Confluence page"
         case _:
             return "Querying data"
+
+
+def _parse_partial_args_buffer(args_buffer: str) -> Dict[str, Any] | None:
+    """Best-effort parser for partially streamed tool args JSON."""
+    if not args_buffer or not isinstance(args_buffer, str):
+        return None
+
+    s = args_buffer.strip()
+    if not s:
+        return None
+
+    try:
+        parsed = json.loads(s)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        pass
+
+    open_braces = s.count("{") - s.count("}")
+    open_brackets = s.count("[") - s.count("]")
+    repaired = s + ("}" * max(open_braces, 0)) + ("]" * max(open_brackets, 0))
+    try:
+        parsed = json.loads(repaired)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        return None
+
+
+def _extract_string_field(args_buffer: str, field_name: str) -> str | None:
+    """Extract a string field from partial JSON text via regex fallback."""
+    m = re.search(rf'"{re.escape(field_name)}"\s*:\s*"([^"]+)', args_buffer)
+    if m and m.group(1).strip():
+        return m.group(1).strip()
+    return None
+
+
+def try_extract_streaming_preview(tool_name: str, args_buffer: str) -> str | None:
+    """Return an early meaningful preview from streaming tool args, when possible."""
+    args: Dict[str, Any] = _parse_partial_args_buffer(args_buffer) or {}
+
+    if tool_name == "fetch_file":
+        file_path = args.get("file_path") or _extract_string_field(args_buffer, "file_path")
+        if file_path:
+            return get_tool_run_message(tool_name, {"file_path": file_path})
+        return None
+
+    if tool_name == "fetch_files_batch":
+        paths = args.get("paths")
+        if isinstance(paths, list) and len(paths) > 0:
+            return get_tool_run_message(tool_name, {"paths": paths})
+        return None
+
+    if tool_name in {
+        "search_text",
+        "search_workspace_symbols",
+        "semantic_search",
+    }:
+        query = args.get("query") or _extract_string_field(args_buffer, "query")
+        if query:
+            return get_tool_run_message(tool_name, {"query": query})
+        return None
+
+    if tool_name == "search_files":
+        pattern = args.get("pattern") or _extract_string_field(args_buffer, "pattern")
+        if pattern:
+            return get_tool_run_message(tool_name, {"pattern": pattern})
+        return None
+
+    if tool_name == "search_symbols":
+        file_path = args.get("file_path") or _extract_string_field(args_buffer, "file_path")
+        if file_path:
+            return get_tool_run_message(tool_name, {"file_path": file_path})
+        return None
+
+    if tool_name in {"search_bash", "bash_command", "execute_terminal_command"}:
+        command = args.get("command") or _extract_string_field(args_buffer, "command")
+        if command:
+            payload: Dict[str, Any] = {"command": command}
+            mode = args.get("mode")
+            if mode:
+                payload["mode"] = mode
+            return get_tool_run_message(tool_name, payload)
+        return None
+
+    return None
 
 
 def _parse_terminal_result_string(content: str) -> tuple[str | None, int | None, bool]:

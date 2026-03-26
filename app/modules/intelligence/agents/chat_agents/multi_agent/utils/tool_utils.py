@@ -142,6 +142,16 @@ def create_tool_call_response(event: FunctionToolCallEvent) -> ToolCallResponse:
                     sanitize_error,
                 )
 
+    command_tools = {"search_bash", "bash_command", "execute_terminal_command"}
+    if tool_name in command_tools:
+        command = str(args_dict.get("command", "") or "").strip()
+        return ToolCallResponse(
+            call_id=event.part.tool_call_id or "",
+            event_type=ToolCallEventType.CALL,
+            tool_name=tool_name,
+            tool_response=command or get_tool_run_message(tool_name, args_dict),
+            tool_call_details={"command": command} if command else {},
+        )
     if is_delegation_tool(tool_name):
         agent_type = extract_agent_type_from_delegation_tool(tool_name)
         task_description = args_dict.get("task_description", "")
