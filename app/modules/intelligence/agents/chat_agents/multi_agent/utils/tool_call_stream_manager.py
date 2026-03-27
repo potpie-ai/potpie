@@ -21,6 +21,53 @@ class ToolCallStreamManager:
         # Use same TTL and max_len as conversation streams
         self.stream_ttl = ConfigProvider.get_stream_ttl_secs()
         self.max_len = ConfigProvider.get_stream_maxlen()
+        self.truncation_length = ConfigProvider.get_tool_response_truncation_length()
+
+    def _truncate_tool_response(self, response: str) -> str:
+        """Truncate tool response to configured maximum length for storage.
+
+        Streaming parts are sent fully, only the complete stored response is truncated.
+
+        Args:
+            response: The full tool response to potentially truncate
+
+        Returns:
+            Truncated response if enabled, otherwise the full response
+        """
+        if self.truncation_length <= 0:
+            # Truncation disabled, store full response
+            return response
+
+        if len(response) <= self.truncation_length:
+            # Response fits within limit, store as-is
+            return response
+
+        # Truncate and add ellipsis indicator
+        truncated = response[:self.truncation_length]
+        return truncated + "\n\n[Response truncated for storage...]"
+
+    def _truncate_stream_part(self, stream_part: str) -> str:
+        """Truncate stream part to prevent Redis stream entry bloat.
+
+        Stream parts are sent to clients for real-time display, but very large
+        individual chunks can cause Redis memory issues. This is a soft limit
+        that's higher than the storage limit to allow full streaming.
+
+        Default: 50000 characters (50KB) per chunk
+
+        Args:
+            stream_part: The stream part to potentially truncate
+
+        Returns:
+            Truncated stream part if too large, otherwise the full stream part
+        """
+        stream_part_limit = 50000  # 50KB per chunk
+        if len(stream_part) <= stream_part_limit:
+            return stream_part
+
+        # Truncate and add continuation indicator
+        truncated = stream_part[:stream_part_limit]
+        return truncated + "\n\n[Large chunk truncated for streaming...]"
 
     def stream_key(self, call_id: str) -> str:
         """Generate Redis stream key for a tool call_id"""
@@ -62,13 +109,13 @@ class ToolCallStreamManager:
         event_data = {
             "type": "tool_call_stream_part",
             "call_id": call_id,
-            "stream_part": stream_part,
+            "stream_part": self._truncate_stream_part(stream_part),
             "is_complete": "true" if is_complete else "false",
             "created_at": datetime.utcnow().isoformat(),
         }
 
         if tool_response is not None:
-            event_data["tool_response"] = tool_response
+            event_data["tool_response"] = self._truncate_tool_response(tool_response)
 
         if tool_call_details:
             event_data["tool_call_details_json"] = json.dumps(
@@ -113,13 +160,13 @@ class ToolCallStreamManager:
         event_data = {
             "type": "tool_call_stream_part",
             "call_id": call_id,
-            "stream_part": stream_part,
+            "stream_part": self._truncate_stream_part(stream_part),
             "is_complete": "true" if is_complete else "false",
             "created_at": datetime.utcnow().isoformat(),
         }
 
         if tool_response is not None:
-            event_data["tool_response"] = tool_response
+            event_data["tool_response"] = self._truncate_tool_response(tool_response)
 
         if tool_call_details:
             event_data["tool_call_details_json"] = json.dumps(

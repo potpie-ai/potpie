@@ -210,6 +210,19 @@ class ConfigProvider:
     def get_stream_prefix() -> str:
         return os.getenv("REDIS_STREAM_PREFIX", "chat:stream")
 
+    @staticmethod
+    def get_tool_response_truncation_length() -> int:
+        """Get maximum length for stored tool responses in Redis streams.
+
+        Tool responses are streamed fully to clients, but stored in a truncated
+        form to reduce Redis memory usage. The streaming parts (stream_part)
+        are sent fully, only the complete response (tool_response) is truncated.
+
+        Default: 10000 characters
+        Set to 0 or negative to disable truncation and store full responses.
+        """
+        return int(os.getenv("TOOL_RESPONSE_TRUNCATION_LENGTH", "10000"))
+
     def get_code_provider_type(self) -> str:
         """Get configured code provider type (default: github)."""
         return os.getenv("CODE_PROVIDER", "github").lower()
