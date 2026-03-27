@@ -24,7 +24,7 @@ class APIKeyService:
     def get_client_and_project():
         """Get Secret Manager client and project ID based on environment."""
         # Check if development mode is enabled
-        is_dev_mode = os.getenv("isDevelopmentMode", "enabled") == "enabled"
+        is_dev_mode = os.getenv("isDevelopmentMode", "disabled") == "enabled"
         if is_dev_mode:
             logger.info("Development mode enabled - skipping GCP Secret Manager")
             return None, None
