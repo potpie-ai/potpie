@@ -69,6 +69,8 @@ def save_config(config: dict):
     fd = os.open(CONFIG_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, 'w') as f:
         json.dump(config, f, indent=2)
+    # Force permissions in case file already existed with looser mode
+    os.chmod(CONFIG_FILE, 0o600)
 
 
 def get_base_url() -> str:
@@ -149,7 +151,10 @@ def cmd_start(args):
         cmd.append("--build")
 
     print(f"   Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=False, check=False)
+    try:
+        result = subprocess.run(cmd, capture_output=False, check=False)
+    except FileNotFoundError:
+        raise PotPieError("docker not found. Please install Docker.")
 
     if result.returncode == 0:
         print("\n✅ PotPie server started!")
@@ -170,7 +175,10 @@ def cmd_stop(args):
     if args.volumes:
         cmd.append("-v")
 
-    result = subprocess.run(cmd, check=False)
+    try:
+        result = subprocess.run(cmd, check=False)
+    except FileNotFoundError:
+        raise PotPieError("docker not found. Please install Docker.")
     if result.returncode == 0:
         print("✅ PotPie server stopped.")
     else:
@@ -236,13 +244,35 @@ def cmd_parse(args):
             raise PotPieError(f"Not a git repository: {local_path}")
         # Validate branch if specified
         if branch:
-            result = subprocess.run(
-                ["git", "-C", str(local_path), "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
-                capture_output=True,
-            )
+            try:
+                result = subprocess.run(
+                    ["git", "-C", str(local_path), "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
+                    capture_output=True,
+                )
+            except FileNotFoundError:
+                raise PotPieError("git not found. Please install git.")
             if result.returncode != 0:
                 raise PotPieError(f"Branch not found: {branch}")
         repo_path = str(local_path)
+    else:
+        # Remote URL validation
+        try:
+            if branch:
+                result = subprocess.run(
+                    ["git", "ls-remote", "--heads", repo_path, branch],
+                    capture_output=True, text=True, timeout=15,
+                )
+                if result.returncode != 0 or branch not in result.stdout:
+                    raise PotPieError(f"Branch not found: {branch}")
+            else:
+                result = subprocess.run(
+                    ["git", "ls-remote", repo_path],
+                    capture_output=True, text=True, timeout=15,
+                )
+                if result.returncode != 0:
+                    raise PotPieError(f"Not a valid git repository: {repo_path}")
+        except FileNotFoundError:
+            raise PotPieError("git not found. Please install git.")
 
     # Get repo name from path
     repo_name = Path(repo_path).name if not repo_path.startswith(("http", "git@")) else repo_path.split("/")[-1].replace(".git", "")
@@ -317,29 +347,32 @@ def cmd_chat(args):
     project_id = args.project_id
     agent_id = args.agent or "codebase_qna_agent"
 
-    print("💬 Starting chat session")
-    print(f"   Project: {project_id}")
-    print(f"   Agent: {agent_id}")
-
-    # Preflight check: verify project exists and is ready
     try:
-        project_result = client.request("GET", f"/projects/{project_id}")
-        project_status = project_result.get("status", "unknown")
+        print("💬 Starting chat session")
+        print(f"   Project: {project_id}")
+        print(f"   Agent: {agent_id}")
 
-        if project_status not in ("ready", "completed", "success"):
-            print("\n❌ Project is not ready for chatting.")
-            print(f"   Current status: {project_status}")
-            print("   Please wait for parsing to complete or check with: potpie status")
-            return
-    except PotPieError as e:
-        print(f"\n❌ Failed to verify project: {e}")
-        print("   Project ID may be invalid or server unavailable.")
-        return
+        # Preflight check: verify project exists and is ready
+        try:
+            project_result = client.request("GET", f"/projects/{project_id}")
+            project_status = project_result.get("status", "unknown")
 
-    print("   Type 'quit' or Ctrl+C to exit.\n")
+            if project_status not in ("ready", "completed", "success"):
+                raise PotPieError(
+                    f"Project is not ready for chatting (status: {project_status}).\n"
+                    "   Please wait for parsing to complete or check with: potpie status"
+                )
+        except PotPieError:
+            raise
+        except Exception as e:
+            raise PotPieError(
+                f"Failed to verify project: {e}\n"
+                "   Project ID may be invalid or server unavailable."
+            )
 
-    # Create conversation
-    try:
+        print("   Type 'quit' or Ctrl+C to exit.\n")
+
+        # Create conversation
         conv_result = client.request("POST", "/conversations/", json={
             "project_ids": [project_id],
             "agent_ids": [agent_id],
