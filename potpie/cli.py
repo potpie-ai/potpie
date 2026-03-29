@@ -96,7 +96,12 @@ def get_headers() -> dict:
 
 def resolve_compose_file(compose_arg: Optional[str]) -> Path:
     """Resolve compose.yaml path from argument or default locations."""
-    compose_file = Path(compose_arg or DEFAULT_COMPOSE_FILE)
+    if compose_arg:
+        compose_file = Path(compose_arg)
+        if not compose_file.exists():
+            raise PotPieError(f"Compose file not found: {compose_file}")
+        return compose_file
+    compose_file = Path(DEFAULT_COMPOSE_FILE)
     if not compose_file.exists():
         cli_dir = Path(__file__).parent.parent
         compose_file = cli_dir / DEFAULT_COMPOSE_FILE
@@ -110,7 +115,7 @@ class PotPieClient:
         self.base_url = (base_url or get_base_url()).rstrip("/")
         if httpx is None:
             raise ImportError("httpx is required: pip install httpx")
-        self.client = httpx.Client(timeout=60.0, headers=get_headers())
+        self.client = httpx.Client(headers=get_headers())
 
     def request(self, method: str, path: str, **kwargs) -> dict:
         """Make an API request."""
@@ -262,7 +267,9 @@ def cmd_parse(args):
                     ["git", "ls-remote", "--heads", repo_path, branch],
                     capture_output=True, text=True, timeout=15,
                 )
-                if result.returncode != 0 or branch not in result.stdout:
+                if result.returncode != 0:
+                    raise PotPieError(f"git ls-remote failed: {result.stderr.strip() or result.stdout.strip()}")
+                if branch not in result.stdout:
                     raise PotPieError(f"Branch not found: {branch}")
             else:
                 result = subprocess.run(
@@ -270,9 +277,11 @@ def cmd_parse(args):
                     capture_output=True, text=True, timeout=15,
                 )
                 if result.returncode != 0:
-                    raise PotPieError(f"Not a valid git repository: {repo_path}")
+                    raise PotPieError(f"git ls-remote failed: {result.stderr.strip() or result.stdout.strip()}")
         except FileNotFoundError:
             raise PotPieError("git not found. Please install git.")
+        except subprocess.TimeoutExpired:
+            raise PotPieError("git ls-remote timed out. Check your network or the repository URL.")
 
     # Get repo name from path
     repo_name = Path(repo_path).name if not repo_path.startswith(("http", "git@")) else repo_path.split("/")[-1].replace(".git", "")
@@ -346,6 +355,7 @@ def cmd_chat(args):
     client = PotPieClient()
     project_id = args.project_id
     agent_id = args.agent or "codebase_qna_agent"
+    branch = getattr(args, "branch", None)
 
     try:
         print("💬 Starting chat session")
@@ -373,10 +383,13 @@ def cmd_chat(args):
         print("   Type 'quit' or Ctrl+C to exit.\n")
 
         # Create conversation
-        conv_result = client.request("POST", "/conversations/", json={
+        conv_payload = {
             "project_ids": [project_id],
             "agent_ids": [agent_id],
-        })
+        }
+        if branch:
+            conv_payload["branch"] = branch
+        conv_result = client.request("POST", "/conversations/", json=conv_payload)
         conversation_id = conv_result.get("conversation_id")
         print(f"   Session ID: {conversation_id}\n")
 
@@ -540,6 +553,7 @@ def main():
     p_chat = subparsers.add_parser("chat", help="Interactive chat with an agent")
     p_chat.add_argument("project_id", help="Project ID to chat about")
     p_chat.add_argument("--agent", "-a", help="Agent ID (default: codebase_qna_agent)")
+    p_chat.add_argument("--branch", "-b", help="Branch name")
     p_chat.set_defaults(func=cmd_chat)
 
     # projects
