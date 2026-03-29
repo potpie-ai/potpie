@@ -62,7 +62,6 @@ class AgentsService:
         self.prompt_service = PromptService(db)
         self.llm_provider = llm_provider
         self.tools_provider = tools_provider
-        # Phase 1 tool registry: build registry and resolver for registry-driven agents
         self._tool_resolver: ToolResolver | None = None
         try:
             registry = build_registry_from_tool_service(tools_provider, strict=False)
@@ -174,11 +173,63 @@ class AgentsService:
         }
 
     async def execute(self, ctx: ChatContext):
-        return await self.supervisor_agent.run(ctx)
+        import time
+
+        start_time = time.time()
+
+        try:
+            result = await self.supervisor_agent.run(ctx)
+
+            latency = int((time.time() - start_time) * 1000)
+
+            logger.info({
+                "event": "agent_execution",
+                "latency_ms": latency,
+                "status": "success"
+            })
+
+            return result
+
+        except Exception as e:
+            latency = int((time.time() - start_time) * 1000)
+
+            logger.error({
+                "event": "agent_execution",
+                "latency_ms": latency,
+                "status": "failure",
+                "error": str(e)
+            })
+
+            raise
 
     async def execute_stream(self, ctx: ChatContext):
-        async for chunk in self.supervisor_agent.run_stream(ctx):
-            yield chunk
+        import time
+
+        start_time = time.time()
+
+        try:
+            async for chunk in self.supervisor_agent.run_stream(ctx):
+                yield chunk
+
+            latency = int((time.time() - start_time) * 1000)
+
+            logger.info({
+                "event": "agent_stream_execution",
+                "latency_ms": latency,
+                "status": "success"
+            })
+
+        except Exception as e:
+            latency = int((time.time() - start_time) * 1000)
+
+            logger.error({
+                "event": "agent_stream_execution",
+                "latency_ms": latency,
+                "status": "failure",
+                "error": str(e)
+            })
+
+            raise
 
     async def list_available_agents(
         self, current_user: dict, list_system_agents: bool
