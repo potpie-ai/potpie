@@ -15,6 +15,7 @@ Usage:
 """
 
 import argparse
+import getpass
 import json
 import os
 import subprocess
@@ -32,8 +33,17 @@ except ImportError:
 
 DEFAULT_BASE_URL = "http://localhost:8001"
 DEFAULT_API_KEY = os.environ.get("POTPIE_API_KEY", "")
+DEFAULT_COMPOSE_FILE = "compose.yaml"
 CONFIG_DIR = Path.home() / ".potpie"
 CONFIG_FILE = CONFIG_DIR / "config.json"
+
+
+class PotPieError(Exception):
+    """CLI error with exit code."""
+
+    def __init__(self, message: str, exit_code: int = 1):
+        super().__init__(message)
+        self.exit_code = exit_code
 
 
 def load_config() -> dict:
@@ -51,12 +61,10 @@ def load_config() -> dict:
 
 def save_config(config: dict):
     """Save CLI configuration."""
-    import os
-    
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     # Set secure permissions for config directory
     os.chmod(CONFIG_DIR, 0o700)
-    
+
     # Write config file with secure permissions
     fd = os.open(CONFIG_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, 'w') as f:
@@ -84,10 +92,19 @@ def get_headers() -> dict:
     return headers
 
 
+def resolve_compose_file(compose_arg: Optional[str]) -> Path:
+    """Resolve compose.yaml path from argument or default locations."""
+    compose_file = Path(compose_arg or DEFAULT_COMPOSE_FILE)
+    if not compose_file.exists():
+        cli_dir = Path(__file__).parent.parent
+        compose_file = cli_dir / DEFAULT_COMPOSE_FILE
+    return compose_file
+
+
 # ─── HTTP Client ─────────────────────────────────────────────────────────────
 
 class PotPieClient:
-    def __init__(self, base_url: str = None):
+    def __init__(self, base_url: Optional[str] = None):
         self.base_url = (base_url or get_base_url()).rstrip("/")
         if httpx is None:
             raise ImportError("httpx is required: pip install httpx")
@@ -102,15 +119,14 @@ class PotPieClient:
             return resp.json()
         except httpx.HTTPStatusError as e:
             error_body = e.response.text[:500] if e.response else str(e)
-            print(f"❌ HTTP {e.response.status_code}: {error_body}")
-            sys.exit(1)
+            raise PotPieError(f"HTTP {e.response.status_code}: {error_body}")
         except httpx.ConnectError:
-            print(f"❌ Cannot connect to {self.base_url}")
-            print("   Is the server running? Try: potpie start")
-            sys.exit(1)
+            raise PotPieError(
+                f"Cannot connect to {self.base_url}\n"
+                "   Is the server running? Try: potpie start"
+            )
         except Exception as e:
-            print(f"❌ Error: {e}")
-            sys.exit(1)
+            raise PotPieError(f"Error: {e}")
 
     def close(self):
         self.client.close()
@@ -122,52 +138,43 @@ def cmd_start(args):
     """Start the local PotPie server using Docker Compose."""
     print("🚀 Starting PotPie server...")
 
-    compose_file = Path(args.compose or "compose.yaml")
-    if not compose_file.exists():
-        # Try to find it relative to the CLI location
-        cli_dir = Path(__file__).parent.parent
-        compose_file = cli_dir / "compose.yaml"
+    compose_file = resolve_compose_file(args.compose)
 
     if not compose_file.exists():
         print("❌ compose.yaml not found. Run this from the potpie directory.")
-        sys.exit(1)
+        raise PotPieError("compose.yaml not found")
 
     cmd = ["docker", "compose", "-f", str(compose_file), "up", "-d"]
     if args.build:
         cmd.append("--build")
 
     print(f"   Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=False, check=False)  # Safe: known strings, not user input
+    result = subprocess.run(cmd, capture_output=False, check=False)
 
     if result.returncode == 0:
         print("\n✅ PotPie server started!")
         print(f"   API: {get_base_url()}")
-        print(f"   UI:  http://localhost:3000")
+        print("   UI:  http://localhost:3000")
         print("\n   Run 'potpie status' to check readiness.")
     else:
-        print("\n❌ Failed to start. Check Docker is running.")
-        sys.exit(1)
+        raise PotPieError("Failed to start. Check Docker is running.")
 
 
 def cmd_stop(args):
     """Stop the local PotPie server."""
     print("⏹️  Stopping PotPie server...")
 
-    compose_file = Path(args.compose or "compose.yaml")
-    if not compose_file.exists():
-        cli_dir = Path(__file__).parent.parent
-        compose_file = cli_dir / "compose.yaml"
+    compose_file = resolve_compose_file(args.compose)
 
     cmd = ["docker", "compose", "-f", str(compose_file), "down"]
     if args.volumes:
         cmd.append("-v")
 
-    result = subprocess.run(cmd, check=False)  # Safe: known strings, not user input
+    result = subprocess.run(cmd, check=False)
     if result.returncode == 0:
         print("✅ PotPie server stopped.")
     else:
-        print("❌ Failed to stop.")
-        sys.exit(1)
+        raise PotPieError("Failed to stop.")
 
 
 def cmd_status(args):
@@ -177,10 +184,10 @@ def cmd_status(args):
         # Check server health
         result = client.request("GET", "/projects/list")
         print(f"✅ Server is running at {client.base_url}")
-        
+
         if isinstance(result, list):
             print(f"📊 Projects: {len(result)}")
-            
+
             # Show project details if requested
             if args.project_id:
                 for project in result:
@@ -199,12 +206,12 @@ def cmd_status(args):
                 for project in result:
                     status = project.get('status', 'unknown')
                     status_counts[status] = status_counts.get(status, 0) + 1
-                
+
                 print(f"   Status summary: {', '.join([f'{k}: {v}' for k, v in status_counts.items()])}")
         else:
-            print(f"   Projects: N/A")
-    except SystemExit:
-        pass
+            print("   Projects: N/A")
+    except PotPieError:
+        raise
     finally:
         client.close()
 
@@ -221,8 +228,20 @@ def cmd_parse(args):
         # Local path
         local_path = Path(repo_path).resolve()
         if not local_path.exists():
-            print(f"❌ Path not found: {local_path}")
-            sys.exit(1)
+            raise PotPieError(f"Path not found: {local_path}")
+        if not local_path.is_dir():
+            raise PotPieError(f"Path is not a directory: {local_path}")
+        # Check if it's a git repository
+        if not (local_path / ".git").exists():
+            raise PotPieError(f"Not a git repository: {local_path}")
+        # Validate branch if specified
+        if branch:
+            result = subprocess.run(
+                ["git", "-C", str(local_path), "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
+                capture_output=True,
+            )
+            if result.returncode != 0:
+                raise PotPieError(f"Branch not found: {branch}")
         repo_path = str(local_path)
 
     # Get repo name from path
@@ -253,6 +272,7 @@ def cmd_parse(args):
         print("\n⏳ Waiting for parsing to complete...")
         max_wait = args.timeout
         start = time.time()
+        consecutive_failures = 0
 
         while time.time() - start < max_wait:
             time.sleep(5)
@@ -262,6 +282,7 @@ def cmd_parse(args):
                 status_result = client.request("GET", f"/parsing-status/{project_id}")
                 current_status = status_result.get("status", "unknown")
                 print(f"   [{elapsed}s] Status: {current_status}")
+                consecutive_failures = 0
 
                 if current_status in ("ready", "completed", "success"):
                     print(f"\n✅ Parsing complete! ({elapsed}s)")
@@ -269,18 +290,23 @@ def cmd_parse(args):
                     print(f"\n   Start chatting: potpie chat {project_id}")
                     return
                 elif current_status in ("failed", "error"):
-                    print(f"\n❌ Parsing failed.")
+                    print("\n❌ Parsing failed.")
                     if "error" in status_result:
                         print(f"   Error: {status_result['error']}")
-                    sys.exit(1)
-            except Exception:
-                pass  # Continue polling
+                    raise PotPieError("Parsing failed")
+            except PotPieError:
+                raise
+            except Exception as poll_err:
+                consecutive_failures += 1
+                print(f"   [{elapsed}s] Polling error (retry {consecutive_failures}): {poll_err}")
+                if consecutive_failures >= 5:
+                    raise PotPieError(f"Too many consecutive polling failures ({consecutive_failures})")
 
         print(f"\n⏱️  Timeout after {max_wait}s. Parsing may still be running.")
-        print(f"   Check later: potpie status")
+        print("   Check later: potpie status")
 
-    except SystemExit:
-        pass
+    except PotPieError:
+        raise
     finally:
         client.close()
 
@@ -291,7 +317,7 @@ def cmd_chat(args):
     project_id = args.project_id
     agent_id = args.agent or "codebase_qna_agent"
 
-    print(f"💬 Starting chat session")
+    print("💬 Starting chat session")
     print(f"   Project: {project_id}")
     print(f"   Agent: {agent_id}")
 
@@ -299,18 +325,18 @@ def cmd_chat(args):
     try:
         project_result = client.request("GET", f"/projects/{project_id}")
         project_status = project_result.get("status", "unknown")
-        
+
         if project_status not in ("ready", "completed", "success"):
-            print(f"\n❌ Project is not ready for chatting.")
+            print("\n❌ Project is not ready for chatting.")
             print(f"   Current status: {project_status}")
-            print(f"   Please wait for parsing to complete or check with: potpie status")
+            print("   Please wait for parsing to complete or check with: potpie status")
             return
-    except Exception as e:
+    except PotPieError as e:
         print(f"\n❌ Failed to verify project: {e}")
-        print(f"   Project ID may be invalid or server unavailable.")
+        print("   Project ID may be invalid or server unavailable.")
         return
 
-    print(f"   Type 'quit' or Ctrl+C to exit.\n")
+    print("   Type 'quit' or Ctrl+C to exit.\n")
 
     # Create conversation
     try:
@@ -359,8 +385,8 @@ def cmd_chat(args):
             except Exception as e:
                 print(f"\r❌ Error: {e}\n")
 
-    except SystemExit:
-        pass
+    except PotPieError:
+        raise
     finally:
         client.close()
 
@@ -382,8 +408,8 @@ def cmd_projects(args):
         else:
             print("📋 No projects found.")
             print("   Parse one: potpie parse <repo-path>")
-    except SystemExit:
-        pass
+    except PotPieError:
+        raise
     finally:
         client.close()
 
@@ -405,8 +431,8 @@ def cmd_agents(args):
                 print()
         else:
             print(result)
-    except SystemExit:
-        pass
+    except PotPieError:
+        raise
     finally:
         client.close()
 
@@ -420,10 +446,11 @@ def cmd_config(args):
         print(f"✅ Server URL set to: {args.set_url}")
 
     if args.set_key:
+        # Secure interactive input for API key
+        api_key = getpass.getpass("Enter API key: ")
         config = load_config()
-        # Mask key in output for security
-        masked_key = args.set_key[:4] + "..." + args.set_key[-4:] if len(args.set_key) > 8 else "***"
-        config["api_key"] = args.set_key
+        masked_key = api_key[:4] + "..." + api_key[-4:] if len(api_key) > 8 else "***"
+        config["api_key"] = api_key
         save_config(config)
         print(f"✅ API key saved ({masked_key}).")
         print("   Note: API keys are stored with file permissions 600.")
@@ -438,7 +465,7 @@ def cmd_config(args):
             masked_key = key[:4] + "..." + key[-4:] if len(key) > 8 else "***"
             print(f"  API Key: {masked_key}")
         else:
-            print(f"  API Key: (not set)")
+            print("  API Key: (not set)")
         print(f"\n  Config file: {CONFIG_FILE}")
         print(f"  Config permissions: {oct(CONFIG_FILE.stat().st_mode)[-3:] if CONFIG_FILE.exists() else 'N/A'}")
 
@@ -493,7 +520,7 @@ def main():
     # config
     p_config = subparsers.add_parser("config", help="View or set configuration")
     p_config.add_argument("--set-url", help="Set server URL")
-    p_config.add_argument("--set-key", help="Set API key")
+    p_config.add_argument("--set-key", action="store_true", help="Set API key (interactive prompt)")
     p_config.set_defaults(func=cmd_config)
 
     args = parser.parse_args()
@@ -501,7 +528,14 @@ def main():
         parser.print_help()
         sys.exit(0)
 
-    args.func(args)
+    try:
+        args.func(args)
+    except PotPieError as e:
+        print(f"❌ {e}")
+        sys.exit(e.exit_code)
+    except KeyboardInterrupt:
+        print("\nCancelled.")
+        sys.exit(130)
 
 
 if __name__ == "__main__":
