@@ -42,7 +42,7 @@ class PotpieCeleryMutationHandlers:
         if not container.settings.is_enabled():
             raise HTTPException(
                 status_code=503,
-                detail="Context graph is not enabled. Set CONTEXT_GRAPH_ENABLED=true.",
+                detail="Context graph is disabled (opt in by unsetting CONTEXT_GRAPH_ENABLED or setting true).",
             )
         mapping = payload.project_ids if payload and payload.project_ids else None
         try:
@@ -58,7 +58,8 @@ class PotpieCeleryMutationHandlers:
     ) -> dict[str, Any]:
         if not container.settings.is_enabled():
             raise HTTPException(
-                status_code=503, detail="Context graph is not enabled."
+                status_code=503,
+                detail="Context graph is disabled (opt in by unsetting CONTEXT_GRAPH_ENABLED or setting true).",
             )
         resolved = container.projects.resolve(body.project_id)
         if not resolved:

@@ -181,6 +181,7 @@ class ProjectService:
             project_dict = {
                 "id": project.id,
                 "repo_name": project.repo_name,
+                "branch_name": project.branch_name,
                 "status": project.status,
             }
             project_list.append(project_dict)

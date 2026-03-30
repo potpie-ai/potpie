@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Callable, Optional, Protocol
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,6 +15,7 @@ from adapters.inbound.http.deps import (
     require_api_key,
 )
 from application.use_cases.backfill_project import backfill_project_context
+from application.use_cases.ingest_episode import ingest_episode
 from application.use_cases.ingest_single_pr import ingest_single_pull_request
 from application.use_cases.query_context import (
     get_change_history,
@@ -37,6 +39,19 @@ class IngestPrRequest(BaseModel):
     project_id: str
     pr_number: int
     is_live_bridge: bool = True
+
+
+class IngestEpisodeRequest(BaseModel):
+    """Raw Graphiti episode (same fields as episodic.add_episode)."""
+
+    project_id: str
+    name: str
+    episode_body: str
+    source_description: str
+    reference_time: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="Event time for the episode (defaults to UTC now).",
+    )
 
 
 class ChangeHistoryQuery(BaseModel):
@@ -113,7 +128,7 @@ def _inline_sync(
     if not container.settings.is_enabled():
         raise HTTPException(
             status_code=503,
-            detail="Context graph is not enabled. Set CONTEXT_GRAPH_ENABLED=true.",
+            detail="Context graph is disabled (opt in by unsetting CONTEXT_GRAPH_ENABLED or setting true).",
         )
     mapping = payload.project_ids if payload and payload.project_ids else None
     results: list[dict[str, Any]] = []
@@ -207,6 +222,38 @@ def create_context_router(
             return mutation_handlers.handle_ingest_pr(body, container, db)
         return _inline_ingest_pr(body, container, db)
 
+    @router.post(
+        "/ingest",
+        summary="Add episodic episode",
+        description="Ingest a raw episode into Graphiti for the project (group_id).",
+    )
+    def post_ingest_episode(
+        body: IngestEpisodeRequest,
+        _: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+    ) -> dict[str, Any]:
+        if not container.settings.is_enabled():
+            raise HTTPException(
+                status_code=503,
+                detail="Context graph is disabled (opt in by unsetting CONTEXT_GRAPH_ENABLED or setting true).",
+            )
+        if container.projects.resolve(body.project_id) is None:
+            raise HTTPException(status_code=404, detail="Unknown project_id")
+        out = ingest_episode(
+            container.episodic,
+            body.project_id,
+            body.name,
+            body.episode_body,
+            body.source_description,
+            body.reference_time,
+        )
+        if out.get("episode_uuid") is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Failed to add episode (Graphiti unavailable or ingestion error).",
+            )
+        return out
+
     @router.post("/query/change-history")
     def post_change_history(
         body: ChangeHistoryQuery,
@@ -279,7 +326,15 @@ def create_context_router(
             limit=body.limit,
         )
 
-    @router.post("/query/search")
+    @router.post(
+        "/query/search",
+        summary="Semantic search (Graphiti episodic)",
+    )
+    @router.post(
+        "/query/get-project-context",
+        summary="get_project_context",
+        description="Same body and behavior as /query/search; alias for agent/tool parity.",
+    )
     def post_search(
         body: SearchQuery,
         _: Any = Depends(require_auth),

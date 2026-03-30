@@ -237,12 +237,15 @@ class ConfigProvider:
 
     def get_context_graph_config(self) -> dict:
         """Get context graph configuration from environment variables."""
-        enabled = os.getenv("CONTEXT_GRAPH_ENABLED", "false").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        )
+        raw = os.getenv("CONTEXT_GRAPH_ENABLED")
+        if raw is None:
+            enabled = True
+        else:
+            s = raw.strip().lower()
+            if s in ("0", "false", "no", "off", ""):
+                enabled = False
+            else:
+                enabled = s in ("1", "true", "yes", "on")
         neo4j = self.get_neo4j_config()
         raw_max = os.getenv("CONTEXT_GRAPH_BACKFILL_MAX_PRS_PER_RUN", "100").strip()
         try:

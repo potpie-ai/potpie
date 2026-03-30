@@ -37,3 +37,14 @@ def project_map_from_env() -> dict[str, str]:
     if not isinstance(data, dict):
         return {}
     return {str(k): str(v) for k, v in data.items()}
+
+
+def repo_to_project_map_from_env() -> dict[str, str]:
+    """``owner/repo`` → project UUID (``CONTEXT_ENGINE_REPO_TO_PROJECT`` JSON)."""
+    raw = os.getenv("CONTEXT_ENGINE_REPO_TO_PROJECT", "").strip()
+    if not raw:
+        return {}
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        return {}
+    return {str(k): str(v) for k, v in data.items()}

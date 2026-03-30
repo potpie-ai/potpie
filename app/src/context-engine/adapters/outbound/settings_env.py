@@ -7,12 +7,13 @@ from domain.ports.settings import ContextEngineSettingsPort
 
 class EnvContextEngineSettings(ContextEngineSettingsPort):
     def is_enabled(self) -> bool:
-        return os.getenv("CONTEXT_GRAPH_ENABLED", "false").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        )
+        raw = os.getenv("CONTEXT_GRAPH_ENABLED")
+        if raw is None:
+            return True
+        s = raw.strip().lower()
+        if s in ("0", "false", "no", "off", ""):
+            return False
+        return s in ("1", "true", "yes", "on")
 
     def neo4j_uri(self) -> str | None:
         return os.getenv("NEO4J_URI") or os.getenv("NEO4J_URL")

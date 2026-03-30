@@ -262,4 +262,4 @@ show_missing = true
 fail_under = 49
 
 [tool.uv.sources]
-context-engine = { path = "context-engine", editable = true }
+context-engine = { path = "app/src/context-engine", editable = true }

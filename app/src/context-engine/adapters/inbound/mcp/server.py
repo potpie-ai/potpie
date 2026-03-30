@@ -108,14 +108,12 @@ def context_get_pr_diff(
     )
 
 
-@mcp.tool()
-def context_search(
+def _mcp_search_project_context(
     project_id: str,
     query: str,
     limit: int = 8,
     node_labels: str | None = None,
 ) -> list[dict]:
-    """Semantic search over Graphiti episodic entities. node_labels: comma-separated optional."""
     assert_mcp_project_allowed(project_id)
     labels = None
     if node_labels:
@@ -126,6 +124,32 @@ def context_search(
         query,
         limit=limit,
         node_labels=labels,
+    )
+
+
+@mcp.tool()
+def context_search(
+    project_id: str,
+    query: str,
+    limit: int = 8,
+    node_labels: str | None = None,
+) -> list[dict]:
+    """Semantic search over Graphiti episodic entities. node_labels: comma-separated optional."""
+    return _mcp_search_project_context(
+        project_id, query, limit=limit, node_labels=node_labels
+    )
+
+
+@mcp.tool()
+def get_project_context(
+    project_id: str,
+    query: str,
+    limit: int = 8,
+    node_labels: str | None = None,
+) -> list[dict]:
+    """Same as context_search: semantic context search over project Graphiti entities with optional label filters (agents / LangChain parity). node_labels: comma-separated optional."""
+    return _mcp_search_project_context(
+        project_id, query, limit=limit, node_labels=node_labels
     )
 
 

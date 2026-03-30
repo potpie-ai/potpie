@@ -822,7 +822,7 @@ wheels = [
 [[package]]
 name = "context-engine"
 version = "0.1.0"
-source = { editable = "context-engine" }
+source = { editable = "app/src/context-engine" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
@@ -4251,7 +4251,7 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.40.67" },
     { name = "celery", specifier = ">=5.5.3" },
     { name = "chardet", specifier = ">=5.2.0" },
-    { name = "context-engine", extras = ["all"], editable = "context-engine" },
+    { name = "context-engine", extras = ["all"], editable = "app/src/context-engine" },
     { name = "cryptography", specifier = ">=46.0.5" },
     { name = "email-inspector", specifier = ">=0.1.4" },
     { name = "fastapi", specifier = ">=0.121.0" },

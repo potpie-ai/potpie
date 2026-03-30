@@ -53,13 +53,25 @@ class SimpleConversationRequest(BaseModel):
     agent_ids: List[str]
 
 
+def _is_development_mode() -> bool:
+    return os.getenv("isDevelopmentMode", "").strip().lower() == "enabled"
+
+
 async def get_api_key_user(
     x_api_key: Optional[str] = Header(None),
     x_user_id: Optional[str] = Header(None),
     db: Session = Depends(get_db),
     async_db: AsyncSession = Depends(get_async_db),
 ) -> dict:
-    """Dependency to validate API key and get user info."""
+    """Dependency to validate API key and get user info.
+
+    Normal API keys identify one user (no extra headers).
+
+    INTERNAL_ADMIN_SECRET is a shared server secret: it can impersonate any user, so the
+    caller must send X-User-Id (users.uid). In development, if the uid is missing we
+    fall back to defaultUsername; if lookup still fails we try the dummy dev email
+    (defaultuser@potpie.ai) so local CLI matches setup_dummy_user without hand-copying uids.
+    """
     if not x_api_key:
         raise HTTPException(
             status_code=401,
@@ -67,8 +79,15 @@ async def get_api_key_user(
             headers={"WWW-Authenticate": "ApiKey"},
         )
 
-    if x_api_key == os.environ.get("INTERNAL_ADMIN_SECRET"):
-        user = await AsyncUserService(async_db).get_user_by_uid(x_user_id or "")
+    admin_secret = (os.environ.get("INTERNAL_ADMIN_SECRET") or "").strip()
+    if admin_secret and (x_api_key or "").strip() == admin_secret:
+        uid = (x_user_id or "").strip()
+        if not uid:
+            uid = (os.getenv("defaultUsername") or "").strip()
+        user_svc = AsyncUserService(async_db)
+        user = await user_svc.get_user_by_uid(uid)
+        if not user and _is_development_mode():
+            user = await user_svc.get_user_by_email("defaultuser@potpie.ai")
         if not user:
             raise HTTPException(
                 status_code=401,

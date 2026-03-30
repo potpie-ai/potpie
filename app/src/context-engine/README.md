@@ -49,7 +49,7 @@ Potpie wires ports in `app/modules/context_graph/wiring.py` (`PotpieContextEngin
 Use this when you want a **separate** process (e.g. integrating non-Potpie agents via a dedicated host). Not required when Potpie is your only API.
 
 ```bash
-cd context-engine
+cd app/src/context-engine
 uv sync --all-extras
 uv run python -m adapters.inbound.http
 ```
@@ -80,7 +80,7 @@ Routes on the standalone app:
 ## CLI and MCP (optional integrations)
 
 ```bash
-cd context-engine
+cd app/src/context-engine
 uv sync --all-extras
 
 # CLI
@@ -105,7 +105,7 @@ Omit both → tools raise a clear error (no implicit multi-tenant trust).
 
 ## Package layout
 
-Source is **flat under `src/`** as four top-level packages:
+Source is **flat under this directory** as four top-level packages:
 
 - `domain` — pure logic, errors, ports (`Protocol`s)
 - `application` — use cases and orchestration services
@@ -137,7 +137,7 @@ Outbound adapters  ←  (implements domain ports)
 ## Tests
 
 ```bash
-cd context-engine
+cd app/src/context-engine
 uv sync --all-extras --extra dev
 uv run pytest
 ```
@@ -145,13 +145,13 @@ uv run pytest
 From the monorepo root:
 
 ```bash
-uv run pytest context-engine/tests/unit/
+uv run pytest app/src/context-engine/tests/unit/
 ```
 
 ## Packaging
 
 - PyPI name: **context-engine**
-- Import roots: **`domain`**, **`application`**, **`adapters`**, **`bootstrap`** (under `src/`)
+- Import roots: **`domain`**, **`application`**, **`adapters`**, **`bootstrap`**
 
 Potpie depends on `context-engine[all]` (path / editable via `[tool.uv.sources]` in the monorepo).
 

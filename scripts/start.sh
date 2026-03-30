@@ -82,10 +82,33 @@ alembic upgrade heads
 
 echo "Starting momentum application..."
 gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app &
+GUNICORN_PID=$!
 
 echo "Starting Celery worker..."
 CELERY_QUEUES="${CELERY_QUEUE_NAME}_process_repository,${CELERY_QUEUE_NAME}_agent_tasks,external-event"
-if [[ "${CONTEXT_GRAPH_ENABLED:-false}" == "true" ]]; then
+# Context graph queue: on by default; disable with CONTEXT_GRAPH_ENABLED=false (or 0, no, off)
+_cg="${CONTEXT_GRAPH_ENABLED:-true}"
+_cg_lc=$(printf '%s' "$_cg" | tr '[:upper:]' '[:lower:]')
+if [[ "$_cg_lc" != "false" && "$_cg_lc" != "0" && "$_cg_lc" != "no" && "$_cg_lc" != "off" && "$_cg_lc" != "" ]]; then
   CELERY_QUEUES="${CELERY_QUEUES},context-graph-etl"
 fi
 celery -A app.celery.celery_app worker --loglevel=debug -Q "${CELERY_QUEUES}" -E --concurrency=1 --pool=solo &
+CELERY_PID=$!
+
+# Keep this script in the foreground and forward Ctrl+C to app workers.
+stop_app_services() {
+  trap - INT TERM EXIT
+  if [ -n "${GUNICORN_PID:-}" ] && kill -0 "$GUNICORN_PID" 2>/dev/null; then
+    kill -TERM "$GUNICORN_PID" 2>/dev/null || true
+  fi
+  if [ -n "${CELERY_PID:-}" ] && kill -0 "$CELERY_PID" 2>/dev/null; then
+    kill -TERM "$CELERY_PID" 2>/dev/null || true
+  fi
+  wait "$GUNICORN_PID" 2>/dev/null || true
+  wait "$CELERY_PID" 2>/dev/null || true
+}
+trap stop_app_services INT TERM EXIT
+
+echo "App running (gunicorn PID $GUNICORN_PID, celery PID $CELERY_PID). Press Ctrl+C to stop."
+wait "$GUNICORN_PID" "$CELERY_PID"
+trap - INT TERM EXIT
