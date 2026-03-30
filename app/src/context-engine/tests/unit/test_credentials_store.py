@@ -45,3 +45,23 @@ def test_clear_credentials(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     assert not cs.credentials_path().is_file()
 
 
+def test_clear_active_pot_id_preserves_api_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cs.write_credentials(api_key="k")
+    cs.set_active_pot_id("11111111-1111-1111-1111-111111111111")
+    cs.clear_active_pot_id()
+    assert cs.get_active_pot_id() == ""
+    assert cs.get_stored_api_key() == "k"
+    data = json.loads(cs.credentials_path().read_text(encoding="utf-8"))
+    assert "active_pot_id" not in data
+
+
+def test_clear_active_pot_id_removes_file_when_only_pot(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cs.set_active_pot_id("22222222-2222-2222-2222-222222222222")
+    cs.clear_active_pot_id()
+    assert not cs.credentials_path().is_file()
+
+

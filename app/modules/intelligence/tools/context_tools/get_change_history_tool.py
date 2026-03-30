@@ -12,7 +12,7 @@ from application.use_cases.query_context import get_change_history as ce_get_cha
 
 
 class GetChangeHistoryInput(BaseModel):
-    project_id: str = Field(description="Project ID (UUID)")
+    pot_id: str = Field(description="Context graph pot scope id (UUID)")
     function_name: Optional[str] = Field(default=None, description="Optional function/class name")
     file_path: Optional[str] = Field(default=None, description="Optional repository-relative file path")
     limit: int = Field(default=10, description="Max records to return")
@@ -27,33 +27,33 @@ class GetChangeHistoryTool:
         self._settings = PotpieContextEngineSettings()
         self._structural = Neo4jStructuralAdapter(self._settings)
 
-    def _assert_project_access(self, project_id: str) -> None:
-        project = self.sql_db.query(Project).filter(Project.id == project_id).first()
+    def _assert_pot_access(self, pot_id: str) -> None:
+        project = self.sql_db.query(Project).filter(Project.id == pot_id).first()
         if not project or project.user_id != self.user_id:
-            raise ValueError("Project not found for user")
+            raise ValueError("Pot scope not found for user")
 
     async def arun(
         self,
-        project_id: str,
+        pot_id: str,
         function_name: Optional[str] = None,
         file_path: Optional[str] = None,
         limit: int = 10,
     ) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(self.run, project_id, function_name, file_path, limit)
+        return await asyncio.to_thread(self.run, pot_id, function_name, file_path, limit)
 
     def run(
         self,
-        project_id: str,
+        pot_id: str,
         function_name: Optional[str] = None,
         file_path: Optional[str] = None,
         limit: int = 10,
     ) -> list[dict[str, Any]]:
-        self._assert_project_access(project_id)
+        self._assert_pot_access(pot_id)
         if not self._settings.is_enabled():
             return []
         return ce_get_change_history(
             self._structural,
-            project_id,
+            pot_id,
             function_name=function_name,
             file_path=file_path,
             limit=limit,

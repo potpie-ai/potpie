@@ -65,7 +65,7 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
 
     def write_bridges(
         self,
-        project_id: str,
+        pot_id: str,
         pr_entity_key: str,
         pr_number: int,
         repo_name: str,
@@ -94,10 +94,10 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
 
                     res = session.run(
                         """
-                        MATCH (file:FILE {repoId: $project_id})
+                        MATCH (file:FILE {repoId: $pot_id})
                         WHERE file.file_path = $file_path
                            OR file.file_path ENDS WITH ('/' + $file_path)
-                        MATCH (pr:Entity {group_id: $project_id, entity_key: $pr_key})
+                        MATCH (pr:Entity {group_id: $pot_id, entity_key: $pr_key})
                         MERGE (file)-[r:TOUCHED_BY {pr_number: $pr_number}]->(pr)
                         SET r.updated_at = timestamp(),
                             r.status = $status,
@@ -106,7 +106,7 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                             r.patch_excerpt = $patch_excerpt
                         RETURN count(r) AS cnt
                         """,
-                        project_id=project_id,
+                        pot_id=pot_id,
                         file_path=file_path,
                         pr_key=pr_entity_key,
                         pr_number=pr_number,
@@ -120,20 +120,20 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                     for start_line, end_line in parse_diff_hunks(f.get("patch")):
                         res = session.run(
                             """
-                            MATCH (n:NODE {repoId: $project_id})
+                            MATCH (n:NODE {repoId: $pot_id})
                             WHERE (n.file_path = $file_path
                                    OR n.file_path ENDS WITH ('/' + $file_path))
                               AND any(lbl IN labels(n) WHERE lbl IN ['FUNCTION', 'CLASS'])
                               AND n.start_line <= $end_line
                               AND n.end_line >= $start_line
-                            MATCH (pr:Entity {group_id: $project_id, entity_key: $pr_key})
+                            MATCH (pr:Entity {group_id: $pot_id, entity_key: $pr_key})
                             MERGE (n)-[r:MODIFIED_IN {pr_number: $pr_number}]->(pr)
                             SET r.merged_at = $merged_at,
                                 r.updated_at = timestamp(),
                                 r.is_approximate = $is_approximate
                             RETURN count(r) AS cnt
                             """,
-                            project_id=project_id,
+                            pot_id=pot_id,
                             file_path=file_path,
                             start_line=start_line,
                             end_line=end_line,
@@ -155,19 +155,19 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
 
                     res = session.run(
                         """
-                        MATCH (n:NODE {repoId: $project_id})
+                        MATCH (n:NODE {repoId: $pot_id})
                         WHERE (n.file_path = $file_path
                                OR n.file_path ENDS WITH ('/' + $file_path))
                           AND any(lbl IN labels(n) WHERE lbl IN ['FUNCTION', 'CLASS'])
                           AND n.start_line <= $line
                           AND n.end_line >= $line
                         WITH n
-                        MATCH (d:Entity {group_id: $project_id, entity_key: $decision_key})
+                        MATCH (d:Entity {group_id: $pot_id, entity_key: $decision_key})
                         MERGE (n)-[r:HAS_DECISION]->(d)
                         SET r.updated_at = timestamp()
                         RETURN count(r) AS cnt
                         """,
-                        project_id=project_id,
+                        pot_id=pot_id,
                         file_path=path,
                         line=line,
                         decision_key=decision_key,
@@ -175,14 +175,14 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                     result.has_decision += _count(res)
 
         except Exception:
-            logger.exception("write_bridges failed project=%s pr=%s", project_id, pr_number)
+            logger.exception("write_bridges failed project=%s pr=%s", pot_id, pr_number)
             raise
         finally:
             drv.close()
 
         logger.info(
             "Bridge write complete project=%s pr=%s edges=%s",
-            project_id,
+            pot_id,
             pr_number,
             result.as_dict(),
         )
@@ -190,7 +190,7 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
 
     def stamp_pr_entities(
         self,
-        project_id: str,
+        pot_id: str,
         episode_uuid: str,
         repo_name: str,
         pr_number: int,
@@ -231,7 +231,7 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                         RETURN count(e) AS cnt
                         """,
                         ep_uuid=episode_uuid,
-                        gid=project_id,
+                        gid=pot_id,
                         key=pr_key,
                     )
                     counts["stamped_pr"] = _int(result)
@@ -247,7 +247,7 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                         SET e.entity_key = $key
                         RETURN count(e) AS cnt
                         """,
-                        gid=project_id,
+                        gid=pot_id,
                         needle=str(pr_number),
                         key=pr_key,
                     )
@@ -271,7 +271,7 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                           pr.created_at = timestamp()
                         SET pr.summary = coalesce(pr.summary, '')
                         """,
-                        gid=project_id,
+                        gid=pot_id,
                         key=pr_key,
                         pr_num=pr_number,
                         title=pr_title or "",
@@ -284,7 +284,7 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                             MERGE (ep)-[:MENTIONS]->(pr)
                             """,
                             ep_uuid=episode_uuid,
-                            gid=project_id,
+                            gid=pot_id,
                             key=pr_key,
                         )
                     counts["stamped_pr"] = 1
@@ -316,7 +316,7 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                         pr.url = $url,
                         pr.summary = coalesce(pr.summary, '')
                     """,
-                    gid=project_id,
+                    gid=pot_id,
                     key=pr_key,
                     pr_num=pr_number,
                     title=canonical_title,
@@ -337,7 +337,7 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                       AND (e.summary IS NULL)
                     SET e.summary = ''
                     """,
-                    gid=project_id,
+                    gid=pot_id,
                 )
 
                 for commit in commits or []:
@@ -354,7 +354,7 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                         SET e.entity_key = $key
                         RETURN count(e) AS cnt
                         """,
-                        gid=project_id,
+                        gid=pot_id,
                         sha=sha[:12],
                         key=commit_key,
                     )
@@ -376,7 +376,7 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                         MATCH (pr:Entity:PullRequest {group_id: $gid, entity_key: $pkey})
                         MERGE (pr)-[:HAS_COMMIT]->(c)
                         """,
-                        gid=project_id,
+                        gid=pot_id,
                         key=commit_key,
                         sha=sha,
                         name=first_line[:300],
@@ -403,7 +403,7 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                         SET e.entity_key = $key
                         RETURN count(e) AS cnt
                         """,
-                        gid=project_id,
+                        gid=pot_id,
                         login=login,
                         key=dev_key,
                     )
@@ -437,7 +437,7 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                         SET e.entity_key = $key
                         RETURN count(e) AS cnt
                         """,
-                        gid=project_id,
+                        gid=pot_id,
                         needle=first_body,
                         key=decision_key,
                     )
@@ -491,7 +491,7 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                         MERGE (pr)-[r:HAS_REVIEW_DECISION]->(d)
                         SET r.thread_id = $tid
                         """,
-                        gid=project_id,
+                        gid=pot_id,
                         dkey=decision_key,
                         dname=(f"PR #{pr_number} review thread {tid_s}")[:200],
                         full=full_text,
@@ -537,7 +537,7 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                         MERGE (pr)-[r:HAS_REVIEW_DECISION]->(d)
                         SET r.thread_id = 'pr_conversation'
                         """,
-                        gid=project_id,
+                        gid=pot_id,
                         dkey=conv_key,
                         dname=(f"PR #{pr_number} conversation")[:200],
                         full=conv_full,
@@ -547,14 +547,14 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                     counts["pr_conversation_linked"] = 1
 
         except Exception:
-            logger.exception("stamp_pr_entities failed project=%s episode=%s", project_id, episode_uuid)
+            logger.exception("stamp_pr_entities failed project=%s episode=%s", pot_id, episode_uuid)
             raise
         finally:
             drv.close()
 
         logger.info(
             "Entity key stamping complete project=%s pr=%s counts=%s",
-            project_id,
+            pot_id,
             pr_number,
             counts,
         )
@@ -562,18 +562,20 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
 
     def get_change_history(
         self,
-        project_id: str,
+        pot_id: str,
         function_name: str | None,
         file_path: str | None,
         limit: int,
+        repo_name: str | None = None,
     ) -> list[dict[str, Any]]:
+        _ = repo_name  # reserved for future repo-scoped history
         query = """
-        MATCH (n:NODE {repoId: $project_id})
+        MATCH (n:NODE {repoId: $pot_id})
         WHERE ($file_path IS NULL OR n.file_path = $file_path)
           AND ($function_name IS NULL OR toLower(coalesce(n.name, '')) CONTAINS toLower($function_name))
         OPTIONAL MATCH (n)-[:MODIFIED_IN]->(pr_direct:Entity)
         WHERE 'PullRequest' IN labels(pr_direct)
-        OPTIONAL MATCH (f:FILE {repoId: $project_id})
+        OPTIONAL MATCH (f:FILE {repoId: $pot_id})
         WHERE f.file_path = n.file_path OR f.file_path ENDS WITH ('/' + n.file_path)
         OPTIONAL MATCH (f)-[:TOUCHED_BY]->(pr_file:Entity)
         WHERE 'PullRequest' IN labels(pr_file)
@@ -598,19 +600,21 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
         ORDER BY pr_number DESC
         LIMIT $limit
         """
-        return self._run_read(query, project_id, file_path, function_name, limit)
+        return self._run_read(query, pot_id, file_path, function_name, limit)
 
     def get_pr_diff(
         self,
-        project_id: str,
+        pot_id: str,
         pr_number: int,
         file_path: str | None,
         limit: int,
+        repo_name: str | None = None,
     ) -> list[dict[str, Any]]:
         query = """
-        MATCH (f:FILE {repoId: $project_id})-[r:TOUCHED_BY {pr_number: $pr_number}]->(pr:Entity)
+        MATCH (f:FILE {repoId: $pot_id})-[r:TOUCHED_BY {pr_number: $pr_number}]->(pr:Entity)
         WHERE 'PullRequest' IN labels(pr)
           AND ($file_path IS NULL OR f.file_path = $file_path OR f.file_path ENDS WITH ('/' + $file_path))
+          AND ($repo_name IS NULL OR coalesce(pr.entity_key, '') CONTAINS $repo_name)
         RETURN f.file_path AS file_path,
                coalesce(r.status, '') AS status,
                coalesce(r.additions, 0) AS additions,
@@ -622,22 +626,25 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
         """
         return self._run_read(
             query,
-            project_id,
+            pot_id,
             file_path,
             None,
             limit,
             pr_number=pr_number,
+            repo_name=repo_name,
         )
 
     def get_file_owners(
         self,
-        project_id: str,
+        pot_id: str,
         file_path: str,
         limit: int,
+        repo_name: str | None = None,
     ) -> list[dict[str, Any]]:
         query = """
-        MATCH (f:FILE {repoId: $project_id, file_path: $file_path})-[:TOUCHED_BY]->(pr:Entity)
+        MATCH (f:FILE {repoId: $pot_id, file_path: $file_path})-[:TOUCHED_BY]->(pr:Entity)
         WHERE 'PullRequest' IN labels(pr)
+          AND ($repo_name IS NULL OR coalesce(pr.entity_key, '') CONTAINS $repo_name)
         OPTIONAL MATCH (pr)-[:AuthoredBy]->(dev:Entity)
         WITH coalesce(dev.github_login, dev.name, pr.author, 'unknown') AS github_login,
              count(DISTINCT pr) AS pr_count,
@@ -653,8 +660,9 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
             with drv.session() as session:
                 res = session.run(
                     query,
-                    project_id=project_id,
+                    pot_id=pot_id,
                     file_path=file_path,
+                    repo_name=repo_name,
                     limit=max(1, min(limit, 50)),
                 )
                 return [record.data() for record in res]
@@ -663,14 +671,15 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
 
     def get_decisions(
         self,
-        project_id: str,
+        pot_id: str,
         file_path: str | None,
         function_name: str | None,
         limit: int,
+        repo_name: str | None = None,
     ) -> list[dict[str, Any]]:
         lim = max(1, min(limit, 100))
         code_query = """
-        MATCH (n:NODE {repoId: $project_id})
+        MATCH (n:NODE {repoId: $pot_id})
         WHERE ($file_path IS NULL OR n.file_path = $file_path)
           AND ($function_name IS NULL OR toLower(coalesce(n.name, '')) CONTAINS toLower($function_name))
         OPTIONAL MATCH (n)-[:HAS_DECISION]->(d:Entity)
@@ -685,9 +694,10 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
         LIMIT $limit
         """
         pr_review_query = """
-        MATCH (pr:Entity {group_id: $project_id})-[:HAS_REVIEW_DECISION]->(d:Entity)
+        MATCH (pr:Entity {group_id: $pot_id})-[:HAS_REVIEW_DECISION]->(d:Entity)
         WHERE 'PullRequest' IN labels(pr) AND 'Decision' IN labels(d)
           AND ($file_path IS NULL OR coalesce(d.review_path, '') = $file_path)
+          AND ($repo_name IS NULL OR coalesce(pr.entity_key, '') CONTAINS $repo_name)
         RETURN DISTINCT
             coalesce(d.entity_key, elementId(d)) AS _dedupe,
             coalesce(d.decision_made, d.name, d.summary) AS decision_made,
@@ -701,12 +711,21 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
             return []
         try:
             with drv.session() as session:
-                code_rows = [r.data() for r in session.run(code_query, project_id=project_id, file_path=file_path, function_name=function_name, limit=lim)]
+                code_rows = [r.data() for r in session.run(code_query, pot_id=pot_id, file_path=file_path, function_name=function_name, limit=lim)]
                 if function_name:
                     for r in code_rows:
                         r.pop("_dedupe", None)
                     return code_rows
-                pr_rows = [r.data() for r in session.run(pr_review_query, project_id=project_id, file_path=file_path, limit=lim)]
+                pr_rows = [
+                    r.data()
+                    for r in session.run(
+                        pr_review_query,
+                        pot_id=pot_id,
+                        file_path=file_path,
+                        repo_name=repo_name,
+                        limit=lim,
+                    )
+                ]
                 merged = _merge_decision_result_rows(code_rows, pr_rows, lim)
                 for r in merged:
                     r.pop("_dedupe", None)
@@ -714,7 +733,12 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
         finally:
             drv.close()
 
-    def get_pr_review_context(self, project_id: str, pr_number: int) -> dict[str, Any]:
+    def get_pr_review_context(
+        self,
+        pot_id: str,
+        pr_number: int,
+        repo_name: str | None = None,
+    ) -> dict[str, Any]:
         """Return PR metadata plus review threads linked via HAS_REVIEW_DECISION."""
         query = """
         MATCH (pr:Entity {group_id: $pid})
@@ -726,6 +750,7 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
               AND reverse(split(pr.entity_key, ':'))[0] = toString($num)
             )
           )
+          AND ($repo_name IS NULL OR coalesce(pr.entity_key, '') CONTAINS $repo_name)
         WITH pr
         ORDER BY CASE WHEN coalesce(pr.entity_key, '') <> '' THEN 0 ELSE 1 END ASC
         LIMIT 1
@@ -768,7 +793,9 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
             }
         try:
             with drv.session() as session:
-                rec = session.run(query, pid=project_id, num=pr_number).single()
+                rec = session.run(
+                    query, pid=pot_id, num=pr_number, repo_name=repo_name
+                ).single()
                 if not rec:
                     return {
                         "found": False,
@@ -812,7 +839,7 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
     def _run_read(
         self,
         query: str,
-        project_id: str,
+        pot_id: str,
         file_path: str | None,
         function_name: str | None,
         limit: int,
@@ -824,7 +851,7 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
         try:
             with drv.session() as session:
                 params: dict[str, Any] = {
-                    "project_id": project_id,
+                    "pot_id": pot_id,
                     "file_path": file_path,
                     "function_name": function_name,
                     "limit": max(1, min(limit, 100)),

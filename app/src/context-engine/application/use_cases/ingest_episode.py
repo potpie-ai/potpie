@@ -1,4 +1,4 @@
-"""Add a raw episode to the Graphiti episodic graph (scoped by project_id group)."""
+"""Add a raw episode to the Graphiti episodic graph (scoped by pot group_id)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from domain.ports.episodic_graph import EpisodicGraphPort
 
 def ingest_episode(
     episodic: EpisodicGraphPort,
-    project_id: str,
+    pot_id: str,
     name: str,
     episode_body: str,
     source_description: str,
@@ -20,7 +20,7 @@ def ingest_episode(
     if not episodic.enabled:
         return {"episode_uuid": None}
     episode_uuid: Optional[str] = episodic.add_episode(
-        project_id=project_id,
+        pot_id=pot_id,
         name=name,
         episode_body=episode_body,
         source_description=source_description,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import os
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -14,11 +14,13 @@ from app.modules.context_graph.code_provider_source_control import (
 )
 from app.modules.projects.projects_model import Project
 from bootstrap.container import ContextEngineContainer, build_container
-from domain.ports.project_resolution import ProjectResolutionPort, ResolvedProject
+from domain.ports.pot_resolution import (
+    PotResolutionPort,
+    RepoRef,
+    ResolvedPotRepo,
+    single_github_repo_pot,
+)
 from domain.ports.settings import ContextEngineSettingsPort
-
-if TYPE_CHECKING:
-    pass
 
 
 class PotpieContextEngineSettings(ContextEngineSettingsPort):
@@ -29,14 +31,27 @@ class PotpieContextEngineSettings(ContextEngineSettingsPort):
         return bool(self._cp.get_context_graph_config().get("enabled"))
 
     def neo4j_uri(self) -> str | None:
+        v = (
+            os.getenv("CONTEXT_ENGINE_NEO4J_URI") or os.getenv("CONTEXT_ENGINE_NEO4J_URL") or ""
+        ).strip()
+        if v:
+            return v
         c = self._cp.get_neo4j_config()
         return c.get("uri")
 
     def neo4j_user(self) -> str | None:
+        v = (
+            os.getenv("CONTEXT_ENGINE_NEO4J_USERNAME") or os.getenv("CONTEXT_ENGINE_NEO4J_USER") or ""
+        ).strip()
+        if v:
+            return v
         c = self._cp.get_neo4j_config()
         return c.get("username")
 
     def neo4j_password(self) -> str | None:
+        if os.getenv("CONTEXT_ENGINE_NEO4J_PASSWORD") is not None:
+            v = os.getenv("CONTEXT_ENGINE_NEO4J_PASSWORD", "").strip()
+            return v
         c = self._cp.get_neo4j_config()
         return c.get("password")
 
@@ -44,45 +59,85 @@ class PotpieContextEngineSettings(ContextEngineSettingsPort):
         return int(self._cp.get_context_graph_config().get("backfill_max_prs_per_run", 100))
 
 
-class SqlalchemyProjectResolution(ProjectResolutionPort):
+class SqlalchemyPotResolution(PotResolutionPort):
     def __init__(self, db: Session) -> None:
         self._db = db
 
-    def resolve(self, project_id: str) -> ResolvedProject | None:
-        project = self._db.query(Project).filter(Project.id == project_id).first()
+    def resolve_pot(self, pot_id: str) -> ResolvedPot | None:
+        project = self._db.query(Project).filter(Project.id == pot_id).first()
         if not project or not project.repo_name:
             return None
         ready = (project.status or "").lower() == "ready"
-        return ResolvedProject(
-            project_id=project.id,
+        return single_github_repo_pot(
+            pot_id=project.id,
             repo_name=project.repo_name,
             ready=ready,
+            name=project.repo_name,
         )
 
+    def known_pot_ids(self) -> list[str]:
+        rows = (
+            self._db.query(Project.id)
+            .filter(
+                Project.repo_name.isnot(None),
+                Project.repo_name != "",
+                func.lower(Project.status) == "ready",
+            )
+            .all()
+        )
+        return [r[0] for r in rows]
 
-class UserScopedSqlalchemyProjectResolution(ProjectResolutionPort):
-    """Resolve projects for a single user (HTTP / agent surfaces)."""
+    def find_pots_for_repo(self, ref: RepoRef) -> list[str]:
+        want = ref.repo_name.lower()
+        rows = (
+            self._db.query(Project.id)
+            .filter(
+                Project.repo_name.isnot(None),
+                func.lower(Project.repo_name) == want,
+            )
+            .all()
+        )
+        return [r[0] for r in rows]
+
+    def list_pot_repos(self, pot_id: str) -> list[ResolvedPotRepo]:
+        r = self.resolve_pot(pot_id)
+        return list(r.repos) if r else []
+
+    def get_repo_in_pot(self, pot_id: str, ref: RepoRef) -> ResolvedPotRepo | None:
+        r = self.resolve_pot(pot_id)
+        if not r:
+            return None
+        want = ref.repo_name.lower()
+        for rr in r.repos:
+            if rr.repo_name.lower() == want:
+                return rr
+        return None
+
+
+class UserScopedSqlalchemyPotResolution(PotResolutionPort):
+    """Resolve pots for a single user (HTTP / agent surfaces)."""
 
     def __init__(self, db: Session, user_id: str) -> None:
         self._db = db
         self._user_id = user_id
 
-    def resolve(self, project_id: str) -> ResolvedProject | None:
+    def resolve_pot(self, pot_id: str) -> ResolvedPot | None:
         project = (
             self._db.query(Project)
-            .filter(Project.id == project_id, Project.user_id == self._user_id)
+            .filter(Project.id == pot_id, Project.user_id == self._user_id)
             .first()
         )
         if not project or not project.repo_name:
             return None
         ready = (project.status or "").lower() == "ready"
-        return ResolvedProject(
-            project_id=project.id,
+        return single_github_repo_pot(
+            pot_id=project.id,
             repo_name=project.repo_name,
             ready=ready,
+            name=project.repo_name,
         )
 
-    def known_project_ids(self) -> list[str]:
+    def known_pot_ids(self) -> list[str]:
         rows = (
             self._db.query(Project.id)
             .filter(
@@ -95,6 +150,33 @@ class UserScopedSqlalchemyProjectResolution(ProjectResolutionPort):
         )
         return [r[0] for r in rows]
 
+    def find_pots_for_repo(self, ref: RepoRef) -> list[str]:
+        want = ref.repo_name.lower()
+        rows = (
+            self._db.query(Project.id)
+            .filter(
+                Project.user_id == self._user_id,
+                Project.repo_name.isnot(None),
+                func.lower(Project.repo_name) == want,
+            )
+            .all()
+        )
+        return [r[0] for r in rows]
+
+    def list_pot_repos(self, pot_id: str) -> list[ResolvedPotRepo]:
+        r = self.resolve_pot(pot_id)
+        return list(r.repos) if r else []
+
+    def get_repo_in_pot(self, pot_id: str, ref: RepoRef) -> ResolvedPotRepo | None:
+        r = self.resolve_pot(pot_id)
+        if not r:
+            return None
+        want = ref.repo_name.lower()
+        for rr in r.repos:
+            if rr.repo_name.lower() == want:
+                return rr
+        return None
+
 
 def build_container_for_session(db: Session) -> ContextEngineContainer:
     def source_for_repo(repo_name: str):
@@ -103,7 +185,7 @@ def build_container_for_session(db: Session) -> ContextEngineContainer:
 
     return build_container(
         settings=PotpieContextEngineSettings(),
-        projects=SqlalchemyProjectResolution(db),
+        pots=SqlalchemyPotResolution(db),
         source_for_repo=source_for_repo,
     )
 
@@ -115,6 +197,6 @@ def build_container_for_user_session(db: Session, user_id: str) -> ContextEngine
 
     return build_container(
         settings=PotpieContextEngineSettings(),
-        projects=UserScopedSqlalchemyProjectResolution(db, user_id),
+        pots=UserScopedSqlalchemyPotResolution(db, user_id),
         source_for_repo=source_for_repo,
     )

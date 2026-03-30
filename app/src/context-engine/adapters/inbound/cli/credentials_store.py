@@ -76,3 +76,34 @@ def clear_credentials() -> None:
     except TypeError:
         if path.is_file():
             path.unlink()
+
+
+def get_active_pot_id() -> str:
+    """CLI-selected active pot (optional)."""
+    v = read_credentials().get("active_pot_id")
+    return str(v).strip() if v else ""
+
+
+def set_active_pot_id(pot_id: str) -> None:
+    """Persist active pot id alongside API credentials."""
+    d = config_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    path = credentials_path()
+    payload: dict[str, Any] = dict(read_credentials())
+    payload["active_pot_id"] = pot_id.strip()
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
+def clear_active_pot_id() -> None:
+    """Remove stored active pot id (fall back to env maps + git origin)."""
+    path = credentials_path()
+    if not path.is_file():
+        return
+    payload: dict[str, Any] = dict(read_credentials())
+    payload.pop("active_pot_id", None)
+    if not payload:
+        path.unlink(missing_ok=True)
+        return
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    path.chmod(stat.S_IRUSR | stat.S_IWUSR)

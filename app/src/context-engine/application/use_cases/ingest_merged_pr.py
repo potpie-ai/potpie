@@ -8,7 +8,7 @@ from typing import Any
 from domain.episode_formatters import build_pr_episode
 from domain.ingestion import IngestionResult
 from domain.ports.episodic_graph import EpisodicGraphPort
-from domain.ports.ingestion_ledger import IngestionLedgerPort
+from domain.ports.ingestion_ledger import IngestionLedgerPort, LedgerScope
 from domain.ports.structural_graph import StructuralGraphPort
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ def ingest_merged_pull_request(
     ledger: IngestionLedgerPort,
     episodic: EpisodicGraphPort,
     structural: StructuralGraphPort,
-    project_id: str,
+    scope: LedgerScope,
     repo_name: str,
     pr_data: dict[str, Any],
     commits: list[dict[str, Any]],
@@ -32,12 +32,13 @@ def ingest_merged_pull_request(
     source_id = f"pr_{pr_number}_merged"
     pr_entity_key = f"github:pr:{repo_name}:{pr_number}"
 
-    existing = ledger.get_ingestion_log(project_id, SOURCE_TYPE, source_id)
+    existing = ledger.get_ingestion_log(scope, SOURCE_TYPE, source_id)
     if existing:
         logger.info(
-            "Skipping already-ingested source %s for project %s",
+            "Skipping already-ingested source %s for pot %s repo %s",
             source_id,
-            project_id,
+            scope.pot_id,
+            scope.repo_name,
         )
         return IngestionResult(
             episode_uuid=existing.graphiti_episode_uuid,
@@ -54,7 +55,7 @@ def ingest_merged_pull_request(
     )
 
     episode_uuid = episodic.add_episode(
-        project_id=project_id,
+        pot_id=scope.pot_id,
         name=episode["name"],
         episode_body=episode["episode_body"],
         source_description=episode["source_description"],
@@ -64,7 +65,7 @@ def ingest_merged_pull_request(
     # Always stamp structural graph (PR entity, review threads, conversation) even if Graphiti
     # returned no episode UUID — otherwise write_bridges runs with no Decision / PR linkage data.
     stamp_counts = structural.stamp_pr_entities(
-        project_id=project_id,
+        pot_id=scope.pot_id,
         episode_uuid=episode_uuid or "",
         repo_name=repo_name,
         pr_number=pr_number,
@@ -85,14 +86,14 @@ def ingest_merged_pull_request(
     }
 
     ok = ledger.try_append_ingestion_and_raw_event(
-        project_id=project_id,
+        scope=scope,
         source_type=SOURCE_TYPE,
         source_id=source_id,
         graphiti_episode_uuid=episode_uuid,
         payload=payload,
     )
     if not ok:
-        after = ledger.get_ingestion_log(project_id, SOURCE_TYPE, source_id)
+        after = ledger.get_ingestion_log(scope, SOURCE_TYPE, source_id)
         return IngestionResult(
             episode_uuid=after.graphiti_episode_uuid if after else episode_uuid,
             pr_entity_key=pr_entity_key,

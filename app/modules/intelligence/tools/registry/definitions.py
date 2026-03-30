@@ -151,7 +151,7 @@ TOOL_DEFINITIONS: Dict[str, dict] = {
     "intelligent_code_graph": {"tier": "high", "category": "analysis"},
     "change_detection": {"tier": "medium", "category": "analysis"},
     # Context graph (Neo4j / GitHub intelligence)
-    "get_project_context": {
+    "get_pot_context": {
         "tier": "medium",
         "category": "search",
         "read_only": True,
@@ -333,7 +333,7 @@ CODE_GEN_BASE_TOOLS: List[str] = [
 ]
 
 CODE_GEN_ADD_WHEN_NON_LOCAL: List[str] = [
-    "get_project_context",
+    "get_pot_context",
     "get_decisions",
     "get_pr_review_context",
     "get_pr_diff",
@@ -363,7 +363,7 @@ GENERAL_PURPOSE_TOOLS: List[str] = [
 # Todo/requirement tools are included here so we have a single source; do not also pass
 # create_todo_management_toolset() as a toolset or we get "read_todos" name conflicts with MCP.
 SUPERVISOR_TOOLS: List[str] = [
-    "get_project_context",
+    "get_pot_context",
     "get_decisions",
     "get_pr_review_context",
     "get_pr_diff",
@@ -390,7 +390,7 @@ SUPERVISOR_TOOLS: List[str] = [
 EXECUTE_TOOLS: List[str] = [
     "webpage_extractor",
     "web_search_tool",
-    "get_project_context",
+    "get_pot_context",
     "get_decisions",
     "get_pr_review_context",
     "get_pr_diff",

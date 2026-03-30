@@ -14,14 +14,14 @@ In production, **context-engine runs inside the Potpie API process**. You mount 
 
 | Method | Path | What it does |
 |--------|------|----------------|
-| `POST` | `/api/v1/context/sync` | Enqueues Celery backfill per project (optional body: `{ "project_ids": ["..."] }`; omit to sync all **your** eligible projects) |
-| `POST` | `/api/v1/context/ingest-pr` | Enqueues single-PR ingest (`project_id`, `pr_number`, optional `is_live_bridge`) |
+| `POST` | `/api/v1/context/sync` | Enqueues Celery backfill (optional body: `{ "pot_ids": ["..."] }`; omit to sync all **your** eligible pots) |
+| `POST` | `/api/v1/context/ingest-pr` | Enqueues single-PR ingest (`pot_id`, `pr_number`, optional `is_live_bridge`) |
 | `POST` | `/api/v1/context/query/change-history` | Neo4j change history |
 | `POST` | `/api/v1/context/query/file-owners` | File owner hints from PR history |
 | `POST` | `/api/v1/context/query/decisions` | Linked decisions |
 | `POST` | `/api/v1/context/query/search` | Graphiti semantic search |
 
-**Project scope:** Requests only apply to projects **owned by the authenticated user** (enforced in Potpie’s wiring).
+**Pot scope:** Requests only apply to pots the authenticated user may access (enforced in Potpie’s wiring).
 
 **Long-running work:** Sync and ingest **enqueue Celery** tasks (`context-graph-etl` queue). Run a Potpie Celery worker that consumes that queue so jobs actually execute.
 
@@ -32,11 +32,11 @@ Context graph reads **Potpie’s config** (via `config_provider`), not a paralle
 | Concern | Notes |
 |---------|--------|
 | Feature flag | `CONTEXT_GRAPH_ENABLED=true` (and related Potpie env you already use) |
-| Neo4j / Graphiti | Same Neo4j settings as the rest of Potpie (`NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, etc., as configured in Potpie) |
+| Neo4j / Graphiti | Default: same as Potpie (`NEO4J_*` via config). Set **`CONTEXT_ENGINE_NEO4J_URI`** (and username/password) to use a **dedicated** Neo4j for Graphiti + context-engine structural queries instead of the code graph DB. |
 | Ledger tables | Potpie’s Postgres / Alembic migrations; same DB session as the app |
 | GitHub | Potpie’s code provider (`CodeProviderFactory` / tokens your deployment already sets) |
 
-No `CONTEXT_ENGINE_API_KEY`, `CONTEXT_ENGINE_PROJECTS` JSON map, or standalone `DATABASE_URL` is required **for the embedded API**—those exist for the **optional standalone** HTTP server below.
+Standalone-only configuration (`CONTEXT_ENGINE_API_KEY`, `CONTEXT_ENGINE_POTS` JSON map, or a separate `DATABASE_URL`) is **not** required **for the embedded API**—those exist for the **optional standalone** HTTP server below.
 
 ### Using the library from Python (Potpie)
 
@@ -62,9 +62,9 @@ uv run python -m adapters.inbound.http
 | `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD` | Neo4j (structural + Graphiti) |
 | `DATABASE_URL` or `POSTGRES_URL` | Ledger tables (`context_*`, `raw_events`) |
 | `CONTEXT_ENGINE_GITHUB_TOKEN` or `GITHUB_TOKEN` | GitHub API |
-| `CONTEXT_ENGINE_PROJECTS` | JSON map `{"project-uuid":"owner/repo"}` for sync |
+| `CONTEXT_ENGINE_POTS` | JSON map `{"pot-uuid":"owner/repo"}` for sync |
 | `CONTEXT_ENGINE_API_KEY` | **Standalone only:** optional; if set, required as header `X-API-Key` |
-| `CONTEXT_ENGINE_REPO_TO_PROJECT` | JSON map `{"owner/repo":"project-uuid"}` for GitHub webhook |
+| `CONTEXT_ENGINE_REPO_TO_POT` | JSON map `{"owner/repo":"pot-uuid"}` for GitHub webhook |
 | `GITHUB_WEBHOOK_SECRET` | Optional HMAC verification for webhooks |
 
 Routes on the standalone app:
@@ -74,6 +74,8 @@ Routes on the standalone app:
 - `POST /api/v1/context/ingest-pr` — single PR (inline)
 - `POST /api/v1/context/query/*`
 - `POST /webhooks/integrations/github`
+
+**Errors:** `HTTPException` with a string `detail` is returned as JSON `{"error":{"code":"http_error","message":"..."}}`. Unhandled server errors return `500` with `{"error":{"code":"internal_error","message":"Internal server error"}}` (details are logged server-side).
 
 ---
 
@@ -90,14 +92,14 @@ uv run context-engine doctor
 uv run context-engine-mcp
 ```
 
-### MCP (project scope)
+### MCP (pot scope)
 
-MCP tools accept a `project_id` string. **By default, access is denied** until you configure one of:
+MCP tools accept a `pot_id` string. **By default, access is denied** until you configure one of:
 
 | Variable | Purpose |
 |----------|---------|
-| `CONTEXT_ENGINE_MCP_ALLOWED_PROJECTS` | JSON array of allowed project IDs, e.g. `["uuid-1","uuid-2"]` |
-| `CONTEXT_ENGINE_MCP_TRUST_ALL_PROJECTS` | Set to `true` for **development only** — any `project_id` is accepted |
+| `CONTEXT_ENGINE_MCP_ALLOWED_POTS` | JSON array of allowed pot IDs, e.g. `["uuid-1","uuid-2"]` |
+| `CONTEXT_ENGINE_MCP_TRUST_ALL_POTS` | Set to `true` for **development only** — any `pot_id` is accepted |
 
 Omit both → tools raise a clear error (no implicit multi-tenant trust).
 
@@ -116,7 +118,7 @@ Example:
 
 ```python
 from bootstrap.container import build_container_with_github_token
-from bootstrap.http_projects import ExplicitProjectResolution
+from bootstrap.http_projects import ExplicitPotResolution
 ```
 
 **Note:** Names like `domain` and `adapters` are generic. If this package is installed alongside another project that defines the same top-level names, use a dedicated virtualenv or install only one such package in the environment.

@@ -12,7 +12,7 @@ from application.use_cases.query_context import get_file_owners as ce_get_file_o
 
 
 class GetFileOwnerInput(BaseModel):
-    project_id: str = Field(description="Project ID (UUID)")
+    pot_id: str = Field(description="Context graph pot scope id (UUID)")
     file_path: str = Field(description="Repository-relative file path")
     limit: int = Field(default=5, description="Max owners to return")
 
@@ -24,19 +24,19 @@ class GetFileOwnerTool:
         self._settings = PotpieContextEngineSettings()
         self._structural = Neo4jStructuralAdapter(self._settings)
 
-    def _assert_project_access(self, project_id: str) -> None:
-        project = self.sql_db.query(Project).filter(Project.id == project_id).first()
+    def _assert_pot_access(self, pot_id: str) -> None:
+        project = self.sql_db.query(Project).filter(Project.id == pot_id).first()
         if not project or project.user_id != self.user_id:
-            raise ValueError("Project not found for user")
+            raise ValueError("Pot scope not found for user")
 
-    async def arun(self, project_id: str, file_path: str, limit: int = 5) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(self.run, project_id, file_path, limit)
+    async def arun(self, pot_id: str, file_path: str, limit: int = 5) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self.run, pot_id, file_path, limit)
 
-    def run(self, project_id: str, file_path: str, limit: int = 5) -> list[dict[str, Any]]:
-        self._assert_project_access(project_id)
+    def run(self, pot_id: str, file_path: str, limit: int = 5) -> list[dict[str, Any]]:
+        self._assert_pot_access(pot_id)
         if not self._settings.is_enabled():
             return []
-        return ce_get_file_owners(self._structural, project_id, file_path, limit)
+        return ce_get_file_owners(self._structural, pot_id, file_path, limit)
 
 
 def get_file_owner_tool(sql_db: Session, user_id: str) -> StructuredTool:

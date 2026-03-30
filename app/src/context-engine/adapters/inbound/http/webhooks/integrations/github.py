@@ -56,16 +56,16 @@ async def github_webhook(
     if not repo or pr_number is None:
         raise HTTPException(status_code=400, detail="missing repository or PR number")
 
-    mapping_raw = os.getenv("CONTEXT_ENGINE_REPO_TO_PROJECT", "").strip()
+    mapping_raw = os.getenv("CONTEXT_ENGINE_REPO_TO_POT", "").strip()
     if not mapping_raw:
         raise HTTPException(
             status_code=503,
-            detail="CONTEXT_ENGINE_REPO_TO_PROJECT env required, e.g. {\"owner/repo\":\"project-uuid\"}",
+            detail="CONTEXT_ENGINE_REPO_TO_POT env required, e.g. {\"owner/repo\":\"pot-uuid\"}",
         )
-    repo_to_project = json.loads(mapping_raw)
-    project_id = repo_to_project.get(repo)
-    if not project_id:
-        return {"processed": False, "reason": "no_project_for_repo", "repo_name": repo}
+    repo_to_pot = json.loads(mapping_raw)
+    pot_id = repo_to_pot.get(repo)
+    if not pot_id:
+        return {"processed": False, "reason": "no_pot_for_repo", "repo_name": repo}
 
     container = get_container_or_503()
     if not container.settings.is_enabled():
@@ -79,12 +79,12 @@ async def github_webhook(
     try:
         result = ingest_single_pull_request(
             settings=container.settings,
-            projects=container.projects,
+            pots=container.pots,
             source=container.source_for_repo(repo),
             ledger=container.ledger(session),
             episodic=container.episodic,
             structural=container.structural,
-            project_id=str(project_id),
+            pot_id=str(pot_id),
             pr_number=int(pr_number),
             is_live_bridge=True,
         )

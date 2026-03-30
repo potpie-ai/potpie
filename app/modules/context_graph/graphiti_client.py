@@ -10,8 +10,6 @@ from adapters.outbound.graphiti.episodic import GraphitiEpisodicAdapter
 
 
 class ContextGraphClient:
-    """Compatibility shim for intelligence tools and legacy imports."""
-
     def __init__(self) -> None:
         self._impl = GraphitiEpisodicAdapter(PotpieContextEngineSettings())
 
@@ -21,14 +19,14 @@ class ContextGraphClient:
 
     async def add_episode_async(
         self,
-        project_id: str,
+        pot_id: str,
         name: str,
         episode_body: str,
         source_description: str,
         reference_time: datetime,
     ) -> Optional[str]:
         return await self._impl.add_episode_async(
-            project_id=project_id,
+            pot_id=pot_id,
             name=name,
             episode_body=episode_body,
             source_description=source_description,
@@ -37,14 +35,14 @@ class ContextGraphClient:
 
     def add_episode(
         self,
-        project_id: str,
+        pot_id: str,
         name: str,
         episode_body: str,
         source_description: str,
         reference_time: datetime,
     ) -> Optional[str]:
         return self._impl.add_episode(
-            project_id=project_id,
+            pot_id=pot_id,
             name=name,
             episode_body=episode_body,
             source_description=source_description,
@@ -53,13 +51,13 @@ class ContextGraphClient:
 
     async def search_async(
         self,
-        project_id: str,
+        pot_id: str,
         query: str,
         limit: int = 10,
         node_labels: Optional[list[str]] = None,
     ) -> list[Any]:
         return await self._impl.search_async(
-            project_id=project_id,
+            pot_id=pot_id,
             query=query,
             limit=limit,
             node_labels=node_labels,
@@ -67,13 +65,13 @@ class ContextGraphClient:
 
     def search(
         self,
-        project_id: str,
+        pot_id: str,
         query: str,
         limit: int = 10,
         node_labels: Optional[list[str]] = None,
     ) -> list[Any]:
         return self._impl.search(
-            project_id=project_id,
+            pot_id=pot_id,
             query=query,
             limit=limit,
             node_labels=node_labels,

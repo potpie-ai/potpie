@@ -12,7 +12,7 @@ from application.use_cases.query_context import get_decisions as ce_get_decision
 
 
 class GetDecisionsInput(BaseModel):
-    project_id: str = Field(description="Project ID (UUID)")
+    pot_id: str = Field(description="Context graph pot scope id (UUID)")
     file_path: Optional[str] = Field(default=None, description="Optional file path filter")
     function_name: Optional[str] = Field(default=None, description="Optional function/class filter")
     limit: int = Field(default=20, description="Max decisions to return")
@@ -25,33 +25,33 @@ class GetDecisionsTool:
         self._settings = PotpieContextEngineSettings()
         self._structural = Neo4jStructuralAdapter(self._settings)
 
-    def _assert_project_access(self, project_id: str) -> None:
-        project = self.sql_db.query(Project).filter(Project.id == project_id).first()
+    def _assert_pot_access(self, pot_id: str) -> None:
+        project = self.sql_db.query(Project).filter(Project.id == pot_id).first()
         if not project or project.user_id != self.user_id:
-            raise ValueError("Project not found for user")
+            raise ValueError("Pot scope not found for user")
 
     async def arun(
         self,
-        project_id: str,
+        pot_id: str,
         file_path: Optional[str] = None,
         function_name: Optional[str] = None,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(self.run, project_id, file_path, function_name, limit)
+        return await asyncio.to_thread(self.run, pot_id, file_path, function_name, limit)
 
     def run(
         self,
-        project_id: str,
+        pot_id: str,
         file_path: Optional[str] = None,
         function_name: Optional[str] = None,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
-        self._assert_project_access(project_id)
+        self._assert_pot_access(pot_id)
         if not self._settings.is_enabled():
             return []
         return ce_get_decisions(
             self._structural,
-            project_id,
+            pot_id,
             file_path=file_path,
             function_name=function_name,
             limit=limit,

@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from adapters.outbound.postgres.session import database_url, make_session_factory
 from bootstrap.container import ContextEngineContainer, build_container_with_github_token
-from bootstrap.http_projects import ExplicitProjectResolution, project_map_from_env
+from bootstrap.http_projects import ExplicitPotResolution, pot_map_from_env
 
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
@@ -29,13 +29,15 @@ def require_api_key(key: str | None = Security(_api_key_header)) -> None:
 @lru_cache
 def get_container() -> ContextEngineContainer:
     token = (os.getenv("CONTEXT_ENGINE_GITHUB_TOKEN") or os.getenv("GITHUB_TOKEN") or "").strip()
-    mapping = project_map_from_env()
+    mapping = pot_map_from_env()
     if not token:
         raise RuntimeError("CONTEXT_ENGINE_GITHUB_TOKEN or GITHUB_TOKEN is required for HTTP server")
     if not mapping:
-        raise RuntimeError("CONTEXT_ENGINE_PROJECTS env JSON is required, e.g. {\"proj-id\":\"owner/repo\"}")
-    projects = ExplicitProjectResolution(mapping)
-    return build_container_with_github_token(token=token, projects=projects)
+        raise RuntimeError(
+            'CONTEXT_ENGINE_POTS env JSON is required, e.g. {"pot-id":"owner/repo"}'
+        )
+    pots = ExplicitPotResolution(mapping)
+    return build_container_with_github_token(token=token, pots=pots)
 
 
 def get_container_or_503() -> ContextEngineContainer:

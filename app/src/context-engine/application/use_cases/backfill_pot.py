@@ -1,4 +1,4 @@
-"""Backfill merged PRs for one project."""
+"""Backfill merged PRs for one pot (one primary repo per run)."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from typing import Any
 from application.services.pr_bundle import fetch_full_pr
 from application.use_cases.ingest_merged_pr import ingest_merged_pull_request
 from domain.ports.episodic_graph import EpisodicGraphPort
-from domain.ports.ingestion_ledger import IngestionLedgerPort
-from domain.ports.project_resolution import ProjectResolutionPort
+from domain.ports.ingestion_ledger import IngestionLedgerPort, ledger_scope_from_pot_repo
+from domain.ports.pot_resolution import PotResolutionPort
 from domain.ports.settings import ContextEngineSettingsPort
 from domain.ports.source_control import SourceControlPort
 from domain.ports.structural_graph import StructuralGraphPort
@@ -21,42 +21,44 @@ logger = logging.getLogger(__name__)
 SOURCE_TYPE = "github_pr"
 
 
-def backfill_project_context(
+def backfill_pot_context(
     settings: ContextEngineSettingsPort,
-    projects: ProjectResolutionPort,
+    pots: PotResolutionPort,
     source: SourceControlPort,
     ledger: IngestionLedgerPort,
     episodic: EpisodicGraphPort,
     structural: StructuralGraphPort,
-    project_id: str,
+    pot_id: str,
     rate_limit_sleep_s: float = 0.5,
 ) -> dict[str, Any]:
     if not settings.is_enabled():
         return {
             "status": "skipped",
-            "project_id": project_id,
+            "pot_id": pot_id,
             "reason": "context_graph_disabled",
         }
 
-    resolved = projects.resolve(project_id)
-    if not resolved or not resolved.repo_name:
+    resolved = pots.resolve_pot(pot_id)
+    primary = resolved.primary_repo() if resolved else None
+    if not resolved or not primary or not primary.repo_name:
         return {
             "status": "skipped",
-            "project_id": project_id,
-            "reason": "project_not_found_or_missing_repo",
+            "pot_id": pot_id,
+            "reason": "pot_not_found_or_missing_repo",
         }
-    if not resolved.ready:
+    if not resolved.ready or not primary.ready:
         return {
             "status": "skipped",
-            "project_id": project_id,
-            "reason": "project_not_ready",
+            "pot_id": pot_id,
+            "reason": "pot_not_ready",
         }
 
-    repo_name = resolved.repo_name
-    sync = ledger.get_or_create_sync_state(project_id, SOURCE_TYPE)
+    repo_name = primary.repo_name
+    scope = ledger_scope_from_pot_repo(primary)
+    sync = ledger.get_or_create_sync_state(scope, SOURCE_TYPE)
     cursor = sync.last_synced_at
     latest_merged_at: datetime | None = cursor
-    ledger.update_sync_state_running(project_id, SOURCE_TYPE)
+    ledger.update_sync_state_running(scope, SOURCE_TYPE)
 
     max_per_run = settings.backfill_max_prs_per_run()
     ingested = 0
@@ -80,7 +82,7 @@ def backfill_project_context(
                     ledger=ledger,
                     episodic=episodic,
                     structural=structural,
-                    project_id=project_id,
+                    scope=scope,
                     repo_name=repo_name,
                     pr_data=payload["pr_data"],
                     commits=payload["commits"],
@@ -91,7 +93,7 @@ def backfill_project_context(
 
                 merged_at = pr.merged_at.isoformat() if pr.merged_at else None
                 bridge_result = structural.write_bridges(
-                    project_id=project_id,
+                    pot_id=pot_id,
                     pr_entity_key=result.pr_entity_key,
                     pr_number=pr.number,
                     repo_name=repo_name,
@@ -101,7 +103,7 @@ def backfill_project_context(
                     is_live=False,
                 )
                 ledger.update_bridge_status(
-                    project_id,
+                    scope,
                     SOURCE_TYPE,
                     source_id,
                     entity_key=result.pr_entity_key,
@@ -114,7 +116,7 @@ def backfill_project_context(
             except Exception as exc:
                 failed += 1
                 ledger.update_bridge_status(
-                    project_id,
+                    scope,
                     SOURCE_TYPE,
                     source_id,
                     entity_key=f"github:pr:{repo_name}:{pr.number}",
@@ -122,15 +124,15 @@ def backfill_project_context(
                     error=str(exc),
                 )
                 logger.exception(
-                    "Failed ingesting PR #%s for project %s",
+                    "Failed ingesting PR #%s for pot %s",
                     pr.number,
-                    project_id,
+                    pot_id,
                 )
 
-        ledger.update_sync_state_success(project_id, SOURCE_TYPE, latest_merged_at)
+        ledger.update_sync_state_success(scope, SOURCE_TYPE, latest_merged_at)
         return {
             "status": "success",
-            "project_id": project_id,
+            "pot_id": pot_id,
             "repo_name": repo_name,
             "ingested": ingested,
             "skipped": skipped,
@@ -139,11 +141,11 @@ def backfill_project_context(
             "last_synced_at": latest_merged_at.isoformat() if latest_merged_at else None,
         }
     except Exception as exc:
-        ledger.update_sync_state_error(project_id, SOURCE_TYPE, str(exc))
-        logger.exception("Context graph backfill failed for project %s", project_id)
+        ledger.update_sync_state_error(scope, SOURCE_TYPE, str(exc))
+        logger.exception("Context graph backfill failed for pot %s", pot_id)
         return {
             "status": "error",
-            "project_id": project_id,
+            "pot_id": pot_id,
             "repo_name": repo_name,
             "error": str(exc),
             "ingested": ingested,

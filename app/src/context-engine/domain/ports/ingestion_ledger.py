@@ -1,15 +1,32 @@
 """Postgres ledger: sync state, ingestion log, raw events (port)."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Optional, Protocol
 
 from domain.ingestion import BridgeResult
+from domain.ports.pot_resolution import ResolvedPotRepo
+
+
+@dataclass(frozen=True, slots=True)
+class LedgerScope:
+    """Partition key for ledger rows: pot + provider-scoped repo identity."""
+
+    pot_id: str
+    provider: str
+    provider_host: str
+    repo_name: str
+    """Normalized ``owner/repo`` within the provider."""
 
 
 @dataclass(slots=True)
 class IngestionLogRow:
-    project_id: str
+    pot_id: str
+    provider: str
+    provider_host: str
+    repo_name: str
     source_type: str
     source_id: str
     graphiti_episode_uuid: str | None
@@ -18,7 +35,10 @@ class IngestionLogRow:
 
 @dataclass(slots=True)
 class SyncStateRow:
-    project_id: str
+    pot_id: str
+    provider: str
+    provider_host: str
+    repo_name: str
     source_type: str
     last_synced_at: datetime | None
     status: str
@@ -28,7 +48,7 @@ class SyncStateRow:
 class IngestionLedgerPort(Protocol):
     def get_ingestion_log(
         self,
-        project_id: str,
+        scope: LedgerScope,
         source_type: str,
         source_id: str,
     ) -> Optional[IngestionLogRow]:
@@ -36,7 +56,7 @@ class IngestionLedgerPort(Protocol):
 
     def try_append_ingestion_and_raw_event(
         self,
-        project_id: str,
+        scope: LedgerScope,
         source_type: str,
         source_id: str,
         graphiti_episode_uuid: str | None,
@@ -46,7 +66,7 @@ class IngestionLedgerPort(Protocol):
 
     def update_bridge_status(
         self,
-        project_id: str,
+        scope: LedgerScope,
         source_type: str,
         source_id: str,
         entity_key: str,
@@ -55,19 +75,29 @@ class IngestionLedgerPort(Protocol):
     ) -> None:
         ...
 
-    def get_or_create_sync_state(self, project_id: str, source_type: str) -> SyncStateRow:
+    def get_or_create_sync_state(self, scope: LedgerScope, source_type: str) -> SyncStateRow:
         ...
 
-    def update_sync_state_running(self, project_id: str, source_type: str) -> None:
+    def update_sync_state_running(self, scope: LedgerScope, source_type: str) -> None:
         ...
 
     def update_sync_state_success(
         self,
-        project_id: str,
+        scope: LedgerScope,
         source_type: str,
         last_synced_at: datetime | None,
     ) -> None:
         ...
 
-    def update_sync_state_error(self, project_id: str, source_type: str, error: str) -> None:
+    def update_sync_state_error(self, scope: LedgerScope, source_type: str, error: str) -> None:
         ...
+
+
+def ledger_scope_from_pot_repo(repo: ResolvedPotRepo) -> LedgerScope:
+    """Build ledger keys from a resolved repo row inside a pot."""
+    return LedgerScope(
+        pot_id=repo.pot_id,
+        provider=repo.provider,
+        provider_host=repo.provider_host,
+        repo_name=repo.repo_name,
+    )

@@ -13,7 +13,10 @@ class ContextSyncState(Base):
     __tablename__ = "context_sync_state"
 
     id: Mapped[str] = mapped_column(String(255), primary_key=True)
-    project_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    pot_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False, default="github")
+    provider_host: Mapped[str] = mapped_column(String(255), nullable=False, default="github.com")
+    repo_name: Mapped[str] = mapped_column(Text, nullable=False)
     source_type: Mapped[str] = mapped_column(String(64), nullable=False)
     last_synced_at: Mapped[object | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="idle")
@@ -27,7 +30,14 @@ class ContextSyncState(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("project_id", "source_type", name="uq_context_sync_project_source"),
+        UniqueConstraint(
+            "pot_id",
+            "provider",
+            "provider_host",
+            "repo_name",
+            "source_type",
+            name="uq_context_sync_pot_repo_source",
+        ),
     )
 
 
@@ -35,7 +45,10 @@ class ContextIngestionLog(Base):
     __tablename__ = "context_ingestion_log"
 
     id: Mapped[str] = mapped_column(String(255), primary_key=True)
-    project_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    pot_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False, default="github")
+    provider_host: Mapped[str] = mapped_column(String(255), nullable=False, default="github.com")
+    repo_name: Mapped[str] = mapped_column(Text, nullable=False)
     source_type: Mapped[str] = mapped_column(String(64), nullable=False)
     source_id: Mapped[str] = mapped_column(String(255), nullable=False)
     graphiti_episode_uuid: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -58,14 +71,20 @@ class ContextIngestionLog(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "project_id",
+            "pot_id",
+            "provider",
+            "provider_host",
+            "repo_name",
             "source_type",
             "source_id",
-            name="uq_context_ingestion_project_source_id",
+            name="uq_context_ingestion_pot_repo_source_id",
         ),
         Index(
-            "ix_context_ingestion_project_source_id",
-            "project_id",
+            "ix_context_ingestion_pot_repo_source_id",
+            "pot_id",
+            "provider",
+            "provider_host",
+            "repo_name",
             "source_type",
             "source_id",
         ),
@@ -76,7 +95,10 @@ class RawEvent(Base):
     __tablename__ = "raw_events"
 
     id: Mapped[str] = mapped_column(String(255), primary_key=True)
-    project_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    pot_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False, default="github")
+    provider_host: Mapped[str] = mapped_column(String(255), nullable=False, default="github.com")
+    repo_name: Mapped[str] = mapped_column(Text, nullable=False)
     source_type: Mapped[str] = mapped_column(String(64), nullable=False)
     source_id: Mapped[str] = mapped_column(String(255), nullable=False)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
@@ -84,6 +106,22 @@ class RawEvent(Base):
     processed_at: Mapped[object | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     __table_args__ = (
-        UniqueConstraint("project_id", "source_type", "source_id", name="uq_raw_events_source"),
-        Index("ix_raw_events_project_source_id", "project_id", "source_type", "source_id"),
+        UniqueConstraint(
+            "pot_id",
+            "provider",
+            "provider_host",
+            "repo_name",
+            "source_type",
+            "source_id",
+            name="uq_raw_events_pot_repo_source",
+        ),
+        Index(
+            "ix_raw_events_pot_repo_source_id",
+            "pot_id",
+            "provider",
+            "provider_host",
+            "repo_name",
+            "source_type",
+            "source_id",
+        ),
     )

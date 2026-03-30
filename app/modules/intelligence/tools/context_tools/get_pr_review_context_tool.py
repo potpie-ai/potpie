@@ -12,7 +12,7 @@ from application.use_cases.query_context import get_pr_review_context as ce_get_
 
 
 class GetPrReviewContextInput(BaseModel):
-    project_id: str = Field(description="Project ID (UUID)")
+    pot_id: str = Field(description="Context graph pot scope id (UUID)")
     pr_number: int = Field(ge=1, description="GitHub pull request number")
 
 
@@ -23,16 +23,16 @@ class GetPrReviewContextTool:
         self._settings = PotpieContextEngineSettings()
         self._structural = Neo4jStructuralAdapter(self._settings)
 
-    def _assert_project_access(self, project_id: str) -> None:
-        project = self.sql_db.query(Project).filter(Project.id == project_id).first()
+    def _assert_pot_access(self, pot_id: str) -> None:
+        project = self.sql_db.query(Project).filter(Project.id == pot_id).first()
         if not project or project.user_id != self.user_id:
-            raise ValueError("Project not found for user")
+            raise ValueError("Pot scope not found for user")
 
-    async def arun(self, project_id: str, pr_number: int) -> dict[str, Any]:
-        return await asyncio.to_thread(self.run, project_id, pr_number)
+    async def arun(self, pot_id: str, pr_number: int) -> dict[str, Any]:
+        return await asyncio.to_thread(self.run, pot_id, pr_number)
 
-    def run(self, project_id: str, pr_number: int) -> dict[str, Any]:
-        self._assert_project_access(project_id)
+    def run(self, pot_id: str, pr_number: int) -> dict[str, Any]:
+        self._assert_pot_access(pot_id)
         if not self._settings.is_enabled():
             return {
                 "found": False,
@@ -41,7 +41,7 @@ class GetPrReviewContextTool:
                 "pr_summary": None,
                 "review_threads": [],
             }
-        return ce_get_pr_review_context(self._structural, project_id, pr_number)
+        return ce_get_pr_review_context(self._structural, pot_id, pr_number)
 
 
 def get_pr_review_context_tool(sql_db: Session, user_id: str) -> StructuredTool:
@@ -53,7 +53,7 @@ def get_pr_review_context_tool(sql_db: Session, user_id: str) -> StructuredTool:
         description=(
             "For a specific merged PR number, return title/summary plus structured discussions: "
             "line-level review threads and the main PR conversation (issue comments). Use for why/"
-            "rationale questions when you know or can infer the PR # (e.g. from get_project_context)."
+            "rationale questions when you know or can infer the PR # (e.g. from get_pot_context)."
         ),
         args_schema=GetPrReviewContextInput,
     )

@@ -11,7 +11,7 @@ class EpisodicGraphPort(Protocol):
 
     def add_episode(
         self,
-        project_id: str,
+        pot_id: str,
         name: str,
         episode_body: str,
         source_description: str,
@@ -21,7 +21,7 @@ class EpisodicGraphPort(Protocol):
 
     async def add_episode_async(
         self,
-        project_id: str,
+        pot_id: str,
         name: str,
         episode_body: str,
         source_description: str,
@@ -31,18 +31,20 @@ class EpisodicGraphPort(Protocol):
 
     def search(
         self,
-        project_id: str,
+        pot_id: str,
         query: str,
         limit: int = 10,
         node_labels: Optional[list[str]] = None,
+        repo_name: str | None = None,
     ) -> list[Any]:
         ...
 
     async def search_async(
         self,
-        project_id: str,
+        pot_id: str,
         query: str,
         limit: int = 10,
         node_labels: Optional[list[str]] = None,
+        repo_name: str | None = None,
     ) -> list[Any]:
         ...

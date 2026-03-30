@@ -13,7 +13,7 @@ from adapters.outbound.neo4j.structural import Neo4jStructuralAdapter
 from adapters.outbound.postgres.ledger import SqlAlchemyIngestionLedger
 from adapters.outbound.settings_env import EnvContextEngineSettings
 from domain.ports.episodic_graph import EpisodicGraphPort
-from domain.ports.project_resolution import ProjectResolutionPort
+from domain.ports.pot_resolution import PotResolutionPort
 from domain.ports.settings import ContextEngineSettingsPort
 from domain.ports.source_control import SourceControlPort
 from domain.ports.structural_graph import StructuralGraphPort
@@ -26,7 +26,7 @@ class ContextEngineContainer:
     settings: ContextEngineSettingsPort
     episodic: EpisodicGraphPort
     structural: StructuralGraphPort
-    projects: ProjectResolutionPort
+    pots: PotResolutionPort
     """Given repo_name (e.g. owner/repo), return API client for that repo."""
     source_for_repo: Callable[[str], SourceControlPort]
 
@@ -37,7 +37,7 @@ class ContextEngineContainer:
 def build_container(
     *,
     settings: ContextEngineSettingsPort | None = None,
-    projects: ProjectResolutionPort,
+    pots: PotResolutionPort,
     source_for_repo: Callable[[str], SourceControlPort],
 ) -> ContextEngineContainer:
     s = settings or EnvContextEngineSettings()
@@ -45,7 +45,7 @@ def build_container(
         settings=s,
         episodic=GraphitiEpisodicAdapter(s),
         structural=Neo4jStructuralAdapter(s),
-        projects=projects,
+        pots=pots,
         source_for_repo=source_for_repo,
     )
 
@@ -53,7 +53,7 @@ def build_container(
 def build_container_with_github_token(
     *,
     token: str,
-    projects: ProjectResolutionPort,
+    pots: PotResolutionPort,
     settings: ContextEngineSettingsPort | None = None,
 ) -> ContextEngineContainer:
     try:
@@ -68,4 +68,4 @@ def build_container_with_github_token(
     def source_for_repo(_repo_name: str) -> SourceControlPort:
         return PyGithubSourceControl(gh)
 
-    return build_container(settings=settings, projects=projects, source_for_repo=source_for_repo)
+    return build_container(settings=settings, pots=pots, source_for_repo=source_for_repo)

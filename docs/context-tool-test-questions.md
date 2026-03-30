@@ -1,6 +1,6 @@
 # Context Tool Test Questions
 
-Use these prompts in chat/agent testing to validate `get_project_context`, `get_change_history`, `get_file_owner`, and `get_decisions` behavior.
+Use these prompts in chat/agent testing to validate `get_pot_context`, `get_change_history`, `get_file_owner`, and `get_decisions` behavior.
 
 ## Basic retrieval
 

@@ -44,7 +44,7 @@ class PotpieCeleryMutationHandlers:
                 status_code=503,
                 detail="Context graph is disabled (opt in by unsetting CONTEXT_GRAPH_ENABLED or setting true).",
             )
-        mapping = payload.project_ids if payload and payload.project_ids else None
+        mapping = payload.pot_ids if payload and payload.pot_ids else None
         try:
             return enqueue_backfill_with_container(container, db, mapping)
         except RuntimeError as e:
@@ -61,19 +61,19 @@ class PotpieCeleryMutationHandlers:
                 status_code=503,
                 detail="Context graph is disabled (opt in by unsetting CONTEXT_GRAPH_ENABLED or setting true).",
             )
-        resolved = container.projects.resolve(body.project_id)
+        resolved = container.pots.resolve_pot(body.pot_id)
         if not resolved:
-            raise HTTPException(status_code=404, detail="Unknown project_id")
+            raise HTTPException(status_code=404, detail="Unknown pot_id")
         try:
             context_graph_ingest_pr.delay(
-                body.project_id,
+                body.pot_id,
                 body.pr_number,
                 is_live_bridge=body.is_live_bridge,
             )
         except Exception as e:
             logger.warning(
                 "Failed to enqueue ingest PR %s/%s: %s",
-                body.project_id,
+                body.pot_id,
                 body.pr_number,
                 e,
             )
@@ -82,7 +82,7 @@ class PotpieCeleryMutationHandlers:
             ) from e
         return {
             "status": "enqueued",
-            "project_id": body.project_id,
+            "pot_id": body.pot_id,
             "pr_number": body.pr_number,
             "is_live_bridge": body.is_live_bridge,
         }
@@ -95,5 +95,5 @@ potpie_context_engine_router = create_context_router(
     get_container=get_context_engine_container,
     get_db=get_db,
     mutation_handlers=_potpie_mutations,
-    enforce_project_access=True,
+    enforce_pot_access=True,
 )

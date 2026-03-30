@@ -83,6 +83,20 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
     def enabled(self) -> bool:
         return self._enabled and self._init_error is None
 
+    def failure_reason(self) -> Optional[str]:
+        """Return why Graphiti cannot run, or None if the client can be used.
+
+        Forces a lazy connection attempt when credentials were not yet validated.
+        """
+        if not self._settings.is_enabled():
+            return "context_graph_disabled"
+        if self._init_error:
+            return self._init_error
+        _ = self._get_graphiti()
+        if self._init_error:
+            return self._init_error
+        return None
+
     async def _close_graphiti_for_running_loop(self) -> None:
         """Close driver before the ephemeral asyncio.run loop shuts down.
 
@@ -124,7 +138,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
 
     async def add_episode_async(
         self,
-        project_id: str,
+        pot_id: str,
         name: str,
         episode_body: str,
         source_description: str,
@@ -139,7 +153,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
             episode_body=episode_body,
             source_description=source_description,
             reference_time=reference_time,
-            group_id=project_id,
+            group_id=pot_id,
             entity_types=ENTITY_TYPES,
             edge_types=EDGE_TYPES,
             edge_type_map=EDGE_TYPE_MAP,
@@ -150,7 +164,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
 
     def add_episode(
         self,
-        project_id: str,
+        pot_id: str,
         name: str,
         episode_body: str,
         source_description: str,
@@ -161,7 +175,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
 
         async def _run():
             return await self.add_episode_async(
-                project_id=project_id,
+                pot_id=pot_id,
                 name=name,
                 episode_body=episode_body,
                 source_description=source_description,
@@ -172,11 +186,13 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
 
     async def search_async(
         self,
-        project_id: str,
+        pot_id: str,
         query: str,
         limit: int = 10,
         node_labels: Optional[list[str]] = None,
+        repo_name: Optional[str] = None,
     ) -> list[Any]:
+        del repo_name  # optional future filter; Graphiti search is pot-scoped
         g = self._get_graphiti()
         if g is None:
             return []
@@ -187,27 +203,29 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
 
         return await g.search(
             query=query,
-            group_ids=[project_id],
+            group_ids=[pot_id],
             num_results=limit,
             search_filter=search_filter,
         )
 
     def search(
         self,
-        project_id: str,
+        pot_id: str,
         query: str,
         limit: int = 10,
         node_labels: Optional[list[str]] = None,
+        repo_name: Optional[str] = None,
     ) -> list[Any]:
         if not self.enabled:
             return []
 
         async def _run():
             return await self.search_async(
-                project_id=project_id,
+                pot_id=pot_id,
                 query=query,
                 limit=limit,
                 node_labels=node_labels,
+                repo_name=repo_name,
             )
 
         return self._sync_run(_run)

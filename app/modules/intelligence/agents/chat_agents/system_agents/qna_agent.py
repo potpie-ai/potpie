@@ -72,7 +72,7 @@ class QnAAgent(ChatAgent):
 
         tools = self.tools_provider.get_tools(
             [
-                "get_project_context",
+                "get_pot_context",
                 "get_decisions",
                 "get_pr_review_context",
                 "get_pr_diff",
@@ -153,24 +153,24 @@ class QnAAgent(ChatAgent):
         # Temporary hard requirement: fetch context-graph signal first.
         # This ensures QnA starts from historical intent/decision context.
         try:
-            project_context_tool = self.tools_provider.tools.get("get_project_context")
-            if project_context_tool:
+            pot_context_tool = self.tools_provider.tools.get("get_pot_context")
+            if pot_context_tool:
                 payload = {
-                    "project_id": ctx.project_id,
+                    "pot_id": ctx.project_id,
                     "query": ctx.query,
                     "limit": 8,
                     "node_labels": ["PullRequest", "Decision", "Issue", "Feature"],
                 }
-                if hasattr(project_context_tool, "ainvoke"):
-                    context_rows = await project_context_tool.ainvoke(payload)
+                if hasattr(pot_context_tool, "ainvoke"):
+                    context_rows = await pot_context_tool.ainvoke(payload)
                 else:
-                    context_rows = project_context_tool.invoke(payload)
+                    context_rows = pot_context_tool.invoke(payload)
                 ctx.additional_context += (
-                    f"\nProject context (via get_project_context, pre-fetched):\n"
+                    f"\nPot context (via get_pot_context, pre-fetched):\n"
                     f"{context_rows}\n"
                 )
         except Exception:
-            logger.exception("Failed prefetching project context for QnA agent")
+            logger.exception("Failed prefetching pot context for QnA agent")
 
         # Neo4j structural layer (PR-linked decisions, change history) — same DB Graphiti uses for
         # episodes, but not returned by semantic search alone. Without this, the model only sees
@@ -300,14 +300,14 @@ Follow this structured approach to explore the codebase:
 ### 2a. Build Contextual Understanding
 
 0. **Mandatory first tool call**:
-   - ALWAYS call `get_project_context` first for every user query.
-   - Use `project_id`, `query=<user query>`, `limit=8`, and node labels including `PullRequest` and `Decision`.
+   - ALWAYS call `get_pot_context` first for every user query.
+   - Use `pot_id`, `query=<user query>`, `limit=8`, and node labels including `PullRequest` and `Decision`.
    - Use this output as the first layer of context before other tools.
    - Note: the run may also include a **structural (Neo4j) pre-fetch** in additional context (decision rows + change-history rows); treat it as ground truth alongside Graphiti search.
 
 0b. **PR discussions and design rationale** (when the question is about *why*, reviewer debate, or decisions on a known PR number):
-   - Call `get_pr_review_context` with `project_id` and `pr_number` to load full review-thread text linked to that PR.
-   - Call `get_pr_diff` with `project_id` + `pr_number` (and optional `file_path`) for concrete file-level patch excerpts.
+   - Call `get_pr_review_context` with `pot_id` and `pr_number` to load full review-thread text linked to that PR.
+   - Call `get_pr_diff` with `pot_id` + `pr_number` (and optional `file_path`) for concrete file-level patch excerpts.
    - Call `get_decisions` with optional `file_path` / `function_name` when the question ties decisions to specific code locations.
    - Call `get_change_history` with optional `file_path` / `function_name` to see which PRs touched code and short decision headlines (including PR review threads merged into the `decisions` list).
 

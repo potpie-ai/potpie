@@ -17,7 +17,12 @@ from adapters.outbound.postgres.models import (
     RawEvent,
 )
 from domain.ingestion import BridgeResult
-from domain.ports.ingestion_ledger import IngestionLedgerPort, IngestionLogRow, SyncStateRow
+from domain.ports.ingestion_ledger import (
+    IngestionLedgerPort,
+    IngestionLogRow,
+    LedgerScope,
+    SyncStateRow,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +36,16 @@ class SqlAlchemyIngestionLedger(IngestionLedgerPort):
 
     def get_ingestion_log(
         self,
-        project_id: str,
+        scope: LedgerScope,
         source_type: str,
         source_id: str,
     ) -> IngestionLogRow | None:
         row = self._db.scalar(
             select(ContextIngestionLog).where(
-                ContextIngestionLog.project_id == project_id,
+                ContextIngestionLog.pot_id == scope.pot_id,
+                ContextIngestionLog.provider == scope.provider,
+                ContextIngestionLog.provider_host == scope.provider_host,
+                ContextIngestionLog.repo_name == scope.repo_name,
                 ContextIngestionLog.source_type == source_type,
                 ContextIngestionLog.source_id == source_id,
             )
@@ -45,7 +53,10 @@ class SqlAlchemyIngestionLedger(IngestionLedgerPort):
         if row is None:
             return None
         return IngestionLogRow(
-            project_id=row.project_id,
+            pot_id=row.pot_id,
+            provider=row.provider,
+            provider_host=row.provider_host,
+            repo_name=row.repo_name,
             source_type=row.source_type,
             source_id=row.source_id,
             graphiti_episode_uuid=row.graphiti_episode_uuid,
@@ -54,7 +65,7 @@ class SqlAlchemyIngestionLedger(IngestionLedgerPort):
 
     def try_append_ingestion_and_raw_event(
         self,
-        project_id: str,
+        scope: LedgerScope,
         source_type: str,
         source_id: str,
         graphiti_episode_uuid: str | None,
@@ -63,7 +74,10 @@ class SqlAlchemyIngestionLedger(IngestionLedgerPort):
         now = datetime.utcnow()
         raw = RawEvent(
             id=str(uuid4()),
-            project_id=project_id,
+            pot_id=scope.pot_id,
+            provider=scope.provider,
+            provider_host=scope.provider_host,
+            repo_name=scope.repo_name,
             source_type=source_type,
             source_id=source_id,
             payload=payload,
@@ -72,7 +86,10 @@ class SqlAlchemyIngestionLedger(IngestionLedgerPort):
         )
         log = ContextIngestionLog(
             id=str(uuid4()),
-            project_id=project_id,
+            pot_id=scope.pot_id,
+            provider=scope.provider,
+            provider_host=scope.provider_host,
+            repo_name=scope.repo_name,
             source_type=source_type,
             source_id=source_id,
             graphiti_episode_uuid=graphiti_episode_uuid,
@@ -86,8 +103,9 @@ class SqlAlchemyIngestionLedger(IngestionLedgerPort):
         except IntegrityError:
             self._db.rollback()
             logger.info(
-                "ingest_duplicate project=%s source_type=%s source_id=%s",
-                project_id,
+                "ingest_duplicate pot=%s repo=%s source_type=%s source_id=%s",
+                scope.pot_id,
+                scope.repo_name,
                 source_type,
                 source_id,
             )
@@ -95,7 +113,7 @@ class SqlAlchemyIngestionLedger(IngestionLedgerPort):
 
     def update_bridge_status(
         self,
-        project_id: str,
+        scope: LedgerScope,
         source_type: str,
         source_id: str,
         entity_key: str,
@@ -120,7 +138,10 @@ class SqlAlchemyIngestionLedger(IngestionLedgerPort):
         self._db.execute(
             update(ContextIngestionLog)
             .where(
-                ContextIngestionLog.project_id == project_id,
+                ContextIngestionLog.pot_id == scope.pot_id,
+                ContextIngestionLog.provider == scope.provider,
+                ContextIngestionLog.provider_host == scope.provider_host,
+                ContextIngestionLog.repo_name == scope.repo_name,
                 ContextIngestionLog.source_type == source_type,
                 ContextIngestionLog.source_id == source_id,
             )
@@ -128,10 +149,13 @@ class SqlAlchemyIngestionLedger(IngestionLedgerPort):
         )
         self._db.commit()
 
-    def get_or_create_sync_state(self, project_id: str, source_type: str) -> SyncStateRow:
+    def get_or_create_sync_state(self, scope: LedgerScope, source_type: str) -> SyncStateRow:
         row = self._db.scalar(
             select(ContextSyncState).where(
-                ContextSyncState.project_id == project_id,
+                ContextSyncState.pot_id == scope.pot_id,
+                ContextSyncState.provider == scope.provider,
+                ContextSyncState.provider_host == scope.provider_host,
+                ContextSyncState.repo_name == scope.repo_name,
                 ContextSyncState.source_type == source_type,
             )
         )
@@ -139,7 +163,10 @@ class SqlAlchemyIngestionLedger(IngestionLedgerPort):
             return self._to_sync_row(row)
         row = ContextSyncState(
             id=str(uuid4()),
-            project_id=project_id,
+            pot_id=scope.pot_id,
+            provider=scope.provider,
+            provider_host=scope.provider_host,
+            repo_name=scope.repo_name,
             source_type=source_type,
             status="idle",
         )
@@ -148,10 +175,13 @@ class SqlAlchemyIngestionLedger(IngestionLedgerPort):
         self._db.refresh(row)
         return self._to_sync_row(row)
 
-    def update_sync_state_running(self, project_id: str, source_type: str) -> None:
+    def update_sync_state_running(self, scope: LedgerScope, source_type: str) -> None:
         row = self._db.scalar(
             select(ContextSyncState).where(
-                ContextSyncState.project_id == project_id,
+                ContextSyncState.pot_id == scope.pot_id,
+                ContextSyncState.provider == scope.provider,
+                ContextSyncState.provider_host == scope.provider_host,
+                ContextSyncState.repo_name == scope.repo_name,
                 ContextSyncState.source_type == source_type,
             )
         )
@@ -162,13 +192,16 @@ class SqlAlchemyIngestionLedger(IngestionLedgerPort):
 
     def update_sync_state_success(
         self,
-        project_id: str,
+        scope: LedgerScope,
         source_type: str,
         last_synced_at: datetime | None,
     ) -> None:
         row = self._db.scalar(
             select(ContextSyncState).where(
-                ContextSyncState.project_id == project_id,
+                ContextSyncState.pot_id == scope.pot_id,
+                ContextSyncState.provider == scope.provider,
+                ContextSyncState.provider_host == scope.provider_host,
+                ContextSyncState.repo_name == scope.repo_name,
                 ContextSyncState.source_type == source_type,
             )
         )
@@ -178,10 +211,13 @@ class SqlAlchemyIngestionLedger(IngestionLedgerPort):
             row.error = None
             self._db.commit()
 
-    def update_sync_state_error(self, project_id: str, source_type: str, error: str) -> None:
+    def update_sync_state_error(self, scope: LedgerScope, source_type: str, error: str) -> None:
         row = self._db.scalar(
             select(ContextSyncState).where(
-                ContextSyncState.project_id == project_id,
+                ContextSyncState.pot_id == scope.pot_id,
+                ContextSyncState.provider == scope.provider,
+                ContextSyncState.provider_host == scope.provider_host,
+                ContextSyncState.repo_name == scope.repo_name,
                 ContextSyncState.source_type == source_type,
             )
         )
@@ -193,7 +229,10 @@ class SqlAlchemyIngestionLedger(IngestionLedgerPort):
     @staticmethod
     def _to_sync_row(row: ContextSyncState) -> SyncStateRow:
         return SyncStateRow(
-            project_id=row.project_id,
+            pot_id=row.pot_id,
+            provider=row.provider,
+            provider_host=row.provider_host,
+            repo_name=row.repo_name,
             source_type=row.source_type,
             last_synced_at=row.last_synced_at,
             status=row.status,

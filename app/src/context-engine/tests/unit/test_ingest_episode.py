@@ -29,7 +29,7 @@ def test_ingest_episode_ok():
     out = ingest_episode(episodic, "p1", "n", "body", "src", t)
     assert out == {"episode_uuid": "uuid-1"}
     episodic.add_episode.assert_called_once_with(
-        project_id="p1",
+        pot_id="p1",
         name="n",
         episode_body="body",
         source_description="src",

@@ -8,7 +8,7 @@ from domain.ingestion import BridgeResult
 class StructuralGraphPort(Protocol):
     def write_bridges(
         self,
-        project_id: str,
+        pot_id: str,
         pr_entity_key: str,
         pr_number: int,
         repo_name: str,
@@ -21,7 +21,7 @@ class StructuralGraphPort(Protocol):
 
     def stamp_pr_entities(
         self,
-        project_id: str,
+        pot_id: str,
         episode_uuid: str,
         repo_name: str,
         pr_number: int,
@@ -36,38 +36,47 @@ class StructuralGraphPort(Protocol):
 
     def get_change_history(
         self,
-        project_id: str,
+        pot_id: str,
         function_name: str | None,
         file_path: str | None,
         limit: int,
+        repo_name: str | None = None,
     ) -> list[dict[str, Any]]:
         ...
 
     def get_file_owners(
         self,
-        project_id: str,
+        pot_id: str,
         file_path: str,
         limit: int,
+        repo_name: str | None = None,
     ) -> list[dict[str, Any]]:
         ...
 
     def get_decisions(
         self,
-        project_id: str,
+        pot_id: str,
         file_path: str | None,
         function_name: str | None,
         limit: int,
+        repo_name: str | None = None,
     ) -> list[dict[str, Any]]:
         ...
 
-    def get_pr_review_context(self, project_id: str, pr_number: int) -> dict[str, Any]:
+    def get_pr_review_context(
+        self,
+        pot_id: str,
+        pr_number: int,
+        repo_name: str | None = None,
+    ) -> dict[str, Any]:
         ...
 
     def get_pr_diff(
         self,
-        project_id: str,
+        pot_id: str,
         pr_number: int,
         file_path: str | None,
         limit: int,
+        repo_name: str | None = None,
     ) -> list[dict[str, Any]]:
         ...

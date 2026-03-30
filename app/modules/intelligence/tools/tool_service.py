@@ -68,7 +68,7 @@ from app.modules.intelligence.tools.context_tools import (
     get_decisions_tool,
     get_pr_diff_tool,
     get_pr_review_context_tool,
-    get_project_context_tool,
+    get_pot_context_tool,
 )
 from app.modules.intelligence.tools.tool_schema import ToolInfo, ToolInfoWithParameters
 from app.modules.intelligence.tools.web_tools.code_provider_tool import (
@@ -263,7 +263,7 @@ class ToolService:
             "get_decisions": get_decisions_tool(self.db, self.user_id),
             "get_pr_diff": get_pr_diff_tool(self.db, self.user_id),
             "get_pr_review_context": get_pr_review_context_tool(self.db, self.user_id),
-            "get_project_context": get_project_context_tool(self.db, self.user_id),
+            "get_pot_context": get_pot_context_tool(self.db, self.user_id),
         }
 
         # Add bash command tool if repo manager is enabled

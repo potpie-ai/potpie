@@ -1,4 +1,4 @@
-"""Tests for MCP project allowlist."""
+"""Tests for MCP pot allowlist."""
 
 import pytest
 
@@ -15,20 +15,20 @@ def reset_mcp_log_state():
 
 
 def test_mcp_deny_when_unconfigured(monkeypatch):
-    monkeypatch.delenv("CONTEXT_ENGINE_MCP_ALLOWED_PROJECTS", raising=False)
-    monkeypatch.delenv("CONTEXT_ENGINE_MCP_TRUST_ALL_PROJECTS", raising=False)
+    monkeypatch.delenv("CONTEXT_ENGINE_MCP_ALLOWED_POTS", raising=False)
+    monkeypatch.delenv("CONTEXT_ENGINE_MCP_TRUST_ALL_POTS", raising=False)
     with pytest.raises(ValueError, match="MCP access denied"):
-        pa.assert_mcp_project_allowed("any-id")
+        pa.assert_mcp_pot_allowed("any-id")
 
 
 def test_mcp_allowlist(monkeypatch):
-    monkeypatch.setenv("CONTEXT_ENGINE_MCP_ALLOWED_PROJECTS", '["a","b"]')
-    pa.assert_mcp_project_allowed("a")
+    monkeypatch.setenv("CONTEXT_ENGINE_MCP_ALLOWED_POTS", '["a","b"]')
+    pa.assert_mcp_pot_allowed("a")
     with pytest.raises(ValueError, match="not permitted"):
-        pa.assert_mcp_project_allowed("c")
+        pa.assert_mcp_pot_allowed("c")
 
 
 def test_mcp_trust_all(monkeypatch):
-    monkeypatch.delenv("CONTEXT_ENGINE_MCP_ALLOWED_PROJECTS", raising=False)
-    monkeypatch.setenv("CONTEXT_ENGINE_MCP_TRUST_ALL_PROJECTS", "true")
-    pa.assert_mcp_project_allowed("anything")
+    monkeypatch.delenv("CONTEXT_ENGINE_MCP_ALLOWED_POTS", raising=False)
+    monkeypatch.setenv("CONTEXT_ENGINE_MCP_TRUST_ALL_POTS", "true")
+    pa.assert_mcp_pot_allowed("anything")

@@ -21,6 +21,6 @@ class BridgeError(ContextEngineError):
     """Failed to write structural graph bridges."""
 
 
-class ProjectNotFound(ContextEngineError):
-    """Host could not resolve project_id."""
+class PotNotFound(ContextEngineError):
+    """Host could not resolve pot_id."""
 

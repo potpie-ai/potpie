@@ -55,12 +55,12 @@ def process_parsing(
             self.run_async(run_parsing())
 
             if config_provider.get_context_graph_config().get("enabled"):
-                from app.modules.context_graph.tasks import context_graph_backfill_project
+                from app.modules.context_graph.tasks import context_graph_backfill_pot
 
-                context_graph_backfill_project.delay(project_id)
+                context_graph_backfill_pot.delay(project_id)
                 logger.info(
                     "Enqueued context graph backfill after parsing",
-                    project_id=project_id,
+                    pot_id=project_id,
                 )
         except Exception:
             logger.exception("Error during parsing")

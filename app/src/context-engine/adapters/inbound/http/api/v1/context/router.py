@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Optional, Protocol
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from adapters.inbound.http.deps import (
@@ -14,7 +14,7 @@ from adapters.inbound.http.deps import (
     get_db,
     require_api_key,
 )
-from application.use_cases.backfill_project import backfill_project_context
+from application.use_cases.backfill_pot import backfill_pot_context
 from application.use_cases.ingest_episode import ingest_episode
 from application.use_cases.ingest_single_pr import ingest_single_pull_request
 from application.use_cases.query_context import (
@@ -23,20 +23,24 @@ from application.use_cases.query_context import (
     get_file_owners,
     get_pr_diff,
     get_pr_review_context,
-    search_project_context,
+    search_pot_context,
 )
 from bootstrap.container import ContextEngineContainer
 
 
 class SyncRequest(BaseModel):
-    project_ids: Optional[list[str]] = Field(
+    model_config = ConfigDict(populate_by_name=True)
+
+    pot_ids: Optional[list[str]] = Field(
         default=None,
-        description="If set, only these project IDs (must exist in CONTEXT_ENGINE_PROJECTS).",
+        description="If set, only these pot IDs (must exist in CONTEXT_ENGINE_POTS).",
     )
 
 
 class IngestPrRequest(BaseModel):
-    project_id: str
+    model_config = ConfigDict(populate_by_name=True)
+
+    pot_id: str
     pr_number: int
     is_live_bridge: bool = True
 
@@ -44,7 +48,9 @@ class IngestPrRequest(BaseModel):
 class IngestEpisodeRequest(BaseModel):
     """Raw Graphiti episode (same fields as episodic.add_episode)."""
 
-    project_id: str
+    model_config = ConfigDict(populate_by_name=True)
+
+    pot_id: str
     name: str
     episode_body: str
     source_description: str
@@ -55,42 +61,60 @@ class IngestEpisodeRequest(BaseModel):
 
 
 class ChangeHistoryQuery(BaseModel):
-    project_id: str
+    model_config = ConfigDict(populate_by_name=True)
+
+    pot_id: str
     function_name: Optional[str] = None
     file_path: Optional[str] = None
     limit: int = 10
+    repo_name: Optional[str] = None
 
 
 class FileOwnersQuery(BaseModel):
-    project_id: str
+    model_config = ConfigDict(populate_by_name=True)
+
+    pot_id: str
     file_path: str
     limit: int = 5
+    repo_name: Optional[str] = None
 
 
 class DecisionsQuery(BaseModel):
-    project_id: str
+    model_config = ConfigDict(populate_by_name=True)
+
+    pot_id: str
     file_path: Optional[str] = None
     function_name: Optional[str] = None
     limit: int = 20
+    repo_name: Optional[str] = None
 
 
 class PrReviewContextQuery(BaseModel):
-    project_id: str
+    model_config = ConfigDict(populate_by_name=True)
+
+    pot_id: str
     pr_number: int = Field(ge=1, description="GitHub pull request number")
+    repo_name: Optional[str] = None
 
 
 class PrDiffQuery(BaseModel):
-    project_id: str
+    model_config = ConfigDict(populate_by_name=True)
+
+    pot_id: str
     pr_number: int = Field(ge=1, description="GitHub pull request number")
     file_path: Optional[str] = None
     limit: int = 30
+    repo_name: Optional[str] = None
 
 
 class SearchQuery(BaseModel):
-    project_id: str
+    model_config = ConfigDict(populate_by_name=True)
+
+    pot_id: str
     query: str
     limit: int = 8
     node_labels: Optional[list[str]] = None
+    repo_name: Optional[str] = None
 
 
 class ContextMutationHandlers(Protocol):
@@ -113,11 +137,11 @@ class ContextMutationHandlers(Protocol):
         ...
 
 
-def _require_project_access(
-    container: ContextEngineContainer, project_id: str
+def _require_pot_access(
+    container: ContextEngineContainer, pot_id: str
 ) -> None:
-    if container.projects.resolve(project_id) is None:
-        raise HTTPException(status_code=404, detail="Unknown project_id")
+    if container.pots.resolve_pot(pot_id) is None:
+        raise HTTPException(status_code=404, detail="Unknown pot_id")
 
 
 def _inline_sync(
@@ -130,34 +154,35 @@ def _inline_sync(
             status_code=503,
             detail="Context graph is disabled (opt in by unsetting CONTEXT_GRAPH_ENABLED or setting true).",
         )
-    mapping = payload.project_ids if payload and payload.project_ids else None
+    mapping = payload.pot_ids if payload and payload.pot_ids else None
     results: list[dict[str, Any]] = []
-    projects = container.projects
-    if not hasattr(projects, "known_project_ids"):
+    pots = container.pots
+    if not hasattr(pots, "known_pot_ids"):
         raise HTTPException(
             status_code=500,
-            detail="Project resolution does not support listing IDs",
+            detail="Pot resolution does not support listing IDs",
         )
-    ids = mapping or projects.known_project_ids()  # type: ignore[union-attr]
+    ids = mapping or pots.known_pot_ids()  # type: ignore[union-attr]
     for pid in ids:
-        resolved = container.projects.resolve(pid)
-        if not resolved:
+        resolved = container.pots.resolve_pot(pid)
+        primary = resolved.primary_repo() if resolved else None
+        if not resolved or not primary:
             results.append(
                 {
                     "status": "skipped",
-                    "project_id": pid,
-                    "reason": "unknown_project_id",
+                    "pot_id": pid,
+                    "reason": "unknown_pot_id",
                 }
             )
             continue
-        out = backfill_project_context(
+        out = backfill_pot_context(
             settings=container.settings,
-            projects=container.projects,
-            source=container.source_for_repo(resolved.repo_name),
+            pots=container.pots,
+            source=container.source_for_repo(primary.repo_name),
             ledger=container.ledger(db),
             episodic=container.episodic,
             structural=container.structural,
-            project_id=pid,
+            pot_id=pid,
         )
         results.append(out)
     return {"status": "success", "results": results}
@@ -172,17 +197,18 @@ def _inline_ingest_pr(
         raise HTTPException(
             status_code=503, detail="Context graph is not enabled."
         )
-    resolved = container.projects.resolve(body.project_id)
-    if not resolved:
-        raise HTTPException(status_code=404, detail="Unknown project_id")
+    resolved = container.pots.resolve_pot(body.pot_id)
+    primary = resolved.primary_repo() if resolved else None
+    if not resolved or not primary:
+        raise HTTPException(status_code=404, detail="Unknown pot_id")
     return ingest_single_pull_request(
         settings=container.settings,
-        projects=container.projects,
-        source=container.source_for_repo(resolved.repo_name),
+        pots=container.pots,
+        source=container.source_for_repo(primary.repo_name),
         ledger=container.ledger(db),
         episodic=container.episodic,
         structural=container.structural,
-        project_id=body.project_id,
+        pot_id=body.pot_id,
         pr_number=body.pr_number,
         is_live_bridge=body.is_live_bridge,
     )
@@ -194,7 +220,7 @@ def create_context_router(
     get_container: Callable[..., ContextEngineContainer],
     get_db: Callable[..., Any],
     mutation_handlers: ContextMutationHandlers | None = None,
-    enforce_project_access: bool = False,
+    enforce_pot_access: bool = False,
 ) -> APIRouter:
     """Build context API routes with injected FastAPI dependencies."""
 
@@ -225,7 +251,7 @@ def create_context_router(
     @router.post(
         "/ingest",
         summary="Add episodic episode",
-        description="Ingest a raw episode into Graphiti for the project (group_id).",
+        description="Ingest a raw episode into Graphiti for the pot (group_id).",
     )
     def post_ingest_episode(
         body: IngestEpisodeRequest,
@@ -237,11 +263,11 @@ def create_context_router(
                 status_code=503,
                 detail="Context graph is disabled (opt in by unsetting CONTEXT_GRAPH_ENABLED or setting true).",
             )
-        if container.projects.resolve(body.project_id) is None:
-            raise HTTPException(status_code=404, detail="Unknown project_id")
+        if container.pots.resolve_pot(body.pot_id) is None:
+            raise HTTPException(status_code=404, detail="Unknown pot_id")
         out = ingest_episode(
             container.episodic,
-            body.project_id,
+            body.pot_id,
             body.name,
             body.episode_body,
             body.source_description,
@@ -260,14 +286,15 @@ def create_context_router(
         _: Any = Depends(require_auth),
         container: ContextEngineContainer = Depends(get_container),
     ):
-        if enforce_project_access:
-            _require_project_access(container, body.project_id)
+        if enforce_pot_access:
+            _require_pot_access(container, body.pot_id)
         return get_change_history(
             container.structural,
-            body.project_id,
+            body.pot_id,
             function_name=body.function_name,
             file_path=body.file_path,
             limit=body.limit,
+            repo_name=body.repo_name,
         )
 
     @router.post("/query/file-owners")
@@ -276,10 +303,10 @@ def create_context_router(
         _: Any = Depends(require_auth),
         container: ContextEngineContainer = Depends(get_container),
     ):
-        if enforce_project_access:
-            _require_project_access(container, body.project_id)
+        if enforce_pot_access:
+            _require_pot_access(container, body.pot_id)
         return get_file_owners(
-            container.structural, body.project_id, body.file_path, body.limit
+            container.structural, body.pot_id, body.file_path, body.limit, repo_name=body.repo_name
         )
 
     @router.post("/query/decisions")
@@ -288,14 +315,15 @@ def create_context_router(
         _: Any = Depends(require_auth),
         container: ContextEngineContainer = Depends(get_container),
     ):
-        if enforce_project_access:
-            _require_project_access(container, body.project_id)
+        if enforce_pot_access:
+            _require_pot_access(container, body.pot_id)
         return get_decisions(
             container.structural,
-            body.project_id,
+            body.pot_id,
             file_path=body.file_path,
             function_name=body.function_name,
             limit=body.limit,
+            repo_name=body.repo_name,
         )
 
     @router.post("/query/pr-review-context")
@@ -304,10 +332,10 @@ def create_context_router(
         _: Any = Depends(require_auth),
         container: ContextEngineContainer = Depends(get_container),
     ):
-        if enforce_project_access:
-            _require_project_access(container, body.project_id)
+        if enforce_pot_access:
+            _require_pot_access(container, body.pot_id)
         return get_pr_review_context(
-            container.structural, body.project_id, body.pr_number
+            container.structural, body.pot_id, body.pr_number, repo_name=body.repo_name
         )
 
     @router.post("/query/pr-diff")
@@ -316,38 +344,35 @@ def create_context_router(
         _: Any = Depends(require_auth),
         container: ContextEngineContainer = Depends(get_container),
     ):
-        if enforce_project_access:
-            _require_project_access(container, body.project_id)
+        if enforce_pot_access:
+            _require_pot_access(container, body.pot_id)
         return get_pr_diff(
             container.structural,
-            body.project_id,
+            body.pot_id,
             body.pr_number,
             file_path=body.file_path,
             limit=body.limit,
+            repo_name=body.repo_name,
         )
 
     @router.post(
         "/query/search",
         summary="Semantic search (Graphiti episodic)",
     )
-    @router.post(
-        "/query/get-project-context",
-        summary="get_project_context",
-        description="Same body and behavior as /query/search; alias for agent/tool parity.",
-    )
     def post_search(
         body: SearchQuery,
         _: Any = Depends(require_auth),
         container: ContextEngineContainer = Depends(get_container),
     ):
-        if enforce_project_access:
-            _require_project_access(container, body.project_id)
-        return search_project_context(
+        if enforce_pot_access:
+            _require_pot_access(container, body.pot_id)
+        return search_pot_context(
             container.episodic,
-            body.project_id,
+            body.pot_id,
             body.query,
             limit=body.limit,
             node_labels=body.node_labels,
+            repo_name=body.repo_name,
         )
 
     return router
