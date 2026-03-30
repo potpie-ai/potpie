@@ -8,8 +8,11 @@ from mcp.server.fastmcp import FastMCP
 
 from adapters.inbound.mcp.project_access import assert_mcp_pot_allowed
 from adapters.outbound.graphiti.episodic import GraphitiEpisodicAdapter
+from adapters.outbound.intelligence.hybrid_graph import HybridGraphIntelligenceProvider
 from adapters.outbound.neo4j.structural import Neo4jStructuralAdapter
 from adapters.outbound.settings_env import EnvContextEngineSettings
+from application.services.context_resolution import ContextResolutionService
+from application.use_cases.resolve_context import resolve_context
 from application.use_cases.query_context import (
     get_change_history,
     get_decisions,
@@ -18,12 +21,15 @@ from application.use_cases.query_context import (
     get_pr_review_context,
     search_pot_context,
 )
+from domain.intelligence_models import ContextResolutionRequest
 
 logger = logging.getLogger(__name__)
 mcp = FastMCP("context-engine")
 _settings = EnvContextEngineSettings()
 _structural = Neo4jStructuralAdapter(_settings)
 _episodic = GraphitiEpisodicAdapter(_settings)
+_intelligence = HybridGraphIntelligenceProvider(episodic=_episodic, structural=_structural)
+_resolution_service = ContextResolutionService(_intelligence)
 
 
 @mcp.tool()
@@ -153,6 +159,35 @@ def context_search(
     return _mcp_search_pot_context(
         pot_id, query, limit=limit, node_labels=node_labels, repo_name=repo_name
     )
+
+
+@mcp.tool()
+async def context_resolve(
+    project_id: str,
+    query: str,
+    consumer_hint: str | None = None,
+    timeout_ms: int = 4000,
+) -> dict:
+    """Resolve normalized contextual evidence (semantic + structural) for a user query."""
+    from dataclasses import asdict
+
+    assert_mcp_project_allowed(project_id)
+    if not _settings.is_enabled():
+        return {"error": "context_graph_disabled", "bundle": None}
+    req = ContextResolutionRequest(
+        project_id=project_id,
+        query=query,
+        consumer_hint=consumer_hint,
+        timeout_ms=timeout_ms,
+    )
+    bundle = await resolve_context(_resolution_service, req)
+    bundle_dict = asdict(bundle)
+    return {
+        "bundle": bundle_dict,
+        "coverage": bundle_dict.get("coverage"),
+        "errors": bundle_dict.get("errors"),
+        "meta": bundle_dict.get("meta"),
+    }
 
 
 def main() -> None:

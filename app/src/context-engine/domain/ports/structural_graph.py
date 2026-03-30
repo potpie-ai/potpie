@@ -41,6 +41,7 @@ class StructuralGraphPort(Protocol):
         file_path: str | None,
         limit: int,
         repo_name: str | None = None,
+        pr_number: int | None = None,
     ) -> list[dict[str, Any]]:
         ...
 
@@ -60,6 +61,7 @@ class StructuralGraphPort(Protocol):
         function_name: str | None,
         limit: int,
         repo_name: str | None = None,
+        pr_number: int | None = None,
     ) -> list[dict[str, Any]]:
         ...
 
@@ -79,4 +81,12 @@ class StructuralGraphPort(Protocol):
         limit: int,
         repo_name: str | None = None,
     ) -> list[dict[str, Any]]:
+        ...
+
+    def get_project_graph(
+        self,
+        project_id: str,
+        pr_number: int | None,
+        limit: int,
+    ) -> dict[str, Any]:
         ...

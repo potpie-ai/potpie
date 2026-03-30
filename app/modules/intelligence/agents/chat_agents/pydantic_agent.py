@@ -23,6 +23,7 @@ from app.modules.intelligence.tools.reasoning_manager import (
     _reset_reasoning_manager,
 )
 
+from app.modules.context_graph.bundle_renderer import intelligence_coverage_status
 from app.modules.intelligence.tracing.logfire_tracer import should_instrument_pydantic_ai
 from ..chat_agent import (
     ChatAgent,
@@ -271,6 +272,60 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             - Correlate visual evidence with the user's query
             """
 
+        bundle = getattr(ctx, "context_intelligence_bundle", None)
+        ci_status = (
+            intelligence_coverage_status(bundle)
+            if isinstance(bundle, dict)
+            else "unknown"
+        )
+
+        if ci_status == "COMPLETE":
+            instructions_block = """
+                INSTRUCTIONS (CONTEXT INTELLIGENCE — COMPLETE):
+                1. Answer from Additional Context (CONTEXT INTELLIGENCE block) first. Do NOT call
+                   get_pot_context, get_pr_diff, get_pr_review_context, get_decisions,
+                   get_change_history, or ask_knowledge_graph_queries — they duplicate prefetch.
+                2. Cite prefetched sections ([Artifacts], [Change history], [Discussions], etc.) in your answer.
+                3. Use fetch_file / get_code_from_probable_node_name / analyze_code_structure only if the user needs source code not in the block.
+                4. Format in markdown with clear structure.
+                5. Verify your output before submitting.
+
+                IMPORTANT:
+                - Do not use tools to "gather" graph/PR data already in Additional Context.
+                - Use tools efficiently; avoid CODEOWNERS fetches for ownership — use [Ownership] or state none.
+                - Only use the tools listed below when they add new information.
+                """
+        elif ci_status == "PARTIAL":
+            instructions_block = """
+                INSTRUCTIONS (CONTEXT INTELLIGENCE — PARTIAL):
+                1. Use the CONTEXT INTELLIGENCE block first, then call only tools allowed by
+                   MANDATORY TOOL-CALL RULES for missing families.
+                2. {"Analyze the provided images in detail and " if ctx.has_images() else ""}Synthesize and answer.
+                3. Format your response in markdown unless explicitly asked otherwise.
+                4. Include relevant code snippets and file references when applicable.
+                5. Verify your output before submitting.
+
+                IMPORTANT:
+                - Use tools efficiently and avoid duplicate fetches for families already prefetched.
+                - Only use the tools listed below.
+                """
+        else:
+            instructions_block = f"""
+                INSTRUCTIONS:
+                1. Use the available tools to gather information
+                2. {"Analyze the provided images in detail and " if ctx.has_images() else ""}Process and synthesize the gathered information
+                3. Format your response in markdown unless explicitely asked to output in a different format, make sure it's well formatted
+                4. Include relevant code snippets and file references
+                5. {"Reference specific details from the images when relevant" if ctx.has_images() else "Provide clear explanations"}
+                6. Verify your output before submitting
+
+                IMPORTANT:
+                - Use tools efficiently and avoid unnecessary API calls
+                - Only use the tools listed below
+                - You have access to tools in MCP Servers too, use them effectively. These mcp servers provide you with tools user might ask you to perform tasks on
+                {"- Provide detailed image analysis when images are present" if ctx.has_images() else ""}
+                """
+
         return f"""
                 CONTEXT:
                 Project ID: {ctx.project_id}
@@ -285,19 +340,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                 TASK HANDLING: (follow the method below if the user asks you to execute your task for your role and goal)
                 {task_config.description}
 
-                INSTRUCTIONS:
-                1. Use the available tools to gather information
-                2. {"Analyze the provided images in detail and " if ctx.has_images() else ""}Process and synthesize the gathered information
-                3. Format your response in markdown unless explicitely asked to output in a different format, make sure it's well formatted
-                4. Include relevant code snippets and file references
-                5. {"Reference specific details from the images when relevant" if ctx.has_images() else "Provide clear explanations"}
-                6. Verify your output before submitting
-
-                IMPORTANT:
-                - Use tools efficiently and avoid unnecessary API calls
-                - Only use the tools listed below
-                - You have access to tools in MCP Servers too, use them effectively. These mcp servers provide you with tools user might ask you to perform tasks on
-                {"- Provide detailed image analysis when images are present" if ctx.has_images() else ""}
+                {instructions_block}
             """
 
     def _debug_multimodal_content(self, ctx: ChatContext) -> None:

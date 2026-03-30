@@ -1,0 +1,76 @@
+"""Provider-neutral port for backing intelligence systems (graph, vector, hybrid)."""
+
+from __future__ import annotations
+
+from typing import Any, Protocol
+
+from domain.intelligence_models import (
+    ArtifactContext,
+    ArtifactRef,
+    CapabilitySet,
+    ChangeRecord,
+    ContextScope,
+    DecisionRecord,
+    DiscussionRecord,
+    OwnershipRecord,
+)
+
+
+class IntelligenceProvider(Protocol):
+    """Async intelligence provider. Sync backends wrap I/O in asyncio.to_thread."""
+
+    async def search_context(
+        self,
+        project_id: str,
+        query: str,
+        *,
+        limit: int = 8,
+        node_labels: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Semantic / hybrid search over project-scoped knowledge."""
+
+    async def get_artifact_context(
+        self,
+        project_id: str,
+        artifact: ArtifactRef,
+    ) -> ArtifactContext | None:
+        """Load structured context for a known artifact (e.g. PR)."""
+
+    async def get_change_history(
+        self,
+        project_id: str,
+        scope: ContextScope,
+        *,
+        limit: int = 10,
+    ) -> list[ChangeRecord]:
+        """Deterministic change history for optional file/function scope."""
+
+    async def get_decision_context(
+        self,
+        project_id: str,
+        scope: ContextScope,
+        *,
+        limit: int = 20,
+    ) -> list[DecisionRecord]:
+        """Design decisions linked to code or PR review."""
+
+    async def get_related_discussions(
+        self,
+        project_id: str,
+        scope: ContextScope,
+        *,
+        limit: int = 10,
+    ) -> list[DiscussionRecord]:
+        """Review threads / discussions when scope includes PR or file context."""
+
+    async def get_ownership(
+        self,
+        project_id: str,
+        scope: ContextScope,
+        *,
+        limit: int = 5,
+    ) -> list[OwnershipRecord]:
+        """Likely owners for a file path."""
+
+    def get_capabilities(self) -> CapabilitySet:
+        """Static capability flags for this provider."""

@@ -17,6 +17,7 @@ from bootstrap.container import ContextEngineContainer, build_container
 from domain.ports.pot_resolution import (
     PotResolutionPort,
     RepoRef,
+    ResolvedPot,
     ResolvedPotRepo,
     single_github_repo_pot,
 )

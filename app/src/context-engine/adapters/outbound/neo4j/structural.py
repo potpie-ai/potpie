@@ -567,8 +567,39 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
         file_path: str | None,
         limit: int,
         repo_name: str | None = None,
+        pr_number: int | None = None,
     ) -> list[dict[str, Any]]:
         _ = repo_name  # reserved for future repo-scoped history
+        if pr_number is not None:
+            query = """
+            MATCH (pr:Entity {group_id: $pot_id})
+            WHERE 'PullRequest' IN labels(pr)
+              AND (
+                coalesce(pr.pr_number, toIntegerOrNull(pr.number)) = $pr_number
+                OR toIntegerOrNull(reverse(split(coalesce(pr.entity_key, ''), ':'))[0]) = $pr_number
+              )
+            OPTIONAL MATCH (pr)-[:HAS_REVIEW_DECISION]->(prdec:Entity)
+            WHERE prdec IS NULL OR 'Decision' IN labels(prdec)
+            WITH pr, collect(DISTINCT coalesce(prdec.decision_made, prdec.name, prdec.summary)) AS prdecs
+            RETURN
+              coalesce(pr.pr_number, toIntegerOrNull(reverse(split(coalesce(pr.entity_key, ''), ':'))[0])) AS pr_number,
+              coalesce(pr.title, pr.name) AS title,
+              coalesce(pr.why_summary, pr.summary, pr.description, '') AS why_summary,
+              coalesce(pr.change_type, '') AS change_type,
+              coalesce(pr.feature_area, '') AS feature_area,
+              [] AS fixed_issues,
+              [x IN prdecs WHERE x IS NOT NULL AND toString(x) <> ''] AS decisions
+            LIMIT 1
+            """
+            return self._run_read(
+                query,
+                pot_id,
+                file_path,
+                function_name,
+                1,
+                pr_number=pr_number,
+            )
+
         query = """
         MATCH (n:NODE {repoId: $pot_id})
         WHERE ($file_path IS NULL OR n.file_path = $file_path)
@@ -676,8 +707,47 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
         function_name: str | None,
         limit: int,
         repo_name: str | None = None,
+        pr_number: int | None = None,
     ) -> list[dict[str, Any]]:
         lim = max(1, min(limit, 100))
+        if pr_number is not None:
+            pr_only = """
+            MATCH (pr:Entity {group_id: $pot_id})-[:HAS_REVIEW_DECISION]->(d:Entity)
+            WHERE 'PullRequest' IN labels(pr) AND 'Decision' IN labels(d)
+              AND (
+                coalesce(pr.pr_number, toIntegerOrNull(pr.number)) = $pr_number
+                OR toIntegerOrNull(reverse(split(coalesce(pr.entity_key, ''), ':'))[0]) = $pr_number
+              )
+              AND ($file_path IS NULL OR coalesce(d.review_path, '') = $file_path)
+            RETURN DISTINCT
+                coalesce(d.entity_key, elementId(d)) AS _dedupe,
+                coalesce(d.decision_made, d.name, d.summary) AS decision_made,
+                coalesce(d.alternatives_rejected, '') AS alternatives_rejected,
+                coalesce(d.rationale, d.summary, '') AS rationale,
+                coalesce(pr.pr_number, pr.number) AS pr_number
+            LIMIT $limit
+            """
+            drv = self._open()
+            if drv is None:
+                return []
+            try:
+                with drv.session() as session:
+                    rows = [
+                        r.data()
+                        for r in session.run(
+                            pr_only,
+                            pot_id=pot_id,
+                            file_path=file_path,
+                            pr_number=pr_number,
+                            limit=lim,
+                        )
+                    ]
+                    for r in rows:
+                        r.pop("_dedupe", None)
+                    return rows
+            finally:
+                drv.close()
+
         code_query = """
         MATCH (n:NODE {repoId: $pot_id})
         WHERE ($file_path IS NULL OR n.file_path = $file_path)

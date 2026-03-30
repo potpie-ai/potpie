@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional, Protocol
 
@@ -21,11 +22,18 @@ from application.use_cases.query_context import (
     get_change_history,
     get_decisions,
     get_file_owners,
+    get_project_graph,
     get_pr_diff,
     get_pr_review_context,
     search_pot_context,
 )
+from application.use_cases.resolve_context import resolve_context
 from bootstrap.container import ContextEngineContainer
+from domain.intelligence_models import (
+    ArtifactRef,
+    ContextResolutionRequest,
+    ContextScope,
+)
 
 
 class SyncRequest(BaseModel):
@@ -115,6 +123,37 @@ class SearchQuery(BaseModel):
     limit: int = 8
     node_labels: Optional[list[str]] = None
     repo_name: Optional[str] = None
+
+
+class ProjectGraphQuery(BaseModel):
+    project_id: str
+    pr_number: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Optional pull request number to focus the graph on",
+    )
+    limit: int = 12
+
+
+class ResolveArtifactBody(BaseModel):
+    kind: str = Field(description="Artifact kind, e.g. pr, issue")
+    identifier: str = Field(description="Artifact identifier, e.g. PR number")
+
+
+class ResolveScopeBody(BaseModel):
+    file_path: Optional[str] = None
+    function_name: Optional[str] = None
+    symbol: Optional[str] = None
+    pr_number: Optional[int] = Field(default=None, ge=1)
+
+
+class ResolveContextRequest(BaseModel):
+    project_id: str
+    query: str
+    consumer_hint: Optional[str] = None
+    artifact: Optional[ResolveArtifactBody] = None
+    scope: Optional[ResolveScopeBody] = None
+    timeout_ms: int = Field(default=4000, ge=500, le=30000)
 
 
 class ContextMutationHandlers(Protocol):
@@ -374,6 +413,69 @@ def create_context_router(
             node_labels=body.node_labels,
             repo_name=body.repo_name,
         )
+
+    @router.post("/query/project-graph")
+    def post_project_graph(
+        body: ProjectGraphQuery,
+        _: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+    ):
+        if enforce_pot_access:
+            _require_pot_access(container, body.project_id)
+        return get_project_graph(
+            container.structural,
+            body.project_id,
+            pr_number=body.pr_number,
+            limit=body.limit,
+        )
+
+    @router.post("/query/resolve-context")
+    async def post_resolve_context(
+        body: ResolveContextRequest,
+        _: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+    ):
+        if not container.settings.is_enabled():
+            raise HTTPException(
+                status_code=503,
+                detail="Context graph is not enabled. Set CONTEXT_GRAPH_ENABLED=true.",
+            )
+        if enforce_pot_access:
+            _require_pot_access(container, body.project_id)
+        if container.resolution_service is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Context intelligence resolution is not available.",
+            )
+        art = (
+            ArtifactRef(kind=body.artifact.kind, identifier=body.artifact.identifier)
+            if body.artifact
+            else None
+        )
+        scope = None
+        if body.scope:
+            scope = ContextScope(
+                file_path=body.scope.file_path,
+                function_name=body.scope.function_name,
+                symbol=body.scope.symbol,
+                pr_number=body.scope.pr_number,
+            )
+        req = ContextResolutionRequest(
+            project_id=body.project_id,
+            query=body.query,
+            consumer_hint=body.consumer_hint,
+            artifact_ref=art,
+            scope=scope,
+            timeout_ms=body.timeout_ms,
+        )
+        bundle = await resolve_context(container.resolution_service, req)
+        bundle_dict = asdict(bundle)
+        return {
+            "bundle": bundle_dict,
+            "coverage": bundle_dict.get("coverage"),
+            "errors": bundle_dict.get("errors"),
+            "meta": bundle_dict.get("meta"),
+        }
 
     return router
 

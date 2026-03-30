@@ -16,6 +16,7 @@ def get_change_history(
     file_path: Optional[str] = None,
     limit: int = 10,
     repo_name: Optional[str] = None,
+    pr_number: Optional[int] = None,
 ) -> list[dict[str, Any]]:
     return structural.get_change_history(
         pot_id=pot_id,
@@ -23,6 +24,7 @@ def get_change_history(
         file_path=file_path,
         limit=max(1, min(limit, 100)),
         repo_name=repo_name,
+        pr_number=pr_number,
     )
 
 
@@ -49,6 +51,7 @@ def get_decisions(
     function_name: Optional[str] = None,
     limit: int = 20,
     repo_name: Optional[str] = None,
+    pr_number: Optional[int] = None,
 ) -> list[dict[str, Any]]:
     return structural.get_decisions(
         pot_id=pot_id,
@@ -56,6 +59,7 @@ def get_decisions(
         function_name=function_name,
         limit=max(1, min(limit, 100)),
         repo_name=repo_name,
+        pr_number=pr_number,
     )
 
 
@@ -93,6 +97,20 @@ def get_pr_diff(
         file_path=file_path,
         limit=max(1, min(limit, 200)),
         repo_name=repo_name,
+    )
+
+
+def get_project_graph(
+    structural: StructuralGraphPort,
+    project_id: str,
+    *,
+    pr_number: Optional[int] = None,
+    limit: int = 12,
+) -> dict[str, Any]:
+    return structural.get_project_graph(
+        project_id,
+        pr_number,
+        max(1, min(limit, 50)),
     )
 
 
