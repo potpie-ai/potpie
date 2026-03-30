@@ -34,6 +34,28 @@ from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+# Max chars of tool result content streamed to browser (prevents OOM on large codebases)
+_MAX_TOOL_RESULT_STREAM_CHARS = 10_000
+
+
+def truncate_result_content(content: str) -> tuple[str, bool, int | None]:
+    """Truncate raw tool result content to browser-safe length.
+    Returns: (content, is_truncated, original_length_or_None)
+    """
+    if not content or len(content) <= _MAX_TOOL_RESULT_STREAM_CHARS:
+        return content, False, None
+    original_length = len(content)
+    truncated = (
+        content[:_MAX_TOOL_RESULT_STREAM_CHARS]
+        + f"\n... [truncated — {original_length:,} chars total, showing first {_MAX_TOOL_RESULT_STREAM_CHARS:,}]"
+    )
+    logger.info(
+        "Tool result truncated for browser stream: %d → %d chars",
+        original_length,
+        _MAX_TOOL_RESULT_STREAM_CHARS,
+    )
+    return truncated, True, original_length
+
 
 def _repair_truncated_tool_args_json(raw: str) -> dict | None:
     """Attempt to repair truncated JSON from streamed tool call args. Returns parsed dict or None."""
@@ -187,28 +209,30 @@ def create_tool_result_response(event: FunctionToolResultEvent) -> ToolCallRespo
     if is_delegation_tool(tool_name):
         agent_type = extract_agent_type_from_delegation_tool(tool_name)
         result_content = str(event.result.content) if event.result.content else ""
+        result_content, is_truncated, original_length = truncate_result_content(result_content)
 
         return ToolCallResponse(
             call_id=event.result.tool_call_id or "",
             event_type=ToolCallEventType.DELEGATION_RESULT,
             tool_name=tool_name,
             tool_response=get_delegation_response_message(agent_type),
-            tool_call_details={
-                "summary": get_delegation_result_content(agent_type, result_content)
-            },
-            is_complete=True,  # Explicitly mark delegation results as complete
+            tool_call_details={"summary": get_delegation_result_content(agent_type, result_content)},
+            is_complete=True,
+            is_truncated=is_truncated,
+            original_length=original_length,
         )
     else:
+        raw_str = str(event.result.content) if event.result.content else ""
+        raw_str, is_truncated, original_length = truncate_result_content(raw_str)
+
         return ToolCallResponse(
             call_id=event.result.tool_call_id or "",
             event_type=ToolCallEventType.RESULT,
             tool_name=tool_name,
-            tool_response=get_tool_response_message(
-                tool_name, result=event.result.content
-            ),
-            tool_call_details={
-                "summary": get_tool_result_info_content(tool_name, event.result.content)
-            },
+            tool_response=get_tool_response_message(tool_name, result=raw_str),
+            tool_call_details={"summary": get_tool_result_info_content(tool_name, raw_str)},
+            is_truncated=is_truncated,
+            original_length=original_length,
         )
 
 
