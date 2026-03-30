@@ -765,13 +765,25 @@ class ConversationService:
                 try:
                     dodo_customer_id = await billing_subscription_service.get_or_create_dodo_customer_id(user_id)
                     if dodo_customer_id:
-                        asyncio.create_task(
+                        report_task = asyncio.create_task(
                             usage_reporting_service.report_message_usage(
                                 user_id=user_id,
                                 dodo_customer_id=dodo_customer_id,
                                 conversation_id=conversation_id,
                             )
                         )
+
+                        def _on_report_done(t: asyncio.Task) -> None:
+                            if t.cancelled():
+                                return
+                            try:
+                                exc = t.exception()
+                            except asyncio.CancelledError:
+                                return
+                            if exc is not None:
+                                logger.exception("Failed to report message usage", exc_info=exc)
+
+                        report_task.add_done_callback(_on_report_done)
                         logger.info(f"Usage reporting triggered for user {user_id}, conversation {conversation_id}")
                     else:
                         logger.warning(f"Could not get or create dodo_customer_id for user {user_id}")
