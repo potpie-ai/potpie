@@ -23,9 +23,47 @@ else
 fi
 unset _repo_root
 
+export PATH="${PWD}/.tools/bin:${PATH}"
+echo "Ensuring ColGREP is available for local parsing and Docker builds..."
+if ! bash scripts/ensure_colgrep.sh; then
+  echo "Note: ColGREP setup failed; local parsing will continue without semantic indexing"
+elif [ -x "${PWD}/.tools/bin/colgrep-linux-amd64" ]; then
+  echo "Packaged Docker ColGREP ready at ${PWD}/.tools/bin/colgrep-linux-amd64"
+elif [ -x "${PWD}/.tools/bin/colgrep-linux-arm64" ]; then
+  echo "Packaged Docker ColGREP ready at ${PWD}/.tools/bin/colgrep-linux-arm64"
+fi
+
+APP_PORT="${APP_PORT:-8001}"
+
+if command -v lsof >/dev/null 2>&1; then
+  listeners="$(lsof -nP -iTCP:${APP_PORT} -sTCP:LISTEN 2>/dev/null || true)"
+  if [ -n "${listeners}" ]; then
+    echo "Error: Port ${APP_PORT} is already in use."
+    echo "${listeners}"
+    echo "Stop the existing process before starting Potpie."
+    echo "Hint: run ./scripts/stop.sh if it is a previous local Potpie instance."
+    exit 1
+  fi
+fi
+
 
 echo "Starting Docker Compose..."
 docker compose up -d
+
+# Wait for redis to be ready and writable
+echo "Waiting for Redis to be ready..."
+until docker exec potpie_redis_broker redis-cli ping >/dev/null 2>&1; do
+  echo "Redis is unavailable - sleeping"
+  sleep 2
+done
+
+echo "Verifying Redis accepts writes..."
+if ! docker exec potpie_redis_broker redis-cli SET potpie:startup:healthcheck ok EX 60 >/dev/null 2>&1; then
+  echo "Error: Redis is reachable but not accepting writes."
+  echo "Check the Redis container logs for persistence or disk-space failures:"
+  docker logs --tail 20 potpie_redis_broker || true
+  exit 1
+fi
 
 # Wait for postgres to be ready
 echo "Waiting for postgres to be ready..."
@@ -94,5 +132,10 @@ alembic upgrade heads
 echo "Starting momentum application..."
 gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app &
 
+COLGREP_INDEX_QUEUE="${COLGREP_INDEX_QUEUE_NAME:-${CELERY_QUEUE_NAME}_colgrep_index}"
+
 echo "Starting Celery worker..."
 celery -A app.celery.celery_app worker --loglevel=debug -Q "${CELERY_QUEUE_NAME}_process_repository,${CELERY_QUEUE_NAME}_agent_tasks" -E --concurrency=1 --pool=solo &
+
+echo "Starting ColGREP Celery worker..."
+celery -A app.celery.celery_app worker --loglevel=debug -Q "${COLGREP_INDEX_QUEUE}" -E --concurrency=1 --pool=solo -n "colgrep@%h" &

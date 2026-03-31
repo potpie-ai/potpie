@@ -1,9 +1,12 @@
 import asyncio
 import os
+import platform
+import threading
 import time
 import traceback
 from asyncio import create_task
 from contextlib import contextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
@@ -121,6 +124,80 @@ class ParsingService:
             yield
         finally:
             os.chdir(old_dir)
+
+    def _schedule_colgrep_index_build(self, repo_root: str) -> None:
+        """Build the ColGREP index without tying it to the current event loop."""
+
+        repos_base_path = self.repo_manager.repos_base_path
+
+        if self._should_run_colgrep_index_locally():
+            self._start_local_colgrep_index_build(repo_root, repos_base_path)
+            return
+
+        try:
+            from app.celery.tasks.parsing_tasks import process_colgrep_index
+
+            task = process_colgrep_index.delay(repo_root, str(repos_base_path))
+            logger.info(
+                "Scheduled ColGREP init task %s for %s",
+                getattr(task, "id", "unknown"),
+                repo_root,
+            )
+            return
+        except Exception:
+            logger.warning(
+                "Failed to enqueue ColGREP init task for %s; falling back to local thread",
+                repo_root,
+                exc_info=True,
+            )
+
+        self._start_local_colgrep_index_build(repo_root, repos_base_path)
+
+    def _should_run_colgrep_index_locally(self) -> bool:
+        """Use a local background worker when Celery would serialize work instead of overlapping it."""
+        if os.getenv("COLGREP_INDEX_FORCE_LOCAL", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            return True
+        if os.getenv("COLGREP_INDEX_FORCE_CELERY", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            return False
+        if platform.system().lower() == "darwin":
+            return True
+
+        from app.celery.celery_app import celery_app
+
+        return str(celery_app.conf.worker_pool or "").strip().lower() == "solo"
+
+    def _start_local_colgrep_index_build(
+        self,
+        repo_root: str,
+        repos_base_path,
+    ) -> None:
+        """Start the best-effort local ColGREP build in a detached thread."""
+        def _run() -> None:
+            try:
+                build_colgrep_index(repo_root, repos_base_path)
+            except Exception:
+                logger.warning(
+                    "Background ColGREP init failed for %s",
+                    repo_root,
+                    exc_info=True,
+                )
+
+        thread = threading.Thread(
+            target=_run,
+            name=f"colgrep-init-{Path(repo_root).name}",
+            daemon=True,
+        )
+        thread.start()
 
     async def parse_directory(
         self,
@@ -341,11 +418,7 @@ class ParsingService:
                     )
                 extracted_dir = str(extracted_dir)
 
-                await asyncio.to_thread(
-                    build_colgrep_index,
-                    extracted_dir,
-                    self.repo_manager.repos_base_path,
-                )
+                self._schedule_colgrep_index_build(extracted_dir)
 
                 # Optional short-circuit: once RepoManager validated a usable worktree path,
                 # mark the project READY immediately and skip heavy analysis.

@@ -22,10 +22,15 @@ from pathlib import Path
 from typing import List, Optional, Dict
 from dataclasses import dataclass
 
+from app.modules.utils.colgrep_index import resolve_sandbox_colgrep_binary
 from app.modules.utils.install_gvisor import get_runsc_path
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+_DOCKER_XDG_DATA_HOME_MOUNT = "/colgrep-xdg-data"
+_DOCKER_COLGREP_BINARY_MOUNT = "/usr/local/bin/colgrep"
+_DOCKER_RUNTIME_IMAGE = "rust:1.88"
 
 
 @dataclass
@@ -101,6 +106,7 @@ def _filter_safe_environment_variables(env: Optional[Dict[str, str]]) -> Dict[st
         "OLDPWD",
         "SHLVL",
         "_",
+        "XDG_DATA_HOME",
     }
 
     # Patterns for sensitive variable names (case-insensitive)
@@ -492,21 +498,53 @@ def _run_with_docker_gvisor(
 
     # SECURITY: Filter environment variables to prevent secret exposure
     safe_env = _filter_safe_environment_variables(env)
+    xdg_data_home = safe_env.get("XDG_DATA_HOME")
+    if xdg_data_home:
+        xdg_data_home_path = Path(xdg_data_home)
+        if xdg_data_home_path.exists():
+            docker_cmd.extend(
+                [
+                    "-v",
+                    f"{xdg_data_home_path}:{_DOCKER_XDG_DATA_HOME_MOUNT}:ro",
+                ]
+            )
+            safe_env["XDG_DATA_HOME"] = _DOCKER_XDG_DATA_HOME_MOUNT
+        else:
+            logger.warning(
+                "[GVISOR] XDG_DATA_HOME path does not exist on host; command may miss ColGREP indices: %s",
+                xdg_data_home,
+            )
+
+    colgrep_binary, colgrep_platform = resolve_sandbox_colgrep_binary()
+    if colgrep_platform:
+        docker_cmd.extend(["--platform", colgrep_platform])
+    if colgrep_binary:
+        docker_cmd.extend(
+            [
+                "-v",
+                f"{colgrep_binary}:{_DOCKER_COLGREP_BINARY_MOUNT}:ro",
+            ]
+        )
+        logger.debug(
+            "[GVISOR] Mounting ColGREP binary from %s to %s",
+            colgrep_binary,
+            _DOCKER_COLGREP_BINARY_MOUNT,
+        )
+
     if safe_env:
         for key, value in safe_env.items():
             docker_cmd.extend(["-e", f"{key}={value}"])
 
     # Mount host binaries that are not in busybox but are whitelisted (e.g. rg, ag, colgrep)
-    _EXTRA_HOST_BINARIES = ["rg", "ag", "ack", "colgrep"]
+    _EXTRA_HOST_BINARIES = ["rg", "ag", "ack"]
     for binary in _EXTRA_HOST_BINARIES:
         host_path = shutil.which(binary)
         if host_path:
             docker_cmd.extend(["-v", f"{host_path}:/usr/local/bin/{binary}:ro"])
             logger.debug(f"[GVISOR] Mounting host binary {binary} from {host_path}")
 
-    # Use a minimal Linux image (alpine or busybox)
-    # We'll use busybox as it's very small
-    docker_cmd.append("busybox:latest")
+    # Use a glibc-based image so mounted Linux binaries such as ColGREP can execute reliably.
+    docker_cmd.append(_DOCKER_RUNTIME_IMAGE)
 
     # Add the command to run
     # Escape command properly for shell execution

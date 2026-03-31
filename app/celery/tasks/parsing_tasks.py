@@ -1,12 +1,31 @@
+from pathlib import Path
 from typing import Any, Dict
 
 from app.celery.celery_app import celery_app
 from app.celery.tasks.base_task import BaseTask
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
+from app.modules.utils.colgrep_index import build_colgrep_index
 from app.modules.utils.logger import setup_logger, log_context
 
 logger = setup_logger(__name__)
+
+
+@celery_app.task(
+    bind=True,
+    base=BaseTask,
+    name="app.celery.tasks.parsing_tasks.process_colgrep_index",
+)
+def process_colgrep_index(
+    self,
+    repo_root: str,
+    repos_base_path: str | None = None,
+) -> None:
+    with log_context(repo_root=repo_root):
+        logger.info("Task received: Starting ColGREP index build")
+        base_path = Path(repos_base_path) if repos_base_path else None
+        build_colgrep_index(repo_root, base_path)
+        logger.info("ColGREP index build task completed")
 
 
 @celery_app.task(

@@ -15,7 +15,10 @@ from langchain_core.tools import StructuredTool
 
 from app.modules.projects.projects_service import ProjectService
 from app.modules.repo_manager import RepoManager
-from app.modules.utils.colgrep_index import colgrep_xdg_data_home
+from app.modules.utils.colgrep_index import (
+    colgrep_xdg_data_home,
+    default_colgrep_binary_path,
+)
 from app.modules.repo_manager.sync_helper import (
     get_or_create_worktree_path,
     get_or_create_edits_worktree_path,
@@ -735,15 +738,26 @@ class BashCommandTool:
 
             # SECURITY: Don't pass environment variables - they will be filtered by gVisor runner
             # but we don't want to pass them at all to prevent any exposure
+            repos_base_path = (
+                self.repo_manager.repos_base_path if self.repo_manager else None
+            )
+            colgrep_bin_dir = str(default_colgrep_binary_path().parent)
+            safe_path_entries = [
+                colgrep_bin_dir,
+                "/usr/local/bin",
+                "/usr/bin",
+                "/bin",
+                "/opt/homebrew/bin",
+            ]
             safe_env = {
-                "PATH": "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin",
+                "PATH": ":".join(safe_path_entries),
                 "HOME": "/tmp",
                 "USER": "sandbox",
                 "SHELL": "/bin/sh",
                 "LANG": "C",
                 "TERM": "dumb",
                 # Match ColGREP index location used during parsing (under REPOS_BASE_PATH).
-                "XDG_DATA_HOME": str(colgrep_xdg_data_home()),
+                "XDG_DATA_HOME": str(colgrep_xdg_data_home(repos_base_path)),
             }
 
             # Execute command with gVisor isolation

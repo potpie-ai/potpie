@@ -754,6 +754,8 @@ class RepoManager(IRepoManager):
         ref: str,
         auth_token: Optional[str],
         repo_url: Optional[str] = None,
+        *,
+        is_commit: bool = False,
     ) -> None:
         """Fetch updates to bare repository for specific ref."""
         try:
@@ -773,23 +775,111 @@ class RepoManager(IRepoManager):
                     repo_url, auth_token, repo_name=repo_name_for_log
                 )
 
-            result = subprocess.run(
-                ["git", "-C", str(bare_repo_path), "fetch", fetch_remote, "--", ref],
-                capture_output=True,
-                text=True,
-                timeout=self._FETCH_TIMEOUT,
+            fetch_commands: List[tuple[list[str], str]] = []
+            if not is_commit:
+                fetch_commands.append(
+                    (
+                        [
+                            "git",
+                            "-C",
+                            str(bare_repo_path),
+                            "fetch",
+                            fetch_remote,
+                            f"+refs/heads/{ref}:refs/remotes/origin/{ref}",
+                        ],
+                        f"refs/remotes/origin/{ref}",
+                    )
+                )
+
+            fetch_commands.append(
+                (
+                    ["git", "-C", str(bare_repo_path), "fetch", fetch_remote, "--", ref],
+                    ref,
+                )
             )
 
-            if result.returncode != 0:
-                sanitized_error = self._sanitize_error_message(result.stderr or "")
-                logger.warning(f"Failed to fetch ref '{ref}': {sanitized_error}")
-            else:
-                logger.info(f"Successfully fetched ref '{ref}'")
+            last_error = ""
+            for cmd, expected_ref in fetch_commands:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=self._FETCH_TIMEOUT,
+                )
+
+                if result.returncode != 0:
+                    last_error = self._sanitize_error_message(result.stderr or "")
+                    continue
+
+                resolved_ref = self._resolve_worktree_ref(
+                    bare_repo_path,
+                    ref,
+                    is_commit=is_commit,
+                )
+                if resolved_ref:
+                    logger.info(
+                        "Successfully fetched ref '%s' (resolved as %s)",
+                        ref,
+                        resolved_ref,
+                    )
+                    return
+
+                logger.warning(
+                    "Fetch for ref '%s' completed, but no resolvable local ref was created (expected %s)",
+                    ref,
+                    expected_ref,
+                )
+                return
+
+            logger.warning(f"Failed to fetch ref '{ref}': {last_error}")
 
         except subprocess.TimeoutExpired:
             logger.warning(f"Fetch timeout for ref '{ref}'")
         except Exception as e:
             logger.warning(f"Error fetching ref '{ref}': {e}")
+
+    def _ref_exists(self, bare_repo_path: Path, ref: str) -> bool:
+        """Return True when ``ref`` resolves to an object in the bare repo."""
+        try:
+            result = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(bare_repo_path),
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    ref,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+
+    def _resolve_worktree_ref(
+        self,
+        bare_repo_path: Path,
+        ref: str,
+        *,
+        is_commit: bool,
+    ) -> Optional[str]:
+        """Resolve the best local ref to use for worktree creation."""
+        if is_commit:
+            return ref if self._ref_exists(bare_repo_path, ref) else None
+
+        candidates = [
+            f"refs/remotes/origin/{ref}",
+            f"refs/heads/{ref}",
+            f"refs/tags/{ref}",
+            ref,
+        ]
+        for candidate in candidates:
+            if self._ref_exists(bare_repo_path, candidate):
+                return candidate
+        return None
 
     def ensure_bare_repo(
         self,
@@ -798,6 +888,7 @@ class RepoManager(IRepoManager):
         auth_token: Optional[str] = None,
         ref: Optional[str] = None,
         user_id: Optional[str] = None,
+        is_commit: bool = False,
     ) -> Path:
         """
         Ensure bare repository exists and is up-to-date.
@@ -878,7 +969,13 @@ class RepoManager(IRepoManager):
         if bare_repo_path.exists() and (bare_repo_path / "HEAD").exists():
             logger.info(f"Bare repo already exists: {repo_name}")
             if ref:
-                self._fetch_ref(bare_repo_path, ref, provider_token, repo_url)
+                self._fetch_ref(
+                    bare_repo_path,
+                    ref,
+                    provider_token,
+                    repo_url,
+                    is_commit=is_commit,
+                )
             self._update_bare_repo_metadata(
                 repo_name, repo_url, bool(provider_token), user_id
             )
@@ -930,7 +1027,13 @@ class RepoManager(IRepoManager):
             logger.info(f"Successfully cloned bare repo: {repo_name}")
 
             if ref:
-                self._fetch_ref(bare_repo_path, ref, provider_token, repo_url)
+                self._fetch_ref(
+                    bare_repo_path,
+                    ref,
+                    provider_token,
+                    repo_url,
+                    is_commit=is_commit,
+                )
 
             self._update_bare_repo_metadata(
                 repo_name,
@@ -1050,17 +1153,27 @@ class RepoManager(IRepoManager):
                         )
 
                         github_token = auth_token or self._get_github_token()
-                        self._fetch_ref(bare_repo_path, ref, github_token, repo_url)
+                        self._fetch_ref(
+                            bare_repo_path,
+                            ref,
+                            github_token,
+                            repo_url,
+                            is_commit=False,
+                        )
 
-                        branch_ref = f"refs/heads/{ref}"
+                        branch_ref = self._resolve_worktree_ref(
+                            bare_repo_path,
+                            ref,
+                            is_commit=False,
+                        )
                         result = subprocess.run(
                             ["git", "-C", str(bare_repo_path), "rev-parse", branch_ref],
                             capture_output=True,
                             text=True,
                             timeout=30,
-                        )
+                        ) if branch_ref else None
 
-                        if result.returncode == 0:
+                        if result and result.returncode == 0:
                             latest_commit = result.stdout.strip()
                             if current_commit == latest_commit:
                                 logger.info(
@@ -1115,7 +1228,21 @@ class RepoManager(IRepoManager):
                 repo_name, None if is_commit else ref, ref if is_commit else None
             )
 
-        if unique_id or is_commit:
+        resolved_ref = self._resolve_worktree_ref(
+            bare_repo_path,
+            ref,
+            is_commit=is_commit,
+        )
+        if not resolved_ref:
+            raise RuntimeError(
+                f"Ref '{ref}' could not be resolved in bare repository {bare_repo_path}"
+            )
+
+        local_branch_ref = f"refs/heads/{ref}"
+        use_detached_ref = unique_id or is_commit or resolved_ref != local_branch_ref
+        checkout_ref = ref if resolved_ref == local_branch_ref else resolved_ref
+
+        if use_detached_ref:
             cmd = [
                 "git",
                 "-C",
@@ -1125,7 +1252,7 @@ class RepoManager(IRepoManager):
                 "--detach",
                 "--",
                 str(worktree_path),
-                ref,
+                checkout_ref,
             ]
         else:
             cmd = [
@@ -1136,7 +1263,7 @@ class RepoManager(IRepoManager):
                 "add",
                 "--",
                 str(worktree_path),
-                ref,
+                checkout_ref,
             ]
 
         try:
@@ -2082,7 +2209,14 @@ class RepoManager(IRepoManager):
 
         self._evict_if_needed(user_id=user_id)
 
-        _ = self.ensure_bare_repo(repo_name, repo_url, auth_token, ref, user_id)
+        _ = self.ensure_bare_repo(
+            repo_name,
+            repo_url,
+            auth_token,
+            ref,
+            user_id,
+            is_commit=is_commit,
+        )
 
         worktree_path = self.create_worktree(
             repo_name, ref, auth_token, is_commit, user_id

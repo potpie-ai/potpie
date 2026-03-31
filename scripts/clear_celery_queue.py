@@ -31,6 +31,7 @@ def get_all_queues():
 
     queues = [
         f"{queue_prefix}_process_repository",
+        os.getenv("COLGREP_INDEX_QUEUE_NAME", f"{queue_prefix}_colgrep_index"),
         f"{queue_prefix}_agent_tasks",
         "external-event",
     ]
