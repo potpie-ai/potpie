@@ -50,7 +50,7 @@ attrs==25.4.0
     #   cyclopts
     #   jsonschema
     #   referencing
-authlib==1.6.6
+authlib==1.6.9
     # via
     #   potpie (pyproject.toml)
     #   fastmcp
@@ -116,7 +116,7 @@ cohere==5.20.7
     # via pydantic-ai-slim
 croniter==6.0.0
     # via pydocket
-cryptography==46.0.5
+cryptography==46.0.6
     # via
     #   potpie (pyproject.toml)
     #   authlib
@@ -363,7 +363,7 @@ kombu==5.6.2
     #   celery
 langchain==1.2.8
     # via potpie (pyproject.toml)
-langchain-core==1.2.8
+langchain-core==1.2.23
     # via
     #   langchain
     #   langgraph
@@ -435,7 +435,7 @@ newrelic==11.5.0
     # via potpie (pyproject.toml)
 nexus-rpc==1.2.0
     # via temporalio
-nltk==3.9.2
+nltk==3.9.4
     # via potpie (pyproject.toml)
 numpy==2.4.2
     # via
@@ -577,7 +577,7 @@ py-key-value-aio==0.3.0
     #   pydocket
 py-key-value-shared==0.3.0
     # via py-key-value-aio
-pyasn1==0.6.2
+pyasn1==0.6.3
     # via
     #   potpie (pyproject.toml)
     #   pyasn1-modules
@@ -638,11 +638,11 @@ pydocket==0.17.5
     # via fastmcp
 pygithub==2.8.1
     # via potpie (pyproject.toml)
-pygments==2.19.2
+pygments==2.20.0
     # via
     #   potpie (pyproject.toml)
     #   rich
-pyjwt==2.11.0
+pyjwt==2.12.1
     # via
     #   potpie (pyproject.toml)
     #   firebase-admin
@@ -709,7 +709,7 @@ regex==2026.1.15
     #   nltk
     #   tiktoken
     #   transformers
-requests==2.32.5
+requests==2.33.1
     # via
     #   potpie (pyproject.toml)
     #   cachecontrol
