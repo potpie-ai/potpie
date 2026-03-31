@@ -302,7 +302,7 @@ def _parse_partial_args_buffer(args_buffer: str) -> Dict[str, Any] | None:
 
     open_braces = s.count("{") - s.count("}")
     open_brackets = s.count("[") - s.count("]")
-    repaired = s + ("}" * max(open_braces, 0)) + ("]" * max(open_brackets, 0))
+    repaired = s + ("]" * max(open_brackets, 0)) + ("}" * max(open_braces, 0))
     try:
         parsed = json.loads(repaired)
         return parsed if isinstance(parsed, dict) else None

@@ -89,6 +89,51 @@ def _repair_truncated_tool_args_json(raw: str) -> dict | None:
         return None
 
 
+def _safe_parse_tool_args(
+    event: FunctionToolCallEvent, tool_name: str
+) -> dict[str, Any]:
+    """Parse streamed tool args defensively and sanitize malformed payloads."""
+    try:
+        return event.part.args_as_dict()
+    except (ValueError, json.JSONDecodeError) as json_error:
+        raw_args = getattr(event.part, "args", "N/A")
+        raw_str = str(raw_args) if raw_args != "N/A" else ""
+        repaired = _repair_truncated_tool_args_json(raw_str)
+        if repaired is not None:
+            try:
+                setattr(event.part, "args", json.dumps(repaired))
+            except Exception as sanitize_error:
+                logger.warning(
+                    "Unable to sanitize repaired tool call arguments for '%s': %s",
+                    tool_name,
+                    sanitize_error,
+                )
+            logger.info(
+                "Repaired truncated JSON for tool call '%s' (recovered %d keys)",
+                tool_name,
+                len(repaired),
+            )
+            return repaired
+
+        logger.error(
+            "JSON parsing error in tool call '%s': %s. "
+            "Tool args (raw, first 300 chars): %s. "
+            "This may cause issues when pydantic_ai tries to serialize the message history.",
+            tool_name,
+            json_error,
+            raw_str[:300],
+        )
+        try:
+            setattr(event.part, "args", "{}")
+        except Exception as sanitize_error:
+            logger.warning(
+                "Unable to sanitize malformed tool call arguments for '%s': %s",
+                tool_name,
+                sanitize_error,
+            )
+        return {}
+
+
 def handle_exception(tool_func):
     # After _adapt_func_for_from_schema the wrapper is always async.
     # Guard here as well in case handle_exception is called on a raw sync func.
@@ -119,50 +164,7 @@ def handle_exception(tool_func):
 def create_tool_call_response(event: FunctionToolCallEvent) -> ToolCallResponse:
     """Create appropriate tool call response for regular or delegation tools"""
     tool_name = event.part.tool_name
-
-    # Safely parse tool arguments with error handling for malformed/truncated JSON
-    try:
-        args_dict = event.part.args_as_dict()
-    except (ValueError, json.JSONDecodeError) as json_error:
-        raw_args = getattr(event.part, "args", "N/A")
-        raw_str = str(raw_args) if raw_args != "N/A" else ""
-
-        # Try to repair truncated JSON (common when tool args are streamed and cut off)
-        repaired = _repair_truncated_tool_args_json(raw_str)
-        if repaired is not None:
-            args_dict = repaired
-            try:
-                setattr(event.part, "args", json.dumps(repaired))
-            except Exception as sanitize_error:
-                logger.warning(
-                    "Unable to sanitize repaired tool call arguments for '%s': %s",
-                    tool_name,
-                    sanitize_error,
-                )
-            logger.info(
-                "Repaired truncated JSON for tool call '%s' (recovered %d keys)",
-                tool_name,
-                len(args_dict),
-            )
-        else:
-            # Repair failed; use empty dict and log
-            logger.error(
-                "JSON parsing error in tool call '%s': %s. "
-                "Tool args (raw, first 300 chars): %s. "
-                "This may cause issues when pydantic_ai tries to serialize the message history.",
-                tool_name,
-                json_error,
-                raw_str[:300],
-            )
-            args_dict = {}
-            try:
-                setattr(event.part, "args", "{}")
-            except Exception as sanitize_error:
-                logger.warning(
-                    "Unable to sanitize malformed tool call arguments for '%s': %s",
-                    tool_name,
-                    sanitize_error,
-                )
+    args_dict = _safe_parse_tool_args(event, tool_name)
 
     command_tools = {"search_bash", "bash_command", "execute_terminal_command"}
     if tool_name in command_tools:
@@ -208,29 +210,41 @@ def create_tool_result_response(event: FunctionToolResultEvent) -> ToolCallRespo
 
     if is_delegation_tool(tool_name):
         agent_type = extract_agent_type_from_delegation_tool(tool_name)
-        result_content = str(event.result.content) if event.result.content else ""
-        result_content, is_truncated, original_length = truncate_result_content(result_content)
+        full_result_content = str(event.result.content) if event.result.content else ""
+        (
+            truncated_result_content,
+            is_truncated,
+            original_length,
+        ) = truncate_result_content(full_result_content)
 
         return ToolCallResponse(
             call_id=event.result.tool_call_id or "",
             event_type=ToolCallEventType.DELEGATION_RESULT,
             tool_name=tool_name,
             tool_response=get_delegation_response_message(agent_type),
-            tool_call_details={"summary": get_delegation_result_content(agent_type, result_content)},
+            tool_call_details={
+                "summary": get_delegation_result_content(
+                    agent_type, full_result_content
+                ),
+                "content": truncated_result_content,
+            },
             is_complete=True,
             is_truncated=is_truncated,
             original_length=original_length,
         )
     else:
-        raw_str = str(event.result.content) if event.result.content else ""
-        raw_str, is_truncated, original_length = truncate_result_content(raw_str)
+        full_raw = str(event.result.content) if event.result.content else ""
+        truncated_raw, is_truncated, original_length = truncate_result_content(full_raw)
 
         return ToolCallResponse(
             call_id=event.result.tool_call_id or "",
             event_type=ToolCallEventType.RESULT,
             tool_name=tool_name,
-            tool_response=get_tool_response_message(tool_name, result=raw_str),
-            tool_call_details={"summary": get_tool_result_info_content(tool_name, raw_str)},
+            tool_response=get_tool_response_message(tool_name, result=full_raw),
+            tool_call_details={
+                "summary": get_tool_result_info_content(tool_name, full_raw),
+                "content": truncated_raw,
+            },
             is_truncated=is_truncated,
             original_length=original_length,
         )

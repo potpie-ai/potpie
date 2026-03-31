@@ -567,14 +567,23 @@ class DelegationManager:
             # Use async version to avoid blocking the event loop
             if call_id:
                 try:
-                    stored_response, _, _ = truncate_result_content(full_response)
+                    (
+                        stored_response,
+                        is_truncated,
+                        original_length,
+                    ) = truncate_result_content(full_response)
                     logger.info(
                         f"[SUBAGENT STREAM] Publishing final complete response to Redis: "
-                        f"call_id={call_id}, response_length={len(stored_response)}"
+                        f"call_id={call_id}, response_length={len(stored_response)}, "
+                        f"is_truncated={is_truncated}, original_length={original_length}"
                     )
                     await self.tool_call_stream_manager.publish_complete_async(
                         call_id=call_id,
                         tool_response=stored_response,
+                        tool_call_details={
+                            "is_truncated": is_truncated,
+                            "original_length": original_length,
+                        },
                     )
                     logger.info(
                         f"[SUBAGENT STREAM] Successfully published final complete response to Redis: call_id={call_id}"
