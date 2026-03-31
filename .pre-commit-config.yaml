@@ -15,9 +15,10 @@ repos:
     rev: v0.8.2
     hooks:
       - id: ruff
-        args: ["--fix"]
+        args: ["--no-fix"]
         exclude: ^app/alembic/
       - id: ruff-format
+        args: ["--check"]
         exclude: ^app/alembic/
 
   - repo: https://github.com/PyCQA/bandit
@@ -27,3 +28,7 @@ repos:
         args: ["-c", "pyproject.toml"]
         additional_dependencies: ["bandit[toml]"]
         exclude: ^(tests|app/alembic)/
+
+ci:
+  autofix_commit_msg: ""
+  autofix_prs: false
