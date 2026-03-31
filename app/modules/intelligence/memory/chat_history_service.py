@@ -123,7 +123,7 @@ class ChatHistoryService:
                     citations=(
                         ",".join(set(citations)) if citations else None
                     ),  # Use set to remove duplicates
-                    tool_calls=tool_calls if tool_calls else None,
+                    tool_calls=None,
                     thinking=thinking,
                 )
                 self.db.add(new_message)
@@ -192,7 +192,7 @@ class ChatHistoryService:
                 status=MessageStatus.ACTIVE,
                 created_at=datetime.now(timezone.utc),
                 citations=(",".join(set(citations)) if citations else None),
-                tool_calls=tool_calls if tool_calls else None,
+                tool_calls=None,
                 thinking=thinking,
             )
             self.db.add(new_message)
@@ -354,7 +354,7 @@ class AsyncChatHistoryService:
                     citations=(
                         ",".join(set(citations)) if citations else None
                     ),
-                    tool_calls=tool_calls if tool_calls else None,
+                    tool_calls=None,
                     thinking=thinking,
                 )
                 self.session.add(new_message)
@@ -413,7 +413,7 @@ class AsyncChatHistoryService:
                 status=MessageStatus.ACTIVE,
                 created_at=datetime.now(timezone.utc),
                 citations=(",".join(set(citations)) if citations else None),
-                tool_calls=tool_calls if tool_calls else None,
+                tool_calls=None,
                 thinking=thinking,
             )
             self.session.add(new_message)
