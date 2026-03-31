@@ -4,8 +4,13 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
+
+[project.scripts]
+potpie = "potpie.cli.main:main"
+
 dependencies = [
     "aiohttp>=3.13.3",
+    "rich>=13.0.0",
     "alembic>=1.17.1",
     "anthropic>=0.72.0",
     "logfire[litellm]>=3.2.0",
