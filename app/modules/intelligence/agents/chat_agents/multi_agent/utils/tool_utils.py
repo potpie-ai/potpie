@@ -2,6 +2,7 @@
 
 import copy
 import functools
+import hashlib
 import inspect
 import json
 import re
@@ -100,6 +101,13 @@ def _safe_parse_tool_args(
         raw_str = str(raw_args) if raw_args != "N/A" else ""
         repaired = _repair_truncated_tool_args_json(raw_str)
         if repaired is not None:
+            if not isinstance(repaired, dict):
+                logger.warning(
+                    "Repaired JSON for tool call '%s' is not a dict (type=%s); normalizing to {}",
+                    tool_name,
+                    type(repaired).__name__,
+                )
+                repaired = {}
             try:
                 setattr(event.part, "args", json.dumps(repaired))
             except Exception as sanitize_error:
@@ -115,13 +123,15 @@ def _safe_parse_tool_args(
             )
             return repaired
 
+        raw_digest = hashlib.sha256(raw_str.encode()).hexdigest()
         logger.error(
             "JSON parsing error in tool call '%s': %s. "
-            "Tool args (raw, first 300 chars): %s. "
+            "Tool args payload size=%d bytes, sha256=%s. "
             "This may cause issues when pydantic_ai tries to serialize the message history.",
             tool_name,
             json_error,
-            raw_str[:300],
+            len(raw_str),
+            raw_digest,
         )
         try:
             setattr(event.part, "args", "{}")
@@ -211,11 +221,25 @@ def create_tool_result_response(event: FunctionToolResultEvent) -> ToolCallRespo
     if is_delegation_tool(tool_name):
         agent_type = extract_agent_type_from_delegation_tool(tool_name)
         full_result_content = str(event.result.content) if event.result.content else ""
-        (
-            truncated_result_content,
-            is_truncated,
-            original_length,
-        ) = truncate_result_content(full_result_content)
+
+        # Detect if the event already carries truncation metadata to avoid double-truncating
+        result_is_truncated = getattr(event.result, "is_truncated", None)
+        result_original_length = getattr(event.result, "original_length", None)
+        already_truncated = result_is_truncated or (
+            result_original_length is not None
+            and result_original_length > len(full_result_content)
+        )
+
+        if already_truncated:
+            truncated_result_content = full_result_content
+            is_truncated = bool(result_is_truncated)
+            original_length = result_original_length
+        else:
+            (
+                truncated_result_content,
+                is_truncated,
+                original_length,
+            ) = truncate_result_content(full_result_content)
 
         return ToolCallResponse(
             call_id=event.result.tool_call_id or "",
