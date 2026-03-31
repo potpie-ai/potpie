@@ -1,9 +1,62 @@
+# Build colgrep from the pinned next-plaid xml branch so stage images don't depend on release artifacts.
+FROM rust:1.88-slim-bookworm AS colgrep-builder
+
+ARG NEXT_PLAID_REPO=https://github.com/dhirenmathur/next-plaid.git
+ARG NEXT_PLAID_BRANCH=xml
+ARG NEXT_PLAID_COMMIT=6e0894ecd2dedaf5193ee3612c5d6fa2bcf47532
+ARG ORT_VERSION=1.23.0
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    curl \
+    git \
+    libopenblas-dev \
+    libssl-dev \
+    pkg-config \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+RUN git clone --branch "${NEXT_PLAID_BRANCH}" "${NEXT_PLAID_REPO}" next-plaid \
+    && cd next-plaid \
+    && git checkout "${NEXT_PLAID_COMMIT}"
+
+RUN set -eux; \
+    ARCH="$(dpkg --print-architecture)"; \
+    case "${ARCH}" in \
+        amd64) ORT_ARCH="x64" ;; \
+        arm64) ORT_ARCH="aarch64" ;; \
+        *) echo "Unsupported architecture: ${ARCH}" && exit 1 ;; \
+    esac; \
+    mkdir -p /opt/ort_cpu; \
+    wget -q "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-${ORT_ARCH}-${ORT_VERSION}.tgz"; \
+    tar -xzf "onnxruntime-linux-${ORT_ARCH}-${ORT_VERSION}.tgz"; \
+    cp -r "onnxruntime-linux-${ORT_ARCH}-${ORT_VERSION}/lib/." /opt/ort_cpu/; \
+    rm -rf "onnxruntime-linux-${ORT_ARCH}-${ORT_VERSION}" "onnxruntime-linux-${ORT_ARCH}-${ORT_VERSION}.tgz"
+
+WORKDIR /workspace/next-plaid
+RUN cargo build --release --package colgrep --features openblas
+
 # Use an official Python runtime as a parent image
 FROM python:3.11-slim
 
+ARG ORT_VERSION=1.23.0
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    git procps supervisor ripgrep silversearcher-ag ack curl ca-certificates xz-utils \
+    ack \
+    ca-certificates \
+    curl \
+    git \
+    libopenblas0-pthread \
+    libsqlite3-0 \
+    libssl3 \
+    procps \
+    ripgrep \
+    silversearcher-ag \
+    supervisor \
+    xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # ColGREP CLI (semantic search). Prefer the repo-packaged linux/amd64 binary
@@ -25,9 +78,15 @@ RUN uv sync --frozen --no-cache
 # Ensure the virtual environment binaries are on PATH
 ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+ENV ORT_DYLIB_PATH=/opt/ort_cpu/libonnxruntime.so.${ORT_VERSION}
+ENV LD_LIBRARY_PATH=/opt/ort_cpu
 
 # Download required NLTK data inside the managed environment
 RUN uv run python -c "import nltk; nltk.download('punkt')"
+
+# Copy the semantic search binary and shared libraries from the Rust builder.
+COPY --from=colgrep-builder /workspace/next-plaid/target/release/colgrep /usr/local/bin/colgrep
+COPY --from=colgrep-builder /opt/ort_cpu /opt/ort_cpu
 
 # Copy the rest of the application code into the container
 COPY . .
@@ -39,6 +98,8 @@ ENV NEW_RELIC_CONFIG_FILE=/app/newrelic.ini
 
 # Copy the Supervisor configuration file into the container
 COPY deployment/stage/mom-api/mom-api-supervisord.conf /etc/supervisor/conf.d/mom-api-supervisord.conf
+
+RUN colgrep --help >/dev/null
 
 # Expose the port that the app runs on
 EXPOSE 8001
