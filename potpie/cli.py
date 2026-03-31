@@ -42,6 +42,7 @@ class PotPieError(Exception):
     """CLI error with exit code."""
 
     def __init__(self, message: str, exit_code: int = 1):
+        """Initialize error with message and exit code."""
         super().__init__(message)
         self.exit_code = exit_code
 
@@ -111,7 +112,10 @@ def resolve_compose_file(compose_arg: Optional[str]) -> Path:
 # ─── HTTP Client ─────────────────────────────────────────────────────────────
 
 class PotPieClient:
+    """HTTP client wrapper for PotPie API communication."""
+
     def __init__(self, base_url: Optional[str] = None):
+        """Initialize client with optional base URL override."""
         self.base_url = (base_url or get_base_url()).rstrip("/")
         if httpx is None:
             raise ImportError("httpx is required: pip install httpx")
@@ -136,6 +140,7 @@ class PotPieClient:
             raise PotPieError(f"Error: {e}")
 
     def close(self):
+        """Close the underlying HTTP client connection."""
         self.client.close()
 
 
@@ -519,6 +524,7 @@ def cmd_config(args):
 # ─── Main ────────────────────────────────────────────────────────────────────
 
 def main():
+    """Entry point for the PotPie CLI."""
     parser = argparse.ArgumentParser(
         prog="potpie",
         description="PotPie CLI — Local Development Interface",
