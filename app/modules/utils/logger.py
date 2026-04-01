@@ -320,6 +320,10 @@ def configure_logging(level: Optional[str] = None):
         lib_logger.setLevel(log_level)
         lib_logger.propagate = False
 
+    # Set app hierarchy to INFO so all app.modules.* loggers show INFO logs
+    # This ensures app.modules.billing, app.modules.usage, etc. all work
+    logging.getLogger("app").setLevel(logging.INFO)
+
     # Catch-all for any other loggers: set to WARNING by default
     # This prevents unknown libraries from spamming logs
     logging.getLogger().setLevel(logging.WARNING)

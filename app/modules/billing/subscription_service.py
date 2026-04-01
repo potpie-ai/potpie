@@ -31,6 +31,7 @@ class BillingSubscriptionService:
         Returns:
             str: The Dodo customer ID or None if not found
         """
+        logger.info(f"[billing] Checking subscription status for user: {user_id}")
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(
@@ -41,14 +42,32 @@ class BillingSubscriptionService:
 
                 if response.status_code == 200:
                     data = response.json()
-                    # The dodo_customer_id should be in the subscription data
-                    return data.get("dodo_customer_id")
+                    dodo_customer_id = data.get("dodo_customer_id")
+                    subscription_id = data.get("subscription_id")
+                    plan_type = data.get("plan_type")
+
+                    if dodo_customer_id:
+                        logger.info(
+                            f"[billing] User EXISTS: user_id={user_id}, "
+                            f"dodo_customer_id={dodo_customer_id}, "
+                            f"subscription_id={subscription_id}, "
+                            f"plan_type={plan_type}"
+                        )
+                    else:
+                        logger.info(
+                            f"[billing] User NOT FOUND in subscriptions table: user_id={user_id}, "
+                            f"plan_type={plan_type}, will initialize free user"
+                        )
+                    return dodo_customer_id
                 else:
-                    logger.warning(f"Failed to get subscription status: {response.status_code}")
+                    logger.warning(
+                        f"[billing] Failed to get subscription status: "
+                        f"status_code={response.status_code}, user_id={user_id}"
+                    )
                     return None
 
         except Exception as e:
-            logger.error(f"Error getting dodo_customer_id: {e}")
+            logger.error(f"[billing] Error getting dodo_customer_id for user {user_id}: {e}")
             return None
 
     @staticmethod
