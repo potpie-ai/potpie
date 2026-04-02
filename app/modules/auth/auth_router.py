@@ -5,7 +5,7 @@ import os
 import httpx
 from dotenv import load_dotenv
 from fastapi import Depends, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse
 from fastapi.exceptions import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -232,12 +232,12 @@ class AuthAPI:
                     f"cannot link to user {user.uid}"
                 )
                 return JSONResponse(
-                    content=
+                    content={
                         {
                             "error": error_message,
                             "details": f"GitHub account {provider_uid} is already linked to user {existing_provider_with_uid.user_id}, cannot link to user {user.uid}",
                         }
-                    ,
+                    },
                     status_code=409,  # Conflict
                 )
 
@@ -271,12 +271,10 @@ class AuthAPI:
                         f"GitHub account {provider_uid} is already linked to another user: {e}"
                     )
                     return JSONResponse(
-                        content=
-                            {
-                                "error": error_message,
-                                "details": f"GitHub account {provider_uid} is already linked to another user. Database constraint violation: {str(e)}",
-                            }
-                        ,
+                        content={
+                            "error": error_message,
+                            "details": f"GitHub account {provider_uid} is already linked to another user. Database constraint violation: {str(e)}",
+                        },
                         status_code=409,  # Conflict
                     )
                 # Re-raise other IntegrityErrors (e.g., unique_user_provider)
@@ -328,12 +326,12 @@ class AuthAPI:
                     f"Blocked new GitHub signup attempt: GitHub UID {provider_uid} is not linked to any user"
                 )
                 return JSONResponse(
-                    content=
+                    content={
                         {
                             "error": "GitHub sign-up is no longer supported. Please use 'Continue with Google' with your work email address.",
                             "details": "New GitHub signups are disabled. Existing GitHub users can still sign in.",
                         }
-                    ,
+                    },
                     status_code=403,  # Forbidden
                 )
 
