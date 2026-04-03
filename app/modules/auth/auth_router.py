@@ -11,8 +11,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-logger = logging.getLogger(__name__)
-
 from app.core.database import get_async_db, get_db
 from app.modules.auth.auth_schema import (
     LoginRequest,
@@ -176,9 +174,7 @@ class AuthAPI:
             if not user:
                 logger.error(f"SSO user {link_to_user_id} not found in database!")
                 return JSONResponse(
-                    content=
-                        {"error": "User not found. Please sign in again."}
-                    ,
+                    content={"error": "User not found. Please sign in again."},
                     status_code=404,
                 )
 
@@ -197,15 +193,13 @@ class AuthAPI:
             if existing_github:
                 logger.info(f"GitHub already linked to user {user.uid}")
                 return JSONResponse(
-                    content=
-                        _signup_response_with_custom_token(
-                            {
-                                "uid": user.uid,
-                                "exists": True,
-                                "needs_github_linking": False,
-                            }
-                        )
-                    ,
+                    content=_signup_response_with_custom_token(
+                        {
+                            "uid": user.uid,
+                            "exists": True,
+                            "needs_github_linking": False,
+                        }
+                    ),
                     status_code=200,
                 )
 
@@ -233,10 +227,8 @@ class AuthAPI:
                 )
                 return JSONResponse(
                     content={
-                        {
-                            "error": error_message,
-                            "details": f"GitHub account {provider_uid} is already linked to user {existing_provider_with_uid.user_id}, cannot link to user {user.uid}",
-                        }
+                        "error": error_message,
+                        "details": f"GitHub account {provider_uid} is already linked to user {existing_provider_with_uid.user_id}, cannot link to user {user.uid}",
                     },
                     status_code=409,  # Conflict
                 )
@@ -288,15 +280,13 @@ class AuthAPI:
 
             logger.info(f"Successfully linked GitHub to user {user.uid}")
             return JSONResponse(
-                content=
-                    _signup_response_with_custom_token(
-                        {
-                            "uid": user.uid,
-                            "exists": True,
-                            "needs_github_linking": False,
-                        }
-                    )
-                ,
+                content=_signup_response_with_custom_token(
+                    {
+                        "uid": user.uid,
+                        "exists": True,
+                        "needs_github_linking": False,
+                    }
+                ),
                 status_code=200,
             )
 
@@ -354,15 +344,13 @@ class AuthAPI:
                         )
 
                     return JSONResponse(
-                        content=
-                            _signup_response_with_custom_token(
-                                {
-                                    "uid": user.uid,
-                                    "exists": True,
-                                    "needs_github_linking": False,
-                                }
-                            )
-                        ,
+                        content=_signup_response_with_custom_token(
+                            {
+                                "uid": user.uid,
+                                "exists": True,
+                                "needs_github_linking": False,
+                            }
+                        ),
                         status_code=200,
                     )
 
@@ -394,15 +382,13 @@ class AuthAPI:
                 )
 
                 return JSONResponse(
-                    content=
-                        _signup_response_with_custom_token(
-                            {
-                                "uid": new_user.uid,
-                                "exists": False,
-                                "needs_github_linking": False,  # They signed up with GitHub
-                            }
-                        )
-                    ,
+                    content=_signup_response_with_custom_token(
+                        {
+                            "uid": new_user.uid,
+                            "exists": False,
+                            "needs_github_linking": False,  # They signed up with GitHub
+                        }
+                    ),
                     status_code=201,
                 )
             except Exception as e:
@@ -428,15 +414,13 @@ class AuthAPI:
             has_github, _ = unified_auth.check_github_linked(user.uid)
 
             return JSONResponse(
-                content=
-                    _signup_response_with_custom_token(
-                        {
-                            "uid": user.uid,
-                            "exists": True,
-                            "needs_github_linking": not has_github,
-                        }
-                    )
-                ,
+                content=_signup_response_with_custom_token(
+                    {
+                        "uid": user.uid,
+                        "exists": True,
+                        "needs_github_linking": not has_github,
+                    }
+                ),
                 status_code=200,
             )
         else:
@@ -454,15 +438,13 @@ class AuthAPI:
                 logger.info(f"Created email/password user: {new_user.uid}")
 
                 return JSONResponse(
-                    content=
-                        _signup_response_with_custom_token(
-                            {
-                                "uid": new_user.uid,
-                                "exists": False,
-                                "needs_github_linking": True,  # Email users always need GitHub
-                            }
-                        )
-                    ,
+                    content=_signup_response_with_custom_token(
+                        {
+                            "uid": new_user.uid,
+                            "exists": False,
+                            "needs_github_linking": True,  # Email users always need GitHub
+                        }
+                    ),
                     status_code=201,
                 )
             except Exception as e:
