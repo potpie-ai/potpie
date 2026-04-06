@@ -30,6 +30,7 @@ from .conversation.conversation_schema import (
     CreateConversationRequest,
     CreateConversationResponse,
     RenameConversationRequest,
+    UpdateAgentRequest,
     ActiveSessionResponse,
     ActiveSessionErrorResponse,
     TaskStatusResponse,
@@ -483,6 +484,30 @@ class ConversationAPI:
         user_email = user["email"]
         controller = ConversationController(db, async_db, user_id, user_email)
         return await controller.rename_conversation(conversation_id, request.title)
+
+    @staticmethod
+    @router.patch(
+        "/conversations/{conversation_id}/agent",
+        response_model=ConversationInfoResponse,
+    )
+    async def update_agent(
+        conversation_id: str,
+        request: UpdateAgentRequest,
+        db: DbSession,
+        async_db: AsyncDbSession,
+        user: AuthenticatedUser,
+    ):
+        user_id = user["user_id"]
+        user_email = user["email"]
+        controller = ConversationController(db, async_db, user_id, user_email)
+        try:
+            return await controller.update_agent(conversation_id, request.agent_id)
+        except Exception as e:
+            logger.error(
+                f"Error in update_agent for {conversation_id}: {str(e)}",
+                exc_info=True,
+            )
+            raise
 
     @staticmethod
     @router.get("/conversations/{conversation_id}/active-session")

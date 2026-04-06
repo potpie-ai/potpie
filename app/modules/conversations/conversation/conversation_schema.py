@@ -66,6 +66,10 @@ class RenameConversationRequest(BaseModel):
     title: str
 
 
+class UpdateAgentRequest(BaseModel):
+    agent_id: str
+
+
 # Frontend-aligned schemas for session endpoints
 class ActiveSessionResponse(BaseModel):
     sessionId: str
