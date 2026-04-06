@@ -2014,6 +2014,12 @@ class ConversationService:
                 )
                 raise AccessTypeNotFoundError("Access type not found")
 
+            if access_type == ConversationAccessType.READ:
+                logger.bind(conversation_id=conversation_id, user_id=user_id).error(
+                    f"Access denied - access type is READ for user {user_id} on conversation {conversation_id}"
+                )
+                raise AccessTypeReadError("Access denied.")
+
             if not await self.agent_service.validate_agent_id(user_id, agent_id):
                 raise ConversationServiceError(f"Invalid agent_id: {agent_id}")
 

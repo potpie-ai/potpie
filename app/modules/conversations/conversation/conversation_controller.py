@@ -199,6 +199,8 @@ class ConversationController:
             raise HTTPException(status_code=404, detail=str(e))
         except AccessTypeNotFoundError as e:
             raise HTTPException(status_code=401, detail=str(e))
+        except AccessTypeReadError as e:
+            raise HTTPException(status_code=403, detail=str(e))
         except ConversationServiceError as e:
             raise HTTPException(status_code=500, detail=str(e))
 
