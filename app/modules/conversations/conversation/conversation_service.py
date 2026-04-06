@@ -1992,6 +1992,63 @@ class ConversationService:
                 "Failed to rename conversation due to an unexpected error"
             ) from e
 
+    async def update_conversation_agent(
+        self, conversation_id: str, agent_id: str, user_id: str
+    ) -> ConversationInfoResponse:
+        try:
+            conversation = await self.conversation_store.get_by_id(conversation_id)
+
+            if not conversation:
+                logger.warning(f"Conversation {conversation_id} not found in database")
+                raise ConversationNotFoundError(
+                    f"Conversation with id {conversation_id} not found"
+                )
+
+            access_type = await self.check_conversation_access(
+                conversation_id, self.user_email, user_id
+            )
+
+            if access_type == ConversationAccessType.NOT_FOUND:
+                logger.bind(conversation_id=conversation_id, user_id=user_id).error(
+                    f"Access denied - access type is NOT_FOUND for user {user_id} on conversation {conversation_id}"
+                )
+                raise AccessTypeNotFoundError("Access type not found")
+
+            if not await self.agent_service.validate_agent_id(user_id, agent_id):
+                raise ConversationServiceError(f"Invalid agent_id: {agent_id}")
+
+            await self.conversation_store.update_agent_ids(
+                conversation_id, [agent_id]
+            )
+
+            logger.info(
+                f"Updated conversation {conversation_id} agent to {agent_id} by user {user_id}"
+            )
+
+            return await self.get_conversation_info(conversation_id, user_id)
+
+        except ConversationNotFoundError as e:
+            logger.warning(f"ConversationNotFoundError: {str(e)}")
+            raise
+        except AccessTypeNotFoundError:
+            logger.exception(
+                f"AccessTypeNotFoundError in update_conversation_agent for {conversation_id}",
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
+            raise
+        except ConversationServiceError:
+            raise
+        except Exception as e:
+            logger.exception(
+                f"Error in update_conversation_agent for {conversation_id}",
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
+            raise ConversationServiceError(
+                f"Failed to update conversation agent for {conversation_id}"
+            ) from e
+
     async def get_conversations_with_projects_for_user(
         self,
         user_id: str,

@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -80,13 +80,24 @@ class AgentsService:
             self.db, llm_provider, tools_provider
         )
 
+    @staticmethod
+    def _is_localhost() -> bool:
+        base_url = os.getenv("BASE_URL", "")
+        env = os.getenv("ENV", "").lower()
+        is_local_env = env in ("development", "dev", "local")
+        return (
+            base_url.startswith("http://localhost")
+            or base_url.startswith("http://127.0.0.1")
+            or is_local_env
+        )
+
     def _system_agents(
         self,
         llm_provider: ProviderService,
         prompt_provider: PromptService,
         tools_provider: ToolService,
-    ):
-        return {
+    ) -> Dict[str, AgentWithInfo]:
+        agents = {
             "codebase_qna_agent": AgentWithInfo(
                 id="codebase_qna_agent",
                 name="Codebase Q&A Agent",
@@ -163,15 +174,17 @@ class AgentsService:
                     llm_provider, tools_provider, prompt_provider
                 ),
             ),
-            "spec_generation_agent": AgentWithInfo(
+        }
+        if self._is_localhost():
+            agents["spec_generation_agent"] = AgentWithInfo(
                 id="spec_generation_agent",
                 name="Specification Generation Agent",
                 description="An agent specialized in generating comprehensive technical specifications from user requests through a systematic 7-step process.",
                 agent=specgen.SpecGenAgent(
                     llm_provider, tools_provider, prompt_provider
                 ),
-            ),
-        }
+            )
+        return agents
 
     async def execute(self, ctx: ChatContext):
         return await self.supervisor_agent.run(ctx)
