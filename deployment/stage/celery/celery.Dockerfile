@@ -1,9 +1,9 @@
 # Build colgrep from the pinned next-plaid xml branch so stage images don't depend on release artifacts.
 FROM rust:1.88-slim-bookworm AS colgrep-builder
 
-ARG NEXT_PLAID_REPO=https://github.com/dhirenmathur/next-plaid.git
-ARG NEXT_PLAID_BRANCH=xml
-ARG NEXT_PLAID_COMMIT=6e0894ecd2dedaf5193ee3612c5d6fa2bcf47532
+ARG NEXT_PLAID_REPO=https://github.com/lightonai/next-plaid.git
+ARG NEXT_PLAID_BRANCH=main
+ARG NEXT_PLAID_COMMIT=b804bb04636866cd97a3d72055304be185cdbafc
 ARG ORT_VERSION=1.23.0
 
 RUN apt-get update && apt-get install -y \
