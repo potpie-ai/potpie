@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from datetime import datetime, timezone
 from sqlalchemy import select, func, update, delete
 from sqlalchemy.exc import SQLAlchemyError
@@ -20,6 +20,24 @@ class ConversationStore(BaseStore):
 
     async def get_by_id(self, conversation_id: str) -> Conversation | None:
         stmt = select(Conversation).where(Conversation.id == conversation_id)
+        result = await self.async_db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    def get_owned_by_id(self, conversation_id: str, user_id: str) -> Conversation | None:
+        return (
+            self.db.query(Conversation)
+            .filter_by(id=conversation_id, user_id=user_id)
+            .first()
+        )
+
+    async def get_owned_by_id_async(
+        self, conversation_id: str, user_id: str
+    ) -> Conversation | None:
+        stmt = (
+            select(Conversation)
+            .where(Conversation.id == conversation_id, Conversation.user_id == user_id)
+            .limit(1)
+        )
         result = await self.async_db.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -56,6 +74,32 @@ class ConversationStore(BaseStore):
         )
         await self.async_db.execute(stmt)
         await self.async_db.commit()
+
+    def update_shared_with_emails(
+        self, conversation_id: str, shared_with_emails: Optional[List[str]]
+    ) -> int:
+        result = (
+            self.db.query(Conversation)
+            .filter_by(id=conversation_id)
+            .update(
+                {Conversation.shared_with_emails: shared_with_emails},
+                synchronize_session=False,
+            )
+        )
+        self.db.commit()
+        return result
+
+    async def update_shared_with_emails_async(
+        self, conversation_id: str, shared_with_emails: Optional[List[str]]
+    ) -> int:
+        stmt = (
+            update(Conversation)
+            .where(Conversation.id == conversation_id)
+            .values(shared_with_emails=shared_with_emails)
+        )
+        result = await self.async_db.execute(stmt)
+        await self.async_db.commit()
+        return result.rowcount
 
     async def delete(self, conversation_id: str) -> int:
         stmt = delete(Conversation).where(Conversation.id == conversation_id)

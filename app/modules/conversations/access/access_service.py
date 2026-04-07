@@ -1,16 +1,13 @@
 from typing import List
 
 from fastapi import HTTPException
-from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.modules.utils.email_helper import is_valid_email
-from app.modules.conversations.conversation.conversation_model import (
-    Conversation,
-    Visibility,
-)
+from app.modules.conversations.conversation.conversation_model import Visibility
+from app.modules.conversations.conversation.conversation_store import ConversationStore
 
 
 class ShareChatServiceError(Exception):
@@ -20,6 +17,7 @@ class ShareChatServiceError(Exception):
 class ShareChatService:
     def __init__(self, db: Session):
         self.db = db
+        self.conversation_store = ConversationStore(db=db, async_db=None)
 
     async def share_chat(
         self,
@@ -28,11 +26,7 @@ class ShareChatService:
         recipient_emails: List[str] = None,
         visibility: Visibility = None,
     ) -> str:
-        chat = (
-            self.db.query(Conversation)
-            .filter_by(id=conversation_id, user_id=user_id)
-            .first()
-        )
+        chat = self.conversation_store.get_owned_by_id(conversation_id, user_id)
         if not chat:
             raise HTTPException(
                 404, "Chat does not exist or you are not authorized to access it."
@@ -80,11 +74,7 @@ class ShareChatService:
             raise ShareChatServiceError(f"Failed to update shared chat: {str(e)}")
 
     async def get_shared_emails(self, conversation_id: str, user_id: str) -> List[str]:
-        chat = (
-            self.db.query(Conversation)
-            .filter_by(id=conversation_id, user_id=user_id)
-            .first()
-        )
+        chat = self.conversation_store.get_owned_by_id(conversation_id, user_id)
         if not chat:
             raise HTTPException(
                 404, "Chat does not exist or you are not authorized to access it."
@@ -96,11 +86,7 @@ class ShareChatService:
         self, conversation_id: str, user_id: str, emails_to_remove: List[str]
     ) -> bool:
         """Remove access for specified emails from a conversation."""
-        chat = (
-            self.db.query(Conversation)
-            .filter_by(id=conversation_id, user_id=user_id)
-            .first()
-        )
+        chat = self.conversation_store.get_owned_by_id(conversation_id, user_id)
         if not chat:
             raise HTTPException(
                 status_code=404,
@@ -121,11 +107,10 @@ class ShareChatService:
 
         try:
             updated_emails = list(existing_emails - emails_to_remove_set)
-            self.db.query(Conversation).filter_by(id=conversation_id).update(
-                {Conversation.shared_with_emails: updated_emails},
-                synchronize_session=False,
+            self.conversation_store.update_shared_with_emails(
+                conversation_id=conversation_id,
+                shared_with_emails=updated_emails,
             )
-            self.db.commit()
             return True
         except IntegrityError as e:
             self.db.rollback()
@@ -139,6 +124,7 @@ class AsyncShareChatService:
 
     def __init__(self, session: AsyncSession):
         self.session = session
+        self.conversation_store = ConversationStore(db=None, async_db=session)
 
     async def share_chat(
         self,
@@ -147,16 +133,9 @@ class AsyncShareChatService:
         recipient_emails: List[str] = None,
         visibility: Visibility = None,
     ) -> str:
-        stmt = (
-            select(Conversation)
-            .where(
-                Conversation.id == conversation_id,
-                Conversation.user_id == user_id,
-            )
-            .limit(1)
+        chat = await self.conversation_store.get_owned_by_id_async(
+            conversation_id, user_id
         )
-        result = await self.session.execute(stmt)
-        chat = result.scalar_one_or_none()
         if not chat:
             raise HTTPException(
                 404, "Chat does not exist or you are not authorized to access it."
@@ -201,16 +180,9 @@ class AsyncShareChatService:
     async def get_shared_emails(
         self, conversation_id: str, user_id: str
     ) -> List[str]:
-        stmt = (
-            select(Conversation)
-            .where(
-                Conversation.id == conversation_id,
-                Conversation.user_id == user_id,
-            )
-            .limit(1)
+        chat = await self.conversation_store.get_owned_by_id_async(
+            conversation_id, user_id
         )
-        result = await self.session.execute(stmt)
-        chat = result.scalar_one_or_none()
         if not chat:
             raise HTTPException(
                 404, "Chat does not exist or you are not authorized to access it."
@@ -221,16 +193,9 @@ class AsyncShareChatService:
     async def remove_access(
         self, conversation_id: str, user_id: str, emails_to_remove: List[str]
     ) -> bool:
-        stmt = (
-            select(Conversation)
-            .where(
-                Conversation.id == conversation_id,
-                Conversation.user_id == user_id,
-            )
-            .limit(1)
+        chat = await self.conversation_store.get_owned_by_id_async(
+            conversation_id, user_id
         )
-        result = await self.session.execute(stmt)
-        chat = result.scalar_one_or_none()
         if not chat:
             raise HTTPException(
                 status_code=404,
@@ -250,13 +215,10 @@ class AsyncShareChatService:
 
         try:
             updated_emails = list(existing_emails - emails_to_remove_set)
-            update_stmt = (
-                update(Conversation)
-                .where(Conversation.id == conversation_id)
-                .values(shared_with_emails=updated_emails)
+            await self.conversation_store.update_shared_with_emails_async(
+                conversation_id=conversation_id,
+                shared_with_emails=updated_emails,
             )
-            await self.session.execute(update_stmt)
-            await self.session.commit()
             return True
         except IntegrityError as e:
             await self.session.rollback()
