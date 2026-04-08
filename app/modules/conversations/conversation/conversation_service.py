@@ -1309,7 +1309,10 @@ class ConversationService:
             # Log vision model check for debugging
             is_vision = self.agent_service.llm_provider.is_vision_model()
             logger.info(
-                f"[_generate_and_stream_ai_response] Vision model check: {is_vision}, has_images: {bool(image_attachments or context_images)}"
+                f"[_generate_and_stream_ai_response] Vision model check: {is_vision}, "
+                f"has_images: {bool(image_attachments or context_images)}, "
+                f"has_documents: {bool(document_attachments)}, "
+                f"attachment_ids_count: {len(attachment_ids) if attachment_ids else 0}"
             )
 
             logger.info(
@@ -1516,13 +1519,27 @@ class ConversationService:
                 try:
                     # Get attachment info
                     attachment = await self.media_service.get_attachment(attachment_id)
+                    if not attachment:
+                        logger.info(
+                            f"DEBUG: Skipping attachment {attachment_id} - not found"
+                        )
+                        continue
+
                     logger.info(
-                        f"DEBUG: Retrieved attachment {attachment_id}: type={attachment.attachment_type.value if attachment else 'None'}, mime_type={attachment.mime_type if attachment else 'None'}"
+                        f"DEBUG: Retrieved attachment {attachment_id}: "
+                        f"type={attachment.attachment_type.value}, mime_type={attachment.mime_type}"
                     )
-                    if (
-                        attachment
-                        and attachment.attachment_type.value.upper() == "IMAGE"
-                    ):  # Check if it's an image
+                    is_image_record = (
+                        attachment.attachment_type.value.upper() == "IMAGE"
+                    )
+                    # Pre-upload via /media/upload can store as DOCUMENT if Content-Type was
+                    # missing or not in the allowlist; still treat image/* as vision input.
+                    is_image_mime = (
+                        attachment.mime_type
+                        and attachment.mime_type.startswith("image/")
+                    )
+
+                    if is_image_record:
                         base64_data = await self.media_service.get_image_as_base64(
                             attachment_id
                         )
@@ -1534,6 +1551,21 @@ class ConversationService:
                         }
                         logger.info(
                             f"Prepared image {attachment_id} ({attachment.file_name}) for multimodal processing"
+                        )
+                    elif is_image_mime:
+                        raw = await self.media_service.get_attachment_data(
+                            attachment_id
+                        )
+                        base64_data = base64.b64encode(raw).decode("utf-8")
+                        images[attachment_id] = {
+                            "base64": base64_data,
+                            "mime_type": attachment.mime_type,
+                            "file_name": attachment.file_name,
+                            "file_size": attachment.file_size,
+                        }
+                        logger.info(
+                            f"Prepared image {attachment_id} ({attachment.file_name}) "
+                            f"as DOCUMENT+image/* for multimodal processing"
                         )
                     else:
                         logger.info(
@@ -1574,6 +1606,11 @@ class ConversationService:
                     if (
                         attachment
                         and attachment.attachment_type.value.upper() == "DOCUMENT"
+                        # Avoid duplicating image bytes already handled as vision input
+                        and not (
+                            attachment.mime_type
+                            and attachment.mime_type.startswith("image/")
+                        )
                     ):  # Check if it's a document
                         # Get document data as base64
                         doc_data = await self.media_service.get_attachment_data(attachment_id)

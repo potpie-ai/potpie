@@ -23,6 +23,7 @@ from app.modules.conversations.conversation.conversation_controller import (
     ConversationController,
 )
 from app.modules.usage.usage_service import UsageService
+from app.modules.media.media_controller import MediaController
 from app.modules.media.media_service import MediaService
 
 from .conversation.conversation_schema import (
@@ -226,29 +227,13 @@ class ConversationAPI:
             attachment_ids = list(attachment_ids) if attachment_ids else []
             logger.info(f"[post_message] Received {len(images) if images else 0} images, {len(attachment_ids) if attachment_ids else 0} pre-uploaded attachment_ids")
             if images:
-                media_service = MediaService(db)
+                media_controller = MediaController(db, user_id, user_email)
                 for _i, image in enumerate(images):
-                    # Check if image has content by checking filename and content_type
-                    if image.filename and image.content_type:
+                    if image.filename:
                         try:
-                            # Read file data first and pass as bytes to avoid UploadFile issues
-                            file_content = await image.read()
-                            # Use upload_image for actual images, upload_file for other types (PDFs, etc.)
-                            if image.content_type and image.content_type.startswith("image/"):
-                                upload_result = await media_service.upload_image(
-                                    file=file_content,
-                                    file_name=image.filename,
-                                    mime_type=image.content_type,
-                                    message_id=None,
-                                )
-                            else:
-                                # For non-image files (PDFs, etc.), use upload_file
-                                upload_result = await media_service.upload_file(
-                                    file=file_content,
-                                    file_name=image.filename,
-                                    mime_type=image.content_type,
-                                    message_id=None,
-                                )
+                            upload_result = await media_controller.upload_file_any(
+                                image, message_id=None
+                            )
                             attachment_ids.append(upload_result.id)
                         except Exception as e:
                             logger.exception(
@@ -257,7 +242,7 @@ class ConversationAPI:
                                 conversation_id=conversation_id,
                                 user_id=user_id,
                             )
-                            # Clean up any successfully uploaded attachments
+                            media_service = MediaService(db)
                             for uploaded_id in attachment_ids:
                                 try:
                                     await media_service.delete_attachment(uploaded_id)

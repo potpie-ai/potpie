@@ -1,9 +1,11 @@
+from pathlib import Path
 from typing import List, Optional
 
 from fastapi import HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 import io
+from PIL import Image, UnidentifiedImageError
 
 from app.core.config_provider import config_provider
 from app.modules.media.media_service import MediaService, MediaServiceError
@@ -53,6 +55,37 @@ class MediaController:
                 },
             )
 
+    def _looks_like_svg(self, file_data: bytes) -> bool:
+        snippet = file_data[:2048].decode("utf-8", errors="ignore").lower()
+        return "<svg" in snippet
+
+    def _detect_upload_image_mime(
+        self, file_name: str, declared_mime_type: str, file_data: bytes
+    ) -> Optional[str]:
+        declared_mime = (declared_mime_type or "").strip().lower()
+        allowed_image_types = getattr(self.media_service, "ALLOWED_IMAGE_TYPES", {})
+
+        if declared_mime in allowed_image_types:
+            return declared_mime
+
+        suffix = Path(file_name).suffix.lower()
+        if suffix == ".svg" or declared_mime == "image/svg+xml":
+            if self._looks_like_svg(file_data):
+                return "image/svg+xml"
+
+        try:
+            image = Image.open(io.BytesIO(file_data))
+            image.verify()
+            detected_mime = Image.MIME.get(image.format)
+            if detected_mime:
+                detected_mime = detected_mime.lower()
+                if detected_mime in allowed_image_types:
+                    return detected_mime
+        except (UnidentifiedImageError, OSError, ValueError):
+            return None
+
+        return None
+
     async def upload_image(
         self, file: UploadFile, message_id: Optional[str] = None
     ) -> AttachmentUploadResponse:
@@ -89,22 +122,43 @@ class MediaController:
     async def upload_file_any(
         self, file: UploadFile, message_id: Optional[str] = None
     ) -> AttachmentUploadResponse:
-        """Upload any file: images are validated and processed; other files stored as document."""
+        """Upload any file: detect real images from bytes, else store as document."""
         self._check_multimodal_enabled()
         if not file.filename:
             raise HTTPException(status_code=400, detail="No file provided")
         file_name = file.filename
-        mime_type = file.content_type or "application/octet-stream"
-        is_image = mime_type.startswith("image/") and mime_type in getattr(
-            self.media_service, "ALLOWED_IMAGE_TYPES", {}
-        )
+        declared_mime_type = file.content_type or "application/octet-stream"
         try:
-            if is_image:
-                return await self.upload_image(file, message_id)
-            return await self.media_service.upload_file(
-                file=file,
+            file_data = await file.read()
+            if not file_data:
+                raise HTTPException(status_code=400, detail="File is empty")
+
+            detected_image_mime = self._detect_upload_image_mime(
+                file_name, declared_mime_type, file_data
+            )
+            if detected_image_mime:
+                logger.info(
+                    "Detected upload as image",
+                    file_name=file_name,
+                    declared_mime_type=declared_mime_type,
+                    detected_mime_type=detected_image_mime,
+                )
+                return await self.media_service.upload_image(
+                    file=file_data,
+                    file_name=file_name,
+                    mime_type=detected_image_mime,
+                    message_id=message_id,
+                )
+
+            logger.info(
+                "Detected upload as document",
                 file_name=file_name,
-                mime_type=mime_type,
+                declared_mime_type=declared_mime_type,
+            )
+            return await self.media_service.upload_file(
+                file=file_data,
+                file_name=file_name,
+                mime_type=declared_mime_type,
                 message_id=message_id,
             )
         except MediaServiceError as e:
