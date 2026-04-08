@@ -184,6 +184,30 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
 
         return self._sync_run(_run)
 
+    def _search_filters(
+        self,
+        node_labels: Optional[list[str]],
+        source_description: Optional[str],
+    ) -> Any | None:
+        if not self._search_filters_cls:
+            return None
+        kwargs: dict[str, Any] = {}
+        if node_labels:
+            kwargs["node_labels"] = node_labels
+        if source_description and source_description.strip():
+            from graphiti_core.search.search_filters import ComparisonOperator, PropertyFilter
+
+            kwargs["property_filters"] = [
+                PropertyFilter(
+                    property_name="source_description",
+                    property_value=source_description.strip(),
+                    comparison_operator=ComparisonOperator.equals,
+                )
+            ]
+        if not kwargs:
+            return None
+        return self._search_filters_cls(**kwargs)
+
     async def search_async(
         self,
         pot_id: str,
@@ -191,15 +215,14 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
         limit: int = 10,
         node_labels: Optional[list[str]] = None,
         repo_name: Optional[str] = None,
+        source_description: Optional[str] = None,
     ) -> list[Any]:
         del repo_name  # optional future filter; Graphiti search is pot-scoped
         g = self._get_graphiti()
         if g is None:
             return []
 
-        search_filter = None
-        if node_labels and self._search_filters_cls:
-            search_filter = self._search_filters_cls(node_labels=node_labels)
+        search_filter = self._search_filters(node_labels, source_description)
 
         return await g.search(
             query=query,
@@ -215,6 +238,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
         limit: int = 10,
         node_labels: Optional[list[str]] = None,
         repo_name: Optional[str] = None,
+        source_description: Optional[str] = None,
     ) -> list[Any]:
         if not self.enabled:
             return []
@@ -226,6 +250,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
                 limit=limit,
                 node_labels=node_labels,
                 repo_name=repo_name,
+                source_description=source_description,
             )
 
         return self._sync_run(_run)

@@ -122,6 +122,7 @@ def search_pot_context(
     limit: int = 8,
     node_labels: Optional[list[str]] = None,
     repo_name: Optional[str] = None,
+    source_description: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     if not episodic.enabled:
         return []
@@ -131,6 +132,7 @@ def search_pot_context(
         limit=max(1, min(limit, 50)),
         node_labels=node_labels,
         repo_name=repo_name,
+        source_description=source_description,
     )
     rows: list[dict[str, Any]] = []
     for item in results:
@@ -153,6 +155,7 @@ async def search_pot_context_async(
     limit: int = 8,
     node_labels: Optional[list[str]] = None,
     repo_name: Optional[str] = None,
+    source_description: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     if not episodic.enabled:
         return []
@@ -162,6 +165,7 @@ async def search_pot_context_async(
         limit=max(1, min(limit, 50)),
         node_labels=node_labels,
         repo_name=repo_name,
+        source_description=source_description,
     )
     rows: list[dict[str, Any]] = []
     for item in results:

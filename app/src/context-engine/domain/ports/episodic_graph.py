@@ -36,6 +36,7 @@ class EpisodicGraphPort(Protocol):
         limit: int = 10,
         node_labels: Optional[list[str]] = None,
         repo_name: str | None = None,
+        source_description: str | None = None,
     ) -> list[Any]:
         ...
 
@@ -46,5 +47,6 @@ class EpisodicGraphPort(Protocol):
         limit: int = 10,
         node_labels: Optional[list[str]] = None,
         repo_name: str | None = None,
+        source_description: str | None = None,
     ) -> list[Any]:
         ...

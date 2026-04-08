@@ -59,11 +59,21 @@ app = typer.Typer(
 pot_app = typer.Typer(help="Active pot and local pot helpers.")
 
 # Set by root callback; read by all subcommands (including nested `pot`).
-_cli_state: dict[str, Any] = {"json": False, "verbose": False}
+_cli_state: dict[str, Any] = {"json": False, "verbose": False, "source": None}
 
 
 def _flags() -> tuple[bool, bool]:
     return bool(_cli_state.get("json")), bool(_cli_state.get("verbose"))
+
+
+def _resolved_source_label(explicit: Optional[str]) -> Optional[str]:
+    """Subcommand --source wins over global `context-engine --source …`."""
+    if explicit and explicit.strip():
+        return explicit.strip()
+    g = _cli_state.get("source")
+    if isinstance(g, str) and g.strip():
+        return g.strip()
+    return None
 
 
 def _version_callback(value: bool) -> None:
@@ -92,10 +102,18 @@ def _cli(
         "-v",
         help="Verbose logging (Neo4j driver); also CONTEXT_ENGINE_VERBOSE_NEO4J=1.",
     ),
+    source: Optional[str] = typer.Option(
+        None,
+        "--source",
+        "-s",
+        help="Default source label for ingest and optional search filter (e.g. cli, mcp). "
+        "May appear before the subcommand, e.g. `context-engine --source cli search …`.",
+    ),
 ) -> None:
     if not _version:
         _cli_state["json"] = json_output
         _cli_state["verbose"] = verbose
+        _cli_state["source"] = source.strip() if source and source.strip() else None
         load_cli_env()
         ve = os.getenv("CONTEXT_ENGINE_VERBOSE_NEO4J", "").strip().lower() in (
             "1",
@@ -324,6 +342,12 @@ def search(
         "-r",
         help="Optional owner/repo to narrow results inside a multi-repo pot",
     ),
+    source_description: Optional[str] = typer.Option(
+        None,
+        "--source",
+        "-s",
+        help="Optional episodic source label filter (e.g. cli). Overrides global --source when both are set.",
+    ),
     cwd: str = typer.Option(
         ".",
         "--cwd",
@@ -368,6 +392,7 @@ def search(
             limit=limit,
             node_labels=labels,
             repo_name=repo_name,
+            source_description=_resolved_source_label(source_description),
         )
     except Exception as exc:
         emit_error(
@@ -484,7 +509,7 @@ def ingest_cmd(
     cwd_resolved = str(Path(cwd).resolve())
     resolved_pot = _pot_id_or_git(explicit_pot, cwd=cwd_resolved)
     episode_name = (name.strip() if name else "") or default_episode_name(body_text)
-    source = (source_description.strip() if source_description else "") or default_source_label()
+    source = _resolved_source_label(source_description) or default_source_label()
     ref: datetime
     if reference_time:
         try:
