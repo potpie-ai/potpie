@@ -48,6 +48,9 @@ from pydantic_ai.messages import (
 from app.modules.intelligence.agents.chat_agents.multi_agent.utils.message_history_utils import (
     _history_strings_to_model_messages,
 )
+from app.modules.intelligence.agents.chat_agents.multi_agent.utils.multimodal_utils import (
+    document_to_user_content,
+)
 from app.modules.intelligence.agents.chat_agents.multi_agent.utils.tool_utils import (
     wrap_structured_tools,
 )
@@ -489,56 +492,18 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
 
         for attachment_id, doc_data in current_documents.items():
             try:
-                # Validate document data structure
                 if not isinstance(doc_data, dict):
                     logger.error(
                         f"Invalid document data structure for {attachment_id}: {type(doc_data)}"
                     )
                     continue
-
-                # Validate required fields
-                if "base64" not in doc_data:
-                    logger.error(f"Missing base64 data for document {attachment_id}")
-                    continue
-
-                base64_data = doc_data["base64"]
-                if not isinstance(base64_data, str) or not base64_data:
-                    logger.error(f"Invalid base64 data for document {attachment_id}")
-                    continue
-
-                # Validate base64 format
-                try:
-                    base64.b64decode(base64_data)
-                except Exception:
-                    logger.exception(
-                        f"Invalid base64 format for document {attachment_id}",
-                        attachment_id=attachment_id,
+                part = document_to_user_content(doc_data, attachment_id)
+                if part:
+                    content.append(part)
+                    logger.info(
+                        "Added document %s to multimodal content (DocumentUrl or text fallback)",
+                        attachment_id,
                     )
-                    continue
-
-                # Get mime type - required for documents
-                mime_type = doc_data.get("mime_type")
-                if not mime_type or not isinstance(mime_type, str):
-                    logger.warning(
-                        f"Missing or invalid mime type for document {attachment_id}"
-                    )
-                    mime_type = "application/octet-stream"
-
-                # Create data URL
-                data_url = f"data:{mime_type};base64,{base64_data}"
-
-                # Log document details for debugging
-                file_name = doc_data.get("file_name", "unknown")
-                file_size = doc_data.get("file_size", 0)
-                logger.info(
-                    f"Adding document {attachment_id} ({file_name}, {file_size} bytes, {mime_type}) to multimodal content"
-                )
-
-                content.append(ImageUrl(url=data_url))
-                logger.info(
-                    f"Successfully added document {attachment_id} to multimodal content"
-                )
-
             except Exception:
                 logger.exception(
                     f"Failed to add document {attachment_id} to content",
