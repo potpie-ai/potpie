@@ -211,17 +211,19 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
         return Agent(**agent_kwargs)
 
     def _prepare_multimodal_instructions(self, ctx: ChatContext) -> str:
-        """Prepare multimodal-specific instructions when images are present"""
-        if not ctx.has_images():
+        """Prepare multimodal-specific instructions when media is present"""
+        if not (ctx.has_images() or ctx.has_documents()):
             return ""
 
         all_images = ctx.get_all_images()
         current_images = ctx.get_current_images_only()
         context_images = ctx.get_context_images_only()
+        all_documents = ctx.get_all_documents()
 
         return f"""
         MULTIMODAL ANALYSIS INSTRUCTIONS:
-        You have access to {len(all_images)} image(s) - {len(current_images)} from the current message and {len(context_images)} from conversation history.
+        You have access to {len(all_images)} image(s) and {len(all_documents)} document(s).
+        Image split: {len(current_images)} from the current message and {len(context_images)} from conversation history.
 
         CRITICAL GUIDELINES FOR ACCURATE ANALYSIS:
         1. **ONLY analyze what you can clearly see** - Do not infer or guess about unclear details
@@ -251,19 +253,28 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
         if isinstance(ctx.node_ids, str):
             ctx.node_ids = [ctx.node_ids]
 
-        # Add image context information
+        # Add media context information
         image_context = ""
-        if ctx.has_images():
+        if ctx.has_images() or ctx.has_documents():
             all_images = ctx.get_all_images()
             image_details = []
             for attachment_id, image_data in all_images.items():
                 file_name = image_data.get("file_name", "unknown")
                 file_size = image_data.get("file_size", 0)
                 image_details.append(f"- {file_name} ({file_size} bytes)")
+            document_details = []
+            all_documents = ctx.get_all_documents()
+            for attachment_id, doc_data in all_documents.items():
+                file_name = doc_data.get("file_name", "unknown")
+                file_size = doc_data.get("file_size", 0)
+                document_details.append(f"- {file_name} ({file_size} bytes)")
 
             image_context = f"""
             ATTACHED IMAGES:
             {chr(10).join(image_details)}
+
+            ATTACHED DOCUMENTS:
+            {chr(10).join(document_details)}
 
             Image Analysis Notes:
             - These images are provided for visual analysis and debugging
@@ -287,23 +298,24 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
 
                 INSTRUCTIONS:
                 1. Use the available tools to gather information
-                2. {"Analyze the provided images in detail and " if ctx.has_images() else ""}Process and synthesize the gathered information
+                2. {"Analyze the provided media in detail and " if (ctx.has_images() or ctx.has_documents()) else ""}Process and synthesize the gathered information
                 3. Format your response in markdown unless explicitely asked to output in a different format, make sure it's well formatted
                 4. Include relevant code snippets and file references
-                5. {"Reference specific details from the images when relevant" if ctx.has_images() else "Provide clear explanations"}
+                5. {"Reference specific details from the attached media when relevant" if (ctx.has_images() or ctx.has_documents()) else "Provide clear explanations"}
                 6. Verify your output before submitting
 
                 IMPORTANT:
                 - Use tools efficiently and avoid unnecessary API calls
                 - Only use the tools listed below
                 - You have access to tools in MCP Servers too, use them effectively. These mcp servers provide you with tools user might ask you to perform tasks on
-                {"- Provide detailed image analysis when images are present" if ctx.has_images() else ""}
+                {"- Provide detailed analysis when images/documents are present" if (ctx.has_images() or ctx.has_documents()) else ""}
             """
 
     def _debug_multimodal_content(self, ctx: ChatContext) -> None:
         """Debug method to log detailed information about multimodal content"""
         logger.info("=== MULTIMODAL CONTENT DEBUG ===")
         logger.info(f"Context has images: {ctx.has_images()}")
+        logger.info(f"Context has documents: {ctx.has_documents()}")
 
         if ctx.has_images():
             all_images = ctx.get_all_images()
@@ -554,7 +566,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
         """Main execution flow with multimodal support using PydanticAI's native capabilities"""
         logger.info(
-            f"Running pydantic-ai agent {'with multimodal support' if ctx.has_images() else ''}"
+            f"Running pydantic-ai agent {'with multimodal support' if (ctx.has_images() or ctx.has_documents()) else ''}"
         )
 
         # Initialize code changes manager with conversation_id for persistence across messages
@@ -579,16 +591,17 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             f"🔄 Initialized code changes manager for conversation_id={ctx.conversation_id}, agent_id={ctx.curr_agent_id}, user_id={ctx.user_id}, tunnel_url={ctx.tunnel_url}"
         )
 
-        # Check if we have images and if the model supports vision
-        if ctx.has_images() and self.llm_provider.is_vision_model():
+        # Check if we have media and if the model supports vision/multimodal input
+        has_multimodal_content = ctx.has_images() or ctx.has_documents()
+        if has_multimodal_content and self.llm_provider.is_vision_model():
             logger.info(
-                f"Processing {len(ctx.get_all_images())} images with PydanticAI multimodal"
+                f"Processing multimodal content with PydanticAI: {len(ctx.get_all_images())} images, {len(ctx.get_all_documents())} documents"
             )
             return await self._run_multimodal(ctx)
         else:
-            if ctx.has_images() and not self.llm_provider.is_vision_model():
+            if has_multimodal_content and not self.llm_provider.is_vision_model():
                 logger.warning(
-                    "Images provided but current model doesn't support vision, proceeding with text-only"
+                    "Multimodal content provided but current model doesn't support vision, proceeding with text-only"
                 )
             # Use standard PydanticAI agent for text-only
             return await self._run_standard(ctx)
@@ -669,22 +682,24 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         has_images = ctx.has_images()
+        has_documents = ctx.has_documents()
+        has_multimodal_content = has_images or has_documents
         is_vision = self.llm_provider.is_vision_model()
         logger.info(
-            f"[PydanticRagAgent.run_stream] has_images={has_images}, is_vision_model={is_vision}, model={self.llm_provider.chat_config.model}"
+            f"[PydanticRagAgent.run_stream] has_images={has_images}, has_documents={has_documents}, is_vision_model={is_vision}, model={self.llm_provider.chat_config.model}"
         )
 
-        # Check if we have images and if the model supports vision
-        if has_images and is_vision:
+        # Check if we have media and if the model supports vision
+        if has_multimodal_content and is_vision:
             logger.info(
-                f"Processing {len(ctx.get_all_images())} images with PydanticAI multimodal streaming"
+                f"Processing multimodal content with PydanticAI streaming: {len(ctx.get_all_images())} images, {len(ctx.get_all_documents())} documents"
             )
             async for chunk in self._run_multimodal_stream(ctx):
                 yield chunk
         else:
-            if has_images and not is_vision:
+            if has_multimodal_content and not is_vision:
                 logger.warning(
-                    f"[PydanticRagAgent.run_stream] Images provided but model '{self.llm_provider.chat_config.model}' doesn't support vision, proceeding with text-only streaming"
+                    f"[PydanticRagAgent.run_stream] Multimodal content provided but model '{self.llm_provider.chat_config.model}' doesn't support vision, proceeding with text-only streaming"
                 )
             # Use standard PydanticAI streaming for text-only
             async for chunk in self._run_standard_stream(ctx):

@@ -405,6 +405,31 @@ class ConversationService:
 
             await self._add_system_message(conversation_id, project_name, user_id)
 
+            # Carry forward attachments sent during conversation creation.
+            # This ensures the first user message can reuse them even if the client
+            # sends only text on redirect from newchat -> chat.
+            if conversation.attachment_ids:
+                try:
+                    if self.async_redis_manager:
+                        await self.async_redis_manager.redis_client.set(
+                            f"conversation:pending_attachments:{conversation_id}",
+                            json.dumps(conversation.attachment_ids),
+                            ex=3600,
+                        )
+                    else:
+                        self.redis_manager.redis_client.set(
+                            f"conversation:pending_attachments:{conversation_id}",
+                            json.dumps(conversation.attachment_ids),
+                            ex=3600,
+                        )
+                    logger.info(
+                        f"Stored {len(conversation.attachment_ids)} pending attachments for conversation {conversation_id}"
+                    )
+                except Exception:
+                    logger.exception(
+                        f"Failed to store pending attachments for conversation {conversation_id}"
+                    )
+
             return conversation_id, "Conversation created successfully."
         except IntegrityError as e:
             logger.exception("IntegrityError in create_conversation", user_id=user_id)
@@ -730,6 +755,43 @@ class ConversationService:
             logger.info(
                 f"DEBUG: store_message called with message.attachment_ids: {message.attachment_ids}"
             )
+            if message_type == MessageType.HUMAN and not message.attachment_ids:
+                # Backward-compatible fallback for first message after create_conversation
+                # when attachment IDs were provided only at conversation creation time.
+                try:
+                    pending_key = (
+                        f"conversation:pending_attachments:{conversation_id}"
+                    )
+                    pending_raw = None
+                    if self.async_redis_manager:
+                        pending_raw = await self.async_redis_manager.redis_client.get(
+                            pending_key
+                        )
+                    else:
+                        pending_raw = self.redis_manager.redis_client.get(pending_key)
+                    if pending_raw:
+                        pending_value = (
+                            pending_raw.decode("utf-8")
+                            if isinstance(pending_raw, bytes)
+                            else pending_raw
+                        )
+                        parsed = json.loads(pending_value)
+                        if isinstance(parsed, list) and parsed:
+                            message.attachment_ids = parsed
+                            logger.info(
+                                f"Applied {len(parsed)} pending attachments to first message in conversation {conversation_id}"
+                            )
+                        if self.async_redis_manager:
+                            await self.async_redis_manager.redis_client.delete(
+                                pending_key
+                            )
+                        else:
+                            self.redis_manager.redis_client.delete(pending_key)
+                except Exception:
+                    logger.exception(
+                        f"Failed to load pending attachments for conversation {conversation_id}"
+                    )
+
             access_level = await self.check_conversation_access(
                 conversation_id, self.user_email, user_id
             )
