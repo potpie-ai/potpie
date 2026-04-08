@@ -117,16 +117,16 @@ def validate_and_build_data_url(image_data: dict, attachment_id: str) -> Optiona
         return None
 
 
-def validate_and_build_document_data_url(doc_data: dict, attachment_id: str) -> Optional[str]:
+def validate_and_get_document_url(doc_data: dict, attachment_id: str) -> Optional[str]:
     """
-    Validate document data and build a data URL if valid.
+    Validate document data and extract a signed/public HTTPS URL if available.
 
     Args:
-        doc_data: Dictionary containing document data with 'base64', 'mime_type', 'file_name'
+        doc_data: Dictionary containing document metadata (expects one of: url, signed_url, download_url)
         attachment_id: ID of the attachment for logging purposes
 
     Returns:
-        Data URL string if valid, None otherwise
+        HTTPS URL string if valid, None otherwise
     """
     try:
         # Validate document data structure
@@ -136,33 +136,23 @@ def validate_and_build_document_data_url(doc_data: dict, attachment_id: str) -> 
             )
             return None
 
-        # Validate required fields
-        if "base64" not in doc_data:
-            logger.error(f"Missing base64 data for document {attachment_id}")
+        document_url = (
+            doc_data.get("url")
+            or doc_data.get("signed_url")
+            or doc_data.get("download_url")
+        )
+        if not isinstance(document_url, str) or not document_url:
+            logger.warning(f"Missing document URL for document {attachment_id}")
             return None
-
-        base64_data = doc_data["base64"]
-        if not isinstance(base64_data, str) or not base64_data:
-            logger.error(f"Invalid base64 data for document {attachment_id}")
-            return None
-
-        # Validate base64 format
-        try:
-            base64.b64decode(base64_data)
-        except Exception as e:
-            logger.error(f"Invalid base64 format for document {attachment_id}: {str(e)}")
-            return None
-
-        # Get mime type - required for documents
-        mime_type = doc_data.get("mime_type")
-        if not mime_type or not isinstance(mime_type, str):
+        if not document_url.startswith("https://"):
             logger.warning(
-                f"Missing or invalid mime type for document {attachment_id}"
+                "Document URL for %s is not HTTPS (%s); skipping DocumentUrl part",
+                attachment_id,
+                document_url[:64],
             )
-            mime_type = "application/octet-stream"
+            return None
 
-        # Create data URL
-        return f"data:{mime_type};base64,{base64_data}"
+        return document_url
 
     except Exception as e:
         logger.error(
@@ -177,13 +167,13 @@ def document_to_user_content(doc_data: dict, attachment_id: str) -> Optional[Use
 
     Do not use ImageUrl for documents: OpenAI rejects non-image data URLs in image_url parts.
     """
-    data_url = validate_and_build_document_data_url(doc_data, attachment_id)
-    if not data_url:
+    document_url = validate_and_get_document_url(doc_data, attachment_id)
+    if not document_url:
         return None
     mime = coerce_document_mime(doc_data.get("mime_type"), doc_data.get("file_name", ""))
     if mime:
         return DocumentUrl(
-            url=data_url,
+            url=document_url,
             media_type=mime,
             identifier=attachment_id,
         )

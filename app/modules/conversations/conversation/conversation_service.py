@@ -1615,11 +1615,21 @@ class ConversationService:
                         # Get document data as base64
                         doc_data = await self.media_service.get_attachment_data(attachment_id)
                         base64_data = base64.b64encode(doc_data).decode("utf-8")
+                        document_url = None
+                        try:
+                            document_url = await self.media_service.generate_signed_url(
+                                attachment_id, expiration_minutes=60
+                            )
+                        except Exception as url_exc:
+                            logger.warning(
+                                f"Failed to generate signed URL for document {attachment_id}: {url_exc}"
+                            )
                         documents[attachment_id] = {
                             "base64": base64_data,
                             "mime_type": attachment.mime_type,
                             "file_name": attachment.file_name,
                             "file_size": attachment.file_size,
+                            "url": document_url,
                         }
                         logger.info(
                             f"Prepared document {attachment_id} ({attachment.file_name}) for multimodal processing"
