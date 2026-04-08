@@ -4,6 +4,9 @@
 # Or: ./scripts/run_celery_worker.sh
 # (Without -Q the worker only consumes the default "celery" queue and agent tasks never run here.)
 from app.celery.celery_app import celery_app, logger
+from integrations.application.bootstrap import load_providers
+
+load_providers()
 from app.celery.tasks.parsing_tasks import (
     process_parsing,  # Ensure the task is imported
 )
@@ -18,6 +21,7 @@ from app.modules.event_bus.tasks.event_tasks import (
 from app.modules.context_graph.tasks import (
     context_graph_backfill_pot,
     context_graph_ingest_pr,
+    context_graph_sync_linear_project_source,
 )
 
 
@@ -39,6 +43,7 @@ def register_tasks():
     # Register context graph tasks
     celery_app.tasks.register(context_graph_backfill_pot)
     celery_app.tasks.register(context_graph_ingest_pr)
+    celery_app.tasks.register(context_graph_sync_linear_project_source)
     logger.info("Tasks registered successfully")
 
 

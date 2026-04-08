@@ -12,6 +12,10 @@ from app.modules.code_provider.provider_factory import CodeProviderFactory
 from app.modules.context_graph.code_provider_source_control import (
     CodeProviderSourceControl,
 )
+from app.modules.context_graph.pot_resolution_sources import (
+    github_resolved_pot_from_project,
+)
+from integrations.adapters.outbound.postgres.project_source_model import ProjectSource
 from app.modules.projects.projects_model import Project
 from bootstrap.container import ContextEngineContainer, build_container
 from domain.ports.pot_resolution import (
@@ -19,7 +23,6 @@ from domain.ports.pot_resolution import (
     RepoRef,
     ResolvedPot,
     ResolvedPotRepo,
-    single_github_repo_pot,
 )
 from domain.ports.settings import ContextEngineSettingsPort
 
@@ -66,15 +69,9 @@ class SqlalchemyPotResolution(PotResolutionPort):
 
     def resolve_pot(self, pot_id: str) -> ResolvedPot | None:
         project = self._db.query(Project).filter(Project.id == pot_id).first()
-        if not project or not project.repo_name:
+        if not project:
             return None
-        ready = (project.status or "").lower() == "ready"
-        return single_github_repo_pot(
-            pot_id=project.id,
-            repo_name=project.repo_name,
-            ready=ready,
-            name=project.repo_name,
-        )
+        return github_resolved_pot_from_project(self._db, project)
 
     def known_pot_ids(self) -> list[str]:
         rows = (
@@ -90,6 +87,7 @@ class SqlalchemyPotResolution(PotResolutionPort):
 
     def find_pots_for_repo(self, ref: RepoRef) -> list[str]:
         want = ref.repo_name.lower()
+        ids: set[str] = set()
         rows = (
             self._db.query(Project.id)
             .filter(
@@ -98,7 +96,20 @@ class SqlalchemyPotResolution(PotResolutionPort):
             )
             .all()
         )
-        return [r[0] for r in rows]
+        ids.update(r[0] for r in rows)
+        repo_json = ProjectSource.scope_json["repo_name"].astext
+        src_rows = (
+            self._db.query(ProjectSource.project_id)
+            .filter(
+                ProjectSource.provider == "github",
+                ProjectSource.source_kind == "repository",
+                func.lower(repo_json) == want,
+            )
+            .distinct()
+            .all()
+        )
+        ids.update(r[0] for r in src_rows)
+        return list(ids)
 
     def list_pot_repos(self, pot_id: str) -> list[ResolvedPotRepo]:
         r = self.resolve_pot(pot_id)
@@ -128,15 +139,9 @@ class UserScopedSqlalchemyPotResolution(PotResolutionPort):
             .filter(Project.id == pot_id, Project.user_id == self._user_id)
             .first()
         )
-        if not project or not project.repo_name:
+        if not project:
             return None
-        ready = (project.status or "").lower() == "ready"
-        return single_github_repo_pot(
-            pot_id=project.id,
-            repo_name=project.repo_name,
-            ready=ready,
-            name=project.repo_name,
-        )
+        return github_resolved_pot_from_project(self._db, project)
 
     def known_pot_ids(self) -> list[str]:
         rows = (
@@ -153,6 +158,7 @@ class UserScopedSqlalchemyPotResolution(PotResolutionPort):
 
     def find_pots_for_repo(self, ref: RepoRef) -> list[str]:
         want = ref.repo_name.lower()
+        ids: set[str] = set()
         rows = (
             self._db.query(Project.id)
             .filter(
@@ -162,7 +168,22 @@ class UserScopedSqlalchemyPotResolution(PotResolutionPort):
             )
             .all()
         )
-        return [r[0] for r in rows]
+        ids.update(r[0] for r in rows)
+        repo_json = ProjectSource.scope_json["repo_name"].astext
+        src_rows = (
+            self._db.query(ProjectSource.project_id)
+            .join(Project, Project.id == ProjectSource.project_id)
+            .filter(
+                Project.user_id == self._user_id,
+                ProjectSource.provider == "github",
+                ProjectSource.source_kind == "repository",
+                func.lower(repo_json) == want,
+            )
+            .distinct()
+            .all()
+        )
+        ids.update(r[0] for r in src_rows)
+        return list(ids)
 
     def list_pot_repos(self, pot_id: str) -> list[ResolvedPotRepo]:
         r = self.resolve_pot(pot_id)

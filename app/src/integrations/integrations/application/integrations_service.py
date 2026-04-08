@@ -1,10 +1,10 @@
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
-from .sentry_oauth_v2 import SentryOAuthV2
-from .linear_oauth import LinearOAuth
-from .jira_oauth import JiraOAuth
-from .confluence_oauth import ConfluenceOAuth
-from .integrations_schema import (
+from integrations.adapters.outbound.oauth.sentry_oauth_v2 import SentryOAuthV2
+from integrations.adapters.outbound.oauth.linear_oauth import LinearOAuth
+from integrations.adapters.outbound.oauth.jira_oauth import JiraOAuth
+from integrations.adapters.outbound.oauth.confluence_oauth import ConfluenceOAuth
+from integrations.domain.integrations_schema import (
     SentryIntegrationStatus,
     SentrySaveRequest,
     LinearIntegrationStatus,
@@ -25,14 +25,14 @@ from .integrations_schema import (
     IntegrationMetadata,
     IntegrationSaveRequest,
 )
-from .integration_model import Integration
+from integrations.adapters.outbound.postgres.integration_model import Integration
 from starlette.config import Config
 import time
 import uuid
 from app.modules.utils.logger import setup_logger
-from app.modules.integrations import hash_user_id
+from integrations import hash_user_id
 from datetime import datetime, timedelta, timezone
-from .token_encryption import decrypt_token
+from integrations.adapters.outbound.crypto.token_encryption import decrypt_token
 
 logger = setup_logger(__name__)
 
@@ -164,7 +164,7 @@ class IntegrationsService:
     async def refresh_sentry_token(self, integration_id: str) -> Dict[str, Any]:
         """Refresh expired Sentry access token"""
         try:
-            from .token_encryption import decrypt_token, encrypt_token
+            from integrations.adapters.outbound.crypto.token_encryption import decrypt_token, encrypt_token
             import httpx
 
             # Get the integration from database
@@ -304,7 +304,7 @@ class IntegrationsService:
     async def get_valid_sentry_token(self, integration_id: str) -> str:
         """Get valid Sentry access token, refreshing if necessary"""
         try:
-            from .token_encryption import decrypt_token
+            from integrations.adapters.outbound.crypto.token_encryption import decrypt_token
 
             # Get the integration from database
             db_integration = (
@@ -597,7 +597,7 @@ class IntegrationsService:
     ) -> Dict[str, Any]:
         """Save Sentry integration with authorization code (backend handles token exchange)"""
         try:
-            from .token_encryption import encrypt_token
+            from integrations.adapters.outbound.crypto.token_encryption import encrypt_token
 
             logger.info(
                 "Processing Sentry integration",
@@ -1343,22 +1343,95 @@ class IntegrationsService:
     async def get_linear_integration_status(
         self, user_id: str
     ) -> LinearIntegrationStatus:
-        """Get Linear integration status for a user"""
-        user_info = self.linear_oauth.get_user_info(user_id)
+        """Get Linear integration status for a user (DB-backed; legacy in-memory fallback)."""
+        row = (
+            self.db.query(Integration)
+            .filter(
+                Integration.created_by == user_id,
+                Integration.integration_type == IntegrationType.LINEAR.value,
+                Integration.active.is_(True),
+            )
+            .order_by(Integration.updated_at.desc())
+            .first()
+        )
+        if row:
+            auth = row.auth_data or {}
+            if not auth.get("access_token"):
+                return LinearIntegrationStatus(user_id=user_id, is_connected=False)
+            exp_raw = auth.get("expires_at")
+            expires_dt: datetime | None = None
+            if isinstance(exp_raw, str):
+                try:
+                    expires_dt = datetime.fromisoformat(
+                        exp_raw.replace("Z", "+00:00")
+                    )
+                except ValueError:
+                    expires_dt = None
+            elif isinstance(exp_raw, datetime):
+                expires_dt = exp_raw
+            elif isinstance(exp_raw, (int, float)):
+                expires_dt = datetime.fromtimestamp(exp_raw, tz=timezone.utc)
+            return LinearIntegrationStatus(
+                user_id=user_id,
+                is_connected=True,
+                connected_at=row.created_at,
+                scope=auth.get("scope"),
+                expires_at=expires_dt,
+            )
 
+        user_info = self.linear_oauth.get_user_info(user_id)
         if not user_info:
             return LinearIntegrationStatus(user_id=user_id, is_connected=False)
-
+        exp_legacy = user_info.get("expires_at")
+        expires_legacy: datetime | None = None
+        if isinstance(exp_legacy, (int, float)):
+            expires_legacy = datetime.fromtimestamp(exp_legacy, tz=timezone.utc)
         return LinearIntegrationStatus(
             user_id=user_id,
             is_connected=True,
             scope=user_info.get("scope"),
-            expires_at=user_info.get("expires_at"),
+            expires_at=expires_legacy,
         )
 
     async def revoke_linear_integration(self, user_id: str) -> bool:
-        """Revoke Linear integration for a user"""
-        return self.linear_oauth.revoke_access(user_id)
+        """Deactivate Linear integrations for this user and clear stored tokens."""
+        try:
+            rows = (
+                self.db.query(Integration)
+                .filter(
+                    Integration.created_by == user_id,
+                    Integration.integration_type == IntegrationType.LINEAR.value,
+                    Integration.active.is_(True),
+                )
+                .all()
+            )
+            integration_ids = [row.integration_id for row in rows]
+            for row in rows:
+                row.active = False
+                row.status = IntegrationStatus.INACTIVE.value
+                if row.auth_data:
+                    ad = dict(row.auth_data)
+                    ad["access_token"] = None
+                    ad["refresh_token"] = None
+                    row.auth_data = ad
+            if integration_ids:
+                from integrations.adapters.outbound.postgres.project_source_model import ProjectSource
+
+                linked_sources = (
+                    self.db.query(ProjectSource)
+                    .filter(ProjectSource.integration_id.in_(integration_ids))
+                    .all()
+                )
+                for source in linked_sources:
+                    source.sync_enabled = False
+                    source.last_error = "connection revoked"
+            self.db.commit()
+            self.linear_oauth.revoke_access(user_id)
+            return True
+        except Exception:
+            logger.exception("Failed to revoke Linear integrations for user")
+            self.db.rollback()
+            return False
 
     def get_linear_oauth_instance(self) -> LinearOAuth:
         """Get the Linear OAuth integration instance"""
@@ -1369,7 +1442,19 @@ class IntegrationsService:
         return self.jira_oauth
 
     async def validate_linear_connection(self, user_id: str) -> bool:
-        """Validate if a user has a valid Linear connection"""
+        """Validate if a user has a valid Linear connection (DB or legacy in-memory)."""
+        row = (
+            self.db.query(Integration)
+            .filter(
+                Integration.created_by == user_id,
+                Integration.integration_type == IntegrationType.LINEAR.value,
+                Integration.active.is_(True),
+            )
+            .order_by(Integration.updated_at.desc())
+            .first()
+        )
+        if row and (row.auth_data or {}).get("access_token"):
+            return True
         return self.linear_oauth.token_store.is_token_valid(user_id)
 
     async def get_linear_token_info(self, user_id: str) -> Optional[Dict[str, Any]]:
@@ -1503,7 +1588,7 @@ class IntegrationsService:
     ) -> Dict[str, Any]:
         """Save Linear integration with authorization code (backend handles token exchange)"""
         try:
-            from .token_encryption import encrypt_token
+            from integrations.adapters.outbound.crypto.token_encryption import encrypt_token
 
             # Validate the authorization code format and timing
             if not request.code or len(request.code) < 10:
@@ -1784,7 +1869,7 @@ class IntegrationsService:
     ) -> Dict[str, Any]:
         """Save Jira integration with authorization code"""
         try:
-            from .token_encryption import encrypt_token
+            from integrations.adapters.outbound.crypto.token_encryption import encrypt_token
 
             if not request.code or len(request.code) < 20:
                 raise Exception("Invalid authorization code format")
@@ -2066,7 +2151,7 @@ class IntegrationsService:
                     )
 
                     # Update tokens in database
-                    from .token_encryption import encrypt_token
+                    from integrations.adapters.outbound.crypto.token_encryption import encrypt_token
 
                     auth_data["access_token"] = encrypt_token(
                         new_tokens["access_token"]
@@ -2313,7 +2398,7 @@ class IntegrationsService:
     ) -> Dict[str, Any]:
         """Save Confluence integration with authorization code (associate with user_id)"""
         try:
-            from .token_encryption import encrypt_token
+            from integrations.adapters.outbound.crypto.token_encryption import encrypt_token
 
             if not request.code or len(request.code) < 20:
                 raise Exception("Invalid authorization code format")
@@ -2483,7 +2568,7 @@ class IntegrationsService:
 
     async def _get_confluence_context(self, integration_id: str) -> Dict[str, Any]:
         """Helper to get Confluence integration context with decrypted tokens"""
-        from .token_encryption import decrypt_token
+        from integrations.adapters.outbound.crypto.token_encryption import decrypt_token
 
         db_integration = (
             self.db.query(Integration)

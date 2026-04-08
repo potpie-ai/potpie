@@ -347,7 +347,7 @@ class AuthAPI:
 
                     # Update last login (encrypt token before storing; update_last_login does not encrypt)
                     if oauth_token:
-                        from app.modules.integrations.token_encryption import (
+                        from integrations.adapters.outbound.crypto.token_encryption import (
                             encrypt_token,
                         )
 

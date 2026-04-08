@@ -69,6 +69,7 @@ class PotpieCeleryMutationHandlers:
                 body.pot_id,
                 body.pr_number,
                 is_live_bridge=body.is_live_bridge,
+                repo_name=body.repo_name,
             )
         except Exception as e:
             logger.warning(

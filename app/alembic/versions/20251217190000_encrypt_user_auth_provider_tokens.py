@@ -34,7 +34,10 @@ def upgrade() -> None:
     The service layer will handle decryption automatically going forward.
     """
     # Import encryption utility
-    from app.modules.integrations.token_encryption import encrypt_token, decrypt_token
+    from integrations.adapters.outbound.crypto.token_encryption import (
+        decrypt_token,
+        encrypt_token,
+    )
 
     # Get database connection
     conn = op.get_bind()

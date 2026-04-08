@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "context-engine[all]",
+    "potpie-integrations",
     "aiohttp>=3.13.3",
     "alembic>=1.17.1",
     "anthropic>=0.72.0",
@@ -129,7 +130,7 @@ omit = [
     "app/modules/intelligence/agents/chat_agents/multi_agent/stream_processor.py",
     "app/modules/intelligence/tools/code_changes_manager/tool_functions.py",
     "app/modules/parsing/knowledge_graph/inference_service.py",
-    "app/modules/integrations/integrations_service.py",
+    "app/src/integrations/integrations/application/integrations_service.py",
     "app/modules/repo_manager/repo_manager.py",
     "app/modules/parsing/graph_construction/parsing_repomap.py",
     "app/modules/intelligence/tools/jira_tools/jira_client.py",
@@ -153,7 +154,7 @@ omit = [
     "app/modules/utils/gvisor_runner.py",
     "app/modules/utils/install_gvisor.py",
     "app/modules/utils/email_helper.py",
-    "app/modules/integrations/integrations_router.py",
+    "app/src/integrations/integrations/adapters/inbound/http/integrations_router.py",
     "app/modules/utils/firebase_setup.py",
     "app/modules/code_provider/github/github_service.py",
     "app/modules/code_provider/github/github_provider.py",
@@ -262,3 +263,4 @@ fail_under = 49
 
 [tool.uv.sources]
 context-engine = { path = "app/src/context-engine", editable = true }
+potpie-integrations = { path = "app/src/integrations", editable = true }

@@ -11,7 +11,7 @@ from application.services.pr_bundle import fetch_full_pr
 from application.use_cases.ingest_merged_pr import ingest_merged_pull_request
 from domain.ports.episodic_graph import EpisodicGraphPort
 from domain.ports.ingestion_ledger import IngestionLedgerPort, ledger_scope_from_pot_repo
-from domain.ports.pot_resolution import PotResolutionPort
+from domain.ports.pot_resolution import PotResolutionPort, ResolvedPotRepo
 from domain.ports.settings import ContextEngineSettingsPort
 from domain.ports.source_control import SourceControlPort
 from domain.ports.structural_graph import StructuralGraphPort
@@ -30,6 +30,8 @@ def backfill_pot_context(
     structural: StructuralGraphPort,
     pot_id: str,
     rate_limit_sleep_s: float = 0.5,
+    *,
+    target_repo: ResolvedPotRepo | None = None,
 ) -> dict[str, Any]:
     if not settings.is_enabled():
         return {
@@ -39,7 +41,26 @@ def backfill_pot_context(
         }
 
     resolved = pots.resolve_pot(pot_id)
-    primary = resolved.primary_repo() if resolved else None
+    if target_repo is not None:
+        if not resolved:
+            return {
+                "status": "skipped",
+                "pot_id": pot_id,
+                "reason": "pot_not_found_or_missing_repo",
+            }
+        if not any(
+            r.repo_name == target_repo.repo_name and r.provider == target_repo.provider
+            for r in resolved.repos
+        ):
+            return {
+                "status": "skipped",
+                "pot_id": pot_id,
+                "reason": "target_repo_not_in_pot",
+            }
+        primary = target_repo
+    else:
+        primary = resolved.primary_repo() if resolved else None
+
     if not resolved or not primary or not primary.repo_name:
         return {
             "status": "skipped",

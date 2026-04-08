@@ -2,7 +2,7 @@
 
 from typing import Dict, Optional, Any
 from starlette.config import Config
-from .atlassian_oauth_base import AtlassianOAuthBase
+from integrations.adapters.outbound.oauth.atlassian_oauth_base import AtlassianOAuthBase
 import httpx
 from app.modules.utils.logger import setup_logger
 

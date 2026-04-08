@@ -10,7 +10,7 @@ the app descriptor. See: https://developer.atlassian.com/cloud/confluence/module
 """
 
 from starlette.config import Config
-from .atlassian_oauth_base import AtlassianOAuthBase
+from integrations.adapters.outbound.oauth.atlassian_oauth_base import AtlassianOAuthBase
 
 
 class ConfluenceOAuth(AtlassianOAuthBase):

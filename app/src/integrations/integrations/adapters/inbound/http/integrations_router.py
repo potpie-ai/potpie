@@ -9,7 +9,7 @@ import base64
 import json
 import time
 from app.modules.utils.logger import setup_logger
-from app.modules.integrations import hash_user_id
+from integrations import hash_user_id
 
 import urllib.parse
 import jwt
@@ -18,12 +18,12 @@ from app.core.database import get_db
 from app.api.router import get_api_key_user
 from app.modules.auth.auth_service import AuthService
 
-from .sentry_oauth_v2 import SentryOAuthV2
-from .linear_oauth import LinearOAuth
-from .jira_oauth import JiraOAuth
-from .confluence_oauth import ConfluenceOAuth
-from .integrations_service import IntegrationsService
-from .integrations_schema import (
+from integrations.adapters.outbound.oauth.sentry_oauth_v2 import SentryOAuthV2
+from integrations.adapters.outbound.oauth.linear_oauth import LinearOAuth
+from integrations.adapters.outbound.oauth.jira_oauth import JiraOAuth
+from integrations.adapters.outbound.oauth.confluence_oauth import ConfluenceOAuth
+from integrations.application.integrations_service import IntegrationsService
+from integrations.domain.integrations_schema import (
     OAuthInitiateRequest,
     OAuthStatusResponse,
     SentryIntegrationStatus,
@@ -51,6 +51,18 @@ from .integrations_schema import (
 
 logger = setup_logger(__name__)
 router = APIRouter(prefix="/integrations", tags=["integrations"])
+
+
+def _linear_oauth_callback_redirect_uri(request: Request) -> str:
+    """URL registered in Linear OAuth app; must match authorize + token exchange."""
+    scheme = (
+        request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+    ).split(",")[0].strip()
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+    if host:
+        return f"{scheme}://{host}/api/v1/integrations/linear/callback"
+    netloc = request.url.netloc
+    return f"{scheme}://{netloc}/api/v1/integrations/linear/callback"
 
 
 def sanitize_headers(headers: Dict[str, str]) -> Dict[str, str]:
@@ -397,7 +409,7 @@ async def linear_oauth_redirect(
         # Get redirect URI from query params or construct from current request
         redirect_uri = request.query_params.get(
             "redirect_uri",
-            f"https://{request.url.hostname}/api/v1/integrations/linear/callback",
+            _linear_oauth_callback_redirect_uri(request),
         )
 
         # Get state parameter if provided
@@ -451,13 +463,12 @@ async def linear_oauth_callback(
                 integrations_service = IntegrationsService(db)
 
                 # Create a LinearSaveRequest with the authorization code
-                from .integrations_schema import LinearSaveRequest
+                from integrations.domain.integrations_schema import LinearSaveRequest
                 from datetime import datetime
 
-                # Always use HTTPS in production
                 save_request = LinearSaveRequest(
                     code=code,
-                    redirect_uri=f"https://{request.url.hostname}/api/v1/integrations/linear/callback",
+                    redirect_uri=_linear_oauth_callback_redirect_uri(request),
                     instance_name="Linear Integration",  # Will be updated with org name in service
                     integration_type="linear",
                     timestamp=datetime.utcnow().isoformat() + "Z",
@@ -545,7 +556,7 @@ async def linear_oauth_callback(
 @router.get("/linear/status/{user_id}")
 async def get_linear_status(
     user_id: str,
-    linear_oauth: LinearOAuth = Depends(get_linear_oauth),
+    integrations_service: IntegrationsService = Depends(get_integrations_service),
     user: dict = Depends(AuthService.check_auth),
 ) -> LinearIntegrationStatus:
     """Get Linear integration status for a user"""
@@ -555,23 +566,13 @@ async def get_linear_status(
             status_code=403, detail="Cannot access other users' integration status"
         )
 
-    user_info = linear_oauth.get_user_info(user_id)
-
-    if not user_info:
-        return LinearIntegrationStatus(user_id=user_id, is_connected=False)
-
-    return LinearIntegrationStatus(
-        user_id=user_id,
-        is_connected=True,
-        scope=user_info.get("scope"),
-        expires_at=user_info.get("expires_at"),
-    )
+    return await integrations_service.get_linear_integration_status(user_id)
 
 
 @router.delete("/linear/revoke/{user_id}")
 async def revoke_linear_access(
     user_id: str,
-    linear_oauth: LinearOAuth = Depends(get_linear_oauth),
+    integrations_service: IntegrationsService = Depends(get_integrations_service),
     user: dict = Depends(AuthService.check_auth),
 ) -> Dict[str, Any]:
     """Revoke Linear OAuth access for a user"""
@@ -581,7 +582,7 @@ async def revoke_linear_access(
             status_code=403, detail="Cannot revoke other users' integrations"
         )
 
-    success = linear_oauth.revoke_access(user_id)
+    success = await integrations_service.revoke_linear_integration(user_id)
 
     if success:
         return {
@@ -683,7 +684,7 @@ async def jira_oauth_callback(
                 db = SessionLocal()
                 integrations_service = IntegrationsService(db)
 
-                from .integrations_schema import JiraSaveRequest
+                from integrations.domain.integrations_schema import JiraSaveRequest
                 from datetime import datetime
 
                 # Prefer configured redirect URI so it exactly matches what's registered
@@ -1024,7 +1025,7 @@ async def confluence_oauth_callback(
             try:
                 integrations_service = IntegrationsService(db)
 
-                from .integrations_schema import ConfluenceSaveRequest
+                from integrations.domain.integrations_schema import ConfluenceSaveRequest
                 from datetime import datetime
 
                 # Prefer configured redirect URI so it exactly matches what's registered

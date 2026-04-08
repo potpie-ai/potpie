@@ -37,8 +37,8 @@ from app.modules.utils.APIRouter import APIRouter
 from app.modules.usage.usage_service import UsageService
 from app.modules.search.search_service import SearchService
 from app.modules.search.search_schema import SearchRequest, SearchResponse
-from app.modules.integrations.integrations_service import IntegrationsService
-from app.modules.integrations.integrations_schema import (
+from integrations.application.integrations_service import IntegrationsService
+from integrations.domain.integrations_schema import (
     IntegrationSaveRequest,
     IntegrationSaveResponse,
 )

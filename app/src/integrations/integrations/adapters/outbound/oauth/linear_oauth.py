@@ -10,7 +10,7 @@ import urllib.parse
 import time
 import hashlib
 from app.modules.utils.logger import setup_logger
-from app.modules.integrations import hash_user_id
+from integrations import hash_user_id
 
 logger = setup_logger(__name__)
 

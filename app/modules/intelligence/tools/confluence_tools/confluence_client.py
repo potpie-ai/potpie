@@ -14,9 +14,9 @@ from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 import httpx
 
-from app.modules.integrations.integration_model import Integration
-from app.modules.integrations.integrations_schema import IntegrationType
-from app.modules.integrations.token_encryption import decrypt_token
+from integrations.adapters.outbound.postgres.integration_model import Integration
+from integrations.domain.integrations_schema import IntegrationType
+from integrations.adapters.outbound.crypto.token_encryption import decrypt_token
 from datetime import datetime, timezone, timedelta
 
 

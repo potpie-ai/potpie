@@ -33,7 +33,9 @@ from app.modules.intelligence.prompts.prompt_model import (  # noqa: F401
 )
 
 # Integration models
-from app.modules.integrations.integration_model import Integration  # noqa: F401
+from integrations.adapters.outbound.postgres.integration_model import (  # noqa: F401
+    Integration,
+)
 
 # Media models
 from app.modules.media.media_model import MessageAttachment  # noqa: F401

@@ -8,7 +8,7 @@ from typing import Any, Dict
 
 from sqlalchemy.orm import Session
 
-from app.modules.integrations.integrations_service import IntegrationsService
+from integrations.application.integrations_service import IntegrationsService
 from app.modules.projects.projects_model import Project
 from app.modules.utils.logger import setup_logger
 

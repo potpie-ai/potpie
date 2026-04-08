@@ -2,7 +2,10 @@ from app.modules.conversations.conversation.conversation_model import (  # noqa
     Conversation,
 )
 from app.modules.conversations.message.message_model import Message  # noqa
-from app.modules.integrations.integration_model import Integration  # noqa
+from integrations.adapters.outbound.postgres.integration_model import Integration  # noqa
+from integrations.adapters.outbound.postgres.project_source_model import (  # noqa
+    ProjectSource,
+)
 from app.modules.context_graph.models import (  # noqa
     ContextSyncState,
     ContextIngestionLog,

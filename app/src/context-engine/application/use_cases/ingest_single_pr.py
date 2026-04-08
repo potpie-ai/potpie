@@ -9,7 +9,7 @@ from application.services.pr_bundle import fetch_full_pr
 from application.use_cases.ingest_merged_pr import ingest_merged_pull_request
 from domain.ports.episodic_graph import EpisodicGraphPort
 from domain.ports.ingestion_ledger import IngestionLedgerPort, ledger_scope_from_pot_repo
-from domain.ports.pot_resolution import PotResolutionPort
+from domain.ports.pot_resolution import PotResolutionPort, ResolvedPotRepo
 from domain.ports.settings import ContextEngineSettingsPort
 from domain.ports.source_control import SourceControlPort
 from domain.ports.structural_graph import StructuralGraphPort
@@ -17,6 +17,21 @@ from domain.ports.structural_graph import StructuralGraphPort
 logger = logging.getLogger(__name__)
 
 SOURCE_TYPE = "github_pr"
+
+
+def pick_github_repo_for_pot(
+    resolved_repos: list[ResolvedPotRepo], repo_name: str | None
+) -> ResolvedPotRepo | None:
+    github_repos = [r for r in resolved_repos if r.provider == "github"]
+    if not github_repos:
+        return None
+    if not repo_name:
+        return github_repos[0]
+    want = repo_name.strip().lower()
+    for r in github_repos:
+        if r.repo_name.lower() == want:
+            return r
+    return github_repos[0]
 
 
 def ingest_single_pull_request(
@@ -29,6 +44,8 @@ def ingest_single_pull_request(
     pot_id: str,
     pr_number: int,
     is_live_bridge: bool = True,
+    *,
+    repo_name: str | None = None,
 ) -> dict[str, Any]:
     if not settings.is_enabled():
         return {
@@ -39,8 +56,15 @@ def ingest_single_pull_request(
         }
 
     resolved = pots.resolve_pot(pot_id)
-    primary = resolved.primary_repo() if resolved else None
-    if not resolved or not primary or not primary.repo_name:
+    if not resolved or not resolved.repos:
+        return {
+            "status": "skipped",
+            "pot_id": pot_id,
+            "pr_number": pr_number,
+            "reason": "pot_not_found_or_missing_repo",
+        }
+    primary = pick_github_repo_for_pot(resolved.repos, repo_name)
+    if not primary or not primary.repo_name:
         return {
             "status": "skipped",
             "pot_id": pot_id,

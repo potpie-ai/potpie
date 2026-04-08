@@ -51,6 +51,10 @@ class IngestPrRequest(BaseModel):
     pot_id: str
     pr_number: int
     is_live_bridge: bool = True
+    repo_name: Optional[str] = Field(
+        default=None,
+        description="GitHub owner/repo when the pot has multiple repository sources.",
+    )
 
 
 class IngestEpisodeRequest(BaseModel):

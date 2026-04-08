@@ -4198,6 +4198,7 @@ dependencies = [
     { name = "pillow" },
     { name = "postgres" },
     { name = "posthog" },
+    { name = "potpie-integrations" },
     { name = "protobuf" },
     { name = "psycopg-binary" },
     { name = "pyasn1" },
@@ -4286,6 +4287,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=12.1.1" },
     { name = "postgres", specifier = ">=4.0" },
     { name = "posthog", specifier = ">=6.9.0" },
+    { name = "potpie-integrations", editable = "app/src/integrations" },
     { name = "protobuf", specifier = ">=6.33.5" },
     { name = "psycopg-binary", specifier = ">=3.2.12" },
     { name = "pyasn1", specifier = ">=0.6.2" },
@@ -4328,6 +4330,11 @@ dev = [
     { name = "pytest-cov", specifier = ">=6.0.0" },
     { name = "ruff", specifier = ">=0.14.3" },
 ]
+
+[[package]]
+name = "potpie-integrations"
+version = "0.1.0"
+source = { editable = "app/src/integrations" }
 
 [[package]]
 name = "pre-commit"
