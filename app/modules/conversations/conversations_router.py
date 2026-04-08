@@ -193,6 +193,9 @@ class ConversationAPI:
             None, description="Tunnel URL from VS Code extension for local server routing"
         ),
         images: Optional[List[UploadFile]] = File(None),
+        attachment_ids: Optional[List[str]] = Form(
+            None, description="Pre-uploaded attachment IDs (non-multimodal path)"
+        ),
         stream: bool = Query(True, description="Whether to stream the response"),
         session_id: Optional[str] = Query(
             None, description="Session ID for reconnection"
@@ -219,8 +222,9 @@ class ConversationAPI:
         with log_context(conversation_id=conversation_id, user_id=user_id):
             await UsageService.check_usage_limit(user_id, async_db)
 
-            # Process images if present
-            attachment_ids = []
+            # Process images if present and merge with pre-uploaded attachment_ids
+            attachment_ids = list(attachment_ids) if attachment_ids else []
+            logger.info(f"[post_message] Received {len(images) if images else 0} images, {len(attachment_ids) if attachment_ids else 0} pre-uploaded attachment_ids")
             if images:
                 media_service = MediaService(db)
                 for _i, image in enumerate(images):
@@ -229,12 +233,22 @@ class ConversationAPI:
                         try:
                             # Read file data first and pass as bytes to avoid UploadFile issues
                             file_content = await image.read()
-                            upload_result = await media_service.upload_image(
-                                file=file_content,
-                                file_name=image.filename,
-                                mime_type=image.content_type,
-                                message_id=None,  # Will be linked after message creation
-                            )
+                            # Use upload_image for actual images, upload_file for other types (PDFs, etc.)
+                            if image.content_type and image.content_type.startswith("image/"):
+                                upload_result = await media_service.upload_image(
+                                    file=file_content,
+                                    file_name=image.filename,
+                                    mime_type=image.content_type,
+                                    message_id=None,
+                                )
+                            else:
+                                # For non-image files (PDFs, etc.), use upload_file
+                                upload_result = await media_service.upload_file(
+                                    file=file_content,
+                                    file_name=image.filename,
+                                    mime_type=image.content_type,
+                                    message_id=None,
+                                )
                             attachment_ids.append(upload_result.id)
                         except Exception as e:
                             logger.exception(

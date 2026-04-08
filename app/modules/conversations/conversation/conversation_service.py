@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import time
@@ -975,20 +976,20 @@ class ConversationService:
                     attachments = await self.media_service.get_message_attachments(
                         last_human_message.id, include_download_urls=False
                     )
-                    # Extract only image attachment IDs for multimodal processing
+                    # Extract both image and document attachment IDs for multimodal processing
                     from app.modules.media.media_model import AttachmentType
 
                     attachment_ids = [
                         att.id
                         for att in attachments
-                        if att.attachment_type == AttachmentType.IMAGE
+                        if att.attachment_type in (AttachmentType.IMAGE, AttachmentType.DOCUMENT)
                     ]
                     if attachment_ids:
                         logger.info(
-                            f"Found {len(attachment_ids)} image attachments for regeneration: {attachment_ids}"
+                            f"Found {len(attachment_ids)} attachments (images + documents) for regeneration: {attachment_ids}"
                         )
                     else:
-                        logger.info("No image attachments found in last human message")
+                        logger.info("No attachments found in last human message")
                 except Exception as e:
                     logger.warning(
                         f"Failed to retrieve attachments for message {last_human_message.id}: {e}"
@@ -1225,14 +1226,28 @@ class ConversationService:
 
             # Prepare multimodal context - use current message attachments if available
             image_attachments = None
+            document_attachments = None
+            logger.info(
+                f"[_generate_and_stream_ai_response] Received attachment_ids: {attachment_ids}"
+            )
             if attachment_ids:
                 image_attachments = await self._prepare_attachments_as_images(
                     attachment_ids
                 )
+                document_attachments = await self._prepare_attachments_as_documents(
+                    attachment_ids
+                )
+                logger.info(f"[_generate_and_stream_ai_response] Prepared image_attachments: {len(image_attachments) if image_attachments else 0}, document_attachments: {len(document_attachments) if document_attachments else 0}")
 
             # Also get context images from recent conversation history
             context_images = await self._prepare_conversation_context_images(
                 conversation_id
+            )
+
+            # Log vision model check for debugging
+            is_vision = self.agent_service.llm_provider.is_vision_model()
+            logger.info(
+                f"[_generate_and_stream_ai_response] Vision model check: {is_vision}, has_images: {bool(image_attachments or context_images)}"
             )
 
             logger.info(
@@ -1272,6 +1287,9 @@ class ConversationService:
                         else project_name
                     ),
                     branch=project_info.get("branch_name") if project_info else None,
+                    image_attachments=image_attachments,
+                    context_images=context_images,
+                    document_attachments=document_attachments,
                 )
                 custom_ctx.check_cancelled = check_cancelled
                 res = (
@@ -1334,6 +1352,7 @@ class ConversationService:
                     project_status=project_status,
                     image_attachments=image_attachments,
                     context_images=context_images,
+                    document_attachments=document_attachments,
                     conversation_id=conversation_id,
                     user_id=user_id,  # Set user_id for tunnel routing
                     tunnel_url=tunnel_url,  # Tunnel URL from request (takes priority)
@@ -1472,6 +1491,58 @@ class ConversationService:
 
         except Exception:
             logger.exception("Error preparing attachments as images")
+            return None
+
+    async def _prepare_attachments_as_documents(
+        self, attachment_ids: List[str]
+    ) -> Optional[Dict[str, Dict[str, Union[str, int]]]]:
+        """Convert attachment IDs to base64 documents for multimodal processing"""
+        try:
+            if not attachment_ids:
+                return None
+
+            documents = {}
+            for attachment_id in attachment_ids:
+                try:
+                    # Get attachment info
+                    attachment = await self.media_service.get_attachment(attachment_id)
+                    logger.info(
+                        f"DEBUG: Retrieved attachment {attachment_id}: type={attachment.attachment_type.value if attachment else 'None'}, mime_type={attachment.mime_type if attachment else 'None'}"
+                    )
+                    if (
+                        attachment
+                        and attachment.attachment_type.value.upper() == "DOCUMENT"
+                    ):  # Check if it's a document
+                        # Get document data as base64
+                        doc_data = await self.media_service.get_attachment_data(attachment_id)
+                        base64_data = base64.b64encode(doc_data).decode("utf-8")
+                        documents[attachment_id] = {
+                            "base64": base64_data,
+                            "mime_type": attachment.mime_type,
+                            "file_name": attachment.file_name,
+                            "file_size": attachment.file_size,
+                        }
+                        logger.info(
+                            f"Prepared document {attachment_id} ({attachment.file_name}) for multimodal processing"
+                        )
+                    else:
+                        logger.info(
+                            f"DEBUG: Skipping attachment {attachment_id} - not a document or attachment not found"
+                        )
+                except Exception:
+                    logger.exception(
+                        f"Failed to prepare attachment {attachment_id} as document",
+                        attachment_id=attachment_id,
+                    )
+                    continue
+
+            logger.info(
+                f"Prepared {len(documents)} documents from {len(attachment_ids)} attachments for multimodal processing"
+            )
+            return documents if documents else None
+
+        except Exception:
+            logger.exception("Error preparing attachments as documents")
             return None
 
     async def _prepare_current_message_images(

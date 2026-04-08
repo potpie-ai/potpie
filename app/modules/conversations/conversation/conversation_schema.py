@@ -16,6 +16,7 @@ class CreateConversationRequest(BaseModel):
     status: ConversationStatus
     project_ids: List[str]
     agent_ids: List[str]
+    attachment_ids: Optional[List[str]] = None
 
 
 class ConversationAccessType(str, Enum):
