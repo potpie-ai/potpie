@@ -76,11 +76,14 @@ class ConversationStore(BaseStore):
         await self.async_db.commit()
 
     def update_shared_with_emails(
-        self, conversation_id: str, shared_with_emails: Optional[List[str]]
+        self,
+        conversation_id: str,
+        user_id: str,
+        shared_with_emails: Optional[List[str]],
     ) -> int:
         result = (
             self.db.query(Conversation)
-            .filter_by(id=conversation_id)
+            .filter_by(id=conversation_id, user_id=user_id)
             .update(
                 {Conversation.shared_with_emails: shared_with_emails},
                 synchronize_session=False,
@@ -90,11 +93,14 @@ class ConversationStore(BaseStore):
         return result
 
     async def update_shared_with_emails_async(
-        self, conversation_id: str, shared_with_emails: Optional[List[str]]
+        self,
+        conversation_id: str,
+        user_id: str,
+        shared_with_emails: Optional[List[str]],
     ) -> int:
         stmt = (
             update(Conversation)
-            .where(Conversation.id == conversation_id)
+            .where(Conversation.id == conversation_id, Conversation.user_id == user_id)
             .values(shared_with_emails=shared_with_emails)
         )
         result = await self.async_db.execute(stmt)
