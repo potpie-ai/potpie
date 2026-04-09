@@ -107,10 +107,17 @@ class ShareChatService:
 
         try:
             updated_emails = list(existing_emails - emails_to_remove_set)
-            self.conversation_store.update_shared_with_emails(
+            updated = self.conversation_store.update_shared_with_emails(
                 conversation_id=conversation_id,
                 shared_with_emails=updated_emails,
             )
+            if updated != 1:
+                self.db.rollback()
+                raise HTTPException(
+                    status_code=404,
+                    detail="Chat does not exist or you are not authorized to access it.",
+                )
+            self.db.commit()
             return True
         except IntegrityError as e:
             self.db.rollback()
@@ -215,10 +222,17 @@ class AsyncShareChatService:
 
         try:
             updated_emails = list(existing_emails - emails_to_remove_set)
-            await self.conversation_store.update_shared_with_emails_async(
+            updated = await self.conversation_store.update_shared_with_emails_async(
                 conversation_id=conversation_id,
                 shared_with_emails=updated_emails,
             )
+            if updated != 1:
+                await self.session.rollback()
+                raise HTTPException(
+                    status_code=404,
+                    detail="Chat does not exist or you are not authorized to access it.",
+                )
+            await self.session.commit()
             return True
         except IntegrityError as e:
             await self.session.rollback()

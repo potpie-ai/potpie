@@ -86,7 +86,7 @@ class ConversationStore(BaseStore):
                 synchronize_session=False,
             )
         )
-        self.db.commit()
+        self.db.flush()
         return result
 
     async def update_shared_with_emails_async(
@@ -98,7 +98,7 @@ class ConversationStore(BaseStore):
             .values(shared_with_emails=shared_with_emails)
         )
         result = await self.async_db.execute(stmt)
-        await self.async_db.commit()
+        await self.async_db.flush()
         return result.rowcount
 
     async def delete(self, conversation_id: str) -> int:
