@@ -26,7 +26,7 @@ class ContextScope:
 
 @dataclass
 class ContextResolutionRequest:
-    project_id: str
+    pot_id: str
     query: str
     consumer_hint: str | None = None
     artifact_ref: ArtifactRef | None = None

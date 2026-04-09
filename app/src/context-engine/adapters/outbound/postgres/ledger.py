@@ -1,22 +1,19 @@
-"""Postgres implementation of IngestionLedgerPort."""
+"""Postgres implementation of IngestionLedgerPort (merged-PR rows live in ``context_events``)."""
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from adapters.outbound.postgres.models import (
-    ContextIngestionLog,
-    ContextSyncState,
-    RawEvent,
-)
+from adapters.outbound.postgres.models import ContextEventModel, ContextSyncState
 from domain.ingestion import BridgeResult
+from domain.ingestion_kinds import INGESTION_KIND_GITHUB_MERGED_PR
 from domain.ports.ingestion_ledger import (
     IngestionLedgerPort,
     IngestionLogRow,
@@ -25,6 +22,10 @@ from domain.ports.ingestion_ledger import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class SqlAlchemyIngestionLedger(IngestionLedgerPort):
@@ -41,23 +42,27 @@ class SqlAlchemyIngestionLedger(IngestionLedgerPort):
         source_id: str,
     ) -> IngestionLogRow | None:
         row = self._db.scalar(
-            select(ContextIngestionLog).where(
-                ContextIngestionLog.pot_id == scope.pot_id,
-                ContextIngestionLog.provider == scope.provider,
-                ContextIngestionLog.provider_host == scope.provider_host,
-                ContextIngestionLog.repo_name == scope.repo_name,
-                ContextIngestionLog.source_type == source_type,
-                ContextIngestionLog.source_id == source_id,
+            select(ContextEventModel).where(
+                ContextEventModel.pot_id == scope.pot_id,
+                ContextEventModel.provider == scope.provider,
+                ContextEventModel.provider_host == scope.provider_host,
+                ContextEventModel.repo_name == scope.repo_name,
+                ContextEventModel.source_system == source_type,
+                ContextEventModel.source_id == source_id,
+                ContextEventModel.ingestion_kind == INGESTION_KIND_GITHUB_MERGED_PR,
             )
         )
         if row is None:
+            return None
+        # Row may exist from record_context_event before Graphiti write; treat as "not logged" until UUID is set.
+        if row.graphiti_episode_uuid is None:
             return None
         return IngestionLogRow(
             pot_id=row.pot_id,
             provider=row.provider,
             provider_host=row.provider_host,
             repo_name=row.repo_name,
-            source_type=row.source_type,
+            source_type=row.source_system,
             source_id=row.source_id,
             graphiti_episode_uuid=row.graphiti_episode_uuid,
             entity_key=row.entity_key,
@@ -71,32 +76,48 @@ class SqlAlchemyIngestionLedger(IngestionLedgerPort):
         graphiti_episode_uuid: str | None,
         payload: dict[str, Any],
     ) -> bool:
-        now = datetime.utcnow()
-        raw = RawEvent(
+        now = _utcnow()
+        existing = self._db.scalar(
+            select(ContextEventModel).where(
+                ContextEventModel.pot_id == scope.pot_id,
+                ContextEventModel.provider == scope.provider,
+                ContextEventModel.provider_host == scope.provider_host,
+                ContextEventModel.repo_name == scope.repo_name,
+                ContextEventModel.source_system == source_type,
+                ContextEventModel.source_id == source_id,
+                ContextEventModel.ingestion_kind == INGESTION_KIND_GITHUB_MERGED_PR,
+            )
+        )
+        if existing is not None:
+            if existing.graphiti_episode_uuid is not None:
+                return False
+            existing.payload = payload
+            existing.graphiti_episode_uuid = graphiti_episode_uuid
+            existing.raw_processed_at = now
+            self._db.commit()
+            return True
+
+        ev = ContextEventModel(
             id=str(uuid4()),
             pot_id=scope.pot_id,
             provider=scope.provider,
             provider_host=scope.provider_host,
             repo_name=scope.repo_name,
-            source_type=source_type,
+            source_system=source_type,
+            event_type="pull_request",
+            action="merged",
             source_id=source_id,
             payload=payload,
             received_at=now,
-            processed_at=now,
-        )
-        log = ContextIngestionLog(
-            id=str(uuid4()),
-            pot_id=scope.pot_id,
-            provider=scope.provider,
-            provider_host=scope.provider_host,
-            repo_name=scope.repo_name,
-            source_type=source_type,
-            source_id=source_id,
+            status="reconciled",
+            ingestion_kind=INGESTION_KIND_GITHUB_MERGED_PR,
+            source_channel="ingest",
             graphiti_episode_uuid=graphiti_episode_uuid,
             bridge_written=False,
+            bridge_status="pending",
+            raw_processed_at=now,
         )
-        self._db.add(raw)
-        self._db.add(log)
+        self._db.add(ev)
         try:
             self._db.commit()
             return True
@@ -136,14 +157,15 @@ class SqlAlchemyIngestionLedger(IngestionLedgerPort):
             values["bridge_status"] = "skipped"
 
         self._db.execute(
-            update(ContextIngestionLog)
+            update(ContextEventModel)
             .where(
-                ContextIngestionLog.pot_id == scope.pot_id,
-                ContextIngestionLog.provider == scope.provider,
-                ContextIngestionLog.provider_host == scope.provider_host,
-                ContextIngestionLog.repo_name == scope.repo_name,
-                ContextIngestionLog.source_type == source_type,
-                ContextIngestionLog.source_id == source_id,
+                ContextEventModel.pot_id == scope.pot_id,
+                ContextEventModel.provider == scope.provider,
+                ContextEventModel.provider_host == scope.provider_host,
+                ContextEventModel.repo_name == scope.repo_name,
+                ContextEventModel.source_system == source_type,
+                ContextEventModel.source_id == source_id,
+                ContextEventModel.ingestion_kind == INGESTION_KIND_GITHUB_MERGED_PR,
             )
             .values(**values)
         )
@@ -225,6 +247,18 @@ class SqlAlchemyIngestionLedger(IngestionLedgerPort):
             row.status = "error"
             row.error = error
             self._db.commit()
+
+    def delete_all_for_pot(self, pot_id: str) -> int:
+        """Delete merged-PR ledger rows and sync state for ``pot_id``."""
+        n_ev = self._db.execute(
+            delete(ContextEventModel).where(
+                ContextEventModel.pot_id == pot_id,
+                ContextEventModel.ingestion_kind == INGESTION_KIND_GITHUB_MERGED_PR,
+            )
+        ).rowcount or 0
+        n_sync = self._db.execute(delete(ContextSyncState).where(ContextSyncState.pot_id == pot_id)).rowcount or 0
+        self._db.commit()
+        return int(n_ev) + int(n_sync)
 
     @staticmethod
     def _to_sync_row(row: ContextSyncState) -> SyncStateRow:

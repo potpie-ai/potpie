@@ -21,24 +21,24 @@ class IntelligenceProvider(Protocol):
 
     async def search_context(
         self,
-        project_id: str,
+        pot_id: str,
         query: str,
         *,
         limit: int = 8,
         node_labels: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Semantic / hybrid search over project-scoped knowledge."""
+        """Semantic / hybrid search over pot-scoped knowledge."""
 
     async def get_artifact_context(
         self,
-        project_id: str,
+        pot_id: str,
         artifact: ArtifactRef,
     ) -> ArtifactContext | None:
         """Load structured context for a known artifact (e.g. PR)."""
 
     async def get_change_history(
         self,
-        project_id: str,
+        pot_id: str,
         scope: ContextScope,
         *,
         limit: int = 10,
@@ -47,7 +47,7 @@ class IntelligenceProvider(Protocol):
 
     async def get_decision_context(
         self,
-        project_id: str,
+        pot_id: str,
         scope: ContextScope,
         *,
         limit: int = 20,
@@ -56,7 +56,7 @@ class IntelligenceProvider(Protocol):
 
     async def get_related_discussions(
         self,
-        project_id: str,
+        pot_id: str,
         scope: ContextScope,
         *,
         limit: int = 10,
@@ -65,7 +65,7 @@ class IntelligenceProvider(Protocol):
 
     async def get_ownership(
         self,
-        project_id: str,
+        pot_id: str,
         scope: ContextScope,
         *,
         limit: int = 5,

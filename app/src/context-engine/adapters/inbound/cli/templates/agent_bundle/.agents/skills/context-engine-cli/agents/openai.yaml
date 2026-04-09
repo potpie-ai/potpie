@@ -1,0 +1,4 @@
+interface:
+  display_name: "Context-Engine CLI"
+  short_description: "Work on the context-engine CLI"
+  default_prompt: "Use $context-engine-cli to update or explain the context-engine CLI in this repository."

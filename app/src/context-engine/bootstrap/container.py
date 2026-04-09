@@ -11,12 +11,18 @@ from adapters.outbound.github.source_control import PyGithubSourceControl
 from adapters.outbound.graphiti.episodic import GraphitiEpisodicAdapter
 from adapters.outbound.intelligence.hybrid_graph import HybridGraphIntelligenceProvider
 from adapters.outbound.neo4j.structural import Neo4jStructuralAdapter
+from adapters.outbound.postgres.delegating_event_query_service import DelegatingEventQueryService
+from adapters.outbound.postgres.ingestion_event_store import SqlAlchemyIngestionEventStore
 from adapters.outbound.postgres.ledger import SqlAlchemyIngestionLedger
+from adapters.outbound.postgres.reconciliation_ledger import SqlAlchemyReconciliationLedger
 from adapters.outbound.settings_env import EnvContextEngineSettings
 from application.services.context_resolution import ContextResolutionService
+from domain.ports.event_query_service import EventQueryService
 from domain.ports.episodic_graph import EpisodicGraphPort
 from domain.ports.intelligence_provider import IntelligenceProvider
+from domain.ports.jobs import JobEnqueuePort, NoOpJobEnqueue
 from domain.ports.pot_resolution import PotResolutionPort
+from domain.ports.reconciliation_agent import ReconciliationAgentPort
 from domain.ports.settings import ContextEngineSettingsPort
 from domain.ports.source_control import SourceControlPort
 from domain.ports.structural_graph import StructuralGraphPort
@@ -34,9 +40,25 @@ class ContextEngineContainer:
     source_for_repo: Callable[[str], SourceControlPort]
     intelligence_provider: IntelligenceProvider | None = None
     resolution_service: ContextResolutionService | None = None
+    reconciliation_agent: ReconciliationAgentPort | None = None
+    jobs: JobEnqueuePort | None = None
 
     def ledger(self, session: Session) -> SqlAlchemyIngestionLedger:
         return SqlAlchemyIngestionLedger(session)
+
+    def reconciliation_ledger(self, session: Session) -> SqlAlchemyReconciliationLedger:
+        return SqlAlchemyReconciliationLedger(session)
+
+    def ingestion_event_store(self, session: Session) -> SqlAlchemyIngestionEventStore:
+        return SqlAlchemyIngestionEventStore(session)
+
+    def event_query_service(self, session: Session) -> EventQueryService:
+        return DelegatingEventQueryService(self.ingestion_event_store(session))
+
+    def ingestion_submission(self, session: Session) -> "DefaultIngestionSubmissionService":
+        from application.services.ingestion_submission_service import DefaultIngestionSubmissionService
+
+        return DefaultIngestionSubmissionService(self, session)
 
 
 def build_container(
@@ -44,6 +66,8 @@ def build_container(
     settings: ContextEngineSettingsPort | None = None,
     pots: PotResolutionPort,
     source_for_repo: Callable[[str], SourceControlPort],
+    reconciliation_agent: ReconciliationAgentPort | None = None,
+    jobs: JobEnqueuePort | None = None,
 ) -> ContextEngineContainer:
     s = settings or EnvContextEngineSettings()
     episodic = GraphitiEpisodicAdapter(s)
@@ -61,6 +85,8 @@ def build_container(
         source_for_repo=source_for_repo,
         intelligence_provider=intelligence_provider,
         resolution_service=resolution_service,
+        reconciliation_agent=reconciliation_agent,
+        jobs=jobs or NoOpJobEnqueue(),
     )
 
 
@@ -69,6 +95,8 @@ def build_container_with_github_token(
     token: str,
     pots: PotResolutionPort,
     settings: ContextEngineSettingsPort | None = None,
+    reconciliation_agent: ReconciliationAgentPort | None = None,
+    jobs: JobEnqueuePort | None = None,
 ) -> ContextEngineContainer:
     try:
         from github import Auth, Github
@@ -82,4 +110,10 @@ def build_container_with_github_token(
     def source_for_repo(_repo_name: str) -> SourceControlPort:
         return PyGithubSourceControl(gh)
 
-    return build_container(settings=settings, pots=pots, source_for_repo=source_for_repo)
+    return build_container(
+        settings=settings,
+        pots=pots,
+        source_for_repo=source_for_repo,
+        reconciliation_agent=reconciliation_agent,
+        jobs=jobs,
+    )

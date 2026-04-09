@@ -14,8 +14,9 @@ In production, **context-engine runs inside the Potpie API process**. You mount 
 
 | Method | Path | What it does |
 |--------|------|----------------|
-| `POST` | `/api/v1/context/sync` | Enqueues Celery backfill (optional body: `{ "pot_ids": ["..."] }`; omit to sync all **your** eligible pots) |
+| `POST` | `/api/v1/context/sync` | Enqueues backfill via the configured job queue (optional body: `{ "pot_ids": ["..."] }`; omit to sync all **your** eligible pots) |
 | `POST` | `/api/v1/context/ingest-pr` | Enqueues single-PR ingest (`pot_id`, `pr_number`, optional `is_live_bridge`) |
+| `POST` | `/api/v1/context/reset` | Hard-delete all context-graph data for a pot (`pot_id` in JSON body; Graphiti + structural Neo4j + Postgres ledger when DB is configured) |
 | `POST` | `/api/v1/context/query/change-history` | Neo4j change history |
 | `POST` | `/api/v1/context/query/file-owners` | File owner hints from PR history |
 | `POST` | `/api/v1/context/query/decisions` | Linked decisions |
@@ -23,7 +24,7 @@ In production, **context-engine runs inside the Potpie API process**. You mount 
 
 **Pot scope:** Requests only apply to pots the authenticated user may access (enforced in Potpie’s wiring).
 
-**Long-running work:** Sync and ingest **enqueue Celery** tasks (`context-graph-etl` queue). Run a Potpie Celery worker that consumes that queue so jobs actually execute.
+**Long-running work:** Sync and ingest use **`ContextGraphJobQueuePort`** (**default: Celery** on the `context-graph-etl` queue). Optional **Hatchet** (`CONTEXT_GRAPH_JOB_QUEUE_BACKEND=hatchet`): install **`hatchet-sdk`**, set **`HATCHET_CLIENT_*`**, self-host Hatchet per **[`docs/hatchet-local.md`](../../../docs/hatchet-local.md)**, and run `python -m app.modules.context_graph.hatchet_worker`. See `bootstrap/queue_factory.py`.
 
 ### Configuration (Potpie)
 
@@ -40,7 +41,7 @@ Standalone-only configuration (`CONTEXT_ENGINE_API_KEY`, `CONTEXT_ENGINE_POTS` J
 
 ### Using the library from Python (Potpie)
 
-Potpie wires ports in `app/modules/context_graph/wiring.py` (`PotpieContextEngineSettings`, `build_container_for_session`, Celery tasks calling `application.use_cases`, intelligence tools, etc.). Import **`application`**, **`domain`**, **`bootstrap`** from the installed `context-engine` package like any other dependency.
+Potpie wires ports in `app/modules/context_graph/wiring.py` (`PotpieContextEngineSettings`, `build_container_for_session`, job queue + Celery tasks calling `application.use_cases`, intelligence tools, etc.). Import **`application`**, **`domain`**, **`bootstrap`** from the installed `context-engine` package like any other dependency.
 
 ---
 
@@ -60,7 +61,7 @@ uv run python -m adapters.inbound.http
 |----------|---------|
 | `CONTEXT_GRAPH_ENABLED` | `true` to enable graph clients |
 | `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD` | Neo4j (structural + Graphiti) |
-| `DATABASE_URL` or `POSTGRES_URL` | Ledger tables (`context_*`, `raw_events`) |
+| `DATABASE_URL` or `POSTGRES_URL` | Ledger tables (`context_events`, `context_sync_state`, …) |
 | `CONTEXT_ENGINE_GITHUB_TOKEN` or `GITHUB_TOKEN` | GitHub API |
 | `CONTEXT_ENGINE_POTS` | JSON map `{"pot-uuid":"owner/repo"}` for sync |
 | `CONTEXT_ENGINE_API_KEY` | **Standalone only:** optional; if set, required as header `X-API-Key` |
@@ -72,6 +73,7 @@ Routes on the standalone app:
 - `GET /api/v1/health`
 - `POST /api/v1/context/sync` — inline backfill (not Celery)
 - `POST /api/v1/context/ingest-pr` — single PR (inline)
+- `POST /api/v1/context/reset` — hard-delete graph + ledger for a pot
 - `POST /api/v1/context/query/*`
 - `POST /webhooks/integrations/github`
 
@@ -102,6 +104,10 @@ MCP tools accept a `pot_id` string. **By default, access is denied** until you c
 | `CONTEXT_ENGINE_MCP_TRUST_ALL_POTS` | Set to `true` for **development only** — any `pot_id` is accepted |
 
 Omit both → tools raise a clear error (no implicit multi-tenant trust).
+
+### Raw episode ingest (HTTP / CLI / MCP)
+
+All three use **`application.use_cases.run_raw_episode_ingestion`**: persist **`context_events`** when Postgres is configured, then **enqueue** apply by default (**async**). Use **`sync=true`** (HTTP query), **`--sync`** (CLI), or **`sync=true`** on the MCP tool for inline apply after persist; without Postgres, **sync** is required and performs a **legacy** direct Graphiti write (no event row).
 
 ---
 
@@ -137,6 +143,8 @@ Outbound adapters  ←  (implements domain ports)
 - **Outbound adapters** implement ports; **bootstrap** wires them into `ContextEngineContainer`.
 
 ## Tests
+
+All unit tests for this package live under **`tests/`** here. Do **not** add a separate `tests/unit/context_graph/` tree at the Potpie repo root—that duplicated coverage and is removed.
 
 ```bash
 cd app/src/context-engine

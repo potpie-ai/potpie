@@ -143,7 +143,7 @@ class ContextResolutionService:
                 _timed(
                     "semantic_search",
                     provider.search_context(
-                        request.project_id,
+                        request.pot_id,
                         request.query,
                         limit=8,
                         node_labels=None,
@@ -156,7 +156,7 @@ class ContextResolutionService:
                 _timed(
                     "artifact_context",
                     provider.get_artifact_context(
-                        request.project_id,
+                        request.pot_id,
                         plan.artifact_ref,
                     ),
                 )
@@ -167,7 +167,7 @@ class ContextResolutionService:
                 _timed(
                     "change_history",
                     provider.get_change_history(
-                        request.project_id,
+                        request.pot_id,
                         plan.scope,
                         limit=10,
                     ),
@@ -179,7 +179,7 @@ class ContextResolutionService:
                 _timed(
                     "decision_context",
                     provider.get_decision_context(
-                        request.project_id,
+                        request.pot_id,
                         plan.scope,
                         limit=20,
                     ),
@@ -191,7 +191,7 @@ class ContextResolutionService:
                 _timed(
                     "discussion_context",
                     provider.get_related_discussions(
-                        request.project_id,
+                        request.pot_id,
                         plan.scope,
                         limit=10,
                     ),
@@ -203,7 +203,7 @@ class ContextResolutionService:
                 _timed(
                     "ownership_context",
                     provider.get_ownership(
-                        request.project_id,
+                        request.pot_id,
                         plan.scope,
                         limit=5,
                     ),

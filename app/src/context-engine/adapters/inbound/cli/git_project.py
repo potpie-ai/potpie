@@ -7,7 +7,10 @@ import subprocess
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from adapters.inbound.cli.credentials_store import get_active_pot_id
+from adapters.inbound.cli.credentials_store import (
+    get_active_pot_id,
+    resolve_cli_pot_ref,
+)
 from adapters.inbound.cli.env_bootstrap import load_cli_env
 from bootstrap.http_projects import pot_map_from_env, repo_to_pot_map_from_env
 
@@ -110,7 +113,7 @@ def resolve_pot_id_from_git_cwd(cwd: str | None = None) -> tuple[str | None, str
 
     Resolution order:
 
-    1. ``context-engine pot use <uuid>`` (stored ``active_pot_id``) — global default for this machine.
+    1. ``context-engine pot use <uuid-or-name>`` (stored ``active_pot_id``; names from ``pot alias``) — global default for this machine.
     2. Else ``CONTEXT_ENGINE_REPO_TO_POT`` / ``CONTEXT_ENGINE_POTS`` for ``owner/repo`` from ``git`` ``origin``
        (under ``cwd``, default current directory).
     3. Else error (pass pot UUID explicitly, or set maps / ``pot use``).
@@ -118,7 +121,10 @@ def resolve_pot_id_from_git_cwd(cwd: str | None = None) -> tuple[str | None, str
     load_cli_env()
     active = get_active_pot_id()
     if active:
-        return active, ""
+        resolved, err = resolve_cli_pot_ref(active)
+        if err:
+            return None, err
+        return resolved, ""
 
     url = get_git_origin_remote_url(cwd)
     if not url:

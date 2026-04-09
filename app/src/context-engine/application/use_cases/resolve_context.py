@@ -10,5 +10,5 @@ async def resolve_context(
     service: ContextResolutionService,
     request: ContextResolutionRequest,
 ) -> IntelligenceBundle:
-    """Resolve contextual evidence for a query within a project."""
+    """Resolve contextual evidence for a query within a pot."""
     return await service.resolve(request)

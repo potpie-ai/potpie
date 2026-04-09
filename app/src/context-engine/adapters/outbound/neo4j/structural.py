@@ -8,6 +8,7 @@ from typing import Any, Optional
 from neo4j import Driver, GraphDatabase
 
 from domain.deterministic_extractors import parse_diff_hunks
+from domain.graph_mutations import EdgeDelete, EdgeUpsert, EntityUpsert, InvalidationOp, ProvenanceRef
 from domain.ingestion import BridgeResult
 from domain.ports.settings import ContextEngineSettingsPort
 from domain.ports.structural_graph import StructuralGraphPort
@@ -905,6 +906,133 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                 }
         finally:
             drv.close()
+
+    def get_project_graph(
+        self,
+        pot_id: str,
+        pr_number: int | None,
+        limit: int,
+    ) -> dict[str, Any]:
+        """Return a subgraph-shaped payload (stub until full Neo4j projection is wired)."""
+        _ = self._open()
+        return {
+            "pot_id": pot_id,
+            "pr_number": pr_number,
+            "limit": limit,
+            "nodes": [],
+            "edges": [],
+            "message": "project_graph_stub",
+        }
+
+    def upsert_entities(
+        self,
+        pot_id: str,
+        items: list[EntityUpsert],
+        provenance: ProvenanceRef,
+    ) -> int:
+        del provenance
+        if not items:
+            return 0
+        raise NotImplementedError(
+            "Neo4jStructuralAdapter.upsert_entities is not implemented in v1; use compat GitHub PR path."
+        )
+
+    def upsert_edges(
+        self,
+        pot_id: str,
+        items: list[EdgeUpsert],
+        provenance: ProvenanceRef,
+    ) -> int:
+        del provenance
+        if not items:
+            return 0
+        raise NotImplementedError(
+            "Neo4jStructuralAdapter.upsert_edges is not implemented in v1; use compat GitHub PR path."
+        )
+
+    def delete_edges(
+        self,
+        pot_id: str,
+        items: list[EdgeDelete],
+        provenance: ProvenanceRef,
+    ) -> int:
+        del provenance
+        if not items:
+            return 0
+        raise NotImplementedError(
+            "Neo4jStructuralAdapter.delete_edges is not implemented in v1; use compat GitHub PR path."
+        )
+
+    def apply_invalidations(
+        self,
+        pot_id: str,
+        items: list[InvalidationOp],
+        provenance: ProvenanceRef,
+    ) -> int:
+        del provenance
+        if not items:
+            return 0
+        raise NotImplementedError(
+            "Neo4jStructuralAdapter.apply_invalidations is not implemented in v1; use compat GitHub PR path."
+        )
+
+    def reset_pot(self, pot_id: str) -> dict[str, Any]:
+        """Remove structural ``Entity`` / ``FILE`` / ``NODE`` data for this pot (default Neo4j database)."""
+        drv = self._open()
+        if drv is None:
+            return {
+                "ok": False,
+                "entity_deleted": 0,
+                "file_deleted": 0,
+                "node_deleted": 0,
+                "error": "neo4j_unavailable",
+            }
+        q_entity = """
+        MATCH (n:Entity {group_id: $pid})
+        CALL (n) {
+            DETACH DELETE n
+        } IN TRANSACTIONS OF 500 ROWS
+        """
+        q_file = """
+        MATCH (n:FILE {repoId: $pid})
+        CALL (n) {
+            DETACH DELETE n
+        } IN TRANSACTIONS OF 500 ROWS
+        """
+        q_node = """
+        MATCH (n:NODE {repoId: $pid})
+        CALL (n) {
+            DETACH DELETE n
+        } IN TRANSACTIONS OF 500 ROWS
+        """
+        entity_deleted = 0
+        file_deleted = 0
+        node_deleted = 0
+        try:
+            with drv.session() as session:
+                r = session.run(q_entity, pid=pot_id)
+                entity_deleted = int(r.consume().counters.nodes_deleted)
+                r = session.run(q_file, pid=pot_id)
+                file_deleted = int(r.consume().counters.nodes_deleted)
+                r = session.run(q_node, pid=pot_id)
+                node_deleted = int(r.consume().counters.nodes_deleted)
+        except Exception as exc:
+            logger.warning("reset_pot structural: %s", exc)
+            return {
+                "ok": False,
+                "entity_deleted": entity_deleted,
+                "file_deleted": file_deleted,
+                "node_deleted": node_deleted,
+                "error": str(exc),
+            }
+        finally:
+            drv.close()
+        return {
+            "ok": True,
+            "entity_deleted": entity_deleted,
+            "file_deleted": file_deleted,
+            "node_deleted": node_deleted,
+        }
 
     def _run_read(
         self,

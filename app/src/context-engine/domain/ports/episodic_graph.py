@@ -3,6 +3,9 @@
 from datetime import datetime
 from typing import Any, Optional, Protocol
 
+from domain.graph_mutations import ProvenanceRef
+from domain.reconciliation import EpisodeDraft
+
 
 class EpisodicGraphPort(Protocol):
     @property
@@ -18,6 +21,14 @@ class EpisodicGraphPort(Protocol):
         reference_time: datetime,
     ) -> Optional[str]:
         """Return episode UUID or None if disabled/failed."""
+
+    def write_episode_drafts(
+        self,
+        pot_id: str,
+        drafts: list[EpisodeDraft],
+        provenance: ProvenanceRef | None = None,
+    ) -> list[Optional[str]]:
+        """Write one or more ``EpisodeDraft`` values; return UUIDs in order."""
 
     async def add_episode_async(
         self,
@@ -37,6 +48,9 @@ class EpisodicGraphPort(Protocol):
         node_labels: Optional[list[str]] = None,
         repo_name: str | None = None,
         source_description: str | None = None,
+        *,
+        include_invalidated: bool = False,
+        as_of: Optional[datetime] = None,
     ) -> list[Any]:
         ...
 
@@ -48,5 +62,14 @@ class EpisodicGraphPort(Protocol):
         node_labels: Optional[list[str]] = None,
         repo_name: str | None = None,
         source_description: str | None = None,
+        *,
+        include_invalidated: bool = False,
+        as_of: Optional[datetime] = None,
     ) -> list[Any]:
+        ...
+
+    def reset_pot(self, pot_id: str) -> dict[str, Any]:
+        """Delete all Graphiti episodic data for this pot (Neo4j database partition)."""
+
+    async def reset_pot_async(self, pot_id: str) -> dict[str, Any]:
         ...

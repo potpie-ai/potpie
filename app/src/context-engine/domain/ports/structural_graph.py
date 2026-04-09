@@ -2,6 +2,7 @@
 
 from typing import Any, Protocol
 
+from domain.graph_mutations import EdgeDelete, EdgeUpsert, EntityUpsert, InvalidationOp, ProvenanceRef
 from domain.ingestion import BridgeResult
 
 
@@ -85,8 +86,44 @@ class StructuralGraphPort(Protocol):
 
     def get_project_graph(
         self,
-        project_id: str,
+        pot_id: str,
         pr_number: int | None,
         limit: int,
     ) -> dict[str, Any]:
+        ...
+
+    def reset_pot(self, pot_id: str) -> dict[str, Any]:
+        """Remove structural graph nodes (``Entity`` / ``FILE`` / ``NODE``) scoped to this pot."""
+        ...
+
+    def upsert_entities(
+        self,
+        pot_id: str,
+        items: list[EntityUpsert],
+        provenance: ProvenanceRef,
+    ) -> int:
+        """Generic entity upserts (reconciliation). Return rows touched."""
+
+    def upsert_edges(
+        self,
+        pot_id: str,
+        items: list[EdgeUpsert],
+        provenance: ProvenanceRef,
+    ) -> int:
+        ...
+
+    def delete_edges(
+        self,
+        pot_id: str,
+        items: list[EdgeDelete],
+        provenance: ProvenanceRef,
+    ) -> int:
+        ...
+
+    def apply_invalidations(
+        self,
+        pot_id: str,
+        items: list[InvalidationOp],
+        provenance: ProvenanceRef,
+    ) -> int:
         ...

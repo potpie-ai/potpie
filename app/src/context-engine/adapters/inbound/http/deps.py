@@ -11,8 +11,8 @@ from fastapi.security import APIKeyHeader
 from sqlalchemy.orm import Session
 
 from adapters.outbound.postgres.session import database_url, make_session_factory
-from bootstrap.container import ContextEngineContainer, build_container_with_github_token
-from bootstrap.http_projects import ExplicitPotResolution, pot_map_from_env
+from bootstrap.container import ContextEngineContainer
+from bootstrap.standalone_container import build_standalone_context_engine_container
 
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
@@ -28,16 +28,7 @@ def require_api_key(key: str | None = Security(_api_key_header)) -> None:
 
 @lru_cache
 def get_container() -> ContextEngineContainer:
-    token = (os.getenv("CONTEXT_ENGINE_GITHUB_TOKEN") or os.getenv("GITHUB_TOKEN") or "").strip()
-    mapping = pot_map_from_env()
-    if not token:
-        raise RuntimeError("CONTEXT_ENGINE_GITHUB_TOKEN or GITHUB_TOKEN is required for HTTP server")
-    if not mapping:
-        raise RuntimeError(
-            'CONTEXT_ENGINE_POTS env JSON is required, e.g. {"pot-id":"owner/repo"}'
-        )
-    pots = ExplicitPotResolution(mapping)
-    return build_container_with_github_token(token=token, pots=pots)
+    return build_standalone_context_engine_container()
 
 
 def get_container_or_503() -> ContextEngineContainer:
@@ -59,6 +50,19 @@ def get_db() -> Generator[Session, None, None]:
             status_code=503,
             detail="DATABASE_URL (or POSTGRES_URL) is required for context HTTP API",
         )
+    session = factory()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+def get_db_optional() -> Generator[Session | None, None, None]:
+    """Yield a SQLAlchemy session when ``DATABASE_URL`` is set, else ``None``."""
+    factory = _session_factory()
+    if factory is None:
+        yield None
+        return
     session = factory()
     try:
         yield session

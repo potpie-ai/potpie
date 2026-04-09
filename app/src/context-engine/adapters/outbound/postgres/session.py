@@ -10,7 +10,13 @@ from sqlalchemy.orm import Session, sessionmaker
 
 
 def database_url() -> str | None:
-    return os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL") or os.getenv("CONTEXT_ENGINE_DATABASE_URL")
+    """Resolve sync SQLAlchemy URL (Potpie uses ``POSTGRES_SERVER`` in ``.env``)."""
+    return (
+        os.getenv("DATABASE_URL")
+        or os.getenv("POSTGRES_URL")
+        or os.getenv("CONTEXT_ENGINE_DATABASE_URL")
+        or os.getenv("POSTGRES_SERVER")
+    )
 
 
 def make_session_factory(url: str | None = None):

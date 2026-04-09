@@ -20,7 +20,7 @@ class MockIntelligenceProvider(IntelligenceProvider):
 
     async def search_context(
         self,
-        project_id: str,
+        pot_id: str,
         query: str,
         *,
         limit: int = 8,
@@ -38,7 +38,7 @@ class MockIntelligenceProvider(IntelligenceProvider):
 
     async def get_artifact_context(
         self,
-        project_id: str,
+        pot_id: str,
         artifact: ArtifactRef,
     ) -> ArtifactContext | None:
         return ArtifactContext(
@@ -50,7 +50,7 @@ class MockIntelligenceProvider(IntelligenceProvider):
 
     async def get_change_history(
         self,
-        project_id: str,
+        pot_id: str,
         scope: ContextScope,
         *,
         limit: int = 10,
@@ -67,7 +67,7 @@ class MockIntelligenceProvider(IntelligenceProvider):
 
     async def get_decision_context(
         self,
-        project_id: str,
+        pot_id: str,
         scope: ContextScope,
         *,
         limit: int = 20,
@@ -84,7 +84,7 @@ class MockIntelligenceProvider(IntelligenceProvider):
 
     async def get_related_discussions(
         self,
-        project_id: str,
+        pot_id: str,
         scope: ContextScope,
         *,
         limit: int = 10,
@@ -102,7 +102,7 @@ class MockIntelligenceProvider(IntelligenceProvider):
 
     async def get_ownership(
         self,
-        project_id: str,
+        pot_id: str,
         scope: ContextScope,
         *,
         limit: int = 5,

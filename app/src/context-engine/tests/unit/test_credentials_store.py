@@ -65,3 +65,42 @@ def test_clear_active_pot_id_removes_file_when_only_pot(
     assert not cs.credentials_path().is_file()
 
 
+def test_register_and_resolve_pot_alias(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    uid = "33333333-3333-3333-3333-333333333333"
+    cs.register_pot_alias("My-Workspace", uid)
+    assert cs.get_pot_aliases() == {"my-workspace": uid}
+    got, err = cs.resolve_cli_pot_ref("my-workspace")
+    assert err == ""
+    assert got == uid
+    got2, err2 = cs.resolve_cli_pot_ref("MY-WORKSPACE")
+    assert err2 == ""
+    assert got2 == uid
+
+
+def test_resolve_cli_pot_ref_unknown(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    got, err = cs.resolve_cli_pot_ref("nope")
+    assert got is None
+    assert "Unknown pot" in err
+    assert "pot create" in err
+
+
+def test_clear_pot_scope_state_keeps_api_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cs.write_credentials(api_key="secret", api_base_url="http://localhost:9")
+    cs.register_pot_alias("w", "77777777-7777-7777-7777-777777777777")
+    cs.set_active_pot_id("77777777-7777-7777-7777-777777777777")
+    cs.clear_pot_scope_state()
+    assert cs.get_stored_api_key() == "secret"
+    assert cs.get_active_pot_id() == ""
+    assert cs.get_pot_aliases() == {}
+
+
+def test_resolve_cli_pot_ref_uuid_normalizes() -> None:
+    s = "550E8400-E29B-41D4-A716-446655440000"
+    got, err = cs.resolve_cli_pot_ref(s)
+    assert err == ""
+    assert got == "550e8400-e29b-41d4-a716-446655440000"
+
+

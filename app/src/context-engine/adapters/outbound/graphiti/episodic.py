@@ -11,8 +11,10 @@ from collections.abc import Coroutine
 from typing import Any, Callable, Optional, TypeVar
 
 from domain.entity_schema import EDGE_TYPE_MAP, EDGE_TYPES, ENTITY_TYPES
+from domain.graph_mutations import ProvenanceRef
 from domain.ports.episodic_graph import EpisodicGraphPort
 from domain.ports.settings import ContextEngineSettingsPort
+from domain.reconciliation import EpisodeDraft
 
 logger = logging.getLogger(__name__)
 
@@ -30,15 +32,19 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
         self._enabled = settings.is_enabled()
         self._thread_local = threading.local()
         self._search_filters_cls = None
+        self._comparison_operator_cls = None
+        self._date_filter_cls = None
         self._init_error: Optional[str] = None
 
         if not self._enabled:
             return
 
         try:
-            from graphiti_core.search.search_filters import SearchFilters
+            from graphiti_core.search.search_filters import ComparisonOperator, DateFilter, SearchFilters
 
             self._search_filters_cls = SearchFilters
+            self._comparison_operator_cls = ComparisonOperator
+            self._date_filter_cls = DateFilter
         except Exception as exc:
             self._init_error = str(exc)
             logger.warning("GraphitiEpisodicAdapter disabled due to init error: %s", exc)
@@ -184,14 +190,61 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
 
         return self._sync_run(_run)
 
-    def _search_filters(
+    def write_episode_drafts(
+        self,
+        pot_id: str,
+        drafts: list[EpisodeDraft],
+        provenance: ProvenanceRef | None = None,
+    ) -> list[Optional[str]]:
+        del provenance  # reserved for future Graphiti tagging / provenance metadata
+        if not self.enabled or not drafts:
+            return [None] * len(drafts)
+        out: list[Optional[str]] = []
+        for d in drafts:
+            out.append(
+                self.add_episode(
+                    pot_id=pot_id,
+                    name=d.name,
+                    episode_body=d.episode_body,
+                    source_description=d.source_description,
+                    reference_time=d.reference_time,
+                )
+            )
+        return out
+
+    def _build_search_filters(
         self,
         node_labels: Optional[list[str]],
         source_description: Optional[str],
+        *,
+        include_invalidated: bool,
+        as_of: Optional[datetime] = None,
     ) -> Any | None:
-        if not self._search_filters_cls:
+        """Graphiti search filters; by default exclude edges with ``invalid_at`` set.
+
+        During ingestion, ``resolve_extracted_edges`` can mark older contradicting
+        facts invalid; hybrid search still matched them unless we filter here.
+
+        When ``as_of`` is set, restrict to edges valid at that instant (valid_at
+        unset or <= as_of, and invalid_at unset or > as_of). ``include_invalidated``
+        is ignored in that case.
+        """
+        if not self._search_filters_cls or not self._comparison_operator_cls or not self._date_filter_cls:
             return None
         kwargs: dict[str, Any] = {}
+        CO = self._comparison_operator_cls
+        DF = self._date_filter_cls
+        if as_of is not None:
+            kwargs["valid_at"] = [
+                [DF(date=None, comparison_operator=CO.is_null)],
+                [DF(date=as_of, comparison_operator=CO.less_than_equal)],
+            ]
+            kwargs["invalid_at"] = [
+                [DF(date=None, comparison_operator=CO.is_null)],
+                [DF(date=as_of, comparison_operator=CO.greater_than)],
+            ]
+        elif not include_invalidated:
+            kwargs["invalid_at"] = [[DF(date=None, comparison_operator=CO.is_null)]]
         if node_labels:
             kwargs["node_labels"] = node_labels
         if source_description and source_description.strip():
@@ -216,13 +269,21 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
         node_labels: Optional[list[str]] = None,
         repo_name: Optional[str] = None,
         source_description: Optional[str] = None,
+        *,
+        include_invalidated: bool = False,
+        as_of: Optional[datetime] = None,
     ) -> list[Any]:
         del repo_name  # optional future filter; Graphiti search is pot-scoped
         g = self._get_graphiti()
         if g is None:
             return []
 
-        search_filter = self._search_filters(node_labels, source_description)
+        search_filter = self._build_search_filters(
+            node_labels,
+            source_description,
+            include_invalidated=include_invalidated,
+            as_of=as_of,
+        )
 
         return await g.search(
             query=query,
@@ -239,6 +300,9 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
         node_labels: Optional[list[str]] = None,
         repo_name: Optional[str] = None,
         source_description: Optional[str] = None,
+        *,
+        include_invalidated: bool = False,
+        as_of: Optional[datetime] = None,
     ) -> list[Any]:
         if not self.enabled:
             return []
@@ -251,6 +315,111 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
                 node_labels=node_labels,
                 repo_name=repo_name,
                 source_description=source_description,
+                include_invalidated=include_invalidated,
+                as_of=as_of,
             )
+
+        return self._sync_run(_run)
+
+    async def reset_pot_async(self, pot_id: str) -> dict[str, Any]:
+        if not self.enabled:
+            return {"ok": False, "error": "graphiti_disabled"}
+        g = self._get_graphiti()
+        if g is None:
+            return {"ok": False, "error": self.failure_reason() or "graphiti_unavailable"}
+        try:
+            from graphiti_core.errors import GroupIdValidationError
+            from graphiti_core.helpers import validate_group_id
+            from graphiti_core.nodes import Node
+
+            validate_group_id(pot_id)
+        except GroupIdValidationError as exc:
+            return {"ok": False, "error": f"invalid_pot_id: {exc}"}
+
+        # Graphiti persists pot partitions via ``group_id`` on nodes in the driver's
+        # default Neo4j database (e.g. ``neo4j``). ``Graphiti.add_episode`` compares
+        # ``group_id`` to ``driver._database`` for *non-Neo4j* providers; Neo4jDriver
+        # ``clone()`` is a no-op, so data always lives in the default DB — do not
+        # target a separate catalog named after ``pot_id``.
+        driver = g.driver
+        try:
+            async with driver.session() as session:
+                cnt_res = await session.run(
+                    "MATCH (n {group_id: $gid}) RETURN count(n) AS cnt",
+                    gid=pot_id,
+                )
+                cnt_rec = await cnt_res.single()
+                await cnt_res.consume()
+                nodes_before = int(cnt_rec["cnt"]) if cnt_rec is not None else 0
+
+            await Node.delete_by_group_id(driver, pot_id)
+            async with driver.session() as session:
+                await session.run(
+                    """
+                    MATCH (s:Saga {group_id: $gid})
+                    CALL (s) {
+                        DETACH DELETE s
+                    } IN TRANSACTIONS OF $batch ROWS
+                    """,
+                    gid=pot_id,
+                    batch=100,
+                )
+                # Entity--Entity edges in Neo4j use intermediate ``RelatesToNode_`` nodes
+                # with ``group_id``. Graphiti's ``Node.delete_by_group_id`` only matches
+                # ``Entity|Episodic|Community`` on Neo4j, so remove edge nodes explicitly.
+                await session.run(
+                    """
+                    MATCH (n:RelatesToNode_ {group_id: $gid})
+                    CALL (n) {
+                        DETACH DELETE n
+                    } IN TRANSACTIONS OF $batch ROWS
+                    """,
+                    gid=pot_id,
+                    batch=100,
+                )
+                # Any remaining nodes tagged with this partition (new Graphiti labels, drift,
+                # or types not covered by ``Node.delete_by_group_id``).
+                sweep = await session.run(
+                    """
+                    MATCH (n {group_id: $gid})
+                    CALL (n) {
+                        DETACH DELETE n
+                    } IN TRANSACTIONS OF $batch ROWS
+                    """,
+                    gid=pot_id,
+                    batch=500,
+                )
+                await sweep.consume()
+
+            async with driver.session() as session:
+                verify_res = await session.run(
+                    "MATCH (n {group_id: $gid}) RETURN count(n) AS cnt",
+                    gid=pot_id,
+                )
+                verify_rec = await verify_res.single()
+                await verify_res.consume()
+                remaining = int(verify_rec["cnt"]) if verify_rec is not None else 0
+            if remaining:
+                return {
+                    "ok": False,
+                    "error": "group_id_reset_incomplete",
+                    "group_id_nodes_before": nodes_before,
+                    "group_id_nodes_remaining": remaining,
+                }
+        except Exception as exc:
+            logger.warning("reset_pot_async failed: %s", exc)
+            return {"ok": False, "error": str(exc)}
+        return {
+            "ok": True,
+            "group_id_nodes_before": nodes_before,
+            "group_id_nodes_remaining": 0,
+        }
+
+    def reset_pot(self, pot_id: str) -> dict[str, Any]:
+        if not self.enabled:
+            return {"ok": False, "error": "graphiti_disabled"}
+
+        async def _run():
+            return await self.reset_pot_async(pot_id)
 
         return self._sync_run(_run)

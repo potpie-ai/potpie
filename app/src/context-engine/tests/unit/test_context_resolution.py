@@ -17,12 +17,12 @@ async def test_resolve_returns_bundle_with_semantic_hits() -> None:
     provider = MockIntelligenceProvider()
     svc = ContextResolutionService(provider)
     req = ContextResolutionRequest(
-        project_id="p1",
+        pot_id="p1",
         query="Why was this changed?",
         timeout_ms=4000,
     )
     bundle = await resolve_context(svc, req)
-    assert bundle.request.project_id == "p1"
+    assert bundle.request.pot_id == "p1"
     assert len(bundle.semantic_hits) >= 1
     assert bundle.meta.schema_version == "1"
     assert bundle.meta.provider == "MockIntelligenceProvider"
@@ -33,7 +33,7 @@ async def test_resolve_pr_query_includes_discussions() -> None:
     provider = MockIntelligenceProvider()
     svc = ContextResolutionService(provider)
     req = ContextResolutionRequest(
-        project_id="p1",
+        pot_id="p1",
         query="What happened in PR #42?",
         timeout_ms=4000,
     )

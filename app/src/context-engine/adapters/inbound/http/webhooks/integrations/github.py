@@ -12,7 +12,8 @@ from fastapi import APIRouter, Header, HTTPException, Request
 
 from adapters.inbound.http.deps import get_container_or_503
 from adapters.outbound.postgres.session import make_session_factory
-from application.use_cases.ingest_single_pr import ingest_single_pull_request
+from domain.ingestion_event_models import IngestionSubmissionRequest
+from domain.ingestion_kinds import INGESTION_KIND_GITHUB_MERGED_PR
 
 logger = logging.getLogger(__name__)
 
@@ -77,19 +78,25 @@ async def github_webhook(
 
     session = factory()
     try:
-        result = ingest_single_pull_request(
-            settings=container.settings,
-            pots=container.pots,
-            source=container.source_for_repo(repo),
-            ledger=container.ledger(session),
-            episodic=container.episodic,
-            structural=container.structural,
+        svc = container.ingestion_submission(session)
+        req = IngestionSubmissionRequest(
             pot_id=str(pot_id),
-            pr_number=int(pr_number),
-            is_live_bridge=True,
+            ingestion_kind=INGESTION_KIND_GITHUB_MERGED_PR,
+            source_channel="webhook",
+            source_system="github",
+            event_type="pull_request",
+            action="merged",
+            payload={"pr_number": int(pr_number), "is_live_bridge": True},
         )
+        receipt = svc.submit(req, sync=True)
     finally:
         session.close()
 
-    logger.info("github_webhook ingest result=%s", result)
-    return {"processed": True, "result": result}
+    logger.info("github_webhook ingest receipt=%s", receipt)
+    return {
+        "processed": True,
+        "event_id": receipt.event_id,
+        "status": receipt.status,
+        "duplicate": receipt.duplicate,
+        "error": receipt.error,
+    }

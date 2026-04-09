@@ -58,7 +58,33 @@ class ResolvedPot:
     ready: bool = True
 
     def primary_repo(self) -> ResolvedPotRepo | None:
+        """First attached repo only — prefer :func:`resolve_write_repo` for writes."""
         return self.repos[0] if self.repos else None
+
+
+def resolve_write_repo(
+    resolved: ResolvedPot,
+    *,
+    repo_name: str | None,
+) -> ResolvedPotRepo | None:
+    """
+    Pick a single repo for source-control writes.
+
+    If ``repo_name`` is set, it must match ``owner/repo`` (case-insensitive).
+    If omitted and the pot has exactly one repo, that repo is used.
+    If omitted and the pot has multiple repos, returns ``None`` (caller must disambiguate).
+    """
+    if not resolved.repos:
+        return None
+    if repo_name and (want := repo_name.strip()):
+        w = want.lower()
+        for r in resolved.repos:
+            if r.repo_name.lower() == w:
+                return r
+        return None
+    if len(resolved.repos) == 1:
+        return resolved.repos[0]
+    return None
 
 
 class PotResolutionPort(Protocol):

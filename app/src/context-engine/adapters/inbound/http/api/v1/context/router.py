@@ -6,33 +6,51 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional, Protocol
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from adapters.inbound.http.deps import (
     get_container_or_503,
     get_db,
+    get_db_optional,
     require_api_key,
 )
+from adapters.outbound.postgres.ledger import SqlAlchemyIngestionLedger
+from adapters.outbound.postgres.reconciliation_ledger import SqlAlchemyReconciliationLedger
 from application.use_cases.backfill_pot import backfill_pot_context
-from application.use_cases.ingest_episode import ingest_episode
-from application.use_cases.ingest_single_pr import ingest_single_pull_request
+from application.use_cases.event_reconciliation import ingestion_event_to_payload
+from application.use_cases.hard_reset_pot import hard_reset_pot
+from application.use_cases.run_raw_episode_ingestion import run_raw_episode_ingestion
 from application.use_cases.query_context import (
     get_change_history,
     get_decisions,
     get_file_owners,
-    get_project_graph,
     get_pr_diff,
     get_pr_review_context,
+    get_project_graph,
     search_pot_context,
 )
+from application.use_cases.replay_context_event import replay_context_event
 from application.use_cases.resolve_context import resolve_context
 from bootstrap.container import ContextEngineContainer
+from domain.ingestion_event_models import (
+    EventListFilters,
+    IngestionEventStatus,
+    IngestionSubmissionRequest,
+)
+from domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION, INGESTION_KIND_GITHUB_MERGED_PR
 from domain.intelligence_models import (
     ArtifactRef,
     ContextResolutionRequest,
     ContextScope,
+)
+from domain.reconciliation_flags import agent_planner_enabled, reconciliation_enabled
+
+UNKNOWN_POT_DETAIL = (
+    "Unknown pot_id for this user (create with POST /api/v2/context/pots "
+    "and attach at least one repository)."
 )
 
 
@@ -50,10 +68,26 @@ class IngestPrRequest(BaseModel):
 
     pot_id: str
     pr_number: int
+    repo_name: Optional[str] = Field(
+        default=None,
+        description="owner/repo when the pot has more than one attached repository.",
+    )
     is_live_bridge: bool = True
     repo_name: Optional[str] = Field(
         default=None,
         description="GitHub owner/repo when the pot has multiple repository sources.",
+    )
+
+
+class HardResetRequest(BaseModel):
+    """Hard-delete all context-graph data for a pot."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    pot_id: str = Field(description="Pot scope id (Graphiti group_id / Neo4j partition).")
+    skip_ledger: bool = Field(
+        default=False,
+        description="If true, only clear Graphiti + structural Neo4j; do not delete Postgres ledger rows.",
     )
 
 
@@ -69,6 +103,10 @@ class IngestEpisodeRequest(BaseModel):
     reference_time: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         description="Event time for the episode (defaults to UTC now).",
+    )
+    idempotency_key: Optional[str] = Field(
+        default=None,
+        description="Optional dedupe key for raw episodic ingest (requires DATABASE_URL).",
     )
 
 
@@ -127,10 +165,21 @@ class SearchQuery(BaseModel):
     limit: int = 8
     node_labels: Optional[list[str]] = None
     repo_name: Optional[str] = None
+    source_description: Optional[str] = Field(
+        default=None,
+        description="Optional episodic source label filter (matches CLI --source).",
+    )
+    include_invalidated: bool = False
+    as_of: Optional[datetime] = Field(
+        default=None,
+        description="Restrict to Graphiti edges valid at this instant (ISO 8601).",
+    )
 
 
 class ProjectGraphQuery(BaseModel):
-    project_id: str
+    model_config = ConfigDict(populate_by_name=True)
+
+    pot_id: str
     pr_number: Optional[int] = Field(
         default=None,
         ge=1,
@@ -152,7 +201,9 @@ class ResolveScopeBody(BaseModel):
 
 
 class ResolveContextRequest(BaseModel):
-    project_id: str
+    model_config = ConfigDict(populate_by_name=True)
+
+    pot_id: str
     query: str
     consumer_hint: Optional[str] = None
     artifact: Optional[ResolveArtifactBody] = None
@@ -160,14 +211,58 @@ class ResolveContextRequest(BaseModel):
     timeout_ms: int = Field(default=4000, ge=500, le=30000)
 
 
+class ContextEventHttpBody(BaseModel):
+    """Normalized context event (persisted, then reconciled when agent is configured)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    event_id: Optional[str] = Field(
+        default=None,
+        description="Stable id for this event; generated if omitted.",
+    )
+    ingestion_kind: Optional[str] = Field(
+        default=None,
+        description="Usually ``agent_reconciliation`` (default).",
+    )
+    source_system: str
+    event_type: str
+    action: str
+    pot_id: str
+    provider: str = "github"
+    provider_host: str = "github.com"
+    repo_name: str
+    source_id: str
+    source_event_id: Optional[str] = None
+    artifact_refs: list[str] = Field(default_factory=list)
+    occurred_at: Optional[datetime] = None
+    received_at: Optional[datetime] = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReplayContextEventBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    event_id: str = Field(description="Existing ``context_events.id`` row.")
+
+
+def _wants_sync(sync: bool, x_sync: str | None) -> bool:
+    if sync:
+        return True
+    if x_sync and x_sync.strip().lower() in ("true", "1", "yes"):
+        return True
+    return False
+
+
 class ContextMutationHandlers(Protocol):
-    """Host-provided mutations (e.g. Celery enqueue) instead of inline use cases."""
+    """Host-provided mutations (e.g. job queue enqueue) instead of inline use cases."""
 
     def handle_sync(
         self,
         payload: Optional[SyncRequest],
         container: ContextEngineContainer,
         db: Session,
+        *,
+        auth_user: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         ...
 
@@ -176,6 +271,8 @@ class ContextMutationHandlers(Protocol):
         body: IngestPrRequest,
         container: ContextEngineContainer,
         db: Session,
+        *,
+        auth_user: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         ...
 
@@ -184,7 +281,25 @@ def _require_pot_access(
     container: ContextEngineContainer, pot_id: str
 ) -> None:
     if container.pots.resolve_pot(pot_id) is None:
-        raise HTTPException(status_code=404, detail="Unknown pot_id")
+        raise HTTPException(
+            status_code=404,
+            detail=UNKNOWN_POT_DETAIL,
+        )
+
+
+def _parse_event_status_filters(
+    raw: list[str] | None,
+) -> tuple[IngestionEventStatus, ...] | None:
+    if not raw:
+        return None
+    allowed: frozenset[str] = frozenset({"queued", "processing", "done", "error"})
+    bad = [x for x in raw if x not in allowed]
+    if bad:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status filter(s): {bad}; use queued, processing, done, or error.",
+        )
+    return tuple(raw)  # type: ignore[return-value]
 
 
 def _inline_sync(
@@ -208,8 +323,7 @@ def _inline_sync(
     ids = mapping or pots.known_pot_ids()  # type: ignore[union-attr]
     for pid in ids:
         resolved = container.pots.resolve_pot(pid)
-        primary = resolved.primary_repo() if resolved else None
-        if not resolved or not primary:
+        if not resolved or not resolved.repos:
             results.append(
                 {
                     "status": "skipped",
@@ -221,7 +335,7 @@ def _inline_sync(
         out = backfill_pot_context(
             settings=container.settings,
             pots=container.pots,
-            source=container.source_for_repo(primary.repo_name),
+            source_for_repo=container.source_for_repo,
             ledger=container.ledger(db),
             episodic=container.episodic,
             structural=container.structural,
@@ -241,20 +355,47 @@ def _inline_ingest_pr(
             status_code=503, detail="Context graph is not enabled."
         )
     resolved = container.pots.resolve_pot(body.pot_id)
-    primary = resolved.primary_repo() if resolved else None
-    if not resolved or not primary:
-        raise HTTPException(status_code=404, detail="Unknown pot_id")
-    return ingest_single_pull_request(
-        settings=container.settings,
-        pots=container.pots,
-        source=container.source_for_repo(primary.repo_name),
-        ledger=container.ledger(db),
-        episodic=container.episodic,
-        structural=container.structural,
+    if not resolved or not resolved.repos:
+        raise HTTPException(
+            status_code=404,
+            detail=UNKNOWN_POT_DETAIL,
+        )
+    svc = container.ingestion_submission(db)
+    req = IngestionSubmissionRequest(
         pot_id=body.pot_id,
-        pr_number=body.pr_number,
-        is_live_bridge=body.is_live_bridge,
+        ingestion_kind=INGESTION_KIND_GITHUB_MERGED_PR,
+        source_channel="http",
+        source_system="github",
+        event_type="pull_request",
+        action="merged",
+        payload={
+            "pr_number": body.pr_number,
+            "is_live_bridge": body.is_live_bridge,
+            "repo_name": body.repo_name,
+        },
+        repo_name=body.repo_name,
     )
+    try:
+        receipt = svc.submit(req, sync=True)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if receipt.duplicate:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "duplicate_event",
+                "event_id": receipt.event_id,
+                "message": "Merged PR already recorded for this pot and PR number.",
+            },
+        )
+    if receipt.status == "error":
+        raise HTTPException(
+            status_code=502,
+            detail=receipt.error or "ingest_failed",
+        )
+    out = dict(receipt.extras or {})
+    out["event_id"] = receipt.event_id
+    return out
 
 
 def create_context_router(
@@ -262,6 +403,7 @@ def create_context_router(
     require_auth: Callable[..., Any],
     get_container: Callable[..., ContextEngineContainer],
     get_db: Callable[..., Any],
+    get_db_optional: Callable[..., Any],
     mutation_handlers: ContextMutationHandlers | None = None,
     enforce_pot_access: bool = False,
 ) -> APIRouter:
@@ -272,56 +414,416 @@ def create_context_router(
     @router.post("/sync")
     def post_sync(
         payload: Optional[SyncRequest] = None,
-        _: Any = Depends(require_auth),
+        auth_user: Any = Depends(require_auth),
         container: ContextEngineContainer = Depends(get_container),
         db: Session = Depends(get_db),
     ):
         if mutation_handlers is not None:
-            return mutation_handlers.handle_sync(payload, container, db)
+            return mutation_handlers.handle_sync(
+                payload, container, db, auth_user=auth_user
+            )
         return _inline_sync(payload, container, db)
 
     @router.post("/ingest-pr")
     def post_ingest_pr(
         body: IngestPrRequest,
-        _: Any = Depends(require_auth),
+        auth_user: Any = Depends(require_auth),
         container: ContextEngineContainer = Depends(get_container),
         db: Session = Depends(get_db),
     ):
         if mutation_handlers is not None:
-            return mutation_handlers.handle_ingest_pr(body, container, db)
+            return mutation_handlers.handle_ingest_pr(
+                body, container, db, auth_user=auth_user
+            )
         return _inline_ingest_pr(body, container, db)
 
     @router.post(
         "/ingest",
         summary="Add episodic episode",
-        description="Ingest a raw episode into Graphiti for the pot (group_id).",
+        description=(
+            "Ingest a raw episode into Graphiti for the pot (group_id). "
+            "When DATABASE_URL is set, defaults to async (202): event is persisted then applied by a worker. "
+            "Use sync=true or header X-Context-Ingest-Sync for inline apply."
+        ),
     )
     def post_ingest_episode(
         body: IngestEpisodeRequest,
         _: Any = Depends(require_auth),
         container: ContextEngineContainer = Depends(get_container),
+        db: Session | None = Depends(get_db_optional),
+        sync: bool = Query(
+            False,
+            description="Synchronous apply after persist (200). Default false = async (202) when DATABASE_URL is set.",
+        ),
+        x_context_ingest_sync: str | None = Header(
+            None,
+            alias="X-Context-Ingest-Sync",
+            description="If true/1/yes, same as sync=true.",
+        ),
+    ):
+        want_sync = _wants_sync(sync, x_context_ingest_sync)
+        try:
+            result = run_raw_episode_ingestion(
+                container=container,
+                db=db,
+                pot_id=body.pot_id,
+                name=body.name,
+                episode_body=body.episode_body,
+                source_description=body.source_description,
+                reference_time=body.reference_time,
+                idempotency_key=body.idempotency_key,
+                sync=want_sync,
+                source_channel="http",
+            )
+            if db is not None:
+                if result.ok:
+                    db.commit()
+                else:
+                    db.rollback()
+        except Exception:
+            if db is not None:
+                db.rollback()
+            raise
+
+        if not result.ok:
+            if result.status == "duplicate":
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "duplicate_ingest",
+                        "event_id": result.event_id,
+                        "message": "Duplicate idempotency key or conflicting event.",
+                    },
+                )
+            err = result.error or "ingest_failed"
+            if err == "unknown_pot_id":
+                raise HTTPException(
+                    status_code=404,
+                    detail=UNKNOWN_POT_DETAIL,
+                )
+            if err == "async_requires_database":
+                raise HTTPException(
+                    status_code=503,
+                    detail="Async raw ingest requires DATABASE_URL (or pass sync=true for inline Graphiti write).",
+                )
+            if err == "context_graph_disabled":
+                raise HTTPException(
+                    status_code=503,
+                    detail="Context graph is disabled (opt in by unsetting CONTEXT_GRAPH_ENABLED or setting true).",
+                )
+            raise HTTPException(
+                status_code=503,
+                detail=err,
+            )
+
+        if result.status == "legacy_direct":
+            return {"episode_uuid": result.episode_uuid}
+        if result.status == "applied":
+            return {
+                "episode_uuid": result.episode_uuid,
+                "event_id": result.event_id,
+                "job_id": result.job_id,
+            }
+        return JSONResponse(
+            status_code=202,
+            content={
+                "status": "queued",
+                "event_id": result.event_id,
+                "job_id": result.job_id,
+            },
+        )
+
+    @router.post(
+        "/reset",
+        summary="Hard-reset pot context graph",
+        description=(
+            "Deletes Postgres reconciliation/ingestion rows for the pot first (so async "
+            "workers cannot re-apply after the graph is cleared), then Graphiti episodic data "
+            "and structural Entity/FILE/NODE nodes in the default Neo4j database."
+        ),
+    )
+    def post_hard_reset(
+        body: HardResetRequest,
+        _: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+        db: Session | None = Depends(get_db_optional),
     ) -> dict[str, Any]:
         if not container.settings.is_enabled():
             raise HTTPException(
                 status_code=503,
                 detail="Context graph is disabled (opt in by unsetting CONTEXT_GRAPH_ENABLED or setting true).",
             )
-        if container.pots.resolve_pot(body.pot_id) is None:
-            raise HTTPException(status_code=404, detail="Unknown pot_id")
-        out = ingest_episode(
-            container.episodic,
-            body.pot_id,
-            body.name,
-            body.episode_body,
-            body.source_description,
-            body.reference_time,
-        )
-        if out.get("episode_uuid") is None:
+        if enforce_pot_access:
+            _require_pot_access(container, body.pot_id)
+        elif container.pots.resolve_pot(body.pot_id) is None:
             raise HTTPException(
-                status_code=503,
-                detail="Failed to add episode (Graphiti unavailable or ingestion error).",
+                status_code=404,
+                detail=UNKNOWN_POT_DETAIL,
+            )
+        use_ledger = db is not None and not body.skip_ledger
+        ledger = SqlAlchemyIngestionLedger(db) if use_ledger else None
+        reconciliation_ledger = SqlAlchemyReconciliationLedger(db) if use_ledger else None
+        out = hard_reset_pot(
+            container.episodic,
+            container.structural,
+            body.pot_id,
+            ledger=ledger,
+            reconciliation_ledger=reconciliation_ledger,
+        )
+        if not out.get("ok"):
+            raise HTTPException(
+                status_code=502,
+                detail=out.get("error") or "reset_failed",
             )
         return out
+
+    @router.post(
+        "/events/reconcile",
+        summary="Record event and run ingestion agent (reconciliation)",
+        description=(
+            "Persists a canonical row in ``context_events`` (deduped by scope + source_system + source_id), "
+            "then runs the configured ingestion agent and applies the plan (async by default)."
+        ),
+    )
+    @router.post(
+        "/events/ingest",
+        summary="Alias of /events/reconcile (ingestion agent)",
+        include_in_schema=False,
+    )
+    def post_events_reconcile(
+        body: ContextEventHttpBody,
+        _: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+        db: Session = Depends(get_db),
+        sync: bool = Query(False, description="Inline reconcile (200) instead of enqueue (202)."),
+        x_context_ingest_sync: str | None = Header(
+            None,
+            alias="X-Context-Ingest-Sync",
+        ),
+    ):
+        if not reconciliation_enabled():
+            raise HTTPException(
+                status_code=503,
+                detail="Reconciliation is disabled (CONTEXT_ENGINE_RECONCILIATION_ENABLED).",
+            )
+        if not agent_planner_enabled():
+            raise HTTPException(
+                status_code=503,
+                detail="Agent planner is disabled (CONTEXT_ENGINE_AGENT_PLANNER_ENABLED).",
+            )
+        if container.reconciliation_agent is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No reconciliation agent on the container; install context-engine[reconciliation-agent] "
+                "and enable CONTEXT_ENGINE_AGENT_PLANNER_ENABLED.",
+            )
+        if not container.settings.is_enabled():
+            raise HTTPException(
+                status_code=503,
+                detail="Context graph is disabled (CONTEXT_GRAPH_ENABLED).",
+            )
+        if enforce_pot_access:
+            _require_pot_access(container, body.pot_id)
+        elif container.pots.resolve_pot(body.pot_id) is None:
+            raise HTTPException(
+                status_code=404,
+                detail=UNKNOWN_POT_DETAIL,
+            )
+        want_sync = _wants_sync(sync, x_context_ingest_sync)
+        svc = container.ingestion_submission(db)
+        req = IngestionSubmissionRequest(
+            pot_id=body.pot_id,
+            ingestion_kind=body.ingestion_kind or INGESTION_KIND_AGENT_RECONCILIATION,
+            source_channel="http",
+            source_system=body.source_system,
+            event_type=body.event_type,
+            action=body.action,
+            payload=dict(body.payload),
+            event_id=body.event_id,
+            source_id=body.source_id,
+            provider=body.provider,
+            provider_host=body.provider_host,
+            repo_name=body.repo_name,
+            source_event_id=body.source_event_id,
+            artifact_refs=tuple(body.artifact_refs),
+            occurred_at=body.occurred_at,
+        )
+        try:
+            out = svc.submit(req, sync=want_sync)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        if out.duplicate:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "duplicate_event",
+                    "event_id": out.event_id,
+                    "message": "Event already recorded for this scope and source_id.",
+                },
+            )
+        if not want_sync:
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "status": "queued",
+                    "event_id": out.event_id,
+                    "job_id": out.job_id,
+                },
+            )
+        r = out.reconciliation
+        assert r is not None
+        return {
+            "event_id": out.event_id,
+            "ok": r.ok,
+            "episode_uuids": r.episode_uuids,
+            "mutation_summary": {
+                "episodes_written": r.mutation_summary.episodes_written,
+                "entity_upserts_applied": r.mutation_summary.entity_upserts_applied,
+                "edge_upserts_applied": r.mutation_summary.edge_upserts_applied,
+                "edge_deletes_applied": r.mutation_summary.edge_deletes_applied,
+                "invalidations_applied": r.mutation_summary.invalidations_applied,
+                "stamp_counts": r.mutation_summary.stamp_counts,
+            },
+            "error": r.error,
+        }
+
+    @router.post(
+        "/events/replay",
+        summary="Retry reconciliation for an existing event",
+    )
+    def post_events_replay(
+        body: ReplayContextEventBody,
+        _: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+        db: Session = Depends(get_db),
+    ) -> dict[str, Any]:
+        if not reconciliation_enabled():
+            raise HTTPException(
+                status_code=503,
+                detail="Reconciliation is disabled (CONTEXT_ENGINE_RECONCILIATION_ENABLED).",
+            )
+        if not agent_planner_enabled():
+            raise HTTPException(
+                status_code=503,
+                detail="Agent planner is disabled (CONTEXT_ENGINE_AGENT_PLANNER_ENABLED).",
+            )
+        if container.reconciliation_agent is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No reconciliation agent on the container.",
+            )
+        if not container.settings.is_enabled():
+            raise HTTPException(
+                status_code=503,
+                detail="Context graph is disabled (CONTEXT_GRAPH_ENABLED).",
+            )
+        row = SqlAlchemyReconciliationLedger(db).get_event_by_id(body.event_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Unknown event_id")
+        if enforce_pot_access:
+            _require_pot_access(container, row.pot_id)
+        elif container.pots.resolve_pot(row.pot_id) is None:
+            raise HTTPException(
+                status_code=404,
+                detail=UNKNOWN_POT_DETAIL,
+            )
+        reco = SqlAlchemyReconciliationLedger(db)
+        try:
+            r = replay_context_event(
+                container.episodic,
+                container.structural,
+                container.reconciliation_agent,
+                reco,
+                body.event_id,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return {
+            "event_id": body.event_id,
+            "ok": r.ok,
+            "episode_uuids": r.episode_uuids,
+            "mutation_summary": {
+                "episodes_written": r.mutation_summary.episodes_written,
+                "entity_upserts_applied": r.mutation_summary.entity_upserts_applied,
+                "edge_upserts_applied": r.mutation_summary.edge_upserts_applied,
+                "edge_deletes_applied": r.mutation_summary.edge_deletes_applied,
+                "invalidations_applied": r.mutation_summary.invalidations_applied,
+                "stamp_counts": r.mutation_summary.stamp_counts,
+            },
+            "error": r.error,
+        }
+
+    @router.get("/events/{event_id}", summary="Fetch a persisted context event")
+    def get_context_event(
+        event_id: str,
+        _: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+        db: Session = Depends(get_db),
+    ) -> dict[str, Any]:
+        q = container.event_query_service(db)
+        ev = q.get_event(event_id)
+        if ev is None:
+            raise HTTPException(status_code=404, detail="Unknown event_id")
+        if enforce_pot_access:
+            _require_pot_access(container, ev.pot_id)
+        elif container.pots.resolve_pot(ev.pot_id) is None:
+            raise HTTPException(
+                status_code=404,
+                detail=UNKNOWN_POT_DETAIL,
+            )
+        reco = SqlAlchemyReconciliationLedger(db)
+        steps = reco.list_episode_steps(event_id)
+        step_payload = [
+            {
+                "sequence": s.sequence,
+                "step_kind": s.step_kind,
+                "status": s.status,
+                "attempt_count": s.attempt_count,
+                "applied_at": s.applied_at.isoformat() if s.applied_at else None,
+                "error": s.error,
+            }
+            for s in steps
+        ]
+        return ingestion_event_to_payload(ev, episode_steps=step_payload)
+
+    @router.get(
+        "/pots/{pot_id}/events",
+        summary="List ingestion events for a pot (latest first)",
+    )
+    def list_pot_events(
+        pot_id: str,
+        _: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+        db: Session = Depends(get_db),
+        cursor: str | None = None,
+        limit: int = Query(50, ge=1, le=200),
+        status: list[str] | None = Query(
+            None,
+            description="Filter by canonical lifecycle (repeat param for multiple).",
+        ),
+        ingestion_kind: list[str] | None = Query(
+            None,
+            description="Filter by ingestion_kind (repeat for multiple).",
+        ),
+    ) -> dict[str, Any]:
+        if enforce_pot_access:
+            _require_pot_access(container, pot_id)
+        elif container.pots.resolve_pot(pot_id) is None:
+            raise HTTPException(
+                status_code=404,
+                detail=UNKNOWN_POT_DETAIL,
+            )
+        filters = EventListFilters(
+            statuses=_parse_event_status_filters(status),
+            ingestion_kinds=tuple(ingestion_kind) if ingestion_kind else None,
+        )
+        page = container.event_query_service(db).list_events(
+            pot_id, filters, cursor=cursor, limit=limit
+        )
+        return {
+            "items": [ingestion_event_to_payload(ev) for ev in page.items],
+            "next_cursor": page.next_cursor,
+        }
 
     @router.post("/query/change-history")
     def post_change_history(
@@ -416,6 +918,9 @@ def create_context_router(
             limit=body.limit,
             node_labels=body.node_labels,
             repo_name=body.repo_name,
+            source_description=body.source_description,
+            include_invalidated=body.include_invalidated,
+            as_of=body.as_of,
         )
 
     @router.post("/query/project-graph")
@@ -425,10 +930,10 @@ def create_context_router(
         container: ContextEngineContainer = Depends(get_container),
     ):
         if enforce_pot_access:
-            _require_pot_access(container, body.project_id)
+            _require_pot_access(container, body.pot_id)
         return get_project_graph(
             container.structural,
-            body.project_id,
+            body.pot_id,
             pr_number=body.pr_number,
             limit=body.limit,
         )
@@ -445,7 +950,7 @@ def create_context_router(
                 detail="Context graph is not enabled. Set CONTEXT_GRAPH_ENABLED=true.",
             )
         if enforce_pot_access:
-            _require_pot_access(container, body.project_id)
+            _require_pot_access(container, body.pot_id)
         if container.resolution_service is None:
             raise HTTPException(
                 status_code=503,
@@ -465,7 +970,7 @@ def create_context_router(
                 pr_number=body.scope.pr_number,
             )
         req = ContextResolutionRequest(
-            project_id=body.project_id,
+            pot_id=body.pot_id,
             query=body.query,
             consumer_hint=body.consumer_hint,
             artifact_ref=art,
@@ -488,4 +993,5 @@ context_router = create_context_router(
     require_auth=require_api_key,
     get_container=get_container_or_503,
     get_db=get_db,
+    get_db_optional=get_db_optional,
 )

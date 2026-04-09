@@ -9,32 +9,17 @@ from application.services.pr_bundle import fetch_full_pr
 from application.use_cases.ingest_merged_pr import ingest_merged_pull_request
 from domain.ports.episodic_graph import EpisodicGraphPort
 from domain.ports.ingestion_ledger import IngestionLedgerPort, ledger_scope_from_pot_repo
-from domain.ports.pot_resolution import PotResolutionPort, ResolvedPotRepo
+from domain.ports.pot_resolution import PotResolutionPort, resolve_write_repo
 from domain.ports.settings import ContextEngineSettingsPort
 from domain.ports.source_control import SourceControlPort
 from domain.ports.structural_graph import StructuralGraphPort
 
 logger = logging.getLogger(__name__)
 
-SOURCE_TYPE = "github_pr"
+SOURCE_TYPE = "github"
 
 
-def pick_github_repo_for_pot(
-    resolved_repos: list[ResolvedPotRepo], repo_name: str | None
-) -> ResolvedPotRepo | None:
-    github_repos = [r for r in resolved_repos if r.provider == "github"]
-    if not github_repos:
-        return None
-    if not repo_name:
-        return github_repos[0]
-    want = repo_name.strip().lower()
-    for r in github_repos:
-        if r.repo_name.lower() == want:
-            return r
-    return github_repos[0]
-
-
-def ingest_single_pull_request(
+def run_merged_pr_ingest_core(
     settings: ContextEngineSettingsPort,
     pots: PotResolutionPort,
     source: SourceControlPort,
@@ -43,10 +28,11 @@ def ingest_single_pull_request(
     structural: StructuralGraphPort,
     pot_id: str,
     pr_number: int,
-    is_live_bridge: bool = True,
     *,
     repo_name: str | None = None,
+    is_live_bridge: bool = True,
 ) -> dict[str, Any]:
+    """Fetch merged PR data, write episodes + structural bridges (shared by HTTP and submission service)."""
     if not settings.is_enabled():
         return {
             "status": "skipped",
@@ -63,14 +49,24 @@ def ingest_single_pull_request(
             "pr_number": pr_number,
             "reason": "pot_not_found_or_missing_repo",
         }
-    primary = pick_github_repo_for_pot(resolved.repos, repo_name)
-    if not primary or not primary.repo_name:
-        return {
+    primary = resolve_write_repo(resolved, repo_name=repo_name)
+    if primary is None:
+        reason = (
+            "repo_not_in_pot"
+            if (repo_name or "").strip()
+            else "ambiguous_repo"
+        )
+        out: dict[str, Any] = {
             "status": "skipped",
             "pot_id": pot_id,
             "pr_number": pr_number,
-            "reason": "pot_not_found_or_missing_repo",
+            "reason": reason,
         }
+        if reason == "ambiguous_repo":
+            out["message"] = "Pot has multiple repositories; pass repo_name (owner/repo)."
+        elif (repo_name or "").strip():
+            out["repo_name"] = repo_name.strip()
+        return out
 
     repo_name = primary.repo_name
     scope = ledger_scope_from_pot_repo(primary)
@@ -137,3 +133,30 @@ def ingest_single_pull_request(
             "pr_number": pr_number,
             "error": str(exc),
         }
+
+
+def ingest_single_pull_request(
+    settings: ContextEngineSettingsPort,
+    pots: PotResolutionPort,
+    source: SourceControlPort,
+    ledger: IngestionLedgerPort,
+    episodic: EpisodicGraphPort,
+    structural: StructuralGraphPort,
+    pot_id: str,
+    pr_number: int,
+    is_live_bridge: bool = True,
+    *,
+    repo_name: str | None = None,
+) -> dict[str, Any]:
+    return run_merged_pr_ingest_core(
+        settings,
+        pots,
+        source,
+        ledger,
+        episodic,
+        structural,
+        pot_id,
+        pr_number,
+        repo_name=repo_name,
+        is_live_bridge=is_live_bridge,
+    )

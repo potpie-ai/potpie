@@ -24,3 +24,11 @@ class BridgeError(ContextEngineError):
 class PotNotFound(ContextEngineError):
     """Host could not resolve pot_id."""
 
+
+class ReconciliationPlanValidationError(ContextEngineError):
+    """Reconciliation plan failed validation."""
+
+
+class ReconciliationApplyError(ContextEngineError):
+    """Deterministic apply step failed after validation."""
+

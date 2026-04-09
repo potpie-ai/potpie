@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Optional
 
 from domain.ports.episodic_graph import EpisodicGraphPort
@@ -102,16 +103,28 @@ def get_pr_diff(
 
 def get_project_graph(
     structural: StructuralGraphPort,
-    project_id: str,
+    pot_id: str,
     *,
     pr_number: Optional[int] = None,
     limit: int = 12,
 ) -> dict[str, Any]:
     return structural.get_project_graph(
-        project_id,
+        pot_id,
         pr_number,
         max(1, min(limit, 50)),
     )
+
+
+def _edge_datetime_iso(obj: Any) -> str | None:
+    if obj is None:
+        return None
+    fn = getattr(obj, "isoformat", None)
+    if callable(fn):
+        try:
+            return fn()
+        except Exception:
+            return None
+    return None
 
 
 def search_pot_context(
@@ -123,6 +136,8 @@ def search_pot_context(
     node_labels: Optional[list[str]] = None,
     repo_name: Optional[str] = None,
     source_description: Optional[str] = None,
+    include_invalidated: bool = False,
+    as_of: Optional[datetime] = None,
 ) -> list[dict[str, Any]]:
     if not episodic.enabled:
         return []
@@ -133,17 +148,24 @@ def search_pot_context(
         node_labels=node_labels,
         repo_name=repo_name,
         source_description=source_description,
+        include_invalidated=include_invalidated,
+        as_of=as_of,
     )
     rows: list[dict[str, Any]] = []
     for item in results:
-        rows.append(
-            {
-                "uuid": str(getattr(item, "uuid", "")),
-                "name": getattr(item, "name", None),
-                "summary": getattr(item, "summary", None),
-                "fact": getattr(item, "fact", None),
-            }
-        )
+        row = {
+            "uuid": str(getattr(item, "uuid", "")),
+            "name": getattr(item, "name", None),
+            "summary": getattr(item, "summary", None),
+            "fact": getattr(item, "fact", None),
+        }
+        for key in ("created_at", "valid_at", "invalid_at", "expired_at"):
+            val = getattr(item, key, None)
+            if val is not None:
+                iso = _edge_datetime_iso(val)
+                if iso is not None:
+                    row[key] = iso
+        rows.append(row)
     return rows
 
 
@@ -156,6 +178,8 @@ async def search_pot_context_async(
     node_labels: Optional[list[str]] = None,
     repo_name: Optional[str] = None,
     source_description: Optional[str] = None,
+    include_invalidated: bool = False,
+    as_of: Optional[datetime] = None,
 ) -> list[dict[str, Any]]:
     if not episodic.enabled:
         return []
@@ -166,15 +190,22 @@ async def search_pot_context_async(
         node_labels=node_labels,
         repo_name=repo_name,
         source_description=source_description,
+        include_invalidated=include_invalidated,
+        as_of=as_of,
     )
     rows: list[dict[str, Any]] = []
     for item in results:
-        rows.append(
-            {
-                "uuid": str(getattr(item, "uuid", "")),
-                "name": getattr(item, "name", None),
-                "summary": getattr(item, "summary", None),
-                "fact": getattr(item, "fact", None),
-            }
-        )
+        row = {
+            "uuid": str(getattr(item, "uuid", "")),
+            "name": getattr(item, "name", None),
+            "summary": getattr(item, "summary", None),
+            "fact": getattr(item, "fact", None),
+        }
+        for key in ("created_at", "valid_at", "invalid_at", "expired_at"):
+            val = getattr(item, key, None)
+            if val is not None:
+                iso = _edge_datetime_iso(val)
+                if iso is not None:
+                    row[key] = iso
+        rows.append(row)
     return rows

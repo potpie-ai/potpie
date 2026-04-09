@@ -62,7 +62,7 @@ class IngestionLedgerPort(Protocol):
         graphiti_episode_uuid: str | None,
         payload: dict[str, Any],
     ) -> bool:
-        """Insert raw_events + context_ingestion_log. Return False if duplicate key."""
+        """Insert merged-PR row into ``context_events`` (``github_merged_pr``). Return False if duplicate."""
 
     def update_bridge_status(
         self,
@@ -90,6 +90,10 @@ class IngestionLedgerPort(Protocol):
         ...
 
     def update_sync_state_error(self, scope: LedgerScope, source_type: str, error: str) -> None:
+        ...
+
+    def delete_all_for_pot(self, pot_id: str) -> int:
+        """Delete all ledger and raw-event rows for ``pot_id``. Returns rows removed."""
         ...
 
 

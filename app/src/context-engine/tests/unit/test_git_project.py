@@ -59,14 +59,15 @@ def test_resolve_missing(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_resolve_from_git_uses_active_pot(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CONTEXT_ENGINE_REPO_TO_POT", raising=False)
     monkeypatch.delenv("CONTEXT_ENGINE_POTS", raising=False)
-    monkeypatch.setattr(gp, "get_active_pot_id", lambda: "pot-default")
+    uid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    monkeypatch.setattr(gp, "get_active_pot_id", lambda: uid)
     monkeypatch.setattr(
         gp,
         "get_git_origin_remote_url",
         lambda _cwd=None: "https://github.com/acme/app.git",
     )
     pid, err = resolve_pot_id_from_git_cwd()
-    assert pid == "pot-default"
+    assert pid == uid
     assert err == ""
 
 
@@ -75,14 +76,15 @@ def test_resolve_from_git_prefers_active_pot_over_env_map(monkeypatch: pytest.Mo
         "CONTEXT_ENGINE_REPO_TO_POT",
         '{"acme/app":"pot-from-env"}',
     )
-    monkeypatch.setattr(gp, "get_active_pot_id", lambda: "pot-default")
+    uid = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    monkeypatch.setattr(gp, "get_active_pot_id", lambda: uid)
     monkeypatch.setattr(
         gp,
         "get_git_origin_remote_url",
         lambda _cwd=None: "https://github.com/acme/app.git",
     )
     pid, err = resolve_pot_id_from_git_cwd()
-    assert pid == "pot-default"
+    assert pid == uid
     assert err == ""
 
 
@@ -91,11 +93,24 @@ def test_resolve_prefers_active_without_git(monkeypatch: pytest.MonkeyPatch) -> 
         "CONTEXT_ENGINE_REPO_TO_POT",
         '{"acme/app":"pot-from-env"}',
     )
-    monkeypatch.setattr(gp, "get_active_pot_id", lambda: "pot-default")
+    uid = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+    monkeypatch.setattr(gp, "get_active_pot_id", lambda: uid)
     monkeypatch.setattr(gp, "get_git_origin_remote_url", lambda _cwd=None: None)
     pid, err = resolve_pot_id_from_git_cwd()
-    assert pid == "pot-default"
+    assert pid == uid
     assert err == ""
+
+
+def test_resolve_active_non_uuid_without_alias_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CONTEXT_ENGINE_REPO_TO_POT", raising=False)
+    monkeypatch.delenv("CONTEXT_ENGINE_POTS", raising=False)
+    monkeypatch.setattr(gp, "get_active_pot_id", lambda: "not-a-uuid-or-alias")
+    monkeypatch.setattr(gp, "get_git_origin_remote_url", lambda _cwd=None: None)
+    pid, err = resolve_pot_id_from_git_cwd()
+    assert pid is None
+    assert "Unknown pot" in err
 
 
 def test_resolve_from_git_errors_without_origin_or_mapping(

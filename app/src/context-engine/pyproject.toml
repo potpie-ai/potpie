@@ -30,15 +30,24 @@ graph = [
 github = [
     "pygithub>=2.8.0",
 ]
+reconciliation-agent = [
+    "pydantic-deep>=0.3.0",
+]
+hatchet = [
+    "hatchet-sdk>=1.29.0",
+]
 all = [
     "sqlalchemy>=2.0",
     "psycopg[binary]>=3.2",
     "graphiti-core>=0.28.0",
     "neo4j>=5.28.0",
     "pygithub>=2.8.0",
+    "pydantic-deep>=0.3.0",
+    "hatchet-sdk>=1.29.0",
 ]
 dev = [
     "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
     "ruff>=0.8.0",
 ]
 
@@ -48,9 +57,20 @@ context-engine-mcp = "adapters.inbound.mcp.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["domain", "application", "adapters", "bootstrap"]
+include = [
+    "adapters/inbound/cli/templates/**/*.md",
+    "adapters/inbound/cli/templates/**/*.yaml",
+]
 
 [tool.hatch.build.targets.sdist]
-include = ["domain", "application", "adapters", "bootstrap"]
+include = [
+    "domain",
+    "application",
+    "adapters",
+    "bootstrap",
+    "adapters/inbound/cli/templates/**/*.md",
+    "adapters/inbound/cli/templates/**/*.yaml",
+]
 
 [tool.ruff]
 target-version = "py310"
@@ -60,3 +80,4 @@ src = [".", "tests"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
+asyncio_mode = "auto"

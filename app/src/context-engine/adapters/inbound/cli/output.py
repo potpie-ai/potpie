@@ -47,6 +47,8 @@ class DoctorSnapshot:
     potpie_port_hint: Optional[str]
     database_url_set: bool
     github_token_set: bool
+    potpie_health_ok: Optional[bool] = None
+    potpie_health_message: Optional[str] = None
     summary_lines: list[str] = field(default_factory=list)
 
 
@@ -83,6 +85,8 @@ def print_doctor_report(data: DoctorSnapshot, *, as_json: bool) -> None:
             "potpie_port_hint": data.potpie_port_hint,
             "database_url_set": data.database_url_set,
             "github_token_set": data.github_token_set,
+            "potpie_health_ok": data.potpie_health_ok,
+            "potpie_health_message": data.potpie_health_message,
             "summary": data.summary_lines,
         }
         print(json.dumps(payload))
@@ -90,9 +94,20 @@ def print_doctor_report(data: DoctorSnapshot, *, as_json: bool) -> None:
 
     ctx_tbl = Table(show_header=False, box=None, padding=(0, 2))
     ctx_tbl.add_row("CONTEXT_GRAPH_ENABLED", str(data.context_graph_enabled))
-    ctx_tbl.add_row("Neo4j URI", "set" if data.neo4j_effective_set else "(missing)")
+    ctx_tbl.add_row("Neo4j URI (local)", "set" if data.neo4j_effective_set else "(missing)")
     ctx_tbl.add_row("Neo4j source", data.neo4j_source)
-    _out.print(Panel(ctx_tbl, title="Context graph (search / ingest)", border_style="cyan"))
+    if data.potpie_health_ok is not None:
+        ctx_tbl.add_row(
+            "GET /health",
+            "ok" if data.potpie_health_ok else (data.potpie_health_message or "failed"),
+        )
+    _out.print(
+        Panel(
+            ctx_tbl,
+            title="Context graph (CLI uses Potpie /api/v2/context; Neo4j local optional)",
+            border_style="cyan",
+        )
+    )
 
     pot_tbl = Table(show_header=False, box=None, padding=(0, 2))
     pot_tbl.add_row(
@@ -111,7 +126,7 @@ def print_doctor_report(data: DoctorSnapshot, *, as_json: bool) -> None:
     _out.print(Panel(pot_tbl, title="Pot scope (CLI)", border_style="cyan"))
 
     other_tbl = Table(show_header=False, box=None, padding=(0, 2))
-    other_tbl.add_row("DATABASE_URL / POSTGRES_URL", str(data.database_url_set))
+    other_tbl.add_row("Postgres URL env (local / other tools)", str(data.database_url_set))
     other_tbl.add_row("GITHUB_TOKEN / CONTEXT_ENGINE_GITHUB_TOKEN", str(data.github_token_set))
     _out.print(Panel(other_tbl, title="Other (sync / ledger)", border_style="dim"))
 
@@ -119,7 +134,18 @@ def print_doctor_report(data: DoctorSnapshot, *, as_json: bool) -> None:
         _out.print(line)
 
 
-def print_search_results(rows: list[dict[str, Any]], *, as_json: bool) -> None:
+def _short_temporal_cell(value: Any) -> str:
+    if value is None or value == "":
+        return "—"
+    s = str(value)
+    if len(s) > 22:
+        return s[:19] + "…"
+    return s
+
+
+def print_search_results(
+    rows: list[dict[str, Any]], *, as_json: bool, with_temporal: bool = False
+) -> None:
     if as_json:
         print(json.dumps(rows))
         return
@@ -131,19 +157,40 @@ def print_search_results(rows: list[dict[str, Any]], *, as_json: bool) -> None:
     table.add_column("name", max_width=36)
     table.add_column("summary", max_width=48)
     table.add_column("uuid", style="dim", max_width=38)
+    if with_temporal:
+        table.add_column("valid_at", style="dim", max_width=24)
+        table.add_column("invalid_at", style="dim", max_width=24)
+        table.add_column("created_at", style="dim", max_width=24)
     for i, row in enumerate(rows, start=1):
         name = str(row.get("name") or "")
         summary = str(row.get("summary") or row.get("fact") or "")
         if len(summary) > 200:
             summary = summary[:197] + "..."
         uid = str(row.get("uuid") or "")
-        table.add_row(str(i), name, summary, uid)
+        if with_temporal:
+            table.add_row(
+                str(i),
+                name,
+                summary,
+                uid,
+                _short_temporal_cell(row.get("valid_at")),
+                _short_temporal_cell(row.get("invalid_at")),
+                _short_temporal_cell(row.get("created_at")),
+            )
+        else:
+            table.add_row(str(i), name, summary, uid)
     _out.print(table)
 
 
 def print_ingest_result(out: dict[str, Any], *, as_json: bool) -> None:
     if as_json:
         print(json.dumps(out))
+        return
+    status = out.get("status")
+    if status == "queued":
+        _out.print(
+            f"[green]Episode queued[/green] (async). event_id={out.get('event_id')} job_id={out.get('job_id')}"
+        )
         return
     ep = out.get("episode_uuid")
     _out.print(f"[green]Episode ingested.[/green] episode_uuid={ep}")

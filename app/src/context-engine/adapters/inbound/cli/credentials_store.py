@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import uuid
 from pathlib import Path
 from typing import Any, Optional
 
@@ -78,6 +79,25 @@ def clear_credentials() -> None:
             path.unlink()
 
 
+def clear_pot_scope_state() -> None:
+    """Remove ``active_pot_id`` and ``pot_aliases``; keep API key / base URL if stored."""
+    path = credentials_path()
+    if not path.is_file():
+        return
+    payload: dict[str, Any] = dict(read_credentials())
+    payload.pop("active_pot_id", None)
+    payload.pop("pot_aliases", None)
+    if not payload:
+        try:
+            path.unlink(missing_ok=True)
+        except TypeError:
+            if path.is_file():
+                path.unlink()
+        return
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
 def get_active_pot_id() -> str:
     """CLI-selected active pot (optional)."""
     v = read_credentials().get("active_pot_id")
@@ -107,3 +127,73 @@ def clear_active_pot_id() -> None:
         return
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
+def _norm_alias_key(name: str) -> str:
+    return name.strip().lower()
+
+
+def get_pot_aliases() -> dict[str, str]:
+    """Lowercase display name -> Potpie project UUID (from ``pot alias``)."""
+    raw = read_credentials().get("pot_aliases")
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for k, v in raw.items():
+        if isinstance(k, str) and isinstance(v, str):
+            ks, vs = k.strip().lower(), v.strip()
+            if ks and vs:
+                out[ks] = vs
+    return out
+
+
+def register_pot_alias(name: str, pot_id: str) -> None:
+    """Store a friendly name -> Potpie project UUID (``pot alias``)."""
+    key = _norm_alias_key(name)
+    if not key:
+        raise ValueError("Alias name must be non-empty")
+    try:
+        uid = uuid.UUID(str(pot_id).strip())
+    except ValueError as e:
+        raise ValueError("pot_id must be a UUID") from e
+    d = config_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    path = credentials_path()
+    payload: dict[str, Any] = dict(read_credentials())
+    aliases = dict(payload.get("pot_aliases") or {})
+    if not isinstance(aliases, dict):
+        aliases = {}
+    aliases[key] = str(uid)
+    payload["pot_aliases"] = aliases
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
+def resolve_cli_pot_ref(ref: str) -> tuple[str | None, str]:
+    """Resolve a pot argument to a canonical UUID string.
+
+    Accepts a UUID or a name registered via ``context-engine pot alias``.
+
+    Returns ``(pot_id, "")`` on success, or ``(None, error_message)``.
+    """
+    s = (ref or "").strip()
+    if not s:
+        return None, "Pot reference is empty."
+    try:
+        u = uuid.UUID(s)
+        return str(u), ""
+    except ValueError:
+        pass
+    aliases = get_pot_aliases()
+    k = _norm_alias_key(s)
+    vs = aliases.get(k)
+    if vs:
+        try:
+            u = uuid.UUID(vs.strip())
+            return str(u), ""
+        except ValueError:
+            return None, f"Stored pot id for alias {s!r} is not a valid UUID."
+    return None, (
+        f"Unknown pot {s!r}. Run `context-engine pot create \"<name>\"` (server pot + alias), "
+        f"or `context-engine pot pots` for ids, then `pot use` / `pot alias`."
+    )

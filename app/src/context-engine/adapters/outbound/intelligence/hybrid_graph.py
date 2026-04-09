@@ -129,7 +129,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
 
     async def search_context(
         self,
-        project_id: str,
+        pot_id: str,
         query: str,
         *,
         limit: int = 8,
@@ -140,7 +140,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
         labels = node_labels or _DEFAULT_NODE_LABELS
         try:
             items = await self._episodic.search_async(
-                pot_id=project_id,
+                pot_id=pot_id,
                 query=query,
                 limit=max(1, min(limit, 50)),
                 node_labels=labels,
@@ -152,7 +152,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
 
     async def get_artifact_context(
         self,
-        project_id: str,
+        pot_id: str,
         artifact: ArtifactRef,
     ) -> ArtifactContext | None:
         if artifact.kind != "pr":
@@ -163,7 +163,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
             return None
 
         def _load() -> dict[str, Any]:
-            return self._structural.get_pr_review_context(project_id, num, repo_name=None)
+            return self._structural.get_pr_review_context(pot_id, num, repo_name=None)
 
         try:
             row = await asyncio.to_thread(_load)
@@ -176,14 +176,14 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
 
     async def get_change_history(
         self,
-        project_id: str,
+        pot_id: str,
         scope: ContextScope,
         *,
         limit: int = 10,
     ) -> list[ChangeRecord]:
         def _load() -> list[dict[str, Any]]:
             return self._structural.get_change_history(
-                project_id,
+                pot_id,
                 scope.function_name,
                 scope.file_path,
                 max(1, min(limit, 100)),
@@ -200,14 +200,14 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
 
     async def get_decision_context(
         self,
-        project_id: str,
+        pot_id: str,
         scope: ContextScope,
         *,
         limit: int = 20,
     ) -> list[DecisionRecord]:
         def _load() -> list[dict[str, Any]]:
             return self._structural.get_decisions(
-                project_id,
+                pot_id,
                 scope.file_path,
                 scope.function_name,
                 max(1, min(limit, 100)),
@@ -224,7 +224,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
 
     async def get_related_discussions(
         self,
-        project_id: str,
+        pot_id: str,
         scope: ContextScope,
         *,
         limit: int = 10,
@@ -237,7 +237,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
 
         def _load() -> dict[str, Any]:
             return self._structural.get_pr_review_context(
-                project_id, pr_num, repo_name=None
+                pot_id, pr_num, repo_name=None
             )
 
         try:
@@ -252,7 +252,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
 
     async def get_ownership(
         self,
-        project_id: str,
+        pot_id: str,
         scope: ContextScope,
         *,
         limit: int = 5,
@@ -262,7 +262,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
 
         def _load() -> list[dict[str, Any]]:
             return self._structural.get_file_owners(
-                project_id,
+                pot_id,
                 scope.file_path,
                 max(1, min(limit, 50)),
                 repo_name=None,
