@@ -1,4 +1,4 @@
-"""Shared Celery enqueue for context-graph backfill (Potpie HTTP surfaces)."""
+"""Enqueue context-graph backfill via the configured job queue port (Potpie HTTP surfaces)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
-from app.modules.context_graph.tasks import context_graph_backfill_pot
 from bootstrap.container import ContextEngineContainer
 
 logger = logging.getLogger(__name__)
@@ -15,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 def enqueue_backfill_with_container(
     container: ContextEngineContainer,
-    db: Session,
+    _db: Session,
     pot_ids_filter: Optional[list[str]],
 ) -> dict[str, Any]:
     """
@@ -23,6 +22,10 @@ def enqueue_backfill_with_container(
 
     Expects container.pots to implement known_pot_ids() when filter is None.
     """
+    jobs = container.jobs
+    if jobs is None:
+        raise RuntimeError("Job queue not configured on context-engine container")
+
     mapping = pot_ids_filter
     pots = container.pots
     if not hasattr(pots, "known_pot_ids"):
@@ -41,7 +44,7 @@ def enqueue_backfill_with_container(
             )
             continue
         try:
-            context_graph_backfill_pot.delay(pid)
+            jobs.enqueue_backfill(pid)
             results.append({"status": "enqueued", "pot_id": pid})
         except Exception as e:
             logger.warning(

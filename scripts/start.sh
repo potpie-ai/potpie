@@ -28,8 +28,8 @@ echo "Postgres is up - applying database migrations"
 
 # Ensure uv is available
 if ! command -v uv >/dev/null 2>&1; then
-    echo "Error: uv command not found. Install uv from https://docs.astral.sh/uv/getting-started/ before running this script."
-    exit 1
+  echo "Error: uv command not found. Install uv from https://docs.astral.sh/uv/getting-started/ before running this script."
+  exit 1
 fi
 
 # Synchronize and create the managed virtual environment if needed

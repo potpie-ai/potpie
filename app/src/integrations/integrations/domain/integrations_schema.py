@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 from enum import Enum
@@ -34,7 +34,7 @@ class AuthData(BaseModel):
     scope: Optional[str] = Field(None, description="OAuth scope")
     code: Optional[str] = Field(None, description="OAuth authorization code")
 
-    model_config = {"json_encoders": {datetime: lambda v: v.isoformat() if v else None}}
+    model_config = ConfigDict()
 
 
 class ScopeData(BaseModel):
@@ -90,10 +90,7 @@ class Integration(BaseModel):
         default_factory=datetime.utcnow, description="Last update timestamp"
     )
 
-    model_config = {
-        "use_enum_values": True,
-        "json_encoders": {datetime: lambda v: v.isoformat() if v else None},
-    }
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class IntegrationCreateRequest(BaseModel):
@@ -115,8 +112,7 @@ class IntegrationUpdateRequest(BaseModel):
 
     name: str = Field(..., description="Integration name", min_length=1, max_length=255)
 
-    class Config:
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class IntegrationResponse(BaseModel):

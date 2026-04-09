@@ -76,6 +76,8 @@ dependencies = [
     "greenlet>=3.3.0",
     "graphiti-core>=0.28.2",
     "griffe>=2.0.1",
+    "tldextract>=5.3.1",
+    "hatchet-sdk>=1.29.0",
 ]
 
 [dependency-groups]

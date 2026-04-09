@@ -1,0 +1,4 @@
+interface:
+  display_name: "Context-Engine CLI Troubleshooting"
+  short_description: "Diagnose CLI config and runtime failures"
+  default_prompt: "Use $context-engine-cli-troubleshooting to diagnose a failing context-engine CLI command."

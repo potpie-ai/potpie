@@ -15,7 +15,7 @@ import urllib.parse
 import jwt
 
 from app.core.database import get_db
-from app.api.router import get_api_key_user
+from app.modules.auth.api_key_deps import get_api_key_user
 from app.modules.auth.auth_service import AuthService
 
 from integrations.adapters.outbound.oauth.sentry_oauth_v2 import SentryOAuthV2

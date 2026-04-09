@@ -8,15 +8,17 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
+from bootstrap.queue_factory import get_context_graph_job_queue
+from adapters.outbound.reconciliation.factory import try_pydantic_deep_reconciliation_agent
 from app.modules.code_provider.provider_factory import CodeProviderFactory
 from app.modules.context_graph.code_provider_source_control import (
     CodeProviderSourceControl,
 )
-from app.modules.context_graph.pot_resolution_sources import (
-    github_resolved_pot_from_project,
+from app.modules.context_graph.context_graph_pot_member_model import ContextGraphPotMember
+from app.modules.context_graph.context_graph_pot_model import ContextGraphPot
+from app.modules.context_graph.context_graph_pot_repository_model import (
+    ContextGraphPotRepository,
 )
-from integrations.adapters.outbound.postgres.project_source_model import ProjectSource
-from app.modules.projects.projects_model import Project
 from bootstrap.container import ContextEngineContainer, build_container
 from domain.ports.pot_resolution import (
     PotResolutionPort,
@@ -63,53 +65,99 @@ class PotpieContextEngineSettings(ContextEngineSettingsPort):
         return int(self._cp.get_context_graph_config().get("backfill_max_prs_per_run", 100))
 
 
+def _resolved_pot_from_context_graph_row(db: Session, row: ContextGraphPot) -> ResolvedPot:
+    rrows = (
+        db.query(ContextGraphPotRepository)
+        .filter(ContextGraphPotRepository.pot_id == row.id)
+        .order_by(ContextGraphPotRepository.created_at.asc())
+        .all()
+    )
+    repos: list[ResolvedPotRepo] = []
+    for r in rrows:
+        repos.append(
+            ResolvedPotRepo(
+                pot_id=row.id,
+                repo_id=r.id,
+                provider=r.provider,
+                provider_host=r.provider_host,
+                repo_name=f"{r.owner}/{r.repo}",
+                remote_url=r.remote_url,
+                default_branch=r.default_branch,
+                ready=True,
+            )
+        )
+    display = (row.display_name or "").strip() or None
+    name = display or (repos[0].repo_name if repos else row.id)
+    return ResolvedPot(
+        pot_id=row.id,
+        name=name,
+        repos=repos,
+        ready=True,
+    )
+
+
+def _user_can_access_context_graph_pot(db: Session, user_id: str, pot_id: str) -> bool:
+    if (
+        db.query(ContextGraphPotMember)
+        .filter(
+            ContextGraphPotMember.pot_id == pot_id,
+            ContextGraphPotMember.user_id == user_id,
+        )
+        .first()
+    ):
+        return True
+    pot = db.query(ContextGraphPot).filter(ContextGraphPot.id == pot_id).first()
+    return bool(pot is not None and pot.user_id == user_id)
+
+
 class SqlalchemyPotResolution(PotResolutionPort):
+    """Worker / session-wide resolver: ``context_graph_pots`` and attached repositories only."""
+
     def __init__(self, db: Session) -> None:
         self._db = db
 
     def resolve_pot(self, pot_id: str) -> ResolvedPot | None:
-        project = self._db.query(Project).filter(Project.id == pot_id).first()
-        if not project:
+        cg = (
+            self._db.query(ContextGraphPot)
+            .filter(ContextGraphPot.id == pot_id)
+            .first()
+        )
+        if cg is None or cg.archived_at is not None:
             return None
-        return github_resolved_pot_from_project(self._db, project)
+        return _resolved_pot_from_context_graph_row(self._db, cg)
 
     def known_pot_ids(self) -> list[str]:
-        rows = (
-            self._db.query(Project.id)
-            .filter(
-                Project.repo_name.isnot(None),
-                Project.repo_name != "",
-                func.lower(Project.status) == "ready",
-            )
+        cg = [
+            r[0]
+            for r in self._db.query(ContextGraphPot.id)
+            .filter(ContextGraphPot.archived_at.is_(None))
             .all()
-        )
-        return [r[0] for r in rows]
+        ]
+        return sorted(set(cg))
 
     def find_pots_for_repo(self, ref: RepoRef) -> list[str]:
         want = ref.repo_name.lower()
-        ids: set[str] = set()
-        rows = (
-            self._db.query(Project.id)
+        full_name = func.lower(
+            func.concat(
+                ContextGraphPotRepository.owner,
+                "/",
+                ContextGraphPotRepository.repo,
+            )
+        )
+        cg_repo = [
+            r[0]
+            for r in self._db.query(ContextGraphPotRepository.pot_id)
+            .join(
+                ContextGraphPot,
+                ContextGraphPot.id == ContextGraphPotRepository.pot_id,
+            )
             .filter(
-                Project.repo_name.isnot(None),
-                func.lower(Project.repo_name) == want,
+                full_name == want,
+                ContextGraphPot.archived_at.is_(None),
             )
             .all()
-        )
-        ids.update(r[0] for r in rows)
-        repo_json = ProjectSource.scope_json["repo_name"].astext
-        src_rows = (
-            self._db.query(ProjectSource.project_id)
-            .filter(
-                ProjectSource.provider == "github",
-                ProjectSource.source_kind == "repository",
-                func.lower(repo_json) == want,
-            )
-            .distinct()
-            .all()
-        )
-        ids.update(r[0] for r in src_rows)
-        return list(ids)
+        ]
+        return sorted(set(cg_repo))
 
     def list_pot_repos(self, pot_id: str) -> list[ResolvedPotRepo]:
         r = self.resolve_pot(pot_id)
@@ -126,64 +174,75 @@ class SqlalchemyPotResolution(PotResolutionPort):
         return None
 
 
-class UserScopedSqlalchemyPotResolution(PotResolutionPort):
-    """Resolve pots for a single user (HTTP / agent surfaces)."""
+class UserScopedContextGraphPotResolution(PotResolutionPort):
+    """Resolve context-graph pots the caller may access (member or legacy pot owner row)."""
 
     def __init__(self, db: Session, user_id: str) -> None:
         self._db = db
         self._user_id = user_id
 
     def resolve_pot(self, pot_id: str) -> ResolvedPot | None:
-        project = (
-            self._db.query(Project)
-            .filter(Project.id == pot_id, Project.user_id == self._user_id)
-            .first()
-        )
-        if not project:
+        row = self._db.query(ContextGraphPot).filter(ContextGraphPot.id == pot_id).first()
+        if row is None or row.archived_at is not None:
             return None
-        return github_resolved_pot_from_project(self._db, project)
+        if not _user_can_access_context_graph_pot(self._db, self._user_id, pot_id):
+            return None
+        return _resolved_pot_from_context_graph_row(self._db, row)
 
     def known_pot_ids(self) -> list[str]:
-        rows = (
-            self._db.query(Project.id)
+        cg = [
+            r[0]
+            for r in self._db.query(ContextGraphPotMember.pot_id)
+            .filter(ContextGraphPotMember.user_id == self._user_id)
+            .all()
+        ]
+        legacy = [
+            r[0]
+            for r in self._db.query(ContextGraphPot.id)
             .filter(
-                Project.user_id == self._user_id,
-                Project.repo_name.isnot(None),
-                Project.repo_name != "",
-                func.lower(Project.status) == "ready",
+                ContextGraphPot.user_id == self._user_id,
+                ContextGraphPot.archived_at.is_(None),
             )
             .all()
-        )
-        return [r[0] for r in rows]
+        ]
+        return sorted(set(cg + legacy))
 
     def find_pots_for_repo(self, ref: RepoRef) -> list[str]:
         want = ref.repo_name.lower()
-        ids: set[str] = set()
-        rows = (
-            self._db.query(Project.id)
+        full_name = func.lower(
+            func.concat(
+                ContextGraphPotRepository.owner,
+                "/",
+                ContextGraphPotRepository.repo,
+            )
+        )
+        cg_repo_member = [
+            r[0]
+            for r in self._db.query(ContextGraphPotRepository.pot_id)
+            .join(
+                ContextGraphPotMember,
+                ContextGraphPotMember.pot_id == ContextGraphPotRepository.pot_id,
+            )
+            .join(ContextGraphPot, ContextGraphPot.id == ContextGraphPotRepository.pot_id)
             .filter(
-                Project.user_id == self._user_id,
-                Project.repo_name.isnot(None),
-                func.lower(Project.repo_name) == want,
+                ContextGraphPotMember.user_id == self._user_id,
+                ContextGraphPot.archived_at.is_(None),
+                full_name == want,
             )
             .all()
-        )
-        ids.update(r[0] for r in rows)
-        repo_json = ProjectSource.scope_json["repo_name"].astext
-        src_rows = (
-            self._db.query(ProjectSource.project_id)
-            .join(Project, Project.id == ProjectSource.project_id)
+        ]
+        cg_repo_owner = [
+            r[0]
+            for r in self._db.query(ContextGraphPotRepository.pot_id)
+            .join(ContextGraphPot, ContextGraphPot.id == ContextGraphPotRepository.pot_id)
             .filter(
-                Project.user_id == self._user_id,
-                ProjectSource.provider == "github",
-                ProjectSource.source_kind == "repository",
-                func.lower(repo_json) == want,
+                ContextGraphPot.user_id == self._user_id,
+                ContextGraphPot.archived_at.is_(None),
+                full_name == want,
             )
-            .distinct()
             .all()
-        )
-        ids.update(r[0] for r in src_rows)
-        return list(ids)
+        ]
+        return sorted(set(cg_repo_member + cg_repo_owner))
 
     def list_pot_repos(self, pot_id: str) -> list[ResolvedPotRepo]:
         r = self.resolve_pot(pot_id)
@@ -209,6 +268,8 @@ def build_container_for_session(db: Session) -> ContextEngineContainer:
         settings=PotpieContextEngineSettings(),
         pots=SqlalchemyPotResolution(db),
         source_for_repo=source_for_repo,
+        reconciliation_agent=try_pydantic_deep_reconciliation_agent(),
+        jobs=get_context_graph_job_queue(),
     )
 
 
@@ -219,6 +280,8 @@ def build_container_for_user_session(db: Session, user_id: str) -> ContextEngine
 
     return build_container(
         settings=PotpieContextEngineSettings(),
-        pots=UserScopedSqlalchemyPotResolution(db, user_id),
+        pots=UserScopedContextGraphPotResolution(db, user_id),
         source_for_repo=source_for_repo,
+        reconciliation_agent=try_pydantic_deep_reconciliation_agent(),
+        jobs=get_context_graph_job_queue(),
     )

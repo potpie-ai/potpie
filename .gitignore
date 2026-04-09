@@ -84,3 +84,4 @@ worktrees/
 specs/
 
 *.egg-info/
+temp.txt
