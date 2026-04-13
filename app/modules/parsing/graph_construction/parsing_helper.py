@@ -1166,14 +1166,12 @@ class ParseHelper:
             file_count = 0
             try:
                 for root, dirs, files in os.walk(repo_manager_path):
-                    # Skip .git directory (check if .git is a directory component, not substring)
-                    root_parts = root.split(os.sep)
+                    # Evaluate path parts relative to the worktree root so absolute path
+                    # components like ".repos_local" do not hide all source files.
+                    rel_root = os.path.relpath(root, repo_manager_path)
+                    root_parts = [] if rel_root == "." else rel_root.split(os.sep)
                     if ".git" in root_parts:
-                        git_idx = root_parts.index(".git")
-                        git_path = os.sep.join(root_parts[: git_idx + 1])
-                        if os.path.isdir(git_path):
-                            continue
-                    # Skip other hidden directories
+                        continue
                     if any(
                         part.startswith(".") and part not in [".github", ".vscode"]
                         for part in root_parts
@@ -1600,6 +1598,26 @@ class ParseHelper:
                 )
                 return None
 
+            # If a branch was requested but is invalid for this repository, fall back to
+            # the repository default branch to avoid invalid worktree refs.
+            if not commit_id and branch:
+                requested_branch = branch
+                try:
+                    github_repo.get_branch(branch)
+                except Exception:
+                    default_branch = getattr(github_repo, "default_branch", None)
+                    if default_branch and default_branch != branch:
+                        logger.warning(
+                            f"[Repomanager] Requested branch '{branch}' not found for {repo_name}; "
+                            f"falling back to default branch '{default_branch}'",
+                            user_id=user_id,
+                            repo_name=repo_name,
+                            requested_branch=requested_branch,
+                            fallback_branch=default_branch,
+                        )
+                        branch = default_branch
+                        ref = default_branch
+
             # Worktree path for this specific branch/commit
             # Use commit_id directly if provided to ensure exact match
             if commit_id:
@@ -1632,8 +1650,8 @@ class ParseHelper:
                 )
 
                 try:
-                    _, _, Repo = _get_git_imports()
-                    base_repo = Repo(base_repo_path)
+                    _, _, RepoCls = _get_git_imports()
+                    base_repo = RepoCls(base_repo_path)
 
                     # Fetch latest to ensure we have the commit
                     logger.info(f"ParsingHelper: Fetching latest for {repo_name}")
@@ -1655,8 +1673,8 @@ class ParseHelper:
                         # Always get actual commit SHA from worktree to ensure accuracy
                         actual_commit_id = None
                         try:
-                            _, _, Repo = _get_git_imports()
-                            worktree_repo = Repo(worktree_path_str)
+                            _, _, RepoCls = _get_git_imports()
+                            worktree_repo = RepoCls(worktree_path_str)
                             actual_commit_id = worktree_repo.head.commit.hexsha
                             logger.info(
                                 f"ParsingHelper: Worktree created at {worktree_path_str}, "
@@ -1895,7 +1913,8 @@ class ParseHelper:
 
             try:
                 # Clone as bare repository
-                Repo.clone_from(
+                _, _, RepoCls = _get_git_imports()
+                RepoCls.clone_from(
                     clone_url,
                     str(bare_repo_path),
                     bare=True,
@@ -1911,8 +1930,8 @@ class ParseHelper:
                 )
 
                 # Configure the bare repo to fetch all refs
-                _, _, Repo = _get_git_imports()
-                bare_repo = Repo(str(bare_repo_path))
+                _, _, RepoCls = _get_git_imports()
+                bare_repo = RepoCls(str(bare_repo_path))
                 if bare_repo.remotes:
                     origin = bare_repo.remotes.origin
                     origin.fetch()
@@ -1924,6 +1943,8 @@ class ParseHelper:
 
             except Exception as e:
                 error_str = str(e).lower()
+                git_stderr = getattr(e, "stderr", None)
+                git_stdout = getattr(e, "stdout", None)
                 if "403" in error_str or "forbidden" in error_str:
                     reason = "Environment token lacks access to repository (check GH_TOKEN_LIST)"
                 elif "401" in error_str or "unauthorized" in error_str:
@@ -1940,6 +1961,12 @@ class ParseHelper:
                     ref=ref,
                     error_type=type(e).__name__,
                     error=str(e)[:200],
+                    git_stderr=(
+                        git_stderr[-2000:] if isinstance(git_stderr, str) else git_stderr
+                    ),
+                    git_stdout=(
+                        git_stdout[-2000:] if isinstance(git_stdout, str) else git_stdout
+                    ),
                     reason=reason,
                     suggestion="All authentication methods exhausted. Check: 1) GitHub App installation, 2) User OAuth scopes, 3) Environment tokens",
                 )
@@ -2001,8 +2028,8 @@ class ParseHelper:
             # Always get actual commit SHA from worktree to ensure accuracy
             actual_commit_id = None
             try:
-                _, _, Repo = _get_git_imports()
-                worktree_repo = Repo(worktree_path_str)
+                _, _, RepoCls = _get_git_imports()
+                worktree_repo = RepoCls(worktree_path_str)
                 actual_commit_id = worktree_repo.head.commit.hexsha
                 logger.info(
                     f"ParsingHelper: Worktree created at {worktree_path_str}, "
@@ -2455,7 +2482,8 @@ class ParseHelper:
                             shutil.copy2(src, dst)
 
                     # Initialize worktree as new repo and add as worktree
-                    worktree_repo = Repo.init(worktree_path)
+                    _, _, RepoCls = _get_git_imports()
+                    worktree_repo = RepoCls.init(worktree_path)
                     worktree_repo.git.add(A=True)
                     try:
                         worktree_repo.index.commit(f"Initial commit for {ref}")
