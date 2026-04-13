@@ -73,7 +73,11 @@ dependencies = [
     "uuid6>=2025.0.1",
     "uvicorn>=0.38.0",
     "greenlet>=3.3.0",
+    "typer>=0.15.0",
 ]
+
+[project.scripts]
+potpie-seed = "seed.cli:main"
 
 [dependency-groups]
 dev = [
@@ -89,7 +93,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["potpie*", "app*"]
+include = ["potpie*", "app*", "seed*"]
 
 [tool.bandit]
 exclude_dirs = ["tests", "app/alembic"]
