@@ -45,7 +45,7 @@ pipeline {
                     def dockerRegistry = env.DOCKER_REGISTRY
                     echo "Printing the saved docker registry from env:"
                     echo "${dockerRegistry}"
-                    sh "sudo docker build --platform linux/amd64 -f deployment/stage/mom-api/api.Dockerfile -t ${DOCKER_REGISTRY}/mom-api:${imageTag} ${env.WORKSPACE}"
+                    sh "sudo docker build --platform linux/amd64 -f deployment/stage/mom-api/api.Dockerfile -t ${DOCKER_REGISTRY}/mom-api-ss:${imageTag} ${env.WORKSPACE}"
                 }
             }
         }
@@ -57,7 +57,7 @@ pipeline {
                     def imageTag = env.GIT_COMMIT_HASH
                     echo "printing the user here"
                     sh "whoami && pwd"
-                    sh "sudo docker push ${DOCKER_REGISTRY}/mom-api:${imageTag}"
+                    sh "sudo docker push ${DOCKER_REGISTRY}/mom-api-ss:${imageTag}"
                 }
             }
         }
@@ -103,8 +103,8 @@ pipeline {
 
                     try {
                         sh """
-                        kubectl set image deployment/mom-api-deployment mom-api=${DOCKER_REGISTRY}/mom-api:${imageTag} -n ${params.namespace}
-                        kubectl rollout status deployment/mom-api-deployment -n ${params.namespace}
+                        kubectl set image deployment/mom-api-ss-deployment mom-api-ss=${DOCKER_REGISTRY}/mom-api-ss:${imageTag} -n ${params.namespace}
+                        kubectl rollout status deployment/mom-api-ss-deployment -n ${params.namespace}
                         """
                         imageDeploySucceeded = true
                     } catch (Exception e) {
@@ -113,7 +113,7 @@ pipeline {
 
                     if (!imageDeploySucceeded) {
                         echo 'Rolling back to previous revision...'
-                        sh "kubectl rollout undo deployment/mom-api-deployment -n ${params.namespace}"
+                        sh "kubectl rollout undo deployment/mom-api-ss-deployment -n ${params.namespace}"
                     }
                 }
             }
@@ -146,7 +146,7 @@ pipeline {
                 // Clean up local Docker images
                 def imageTag = env.GIT_COMMIT_HASH
                 sh """
-                docker rmi ${DOCKER_REGISTRY}/mom-api:${imageTag} || true
+                docker rmi ${DOCKER_REGISTRY}/mom-api-ss:${imageTag} || true
                 """
             }
         }
