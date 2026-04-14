@@ -311,6 +311,19 @@ class StreamProcessor:
                 )
         except ImportError:
             pass
+        try:
+            import httpx
+
+            if isinstance(error, httpx.ConnectError):
+                logger.warning(
+                    f"Model connection error in {context}: {error}. "
+                    "Likely network/provider connectivity issue during stream setup."
+                )
+                return self.create_error_response(
+                    "*Could not connect to the model provider. Please try again.*"
+                )
+        except ImportError:
+            pass
         if isinstance(error, (ModelRetry, AgentRunError, UserError)):
             logger.warning(f"Pydantic-ai error in {context}: {error}")
             return self.create_error_response(

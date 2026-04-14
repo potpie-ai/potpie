@@ -755,48 +755,58 @@ class ConversationService:
             logger.info(
                 f"DEBUG: store_message called with message.attachment_ids: {message.attachment_ids}"
             )
-            if message_type == MessageType.HUMAN and not message.attachment_ids:
-                # Backward-compatible fallback for first message after create_conversation
-                # when attachment IDs were provided only at conversation creation time.
-                try:
-                    pending_key = (
-                        f"conversation:pending_attachments:{conversation_id}"
-                    )
-                    pending_raw = None
-                    if self.async_redis_manager:
-                        pending_raw = await self.async_redis_manager.redis_client.get(
-                            pending_key
-                        )
-                    else:
-                        pending_raw = self.redis_manager.redis_client.get(pending_key)
-                    if pending_raw:
-                        pending_value = (
-                            pending_raw.decode("utf-8")
-                            if isinstance(pending_raw, bytes)
-                            else pending_raw
-                        )
-                        parsed = json.loads(pending_value)
-                        if isinstance(parsed, list) and parsed:
-                            message.attachment_ids = parsed
-                            logger.info(
-                                f"Applied {len(parsed)} pending attachments to first message in conversation {conversation_id}"
-                            )
-                        if self.async_redis_manager:
-                            await self.async_redis_manager.redis_client.delete(
-                                pending_key
-                            )
-                        else:
-                            self.redis_manager.redis_client.delete(pending_key)
-                except Exception:
-                    logger.exception(
-                        f"Failed to load pending attachments for conversation {conversation_id}"
-                    )
-
             access_level = await self.check_conversation_access(
                 conversation_id, self.user_email, user_id
             )
             if access_level == ConversationAccessType.READ:
                 raise AccessTypeReadError("Access denied.")
+            if message_type == MessageType.HUMAN and not message.attachment_ids:
+                # Backward-compatible fallback for first message after create_conversation
+                # when attachment IDs were provided only at conversation creation time.
+                conversation = await self._get_conversation_with_message_count(
+                    conversation_id
+                )
+                is_first_human_turn = bool(conversation) and (
+                    conversation.human_message_count == 0
+                )
+                if is_first_human_turn:
+                    try:
+                        pending_key = (
+                            f"conversation:pending_attachments:{conversation_id}"
+                        )
+                        pending_raw = None
+                        if self.async_redis_manager:
+                            pending_raw = (
+                                await self.async_redis_manager.redis_client.get(
+                                    pending_key
+                                )
+                            )
+                        else:
+                            pending_raw = self.redis_manager.redis_client.get(
+                                pending_key
+                            )
+                        if pending_raw:
+                            pending_value = (
+                                pending_raw.decode("utf-8")
+                                if isinstance(pending_raw, bytes)
+                                else pending_raw
+                            )
+                            parsed = json.loads(pending_value)
+                            if isinstance(parsed, list) and parsed:
+                                message.attachment_ids = parsed
+                                logger.info(
+                                    f"Applied {len(parsed)} pending attachments to first message in conversation {conversation_id}"
+                                )
+                                if self.async_redis_manager:
+                                    await self.async_redis_manager.redis_client.delete(
+                                        pending_key
+                                    )
+                                else:
+                                    self.redis_manager.redis_client.delete(pending_key)
+                    except Exception:
+                        logger.exception(
+                            f"Failed to load pending attachments for conversation {conversation_id}"
+                        )
             self._history_add_message_chunk(
                 conversation_id, message.content, message_type, user_id
             )

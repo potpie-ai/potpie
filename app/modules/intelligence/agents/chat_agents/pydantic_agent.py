@@ -60,6 +60,26 @@ from langchain_core.tools import StructuredTool
 logger = setup_logger(__name__)
 
 
+def _sanitize_prompt_file_name(file_name: object, max_length: int = 200) -> str:
+    """Sanitize file names before interpolating into prompt text."""
+    normalized_name = str(file_name or "")
+    # Drop control characters and normalize all whitespace/newlines to single spaces.
+    normalized_name = "".join(ch for ch in normalized_name if ch.isprintable())
+    normalized_name = re.sub(r"\s+", " ", normalized_name).strip()
+    if not normalized_name:
+        return "unknown"
+    return normalized_name[:max_length]
+
+
+def _safe_file_size(file_size: object) -> int:
+    """Best-effort conversion to a non-negative integer file size."""
+    try:
+        normalized_size = int(file_size)
+        return normalized_size if normalized_size >= 0 else 0
+    except (TypeError, ValueError):
+        return 0
+
+
 def handle_exception(tool_func):
     @functools.wraps(tool_func)
     def wrapper(*args, **kwargs):
@@ -262,14 +282,14 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             all_images = ctx.get_all_images()
             image_details = []
             for attachment_id, image_data in all_images.items():
-                file_name = image_data.get("file_name", "unknown")
-                file_size = image_data.get("file_size", 0)
+                file_name = _sanitize_prompt_file_name(image_data.get("file_name", "unknown"))
+                file_size = _safe_file_size(image_data.get("file_size", 0))
                 image_details.append(f"- {file_name} ({file_size} bytes)")
             document_details = []
             all_documents = ctx.get_all_documents()
             for attachment_id, doc_data in all_documents.items():
-                file_name = doc_data.get("file_name", "unknown")
-                file_size = doc_data.get("file_size", 0)
+                file_name = _sanitize_prompt_file_name(doc_data.get("file_name", "unknown"))
+                file_size = _safe_file_size(doc_data.get("file_size", 0))
                 document_details.append(f"- {file_name} ({file_size} bytes)")
 
             image_context = f"""
@@ -424,8 +444,15 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                 )
                 continue
 
-        # If no current images, add context images as fallback
-        if not current_images:
+        current_documents = ctx.get_current_documents_only()
+        is_document_only_request = bool(current_documents) and not bool(current_images)
+        if is_document_only_request:
+            logger.info(
+                "Skipping historical image fallback because request is document-only"
+            )
+
+        # If no current images, add context images as fallback (except document-only requests)
+        if not current_images and not is_document_only_request:
             context_images = ctx.get_context_images_only()
             logger.info(
                 f"No current images found, processing {len(context_images)} context images as fallback"
@@ -485,7 +512,6 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                     continue
 
         # Add document attachments to the content
-        current_documents = ctx.get_current_documents_only()
         logger.info(
             f"Processing {len(current_documents)} current documents for multimodal content"
         )
