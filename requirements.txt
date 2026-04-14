@@ -2,9 +2,11 @@
 #    uv pip compile pyproject.toml -o requirements.txt
 ag-ui-protocol==0.1.10
     # via pydantic-ai-slim
+aiofile==3.9.0
+    # via py-key-value-aio
 aiohappyeyeballs==2.6.1
     # via aiohttp
-aiohttp==3.13.3
+aiohttp==3.13.5
     # via
     #   potpie (pyproject.toml)
     #   firecrawl-py
@@ -35,9 +37,11 @@ anyio==4.12.1
     #   httpx
     #   mcp
     #   openai
+    #   py-key-value-aio
     #   pydantic-evals
     #   sse-starlette
     #   starlette
+    #   watchfiles
 argcomplete==3.6.3
     # via pydantic-ai-slim
 asyncpg==0.31.0
@@ -57,9 +61,7 @@ authlib==1.6.9
 backoff==2.2.1
     # via posthog
 beartype==0.22.9
-    # via
-    #   py-key-value-aio
-    #   py-key-value-shared
+    # via py-key-value-aio
 bidict==0.23.1
     # via python-socketio
 billiard==4.2.4
@@ -76,6 +78,8 @@ cachecontrol==0.14.4
     # via firebase-admin
 cachetools==7.0.0
     # via py-key-value-aio
+caio==0.9.25
+    # via aiofile
 celery==5.6.2
     # via
     #   potpie (pyproject.toml)
@@ -110,13 +114,9 @@ click-plugins==1.1.1.2
     # via celery
 click-repl==0.3.0
     # via celery
-cloudpickle==3.1.2
-    # via pydocket
 cohere==5.20.7
     # via pydantic-ai-slim
-croniter==6.0.0
-    # via pydocket
-cryptography==46.0.6
+cryptography==46.0.7
     # via
     #   potpie (pyproject.toml)
     #   authlib
@@ -125,9 +125,7 @@ cryptography==46.0.6
 cyclopts==4.5.1
     # via fastmcp
 diskcache==5.6.3
-    # via
-    #   instructor
-    #   py-key-value-aio
+    # via instructor
 distro==1.9.0
     # via
     #   anthropic
@@ -154,16 +152,16 @@ exceptiongroup==1.3.1
     # via fastmcp
 executing==2.2.1
     # via logfire
-fakeredis==2.33.0
-    # via pydocket
 fastapi==0.128.1
     # via
     #   potpie (pyproject.toml)
     #   sentry-sdk
 fastavro==1.12.1
     # via cohere
-fastmcp==2.14.5
-    # via pydantic-ai-slim
+fastmcp==3.2.4
+    # via
+    #   potpie (pyproject.toml)
+    #   pydantic-ai-slim
 fastuuid==0.14.0
     # via litellm
 filelock==3.20.3
@@ -238,7 +236,9 @@ greenlet==3.3.1
 grep-ast==0.9.0
     # via potpie (pyproject.toml)
 griffelib==2.0.0
-    # via pydantic-ai-slim
+    # via
+    #   fastmcp
+    #   pydantic-ai-slim
 groq==1.0.0
     # via pydantic-ai-slim
 grpc-google-iam-v1==0.14.3
@@ -363,14 +363,17 @@ kombu==5.6.2
     #   celery
 langchain==1.2.8
     # via potpie (pyproject.toml)
-langchain-core==1.2.23
+langchain-core==1.2.28
     # via
+    #   potpie (pyproject.toml)
     #   langchain
     #   langgraph
     #   langgraph-checkpoint
     #   langgraph-prebuilt
 langgraph==1.0.10
-    # via langchain
+    # via
+    #   potpie (pyproject.toml)
+    #   langchain
 langgraph-checkpoint==4.0.0
     # via
     #   langgraph
@@ -381,7 +384,7 @@ langgraph-sdk==0.3.3
     # via langgraph
 langsmith==0.6.8
     # via langchain-core
-litellm==1.81.7
+litellm==1.83.0
     # via potpie (pyproject.toml)
 logfire==4.22.0
     # via
@@ -393,8 +396,8 @@ logfire-api==4.22.0
     #   pydantic-graph
 loguru==0.7.3
     # via potpie (pyproject.toml)
-lupa==2.6
-    # via fakeredis
+lupa==2.7
+    # via potpie (pyproject.toml)
 mako==1.3.10
     # via alembic
 markdown-it-py==4.0.0
@@ -461,6 +464,7 @@ openinference-semantic-conventions==0.1.26
     #   openinference-instrumentation-litellm
 opentelemetry-api==1.39.1
     # via
+    #   fastmcp
     #   openinference-instrumentation
     #   openinference-instrumentation-litellm
     #   opentelemetry-exporter-otlp-proto-http
@@ -469,7 +473,6 @@ opentelemetry-api==1.39.1
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
     #   pydantic-ai-slim
-    #   pydocket
 opentelemetry-exporter-otlp-proto-common==1.39.1
     # via opentelemetry-exporter-otlp-proto-http
 opentelemetry-exporter-otlp-proto-http==1.39.1
@@ -522,9 +525,7 @@ pathspec==1.0.4
     # via
     #   potpie (pyproject.toml)
     #   grep-ast
-pathvalidate==3.3.1
-    # via py-key-value-aio
-pillow==12.1.1
+pillow==12.2.0
     # via potpie (pyproject.toml)
 platformdirs==4.5.1
     # via fastmcp
@@ -533,9 +534,7 @@ postgres==4.0
 posthog==7.8.2
     # via potpie (pyproject.toml)
 prometheus-client==0.24.1
-    # via
-    #   flower
-    #   pydocket
+    # via flower
 prompt-toolkit==3.0.52
     # via
     #   click-repl
@@ -571,12 +570,8 @@ psycopg2-binary==2.9.11
     #   psycopg2-pool
 psycopg2-pool==1.2
     # via postgres
-py-key-value-aio==0.3.0
-    # via
-    #   fastmcp
-    #   pydocket
-py-key-value-shared==0.3.0
-    # via py-key-value-aio
+py-key-value-aio==0.4.4
+    # via fastmcp
 pyasn1==0.6.3
     # via
     #   potpie (pyproject.toml)
@@ -634,8 +629,6 @@ pydantic-graph==1.63.0
     # via pydantic-ai-slim
 pydantic-settings==2.12.0
     # via mcp
-pydocket==0.17.5
-    # via fastmcp
 pygithub==2.8.1
     # via potpie (pyproject.toml)
 pygments==2.20.0
@@ -660,7 +653,6 @@ python-dateutil==2.9.0.post0
     # via
     #   botocore
     #   celery
-    #   croniter
     #   mistralai
     #   posthog
 python-dotenv==1.2.1
@@ -672,8 +664,6 @@ python-dotenv==1.2.1
     #   pydantic-settings
 python-engineio==4.13.1
     # via python-socketio
-python-json-logger==4.0.0
-    # via pydocket
 python-multipart==0.0.22
     # via
     #   potpie (pyproject.toml)
@@ -682,11 +672,11 @@ python-socketio==5.16.1
     # via potpie (pyproject.toml)
 pytz==2025.2
     # via
-    #   croniter
     #   flower
     #   neo4j
 pyyaml==6.0.3
     # via
+    #   fastmcp
     #   huggingface-hub
     #   jsonschema-path
     #   langchain-core
@@ -694,11 +684,7 @@ pyyaml==6.0.3
     #   pydantic-evals
     #   transformers
 redis==7.1.0
-    # via
-    #   potpie (pyproject.toml)
-    #   fakeredis
-    #   py-key-value-aio
-    #   pydocket
+    # via potpie (pyproject.toml)
 referencing==0.36.2
     # via
     #   jsonschema
@@ -742,7 +728,6 @@ rich==14.3.2
     #   logfire
     #   pydantic-ai-slim
     #   pydantic-evals
-    #   pydocket
     #   rich-rst
     #   typer
 rich-rst==1.3.2
@@ -791,8 +776,6 @@ sniffio==1.3.1
     #   google-genai
     #   groq
     #   openai
-sortedcontainers==2.4.0
-    # via fakeredis
 sqlalchemy==2.0.46
     # via
     #   potpie (pyproject.toml)
@@ -829,8 +812,10 @@ tokenizers==0.22.2
     #   transformers
 torch==2.10.0
     # via sentence-transformers
-tornado==6.5.4
-    # via flower
+tornado==6.5.5
+    # via
+    #   potpie (pyproject.toml)
+    #   flower
 tqdm==4.67.3
     # via
     #   potpie (pyproject.toml)
@@ -859,8 +844,8 @@ tree-sitter-yaml==0.7.2
     # via tree-sitter-language-pack
 typer==0.24.1
     # via
+    #   potpie (pyproject.toml)
     #   instructor
-    #   pydocket
     #   typer-slim
 typer-slim==0.24.0
     # via
@@ -890,10 +875,9 @@ typing-extensions==4.15.0
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
     #   posthog
-    #   py-key-value-shared
+    #   py-key-value-aio
     #   pydantic
     #   pydantic-core
-    #   pydocket
     #   pygithub
     #   resend
     #   sentence-transformers
@@ -913,6 +897,8 @@ tzdata==2025.3
     # via kombu
 tzlocal==5.3.1
     # via celery
+uncalled-for==0.3.1
+    # via fastmcp
 urllib3==2.6.3
     # via
     #   potpie (pyproject.toml)
@@ -937,6 +923,8 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
+watchfiles==1.1.1
+    # via fastmcp
 wcwidth==0.5.3
     # via prompt-toolkit
 websockets==15.0.1
