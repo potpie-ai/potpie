@@ -1,5 +1,4 @@
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator};
 
@@ -159,14 +158,32 @@ fn language_for_lang(lang: &str) -> Option<Language> {
     }
 }
 
-fn load_query(lang: &str) -> Option<String> {
-    let query_path = query_dir().join(format!("tree-sitter-{lang}-tags.scm"));
-    fs::read_to_string(query_path).ok()
+mod embedded_queries {
+    pub fn get_query(lang: &str) -> Option<&'static str> {
+        match lang {
+            "python" => Some(include_str!("../queries/tree-sitter-python-tags.scm")),
+            "javascript" => Some(include_str!("../queries/tree-sitter-javascript-tags.scm")),
+            "typescript" => Some(include_str!("../queries/tree-sitter-typescript-tags.scm")),
+            "c" => Some(include_str!("../queries/tree-sitter-c-tags.scm")),
+            "c_sharp" => Some(include_str!("../queries/tree-sitter-c_sharp-tags.scm")),
+            "cpp" => Some(include_str!("../queries/tree-sitter-cpp-tags.scm")),
+            "elisp" => Some(include_str!("../queries/tree-sitter-elisp-tags.scm")),
+            "elixir" => Some(include_str!("../queries/tree-sitter-elixir-tags.scm")),
+            "elm" => Some(include_str!("../queries/tree-sitter-elm-tags.scm")),
+            "go" => Some(include_str!("../queries/tree-sitter-go-tags.scm")),
+            "java" => Some(include_str!("../queries/tree-sitter-java-tags.scm")),
+            "ocaml" => Some(include_str!("../queries/tree-sitter-ocaml-tags.scm")),
+            "php" => Some(include_str!("../queries/tree-sitter-php-tags.scm")),
+            "ql" => Some(include_str!("../queries/tree-sitter-ql-tags.scm")),
+            "ruby" => Some(include_str!("../queries/tree-sitter-ruby-tags.scm")),
+            "rust" => Some(include_str!("../queries/tree-sitter-rust-tags.scm")),
+            _ => None,
+        }
+    }
 }
 
-fn query_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../app/modules/parsing/graph_construction/queries")
+fn load_query(lang: &str) -> Option<String> {
+    embedded_queries::get_query(lang).map(|s| s.to_string())
 }
 
 fn fallback_refs(text: &str) -> Vec<TagPayload> {
