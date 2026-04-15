@@ -271,15 +271,8 @@ class MainApp:
         except Exception as e:
             logger.warning("Shutdown cleanup error: %s", e)
 
-    @asynccontextmanager
-    async def lifespan(self):
-        await self.startup_event()
-        yield
-        await self.shutdown_event()
-
     def run(self):
         self.add_health_check()
-        self.app = FastAPI(lifespan=self.lifespan)
         return self.app
 
 
