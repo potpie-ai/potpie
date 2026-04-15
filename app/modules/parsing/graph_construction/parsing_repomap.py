@@ -30,34 +30,49 @@ FALLBACK_REF_LINE = (
 ) - 1  # u32::MAX sentinel for Python -1 line numbers in Rust payload
 
 
+def normalize_ref_line(value):
+    """Map FALLBACK_REF_LINE sentinel to -1, otherwise return value unchanged."""
+    if value == FALLBACK_REF_LINE:
+        return -1
+    return value
+
+
+def build_node_attrs(node):
+    """Build node_attrs dict for a graph node from Rust payload."""
+    node_attrs = {
+        "file": node.file,
+        "line": node.line,
+        "end_line": node.end_line,
+        "type": node.node_type,
+        "name": node.name,
+    }
+    if node.node_type != "FILE":
+        node_attrs["class_name"] = node.class_name
+    if node.text is not None:
+        node_attrs["text"] = node.text
+    return node_attrs
+
+
+def build_edge_attrs(edge):
+    """Build edge_attrs dict for a graph edge from Rust payload."""
+    edge_attrs = {"type": edge.edge_type}
+    if edge.ident is not None:
+        edge_attrs["ident"] = edge.ident
+    if edge.ref_line is not None:
+        edge_attrs["ref_line"] = normalize_ref_line(edge.ref_line)
+    if edge.end_ref_line is not None:
+        edge_attrs["end_ref_line"] = normalize_ref_line(edge.end_ref_line)
+    return edge_attrs
+
+
 def _reconstruct_graph_from_payload(payload) -> nx.MultiDiGraph:
     """Reconstruct nx.MultiDiGraph from a Rust GraphPayload."""
     G = nx.MultiDiGraph()
     for node in payload.nodes:
-        node_attrs = {
-            "file": node.file,
-            "line": node.line,
-            "end_line": node.end_line,
-            "type": node.node_type,
-            "name": node.name,
-        }
-        if node.node_type != "FILE":
-            node_attrs["class_name"] = node.class_name
-        if node.text is not None:
-            node_attrs["text"] = node.text
+        node_attrs = build_node_attrs(node)
         G.add_node(node.id, **node_attrs)
     for edge in payload.edges:
-        edge_attrs = {"type": edge.edge_type}
-        if edge.ident is not None:
-            edge_attrs["ident"] = edge.ident
-        if edge.ref_line is not None:
-            edge_attrs["ref_line"] = (
-                -1 if edge.ref_line == FALLBACK_REF_LINE else edge.ref_line
-            )
-        if edge.end_ref_line is not None:
-            edge_attrs["end_ref_line"] = (
-                -1 if edge.end_ref_line == FALLBACK_REF_LINE else edge.end_ref_line
-            )
+        edge_attrs = build_edge_attrs(edge)
         G.add_edge(edge.source_id, edge.target_id, **edge_attrs)
     return G
 

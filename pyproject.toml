@@ -77,8 +77,10 @@ dependencies = [
     "uvicorn>=0.38.0",
     "greenlet>=3.3.0",
     "typer>=0.15.0",
-    "create_graph_rs",
 ]
+
+[project.optional-dependencies]
+rust = ["create_graph_rs"]
 
 [project.scripts]
 potpie-seed = "seed.cli:main"
@@ -98,9 +100,6 @@ dev = [
 
 [tool.setuptools.packages.find]
 include = ["potpie*", "app*", "seed*"]
-
-[tool.uv.sources]
-create_graph_rs = { path = "rust/create_graph_rs" }
 
 [tool.bandit]
 exclude_dirs = ["tests", "app/alembic"]
