@@ -117,8 +117,8 @@ fn filename_to_lang(path: &str) -> Option<&'static str> {
 
     match extension.as_str() {
         "py" => Some("python"),
-        "js" => Some("javascript"),
-        "ts" => Some("typescript"),
+        "js" | "jsx" => Some("javascript"),
+        "ts" | "tsx" => Some("typescript"),
         "c" => Some("c"),
         "cs" => Some("c_sharp"),
         "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" => Some("cpp"),
@@ -140,8 +140,8 @@ fn filename_to_lang(path: &str) -> Option<&'static str> {
 fn language_for_lang(lang: &str) -> Option<Language> {
     match lang {
         "python" => Some(tree_sitter_python::LANGUAGE.into()),
-        "javascript" => Some(tree_sitter_javascript::LANGUAGE.into()),
-        "typescript" => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+        "javascript" | "jsx" => Some(tree_sitter_javascript::LANGUAGE.into()),
+        "typescript" | "tsx" => Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
         "c" => Some(tree_sitter_c::LANGUAGE.into()),
         "c_sharp" => Some(tree_sitter_c_sharp::LANGUAGE.into()),
         "cpp" => Some(tree_sitter_cpp::LANGUAGE.into()),

@@ -30,6 +30,11 @@ pub fn build_graph_payload(repo_dir: &str) -> PyResult<GraphPayload> {
     let mut seen_relationships: HashSet<(String, String, String)> = HashSet::new();
 
     for file in files {
+        // Skip binary files entirely - do not create a FILE node or extract tags
+        if file.is_binary {
+            continue;
+        }
+
         let file_node_name = file.relative_path.clone();
         let file_display_name = file
             .relative_path

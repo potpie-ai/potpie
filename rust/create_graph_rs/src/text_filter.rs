@@ -34,7 +34,7 @@ pub fn read_text(path: &Path) -> String {
         Err(_) => return String::new(),
     };
 
-    decode_text(&bytes).unwrap_or_default()
+    decode_text(&bytes).unwrap_or_else(|| decode_latin1(&bytes))
 }
 
 fn open_text_file(path: &Path) -> io::Result<bool> {
@@ -47,7 +47,6 @@ fn decode_text(bytes: &[u8]) -> Option<String> {
     decode_utf8(bytes)
         .or_else(|| decode_utf8_sig(bytes))
         .or_else(|| decode_utf16(bytes))
-        .or_else(|| Some(decode_latin1(bytes)))
 }
 
 fn decode_utf8(bytes: &[u8]) -> Option<String> {

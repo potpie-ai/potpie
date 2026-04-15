@@ -652,14 +652,17 @@ class RepoMap:
             return self._create_graph_rust(repo_dir)
         else:
             raise ValueError(
-                f"Unknown POTPIE_CREATE_GRAPH_IMPL value: {impl!r}. Expected 'python', 'rust', or 'shadow'."
+                f"Unknown POTPIE_CREATE_GRAPH_IMPL value: {impl!r}. Expected 'python' or 'rust'"
             )
 
     def _create_graph_rust(self, repo_dir):
         """Build graph using Rust backend and reconstruct nx.MultiDiGraph."""
         import importlib
 
-        create_graph_rs = importlib.import_module("create_graph_rs")
+        try:
+            create_graph_rs = importlib.import_module("create_graph_rs")
+        except ImportError:
+            return self.create_graph_python(repo_dir)
         payload = create_graph_rs.build_graph_payload(repo_dir)
         return _reconstruct_graph_from_payload(payload)
 
