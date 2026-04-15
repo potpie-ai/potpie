@@ -2,6 +2,7 @@
 
 import copy
 import functools
+import hashlib
 import inspect
 import json
 import re
@@ -33,6 +34,28 @@ from ...tool_helpers import (
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+# Max chars of tool result content streamed to browser (prevents OOM on large codebases)
+_MAX_TOOL_RESULT_STREAM_CHARS = 10_000
+
+
+def truncate_result_content(content: str) -> tuple[str, bool, int | None]:
+    """Truncate raw tool result content to browser-safe length.
+    Returns: (content, is_truncated, original_length_or_None)
+    """
+    if not content or len(content) <= _MAX_TOOL_RESULT_STREAM_CHARS:
+        return content, False, None
+    original_length = len(content)
+    truncated = (
+        content[:_MAX_TOOL_RESULT_STREAM_CHARS]
+        + f"\n... [truncated — {original_length:,} chars total, showing first {_MAX_TOOL_RESULT_STREAM_CHARS:,}]"
+    )
+    logger.info(
+        "Tool result truncated for browser stream: %d → %d chars",
+        original_length,
+        _MAX_TOOL_RESULT_STREAM_CHARS,
+    )
+    return truncated, True, original_length
 
 
 def _repair_truncated_tool_args_json(raw: str) -> dict | None:
@@ -67,33 +90,24 @@ def _repair_truncated_tool_args_json(raw: str) -> dict | None:
         return None
 
 
-def handle_exception(tool_func):
-    @functools.wraps(tool_func)
-    def wrapper(*args, **kwargs):
-        try:
-            return tool_func(*args, **kwargs)
-        except Exception as e:
-            logger.error(f"Exception in tool function: {e}")
-            return "An internal error occurred. Please try again later."
-
-    return wrapper
-
-
-def create_tool_call_response(event: FunctionToolCallEvent) -> ToolCallResponse:
-    """Create appropriate tool call response for regular or delegation tools"""
-    tool_name = event.part.tool_name
-
-    # Safely parse tool arguments with error handling for malformed/truncated JSON
+def _safe_parse_tool_args(
+    event: FunctionToolCallEvent, tool_name: str
+) -> dict[str, Any]:
+    """Parse streamed tool args defensively and sanitize malformed payloads."""
     try:
-        args_dict = event.part.args_as_dict()
+        return event.part.args_as_dict()
     except (ValueError, json.JSONDecodeError) as json_error:
         raw_args = getattr(event.part, "args", "N/A")
         raw_str = str(raw_args) if raw_args != "N/A" else ""
-
-        # Try to repair truncated JSON (common when tool args are streamed and cut off)
         repaired = _repair_truncated_tool_args_json(raw_str)
         if repaired is not None:
-            args_dict = repaired
+            if not isinstance(repaired, dict):
+                logger.warning(
+                    "Repaired JSON for tool call '%s' is not a dict (type=%s); normalizing to {}",
+                    tool_name,
+                    type(repaired).__name__,
+                )
+                repaired = {}
             try:
                 setattr(event.part, "args", json.dumps(repaired))
             except Exception as sanitize_error:
@@ -105,28 +119,73 @@ def create_tool_call_response(event: FunctionToolCallEvent) -> ToolCallResponse:
             logger.info(
                 "Repaired truncated JSON for tool call '%s' (recovered %d keys)",
                 tool_name,
-                len(args_dict),
+                len(repaired),
             )
-        else:
-            # Repair failed; use empty dict and log
-            logger.error(
-                "JSON parsing error in tool call '%s': %s. "
-                "Tool args (raw, first 300 chars): %s. "
-                "This may cause issues when pydantic_ai tries to serialize the message history.",
-                tool_name,
-                json_error,
-                raw_str[:300],
-            )
-            args_dict = {}
-            try:
-                setattr(event.part, "args", "{}")
-            except Exception as sanitize_error:
-                logger.warning(
-                    "Unable to sanitize malformed tool call arguments for '%s': %s",
-                    tool_name,
-                    sanitize_error,
-                )
+            return repaired
 
+        raw_digest = hashlib.sha256(raw_str.encode()).hexdigest()
+        logger.error(
+            "JSON parsing error in tool call '%s': %s. "
+            "Tool args payload size=%d bytes, sha256=%s. "
+            "This may cause issues when pydantic_ai tries to serialize the message history.",
+            tool_name,
+            json_error,
+            len(raw_str),
+            raw_digest,
+        )
+        try:
+            setattr(event.part, "args", "{}")
+        except Exception as sanitize_error:
+            logger.warning(
+                "Unable to sanitize malformed tool call arguments for '%s': %s",
+                tool_name,
+                sanitize_error,
+            )
+        return {}
+
+
+def handle_exception(tool_func):
+    # After _adapt_func_for_from_schema the wrapper is always async.
+    # Guard here as well in case handle_exception is called on a raw sync func.
+    if inspect.iscoroutinefunction(tool_func):
+
+        @functools.wraps(tool_func)
+        async def async_wrapper(*args, **kwargs):
+            try:
+                return await tool_func(*args, **kwargs)
+            except Exception as e:
+                logger.error(f"Exception in tool function: {e}")
+                return "An internal error occurred. Please try again later."
+
+        return async_wrapper
+    else:
+
+        @functools.wraps(tool_func)
+        def wrapper(*args, **kwargs):
+            try:
+                return tool_func(*args, **kwargs)
+            except Exception as e:
+                logger.error(f"Exception in tool function: {e}")
+                return "An internal error occurred. Please try again later."
+
+        return wrapper
+
+
+def create_tool_call_response(event: FunctionToolCallEvent) -> ToolCallResponse:
+    """Create appropriate tool call response for regular or delegation tools"""
+    tool_name = event.part.tool_name
+    args_dict = _safe_parse_tool_args(event, tool_name)
+
+    command_tools = {"search_bash", "bash_command", "execute_terminal_command"}
+    if tool_name in command_tools:
+        command = str(args_dict.get("command", "") or "").strip()
+        return ToolCallResponse(
+            call_id=event.part.tool_call_id or "",
+            event_type=ToolCallEventType.CALL,
+            tool_name=tool_name,
+            tool_response=command or get_tool_run_message(tool_name, args_dict),
+            tool_call_details={"command": command} if command else {},
+        )
     if is_delegation_tool(tool_name):
         agent_type = extract_agent_type_from_delegation_tool(tool_name)
         task_description = args_dict.get("task_description", "")
@@ -161,7 +220,26 @@ def create_tool_result_response(event: FunctionToolResultEvent) -> ToolCallRespo
 
     if is_delegation_tool(tool_name):
         agent_type = extract_agent_type_from_delegation_tool(tool_name)
-        result_content = str(event.result.content) if event.result.content else ""
+        full_result_content = str(event.result.content) if event.result.content else ""
+
+        # Detect if the event already carries truncation metadata to avoid double-truncating
+        result_is_truncated = getattr(event.result, "is_truncated", None)
+        result_original_length = getattr(event.result, "original_length", None)
+        already_truncated = result_is_truncated or (
+            result_original_length is not None
+            and result_original_length > len(full_result_content)
+        )
+
+        if already_truncated:
+            truncated_result_content = full_result_content
+            is_truncated = bool(result_is_truncated)
+            original_length = result_original_length
+        else:
+            (
+                truncated_result_content,
+                is_truncated,
+                original_length,
+            ) = truncate_result_content(full_result_content)
 
         return ToolCallResponse(
             call_id=event.result.tool_call_id or "",
@@ -169,21 +247,30 @@ def create_tool_result_response(event: FunctionToolResultEvent) -> ToolCallRespo
             tool_name=tool_name,
             tool_response=get_delegation_response_message(agent_type),
             tool_call_details={
-                "summary": get_delegation_result_content(agent_type, result_content)
+                "summary": get_delegation_result_content(
+                    agent_type, full_result_content
+                ),
+                "content": truncated_result_content,
             },
-            is_complete=True,  # Explicitly mark delegation results as complete
+            is_complete=True,
+            is_truncated=is_truncated,
+            original_length=original_length,
         )
     else:
+        full_raw = str(event.result.content) if event.result.content else ""
+        truncated_raw, is_truncated, original_length = truncate_result_content(full_raw)
+
         return ToolCallResponse(
             call_id=event.result.tool_call_id or "",
             event_type=ToolCallEventType.RESULT,
             tool_name=tool_name,
-            tool_response=get_tool_response_message(
-                tool_name, result=event.result.content
-            ),
+            tool_response=get_tool_response_message(tool_name, result=full_raw),
             tool_call_details={
-                "summary": get_tool_result_info_content(tool_name, event.result.content)
+                "summary": get_tool_result_info_content(tool_name, full_raw),
+                "content": truncated_raw,
             },
+            is_truncated=is_truncated,
+            original_length=original_length,
         )
 
 
@@ -192,12 +279,15 @@ _TOOL_NAME_PATTERN = re.compile(r"[^a-zA-Z0-9_-]+")
 
 
 def sanitize_tool_name_for_api(name: str) -> str:
-    """Sanitize a tool name so it matches OpenAI-style API requirement: ^[a-zA-Z0-9_-]+$"""
+    """Sanitize a tool name so it matches OpenAI-style API requirement: ^[a-zA-Z0-9_-]+$.
+    Returns lowercase so tool names match registry keys (e.g. web_search_tool) and models
+    that normalize tool names; avoids mismatch when the model returns tool_calls."""
     if not name:
         return "unnamed_tool"
     sanitized = _TOOL_NAME_PATTERN.sub("_", name)
     sanitized = re.sub(r"_+", "_", sanitized).strip("_")
-    return sanitized or "unnamed_tool"
+    out = (sanitized or "unnamed_tool").lower()
+    return out
 
 
 def _inline_json_schema_refs(
@@ -254,7 +344,14 @@ def _adapt_func_for_from_schema(tool: Any) -> Any:
        validate kwargs via the args_schema and call func(**model.model_dump()). This
        ensures required fields are validated (clear errors instead of "missing N
        required positional arguments") when the model sends empty or malformed args.
+
+    The returned wrapper is always async. For sync tool funcs it uses asyncio.to_thread
+    which explicitly copies the current contextvars before dispatching the thread.
+    Python 3.13's loop.run_in_executor does NOT copy contextvars, so relying on
+    pydantic-ai's default run_in_executor path loses user_id / tunnel_url context.
     """
+    import asyncio as _asyncio
+
     raw_schema = getattr(tool, "args_schema", None)
     if not (isinstance(raw_schema, type) and issubclass(raw_schema, BaseModel)):
         return tool.func
@@ -272,22 +369,44 @@ def _adapt_func_for_from_schema(tool: Any) -> Any:
             and issubclass(annotation, BaseModel)
         ):
             model_cls = annotation
+            _is_async = inspect.iscoroutinefunction(tool.func)
+            _func = tool.func
 
-            def single_arg_wrapper(**kwargs: Any) -> Any:
-                return tool.func(model_cls(**kwargs))
+            if _is_async:
 
-            return single_arg_wrapper
+                async def _single_async(**kwargs: Any) -> Any:
+                    return await _func(model_cls(**kwargs))
+
+                return _single_async
+            else:
+
+                async def _single_sync(**kwargs: Any) -> Any:
+                    return await _asyncio.to_thread(_func, model_cls(**kwargs))
+
+                return _single_sync
+
     if len(params) >= 2:
-        # Multiple params (e.g. project_id, paths, with_line_numbers): validate
-        # kwargs with args_schema and call func(**validated) so missing/empty
-        # args produce a clear ValidationError instead of "missing N required positional arguments".
         model_cls = raw_schema
+        _is_async_multi = inspect.iscoroutinefunction(tool.func)
+        _func_multi = tool.func
 
-        def multi_arg_wrapper(**kwargs: Any) -> Any:
-            validated = model_cls(**kwargs)
-            return tool.func(**validated.model_dump())
+        if _is_async_multi:
 
-        return multi_arg_wrapper
+            async def _multi_async(**kwargs: Any) -> Any:
+                validated = model_cls(**kwargs)
+                return await _func_multi(**validated.model_dump())
+
+            return _multi_async
+        else:
+
+            async def _multi_sync(**kwargs: Any) -> Any:
+                validated = model_cls(**kwargs)
+                return await _asyncio.to_thread(
+                    lambda: _func_multi(**validated.model_dump())
+                )
+
+            return _multi_sync
+
     return tool.func
 
 

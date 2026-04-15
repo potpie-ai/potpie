@@ -1,6 +1,7 @@
 import asyncio
 import os
 from asyncio import create_task
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from dotenv import load_dotenv
@@ -30,6 +31,7 @@ from app.modules.parsing.utils.repo_name_normalizer import normalize_repo_name
 from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
+from app.modules.repo_manager import RepoManager
 from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.logger import setup_logger
 from app.modules.utils.posthog_helper import PostHogClient
@@ -116,13 +118,11 @@ class ParsingController:
                 commit_id=repo_details.commit_id,
             )
             demo_repos = [
-                "Portkey-AI/gateway",
-                "crewAIInc/crewAI",
-                "AgentOps-AI/agentops",
                 "calcom/cal.com",
                 "langchain-ai/langchain",
-                "AgentOps-AI/AgentStack",
-                "formbricks/formbricks",
+                "electron/electron",
+                "openclaw/openclaw",
+                "pydantic/pydantic-ai",
             ]
             if not project and repo_details.repo_name in demo_repos:
                 existing_project = await project_manager.get_global_project_from_db(
@@ -237,6 +237,51 @@ class ParsingController:
                         f"Project {project_id} already exists and is READY for commit {repo_details.commit_id or 'branch'}. "
                         "Returning existing project."
                     )
+                    # Ensure worktree exists in repo manager when enabled
+                    if os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true":
+                        repo_name = str(project.repo_name) if project.repo_name is not None else None
+                        branch = str(project.branch_name) if project.branch_name is not None else None
+                        commit_id_val = str(project.commit_id) if project.commit_id is not None else None
+                        repo_path = str(project.repo_path) if project.repo_path is not None else None
+                        if repo_name and not repo_path:
+                            ref = commit_id_val if commit_id_val else branch
+                            if ref:
+                                from app.modules.code_provider.github.github_service import GithubService  # noqa: PLC0415
+                                _repo_manager = RepoManager()
+                                try:
+                                    _auth_token = GithubService(db).get_github_oauth_token(user_id)
+                                except Exception:
+                                    _auth_token = None
+
+                                async def _ensure_worktree_bg(
+                                    _rm=_repo_manager,
+                                    _rn=repo_name,
+                                    _ref=ref,
+                                    _at=_auth_token,
+                                    _ic=bool(commit_id_val),
+                                    _uid=user_id,
+                                ):
+                                    try:
+                                        await asyncio.get_running_loop().run_in_executor(
+                                            None,
+                                            lambda: _rm.prepare_for_parsing(
+                                                _rn, _ref, auth_token=_at, is_commit=_ic, user_id=_uid
+                                            ),
+                                        )
+                                        logger.info(
+                                            "Background worktree ensured for READY project %s (%s@%s)",
+                                            project_id,
+                                            _rn,
+                                            _ref,
+                                        )
+                                    except Exception:
+                                        logger.warning(
+                                            "Background worktree failed for project %s",
+                                            project_id,
+                                            exc_info=True,
+                                        )
+
+                                asyncio.create_task(_ensure_worktree_bg())
                     return {"project_id": project_id, "status": project.status}
 
                 # If project exists but commit doesn't match or status is not READY, reparse
@@ -300,6 +345,12 @@ class ParsingController:
         except Exception as e:
             logger.error(f"Error in parse_directory: {e}")
             raise HTTPException(status_code=500, detail="Internal server error")
+        finally:
+            if parsing_service is not None:
+                try:
+                    parsing_service.close()
+                except Exception:
+                    pass
 
     @staticmethod
     async def handle_new_project(
@@ -352,11 +403,21 @@ class ParsingController:
 
     @staticmethod
     async def fetch_parsing_status(
-        project_id: str, db: Session, user: Dict[str, Any]
+        project_id: str,
+        db: Session,
+        async_db: AsyncSession,
+        user: Dict[str, Any],
     ):
         try:
             project_query = (
-                select(Project.status)
+                select(
+                    Project.status,
+                    Project.updated_at,
+                    Project.repo_name,
+                    Project.branch_name,
+                    Project.repo_path,
+                    Project.commit_id,
+                )
                 .join(
                     Conversation, Conversation.project_ids.any(Project.id), isouter=True
                 )
@@ -371,15 +432,72 @@ class ParsingController:
                 .limit(1)
             )
 
-            result = db.execute(project_query)
-            project_status = result.scalars().first()
+            result = await async_db.execute(project_query)
+            row = result.first()
 
-            if not project_status:
+            if not row:
                 raise HTTPException(
                     status_code=404, detail="Project not found or access denied"
                 )
+
+            project_status = row.status
             parse_helper = ParseHelper(db)
             is_latest = await parse_helper.check_commit_status(project_id)
+
+            # Auto-recover: if a project has been stuck in "submitted" with no active
+            # Celery task (task was lost due to worker crash/restart), re-submit the
+            # parse task. Once the Celery task starts, status advances beyond "submitted"
+            # (→ cloned/parsed/inferring/ready) and updated_at is refreshed with each
+            # transition. If status is still "submitted" past the threshold, the task
+            # was never picked up and must be re-queued.
+            if (
+                project_status == ProjectStatusEnum.SUBMITTED.value
+                and not is_latest
+                and row.updated_at is not None
+                and (row.repo_name or row.repo_path)
+            ):
+                stuck_threshold_minutes = int(
+                    os.getenv("PARSING_STUCK_THRESHOLD_MINUTES", "10")
+                )
+                updated = row.updated_at
+                if updated.tzinfo is None:
+                    updated = updated.replace(tzinfo=timezone.utc)
+                age_minutes = (datetime.now(timezone.utc) - updated).total_seconds() / 60
+
+                if age_minutes > stuck_threshold_minutes:
+                    try:
+                        repo_details = ParsingRequest(
+                            repo_name=row.repo_name,
+                            repo_path=row.repo_path,
+                            branch_name=row.branch_name,
+                            commit_id=row.commit_id,
+                        )
+                        # Reset updated_at now to prevent concurrent polls from all
+                        # triggering duplicate re-submissions within the same window.
+                        await asyncio.to_thread(
+                            ProjectService.update_project,
+                            db,
+                            project_id,
+                            updated_at=datetime.utcnow(),
+                        )
+                        process_parsing.delay(
+                            repo_details.model_dump(),
+                            user["user_id"],
+                            user.get("email"),
+                            project_id,
+                            True,
+                        )
+                        logger.warning(
+                            "Auto-recovered stuck parsing task",
+                            project_id=project_id,
+                            age_minutes=round(age_minutes, 1),
+                            stuck_threshold_minutes=stuck_threshold_minutes,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to auto-recover stuck parsing task",
+                            project_id=project_id,
+                        )
 
             return {"status": project_status, "latest": is_latest}
 

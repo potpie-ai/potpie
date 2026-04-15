@@ -133,7 +133,7 @@ class ToolCallStreamManager:
 
         try:
             # Run synchronous Redis operations in thread pool to avoid blocking event loop
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(
                 None,  # Use default thread pool
                 partial(self._sync_publish_stream_part, key, event_data),
@@ -212,7 +212,7 @@ class ToolCallStreamManager:
             "created_at": datetime.utcnow().isoformat(),
         }
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(
                 None, partial(self._sync_publish_end_event, key, end_event_data)
             )
@@ -234,7 +234,7 @@ class ToolCallStreamManager:
         key = self.stream_key(call_id)
 
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
 
             # Only replay existing events if cursor is explicitly provided
             events = []
@@ -296,7 +296,7 @@ class ToolCallStreamManager:
             while True:
                 # Check if key still exists (TTL expiry detection)
                 # Run in thread pool to avoid blocking
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 key_exists = await loop.run_in_executor(
                     None, self.redis_client.exists, key
                 )

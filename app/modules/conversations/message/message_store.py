@@ -1,5 +1,7 @@
 from typing import List
-from datetime import datetime
+from datetime import datetime, timezone
+from uuid6 import uuid7
+
 from sqlalchemy import select, func, cast, String, update, delete
 from app.core.base_store import BaseStore
 from .message_model import Message, MessageStatus, MessageType
@@ -7,6 +9,23 @@ from .message_model import Message, MessageStatus, MessageType
 
 class MessageStore(BaseStore):
     """Handles all database operations for the Message model."""
+
+    async def create_system_message(
+        self, conversation_id: str, content: str
+    ) -> str:
+        """Create a system-generated message using the async session (same as conversation create)."""
+        new_message = Message(
+            id=str(uuid7()),
+            conversation_id=conversation_id,
+            content=content,
+            sender_id=None,
+            type=MessageType.SYSTEM_GENERATED,
+            status=MessageStatus.ACTIVE,
+            created_at=datetime.now(timezone.utc),
+        )
+        self.async_db.add(new_message)
+        await self.async_db.commit()
+        return new_message.id
 
     async def count_active_for_conversation(self, conversation_id: str) -> int:
         stmt = select(func.count(Message.id)).where(

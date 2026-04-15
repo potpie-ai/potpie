@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "profile": "default",
+  "steps": [
+    "user",
+    "projects",
+    "custom_agents",
+    "conversations"
+  ]
+}

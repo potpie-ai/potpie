@@ -1,4 +1,5 @@
 import re
+import json
 from typing import Any, Dict, List
 
 # Import todo management for streaming todo list state
@@ -54,13 +55,11 @@ def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
             return "Fetching content from github"
         case "fetch_file":
             file_path = _get_file_path()
-            return (
-                f"Fetching file: {file_path}" if file_path else "Fetching file content"
-            )
+            return f"Reading file: {file_path}" if file_path else "Reading file content"
         case "fetch_files_batch":
             paths = args.get("paths") if args else []
             if paths:
-                return f"Fetching {len(paths)} file(s): {', '.join(paths[:3])}{'...' if len(paths) > 3 else ''}"
+                return f"Reading {len(paths)} file(s): {', '.join(paths[:3])}{'...' if len(paths) > 3 else ''}"
             return "Fetching files"
         case "WebSearchTool":
             return "Searching the web"
@@ -221,8 +220,6 @@ def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
             )
         case "list_files_in_changes":
             return "Listing files in code changes"
-        case "search_content_in_changes":
-            return "Searching content in code changes"
         case "clear_file_from_changes":
             file_path = _get_file_path()
             return (
@@ -286,6 +283,90 @@ def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
             return "Adding comment to Confluence page"
         case _:
             return "Querying data"
+
+
+def _parse_partial_args_buffer(args_buffer: str) -> Dict[str, Any] | None:
+    """Best-effort parser for partially streamed tool args JSON."""
+    if not args_buffer or not isinstance(args_buffer, str):
+        return None
+
+    s = args_buffer.strip()
+    if not s:
+        return None
+
+    try:
+        parsed = json.loads(s)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        pass
+
+    open_braces = s.count("{") - s.count("}")
+    open_brackets = s.count("[") - s.count("]")
+    repaired = s + ("]" * max(open_brackets, 0)) + ("}" * max(open_braces, 0))
+    try:
+        parsed = json.loads(repaired)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        return None
+
+
+def _extract_string_field(args_buffer: str, field_name: str) -> str | None:
+    """Extract a string field from partial JSON text via regex fallback."""
+    m = re.search(rf'"{re.escape(field_name)}"\s*:\s*"([^"]+)', args_buffer)
+    if m and m.group(1).strip():
+        return m.group(1).strip()
+    return None
+
+
+def try_extract_streaming_preview(tool_name: str, args_buffer: str) -> str | None:
+    """Return an early meaningful preview from streaming tool args, when possible."""
+    args: Dict[str, Any] = _parse_partial_args_buffer(args_buffer) or {}
+
+    if tool_name == "fetch_file":
+        file_path = args.get("file_path") or _extract_string_field(args_buffer, "file_path")
+        if file_path:
+            return get_tool_run_message(tool_name, {"file_path": file_path})
+        return None
+
+    if tool_name == "fetch_files_batch":
+        paths = args.get("paths")
+        if isinstance(paths, list) and len(paths) > 0:
+            return get_tool_run_message(tool_name, {"paths": paths})
+        return None
+
+    if tool_name in {
+        "search_text",
+        "search_workspace_symbols",
+        "semantic_search",
+    }:
+        query = args.get("query") or _extract_string_field(args_buffer, "query")
+        if query:
+            return get_tool_run_message(tool_name, {"query": query})
+        return None
+
+    if tool_name == "search_files":
+        pattern = args.get("pattern") or _extract_string_field(args_buffer, "pattern")
+        if pattern:
+            return get_tool_run_message(tool_name, {"pattern": pattern})
+        return None
+
+    if tool_name == "search_symbols":
+        file_path = args.get("file_path") or _extract_string_field(args_buffer, "file_path")
+        if file_path:
+            return get_tool_run_message(tool_name, {"file_path": file_path})
+        return None
+
+    if tool_name in {"search_bash", "bash_command", "execute_terminal_command"}:
+        command = args.get("command") or _extract_string_field(args_buffer, "command")
+        if command:
+            payload: Dict[str, Any] = {"command": command}
+            mode = args.get("mode")
+            if mode:
+                payload["mode"] = mode
+            return get_tool_run_message(tool_name, payload)
+        return None
+
+    return None
 
 
 def _parse_terminal_result_string(content: str) -> tuple[str | None, int | None, bool]:
@@ -746,8 +827,6 @@ def get_tool_response_message(
                         f"Files listed successfully ({m.group(1)} file(s) in changes)"
                     )
             return "Files listed successfully"
-        case "search_content_in_changes":
-            return "Content search completed successfully"
         case "clear_file_from_changes":
             file_path = args.get("file_path") if args else None
             if file_path:
@@ -1097,14 +1176,6 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
                 filters.append(f"path: {path_pattern}")
             filter_text = f" ({', '.join(filters)})" if filters else ""
             return f"-> listing files in code changes{filter_text}\n"
-        case "search_content_in_changes":
-            pattern = args.get("pattern", "")
-            file_pattern = args.get("file_pattern", "")
-            return (
-                f"-> searching content in code changes: pattern '{pattern}'"
-                + (f" in files matching '{file_pattern}'" if file_pattern else "")
-                + "\n"
-            )
         case "clear_file_from_changes":
             file_path = args.get("file_path", "")
             return f"-> clearing file from code changes: {file_path}\n"
@@ -1546,7 +1617,6 @@ description:
             | "delete_file_in_changes"
             | "get_file_from_changes"
             | "list_files_in_changes"
-            | "search_content_in_changes"
             | "clear_file_from_changes"
             | "clear_all_changes"
             | "get_changes_summary"

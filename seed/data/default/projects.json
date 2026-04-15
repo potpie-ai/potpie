@@ -1,0 +1,22 @@
+{
+  "projects": [
+    {
+      "id": "8f4e2d1c-3b5a-6978-9eaf-0c1d2e3f4a50",
+      "repo_name": "langchain-ai/langchain",
+      "branch_name": "master",
+      "status": "ready",
+      "commit_id": "0000000000000000000000000000000000000000",
+      "repo_path": null,
+      "properties_base64": null
+    },
+    {
+      "id": "8f4e2d1c-3b5a-6978-9eaf-0c1d2e3f4a51",
+      "repo_name": "pydantic/pydantic",
+      "branch_name": "main",
+      "status": "ready",
+      "commit_id": "1111111111111111111111111111111111111111",
+      "repo_path": null,
+      "properties_base64": null
+    }
+  ]
+}

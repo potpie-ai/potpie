@@ -4,14 +4,24 @@ import time
 import traceback
 from asyncio import create_task
 from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
-from git import Repo
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.code_provider.github.github_service import GithubService
+
+# Lazy import for GitPython - import at module level causes SIGSEGV in forked workers
+if TYPE_CHECKING:
+    from git import Repo as RepoType
+
+
+def _get_repo_class():
+    """Lazy import git.Repo to avoid fork-safety issues."""
+    from git import Repo
+    return Repo
 from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.parsing.graph_construction.parsing_helper import (
     ParseHelper,
@@ -60,6 +70,15 @@ class ParsingService:
         self._neo4j_config = neo4j_config
         self._raise_library_exceptions = raise_library_exceptions
         self.repo_manager = RepoManager()
+
+    def close(self) -> None:
+        """Close Neo4j-backed services (e.g. inference_service). Call when done with this instance."""
+        if hasattr(self, "inference_service") and self.inference_service is not None:
+            try:
+                self.inference_service.close()
+            except Exception:
+                pass
+            self.inference_service = None
 
     @classmethod
     def create_from_config(
@@ -148,6 +167,43 @@ class ParsingService:
                         await project_manager.update_project_status(
                             project_id, ProjectStatusEnum.READY
                         )
+                        # Ensure worktree exists in repo manager when enabled
+                        if self.repo_manager and os.getenv(
+                            "REPO_MANAGER_ENABLED", "false"
+                        ).lower() == "true":
+                            repo_name = existing_project.get("project_name")
+                            branch = existing_project.get("branch_name")
+                            commit_id_val = existing_project.get("commit_id")
+                            repo_path = existing_project.get("repo_path")
+                            if repo_name and not repo_path:
+                                ref = commit_id_val if commit_id_val else branch
+                                if ref:
+                                    try:
+                                        github_service = GithubService(self.db)
+                                        user_token = github_service.get_github_oauth_token(user_id)
+                                        loop = asyncio.get_running_loop()
+                                        await loop.run_in_executor(
+                                            None,
+                                            lambda: self.repo_manager.prepare_for_parsing(
+                                                repo_name,
+                                                ref,
+                                                auth_token=user_token,
+                                                is_commit=bool(commit_id_val),
+                                                user_id=user_id,
+                                            ),
+                                        )
+                                        logger.info(
+                                            "Ensured worktree for already-parsed project %s (%s@%s)",
+                                            project_id,
+                                            repo_name,
+                                            ref,
+                                        )
+                                    except Exception:
+                                        logger.warning(
+                                            "Failed to ensure worktree for project %s",
+                                            project_id,
+                                            exc_info=True,
+                                        )
                         return {
                             "message": "Project already parsed for requested commit",
                             "id": project_id,
@@ -155,7 +211,7 @@ class ParsingService:
 
                 if cleanup_graph:
                     neo4j_config = self._get_neo4j_config()
-
+                    code_graph_service = None
                     try:
                         code_graph_service = CodeGraphService(
                             neo4j_config["uri"],
@@ -163,7 +219,6 @@ class ParsingService:
                             neo4j_config["password"],
                             self.db,
                         )
-
                         code_graph_service.cleanup_graph(str(project_id))
                     except Exception:
                         logger.exception(
@@ -176,6 +231,12 @@ class ParsingService:
                         raise HTTPException(
                             status_code=500, detail="Internal server error"
                         )
+                    finally:
+                        if code_graph_service is not None:
+                            try:
+                                code_graph_service.close()
+                            except Exception:
+                                pass
 
                 # Convert ParsingRequest to RepoDetails
                 repo_details_converted = RepoDetails(
@@ -222,7 +283,7 @@ class ParsingService:
                     auth,
                     repo_manager_path,
                 ) = await self.parse_helper.clone_or_copy_repository(
-                    repo_details_converted, user_id, auth_token=user_token
+                    repo_details_converted, user_id, auth_token=user_token, project_id=str(project_id)
                 )
                 logger.info(
                     "ParsingService: clone_or_copy_repository completed",
@@ -276,6 +337,7 @@ class ParsingService:
                     )
                 extracted_dir = str(extracted_dir)
 
+                Repo = _get_repo_class()
                 if repo is None or isinstance(repo, Repo):
                     # Local repo or cached repo without GitHub API access
                     # Use local language detection

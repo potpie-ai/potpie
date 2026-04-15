@@ -188,12 +188,12 @@ class FetchFileTool:
                 user_id, conversation_id, repository=repository, branch=branch
             )
 
-            logger.info(
+            logger.debug(
                 f"[fetch_file] 🔍 Tunnel lookup result: tunnel_url={tunnel_url}"
             )
 
             if not tunnel_url:
-                logger.info(
+                logger.debug(
                     f"[fetch_file] ❌ No tunnel available for user {user_id}, conversation {conversation_id} - falling back to GitHub"
                 )
                 return None

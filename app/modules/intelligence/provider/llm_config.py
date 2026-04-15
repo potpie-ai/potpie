@@ -179,7 +179,7 @@ MODEL_CONFIG_MAP = {
     # Z-AI / GLM Models
     "openrouter/z-ai/glm-5": {
         "provider": "zai",
-        "context_window": 128000,
+        "context_window": 200000,
         "auth_provider": "openrouter",
         "default_params": {"temperature": 0.3},
         "capabilities": {
@@ -193,9 +193,22 @@ MODEL_CONFIG_MAP = {
     },
     "openrouter/z-ai/glm-4.7": {
         "provider": "zai",
-        "context_window": 128000,
+        "context_window": 200000,
         "auth_provider": "openrouter",
-        "default_params": {"temperature": 0.3},
+        "default_params": {
+            "temperature": 0.3,
+            # Pin OpenRouter routing for GLM 4.7 to a specific backend provider
+            # so we get a single provider's cost rather than an aggregate.
+            # You can change this slug to any other provider from the
+            # OpenRouter model page (e.g. "deepinfra", "parasail", "nebius", etc.).
+            "extra_body": {
+                "provider": {
+                    # Example: use Nebius Token Factory as the backend
+                    "order": ["nebius"],
+                    "allow_fallbacks": False,
+                }
+            },
+        },
         "capabilities": {
             "supports_pydantic": True,
             "supports_streaming": True,
@@ -208,7 +221,7 @@ MODEL_CONFIG_MAP = {
     # Moonshot AI / Kimi (via OpenRouter)
     "openrouter/moonshotai/kimi-k2.5": {
         "provider": "moonshot",
-        "context_window": 128000,
+        "context_window": 256000,
         "auth_provider": "openrouter",
         "default_params": {"temperature": 0.3},
         "capabilities": {
@@ -223,7 +236,7 @@ MODEL_CONFIG_MAP = {
     # MiniMax (via OpenRouter)
     "openrouter/minimax/minimax-m2.5": {
         "provider": "minimax",
-        "context_window": 196608,
+        "context_window": 200000,
         "auth_provider": "openrouter",
         "default_params": {"temperature": 0.3},
         "capabilities": {

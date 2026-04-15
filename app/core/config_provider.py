@@ -20,10 +20,11 @@ class ConfigProvider:
     _neo4j_override: dict | None = None  # Class-level override for library usage
 
     def __init__(self):
+        # Default URI so Neo4j driver never receives None (raises "URI scheme b'' is not supported")
         self.neo4j_config = {
-            "uri": os.getenv("NEO4J_URI"),
-            "username": os.getenv("NEO4J_USERNAME"),
-            "password": os.getenv("NEO4J_PASSWORD"),
+            "uri": os.getenv("NEO4J_URI") or "bolt://localhost:7687",
+            "username": os.getenv("NEO4J_USERNAME") or "",
+            "password": os.getenv("NEO4J_PASSWORD") or "",
         }
         self.github_key = os.getenv("GITHUB_PRIVATE_KEY")
         self.is_development_mode = os.getenv("isDevelopmentMode", "disabled")
@@ -107,44 +108,28 @@ class ConfigProvider:
                 "owner": "calcom",
             },
             {
-                "id": "demo5",
-                "name": "formbricks",
-                "full_name": "formbricks/formbricks",
+                "id": "demo9",
+                "name": "electron",
+                "full_name": "electron/electron",
                 "private": False,
-                "url": "https://github.com/formbricks/formbricks",
-                "owner": "formbricks",
+                "url": "https://github.com/electron/electron",
+                "owner": "electron",
             },
             {
-                "id": "demo3",
-                "name": "gateway",
-                "full_name": "Portkey-AI/gateway",
+                "id": "demo10",
+                "name": "openclaw",
+                "full_name": "openclaw/openclaw",
                 "private": False,
-                "url": "https://github.com/Portkey-AI/gateway",
-                "owner": "Portkey-AI",
+                "url": "https://github.com/openclaw/openclaw",
+                "owner": "openclaw",
             },
             {
-                "id": "demo2",
-                "name": "crewAI",
-                "full_name": "crewAIInc/crewAI",
+                "id": "demo11",
+                "name": "pydantic-ai",
+                "full_name": "pydantic/pydantic-ai",
                 "private": False,
-                "url": "https://github.com/crewAIInc/crewAI",
-                "owner": "crewAIInc",
-            },
-            {
-                "id": "demo1",
-                "name": "agentops",
-                "full_name": "AgentOps-AI/agentops",
-                "private": False,
-                "url": "https://github.com/AgentOps-AI/agentops",
-                "owner": "AgentOps-AI",
-            },
-            {
-                "id": "demo0",
-                "name": "agentstack",
-                "full_name": "AgentOps-AI/AgentStack",
-                "private": False,
-                "url": "https://github.com/AgentOps-AI/AgentStack",
-                "owner": "AgentOps-AI",
+                "url": "https://github.com/pydantic/pydantic-ai",
+                "owner": "pydantic",
             },
         ]
 

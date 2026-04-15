@@ -6,7 +6,18 @@ from app.modules.intelligence.tools.registry.schema import AllowListDefinition
 
 # Tools that ToolService may omit when optional deps/config are missing (e.g. API keys).
 # Registry keeps them for allow-lists; do not warn "registry has names not in ToolService".
-OPTIONAL_TOOL_NAMES: FrozenSet[str] = frozenset({"webpage_extractor"})
+# Also includes tools gated on REPO_MANAGER_ENABLED (bash_command, apply_changes,
+# git_commit, git_push) which are absent from ToolService when the flag is off.
+OPTIONAL_TOOL_NAMES: FrozenSet[str] = frozenset(
+    {
+        "webpage_extractor",
+        "bash_command",
+        "apply_changes",
+        "git_commit",
+        "git_push",
+        "checkout_worktree_branch",
+    }
+)
 
 
 # --- Tool metadata definitions (tier, category). Description filled at population from ToolService. ---
@@ -79,7 +90,6 @@ TOOL_DEFINITIONS: Dict[str, dict] = {
     },
     "get_file_from_changes": {"tier": "medium", "category": "code_changes"},
     "list_files_in_changes": {"tier": "medium", "category": "code_changes"},
-    "search_content_in_changes": {"tier": "medium", "category": "code_changes"},
     "clear_file_from_changes": {
         "tier": "medium",
         "category": "code_changes",
@@ -91,6 +101,7 @@ TOOL_DEFINITIONS: Dict[str, dict] = {
         "destructive": True,
     },
     "get_changes_summary": {"tier": "medium", "category": "code_changes"},
+    "get_changes_for_pr": {"tier": "medium", "category": "code_changes"},
     "export_changes": {"tier": "medium", "category": "code_changes"},
     "show_updated_file": {"tier": "medium", "category": "code_changes"},
     "get_file_diff": {"tier": "medium", "category": "code_changes"},
@@ -183,6 +194,7 @@ TOOL_DEFINITIONS: Dict[str, dict] = {
         "tier": "high",
         "category": "integration_github",
         "aliases": ["github_create_pull_request"],
+        "requires_confirmation": True,
     },
     "code_provider_add_pr_comments": {
         "tier": "high",
@@ -193,6 +205,39 @@ TOOL_DEFINITIONS: Dict[str, dict] = {
         "tier": "high",
         "category": "integration_github",
         "aliases": ["github_update_branch"],
+    },
+    # Git workflow tools (apply changes from Redis to worktree)
+    "checkout_worktree_branch": {
+        "tier": "medium",
+        "category": "code_changes",
+        "short_description": "Checkout or create an edits worktree branch for the conversation.",
+        "destructive": True,
+    },
+    "apply_changes": {
+        "tier": "medium",
+        "category": "code_changes",
+        "short_description": "Apply changes from CodeChangesManager to the worktree filesystem.",
+        "destructive": True,
+    },
+    "git_commit": {
+        "tier": "medium",
+        "category": "code_changes",
+        "short_description": "Stage and commit changes in the repository worktree.",
+        "destructive": True,
+    },
+    "git_push": {
+        "tier": "medium",
+        "category": "code_changes",
+        "short_description": "Push the current branch to the remote repository.",
+        "destructive": True,
+    },
+    # Composite PR workflow tool (combines apply_changes + git_commit + git_push + create_pr)
+    "create_pr_workflow": {
+        "tier": "medium",
+        "category": "code_changes",
+        "short_description": "Composite tool: apply changes, commit, push, and create PR in one operation.",
+        "destructive": True,
+        "requires_confirmation": True,
     },
 }
 
@@ -234,7 +279,6 @@ CODE_GEN_BASE_TOOLS: List[str] = [
     "delete_file_in_changes",
     "get_file_from_changes",
     "list_files_in_changes",
-    "search_content_in_changes",
     "clear_file_from_changes",
     "clear_all_changes",
     "get_changes_summary",
@@ -243,6 +287,12 @@ CODE_GEN_BASE_TOOLS: List[str] = [
     "get_file_diff",
     "revert_file",
     "get_session_metadata",
+    # Git workflow tools for PR creation
+    "apply_changes",
+    "git_commit",
+    "git_push",
+    # Composite PR workflow tool (single tool for apply + commit + push + create_pr)
+    "create_pr_workflow",
 ]
 
 CODE_GEN_ADD_WHEN_NON_LOCAL: List[str] = [
@@ -255,6 +305,7 @@ CODE_GEN_ADD_WHEN_NON_LOCAL: List[str] = [
     "fetch_files_batch",
     "analyze_code_structure",
     "show_diff",
+    "bash_command",
 ]
 CODE_GEN_EXCLUDE_IN_LOCAL: List[str] = ["show_diff"]
 
@@ -303,15 +354,23 @@ EXECUTE_TOOLS: List[str] = [
     "delete_file_in_changes",
     "get_file_from_changes",
     "list_files_in_changes",
-    "search_content_in_changes",
     "clear_file_from_changes",
     "clear_all_changes",
     "get_changes_summary",
+    "get_changes_for_pr",
     "export_changes",
     "show_updated_file",
     "get_file_diff",
     "revert_file",
     "get_session_metadata",
+    # Git workflow tools for PR creation
+    "apply_changes",
+    "git_commit",
+    "git_push",
+    "code_provider_create_branch",
+    "code_provider_create_pr",
+    # Composite PR workflow (apply + commit + push + create_pr in one call)
+    "create_pr_workflow",
 ]
 EXECUTE_ADD_WHEN_NON_LOCAL: List[str] = [
     "get_code_from_multiple_node_ids",
@@ -323,8 +382,16 @@ EXECUTE_ADD_WHEN_NON_LOCAL: List[str] = [
     "fetch_files_batch",
     "analyze_code_structure",
     "show_diff",
+    "bash_command",
 ]
 EXECUTE_EXCLUDE_IN_LOCAL: List[str] = ["show_diff"]
+
+# Supervisor non-local additions: repo-manager-backed tools not needed in local/VSCode mode
+SUPERVISOR_ADD_WHEN_NON_LOCAL: List[str] = [
+    "bash_command",
+    "apply_changes",
+    "checkout_worktree_branch",
+]
 
 # Explore: minimal read-only set (for future use)
 EXPLORE_TOOLS: List[str] = [
@@ -351,6 +418,14 @@ INTEGRATION_GITHUB_TOOLS: List[str] = [
     "code_provider_create_pr",
     "code_provider_add_pr_comments",
     "code_provider_update_file",
+    # Get changes summary for PR (verify before create_pr_workflow)
+    "get_changes_for_pr",
+    # Git workflow tools for PR creation from worktree
+    "apply_changes",
+    "git_commit",
+    "git_push",
+    # Composite PR workflow (apply + commit + push + create_pr in one call)
+    "create_pr_workflow",
 ]
 INTEGRATION_CONFLUENCE_TOOLS: List[str] = [
     "get_confluence_spaces",
@@ -381,7 +456,10 @@ ALLOW_LIST_DEFINITIONS: List[AllowListDefinition] = [
     ),
     # Phase 2: scoped sets for multi-agent
     AllowListDefinition(
-        name="supervisor", tool_names=SUPERVISOR_TOOLS, tier_filter=None
+        name="supervisor",
+        tool_names=SUPERVISOR_TOOLS,
+        add_when_non_local=SUPERVISOR_ADD_WHEN_NON_LOCAL,
+        tier_filter=None,
     ),
     AllowListDefinition(
         name="execute",

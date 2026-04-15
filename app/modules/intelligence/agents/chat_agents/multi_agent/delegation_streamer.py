@@ -210,7 +210,7 @@ class DelegationStreamer:
         )
 
         reasoning_manager = _get_reasoning_manager()
-        start_time = asyncio.get_event_loop().time()
+        start_time = asyncio.get_running_loop().time()
 
         # Track execution state for error reporting
         execution_state = {
@@ -240,7 +240,7 @@ class DelegationStreamer:
                 yield response
 
         except asyncio.TimeoutError:
-            elapsed = asyncio.get_event_loop().time() - start_time
+            elapsed = asyncio.get_running_loop().time() - start_time
             logger.error(
                 f"[SUBAGENT] ⚠️ TIMEOUT after {elapsed:.1f}s (agent_type={agent_type}, "
                 f"nodes={execution_state['node_count']})"
@@ -258,7 +258,7 @@ class DelegationStreamer:
             raise
 
         except SubagentTimeoutError as e:
-            elapsed = asyncio.get_event_loop().time() - start_time
+            elapsed = asyncio.get_running_loop().time() - start_time
             logger.error(
                 f"[SUBAGENT] Subagent timeout after {elapsed:.1f}s (agent_type={agent_type}): {e}"
             )
@@ -277,7 +277,7 @@ class DelegationStreamer:
                 )
 
         except SubagentExecutionError as e:
-            elapsed = asyncio.get_event_loop().time() - start_time
+            elapsed = asyncio.get_running_loop().time() - start_time
             logger.error(
                 f"[SUBAGENT] Execution error after {elapsed:.1f}s (agent_type={agent_type}): {e}"
             )
@@ -298,7 +298,7 @@ class DelegationStreamer:
                 )
 
         except Exception as e:
-            elapsed = asyncio.get_event_loop().time() - start_time
+            elapsed = asyncio.get_running_loop().time() - start_time
             error_str = str(e)
 
             # Classify error type based on exception
@@ -324,7 +324,7 @@ class DelegationStreamer:
             )
 
         finally:
-            elapsed = asyncio.get_event_loop().time() - start_time
+            elapsed = asyncio.get_running_loop().time() - start_time
             logger.info(
                 f"[SUBAGENT] Finished after {elapsed:.1f}s (agent_type={agent_type}, "
                 f"nodes={execution_state['node_count']}, "
@@ -359,11 +359,11 @@ class DelegationStreamer:
                 node_iteration_timeout = 180.0  # 3 minutes max to get next node
                 consecutive_node_timeouts = 0
                 max_consecutive_node_timeouts = 2  # Allow 2 consecutive timeouts
-                last_progress_log = asyncio.get_event_loop().time()
+                last_progress_log = asyncio.get_running_loop().time()
                 agent_start_time = last_progress_log
 
                 while True:
-                    current_time = asyncio.get_event_loop().time()
+                    current_time = asyncio.get_running_loop().time()
 
                     # Progress logging
                     if current_time - last_progress_log >= PROGRESS_LOG_INTERVAL:
@@ -390,7 +390,7 @@ class DelegationStreamer:
                     except asyncio.TimeoutError:
                         consecutive_node_timeouts += 1
                         total_elapsed = (
-                            asyncio.get_event_loop().time() - agent_start_time
+                            asyncio.get_running_loop().time() - agent_start_time
                         )
 
                         if consecutive_node_timeouts >= max_consecutive_node_timeouts:
@@ -438,7 +438,7 @@ class DelegationStreamer:
 
                     execution_state["node_count"] += 1
                     node_count = execution_state["node_count"]
-                    node_start = asyncio.get_event_loop().time()
+                    node_start = asyncio.get_running_loop().time()
 
                     try:
                         async for response in self._process_node_with_timeout(
@@ -446,14 +446,14 @@ class DelegationStreamer:
                         ):
                             yield response
 
-                        node_elapsed = asyncio.get_event_loop().time() - node_start
+                        node_elapsed = asyncio.get_running_loop().time() - node_start
                         if node_elapsed > 10:  # Log if node took > 10s
                             logger.info(
                                 f"[SUBAGENT] Node #{node_count} completed in {node_elapsed:.1f}s"
                             )
 
                     except asyncio.TimeoutError:
-                        node_elapsed = asyncio.get_event_loop().time() - node_start
+                        node_elapsed = asyncio.get_running_loop().time() - node_start
                         logger.warning(
                             f"[SUBAGENT] Node #{node_count} timeout after {node_elapsed:.1f}s - continuing to next node"
                         )
@@ -490,12 +490,12 @@ class DelegationStreamer:
 
         # Use asyncio.wait_for with overall timeout
         gen = _run_agent()
-        deadline = asyncio.get_event_loop().time() + AGENT_ITER_TIMEOUT
+        deadline = asyncio.get_running_loop().time() + AGENT_ITER_TIMEOUT
 
         try:
             async for response in gen:
                 # Check if we've exceeded the overall deadline
-                if asyncio.get_event_loop().time() > deadline:
+                if asyncio.get_running_loop().time() > deadline:
                     raise asyncio.TimeoutError("Agent execution exceeded deadline")
                 yield response
         finally:
@@ -601,7 +601,7 @@ class DelegationStreamer:
                 logger.info(f"[SUBAGENT] Node #{node_count}: stream entered")
                 event_count = 0
                 yield_count = 0
-                last_event_time = asyncio.get_event_loop().time()
+                last_event_time = asyncio.get_running_loop().time()
                 last_keepalive_time = last_event_time
                 stream_start_time = last_event_time
                 consecutive_timeouts = 0
@@ -611,7 +611,7 @@ class DelegationStreamer:
                 stream_iter = request_stream.__aiter__()
 
                 while True:
-                    current_time = asyncio.get_event_loop().time()
+                    current_time = asyncio.get_running_loop().time()
 
                     # Emit keepalive if it's been a while since last yield
                     # This prevents upstream timeouts during long-running operations
@@ -634,7 +634,7 @@ class DelegationStreamer:
                         event = await asyncio.wait_for(
                             stream_iter.__anext__(), timeout=EVENT_TIMEOUT
                         )
-                        last_event_time = asyncio.get_event_loop().time()
+                        last_event_time = asyncio.get_running_loop().time()
                         last_keepalive_time = last_event_time  # Reset keepalive timer
                         consecutive_timeouts = 0  # Reset timeout counter on success
 
@@ -648,10 +648,10 @@ class DelegationStreamer:
                     except asyncio.TimeoutError:
                         consecutive_timeouts += 1
                         elapsed_total = (
-                            asyncio.get_event_loop().time() - stream_start_time
+                            asyncio.get_running_loop().time() - stream_start_time
                         )
                         time_since_event = (
-                            asyncio.get_event_loop().time() - last_event_time
+                            asyncio.get_running_loop().time() - last_event_time
                         )
 
                         if consecutive_timeouts >= max_consecutive_timeouts:
@@ -678,7 +678,7 @@ class DelegationStreamer:
                                 tool_calls=[],
                                 citations=[],
                             )
-                            last_keepalive_time = asyncio.get_event_loop().time()
+                            last_keepalive_time = asyncio.get_running_loop().time()
                             continue  # Retry getting the next event
 
                     except asyncio.CancelledError:
@@ -744,7 +744,7 @@ class DelegationStreamer:
                                 citations=[],
                             )
                             yield_count = event_count
-                            last_keepalive_time = asyncio.get_event_loop().time()
+                            last_keepalive_time = asyncio.get_running_loop().time()
 
             finally:
                 # Always properly exit the stream context with timeout
@@ -816,14 +816,14 @@ class DelegationStreamer:
                 )
                 return
 
-            tool_start = asyncio.get_event_loop().time()  # Initialize before try block
+            tool_start = asyncio.get_running_loop().time()  # Initialize before try block
             try:
                 logger.info(f"[SUBAGENT] Node #{node_count}: tool stream entered")
                 last_keepalive_time = tool_start
                 event_count = 0
 
                 async for event in tool_stream:
-                    current_time = asyncio.get_event_loop().time()
+                    current_time = asyncio.get_running_loop().time()
                     elapsed = current_time - tool_start
                     event_count += 1
 
@@ -882,7 +882,7 @@ class DelegationStreamer:
                 raise
 
             except Exception as e:
-                elapsed = asyncio.get_event_loop().time() - tool_start
+                elapsed = asyncio.get_running_loop().time() - tool_start
                 logger.error(
                     f"[SUBAGENT] Node #{node_count}: error during tool execution "
                     f"(tool={current_tool_name}, elapsed={elapsed:.1f}s): {e}",

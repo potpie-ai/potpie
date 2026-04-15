@@ -156,17 +156,13 @@ class ProviderWrapper:
         # Don't create provider here - create it per-request with proper auth
         self.sql_db = sql_db
 
-        # Initialize repo manager if enabled
+        # Initialize repo manager - always enabled
         self.repo_manager = None
         try:
-            repo_manager_enabled = (
-                os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
-            )
-            if repo_manager_enabled:
-                from app.modules.repo_manager import RepoManager
+            from app.modules.repo_manager import RepoManager
 
-                self.repo_manager = RepoManager()
-                logger.info("ProviderWrapper: RepoManager initialized")
+            self.repo_manager = RepoManager()
+            logger.info("ProviderWrapper: RepoManager initialized")
         except Exception as e:
             logger.warning(f"ProviderWrapper: Failed to initialize RepoManager: {e}")
 
@@ -381,11 +377,13 @@ class ProviderWrapper:
                 f"Retrieved repository {'path' if repo_path else 'name'} '{repo_name}' for project_id '{project_id}'"
             )
 
-            # Extract branch_name or commit_id from project for ref parameter
+            # Use the same ref priority as get_file_content: commit_id first, then
+            # branch_name. Worktrees are registered under commit_id by default, so this
+            # ensures the lookup key here matches the key used by all other tools.
             ref = (
-                project.get("branch_name")
-                if project.get("branch_name")
-                else project.get("commit_id")
+                project.get("commit_id")
+                if project.get("commit_id")
+                else project.get("branch_name")
             )
 
             # Check if tunnel provider is available (highest priority for local access)

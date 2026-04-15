@@ -1,8 +1,9 @@
 from fastapi import Depends, Query, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
-from app.core.database import get_db
+from app.core.database import get_async_db, get_db
 from app.modules.auth.auth_service import AuthService
 from app.modules.code_provider.code_provider_controller import CodeProviderController
 from app.modules.utils.APIRouter import APIRouter
@@ -13,14 +14,19 @@ router = APIRouter()
 @router.get("/github/user-repos")
 async def get_user_repos(
     search: str = Query(None, description="Search query to filter repositories"),
-    user=Depends(AuthService.check_auth), 
-    db: Session = Depends(get_db)
+    limit: int | None = Query(None, ge=1, description="Number of repositories to return"),
+    offset: int = Query(0, ge=0, description="Number of repositories to skip"),
+    user=Depends(AuthService.check_auth),
+    db: Session = Depends(get_db),
+    async_db: AsyncSession = Depends(get_async_db),
 ):
     controller = CodeProviderController(db)
     
     # Get repos (controller handles search filtering internally)
     # We pass search=None initially to get all repos, then filter after adding demo repos
-    user_repo_list = await controller.get_user_repos(user=user, search=None)
+    user_repo_list = await controller.get_user_repos(
+        user=user, search=None, async_db=async_db
+    )
     
     # Add demo repos if not in development mode
     if not config_provider.get_is_development_mode():
@@ -58,19 +64,27 @@ async def get_user_repos(
             # Re-raise HTTP exceptions (e.g., query too long)
             raise
         except Exception as e:
-            # Log but don't fail - return unfiltered results if filtering fails
             from app.modules.utils.logger import setup_logger
             logger = setup_logger(__name__)
             logger.warning(f"Error filtering repositories: {str(e)}")
-    
-    return user_repo_list
+
+    # Pagination: offset applied regardless of limit; always return same structure
+    repos = user_repo_list["repositories"]
+    total_count = len(repos)
+    paginated_repos = repos[offset : offset + limit] if limit is not None else repos[offset:]
+    has_next_page = (offset + (limit or total_count)) < total_count
+    return {
+        "repositories": paginated_repos,
+        "has_next_page": has_next_page,
+        "total_count": total_count,
+    }
 
 
 @router.get("/github/get-branch-list")
 async def get_branch_list(
     repo_name: str = Query(..., description="Repository name"),
-    limit: int = Query(None, description="Number of branches to return"),
-    offset: int = Query(0, description="Number of branches to skip"),
+    limit: int | None = Query(None, ge=1, description="Number of branches to return"),
+    offset: int = Query(0, ge=0, description="Number of branches to skip"),
     search: str = Query(None, description="Search query to filter branches"),
     user=Depends(AuthService.check_auth),
     db: Session = Depends(get_db),

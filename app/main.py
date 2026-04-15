@@ -18,6 +18,7 @@ from app.api.router import router as potpie_api_router
 from app.core.base_model import Base
 from app.core.database import SessionLocal, engine
 from app.core.models import *  # noqa #necessary for models to not give import errors
+from app.modules.analytics.analytics_router import router as analytics_router
 from app.modules.auth.auth_router import auth_router
 from app.modules.code_provider.github.github_router import router as github_router
 from app.modules.conversations.conversations_router import (
@@ -173,6 +174,7 @@ class MainApp:
         self.app.include_router(provider_router, prefix="/api/v1", tags=["Providers"])
         self.app.include_router(tool_router, prefix="/api/v1", tags=["Tools"])
         self.app.include_router(usage_router, prefix="/api/v1/usage", tags=["Usage"])
+        self.app.include_router(analytics_router, prefix="/api/v1", tags=["Analytics"])
         self.app.include_router(
             potpie_api_router, prefix="/api/v2", tags=["Potpie API"]
         )
@@ -205,6 +207,24 @@ class MainApp:
         self.initialize_database()
         logger.info("Database initialized successfully")
 
+        # Async Redis stream manager for FastAPI (native async, no event-loop blocking)
+        try:
+            from app.modules.conversations.utils.redis_streaming import (
+                AsyncRedisStreamManager,
+            )
+
+            self.app.state.async_redis_stream_manager = AsyncRedisStreamManager()
+            logger.info("AsyncRedisStreamManager initialized")
+        except Exception as e:
+            logger.exception(
+                "AsyncRedisStreamManager failed to initialize (redis.asyncio required): %s",
+                e,
+            )
+            raise RuntimeError(
+                "Async Redis stream manager unavailable; cannot start. "
+                "Install redis>=4.2 with redis.asyncio support."
+            ) from e
+
         # Setup data (Firebase or dummy user)
         logger.info("Setting up application data...")
         self.setup_data()
@@ -222,9 +242,28 @@ class MainApp:
         finally:
             db.close()
 
+    async def shutdown_event(self):
+        """Close async Redis and other resources on app shutdown."""
+        if getattr(self.app.state, "async_redis_stream_manager", None):
+            try:
+                await self.app.state.async_redis_stream_manager.aclose()
+                logger.info("AsyncRedisStreamManager closed")
+            except Exception as e:
+                logger.warning("Error closing AsyncRedisStreamManager: %s", e)
+        try:
+            from app.modules.code_provider.github.github_service import (
+                close_github_async_redis_cache,
+                GithubService,
+            )
+            await close_github_async_redis_cache()
+            GithubService.shutdown_executor()
+        except Exception as e:
+            logger.warning("Shutdown cleanup error: %s", e)
+
     def run(self):
         self.add_health_check()
         self.app.add_event_handler("startup", self.startup_event)
+        self.app.add_event_handler("shutdown", self.shutdown_event)
         return self.app
 
 
