@@ -1,7 +1,7 @@
 """Add project_sources for multi-source context sync (GitHub + Linear).
 
 Revision ID: 20260406_project_sources
-Revises: 20260330_pot_scoped_ledger
+Revises: ctx_graph_ledger_v1
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from sqlalchemy import text
 from sqlalchemy.dialects import postgresql
 
 revision: str = "20260406_project_sources"
-down_revision: Union[str, None] = "20260330_pot_scoped_ledger"
+down_revision: Union[str, None] = "ctx_graph_ledger_v1"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

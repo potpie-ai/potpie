@@ -1,7 +1,7 @@
 """context_graph_pots: user-owned pots independent of projects
 
 Revision ID: ctx_pots_20260406
-Revises: ctx_graph_ledger_v1
+Revises: 20260406_project_sources
 Create Date: 2026-04-06
 
 """
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "ctx_pots_20260406"
-down_revision = "ctx_graph_ledger_v1"
+down_revision = "20260406_project_sources"
 branch_labels = None
 depends_on = None
 
