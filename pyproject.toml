@@ -71,6 +71,7 @@ dependencies = [
     "uuid6>=2025.0.1",
     "uvicorn>=0.38.0",
     "greenlet>=3.3.0",
+    "create_graph_rs",
 ]
 
 [dependency-groups]
@@ -87,6 +88,9 @@ dev = [
 
 [tool.setuptools.packages.find]
 include = ["potpie*", "app*"]
+
+[tool.uv.sources]
+create_graph_rs = { path = "rust/create_graph_rs" }
 
 [tool.bandit]
 exclude_dirs = ["tests", "app/alembic"]

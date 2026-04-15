@@ -25,6 +25,42 @@ logger = setup_logger(__name__)
 warnings.simplefilter("ignore", category=FutureWarning)
 Tag = namedtuple("Tag", "rel_fname fname line end_line name kind type".split())
 
+FALLBACK_REF_LINE = (
+    1 << 32
+) - 1  # u32::MAX sentinel for Python -1 line numbers in Rust payload
+
+
+def _reconstruct_graph_from_payload(payload) -> nx.MultiDiGraph:
+    """Reconstruct nx.MultiDiGraph from a Rust GraphPayload."""
+    G = nx.MultiDiGraph()
+    for node in payload.nodes:
+        node_attrs = {
+            "file": node.file,
+            "line": node.line,
+            "end_line": node.end_line,
+            "type": node.node_type,
+            "name": node.name,
+        }
+        if node.node_type != "FILE":
+            node_attrs["class_name"] = node.class_name
+        if node.text is not None:
+            node_attrs["text"] = node.text
+        G.add_node(node.id, **node_attrs)
+    for edge in payload.edges:
+        edge_attrs = {"type": edge.edge_type}
+        if edge.ident is not None:
+            edge_attrs["ident"] = edge.ident
+        if edge.ref_line is not None:
+            edge_attrs["ref_line"] = (
+                -1 if edge.ref_line == FALLBACK_REF_LINE else edge.ref_line
+            )
+        if edge.end_ref_line is not None:
+            edge_attrs["end_ref_line"] = (
+                -1 if edge.end_ref_line == FALLBACK_REF_LINE else edge.end_ref_line
+            )
+        G.add_edge(edge.source_id, edge.target_id, **edge_attrs)
+    return G
+
 
 class RepoMap:
     # Parsing logic adapted from aider (https://github.com/paul-gauthier/aider)
@@ -609,6 +645,25 @@ class RepoMap:
         return False
 
     def create_graph(self, repo_dir):
+        impl = os.environ.get("POTPIE_CREATE_GRAPH_IMPL", "rust").strip().lower()
+        if impl == "python":
+            return self.create_graph_python(repo_dir)
+        elif impl == "rust":
+            return self._create_graph_rust(repo_dir)
+        else:
+            raise ValueError(
+                f"Unknown POTPIE_CREATE_GRAPH_IMPL value: {impl!r}. Expected 'python', 'rust', or 'shadow'."
+            )
+
+    def _create_graph_rust(self, repo_dir):
+        """Build graph using Rust backend and reconstruct nx.MultiDiGraph."""
+        import importlib
+
+        create_graph_rs = importlib.import_module("create_graph_rs")
+        payload = create_graph_rs.build_graph_payload(repo_dir)
+        return _reconstruct_graph_from_payload(payload)
+
+    def create_graph_python(self, repo_dir):
         G = nx.MultiDiGraph()
         defines = defaultdict(set)
         references = defaultdict(set)
