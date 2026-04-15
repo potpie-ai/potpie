@@ -47,6 +47,10 @@ from app.modules.intelligence.tools.code_query_tools.get_file_content_by_path im
 from app.modules.intelligence.tools.code_query_tools.bash_command_tool import (
     bash_command_tool,
 )
+from app.modules.intelligence.tools.code_query_tools.colgrep_search_tool import (
+    colgrep_health_tool,
+    colgrep_search_tool,
+)
 from app.modules.intelligence.tools.code_query_tools.apply_changes_tool import (
     apply_changes_tool,
 )
@@ -256,6 +260,13 @@ class ToolService:
         bash_tool = bash_command_tool(self.db, self.user_id)
         if bash_tool:
             tools["bash_command"] = bash_tool
+
+        colgrep_tool = colgrep_search_tool(self.db, self.user_id)
+        if colgrep_tool:
+            tools["search_colgrep"] = colgrep_tool
+        colgrep_health = colgrep_health_tool(self.db, self.user_id)
+        if colgrep_health:
+            tools["check_colgrep_health"] = colgrep_health
 
         # Add git workflow tools if repo manager is enabled
         apply_tool = apply_changes_tool(self.db, self.user_id)

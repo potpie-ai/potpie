@@ -74,6 +74,8 @@ class DebugAgent(ChatAgent):
                 "fetch_file",
                 "fetch_files_batch",
                 "analyze_code_structure",
+                "search_colgrep",
+                "check_colgrep_health",
                 "bash_command",
                 "read_todos",
                 "write_todos",

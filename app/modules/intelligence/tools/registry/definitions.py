@@ -39,6 +39,20 @@ TOOL_DEFINITIONS: Dict[str, dict] = {
     "search_definitions": {"tier": "medium", "category": "search"},
     "search_code_structure": {"tier": "medium", "category": "search"},
     "search_bash": {"tier": "low", "category": "search"},
+    "search_colgrep": {
+        "tier": "medium",
+        "category": "search",
+        "short_description": "Search an indexed repository with ColGREP (POST /search).",
+        "read_only": True,
+        "idempotent": True,
+    },
+    "check_colgrep_health": {
+        "tier": "low",
+        "category": "search",
+        "short_description": "GET /healthz on the ColGREP HTTP service.",
+        "read_only": True,
+        "idempotent": True,
+    },
     "semantic_search": {"tier": "medium", "category": "search"},
     # Terminal (local_mode_only: only sent when local_mode=True, i.e. VS Code extension)
     "execute_terminal_command": {
@@ -254,6 +268,8 @@ CODE_GEN_BASE_TOOLS: List[str] = [
     "search_definitions",
     "search_code_structure",
     "search_bash",
+    "search_colgrep",
+    "check_colgrep_health",
     "semantic_search",
     "ask_knowledge_graph_queries",
     "execute_terminal_command",

@@ -1211,12 +1211,13 @@ class ConversationService:
             capped_history = validated_history[-msg_cap:]
 
             if type == "CUSTOM_AGENT":
+                nodes = [] if node_ids is None else [node.node_id for node in node_ids]
                 custom_ctx = ChatContext(
                     project_id=str(project_id),
                     project_name=project_name,
                     curr_agent_id=str(agent_id),
                     history=capped_history,
-                    node_ids=[node.node_id for node in node_ids],
+                    node_ids=nodes,
                     query=query,
                     project_status=project_status,
                     conversation_id=conversation_id,
