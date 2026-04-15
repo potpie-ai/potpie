@@ -1,5 +1,6 @@
 import json
-from typing import Any, AsyncGenerator, List, Optional, Union, Literal
+import re
+from typing import Annotated, Any, AsyncGenerator, List, Literal, Optional, Union
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
@@ -47,14 +48,30 @@ from app.modules.conversations.utils.conversation_routing import (
     start_celery_task_and_stream,
 )
 from app.modules.conversations.utils.redis_streaming import AsyncRedisStreamManager
+from app.modules.conversations.session.session_service import AsyncSessionService
 
 router = APIRouter()
 logger = setup_logger(__name__)
+_VSCODE_EXT_PATTERN = re.compile(r"\bPotpie-VSCode-Extension/\d+\.\d+(?:\.\d+)?\b")
+
+AuthenticatedUser = Annotated[dict[str, Any], Depends(AuthService.check_auth)]
+DbSession = Annotated[Session, Depends(get_db)]
+AsyncDbSession = Annotated[AsyncSession, Depends(get_async_db)]
+RedisStreamManagerDep = Annotated[
+    AsyncRedisStreamManager, Depends(get_async_redis_stream_manager)
+]
+AsyncSessionServiceDep = Annotated[
+    AsyncSessionService, Depends(get_async_session_service)
+]
 
 
 async def get_stream(data_stream: AsyncGenerator[Any, None]):
     async for chunk in data_stream:
         yield json.dumps(chunk.dict())
+
+
+def _is_vscode_extension_user_agent(user_agent: str) -> bool:
+    return bool(_VSCODE_EXT_PATTERN.search(user_agent or ""))
 
 
 class ConversationAPI:
@@ -65,15 +82,15 @@ class ConversationAPI:
         description="Get a list of conversations for the current user with sorting options.",
     )
     async def get_conversations_for_user(
-        user=Depends(AuthService.check_auth),
+        user: AuthenticatedUser,
+        db: DbSession,
+        async_db: AsyncDbSession,
         start: int = Query(0, ge=0),
         limit: int = Query(10, ge=1),
         sort: Literal["updated_at", "created_at"] = Query(
             "updated_at", description="Field to sort by"
         ),
         order: Literal["asc", "desc"] = Query("desc", description="Direction of sort"),
-        db: Session = Depends(get_db),
-        async_db: AsyncSession = Depends(get_async_db),
     ):
         """Get a list of conversations for the current user with sorting options."""
         user_id = user["user_id"]
@@ -86,15 +103,15 @@ class ConversationAPI:
     async def create_conversation(
         conversation: CreateConversationRequest,
         request: Request,
+        db: DbSession,
+        async_db: AsyncDbSession,
+        user: AuthenticatedUser,
         hidden: bool = Query(
             False, description="Whether to hide this conversation from the web UI"
         ),
-        db: Session = Depends(get_db),
-        async_db: AsyncSession = Depends(get_async_db),
-        user=Depends(AuthService.check_auth),
     ):
         user_agent = request.headers.get("user-agent", "")
-        local_mode = user_agent == "Potpie-VSCode-Extension/1.0.1"
+        local_mode = _is_vscode_extension_user_agent(user_agent)
 
         user_id = user["user_id"]
         await UsageService.check_usage_limit(user_id, async_db)
@@ -111,9 +128,9 @@ class ConversationAPI:
     )
     async def get_conversation_info(
         conversation_id: str,
-        db: Session = Depends(get_db),
-        async_db: AsyncSession = Depends(get_async_db),
-        user=Depends(AuthService.check_auth),
+        db: DbSession,
+        async_db: AsyncDbSession,
+        user: AuthenticatedUser,
     ):
         user_id = user["user_id"]
         user_email = user["email"]
@@ -137,11 +154,11 @@ class ConversationAPI:
     )
     async def get_conversation_messages(
         conversation_id: str,
+        db: DbSession,
+        async_db: AsyncDbSession,
+        user: AuthenticatedUser,
         start: int = Query(0, ge=0),
         limit: int = Query(10, ge=1),
-        db: Session = Depends(get_db),
-        async_db: AsyncSession = Depends(get_async_db),
-        user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
         user_email = user["email"]
@@ -165,9 +182,15 @@ class ConversationAPI:
     async def post_message(
         conversation_id: str,
         http_request: Request,
+        db: DbSession,
+        async_db: AsyncDbSession,
+        user: AuthenticatedUser,
+        async_redis: RedisStreamManagerDep,
         content: str = Form(...),
         node_ids: Optional[str] = Form(None),
-        tunnel_url: Optional[str] = Form(None, description="Tunnel URL from VS Code extension for local server routing"),
+        tunnel_url: Optional[str] = Form(
+            None, description="Tunnel URL from VS Code extension for local server routing"
+        ),
         images: Optional[List[UploadFile]] = File(None),
         stream: bool = Query(True, description="Whether to stream the response"),
         session_id: Optional[str] = Query(
@@ -177,14 +200,10 @@ class ConversationAPI:
             None, description="Previous human message ID for deterministic session ID"
         ),
         cursor: Optional[str] = Query(None, description="Stream cursor for replay"),
-        db: Session = Depends(get_db),
-        async_db: AsyncSession = Depends(get_async_db),
-        user=Depends(AuthService.check_auth),
-        async_redis: AsyncRedisStreamManager = Depends(get_async_redis_stream_manager),
     ):
         # Check User-Agent header for local mode (same as regenerate_last_message)
         user_agent = http_request.headers.get("user-agent", "")
-        local_mode = user_agent == "Potpie-VSCode-Extension/1.0.1"
+        local_mode = _is_vscode_extension_user_agent(user_agent)
 
         # Validate message content
         if content == "" or content is None or content.isspace():
@@ -301,6 +320,10 @@ class ConversationAPI:
         conversation_id: str,
         request: RegenerateRequest,
         http_request: Request,
+        db: DbSession,
+        async_db: AsyncDbSession,
+        user: AuthenticatedUser,
+        async_redis: RedisStreamManagerDep,
         stream: bool = Query(True, description="Whether to stream the response"),
         session_id: Optional[str] = Query(
             None, description="Session ID for reconnection"
@@ -312,14 +335,10 @@ class ConversationAPI:
         background: bool = Query(
             True, description="Use background execution (recommended)"
         ),
-        db: Session = Depends(get_db),
-        async_db: AsyncSession = Depends(get_async_db),
-        user=Depends(AuthService.check_auth),
-        async_redis: AsyncRedisStreamManager = Depends(get_async_redis_stream_manager),
     ):
         # Check User-Agent header for local mode (same as post_message)
         user_agent = http_request.headers.get("user-agent", "")
-        local_mode = user_agent == "Potpie-VSCode-Extension/1.0.1"
+        local_mode = _is_vscode_extension_user_agent(user_agent)
 
         user_id = user["user_id"]
         await UsageService.check_usage_limit(user_id, async_db)
@@ -419,9 +438,9 @@ class ConversationAPI:
     @router.delete("/conversations/{conversation_id}", response_model=dict)
     async def delete_conversation(
         conversation_id: str,
-        db: Session = Depends(get_db),
-        async_db: AsyncSession = Depends(get_async_db),
-        user=Depends(AuthService.check_auth),
+        db: DbSession,
+        async_db: AsyncDbSession,
+        user: AuthenticatedUser,
     ):
         user_id = user["user_id"]
         user_email = user["email"]
@@ -432,12 +451,12 @@ class ConversationAPI:
     @router.post("/conversations/{conversation_id}/stop", response_model=dict)
     async def stop_generation(
         conversation_id: str,
+        db: DbSession,
+        async_db: AsyncDbSession,
+        user: AuthenticatedUser,
+        async_redis: RedisStreamManagerDep,
+        async_session_service: AsyncSessionServiceDep,
         session_id: Optional[str] = Query(None, description="Session ID to stop"),
-        db: Session = Depends(get_db),
-        async_db: AsyncSession = Depends(get_async_db),
-        user=Depends(AuthService.check_auth),
-        async_redis: AsyncRedisStreamManager = Depends(get_async_redis_stream_manager),
-        async_session_service=Depends(get_async_session_service),
     ):
         user_id = user["user_id"]
         user_email = user["email"]
@@ -456,9 +475,9 @@ class ConversationAPI:
     async def rename_conversation(
         conversation_id: str,
         request: RenameConversationRequest,
-        db: Session = Depends(get_db),
-        async_db: AsyncSession = Depends(get_async_db),
-        user=Depends(AuthService.check_auth),
+        db: DbSession,
+        async_db: AsyncDbSession,
+        user: AuthenticatedUser,
     ):
         user_id = user["user_id"]
         user_email = user["email"]
@@ -469,10 +488,10 @@ class ConversationAPI:
     @router.get("/conversations/{conversation_id}/active-session")
     async def get_active_session(
         conversation_id: str,
-        db: Session = Depends(get_db),
-        async_db: AsyncSession = Depends(get_async_db),
-        user=Depends(AuthService.check_auth),
-        async_session_service=Depends(get_async_session_service),
+        db: DbSession,
+        async_db: AsyncDbSession,
+        user: AuthenticatedUser,
+        async_session_service: AsyncSessionServiceDep,
     ) -> Union[ActiveSessionResponse, ActiveSessionErrorResponse]:
         """Get active session information for a conversation"""
         user_id = user["user_id"]
@@ -497,10 +516,10 @@ class ConversationAPI:
     @router.get("/conversations/{conversation_id}/task-status")
     async def get_task_status(
         conversation_id: str,
-        db: Session = Depends(get_db),
-        async_db: AsyncSession = Depends(get_async_db),
-        user=Depends(AuthService.check_auth),
-        async_session_service=Depends(get_async_session_service),
+        db: DbSession,
+        async_db: AsyncDbSession,
+        user: AuthenticatedUser,
+        async_session_service: AsyncSessionServiceDep,
     ) -> Union[TaskStatusResponse, TaskStatusErrorResponse]:
         """Get background task status for a conversation"""
         user_id = user["user_id"]
@@ -526,13 +545,13 @@ class ConversationAPI:
     async def resume_session(
         conversation_id: str,
         session_id: str,
+        db: DbSession,
+        async_db: AsyncDbSession,
+        user: AuthenticatedUser,
+        async_redis: RedisStreamManagerDep,
         cursor: Optional[str] = Query(
             "0-0", description="Stream cursor position to resume from"
         ),
-        db: Session = Depends(get_db),
-        async_db: AsyncSession = Depends(get_async_db),
-        user=Depends(AuthService.check_auth),
-        async_redis: AsyncRedisStreamManager = Depends(get_async_redis_stream_manager),
     ):
         """Resume streaming from an existing session"""
         user_id = user["user_id"]
@@ -567,8 +586,8 @@ class ConversationAPI:
 @router.post("/conversations/share", response_model=ShareChatResponse, status_code=201)
 async def share_chat(
     request: ShareChatRequest,
-    async_db: AsyncSession = Depends(get_async_db),
-    user=Depends(AuthService.check_auth),
+    async_db: AsyncDbSession,
+    user: AuthenticatedUser,
 ):
     user_id = user["user_id"]
     service = AsyncShareChatService(async_db)
@@ -589,8 +608,8 @@ async def share_chat(
 @router.get("/conversations/{conversation_id}/shared-emails", response_model=List[str])
 async def get_shared_emails(
     conversation_id: str,
-    async_db: AsyncSession = Depends(get_async_db),
-    user=Depends(AuthService.check_auth),
+    async_db: AsyncDbSession,
+    user: AuthenticatedUser,
 ):
     user_id = user["user_id"]
     service = AsyncShareChatService(async_db)
@@ -602,8 +621,8 @@ async def get_shared_emails(
 async def remove_access(
     conversation_id: str,
     request: RemoveAccessRequest,
-    user: str = Depends(AuthService.check_auth),
-    async_db: AsyncSession = Depends(get_async_db),
+    user: AuthenticatedUser,
+    async_db: AsyncDbSession,
 ) -> dict:
     """Remove access for specified emails from a conversation."""
     share_service = AsyncShareChatService(async_db)
@@ -623,8 +642,8 @@ async def remove_access(
 async def sync_code_change_from_local(
     conversation_id: str,
     change: dict,
-    user=Depends(AuthService.check_auth),
-    db: Session = Depends(get_db),
+    user: AuthenticatedUser,
+    db: DbSession,
 ) -> dict:
     """Receive code changes that were applied locally and sync to CodeChangesManager.
     

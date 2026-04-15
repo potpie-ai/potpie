@@ -68,40 +68,40 @@ class TestUsageServiceCheckUsageLimit:
 
     @pytest.mark.asyncio
     async def test_check_usage_limit_with_subscription_under_limit(self):
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {"plan_type": "free", "end_date": None}
-        mock_client = MagicMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
         with patch.dict(os.environ, {"SUBSCRIPTION_BASE_URL": "https://sub.example.com"}, clear=False):
-            with patch("app.modules.usage.usage_service.httpx.AsyncClient", return_value=mock_client):
-                with patch.object(
-                    UsageService,
-                    "get_usage_data",
+            with patch(
+                "app.modules.usage.usage_service.billing_subscription_service.get_or_create_dodo_customer_id",
+                new_callable=AsyncMock,
+                return_value="dodo-cust-123",
+            ):
+                with patch(
+                    "app.modules.usage.usage_service.billing_subscription_service.get_credit_balance",
                     new_callable=AsyncMock,
-                    return_value={"total_human_messages": 10, "agent_message_counts": {}},
+                    return_value={
+                        "credits_available": 25,
+                        "plan_type": "free",
+                        "credits_total": 50,
+                    },
                 ):
                     result = await UsageService.check_usage_limit("user-1", AsyncMock())
                     assert result is True
 
     @pytest.mark.asyncio
     async def test_check_usage_limit_free_plan_over_limit_raises(self):
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {"plan_type": "free", "end_date": None}
-        mock_client = MagicMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
         with patch.dict(os.environ, {"SUBSCRIPTION_BASE_URL": "https://sub.example.com"}, clear=False):
-            with patch("app.modules.usage.usage_service.httpx.AsyncClient", return_value=mock_client):
-                with patch.object(
-                    UsageService,
-                    "get_usage_data",
+            with patch(
+                "app.modules.usage.usage_service.billing_subscription_service.get_or_create_dodo_customer_id",
+                new_callable=AsyncMock,
+                return_value="dodo-cust-123",
+            ):
+                with patch(
+                    "app.modules.usage.usage_service.billing_subscription_service.get_credit_balance",
                     new_callable=AsyncMock,
-                    return_value={"total_human_messages": 50, "agent_message_counts": {}},
+                    return_value={
+                        "credits_available": 0,
+                        "plan_type": "free",
+                        "credits_total": 50,
+                    },
                 ):
                     with pytest.raises(HTTPException) as exc_info:
                         await UsageService.check_usage_limit("user-1", AsyncMock())

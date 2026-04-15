@@ -35,6 +35,7 @@ from app.modules.intelligence.agents.chat_agent import (
 )
 from app.modules.intelligence.agents.chat_agents.tool_helpers import (
     get_tool_call_info_content,
+    try_extract_streaming_preview,
 )
 from app.modules.utils.logger import setup_logger
 
@@ -123,6 +124,8 @@ class StreamProcessor:
         # Track current tool call for request deltas (model writing tool name/args)
         current_tool_call_id: str = ""
         current_tool_name: str = ""
+        tool_args_buffers: Dict[str, str] = {}
+        tool_preview_cache: Dict[str, str] = {}
         async for event in request_stream:
             events_seen += 1
             if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
@@ -198,6 +201,25 @@ class StreamProcessor:
                     if isinstance(part.args, str)
                     else json.dumps(part.args or {}, default=str)
                 )
+                if current_tool_call_id:
+                    tool_args_buffers[current_tool_call_id] = args_str or ""
+                command_tools = {"search_bash", "bash_command", "execute_terminal_command"}
+                command = str(args_dict.get("command", "") or "").strip()
+                tool_response = (
+                    command
+                    if current_tool_name in command_tools and command
+                    else get_tool_call_info_content(current_tool_name, args_dict)
+                )
+                tool_call_details = (
+                    {"command": command}
+                    if current_tool_name in command_tools and command
+                    else {"summary": args_str[:500]}
+                )
+                stream_part = (
+                    command
+                    if current_tool_name in command_tools and command
+                    else (args_str if args_str else None)
+                )
                 yield ChatAgentResponse(
                     response="",
                     tool_calls=[
@@ -205,11 +227,9 @@ class StreamProcessor:
                             call_id=current_tool_call_id,
                             event_type=ToolCallEventType.CALL,
                             tool_name=current_tool_name,
-                            tool_response=get_tool_call_info_content(
-                                current_tool_name, args_dict
-                            ),
-                            tool_call_details={"summary": args_str[:500]},
-                            stream_part=args_str if args_str else None,
+                            tool_response=tool_response,
+                            tool_call_details=tool_call_details,
+                            stream_part=stream_part,
                             is_complete=False,
                         )
                     ],
@@ -226,6 +246,9 @@ class StreamProcessor:
                         delta.tool_name_delta or ""
                     )
                 args_delta = getattr(delta, "args_delta", None)
+                if current_tool_call_id and args_delta is not None:
+                    existing = tool_args_buffers.get(current_tool_call_id, "")
+                    tool_args_buffers[current_tool_call_id] = existing + str(args_delta)
                 stream_part = (
                     args_delta if isinstance(args_delta, str) else str(args_delta)
                 ) if args_delta is not None else ""
@@ -248,6 +271,28 @@ class StreamProcessor:
                         ],
                         citations=[],
                     )
+                if current_tool_call_id and current_tool_name:
+                    args_buffer = tool_args_buffers.get(current_tool_call_id, "")
+                    preview = try_extract_streaming_preview(current_tool_name, args_buffer)
+                    last_preview = tool_preview_cache.get(current_tool_call_id, "")
+                    if preview and preview != last_preview:
+                        tool_preview_cache[current_tool_call_id] = preview
+                        chunks_yielded += 1
+                        yield ChatAgentResponse(
+                            response="",
+                            tool_calls=[
+                                ToolCallResponse(
+                                    call_id=current_tool_call_id,
+                                    event_type=ToolCallEventType.CALL,
+                                    tool_name=current_tool_name,
+                                    tool_response=preview,
+                                    tool_call_details={"summary": preview},
+                                    stream_part=None,
+                                    is_complete=False,
+                                )
+                            ],
+                            citations=[],
+                        )
 
     def handle_stream_error(
         self, error: Exception, context: str = "model request stream"

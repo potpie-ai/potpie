@@ -9,6 +9,7 @@ cli/.venv
 venv/
 .env
 *.json
+!seed/data/**/*.json
 .momentum
 db
 cli/momentum_cli/.momentum
@@ -85,3 +86,4 @@ specs/
 
 *.egg-info/
 temp.txt
+seed/.state/

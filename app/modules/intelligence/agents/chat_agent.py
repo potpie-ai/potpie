@@ -39,6 +39,14 @@ class ToolCallResponse(BaseModel):
         default=True,
         description="Whether this tool call response is complete (False for streaming parts)",
     )
+    is_truncated: bool = Field(
+        default=False,
+        description="True if tool_response was truncated before streaming to browser",
+    )
+    original_length: Optional[int] = Field(
+        default=None,
+        description="Original char length of tool result content before truncation",
+    )
 
     class Config:
         use_enum_values = True
