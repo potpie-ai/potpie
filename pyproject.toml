@@ -100,7 +100,7 @@ dev = [
 include = ["potpie*", "app*", "seed*"]
 
 [tool.uv.sources]
-create_graph_rs = { path = "rust/create_graph_rs" }
+create_graph_rs = { path = "rust/create_graph_rs", package = true }
 
 [tool.bandit]
 exclude_dirs = ["tests", "app/alembic"]
