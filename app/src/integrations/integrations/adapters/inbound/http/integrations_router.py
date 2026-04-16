@@ -406,11 +406,16 @@ async def linear_oauth_redirect(
                 status_code=400,
                 detail="This endpoint is for OAuth initiation, not callback. Linear should redirect to /api/v1/integrations/linear/callback with the authorization code.",
             )
-        # Get redirect URI from query params or construct from current request
-        redirect_uri = request.query_params.get(
-            "redirect_uri",
-            _linear_oauth_callback_redirect_uri(request),
-        )
+        # Always anchor OAuth redirect URI to callback route.
+        # Frontend-supplied redirect_uri values are treated as optional hints and only accepted
+        # when they exactly match the callback path expected by backend.
+        callback_redirect_uri = _linear_oauth_callback_redirect_uri(request)
+        requested_redirect_uri = request.query_params.get("redirect_uri")
+        redirect_uri = callback_redirect_uri
+        if requested_redirect_uri:
+            parsed = urllib.parse.urlparse(requested_redirect_uri)
+            if parsed.path == "/api/v1/integrations/linear/callback":
+                redirect_uri = requested_redirect_uri
 
         # Get state parameter if provided
         state = request.query_params.get("state")

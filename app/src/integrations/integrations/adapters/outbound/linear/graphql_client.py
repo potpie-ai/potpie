@@ -36,9 +36,31 @@ def linear_graphql(
                     "Content-Type": "application/json",
                 },
             )
-            r.raise_for_status()
+            if r.status_code >= 400:
+                # Linear often returns GraphQL errors in JSON even for 4xx; surface them.
+                detail = r.text[:4000]
+                try:
+                    err_body = r.json()
+                    errs = err_body.get("errors")
+                    if isinstance(errs, list) and errs:
+                        first = errs[0]
+                        msg = (
+                            first.get("message")
+                            if isinstance(first, dict)
+                            else str(first)
+                        )
+                        raise LinearGraphQLError(
+                            f"Linear GraphQL HTTP {r.status_code}: {msg}"
+                        ) from None
+                except LinearGraphQLError:
+                    raise
+                except Exception:
+                    pass
+                raise LinearGraphQLError(
+                    f"Linear GraphQL HTTP {r.status_code}: {detail}"
+                ) from None
             body = r.json()
-    except httpx.HTTPStatusError:
+    except LinearGraphQLError:
         raise
     except httpx.HTTPError as exc:
         raise RuntimeError(f"Linear API request failed: {exc}") from exc
