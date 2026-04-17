@@ -49,6 +49,8 @@ class DoctorSnapshot:
     github_token_set: bool
     potpie_health_ok: Optional[bool] = None
     potpie_health_message: Optional[str] = None
+    potpie_auth_ok: Optional[bool] = None
+    potpie_auth_message: Optional[str] = None
     summary_lines: list[str] = field(default_factory=list)
 
 
@@ -65,9 +67,7 @@ def emit_error(
     if hint:
         _err.print(f"[dim]{hint}[/dim]")
     if verbose and exc is not None:
-        tb_text = "".join(
-            traceback.format_exception(type(exc), exc, exc.__traceback__)
-        )
+        tb_text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
         _err.print(Syntax(tb_text, "python", theme="ansi_dark"))
 
 
@@ -87,6 +87,8 @@ def print_doctor_report(data: DoctorSnapshot, *, as_json: bool) -> None:
             "github_token_set": data.github_token_set,
             "potpie_health_ok": data.potpie_health_ok,
             "potpie_health_message": data.potpie_health_message,
+            "potpie_auth_ok": data.potpie_auth_ok,
+            "potpie_auth_message": data.potpie_auth_message,
             "summary": data.summary_lines,
         }
         print(json.dumps(payload))
@@ -94,12 +96,19 @@ def print_doctor_report(data: DoctorSnapshot, *, as_json: bool) -> None:
 
     ctx_tbl = Table(show_header=False, box=None, padding=(0, 2))
     ctx_tbl.add_row("CONTEXT_GRAPH_ENABLED", str(data.context_graph_enabled))
-    ctx_tbl.add_row("Neo4j URI (local)", "set" if data.neo4j_effective_set else "(missing)")
+    ctx_tbl.add_row(
+        "Neo4j URI (local)", "set" if data.neo4j_effective_set else "(missing)"
+    )
     ctx_tbl.add_row("Neo4j source", data.neo4j_source)
     if data.potpie_health_ok is not None:
         ctx_tbl.add_row(
             "GET /health",
             "ok" if data.potpie_health_ok else (data.potpie_health_message or "failed"),
+        )
+    if data.potpie_auth_ok is not None:
+        ctx_tbl.add_row(
+            "GET /api/v2/context/pots",
+            "ok" if data.potpie_auth_ok else (data.potpie_auth_message or "failed"),
         )
     _out.print(
         Panel(
@@ -126,8 +135,12 @@ def print_doctor_report(data: DoctorSnapshot, *, as_json: bool) -> None:
     _out.print(Panel(pot_tbl, title="Pot scope (CLI)", border_style="cyan"))
 
     other_tbl = Table(show_header=False, box=None, padding=(0, 2))
-    other_tbl.add_row("Postgres URL env (local / other tools)", str(data.database_url_set))
-    other_tbl.add_row("GITHUB_TOKEN / CONTEXT_ENGINE_GITHUB_TOKEN", str(data.github_token_set))
+    other_tbl.add_row(
+        "Postgres URL env (local / other tools)", str(data.database_url_set)
+    )
+    other_tbl.add_row(
+        "GITHUB_TOKEN / CONTEXT_ENGINE_GITHUB_TOKEN", str(data.github_token_set)
+    )
     _out.print(Panel(other_tbl, title="Other (sync / ledger)", border_style="dim"))
 
     for line in data.summary_lines:
@@ -150,7 +163,9 @@ def print_search_results(
         print(json.dumps(rows))
         return
     if not rows:
-        _out.print("[dim]No results (empty graph or no matches for this query / pot).[/dim]")
+        _out.print(
+            "[dim]No results (empty graph or no matches for this query / pot).[/dim]"
+        )
         return
     table = Table(title="Search results", show_lines=False)
     table.add_column("#", style="dim", justify="right")
@@ -204,7 +219,9 @@ def print_json_blob(data: dict[str, Any], *, as_json: bool) -> None:
     _out.print(Syntax(json.dumps(data, indent=2), "json", theme="ansi_dark"))
 
 
-def print_plain_line(message: str, *, as_json: bool, json_payload: Optional[dict[str, Any]] = None) -> None:
+def print_plain_line(
+    message: str, *, as_json: bool, json_payload: Optional[dict[str, Any]] = None
+) -> None:
     if as_json and json_payload is not None:
         print(json.dumps(json_payload))
     else:

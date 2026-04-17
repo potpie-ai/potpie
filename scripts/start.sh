@@ -3,13 +3,16 @@ set -e
 
 source .env
 
-# Set up Service Account Credentials
-export GOOGLE_APPLICATION_CREDENTIALS="./service-account.json"
-
-# Check if the credentials file exists
-if [ ! -f "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
-    echo "Error: Service Account Credentials file not found at $GOOGLE_APPLICATION_CREDENTIALS"
-    echo "Please ensure the service-account.json file is in the current directory if you are working outside developmentMode"
+# Set up Google ADC-style Service Account Credentials when available.
+# Firebase startup uses firebase_service_account.json/txt separately; this file is
+# only needed by integrations that rely on GOOGLE_APPLICATION_CREDENTIALS.
+if [[ "${isDevelopmentMode:-}" == "enabled" ]]; then
+    echo "Development mode enabled; skipping GOOGLE_APPLICATION_CREDENTIALS check."
+elif [ -f "./service-account.json" ]; then
+    export GOOGLE_APPLICATION_CREDENTIALS="./service-account.json"
+else
+    echo "Warning: ./service-account.json not found; GOOGLE_APPLICATION_CREDENTIALS was not set."
+    echo "Firebase can still start from firebase_service_account.json/txt, but GCP integrations that need ADC may fail."
 fi
 
 

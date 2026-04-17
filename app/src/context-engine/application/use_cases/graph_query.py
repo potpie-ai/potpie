@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import asdict
 from datetime import datetime
 from typing import Any, Optional
 
@@ -21,6 +20,7 @@ from application.use_cases.query_context import (
 )
 from application.use_cases.resolve_context import resolve_context
 from bootstrap.container import ContextEngineContainer
+from domain.agent_context_port import bundle_to_agent_envelope
 from domain.graph_query import GraphQueryKind
 from domain.intelligence_models import (
     ArtifactRef,
@@ -41,10 +41,16 @@ class GraphQueryArtifact(BaseModel):
 class GraphQueryScope(BaseModel):
     """Optional scope hint for ``resolve_context``."""
 
+    repo_name: Optional[str] = None
     file_path: Optional[str] = None
     function_name: Optional[str] = None
     symbol: Optional[str] = None
     pr_number: Optional[int] = Field(default=None, ge=1)
+    services: list[str] = Field(default_factory=list)
+    features: list[str] = Field(default_factory=list)
+    environment: Optional[str] = None
+    user: Optional[str] = None
+    source_refs: list[str] = Field(default_factory=list)
 
 
 class GraphQueryRequest(BaseModel):
@@ -67,6 +73,7 @@ class GraphQueryRequest(BaseModel):
     function_name: Optional[str] = None
     pr_number: Optional[int] = Field(default=None, ge=1)
     node_labels: Optional[list[str]] = None
+    include: list[str] = Field(default_factory=list)
     source_description: Optional[str] = None
     include_invalidated: bool = Field(
         default=False,
@@ -77,6 +84,10 @@ class GraphQueryRequest(BaseModel):
         description="For semantic_search: restrict to edges valid at this instant.",
     )
     consumer_hint: Optional[str] = None
+    intent: Optional[str] = None
+    exclude: list[str] = Field(default_factory=list)
+    mode: str = "fast"
+    source_policy: str = "references_only"
     timeout_ms: int = Field(default=4000, ge=500, le=30000)
     artifact: Optional[GraphQueryArtifact] = None
     scope: Optional[GraphQueryScope] = None
@@ -101,13 +112,22 @@ class GraphQueryRequest(BaseModel):
         if k in (GraphQueryKind.PROJECT_GRAPH, GraphQueryKind.RESOLVE_CONTEXT):
             if not sid:
                 raise ValueError("pot_id is required for this kind")
-        if k == GraphQueryKind.SEMANTIC_SEARCH and not (self.query and self.query.strip()):
+        if k == GraphQueryKind.SEMANTIC_SEARCH and not (
+            self.query and self.query.strip()
+        ):
             raise ValueError("query is required for semantic_search")
-        if k == GraphQueryKind.FILE_OWNERS and not (self.file_path and self.file_path.strip()):
+        if k == GraphQueryKind.FILE_OWNERS and not (
+            self.file_path and self.file_path.strip()
+        ):
             raise ValueError("file_path is required for file_owners")
-        if k in (GraphQueryKind.PR_REVIEW_CONTEXT, GraphQueryKind.PR_DIFF) and self.pr_number is None:
+        if (
+            k in (GraphQueryKind.PR_REVIEW_CONTEXT, GraphQueryKind.PR_DIFF)
+            and self.pr_number is None
+        ):
             raise ValueError("pr_number is required for this kind")
-        if k == GraphQueryKind.RESOLVE_CONTEXT and not (self.query and self.query.strip()):
+        if k == GraphQueryKind.RESOLVE_CONTEXT and not (
+            self.query and self.query.strip()
+        ):
             raise ValueError("query is required for resolve_context")
         return self
 
@@ -193,6 +213,14 @@ def _dispatch_sync(
             sid,
             pr_number=body.pr_number,
             limit=min(body.limit, 50),
+            scope={
+                "repo_name": body.repo_name,
+                "services": body.scope.services if body.scope else [],
+                "features": body.scope.features if body.scope else [],
+                "environment": body.scope.environment if body.scope else None,
+                "user": body.scope.user if body.scope else None,
+            },
+            include=body.include,
         )
         return {"kind": k.value, "result": out}
 
@@ -238,10 +266,16 @@ async def _resolve_context_async(
     scope = None
     if body.scope:
         scope = ContextScope(
+            repo_name=body.scope.repo_name,
             file_path=body.scope.file_path,
             function_name=body.scope.function_name,
             symbol=body.scope.symbol,
             pr_number=body.scope.pr_number,
+            services=list(body.scope.services),
+            features=list(body.scope.features),
+            environment=body.scope.environment,
+            user=body.scope.user,
+            source_refs=body.scope.source_refs,
         )
     req = ContextResolutionRequest(
         pot_id=sid,
@@ -249,16 +283,15 @@ async def _resolve_context_async(
         consumer_hint=body.consumer_hint,
         artifact_ref=art,
         scope=scope,
+        intent=body.intent,
+        include=body.include,
+        exclude=body.exclude,
+        mode=body.mode,
+        source_policy=body.source_policy,
         timeout_ms=body.timeout_ms,
     )
     bundle = await resolve_context(container.resolution_service, req)
-    bundle_dict = asdict(bundle)
     return {
         "kind": GraphQueryKind.RESOLVE_CONTEXT.value,
-        "result": {
-            "bundle": bundle_dict,
-            "coverage": bundle_dict.get("coverage"),
-            "errors": bundle_dict.get("errors"),
-            "meta": bundle_dict.get("meta"),
-        },
+        "result": bundle_to_agent_envelope(bundle),
     }

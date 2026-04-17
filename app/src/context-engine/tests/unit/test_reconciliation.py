@@ -15,7 +15,9 @@ from domain.context_events import ContextEvent, EventRef, EventScope
 from domain.errors import ReconciliationPlanValidationError
 from domain.graph_mutations import EntityUpsert
 from domain.ports.ingestion_ledger import LedgerScope
-from adapters.outbound.reconciliation.llm_plan_convert import llm_plan_to_reconciliation_plan
+from adapters.outbound.reconciliation.llm_plan_convert import (
+    llm_plan_to_reconciliation_plan,
+)
 from adapters.outbound.reconciliation.llm_plan_schema import (
     LlmEdgeDelete,
     LlmEdgeUpsert,
@@ -34,7 +36,9 @@ def test_validate_compat_mutually_exclusive_with_generic() -> None:
         event_ref=ref,
         summary="s",
         episodes=[],
-        entity_upserts=[EntityUpsert(entity_key="k", labels=("Entity",), properties={})],
+        entity_upserts=[
+            EntityUpsert(entity_key="k", labels=("Entity",), properties={})
+        ],
         compat_github_pr_merged=MagicMock(),
     )
     with pytest.raises(ReconciliationPlanValidationError):
@@ -240,23 +244,44 @@ def test_llm_plan_convert_roundtrip() -> None:
                 reference_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
             )
         ],
-        entity_upserts=[LlmEntityUpsert(entity_key="k", labels=["Entity"], properties={"x": 1})],
+        entity_upserts=[
+            LlmEntityUpsert(
+                entity_key="source-ref:github:pr:1",
+                labels=["Entity", "SourceReference"],
+                properties={
+                    "source_system": "github",
+                    "external_id": "pr:1",
+                    "ref_type": "pull_request",
+                },
+            ),
+            LlmEntityUpsert(
+                entity_key="source-system:github",
+                labels=["Entity", "SourceSystem"],
+                properties={"name": "GitHub", "source_type": "source_control"},
+            ),
+        ],
         edge_upserts=[
             LlmEdgeUpsert(
-                edge_type="REL",
-                from_entity_key="a",
-                to_entity_key="b",
+                edge_type="FROM_SOURCE",
+                from_entity_key="source-ref:github:pr:1",
+                to_entity_key="source-system:github",
                 properties={},
             )
         ],
-        edge_deletes=[LlmEdgeDelete(edge_type="REL", from_entity_key="a", to_entity_key="b")],
+        edge_deletes=[
+            LlmEdgeDelete(
+                edge_type="FROM_SOURCE",
+                from_entity_key="source-ref:github:pr:1",
+                to_entity_key="source-system:github",
+            )
+        ],
         invalidations=[
             LlmInvalidationOp(reason="r", target_entity_key="k"),
             LlmInvalidationOp(
                 reason="r2",
-                edge_type="REL",
-                from_entity_key="a",
-                to_entity_key="b",
+                edge_type="FROM_SOURCE",
+                from_entity_key="source-ref:github:pr:1",
+                to_entity_key="source-system:github",
             ),
         ],
         evidence=[LlmEvidenceRef(kind="payload", ref="ref1")],
@@ -267,5 +292,9 @@ def test_llm_plan_convert_roundtrip() -> None:
     validate_reconciliation_plan(plan, "pot-a")
     assert plan.summary == "test plan"
     assert len(plan.episodes) == 1
-    assert plan.entity_upserts[0].labels == ("Entity",)
-    assert plan.invalidations[1].target_edge == ("REL", "a", "b")
+    assert plan.entity_upserts[0].labels == ("Entity", "SourceReference")
+    assert plan.invalidations[1].target_edge == (
+        "FROM_SOURCE",
+        "source-ref:github:pr:1",
+        "source-system:github",
+    )

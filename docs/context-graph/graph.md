@@ -17,6 +17,76 @@ The graph must support two different jobs at the same time:
 
 The target architecture should use Graphiti as the graph substrate, not as the sole owner of truth. Graphiti is strong at episodic ingestion, temporal semantics, provenance, hybrid retrieval, and typed extraction. Potpie still needs to own the ontology, deterministic identifiers, validation rules, and query contract that agents rely on.
 
+## Product model
+
+The context graph is the project memory layer for Potpie and for external agents that need to work inside the context of a real project.
+
+The primary product abstraction is a **pot**. A pot maps to an end-to-end project and contains the context needed to reason about that project across repositories, people, features, services, deployments, docs, integrations, operations, historical decisions, incidents, fixes, preferences, and agent instructions.
+
+The graph should help agents answer:
+
+- what project am I working in
+- why does this feature, service, file, or workflow exist
+- where does this work sit in the larger project
+- which repos, services, docs, tickets, users, deployments, and environments are related
+- what decisions, constraints, and preferences should be respected
+- what changed recently
+- what similar issue was debugged before and how it was fixed
+- whether available context is fresh, stale, partial, missing, or source-unverified
+
+The design target is an extensible context platform, not a single GitHub PR history feature.
+
+### Pot
+
+A pot is the tenant, project, and reasoning boundary for graph operations.
+
+A pot can contain:
+
+- repositories across one or more providers
+- users, maintainers, reviewers, teams, and preferences
+- features and user-facing functionality
+- backend services, frontend apps, workers, jobs, packages, libraries, and integrations
+- docs, tickets, PRs, incidents, alerts, runbooks, deployments, and environments
+- local development workflows, scripts, setup notes, and project conventions
+
+Agents should normally start from the active pot, then narrow by repo, feature, service, file, PR, ticket, incident, environment, or user.
+
+### Context wrap
+
+A **context wrap** is the agent-facing bundle returned for a task or query. It should be assembled from canonical graph facts, Graphiti recall, and live source resolvers. It is not just semantic search results.
+
+A useful context wrap includes:
+
+- orientation: pot, repos, feature/service scope, and likely task type
+- evidence: relevant decisions, tickets, docs, PRs, incidents, discussions, and code links
+- operational context: local scripts, deployments, environments, alerts, runbooks
+- constraints and preferences: project rules, prior decisions, and team/user guidance
+- freshness and fallback state: what was searched, what was unavailable, what is stale, and when graph context was last updated or verified
+- source references: IDs, URLs, and resolver inputs that `context_resolve` can use for source-backed summaries, verification, or full source snippets when the request explicitly asks for them
+
+### Source-reference-first storage
+
+The context graph should stitch together project context. It should not become a second source of truth for every source payload.
+
+The graph should store:
+
+- stable references to source artifacts
+- compact summaries and indexable key details
+- canonical relationships across sources
+- provenance, confidence, lifecycle, and freshness metadata
+- resolver hints for fetching full source data through integrations, MCPs, or APIs
+
+The graph should usually avoid storing:
+
+- full PR diffs
+- full documents
+- full Slack or review threads
+- large logs
+- complete incident payloads
+- high-volume telemetry streams
+
+Exceptions are appropriate when small snippets materially improve recall, explanation, or offline usefulness.
+
 ## Design principles
 
 1. Use one graph, not separate disconnected stores.
@@ -43,9 +113,493 @@ Use a single Graphiti-backed Neo4j graph with three logical layers.
 The important architectural decision is this:
 
 - Graphiti is the graph engine, temporal memory layer, and retrieval substrate.
-- Potpie ontology is the source of truth for canonical queryable context.
+- Potpie ontology owns the canonical queryable context contract.
 
 Graphiti should host the ontology layer, not replace it.
+
+This does not mean the context graph becomes the source of truth for every project fact. Source systems and the codebase remain authoritative for their own data. Potpie's canonical ontology is the stable graph representation agents query for orientation, joins, ranking, and memory.
+
+## Target logical architecture
+
+```text
+Agents / IDEs / Potpie / MCP clients / CLI
+    |
+    |  context_resolve / context_search / context_record / context_status
+    v
+Context Intelligence Layer
+    |
+    |  evidence planning, coverage, fallbacks, source resolution
+    v
+Context Graph Application Layer
+    |
+    |  ingest events, reconcile, validate, apply, query
+    v
+Graph Storage and Workflow
+    |
+    +-- Graphiti episodic + temporal graph on Neo4j
+    +-- Potpie canonical ontology nodes and edges on Neo4j
+    +-- Existing code graph nodes and bridges on Neo4j
+    +-- Postgres event ledger, reconciliation ledger, and step status
+    +-- External source resolvers for full payloads
+```
+
+The current `app/src/context-engine` package already has many pieces of this shape:
+
+- hexagonal package boundaries: `domain`, `application`, `adapters`, `bootstrap`
+- pot-scoped Graphiti episodic ingestion using `group_id`
+- structural Neo4j bridges from code graph nodes to PR, decision, and file history context
+- Postgres-backed context events, ingestion events, reconciliation ledger, and step status
+- Celery/Hatchet queue abstractions for async graph jobs
+- HTTP, CLI, and MCP entrypoints
+- raw episode ingest, merged GitHub PR ingest, semantic search, change history, file owners, decisions, PR review context, PR diff, project graph, and `resolve-context`
+- a first provider-neutral context intelligence layer with `IntelligenceBundle`, coverage, errors, and capability metadata
+
+The main implementation gap is not the skeleton. It is the domain breadth: the current graph mostly understands GitHub/code-history context, while the target system needs broader project context around features, users, services, environments, docs, integrations, operations, debugging knowledge, and preferences.
+
+## Agent integration and context injection
+
+The context graph should feel natural to agents. Agents should not need to understand Graphiti, Cypher, Neo4j labels, or source-specific schemas to benefit from the graph.
+
+Supported integration surfaces should include:
+
+- `AGENTS.md` instructions that teach an agent how to identify the active pot and when to ask for context
+- skills that encode task-specific context recipes such as feature work, debugging, operations, docs lookup, or reviewer selection
+- MCP tools for external agents and IDEs
+- CLI commands for local workflows and setup checks
+- HTTP APIs for Potpie agents and other services
+- future SDKs for structured integrations
+
+The default behavior should be:
+
+1. Resolve the active pot.
+2. Resolve the task scope: repo, feature, service, file, PR, ticket, incident, environment, or user.
+3. Request a context wrap through `context_resolve`.
+4. Inspect coverage, freshness, and source verification state.
+5. Ask `context_resolve` for source-backed summaries, verification, or selected full source snippets only when the graph indicates it is needed.
+6. Emit alignment events when source truth disagrees with graph memory.
+
+The public agent surface should stay intentionally small. Do not add a new MCP or HTTP tool for every use case. Use-case-specific skills should describe `context_resolve` parameter recipes, not hard-code graph internals or call separate feature/debugging/operations tools. For example:
+
+- a feature skill calls `context_resolve` with `intent: "feature"` and includes feature map, service map, docs, tickets, decisions, recent changes, owners, and preferences
+- a debugging skill calls `context_resolve` with `intent: "debugging"` and includes prior fixes, diagnostic signals, incidents, alerts, recent changes, config, deployments, and owners
+- an operations skill calls `context_resolve` with `intent: "operations"` and includes deployment targets, runbooks, alerts, incidents, scripts, config references, and source status
+- a reviewer skill calls `context_resolve` with `intent: "review"` and includes ownership, familiarity, recent changes, decisions, and team context
+
+This is how context becomes an agent operating layer rather than a search box.
+
+### Minimal agent context port
+
+The recommended public tool surface is:
+
+- `context_resolve`
+  - primary tool for task context, source-backed context wraps, source verification, and bounded source retrieval
+- `context_search`
+  - secondary tool for narrow follow-up lookup when the agent already knows what it is looking for
+- `context_record`
+  - generic write tool for durable learnings such as decisions, fixes, preferences, workflows, feature notes, source references, and incident summaries
+- `context_status`
+  - lightweight health, freshness, source coverage, and pot/scope readiness check
+
+Do not create public tools such as `context_get_feature_context`, `context_get_debugging_context`, `context_get_operational_context`, or `context_get_source`. Those concepts should be expressed through `context_resolve` parameters.
+
+The extension points are:
+
+- `intent`
+- `scope`
+- `include`
+- `exclude`
+- `mode`
+- `budget`
+- `source_policy`
+- `filters`
+- `record.type`
+
+This keeps the agent interface stable while allowing new context use cases to be added over time.
+
+### `context_resolve` request contract
+
+`context_resolve` should accept enough structure to route the request without requiring agents to know graph internals.
+
+Recommended fields:
+
+```json
+{
+  "pot_id": "pot_123",
+  "query": "Fix timeout during GitHub repository ingestion",
+  "intent": "debugging",
+  "scope": {
+    "repo": "potpie/api",
+    "branch": "main",
+    "files": [
+      "app/src/context-engine/application/services/ingestion_submission_service.py"
+    ],
+    "services": ["context-engine"],
+    "features": ["context graph ingestion"],
+    "environment": "staging",
+    "pr_number": 1234,
+    "ticket_ids": ["ENG-42"],
+    "user": "nandan",
+    "source_refs": ["github_pr:1234", "doc:docs/context-graph/graph.md"]
+  },
+  "include": [
+    "purpose",
+    "feature_map",
+    "service_map",
+    "docs",
+    "tickets",
+    "decisions",
+    "recent_changes",
+    "owners",
+    "prior_fixes",
+    "operations",
+    "preferences",
+    "source_status"
+  ],
+  "exclude": [
+    "full_diffs",
+    "full_docs",
+    "large_threads"
+  ],
+  "mode": "fast",
+  "source_policy": "references_only",
+  "budget": {
+    "max_items": 12,
+    "max_tokens": 2500,
+    "timeout_ms": 3500,
+    "freshness": "prefer_fresh"
+  },
+  "as_of": null
+}
+```
+
+`intent` is a routing hint, not a separate endpoint. Initial values should include:
+
+- `feature`
+- `debugging`
+- `review`
+- `operations`
+- `planning`
+- `docs`
+- `onboarding`
+- `refactor`
+- `test`
+- `security`
+- `unknown`
+
+`include` controls evidence families. Initial values should include:
+
+- `purpose`
+- `feature_map`
+- `service_map`
+- `repo_map`
+- `docs`
+- `tickets`
+- `decisions`
+- `recent_changes`
+- `owners`
+- `prior_fixes`
+- `incidents`
+- `alerts`
+- `deployments`
+- `runbooks`
+- `local_workflows`
+- `scripts`
+- `config`
+- `preferences`
+- `agent_instructions`
+- `source_status`
+
+`mode` controls depth and latency:
+
+- `fast`
+  - graph facts, compact summaries, source references, freshness, and fallbacks; no full external source payloads by default
+- `balanced`
+  - fast path plus selective source-backed summaries or verification for top-ranked references
+- `deep`
+  - may fetch larger source details when necessary and within budget
+- `verify`
+  - focuses on checking graph facts against authoritative source systems
+
+`source_policy` controls how source references are used inside `context_resolve`:
+
+- `references_only`
+  - return source refs and resolver metadata without fetching source payloads
+- `summary`
+  - fetch compact source summaries for top-ranked refs when useful
+- `verify`
+  - verify whether selected graph facts still match source truth
+- `snippets`
+  - return bounded source snippets when the source is available and allowed
+- `full_if_needed`
+  - allow larger source reads only when `mode` and `budget` permit
+
+This folds source fetching and verification into `context_resolve` without introducing a separate `context_source` tool.
+
+### `context_resolve` response contract
+
+Every `context_resolve` response should use a consistent envelope.
+
+Recommended shape:
+
+```json
+{
+  "ok": true,
+  "request_id": "ctxreq_123",
+  "pot": {
+    "id": "pot_123",
+    "name": "Potpie"
+  },
+  "resolved_scope": {
+    "repos": ["potpie/api"],
+    "features": ["context graph ingestion"],
+    "services": ["context-engine"],
+    "confidence": 0.82,
+    "inferred": true
+  },
+  "answer": {
+    "summary": "This task is in the context graph ingestion path. The service submits ingestion events and delegates async execution to Celery by default or Hatchet optionally.",
+    "purpose": [],
+    "decisions": [],
+    "recent_changes": [],
+    "prior_fixes": [],
+    "debugging_memory": [],
+    "docs": [],
+    "owners": [],
+    "operations": [],
+    "preferences": []
+  },
+  "evidence": [
+    {
+      "id": "ev_1",
+      "type": "decision",
+      "title": "Celery is default queue backend",
+      "summary": "Context graph jobs use the context-graph-etl queue unless Hatchet is explicitly configured.",
+      "confidence": 0.94,
+      "freshness": "fresh",
+      "verification_state": "verified",
+      "source_refs": ["doc:AGENTS.md"]
+    }
+  ],
+  "source_refs": [
+    {
+      "ref": "doc:AGENTS.md",
+      "type": "doc",
+      "uri": "repo://AGENTS.md",
+      "fetchable": true,
+      "last_seen_at": "2026-04-17T08:00:00Z",
+      "last_verified_at": "2026-04-17T08:00:00Z",
+      "access": "allowed"
+    }
+  ],
+  "coverage": {
+    "status": "partial",
+    "searched": ["docs", "decisions", "recent_changes", "prior_fixes"],
+    "missing": ["production alerts integration is not connected"],
+    "stale": [],
+    "confidence": 0.78
+  },
+  "freshness": {
+    "status": "mostly_fresh",
+    "last_graph_update": "2026-04-16T18:22:00Z",
+    "last_source_verification": "2026-04-17T08:00:00Z"
+  },
+  "quality": {
+    "status": "watch",
+    "metrics": {
+      "source_ref_count": 4,
+      "stale_ref_count": 0,
+      "needs_verification_ref_count": 2
+    },
+    "issues": [],
+    "recommended_maintenance": [
+      {
+        "job": "verify_entity",
+        "reason": "Verify high-value facts before agents rely on them."
+      }
+    ]
+  },
+  "fallbacks": [
+    {
+      "code": "source_not_connected",
+      "message": "No alert source is connected for this pot.",
+      "impact": "Operational debugging context may be incomplete."
+    }
+  ],
+  "open_conflicts": [],
+  "recommended_next_actions": [
+    {
+      "action": "resolve",
+      "mode": "verify",
+      "source_policy": "verify",
+      "reason": "Verify deployment facts before production-impacting changes."
+    }
+  ]
+}
+```
+
+Agents should always inspect `coverage`, `freshness`, `quality`, `fallbacks`, `open_conflicts`, and `source_refs` before relying on the answer.
+
+As of Phase 4, project-map includes are backed by a canonical `project_map_context` read path. When `context_resolve` is called with `intent: "feature"`, `intent: "operations"`, `intent: "onboarding"`, or includes such as `service_map`, `feature_map`, `docs`, `deployments`, `runbooks`, `local_workflows`, `scripts`, `config`, `preferences`, or `agent_instructions`, the response envelope can include:
+
+```json
+{
+  "answer": {
+    "project_map": [
+      {
+        "family": "service_map",
+        "kind": "Service",
+        "entity_key": "service:context-engine",
+        "name": "context-engine",
+        "summary": "Context graph ingestion and agent context service.",
+        "relationships": [
+          {
+            "type": "BACKED_BY",
+            "direction": "out",
+            "target_kind": "Repository",
+            "target_name": "potpie"
+          }
+        ],
+        "source_uri": "repo://app/src/context-engine/README.md"
+      }
+    ]
+  },
+  "facts": {
+    "project_map": []
+  }
+}
+```
+
+This is still reference-first context. The graph returns compact canonical facts and relationship references; agents should request source-backed verification through `context_resolve` when they need authoritative details.
+
+As of Phase 5, debugging includes are backed by a canonical `debugging_memory_context` read path. When `context_resolve` is called with `intent: "debugging"` or includes such as `prior_fixes`, `diagnostic_signals`, `incidents`, or `alerts`, the response envelope can include:
+
+```json
+{
+  "answer": {
+    "debugging_memory": [
+      {
+        "family": "prior_fixes",
+        "kind": "Fix",
+        "entity_key": "fix:repo-ingestion-timeout",
+        "title": "Repository ingestion timeout fix",
+        "summary": "Increased provider timeout and added retry budget for large repositories.",
+        "root_cause": "Repository metadata fetch exceeded the previous request timeout.",
+        "fix_type": "configuration",
+        "affected_scope": [
+          {
+            "type": "SEEN_IN",
+            "target_labels": ["Service"],
+            "target_name": "context-engine"
+          }
+        ],
+        "diagnostic_signals": [
+          {
+            "type": "HAS_SIGNAL",
+            "target_labels": ["DiagnosticSignal"],
+            "target_name": "repository ingestion timeout"
+          }
+        ],
+        "source_ref": "github:pr:1234"
+      }
+    ]
+  },
+  "facts": {
+    "debugging_memory": []
+  }
+}
+```
+
+This remains a compact memory layer. Full incident timelines, alert payloads, logs, PR diffs, and debugging transcripts should stay in source systems and be fetched only through source-backed `context_resolve` modes when needed.
+
+### Skill recipes over tool sprawl
+
+Skills and `AGENTS.md` files should encode parameter presets.
+
+Feature work recipe:
+
+```json
+{
+  "intent": "feature",
+  "include": [
+    "purpose",
+    "feature_map",
+    "service_map",
+    "docs",
+    "tickets",
+    "decisions",
+    "recent_changes",
+    "owners",
+    "preferences",
+    "source_status"
+  ],
+  "mode": "fast",
+  "source_policy": "references_only"
+}
+```
+
+Debugging recipe:
+
+```json
+{
+  "intent": "debugging",
+  "include": [
+    "prior_fixes",
+    "recent_changes",
+    "incidents",
+    "alerts",
+    "diagnostic_signals",
+    "config",
+    "deployments",
+    "owners",
+    "source_status"
+  ],
+  "mode": "fast",
+  "source_policy": "references_only"
+}
+```
+
+Review recipe:
+
+```json
+{
+  "intent": "review",
+  "include": [
+    "purpose",
+    "decisions",
+    "owners",
+    "recent_changes",
+    "prior_fixes",
+    "docs",
+    "preferences",
+    "source_status"
+  ],
+  "mode": "balanced",
+  "source_policy": "summary"
+}
+```
+
+Operations recipe:
+
+```json
+{
+  "intent": "operations",
+  "include": [
+    "service_map",
+    "deployments",
+    "incidents",
+    "alerts",
+    "runbooks",
+    "scripts",
+    "config",
+    "owners",
+    "source_status"
+  ],
+  "mode": "balanced",
+  "source_policy": "summary"
+}
+```
+
+The agent still calls `context_resolve`; the skill only changes parameters.
 
 ## Is Graphiti a good fit?
 
@@ -218,7 +772,7 @@ The graph should usually not be the long-term home for:
 Recommended rule:
 
 - store enough graph state to answer common agent questions quickly
-- store references that let the agent fetch full detail from the source system when needed
+- store references that let `context_resolve` or another authorized source integration fetch full detail from the source system when needed
 - only persist large raw content when it materially improves recall, explainability, or offline operation
 
 ### Source references as first-class graph data
@@ -236,7 +790,7 @@ Recommended fields:
 Recommended rule:
 
 - agent answers should rely on graph facts for orientation
-- detailed inspection should often resolve through source references rather than expecting the graph to contain every raw payload
+- detailed inspection should often resolve through source references via `context_resolve` source policies or source integrations rather than expecting the graph to contain every raw payload
 
 ### Source resolver contract
 
@@ -269,7 +823,7 @@ Recommended resolver outputs:
 
 Recommended rule:
 
-- source resolution should be a first-class product surface, not an implementation detail hidden behind ingestion code
+- source resolution should be a first-class capability inside the context port, primarily exposed through `context_resolve` parameters rather than as a separate public tool
 - if the graph cannot resolve a source reference reliably, the fact should be treated as lower quality over time
 
 ## Graphiti constraints to design around
@@ -338,21 +892,33 @@ These nodes describe what the software does and how it is built.
   - External functionality or product behavior.
 - `Feature`
   - Concrete deliverable area within a capability.
+- `Functionality`
+  - More granular behavior under a feature.
+- `Requirement`
+  - Expected behavior, product requirement, or acceptance criterion.
+- `RoadmapItem`
+  - Planned evolution or future direction.
 - `Component`
   - Logical subsystem, module, package, or bounded context.
 - `Interface`
   - API, event contract, queue, webhook, database contract.
 - `DataStore`
   - Postgres, Redis, S3, Neo4j, external SaaS storage.
+- `Integration`
+  - External API, SDK, webhook, MCP, database, queue, or cloud service.
 - `Dependency`
-  - External system or library with operational significance.
+  - External system, service, or library with operational significance.
 
 Core relationships:
 
 - `(:Feature)-[:IMPLEMENTS]->(:Capability)`
+- `(:Feature)-[:HAS_FUNCTIONALITY]->(:Functionality)`
+- `(:Requirement)-[:DEFINES]->(:Feature|:Functionality)`
+- `(:RoadmapItem)-[:EVOLVES]->(:Feature|:Capability)`
 - `(:Component)-[:SUPPORTS]->(:Feature)`
 - `(:Component)-[:EXPOSES]->(:Interface)`
-- `(:Component)-[:DEPENDS_ON]->(:Dependency)`
+- `(:Component)-[:USES]->(:Integration)`
+- `(:Component)-[:DEPENDS_ON]->(:Dependency|:Service)`
 - `(:Service)-[:USES_DATA_STORE]->(:DataStore)`
 - `(:Service)-[:CALLS]->(:Service)`
 - `(:Component)-[:OWNS_FILE]->(:CodeAsset)`
@@ -363,6 +929,10 @@ These nodes capture the state of running systems and how they are operated.
 
 - `Deployment`
   - Version or branch promoted into an environment.
+- `DeploymentTarget`
+  - GCP, AWS, Kubernetes cluster, Vercel, Render, or another deployment target.
+- `DeploymentStrategy`
+  - Rolling, blue-green, canary, manual, preview, or another strategy.
 - `Branch`
   - Git branch with operational meaning.
 - `Alert`
@@ -371,6 +941,10 @@ These nodes capture the state of running systems and how they are operated.
   - Operational issue with timeline and severity.
 - `Runbook`
   - Human-usable remediation procedure.
+- `Script`
+  - Local, CI, debug, or deployment command commonly used by the team.
+- `ConfigVariable`
+  - Important configuration variable or secret reference. Store references and usage context, not secret values.
 - `Metric`
   - Named health indicator when worth modeling explicitly.
 
@@ -378,10 +952,38 @@ Core relationships:
 
 - `(:Branch)-[:DEPLOYED_AS]->(:Deployment)`
 - `(:Deployment)-[:TARGETS]->(:Environment)`
+- `(:Environment)-[:HOSTED_ON]->(:DeploymentTarget)`
+- `(:Service)-[:USES_DEPLOYMENT_STRATEGY]->(:DeploymentStrategy)`
 - `(:Alert)-[:FIRED_IN]->(:Environment)`
 - `(:Alert)-[:INDICATES]->(:Incident)`
 - `(:Runbook)-[:MITIGATES]->(:Incident)`
 - `(:Incident)-[:IMPACTS]->(:Service)`
+- `(:Script)-[:RUNS]->(:Service|:Component)`
+- `(:ConfigVariable)-[:CONFIGURES]->(:Service|:Environment)`
+
+### 3a. Debugging and reliability memory
+
+These nodes let the graph remember how issues were investigated and fixed across users and agents.
+
+- `BugPattern`
+  - Repeated failure mode, symptom cluster, or known class of issue.
+- `Investigation`
+  - Debugging session, diagnostic path, or incident investigation.
+- `Fix`
+  - Resolution, mitigation, workaround, or permanent code/config change.
+- `DiagnosticSignal`
+  - Error message, stack trace signature, metric, log query, alert fingerprint, or symptom.
+
+Core relationships:
+
+- `(:Incident)-[:MATCHES_PATTERN]->(:BugPattern)`
+- `(:Investigation)-[:DEBUGGED]->(:Incident|:BugPattern)`
+- `(:DiagnosticSignal)-[:OBSERVED_IN]->(:Investigation|:Incident)`
+- `(:Fix)-[:RESOLVED]->(:Incident|:BugPattern)`
+- `(:Fix)-[:CHANGED_BY]->(:PullRequest|:Commit)`
+- `(:BugPattern)-[:SEEN_IN]->(:Service|:Environment|:Component)`
+
+This is the direct support for the workflow where one user debugs a problem, the fix is captured, and another user later retrieves that prior fix when similar symptoms appear.
 
 ### 4. Team and ownership context
 
@@ -417,6 +1019,10 @@ This is where Graphiti and reconciliation should work most closely.
   - Rules, do-not-do guidance, architecture constraints, compliance restrictions.
 - `Preference`
   - Team/project style and workflow preferences.
+- `AgentInstruction`
+  - AGENTS.md, skill, prompt, MCP guidance, or other agent-facing instruction.
+- `LocalWorkflow`
+  - How people usually run, test, debug, or deploy locally.
 
 Core relationships:
 
@@ -427,6 +1033,8 @@ Core relationships:
 - `(:Decision)-[:AFFECTS]->(:Feature|:Component|:Service|:CodeAsset)`
 - `(:Constraint)-[:APPLIES_TO]->(:Service|:Component|:Feature|:Repository)`
 - `(:Preference)-[:PREFERRED_FOR]->(:Repository|:Component|:Team)`
+- `(:AgentInstruction)-[:INFORMS]->(:Repository|:Service|:Feature|:Agent)`
+- `(:LocalWorkflow)-[:RUNS]->(:Service|:Component|:Repository)`
 
 ### 6. Knowledge artifacts and evidence
 
@@ -440,6 +1048,10 @@ These nodes preserve why we believe something.
   - Graphiti ingested episode; remains the narrative source.
 - `Observation`
   - Optional normalized evidence unit when direct modeling is useful.
+- `SourceSystem`
+  - GitHub, Linear, Slack, Docs, Sentry, GCP, AWS, or another provider.
+- `SourceReference`
+  - Stable pointer to an external artifact with resolver hints and freshness metadata.
 
 Core relationships:
 
@@ -447,6 +1059,8 @@ Core relationships:
 - `(:Document)-[:DESCRIBES]->(:Feature|:Component|:Constraint)`
 - `(:Conversation)-[:RESULTED_IN]->(:Decision)`
 - `(:Observation)-[:SUPPORTS]->(:Decision|:Incident|:Constraint)`
+- `(:SourceReference)-[:FROM_SOURCE]->(:SourceSystem)`
+- `(:Entity)-[:EVIDENCED_BY]->(:SourceReference)`
 
 ## Code graph bridge model
 
@@ -620,11 +1234,17 @@ Start with a smaller schema and expand carefully. A good first stable set is:
 - `System`
 - `Service`
 - `Environment`
+- `DeploymentTarget`
+- `DeploymentStrategy`
 - `Component`
 - `Capability`
 - `Feature`
+- `Functionality`
+- `Requirement`
+- `RoadmapItem`
 - `Interface`
 - `DataStore`
+- `Integration`
 - `Dependency`
 - `Person`
 - `Team`
@@ -634,11 +1254,25 @@ Start with a smaller schema and expand carefully. A good first stable set is:
 - `Decision`
 - `Constraint`
 - `Preference`
+- `AgentInstruction`
+- `LocalWorkflow`
 - `Document`
+- `Conversation`
+- `SourceSystem`
+- `SourceReference`
 - `Incident`
 - `Alert`
+- `BugPattern`
+- `Investigation`
+- `Fix`
+- `DiagnosticSignal`
 - `Metric`
 - `Runbook`
+- `Script`
+- `ConfigVariable`
+- `QualityIssue`
+- `MaintenanceJob`
+- `MaterializedAccessPath`
 - `Deployment`
 - `Branch`
 - `Observation`
@@ -654,11 +1288,16 @@ Keep edge names semantically strong and reusable.
 - `BACKED_BY`
 - `DEPLOYED_TO`
 - `HOSTS`
+- `HOSTED_ON`
 - `IMPLEMENTS`
+- `HAS_FUNCTIONALITY`
+- `DEFINES`
 - `SUPPORTS`
 - `EXPOSES`
+- `USES`
 - `DEPENDS_ON`
 - `USES_DATA_STORE`
+- `USES_DEPLOYMENT_STRATEGY`
 - `CALLS`
 - `OWNS`
 - `OWNS_FILE`
@@ -670,13 +1309,25 @@ Keep edge names semantically strong and reusable.
 - `MADE_IN`
 - `APPLIES_TO`
 - `PREFERRED_FOR`
+- `INFORMS`
 - `MITIGATES`
 - `IMPACTS`
 - `FIRED_IN`
 - `INDICATES`
+- `MATCHES_PATTERN`
+- `DEBUGGED`
+- `OBSERVED_IN`
+- `RESOLVED`
+- `CHANGED_BY`
+- `SEEN_IN`
 - `DESCRIBES`
 - `RESULTED_IN`
 - `SUPPORTS`
+- `EVIDENCED_BY`
+- `FROM_SOURCE`
+- `FLAGS`
+- `REPAIRS`
+- `MATERIALIZES`
 - `MODIFIED`
 - `INVOLVES_CODE`
 - `REFERENCES_CODE`
@@ -1340,19 +1991,31 @@ Recommended policy split:
 
 ## Agent query contract
 
-The graph should expose a stable public read contract for agents. The ontology alone is not enough. Agents need predictable entrypoints, consistent response shapes, and explicit explanation payloads.
+The graph should expose a stable public read contract for agents. The ontology alone is not enough. Agents need predictable entrypoints, consistent response shapes, explicit explanation payloads, and clear fallback behavior.
+
+The public contract should stay small:
+
+- `context_resolve`
+- `context_search`
+- `context_record`
+- `context_status`
+
+Everything else in this section describes internal query planning or request parameters behind those tools.
 
 ### Query principles
 
-- canonical queries answer precise questions
-- episodic retrieval supplies evidence, recall, and ambiguity resolution
+- `context_resolve` is the default starting point for non-trivial agent work
+- canonical graph queries answer precise questions inside the resolver
+- episodic retrieval supplies evidence, recall, and ambiguity resolution inside the resolver
 - every high-value answer should include supporting facts or evidence
 - partial coverage should be visible to the caller
 - temporal perspective should be explicit through `as_of`
+- source-backed reads and verification are controlled by `mode`, `source_policy`, and `budget`
+- broad `context_search` is a follow-up tool, not the default entrypoint
 
-### Recommended query families
+### Internal query families
 
-Start with a small public surface.
+These query families are stable product capabilities, but they should not each become a separate agent tool.
 
 #### 1. Identity and topology
 
@@ -1400,32 +2063,40 @@ Questions:
 - what documents, conversations, or episodes support this answer
 - what unresolved evidence exists
 
+The resolver should compose these families based on `intent`, `scope`, `include`, `mode`, and `source_policy`.
+
 ### Recommended response shape
 
-Agent-facing query tools should return a common envelope.
+Agent-facing tools should return a common envelope. `context_resolve` should provide the richest envelope; `context_search`, `context_record`, and `context_status` should preserve the same ideas where applicable.
 
 Recommended fields:
 
 - `answer`
 - `facts`
-- `evidence_refs`
+- `evidence`
+- `source_refs`
 - `confidence`
 - `as_of`
 - `open_conflicts`
-- `coverage_gaps`
+- `coverage`
 - `freshness`
+- `quality`
 - `verification_state`
-- `needs_alignment`
+- `fallbacks`
+- `recommended_next_actions`
 
 Recommended behavior:
 
 - `facts` should contain canonical graph results
-- `evidence_refs` should point to supporting episodes, docs, or conversations
+- `evidence` should contain compact supporting facts, episodes, docs, conversations, observations, or source-backed summaries
+- `source_refs` should point to source artifacts and resolver inputs
 - `open_conflicts` should surface contested or contradictory support
-- `coverage_gaps` should state when the graph is incomplete instead of pretending certainty
+- `coverage` should state what was searched, what was missing, and whether the answer is complete enough for the task
 - `freshness` should indicate whether the answer is recent enough to trust directly
+- `quality` should expose graph health metrics, drift issues, source-sync gaps, freshness policy, and recommended maintenance jobs
 - `verification_state` should indicate whether the fact was checked against an external source recently
-- `needs_alignment` should tell the caller when the graph should be refreshed before high-impact action
+- `fallbacks` should tell the caller when context is missing, stale, unsupported, unreachable, or permission-denied
+- `recommended_next_actions` should suggest source verification, narrower scope, deeper resolve mode, or graph alignment only when useful
 
 ### Ranking policy
 
@@ -1455,23 +2126,61 @@ Recommended rule:
 
 - agents should know whether they are receiving current truth, historical truth, or both
 
-### Suggested initial public queries
+### Tool responsibilities
 
-Examples:
+#### `context_resolve`
 
-- `resolve_scope`
-- `get_owners`
-- `get_familiar_people`
-- `get_applicable_constraints`
-- `get_preferences`
-- `get_decisions`
-- `get_change_context`
-- `get_runtime_context`
-- `search_evidence`
-- `verify_against_source`
-- `refresh_scope`
+Primary read tool. It should:
 
-The names can change, but the concepts should stay stable.
+- resolve pot, repo, feature, service, file, PR, ticket, incident, environment, user, and source-reference scope
+- plan internal query families from `intent` and `include`
+- combine canonical graph facts, Graphiti recall, source references, and optional source-backed summaries or verification
+- return compact context wraps with coverage, freshness, fallbacks, conflicts, and recommended next actions
+- enforce `budget` and return partial context instead of blocking the agent for too long
+
+#### `context_search`
+
+Secondary lookup tool. It should:
+
+- support narrow follow-up searches over graph memory and evidence
+- accept filters by labels/types, repo, feature, service, source type, time, freshness, and status
+- return compact results with source refs and confidence
+- avoid becoming the default task-context tool
+
+#### `context_record`
+
+Generic write tool. It should:
+
+- record durable learnings and corrections from agent work
+- accept `record.type` values such as `decision`, `fix`, `preference`, `workflow`, `feature_note`, `service_note`, `runbook_note`, `integration_note`, `incident_summary`, and `doc_reference`
+- require scope, summary, source refs, confidence, visibility, and idempotency key when possible
+- route writes through the same reconciliation and validation pipeline as other source events
+
+#### `context_status`
+
+Lightweight status tool. It should:
+
+- report pot and scope readiness
+- summarize connected sources, last ingestion, last verification, freshness, known gaps, and permission issues
+- return the stable context port manifest and the recommended `context_resolve` recipe when an intent is provided
+- be cheap enough for agents to call before large tasks or when `context_resolve` reports poor coverage
+
+### Non-goals for the public tool surface
+
+Do not add separate public tools for every query family.
+
+Avoid public tools like:
+
+- `context_get_feature_context`
+- `context_get_service_context`
+- `context_get_debugging_context`
+- `context_get_operational_context`
+- `context_get_preferences`
+- `context_get_source`
+
+Those are recipes or internal resolver paths. They should be expressed through `context_resolve` parameters and skills.
+
+Current implementation note: Phase 6 adds a code-level context port manifest and recipe catalog. `context_status` returns the manifest plus the recommended recipe for optional intent values, MCP descriptions steer agents toward the four-tool port, and the generated `context-engine-agent-context` skill documents the operating loop and presets.
 
 ## Operational alignment and drift management
 
@@ -1582,7 +2291,7 @@ Recommended behavior:
 - if a fact is `fresh` and low-risk, the agent may answer directly from the graph
 - if a fact is stale or high-impact, the agent should verify against the source when possible
 - if graph and source disagree, the agent should prefer the source and emit an alignment signal
-- if graph coverage is poor, the agent should fall back to source tools without pretending graph certainty
+- if graph coverage is poor, the agent should request source-backed `context_resolve` output or use available source integrations without pretending graph certainty
 
 Recommended rule:
 
@@ -1645,6 +2354,8 @@ Recommended metrics:
 - orphan count
 - unresolved alias candidate count
 - percentage of agent answers requiring source fallback
+
+Current implementation note: Phase 7 adds `domain/graph_quality.py` as the first code-level policy for these metrics. `context_resolve` and `context_status` return a `quality` report with metrics, issues, source-of-truth policy, freshness TTL policy, and recommended maintenance jobs. The ontology now includes `QualityIssue`, `MaintenanceJob`, and `MaterializedAccessPath` nodes plus `FLAGS`, `REPAIRS`, and `MATERIALIZES` edges so future jobs can write durable quality state into the graph.
 
 ## Materialized access patterns
 
@@ -1737,6 +2448,192 @@ The graph helps the agent:
 - connect evidence across systems
 
 The source systems and codebase still decide what is currently true.
+
+## Current implementation review
+
+This section reviews the current `app/src/context-engine` implementation against the target architecture above.
+
+### Requirement coverage against the product ask
+
+| Product requirement | Coverage in this spec | Current implementation state |
+| --- | --- | --- |
+| Pot as end-to-end project context | Covered by `Pot`, pot-scoped graph operations, and context wraps | Pot scoping exists for Graphiti, HTTP, CLI, MCP, and tenancy |
+| Add repos, users, features, docs, integrations, deployments, preferences | Covered by ontology categories and source-reference policy | Phase 4 ontology and `project_map_context` reads exist; ingestion coverage still needs expansion |
+| Agent has purpose and knows where work sits | Covered by feature/service/component mappings and context wraps | `context_resolve` now returns `project_map` facts when backed by canonical data |
+| Feature/functionality mapped across frontend, backend, services, docs | Covered by `Feature`, `Functionality`, `Service`, `Component`, `Document`, `Integration` | Phase 4 read model exists; durable cross-repo population remains incremental |
+| Deployment and local operating context | Covered by `Environment`, `DeploymentTarget`, `DeploymentStrategy`, `Script`, `Runbook`, `ConfigVariable`, `LocalWorkflow` | Phase 4 read model exists through `operations` and related includes; source ingestion remains incremental |
+| Debugging memory and prior fixes | Covered by `BugPattern`, `Investigation`, `Fix`, `DiagnosticSignal`, incidents, and capture-fix workflow | Phase 5 read model exists through `debugging_memory`; ingestion population remains incremental |
+| Extensible future use cases | Covered by ontology governance, source normalization, `context_resolve` recipes, and phased rollout | Ontology validation and minimal-port planning are implemented; future use cases should add includes/providers, not new public tools |
+| Use Graphiti temporal/update features but build on top | Covered by Graphiti substrate + Potpie canonical ontology split | Current implementation already uses Graphiti and deterministic structural writes |
+| Avoid huge graph / avoid source duplication | Covered by source-reference-first storage and resolver contract | Implemented for source refs and Phase 4 project-map reads; full source payloads stay external |
+| Good fallbacks for missing/stale data | Covered by coverage gaps, freshness, verification, resolver status, and drift management | Phase 7 quality report adds freshness/source-sync metrics, issues, and maintenance recommendations |
+| Natural agent injection via skills, AGENTS.md, MCP | Covered by the minimal context port and recipe-based skills | Phase 6 recipe manifest, generated `AGENTS.md`, MCP descriptions, and `context-engine-agent-context` skill are implemented |
+
+### What is already aligned
+
+The implementation is directionally sound and has the right skeleton for an extensible context platform:
+
+- package boundaries are hexagonal: `domain`, `application`, `adapters`, `bootstrap`
+- pot scoping exists through `pot_id`, Graphiti `group_id`, API tenancy checks, CLI pot resolution, and MCP pot allowlisting
+- event-first ingestion is emerging through `ContextEvent`, ingestion kinds, event stores, reconciliation ledgers, idempotency, and async step status
+- Graphiti is used in the right role for episodic ingest, custom entity extraction, semantic retrieval, invalidation filtering, and temporal `as_of` reads
+- deterministic structural writes already stamp PR, commit, developer, decision, file, and code bridge context instead of trusting extraction alone
+- agent-facing `resolve-context` already returns normalized evidence families, coverage, metadata, and recoverable errors
+- queueing is abstracted behind Celery/Hatchet/noop adapters
+- HTTP, CLI, and MCP are all present as integration surfaces
+
+The key strength is that the implementation is already a platform-shaped system, not a script. The missing work is mostly richer source resolvers, ingestion breadth, scheduled quality operations, and source-specific repair adapters.
+
+### Important gaps
+
+#### Canonical ontology breadth
+
+The current canonical schema is mostly GitHub/code-history oriented. It understands PRs, commits, issues, decisions, developers, features, file owners, review context, and semantic search.
+
+The target needs first-class concepts for:
+
+- repositories, users, teams, services, components, and systems
+- functionality, requirements, roadmap, docs, and integrations
+- environments, deployment targets, strategies, scripts, runbooks, and config references
+- incidents, alerts, bug patterns, investigations, fixes, and diagnostic signals
+- preferences, conventions, local workflows, and agent instructions
+- source systems and source references
+
+Without these concepts, new use cases will overload generic episodes or existing PR/Decision/Feature nodes, making deterministic agent queries weak.
+
+#### Source references and resolvers
+
+The graph should store references plus compact summaries, then fetch full payloads through source integrations when needed. Today, source identity appears in several places, but there is no unified `SourceReference` model or `SourceResolverPort`.
+
+This makes it hard to answer with precise fallback states such as:
+
+- no graph fact exists
+- graph fact exists but source could not be reached
+- graph fact exists but source access was denied
+- graph fact exists but is stale
+- graph fact was verified recently
+- source truth disagrees with graph memory
+
+#### Freshness and verification
+
+Graphiti supports temporal semantics and the intelligence bundle has coverage/errors, but canonical facts do not yet consistently expose:
+
+- `last_seen_at`
+- `last_verified_at`
+- source last modified time
+- freshness policy
+- stale/superseded/invalidated status
+- confidence
+- resolver verification result
+
+Freshness is product behavior, not only metadata. Agents need to know when to trust graph memory and when to verify against the source.
+
+#### Resolver planning families
+
+Current query kinds are valuable but narrow:
+
+- semantic search
+- change history
+- file owners
+- decisions
+- PR review context
+- PR diff
+- project graph
+- resolve context
+
+The target needs high-level internal resolver families for:
+
+- feature context
+- service context
+- operational and deployment context
+- debugging and prior-fix lookup
+- docs and integration context
+- preferences, conventions, and local workflows
+- user/team context
+- source/freshness verification
+
+These should be context-wrap sections and internal resolver paths behind `context_resolve`, not separate public agent tools or ad hoc raw graph queries.
+
+#### Debugging memory
+
+Raw episodes and PR history can remember some fixes, but debugging memory needs direct modeling:
+
+- symptom signatures
+- diagnostic steps
+- alerts, log queries, stack traces, and error messages
+- investigation timelines
+- mitigations and confirmed fixes
+- affected service/environment/component
+- recurrence patterns
+
+This is now a first-class read domain through `debugging_memory_context`. The remaining work is richer ingestion and reconciliation so agent sessions, alert systems, incidents, PRs, and runbooks consistently populate these canonical records.
+
+#### Preferences and instructions
+
+Preferences can be personal, team-wide, project-wide, stale, conflicting, or low-confidence. The graph should distinguish:
+
+- hard constraints
+- soft preferences
+- conventions
+- user preferences
+- team preferences
+- local workflows
+- agent instructions
+- temporary observations
+
+Each should carry scope, owner, source, confidence, and freshness.
+
+## Recommended next implementation steps
+
+### Phase A: Ontology foundation
+
+- Add a code-level ontology catalog for canonical labels, edges, key formats, required fields, metadata, and allowed edge pairs.
+- Add schema-aware validation for `ReconciliationPlan` before graph writes.
+- Add common metadata requirements for confidence, status, source refs, validity, last seen, last verified, and schema version.
+- Add unit tests under `app/src/context-engine/tests/unit/`.
+
+### Phase B: Source references and resolvers
+
+- Define `SourceReference` and freshness models.
+- Define `SourceResolverPort`.
+- Implement GitHub resolver first for PRs, issues, commits, review discussions, and URLs already present in the graph.
+- Return resolver status in context intelligence bundles.
+- Add fallback reasons such as `not_ingested`, `empty_result`, `source_unreachable`, `permission_denied`, `stale`, and `not_supported`.
+
+### Phase C: Minimal context port and agent operating workflows
+
+Implementation status: first pass implemented. The MCP agent surface now exposes the four-tool port, `context_resolve` returns the common envelope with budget/as-of support, `context_record` routes generic learnings through reconciliation, and `context_status` reports cheap pot readiness plus a recommended recipe. Generated `AGENTS.md`, CLI docs, MCP descriptions, and the `context-engine-agent-context` skill now guide agents to use parameter presets over `context_resolve`. Dedicated feature/service/operations/debugging evidence families remain Phase D/E expansion work behind the same port.
+
+- Evolve `context_resolve` into the primary context-wrap orchestrator with `intent`, `scope`, `include`, `exclude`, `mode`, `source_policy`, `budget`, and `as_of`.
+- Extend the intelligence bundle with feature, service, operations, debugging, docs, preferences, and source-status evidence families.
+- Add or update MCP/HTTP support for the stable minimal public surface:
+  - `context_resolve`
+  - `context_search`
+  - `context_record`
+  - `context_status`
+- Fold source fetching and verification into `context_resolve` through `source_policy`; do not add a separate public `context_source` tool.
+- Keep generated `AGENTS.md` and skills aligned so feature, debugging, review, operations, docs, and onboarding workflows remain parameter recipes over `context_resolve`.
+- Keep any source-specific or use-case-specific helpers internal to the resolver/application layer.
+
+### Phase D: Debugging memory
+
+- First read-model pass implemented: `context_resolve` can return `debugging_memory` records for `Fix`, `BugPattern`, `Investigation`, `DiagnosticSignal`, `Incident`, and `Alert` when canonical data exists.
+- `context_record` accepts debugging-oriented records such as `fix`, `bug_pattern`, `investigation`, `diagnostic_signal`, and `incident_summary`.
+- Next ingestion work should turn agent debugging session summaries into canonical symptoms, root causes, fixes, changed files/PRs, affected service/environment, and source refs.
+- Add richer similarity lookup over symptoms plus deterministic filters by service, environment, file path, and error signature.
+
+### Phase E: Feature, service, and operations map
+
+- First read-model pass implemented: `context_resolve` can return `project_map` records for first-class `Service`, `Component`, `Functionality`, `Requirement`, `Integration`, `Document`, `Environment`, `DeploymentTarget`, `DeploymentStrategy`, `Script`, `Runbook`, `ConfigVariable`, `Preference`, `AgentInstruction`, and `LocalWorkflow` support when canonical data exists.
+- Link existing PR/Decision/File history into those entities.
+- Ingest compact references from README, AGENTS.md, package scripts, compose files, CI workflows, deployment docs, and runbooks.
+- Avoid copying full docs or logs into the graph by default.
+
+### Phase F: Quality, drift, and scale
+
+- First policy/readiness pass implemented: `context_resolve` and `context_status` return `quality` reports with source-ref metrics, stale and unverified counts, access gaps, coverage gaps, freshness TTL policy, source-of-truth policy, and recommended maintenance jobs.
+- Ontology support exists for `QualityIssue`, `MaintenanceJob`, and `MaterializedAccessPath` plus `FLAGS`, `REPAIRS`, and `MATERIALIZES` relationships.
+- Next production work should schedule recurring verification and cleanup jobs, then connect source-specific adapters for alias repair, orphan cleanup, code bridge repair, retention, and materialized access path refresh.
 
 ## Query-oriented indexing and access patterns
 

@@ -22,18 +22,17 @@ Use this skill for work centered on the `context-engine` command in this repo.
 
 ## Command Map
 
-- `doctor`: reports whether key env/config values are present.
+- `doctor`: Potpie API URL/key hints + optional `GET /health` when configured.
 - `login` / `logout`: persist or clear Potpie API credentials in the user config dir.
-- `pot use` / `pot unset` / `pot list` / `pot create`: manage local default pot state and inspect env-backed mappings.
+- `pot create` / `pot pots` (server-owned context pots), `pot repo list` / `pot repo add`, `pot alias` / `pot use` / `pot unset` / `pot list` / `pot clear-local`; `logout` clears stored credentials.
 - `add`: inspect a git checkout and print provider-scoped repo identity.
-- `search`: semantic search over Graphiti episodic entities.
-- `ingest`: write a raw episode into the episodic graph.
+- `search` / `ingest` / `pot hard-reset`: HTTP to Potpie **`POST /api/v2/context/*`** with **`X-API-Key`** (`POTPIE_API_URL` + `POTPIE_API_KEY` or `context-engine login`).
 
 ## Guardrails
 
 - Do not describe the CLI as a separate production service; in Potpie it is an optional integration surface around the embedded package.
-- `doctor` does not validate connectivity.
-- `search` and `ingest` fail fast when `CONTEXT_GRAPH_ENABLED` is off or Graphiti is unavailable.
+- `doctor` probes **`GET /health`** when base URL and API key resolve; it does not validate graph content.
+- `search` and `ingest` require a reachable Potpie API and valid key (no local Neo4j/Graphiti required on the CLI host).
 - Global `--source` is overridden by subcommand `--source`.
 
 ## Verification

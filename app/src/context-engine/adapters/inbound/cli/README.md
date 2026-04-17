@@ -37,6 +37,8 @@ context-engine -v search "query here"
 
 Install the packaged agent bundle into the current repository. This writes a top-level `AGENTS.md` plus the repo-local `.agents/skills/context-engine-*` files used by Codex-style agent workflows.
 
+The bundle includes a dedicated `context-engine-agent-context` skill for MCP workflows. That skill keeps the public agent surface to `context_resolve`, `context_search`, `context_record`, and `context_status`, and encodes feature, debugging, review, operations, docs, and onboarding workflows as `context_resolve` parameter recipes.
+
 | Command | Description |
 |---------|-------------|
 | `context-engine init-agent` | Install into the current repo root (auto-detected from the current directory). |
@@ -63,7 +65,7 @@ Persist a **Potpie API key** and optional base URL — **required** for **`searc
 
 ### `doctor`
 
-Shows Potpie API URL/key presence, local pot maps, and (when URL+key are set) **`GET /health`** on the Potpie host. Local Neo4j/Graphiti lines are informational only for other workflows.
+Shows Potpie API URL/key presence, local pot maps, **`GET /health`** on the Potpie host, and an authenticated **`GET /api/v2/context/pots`** probe when URL+key are set. Local Neo4j/Graphiti lines are informational only for other workflows.
 
 ```bash
 uv run context-engine doctor
@@ -87,7 +89,7 @@ uv run context-engine --json pot hard-reset 00000000-0000-0000-0000-000000000000
 
 ### `search`
 
-Semantic search over **Graphiti episodic** entities for a pot via **`POST /api/v2/context/query/search`**. Same behavior as the MCP tool **`context_search`**.
+Semantic search over **Graphiti episodic** entities for a pot via **`POST /api/v2/context/query/search`**. This CLI command returns raw search rows; the MCP **`context_search`** tool wraps those rows in the common agent context envelope.
 
 **Arguments**
 
@@ -193,3 +195,34 @@ uv run context-engine ingest --file ./notes/design.md --name "Design note" --sou
 - Full service and env tables: repository root `app/src/context-engine/README.md`.
 - CLI targets **`/api/v2/context/`** with **`X-API-Key`**. **`/api/v1/context/`** remains for Firebase-authenticated clients.
 - MCP entrypoint: `context-engine-mcp` (stdio server).
+
+### MCP agent context port
+
+MCP exposes the minimal context port:
+
+| Tool | Use |
+|------|-----|
+| `context_resolve` | Primary bounded context wrap for a task. |
+| `context_status` | Cheap pot/scope readiness, freshness gaps, and recommended recipe. |
+| `context_search` | Narrow follow-up lookup after `context_resolve`. |
+| `context_record` | Durable learnings: decisions, fixes, preferences, workflows, feature notes, doc refs, and incident summaries. |
+
+Use `context_resolve` recipes instead of adding separate tools per context type:
+
+```json
+{"intent":"feature","include":["purpose","feature_map","service_map","docs","tickets","decisions","recent_changes","owners","preferences","source_status"],"mode":"fast","source_policy":"references_only"}
+```
+
+```json
+{"intent":"debugging","include":["prior_fixes","diagnostic_signals","incidents","alerts","recent_changes","config","deployments","owners","source_status"],"mode":"fast","source_policy":"references_only"}
+```
+
+```json
+{"intent":"review","include":["artifact","discussions","owners","recent_changes","decisions","preferences","source_status"],"mode":"balanced","source_policy":"summary"}
+```
+
+```json
+{"intent":"operations","include":["deployments","runbooks","alerts","incidents","scripts","config","owners","source_status"],"mode":"balanced","source_policy":"summary"}
+```
+
+Agents should inspect `coverage`, `freshness`, `quality`, `fallbacks`, `open_conflicts`, and `source_refs` before relying on graph memory. Start with `mode=fast` and `source_policy=references_only`; escalate to `summary`, `verify`, `snippets`, or `deep` only when risk, missing coverage, or degraded quality calls for it.

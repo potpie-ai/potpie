@@ -158,6 +158,19 @@ From the monorepo root:
 uv run pytest app/src/context-engine/tests/unit/
 ```
 
+## Local lab / smoke testing
+
+Use the bundled lab harness for quick mock, in-process HTTP, and live API checks:
+
+```bash
+uv run python app/src/context-engine/scripts/context_engine_lab.py mock-e2e
+uv run python app/src/context-engine/scripts/context_engine_lab.py http-e2e
+uv run python app/src/context-engine/scripts/context_engine_lab.py api-smoke
+uv run python app/src/context-engine/scripts/context_engine_lab.py api-smoke --write
+```
+
+The mock mode runs context resolution directly with deterministic data and no external services. The HTTP mode mounts the context API router in-process with in-memory adapters, so it exercises status, ingest, search, resolve, record normalization, and reset without a Potpie server or API key. The live API mode uses the same Potpie URL/key resolution as the CLI and writes a report under `app/src/context-engine/.tmp/`. Findings and open bugs are tracked in [`docs/context-graph/testing-and-bugs.md`](../../../docs/context-graph/testing-and-bugs.md).
+
 ## Packaging
 
 - PyPI name: **context-engine**

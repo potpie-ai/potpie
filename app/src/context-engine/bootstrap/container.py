@@ -11,15 +11,22 @@ from adapters.outbound.github.source_control import PyGithubSourceControl
 from adapters.outbound.graphiti.episodic import GraphitiEpisodicAdapter
 from adapters.outbound.intelligence.hybrid_graph import HybridGraphIntelligenceProvider
 from adapters.outbound.neo4j.structural import Neo4jStructuralAdapter
-from adapters.outbound.postgres.delegating_event_query_service import DelegatingEventQueryService
-from adapters.outbound.postgres.ingestion_event_store import SqlAlchemyIngestionEventStore
+from adapters.outbound.postgres.delegating_event_query_service import (
+    DelegatingEventQueryService,
+)
+from adapters.outbound.postgres.ingestion_event_store import (
+    SqlAlchemyIngestionEventStore,
+)
 from adapters.outbound.postgres.ledger import SqlAlchemyIngestionLedger
-from adapters.outbound.postgres.reconciliation_ledger import SqlAlchemyReconciliationLedger
+from adapters.outbound.postgres.reconciliation_ledger import (
+    SqlAlchemyReconciliationLedger,
+)
 from adapters.outbound.settings_env import EnvContextEngineSettings
 from application.services.context_resolution import ContextResolutionService
 from domain.ports.event_query_service import EventQueryService
 from domain.ports.episodic_graph import EpisodicGraphPort
 from domain.ports.intelligence_provider import IntelligenceProvider
+from domain.ports.ingestion_submission import IngestionSubmissionService
 from domain.ports.jobs import JobEnqueuePort, NoOpJobEnqueue
 from domain.ports.pot_resolution import PotResolutionPort
 from domain.ports.reconciliation_agent import ReconciliationAgentPort
@@ -55,8 +62,10 @@ class ContextEngineContainer:
     def event_query_service(self, session: Session) -> EventQueryService:
         return DelegatingEventQueryService(self.ingestion_event_store(session))
 
-    def ingestion_submission(self, session: Session) -> "DefaultIngestionSubmissionService":
-        from application.services.ingestion_submission_service import DefaultIngestionSubmissionService
+    def ingestion_submission(self, session: Session) -> IngestionSubmissionService:
+        from application.services.ingestion_submission_service import (
+            DefaultIngestionSubmissionService,
+        )
 
         return DefaultIngestionSubmissionService(self, session)
 

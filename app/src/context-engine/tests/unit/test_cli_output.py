@@ -38,6 +38,7 @@ def test_print_doctor_json_mode(capsys) -> None:
     out = capsys.readouterr().out
     assert '"context_graph_enabled": true' in out
     assert '"neo4j_source": "legacy"' in out
+    assert '"potpie_auth_ok": null' in out
 
 
 def test_print_search_results_with_temporal(capsys) -> None:

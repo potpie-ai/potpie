@@ -107,11 +107,15 @@ def get_project_graph(
     *,
     pr_number: Optional[int] = None,
     limit: int = 12,
+    scope: Optional[dict[str, Any]] = None,
+    include: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     return structural.get_project_graph(
         pot_id,
         pr_number,
         max(1, min(limit, 50)),
+        scope=scope,
+        include=include,
     )
 
 

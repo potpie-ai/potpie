@@ -60,6 +60,8 @@ packages = ["domain", "application", "adapters", "bootstrap"]
 include = [
     "adapters/inbound/cli/templates/**/*.md",
     "adapters/inbound/cli/templates/**/*.yaml",
+    "scripts/**/*.py",
+    "scripts/**/*.json",
 ]
 
 [tool.hatch.build.targets.sdist]
@@ -70,6 +72,8 @@ include = [
     "bootstrap",
     "adapters/inbound/cli/templates/**/*.md",
     "adapters/inbound/cli/templates/**/*.yaml",
+    "scripts/**/*.py",
+    "scripts/**/*.json",
 ]
 
 [tool.ruff]
@@ -81,3 +85,6 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
 asyncio_mode = "auto"
+markers = [
+    "unit: unit tests",
+]

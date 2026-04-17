@@ -10,9 +10,11 @@ from domain.intelligence_models import (
     CapabilitySet,
     ChangeRecord,
     ContextScope,
+    DebuggingMemoryRecord,
     DecisionRecord,
     DiscussionRecord,
     OwnershipRecord,
+    ProjectContextRecord,
 )
 
 
@@ -71,6 +73,27 @@ class IntelligenceProvider(Protocol):
         limit: int = 5,
     ) -> list[OwnershipRecord]:
         """Likely owners for a file path."""
+
+    async def get_project_map(
+        self,
+        pot_id: str,
+        scope: ContextScope,
+        *,
+        include: list[str],
+        limit: int = 12,
+    ) -> list[ProjectContextRecord]:
+        """Canonical project-map records for features, services, docs, operations, and instructions."""
+
+    async def get_debugging_memory(
+        self,
+        pot_id: str,
+        scope: ContextScope,
+        *,
+        include: list[str],
+        query: str,
+        limit: int = 12,
+    ) -> list[DebuggingMemoryRecord]:
+        """Reusable prior fixes, incidents, alerts, investigations, and diagnostic signals."""
 
     def get_capabilities(self) -> CapabilitySet:
         """Static capability flags for this provider."""

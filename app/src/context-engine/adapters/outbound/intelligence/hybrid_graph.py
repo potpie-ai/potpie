@@ -12,9 +12,11 @@ from domain.intelligence_models import (
     CapabilitySet,
     ChangeRecord,
     ContextScope,
+    DebuggingMemoryRecord,
     DecisionRecord,
     DiscussionRecord,
     OwnershipRecord,
+    ProjectContextRecord,
 )
 from domain.ports.episodic_graph import EpisodicGraphPort
 from domain.ports.intelligence_provider import IntelligenceProvider
@@ -23,6 +25,53 @@ from domain.ports.structural_graph import StructuralGraphPort
 logger = logging.getLogger(__name__)
 
 _DEFAULT_NODE_LABELS = ["PullRequest", "Decision", "Issue", "Feature"]
+
+_PROJECT_MAP_FAMILIES_BY_LABEL = {
+    "Pot": "purpose",
+    "Repository": "repo_map",
+    "System": "purpose",
+    "Service": "service_map",
+    "Component": "service_map",
+    "Capability": "feature_map",
+    "Feature": "feature_map",
+    "Functionality": "feature_map",
+    "Requirement": "feature_map",
+    "RoadmapItem": "feature_map",
+    "Interface": "service_map",
+    "DataStore": "service_map",
+    "Integration": "service_map",
+    "Dependency": "service_map",
+    "Document": "docs",
+    "Deployment": "deployments",
+    "DeploymentTarget": "deployments",
+    "DeploymentStrategy": "deployments",
+    "Environment": "deployments",
+    "Runbook": "runbooks",
+    "Script": "scripts",
+    "ConfigVariable": "config",
+    "Preference": "preferences",
+    "AgentInstruction": "agent_instructions",
+    "LocalWorkflow": "local_workflows",
+    "Person": "owners",
+    "Team": "owners",
+}
+
+_OPERATIONS_FAMILIES = {
+    "deployments",
+    "runbooks",
+    "scripts",
+    "config",
+    "local_workflows",
+}
+
+_DEBUGGING_MEMORY_FAMILIES_BY_LABEL = {
+    "Fix": "prior_fixes",
+    "BugPattern": "prior_fixes",
+    "Investigation": "prior_fixes",
+    "DiagnosticSignal": "diagnostic_signals",
+    "Incident": "incidents",
+    "Alert": "alerts",
+}
 
 
 def _semantic_hits_to_dicts(items: list[Any]) -> list[dict[str, Any]]:
@@ -116,6 +165,139 @@ def _threads_to_discussions(
     return out
 
 
+def _row_to_project_context_record(row: dict[str, Any]) -> ProjectContextRecord | None:
+    labels = row.get("labels") or []
+    if not isinstance(labels, list):
+        labels = []
+    canonical = [label for label in labels if label in _PROJECT_MAP_FAMILIES_BY_LABEL]
+    if not canonical:
+        return None
+    kind = canonical[0]
+    props = row.get("properties") or {}
+    if not isinstance(props, dict):
+        props = {}
+    family = _PROJECT_MAP_FAMILIES_BY_LABEL[kind]
+    relationships = row.get("relationships") or []
+    if not isinstance(relationships, list):
+        relationships = []
+    source_uri = (
+        props.get("source_uri")
+        or props.get("url")
+        or props.get("uri")
+        or props.get("retrieval_uri")
+    )
+    return ProjectContextRecord(
+        family=family,
+        kind=kind,
+        entity_key=row.get("entity_key") or props.get("entity_key"),
+        name=props.get("name") or props.get("title") or props.get("statement"),
+        summary=(
+            props.get("summary")
+            or props.get("description")
+            or props.get("statement")
+            or props.get("command")
+        ),
+        status=props.get("status") or props.get("lifecycle_state"),
+        source_ref=props.get("source_ref"),
+        source_uri=str(source_uri) if source_uri else None,
+        relationships=relationships,
+        properties={
+            key: value
+            for key, value in props.items()
+            if key
+            in {
+                "criticality",
+                "environment_type",
+                "component_type",
+                "integration_type",
+                "dependency_type",
+                "workflow_type",
+                "preference_type",
+                "instruction_type",
+                "scope_kind",
+                "command",
+                "path_hint",
+            }
+        },
+    )
+
+
+def _row_to_debugging_memory_record(
+    row: dict[str, Any],
+) -> DebuggingMemoryRecord | None:
+    labels = row.get("labels") or []
+    if not isinstance(labels, list):
+        labels = []
+    canonical = [
+        label for label in labels if label in _DEBUGGING_MEMORY_FAMILIES_BY_LABEL
+    ]
+    if not canonical:
+        return None
+    kind = canonical[0]
+    props = row.get("properties") or {}
+    if not isinstance(props, dict):
+        props = {}
+    relationships = row.get("relationships") or []
+    if not isinstance(relationships, list):
+        relationships = []
+    source_uri = (
+        props.get("source_uri")
+        or props.get("url")
+        or props.get("uri")
+        or props.get("retrieval_uri")
+    )
+    return DebuggingMemoryRecord(
+        family=_DEBUGGING_MEMORY_FAMILIES_BY_LABEL[kind],
+        kind=kind,
+        entity_key=row.get("entity_key") or props.get("entity_key"),
+        title=props.get("title") or props.get("name"),
+        summary=(
+            props.get("summary")
+            or props.get("description")
+            or props.get("root_cause")
+            or props.get("message")
+        ),
+        status=props.get("status") or props.get("lifecycle_state"),
+        severity=props.get("severity"),
+        root_cause=props.get("root_cause"),
+        fix_type=props.get("fix_type"),
+        source_ref=props.get("source_ref"),
+        source_uri=str(source_uri) if source_uri else None,
+        affected_scope=_filter_relationships(
+            relationships,
+            {"IMPACTS", "SEEN_IN", "INVOLVES_CODE", "FIRED_IN"},
+        ),
+        diagnostic_signals=_filter_relationships(relationships, {"OBSERVED_IN"}),
+        related_changes=_filter_relationships(
+            relationships, {"CHANGED_BY", "RESOLVED"}
+        ),
+        relationships=relationships,
+        properties={
+            key: value
+            for key, value in props.items()
+            if key
+            in {
+                "signal_type",
+                "fingerprint",
+                "environment",
+                "service",
+                "component",
+                "confidence",
+                "last_observed_at",
+                "started_at",
+                "resolved_at",
+            }
+        },
+    )
+
+
+def _filter_relationships(
+    relationships: list[dict[str, Any]],
+    edge_types: set[str],
+) -> list[dict[str, Any]]:
+    return [rel for rel in relationships if rel.get("type") in edge_types]
+
+
 class HybridGraphIntelligenceProvider(IntelligenceProvider):
     """Maps episodic + structural ports into normalized intelligence records."""
 
@@ -187,7 +369,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
                 scope.function_name,
                 scope.file_path,
                 max(1, min(limit, 100)),
-                repo_name=None,
+                repo_name=scope.repo_name,
                 pr_number=scope.pr_number,
             )
 
@@ -211,7 +393,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
                 scope.file_path,
                 scope.function_name,
                 max(1, min(limit, 100)),
-                repo_name=None,
+                repo_name=scope.repo_name,
                 pr_number=scope.pr_number,
             )
 
@@ -237,7 +419,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
 
         def _load() -> dict[str, Any]:
             return self._structural.get_pr_review_context(
-                pot_id, pr_num, repo_name=None
+                pot_id, pr_num, repo_name=scope.repo_name
             )
 
         try:
@@ -265,7 +447,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
                 pot_id,
                 scope.file_path,
                 max(1, min(limit, 50)),
-                repo_name=None,
+                repo_name=scope.repo_name,
             )
 
         try:
@@ -286,6 +468,101 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
             )
         return out
 
+    async def get_project_map(
+        self,
+        pot_id: str,
+        scope: ContextScope,
+        *,
+        include: list[str],
+        limit: int = 12,
+    ) -> list[ProjectContextRecord]:
+        query_include = set(include)
+        if "operations" in query_include:
+            query_include.update(_OPERATIONS_FAMILIES)
+        structural_scope = {
+            "repo_name": scope.repo_name,
+            "services": list(scope.services),
+            "features": list(scope.features),
+            "environment": scope.environment,
+            "ticket_ids": list(scope.ticket_ids),
+            "user": scope.user,
+            "file_path": scope.file_path,
+        }
+
+        def _load() -> dict[str, Any]:
+            return self._structural.get_project_graph(
+                pot_id,
+                pr_number=scope.pr_number,
+                limit=max(1, min(limit, 100)),
+                scope=structural_scope,
+                include=sorted(query_include),
+            )
+
+        try:
+            payload = await asyncio.to_thread(_load)
+        except Exception as exc:
+            logger.exception("get_project_graph failed: %s", exc)
+            return []
+        rows = payload.get("nodes") or []
+        out: list[ProjectContextRecord] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            item = _row_to_project_context_record(row)
+            if item is None:
+                continue
+            if query_include and item.family not in query_include:
+                continue
+            out.append(item)
+        return out[:limit]
+
+    async def get_debugging_memory(
+        self,
+        pot_id: str,
+        scope: ContextScope,
+        *,
+        include: list[str],
+        query: str,
+        limit: int = 12,
+    ) -> list[DebuggingMemoryRecord]:
+        structural_scope = {
+            "repo_name": scope.repo_name,
+            "services": list(scope.services),
+            "features": list(scope.features),
+            "environment": scope.environment,
+            "ticket_ids": list(scope.ticket_ids),
+            "user": scope.user,
+            "file_path": scope.file_path,
+        }
+
+        def _load() -> dict[str, Any]:
+            return self._structural.get_debugging_memory(
+                pot_id,
+                limit=max(1, min(limit, 100)),
+                scope=structural_scope,
+                include=include,
+                query=query,
+            )
+
+        try:
+            payload = await asyncio.to_thread(_load)
+        except Exception as exc:
+            logger.exception("get_debugging_memory failed: %s", exc)
+            return []
+        rows = payload.get("nodes") or []
+        requested = set(include)
+        out: list[DebuggingMemoryRecord] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            item = _row_to_debugging_memory_record(row)
+            if item is None:
+                continue
+            if requested and item.family not in requested:
+                continue
+            out.append(item)
+        return out[:limit]
+
     def get_capabilities(self) -> CapabilitySet:
         return CapabilitySet(
             semantic_search=self._episodic.enabled,
@@ -294,5 +571,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
             decision_context=True,
             discussion_context=True,
             ownership_context=True,
+            project_map_context=True,
+            debugging_memory_context=True,
             workflow_context=False,
         )

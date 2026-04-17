@@ -18,7 +18,9 @@ from adapters.inbound.http.deps import (
     require_api_key,
 )
 from adapters.outbound.postgres.ledger import SqlAlchemyIngestionLedger
-from adapters.outbound.postgres.reconciliation_ledger import SqlAlchemyReconciliationLedger
+from adapters.outbound.postgres.reconciliation_ledger import (
+    SqlAlchemyReconciliationLedger,
+)
 from application.use_cases.backfill_pot import backfill_pot_context
 from application.use_cases.event_reconciliation import ingestion_event_to_payload
 from application.use_cases.hard_reset_pot import hard_reset_pot
@@ -35,17 +37,31 @@ from application.use_cases.query_context import (
 from application.use_cases.replay_context_event import replay_context_event
 from application.use_cases.resolve_context import resolve_context
 from bootstrap.container import ContextEngineContainer
+from domain.agent_context_port import (
+    build_context_record_source_id,
+    bundle_to_agent_envelope,
+    context_port_manifest,
+    context_recipe_for_intent,
+    normalize_record_type,
+)
+from domain.graph_quality import assess_graph_quality
 from domain.ingestion_event_models import (
     EventListFilters,
     IngestionEventStatus,
     IngestionSubmissionRequest,
 )
-from domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION, INGESTION_KIND_GITHUB_MERGED_PR
+from domain.ingestion_kinds import (
+    INGESTION_KIND_AGENT_RECONCILIATION,
+    INGESTION_KIND_GITHUB_MERGED_PR,
+)
 from domain.intelligence_models import (
     ArtifactRef,
+    ContextBudget,
     ContextResolutionRequest,
     ContextScope,
+    CoverageReport,
 )
+from domain.source_references import SourceReferenceRecord
 from domain.reconciliation_flags import agent_planner_enabled, reconciliation_enabled
 
 UNKNOWN_POT_DETAIL = (
@@ -68,10 +84,6 @@ class IngestPrRequest(BaseModel):
 
     pot_id: str
     pr_number: int
-    repo_name: Optional[str] = Field(
-        default=None,
-        description="owner/repo when the pot has more than one attached repository.",
-    )
     is_live_bridge: bool = True
     repo_name: Optional[str] = Field(
         default=None,
@@ -84,7 +96,9 @@ class HardResetRequest(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    pot_id: str = Field(description="Pot scope id (Graphiti group_id / Neo4j partition).")
+    pot_id: str = Field(
+        description="Pot scope id (Graphiti group_id / Neo4j partition)."
+    )
     skip_ledger: bool = Field(
         default=False,
         description="If true, only clear Graphiti + structural Neo4j; do not delete Postgres ledger rows.",
@@ -180,6 +194,12 @@ class ProjectGraphQuery(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     pot_id: str
+    repo_name: Optional[str] = None
+    services: list[str] = Field(default_factory=list)
+    features: list[str] = Field(default_factory=list)
+    environment: Optional[str] = None
+    user: Optional[str] = None
+    include: list[str] = Field(default_factory=list)
     pr_number: Optional[int] = Field(
         default=None,
         ge=1,
@@ -194,10 +214,25 @@ class ResolveArtifactBody(BaseModel):
 
 
 class ResolveScopeBody(BaseModel):
+    repo_name: Optional[str] = None
+    branch: Optional[str] = None
     file_path: Optional[str] = None
     function_name: Optional[str] = None
     symbol: Optional[str] = None
     pr_number: Optional[int] = Field(default=None, ge=1)
+    services: list[str] = Field(default_factory=list)
+    features: list[str] = Field(default_factory=list)
+    environment: Optional[str] = None
+    ticket_ids: list[str] = Field(default_factory=list)
+    user: Optional[str] = None
+    source_refs: list[str] = Field(default_factory=list)
+
+
+class ResolveBudgetBody(BaseModel):
+    max_items: int = Field(default=12, ge=1, le=50)
+    max_tokens: Optional[int] = Field(default=None, ge=256, le=200000)
+    timeout_ms: int = Field(default=4000, ge=500, le=30000)
+    freshness: str = Field(default="prefer_fresh")
 
 
 class ResolveContextRequest(BaseModel):
@@ -208,7 +243,44 @@ class ResolveContextRequest(BaseModel):
     consumer_hint: Optional[str] = None
     artifact: Optional[ResolveArtifactBody] = None
     scope: Optional[ResolveScopeBody] = None
+    intent: Optional[str] = None
+    include: list[str] = Field(default_factory=list)
+    exclude: list[str] = Field(default_factory=list)
+    mode: str = Field(default="fast")
+    source_policy: str = Field(default="references_only")
+    budget: ResolveBudgetBody = Field(default_factory=ResolveBudgetBody)
+    as_of: Optional[datetime] = None
     timeout_ms: int = Field(default=4000, ge=500, le=30000)
+
+
+class ContextRecordPayload(BaseModel):
+    type: str
+    summary: str = Field(min_length=1)
+    details: dict[str, Any] = Field(default_factory=dict)
+    source_refs: list[str] = Field(default_factory=list)
+    confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+    visibility: str = Field(default="project")
+
+
+class ContextRecordRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    pot_id: str
+    record: ContextRecordPayload
+    scope: ResolveScopeBody = Field(default_factory=ResolveScopeBody)
+    idempotency_key: Optional[str] = None
+    occurred_at: Optional[datetime] = None
+
+
+class ContextStatusRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    pot_id: str
+    scope: ResolveScopeBody = Field(default_factory=ResolveScopeBody)
+    intent: Optional[str] = Field(
+        default=None,
+        description="Optional task intent used to return the recommended context_resolve recipe.",
+    )
 
 
 class ContextEventHttpBody(BaseModel):
@@ -263,8 +335,7 @@ class ContextMutationHandlers(Protocol):
         db: Session,
         *,
         auth_user: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        ...
+    ) -> dict[str, Any]: ...
 
     def handle_ingest_pr(
         self,
@@ -273,13 +344,10 @@ class ContextMutationHandlers(Protocol):
         db: Session,
         *,
         auth_user: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        ...
+    ) -> dict[str, Any]: ...
 
 
-def _require_pot_access(
-    container: ContextEngineContainer, pot_id: str
-) -> None:
+def _require_pot_access(container: ContextEngineContainer, pot_id: str) -> None:
     if container.pots.resolve_pot(pot_id) is None:
         raise HTTPException(
             status_code=404,
@@ -351,9 +419,7 @@ def _inline_ingest_pr(
     db: Session,
 ) -> dict[str, Any]:
     if not container.settings.is_enabled():
-        raise HTTPException(
-            status_code=503, detail="Context graph is not enabled."
-        )
+        raise HTTPException(status_code=503, detail="Context graph is not enabled.")
     resolved = container.pots.resolve_pot(body.pot_id)
     if not resolved or not resolved.repos:
         raise HTTPException(
@@ -562,7 +628,9 @@ def create_context_router(
             )
         use_ledger = db is not None and not body.skip_ledger
         ledger = SqlAlchemyIngestionLedger(db) if use_ledger else None
-        reconciliation_ledger = SqlAlchemyReconciliationLedger(db) if use_ledger else None
+        reconciliation_ledger = (
+            SqlAlchemyReconciliationLedger(db) if use_ledger else None
+        )
         out = hard_reset_pot(
             container.episodic,
             container.structural,
@@ -595,7 +663,9 @@ def create_context_router(
         _: Any = Depends(require_auth),
         container: ContextEngineContainer = Depends(get_container),
         db: Session = Depends(get_db),
-        sync: bool = Query(False, description="Inline reconcile (200) instead of enqueue (202)."),
+        sync: bool = Query(
+            False, description="Inline reconcile (200) instead of enqueue (202)."
+        ),
         x_context_ingest_sync: str | None = Header(
             None,
             alias="X-Context-Ingest-Sync",
@@ -825,6 +895,235 @@ def create_context_router(
             "next_cursor": page.next_cursor,
         }
 
+    @router.post(
+        "/record",
+        summary="Record durable context through the minimal agent context port",
+    )
+    def post_context_record(
+        body: ContextRecordRequest,
+        _: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+        db: Session = Depends(get_db),
+        sync: bool = Query(
+            False, description="Inline reconcile (200) instead of enqueue (202)."
+        ),
+        x_context_ingest_sync: str | None = Header(
+            None,
+            alias="X-Context-Ingest-Sync",
+        ),
+    ):
+        if not reconciliation_enabled():
+            raise HTTPException(
+                status_code=503,
+                detail="Reconciliation is disabled (CONTEXT_ENGINE_RECONCILIATION_ENABLED).",
+            )
+        if not agent_planner_enabled():
+            raise HTTPException(
+                status_code=503,
+                detail="Agent planner is disabled (CONTEXT_ENGINE_AGENT_PLANNER_ENABLED).",
+            )
+        if container.reconciliation_agent is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No reconciliation agent on the container.",
+            )
+        if not container.settings.is_enabled():
+            raise HTTPException(status_code=503, detail="Context graph is disabled.")
+        if enforce_pot_access:
+            _require_pot_access(container, body.pot_id)
+        elif container.pots.resolve_pot(body.pot_id) is None:
+            raise HTTPException(status_code=404, detail=UNKNOWN_POT_DETAIL)
+
+        try:
+            record_type = normalize_record_type(body.record.type)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        scope_payload = body.scope.model_dump(exclude_none=True)
+        source_refs = list(
+            dict.fromkeys(body.record.source_refs + body.scope.source_refs)
+        )
+        source_id = build_context_record_source_id(
+            record_type=record_type,
+            summary=body.record.summary,
+            scope=scope_payload,
+            source_refs=source_refs,
+            idempotency_key=body.idempotency_key,
+        )
+        req = IngestionSubmissionRequest(
+            pot_id=body.pot_id,
+            ingestion_kind=INGESTION_KIND_AGENT_RECONCILIATION,
+            source_channel="http",
+            source_system="agent",
+            event_type="context_record",
+            action=record_type,
+            source_id=source_id,
+            repo_name=body.scope.repo_name,
+            artifact_refs=tuple(source_refs),
+            occurred_at=body.occurred_at,
+            idempotency_key=body.idempotency_key,
+            payload={
+                "record": {
+                    "type": record_type,
+                    "summary": body.record.summary,
+                    "details": dict(body.record.details),
+                    "source_refs": source_refs,
+                    "confidence": body.record.confidence,
+                    "visibility": body.record.visibility,
+                },
+                "scope": scope_payload,
+            },
+        )
+        try:
+            receipt = container.ingestion_submission(db).submit(
+                req,
+                sync=_wants_sync(sync, x_context_ingest_sync),
+            )
+            db.commit()
+        except ValueError as exc:
+            db.rollback()
+            err = str(exc)
+            if err == "unknown_pot_id":
+                raise HTTPException(status_code=404, detail=UNKNOWN_POT_DETAIL) from exc
+            if err in {"context_graph_disabled", "async_requires_database"}:
+                raise HTTPException(status_code=503, detail=err) from exc
+            raise HTTPException(status_code=400, detail=err) from exc
+        except Exception:
+            db.rollback()
+            raise
+
+        return {
+            "ok": receipt.error is None,
+            "status": "duplicate" if receipt.duplicate else receipt.status,
+            "event_id": receipt.event_id,
+            "job_id": receipt.job_id,
+            "record_type": record_type,
+            "source_id": source_id,
+            "fallbacks": [
+                {
+                    "code": "record_queued",
+                    "message": "The context record was accepted and queued for reconciliation.",
+                    "impact": "It may not appear in graph reads until the worker applies it.",
+                }
+            ]
+            if receipt.status == "queued" and not receipt.duplicate
+            else [],
+            "error": receipt.error,
+        }
+
+    @router.post(
+        "/status",
+        summary="Lightweight context readiness and freshness status",
+    )
+    def post_context_status(
+        body: ContextStatusRequest,
+        _: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+    ) -> dict[str, Any]:
+        resolved = container.pots.resolve_pot(body.pot_id)
+        if resolved is None:
+            raise HTTPException(status_code=404, detail=UNKNOWN_POT_DETAIL)
+        if enforce_pot_access:
+            _require_pot_access(container, body.pot_id)
+
+        gaps: list[dict[str, str]] = []
+        if not container.settings.is_enabled():
+            gaps.append(
+                {
+                    "code": "context_graph_disabled",
+                    "message": "Context graph is disabled for this server.",
+                }
+            )
+        if container.resolution_service is None:
+            gaps.append(
+                {
+                    "code": "resolver_unavailable",
+                    "message": "Context resolution service is not configured.",
+                }
+            )
+        if not resolved.repos:
+            gaps.append(
+                {
+                    "code": "no_repositories",
+                    "message": "This pot has no attached repositories.",
+                }
+            )
+        if not container.episodic.enabled:
+            gaps.append(
+                {
+                    "code": "episodic_graph_unavailable",
+                    "message": "Graphiti episodic search is not enabled.",
+                }
+            )
+
+        recommended_recipe = context_recipe_for_intent(body.intent)
+        coverage = CoverageReport(
+            status="partial" if gaps else "complete",
+            available=["pot", "repositories"],
+            missing=[gap["code"] for gap in gaps],
+            missing_reasons={gap["code"]: gap["message"] for gap in gaps},
+        )
+        source_ref_records = [
+            SourceReferenceRecord(
+                ref=ref,
+                source_type=ref.split(":", 1)[0] if ":" in ref else "unknown",
+                external_id=ref.split(":", 1)[1] if ":" in ref else ref,
+                freshness="needs_verification",
+                sync_status="needs_resync",
+                verification_state="unverified",
+            )
+            for ref in body.scope.source_refs
+        ]
+        quality = assess_graph_quality(
+            refs=source_ref_records,
+            coverage=coverage,
+            fallbacks=[],
+        )
+        return {
+            "ok": not gaps,
+            "pot": {
+                "id": resolved.pot_id,
+                "name": resolved.name,
+                "ready": resolved.ready,
+                "repos": [
+                    {
+                        "repo_name": repo.repo_name,
+                        "provider": repo.provider,
+                        "provider_host": repo.provider_host,
+                        "default_branch": repo.default_branch,
+                        "ready": repo.ready,
+                    }
+                    for repo in resolved.repos
+                ],
+            },
+            "scope": body.scope.model_dump(exclude_none=True),
+            "coverage": asdict(coverage),
+            "freshness": {
+                "status": "unknown",
+                "last_graph_update": None,
+                "last_source_verification": None,
+                "stale_refs": [],
+                "needs_verification_refs": body.scope.source_refs,
+            },
+            "source_refs": body.scope.source_refs,
+            "quality": asdict(quality),
+            "agent_port": context_port_manifest(),
+            "recommended_recipe": recommended_recipe,
+            "fallbacks": gaps,
+            "recommended_next_actions": [
+                {
+                    "action": "resolve",
+                    "intent": recommended_recipe["intent"],
+                    "include": recommended_recipe["include"],
+                    "mode": recommended_recipe["mode"],
+                    "source_policy": recommended_recipe["source_policy"],
+                    "reason": "Gather a bounded context wrap for the task scope.",
+                }
+            ]
+            if not gaps
+            else [],
+        }
+
     @router.post("/query/change-history")
     def post_change_history(
         body: ChangeHistoryQuery,
@@ -851,7 +1150,11 @@ def create_context_router(
         if enforce_pot_access:
             _require_pot_access(container, body.pot_id)
         return get_file_owners(
-            container.structural, body.pot_id, body.file_path, body.limit, repo_name=body.repo_name
+            container.structural,
+            body.pot_id,
+            body.file_path,
+            body.limit,
+            repo_name=body.repo_name,
         )
 
     @router.post("/query/decisions")
@@ -936,6 +1239,14 @@ def create_context_router(
             body.pot_id,
             pr_number=body.pr_number,
             limit=body.limit,
+            scope={
+                "repo_name": body.repo_name,
+                "services": body.services,
+                "features": body.features,
+                "environment": body.environment,
+                "user": body.user,
+            },
+            include=body.include,
         )
 
     @router.post("/query/resolve-context")
@@ -964,10 +1275,18 @@ def create_context_router(
         scope = None
         if body.scope:
             scope = ContextScope(
+                repo_name=body.scope.repo_name,
+                branch=body.scope.branch,
                 file_path=body.scope.file_path,
                 function_name=body.scope.function_name,
                 symbol=body.scope.symbol,
                 pr_number=body.scope.pr_number,
+                services=body.scope.services,
+                features=body.scope.features,
+                environment=body.scope.environment,
+                ticket_ids=body.scope.ticket_ids,
+                user=body.scope.user,
+                source_refs=body.scope.source_refs,
             )
         req = ContextResolutionRequest(
             pot_id=body.pot_id,
@@ -975,16 +1294,22 @@ def create_context_router(
             consumer_hint=body.consumer_hint,
             artifact_ref=art,
             scope=scope,
+            intent=body.intent,
+            include=body.include,
+            exclude=body.exclude,
+            mode=body.mode,
+            source_policy=body.source_policy,
+            budget=ContextBudget(
+                max_items=body.budget.max_items,
+                max_tokens=body.budget.max_tokens,
+                timeout_ms=body.budget.timeout_ms,
+                freshness=body.budget.freshness,
+            ),
+            as_of=body.as_of,
             timeout_ms=body.timeout_ms,
         )
         bundle = await resolve_context(container.resolution_service, req)
-        bundle_dict = asdict(bundle)
-        return {
-            "bundle": bundle_dict,
-            "coverage": bundle_dict.get("coverage"),
-            "errors": bundle_dict.get("errors"),
-            "meta": bundle_dict.get("meta"),
-        }
+        return bundle_to_agent_envelope(bundle)
 
     return router
 

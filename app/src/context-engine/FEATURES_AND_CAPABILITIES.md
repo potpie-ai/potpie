@@ -76,7 +76,7 @@ Entry: `adapters/inbound/cli/main.py` (Typer).
 |---------|---------|
 | `login` / `logout` | Store or clear Potpie base URL + API key for v2 calls. |
 | `doctor` | Credentials, config snapshot, `GET /health` probe. |
-| `init-agent` | Install agent bundle templates (`agent_installer.py`). |
+| `init-agent` | Install `AGENTS.md` plus context-engine agent skills, including `context-engine-agent-context` recipes over the minimal context port. |
 | `pot use` / `unset` / `list` / `pots` / `alias` / `clear-local` | Local pot scope and Potpie-backed pot listing/creation helpers. |
 | `pot repo list` / `pot repo add` | Repositories attached to a pot (Potpie API). |
 | `pot hard-reset` | Calls reset API for the active/scoped pot. |
@@ -90,7 +90,9 @@ Global flags: `--json`, `--verbose`, `--source` (default source label for ingest
 
 Stdio MCP server (`adapters/inbound/mcp/server.py`): tools call **Potpie `POST /api/v2/context`** with the stored API key. **Pot allowlisting** via `CONTEXT_ENGINE_MCP_ALLOWED_POTS` or dev-only `CONTEXT_ENGINE_MCP_TRUST_ALL_POTS`.
 
-Tools: change history, file owners, decisions, PR review context, PR diff, semantic search, raw episode ingest, `context_resolve` (resolve-context).
+Public tools: `context_resolve`, `context_search`, `context_record`, and `context_status`.
+
+`context_resolve` is the primary task context wrap. Feature, debugging, review, operations, docs, and onboarding workflows are expressed through `intent`, `scope`, `include`, `exclude`, `mode`, `source_policy`, `budget`, and `as_of`, not through separate MCP tools per context type. `context_status` returns readiness plus the recommended recipe, `context_search` is for narrow follow-up lookup, and `context_record` captures durable project learnings.
 
 ---
 

@@ -8,12 +8,69 @@ from typing import Any, Optional
 from neo4j import Driver, GraphDatabase
 
 from domain.deterministic_extractors import parse_diff_hunks
-from domain.graph_mutations import EdgeDelete, EdgeUpsert, EntityUpsert, InvalidationOp, ProvenanceRef
+from domain.graph_mutations import (
+    EdgeDelete,
+    EdgeUpsert,
+    EntityUpsert,
+    InvalidationOp,
+    ProvenanceRef,
+)
 from domain.ingestion import BridgeResult
 from domain.ports.settings import ContextEngineSettingsPort
 from domain.ports.structural_graph import StructuralGraphPort
 
 logger = logging.getLogger(__name__)
+
+_PROJECT_MAP_LABELS_BY_INCLUDE: dict[str, tuple[str, ...]] = {
+    "purpose": ("Pot", "System"),
+    "repo_map": ("Repository",),
+    "service_map": (
+        "Service",
+        "Component",
+        "Interface",
+        "DataStore",
+        "Integration",
+        "Dependency",
+    ),
+    "feature_map": (
+        "Capability",
+        "Feature",
+        "Functionality",
+        "Requirement",
+        "RoadmapItem",
+    ),
+    "docs": ("Document",),
+    "deployments": (
+        "Deployment",
+        "DeploymentTarget",
+        "DeploymentStrategy",
+        "Environment",
+    ),
+    "runbooks": ("Runbook",),
+    "local_workflows": ("LocalWorkflow",),
+    "scripts": ("Script",),
+    "config": ("ConfigVariable",),
+    "preferences": ("Preference",),
+    "agent_instructions": ("AgentInstruction",),
+    "operations": (
+        "Deployment",
+        "DeploymentTarget",
+        "DeploymentStrategy",
+        "Environment",
+        "Runbook",
+        "Script",
+        "ConfigVariable",
+        "LocalWorkflow",
+    ),
+    "owners": ("Person", "Team", "Role"),
+}
+
+_DEBUGGING_MEMORY_LABELS_BY_INCLUDE: dict[str, tuple[str, ...]] = {
+    "prior_fixes": ("Fix", "BugPattern", "Investigation"),
+    "diagnostic_signals": ("DiagnosticSignal",),
+    "incidents": ("Incident",),
+    "alerts": ("Alert",),
+}
 
 
 def _merge_decision_result_rows(
@@ -25,7 +82,11 @@ def _merge_decision_result_rows(
     out: list[dict[str, Any]] = []
     for row in code_rows + pr_rows:
         dedupe = row.pop("_dedupe", None)
-        key = str(dedupe) if dedupe is not None else f"{row.get('decision_made')}|{row.get('pr_number')}"
+        key = (
+            str(dedupe)
+            if dedupe is not None
+            else f"{row.get('decision_made')}|{row.get('pr_number')}"
+        )
         if key in seen:
             continue
         seen.add(key)
@@ -152,7 +213,9 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                     if not path or line is None or thread_id is None:
                         continue
 
-                    decision_key = f"github:decision:{repo_name}:{pr_number}:{thread_id!s}"
+                    decision_key = (
+                        f"github:decision:{repo_name}:{pr_number}:{thread_id!s}"
+                    )
 
                     res = session.run(
                         """
@@ -361,7 +424,9 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                     )
                     counts["stamped_commits"] += _int(result)
                     message = (commit.get("message") or "").strip()
-                    first_line = message.splitlines()[0] if message else f"Commit {sha[:12]}"
+                    first_line = (
+                        message.splitlines()[0] if message else f"Commit {sha[:12]}"
+                    )
                     commit_author = commit.get("author") or "unknown"
                     session.run(
                         """
@@ -414,12 +479,16 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                     thread_id = thread.get("thread_id")
                     if thread_id is None:
                         continue
-                    decision_key = f"github:decision:{repo_name}:{pr_number}:{thread_id!s}"
+                    decision_key = (
+                        f"github:decision:{repo_name}:{pr_number}:{thread_id!s}"
+                    )
 
                     first_body = ""
                     comments = thread.get("comments") or []
                     if comments:
-                        first_body = (comments[0].get("body") or "").strip()[:120].lower()
+                        first_body = (
+                            (comments[0].get("body") or "").strip()[:120].lower()
+                        )
 
                     if not first_body:
                         continue
@@ -469,7 +538,9 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                         first_excerpt = first_body[:500] if first_body else ""
                     if not first_excerpt:
                         first_excerpt = (
-                            full_text[:240] if full_text != "(empty thread)" else "(no text in thread)"
+                            full_text[:240]
+                            if full_text != "(empty thread)"
+                            else "(no text in thread)"
                         )
                     path = thread.get("path")
                     line = thread.get("line")
@@ -517,7 +588,9 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                 if conv_full:
                     if len(conv_full) > 16000:
                         conv_full = conv_full[:16000] + "\n…"
-                    conv_key = f"github:decision:{repo_name}:{pr_number}:pr_conversation"
+                    conv_key = (
+                        f"github:decision:{repo_name}:{pr_number}:pr_conversation"
+                    )
                     conv_excerpt = conv_lines[0][:500] if conv_lines else ""
                     session.run(
                         """
@@ -548,7 +621,9 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                     counts["pr_conversation_linked"] = 1
 
         except Exception:
-            logger.exception("stamp_pr_entities failed project=%s episode=%s", pot_id, episode_uuid)
+            logger.exception(
+                "stamp_pr_entities failed project=%s episode=%s", pot_id, episode_uuid
+            )
             raise
         finally:
             drv.close()
@@ -782,7 +857,16 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
             return []
         try:
             with drv.session() as session:
-                code_rows = [r.data() for r in session.run(code_query, pot_id=pot_id, file_path=file_path, function_name=function_name, limit=lim)]
+                code_rows = [
+                    r.data()
+                    for r in session.run(
+                        code_query,
+                        pot_id=pot_id,
+                        file_path=file_path,
+                        function_name=function_name,
+                        limit=lim,
+                    )
+                ]
                 if function_name:
                     for r in code_rows:
                         r.pop("_dedupe", None)
@@ -912,17 +996,264 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
         pot_id: str,
         pr_number: int | None,
         limit: int,
+        scope: dict[str, Any] | None = None,
+        include: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Return a subgraph-shaped payload (stub until full Neo4j projection is wired)."""
-        _ = self._open()
-        return {
-            "pot_id": pot_id,
-            "pr_number": pr_number,
-            "limit": limit,
-            "nodes": [],
-            "edges": [],
-            "message": "project_graph_stub",
-        }
+        """Return a bounded canonical project-map projection for a pot.
+
+        This intentionally returns compact node summaries plus relationship
+        references. Full source payloads remain behind source integrations.
+        """
+        scope = scope or {}
+        labels = _project_map_labels_for_includes(include)
+        lim = max(1, min(limit, 100))
+        drv = self._open()
+        if drv is None:
+            return {
+                "pot_id": pot_id,
+                "pr_number": pr_number,
+                "limit": lim,
+                "nodes": [],
+                "edges": [],
+                "message": "neo4j_unavailable",
+            }
+
+        node_query = """
+        MATCH (n:Entity {group_id: $pot_id})
+        WHERE any(lbl IN labels(n) WHERE lbl IN $labels)
+          AND (
+            $repo_name IS NULL
+            OR coalesce(n.repo_name, '') = $repo_name
+            OR coalesce(n.repository_key, '') CONTAINS $repo_name
+            OR coalesce(n.entity_key, '') CONTAINS $repo_name
+          )
+          AND (
+            size($services) = 0
+            OR toLower(coalesce(n.name, '')) IN $services_lc
+            OR toLower(coalesce(n.entity_key, '')) IN $services_lc
+            OR any(service IN $services_lc WHERE toLower(coalesce(n.entity_key, '')) CONTAINS service)
+          )
+          AND (
+            size($features) = 0
+            OR toLower(coalesce(n.name, '')) IN $features_lc
+            OR toLower(coalesce(n.entity_key, '')) IN $features_lc
+            OR any(feature IN $features_lc WHERE toLower(coalesce(n.entity_key, '')) CONTAINS feature)
+          )
+          AND (
+            $environment IS NULL
+            OR toLower(coalesce(n.name, '')) = $environment_lc
+            OR toLower(coalesce(n.environment_type, '')) = $environment_lc
+            OR toLower(coalesce(n.entity_key, '')) CONTAINS $environment_lc
+          )
+          AND (
+            $user IS NULL
+            OR toLower(coalesce(n.name, '')) = $user_lc
+            OR toLower(coalesce(n.github_login, '')) = $user_lc
+            OR toLower(coalesce(n.email, '')) = $user_lc
+          )
+        WITH n
+        ORDER BY
+          CASE
+            WHEN 'Service' IN labels(n) THEN 0
+            WHEN 'Feature' IN labels(n) THEN 1
+            WHEN 'Component' IN labels(n) THEN 2
+            WHEN 'Document' IN labels(n) THEN 3
+            ELSE 4
+          END,
+          coalesce(n.updated_at, n.created_at, 0) DESC,
+          coalesce(n.name, n.title, n.entity_key, '') ASC
+        LIMIT $limit
+        OPTIONAL MATCH (n)-[out]->(m:Entity {group_id: $pot_id})
+        WHERE any(lbl IN labels(m) WHERE lbl IN $labels)
+        WITH n, collect(DISTINCT {
+          type: type(out),
+          direction: 'out',
+          target_key: coalesce(m.entity_key, elementId(m)),
+          target_labels: labels(m),
+          target_name: coalesce(m.name, m.title, m.statement, m.entity_key)
+        }) AS out_rels
+        OPTIONAL MATCH (src:Entity {group_id: $pot_id})-[inr]->(n)
+        WHERE any(lbl IN labels(src) WHERE lbl IN $labels)
+        WITH n, out_rels, collect(DISTINCT {
+          type: type(inr),
+          direction: 'in',
+          source_key: coalesce(src.entity_key, elementId(src)),
+          source_labels: labels(src),
+          source_name: coalesce(src.name, src.title, src.statement, src.entity_key)
+        }) AS in_rels
+        WITH n, out_rels + in_rels AS rels
+        RETURN
+          elementId(n) AS id,
+          coalesce(n.entity_key, elementId(n)) AS entity_key,
+          labels(n) AS labels,
+          properties(n) AS properties,
+          [rel IN rels WHERE rel.type IS NOT NULL][..12] AS relationships
+        """
+        edge_query = """
+        MATCH (a:Entity {group_id: $pot_id})-[r]->(b:Entity {group_id: $pot_id})
+        WHERE any(lbl IN labels(a) WHERE lbl IN $labels)
+          AND any(lbl IN labels(b) WHERE lbl IN $labels)
+        RETURN
+          coalesce(a.entity_key, elementId(a)) AS from,
+          type(r) AS type,
+          coalesce(b.entity_key, elementId(b)) AS to,
+          properties(r) AS properties
+        LIMIT $limit
+        """
+        try:
+            with drv.session() as session:
+                params = _project_graph_params(pot_id, pr_number, lim, labels, scope)
+                nodes = [record.data() for record in session.run(node_query, **params)]
+                edges = [record.data() for record in session.run(edge_query, **params)]
+                return {
+                    "pot_id": pot_id,
+                    "pr_number": pr_number,
+                    "limit": lim,
+                    "nodes": nodes,
+                    "edges": edges,
+                    "message": "ok",
+                }
+        except Exception as exc:
+            logger.exception("get_project_graph failed pot=%s", pot_id)
+            return {
+                "pot_id": pot_id,
+                "pr_number": pr_number,
+                "limit": lim,
+                "nodes": [],
+                "edges": [],
+                "message": str(exc),
+            }
+        finally:
+            drv.close()
+
+    def get_debugging_memory(
+        self,
+        pot_id: str,
+        limit: int,
+        scope: dict[str, Any] | None = None,
+        include: list[str] | None = None,
+        query: str | None = None,
+    ) -> dict[str, Any]:
+        """Return compact reusable debugging memory for a pot."""
+        scope = scope or {}
+        labels = _debugging_memory_labels_for_includes(include)
+        lim = max(1, min(limit, 100))
+        drv = self._open()
+        if drv is None:
+            return {
+                "pot_id": pot_id,
+                "limit": lim,
+                "nodes": [],
+                "edges": [],
+                "message": "neo4j_unavailable",
+            }
+
+        node_query = """
+        MATCH (n:Entity {group_id: $pot_id})
+        WHERE any(lbl IN labels(n) WHERE lbl IN $labels)
+          AND (
+            $query_text = ''
+            OR toLower(
+              coalesce(n.name, '') + ' ' +
+              coalesce(n.title, '') + ' ' +
+              coalesce(n.summary, '') + ' ' +
+              coalesce(n.description, '') + ' ' +
+              coalesce(n.root_cause, '') + ' ' +
+              coalesce(n.signal_type, '') + ' ' +
+              coalesce(n.fingerprint, '')
+            ) CONTAINS $query_text
+          )
+          AND (
+            size($services) = 0
+            OR any(service IN $services_lc WHERE toLower(coalesce(n.entity_key, '')) CONTAINS service)
+            OR any(service IN $services_lc WHERE toLower(coalesce(n.service, '')) CONTAINS service)
+          )
+          AND (
+            $environment IS NULL
+            OR toLower(coalesce(n.environment, '')) = $environment_lc
+            OR toLower(coalesce(n.entity_key, '')) CONTAINS $environment_lc
+          )
+        WITH n
+        ORDER BY
+          CASE
+            WHEN 'Fix' IN labels(n) THEN 0
+            WHEN 'BugPattern' IN labels(n) THEN 1
+            WHEN 'Investigation' IN labels(n) THEN 2
+            WHEN 'Incident' IN labels(n) THEN 3
+            WHEN 'Alert' IN labels(n) THEN 4
+            ELSE 5
+          END,
+          coalesce(n.resolved_at, n.last_observed_at, n.updated_at, n.created_at, 0) DESC,
+          coalesce(n.name, n.title, n.entity_key, '') ASC
+        LIMIT $limit
+        OPTIONAL MATCH (n)-[out]->(m:Entity {group_id: $pot_id})
+        WHERE any(lbl IN labels(m) WHERE lbl IN $related_labels)
+        WITH n, collect(DISTINCT {
+          type: type(out),
+          direction: 'out',
+          target_key: coalesce(m.entity_key, elementId(m)),
+          target_labels: labels(m),
+          target_name: coalesce(m.name, m.title, m.summary, m.entity_key),
+          properties: properties(out)
+        }) AS out_rels
+        OPTIONAL MATCH (src:Entity {group_id: $pot_id})-[inr]->(n)
+        WHERE any(lbl IN labels(src) WHERE lbl IN $related_labels)
+        WITH n, out_rels, collect(DISTINCT {
+          type: type(inr),
+          direction: 'in',
+          source_key: coalesce(src.entity_key, elementId(src)),
+          source_labels: labels(src),
+          source_name: coalesce(src.name, src.title, src.summary, src.entity_key),
+          properties: properties(inr)
+        }) AS in_rels
+        WITH n, out_rels + in_rels AS rels
+        RETURN
+          elementId(n) AS id,
+          coalesce(n.entity_key, elementId(n)) AS entity_key,
+          labels(n) AS labels,
+          properties(n) AS properties,
+          [rel IN rels WHERE rel.type IS NOT NULL][..16] AS relationships
+        """
+        edge_query = """
+        MATCH (a:Entity {group_id: $pot_id})-[r]->(b:Entity {group_id: $pot_id})
+        WHERE any(lbl IN labels(a) WHERE lbl IN $labels)
+          AND any(lbl IN labels(b) WHERE lbl IN $related_labels)
+        RETURN
+          coalesce(a.entity_key, elementId(a)) AS from,
+          type(r) AS type,
+          coalesce(b.entity_key, elementId(b)) AS to,
+          properties(r) AS properties
+        LIMIT $limit
+        """
+        try:
+            with drv.session() as session:
+                params = _debugging_memory_params(
+                    pot_id,
+                    lim,
+                    labels,
+                    scope,
+                    query,
+                )
+                nodes = [record.data() for record in session.run(node_query, **params)]
+                edges = [record.data() for record in session.run(edge_query, **params)]
+                return {
+                    "pot_id": pot_id,
+                    "limit": lim,
+                    "nodes": nodes,
+                    "edges": edges,
+                    "message": "ok",
+                }
+        except Exception as exc:
+            logger.exception("get_debugging_memory failed pot=%s", pot_id)
+            return {
+                "pot_id": pot_id,
+                "limit": lim,
+                "nodes": [],
+                "edges": [],
+                "message": str(exc),
+            }
+        finally:
+            drv.close()
 
     def upsert_entities(
         self,
@@ -1072,3 +1403,113 @@ def _count(neo4j_result) -> int:
 def _int(result) -> int:
     record = result.single()
     return int(record["cnt"]) if record and record.get("cnt") is not None else 0
+
+
+def _project_map_labels_for_includes(include: list[str] | None) -> list[str]:
+    if not include:
+        include = [
+            "purpose",
+            "repo_map",
+            "service_map",
+            "feature_map",
+            "docs",
+            "deployments",
+            "runbooks",
+            "local_workflows",
+            "scripts",
+            "config",
+            "preferences",
+            "agent_instructions",
+        ]
+    labels: list[str] = []
+    seen: set[str] = set()
+    for raw in include:
+        for label in _PROJECT_MAP_LABELS_BY_INCLUDE.get(raw, ()):
+            if label in seen:
+                continue
+            labels.append(label)
+            seen.add(label)
+    return labels or ["Service", "Feature", "Repository", "Document"]
+
+
+def _project_graph_params(
+    pot_id: str,
+    pr_number: int | None,
+    limit: int,
+    labels: list[str],
+    scope: dict[str, Any],
+) -> dict[str, Any]:
+    services = [str(value) for value in scope.get("services") or [] if value]
+    features = [str(value) for value in scope.get("features") or [] if value]
+    environment = scope.get("environment")
+    user = scope.get("user")
+    return {
+        "pot_id": pot_id,
+        "pr_number": pr_number,
+        "limit": limit,
+        "labels": labels,
+        "repo_name": scope.get("repo_name"),
+        "services": services,
+        "services_lc": [value.lower() for value in services],
+        "features": features,
+        "features_lc": [value.lower() for value in features],
+        "environment": environment,
+        "environment_lc": str(environment).lower() if environment else None,
+        "user": user,
+        "user_lc": str(user).lower() if user else None,
+    }
+
+
+def _debugging_memory_labels_for_includes(include: list[str] | None) -> list[str]:
+    if not include:
+        include = ["prior_fixes", "diagnostic_signals", "incidents", "alerts"]
+    labels: list[str] = []
+    seen: set[str] = set()
+    for raw in include:
+        for label in _DEBUGGING_MEMORY_LABELS_BY_INCLUDE.get(raw, ()):
+            if label in seen:
+                continue
+            labels.append(label)
+            seen.add(label)
+    return labels or ["Fix", "BugPattern", "Investigation", "DiagnosticSignal"]
+
+
+def _debugging_memory_params(
+    pot_id: str,
+    limit: int,
+    labels: list[str],
+    scope: dict[str, Any],
+    query: str | None,
+) -> dict[str, Any]:
+    services = [str(value) for value in scope.get("services") or [] if value]
+    environment = scope.get("environment")
+    related = set(labels)
+    related.update(
+        {
+            "Service",
+            "Environment",
+            "Component",
+            "Repository",
+            "PullRequest",
+            "Commit",
+            "Runbook",
+            "DiagnosticSignal",
+            "Incident",
+            "Alert",
+            "BugPattern",
+            "Investigation",
+            "Fix",
+            "SourceReference",
+        }
+    )
+    return {
+        "pot_id": pot_id,
+        "limit": limit,
+        "labels": labels,
+        "related_labels": sorted(related),
+        "services": services,
+        "services_lc": [value.lower() for value in services],
+        "environment": environment,
+        "environment_lc": str(environment).lower() if environment else None,
+        "query_text": (query or "").strip().lower()[:240],
+    }

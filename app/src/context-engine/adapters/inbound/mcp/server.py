@@ -16,6 +16,7 @@ from adapters.outbound.http.potpie_context_api_client import (
     PotpieContextApiClient,
     PotpieContextApiError,
 )
+
 logger = logging.getLogger(__name__)
 mcp = FastMCP("context-engine")
 
@@ -28,10 +29,14 @@ def _client() -> PotpieContextApiClient:
 
 
 def _api_err(e: PotpieContextApiError) -> dict:
-    return {"ok": False, "error": "api_error", "status_code": e.status_code, "detail": e.detail}
+    return {
+        "ok": False,
+        "error": "api_error",
+        "status_code": e.status_code,
+        "detail": e.detail,
+    }
 
 
-@mcp.tool()
 def context_get_change_history(
     pot_id: str,
     file_path: str | None = None,
@@ -55,13 +60,17 @@ def context_get_change_history(
         return _api_err(e)
 
 
-@mcp.tool()
 def context_get_file_owners(
     pot_id: str, file_path: str, limit: int = 5, repo_name: str | None = None
 ) -> list[dict] | dict:
     """Return likely file owners from PR touch history."""
     assert_mcp_pot_allowed(pot_id)
-    body = {"pot_id": pot_id, "file_path": file_path, "limit": limit, "repo_name": repo_name}
+    body = {
+        "pot_id": pot_id,
+        "file_path": file_path,
+        "limit": limit,
+        "repo_name": repo_name,
+    }
     try:
         out = _client().post_query("file-owners", body)
         return out if isinstance(out, list) else []
@@ -69,7 +78,6 @@ def context_get_file_owners(
         return _api_err(e)
 
 
-@mcp.tool()
 def context_get_decisions(
     pot_id: str,
     file_path: str | None = None,
@@ -93,7 +101,6 @@ def context_get_decisions(
         return _api_err(e)
 
 
-@mcp.tool()
 def context_get_pr_review_context(
     pot_id: str, pr_number: int, repo_name: str | None = None
 ) -> dict:
@@ -106,7 +113,6 @@ def context_get_pr_review_context(
         return _api_err(e)
 
 
-@mcp.tool()
 def context_get_pr_diff(
     pot_id: str,
     pr_number: int,
@@ -149,8 +155,8 @@ def context_search(
     source_description: str | None = None,
     include_invalidated: bool = False,
     as_of: str | None = None,
-) -> list[dict] | dict:
-    """Semantic search over Graphiti episodic entities. node_labels: comma-separated optional."""
+) -> dict:
+    """Narrow follow-up memory search. Prefer context_resolve first for task context wraps."""
     assert_mcp_pot_allowed(pot_id)
     labels = None
     if node_labels:
@@ -173,12 +179,32 @@ def context_search(
     }
     try:
         out = _client().search(body)
-        return out if isinstance(out, list) else []
+        rows = out if isinstance(out, list) else []
+        return {
+            "ok": True,
+            "answer": {"summary": f"Found {len(rows)} context search result(s)."},
+            "evidence": rows,
+            "source_refs": [],
+            "coverage": {
+                "status": "complete" if rows else "empty",
+                "available": ["semantic_search"] if rows else [],
+                "missing": [] if rows else ["semantic_search"],
+                "missing_reasons": {} if rows else {"semantic_search": "empty_result"},
+            },
+            "freshness": {
+                "status": "unknown",
+                "last_graph_update": None,
+                "last_source_verification": None,
+                "stale_refs": [],
+                "needs_verification_refs": [],
+            },
+            "fallbacks": [],
+            "recommended_next_actions": [],
+        }
     except PotpieContextApiError as e:
         return _api_err(e)
 
 
-@mcp.tool()
 def context_ingest_episode(
     pot_id: str,
     name: str,
@@ -242,14 +268,70 @@ async def context_resolve(
     pot_id: str,
     query: str,
     consumer_hint: str | None = None,
+    intent: str | None = None,
+    repo_name: str | None = None,
+    branch: str | None = None,
+    file_path: str | None = None,
+    function_name: str | None = None,
+    symbol: str | None = None,
+    pr_number: int | None = None,
+    services: str | None = None,
+    features: str | None = None,
+    environment: str | None = None,
+    ticket_ids: str | None = None,
+    user: str | None = None,
+    source_refs: str | None = None,
+    include: str | None = None,
+    exclude: str | None = None,
+    mode: str = "fast",
+    source_policy: str = "references_only",
+    max_items: int = 12,
+    max_tokens: int | None = None,
     timeout_ms: int = 4000,
+    freshness: str = "prefer_fresh",
+    as_of: str | None = None,
 ) -> dict:
-    """Resolve normalized contextual evidence (semantic + structural) for a user query."""
+    """Primary agent context tool: resolve a bounded task context wrap with evidence, freshness, and fallbacks."""
     assert_mcp_pot_allowed(pot_id)
+    as_of_dt = None
+    if as_of:
+        try:
+            as_of_dt = _parse_as_of_iso(as_of)
+        except ValueError as exc:
+            return {"ok": False, "error": "invalid_as_of", "detail": str(exc)}
+    scope = {
+        "repo_name": repo_name,
+        "branch": branch,
+        "file_path": file_path,
+        "function_name": function_name,
+        "symbol": symbol,
+        "pr_number": pr_number,
+        "services": _split_csv(services),
+        "features": _split_csv(features),
+        "environment": environment,
+        "ticket_ids": _split_csv(ticket_ids),
+        "user": user,
+        "source_refs": _split_csv(source_refs),
+    }
     body = {
         "pot_id": pot_id,
         "query": query,
         "consumer_hint": consumer_hint,
+        "intent": intent,
+        "scope": {
+            key: value for key, value in scope.items() if value not in (None, [])
+        },
+        "include": _split_csv(include),
+        "exclude": _split_csv(exclude),
+        "mode": mode,
+        "source_policy": source_policy,
+        "budget": {
+            "max_items": max_items,
+            "max_tokens": max_tokens,
+            "timeout_ms": timeout_ms,
+            "freshness": freshness,
+        },
+        "as_of": as_of_dt,
         "timeout_ms": timeout_ms,
     }
     client = _client()
@@ -257,6 +339,72 @@ async def context_resolve(
         return await client.post_query_async("resolve-context", body)
     except PotpieContextApiError as e:
         return _api_err(e)
+
+
+@mcp.tool()
+def context_record(
+    pot_id: str,
+    record_type: str,
+    summary: str,
+    repo_name: str | None = None,
+    source_refs: str | None = None,
+    confidence: float = 0.7,
+    visibility: str = "project",
+    idempotency_key: str | None = None,
+    details: str | None = None,
+    sync: bool = False,
+) -> dict:
+    """Record durable project memory: decisions, fixes, preferences, workflows, feature notes, or incidents."""
+    assert_mcp_pot_allowed(pot_id)
+    body = {
+        "pot_id": pot_id,
+        "record": {
+            "type": record_type,
+            "summary": summary,
+            "details": {"text": details} if details else {},
+            "source_refs": _split_csv(source_refs),
+            "confidence": confidence,
+            "visibility": visibility,
+        },
+        "scope": {"repo_name": repo_name} if repo_name else {},
+        "idempotency_key": idempotency_key,
+    }
+    try:
+        return _client().record(body, sync=sync)
+    except PotpieContextApiError as e:
+        return _api_err(e)
+
+
+@mcp.tool()
+def context_status(
+    pot_id: str,
+    repo_name: str | None = None,
+    source_refs: str | None = None,
+    intent: str | None = None,
+) -> dict:
+    """Return cheap pot readiness plus the recommended context_resolve recipe for an intent."""
+    assert_mcp_pot_allowed(pot_id)
+    scope = {
+        "repo_name": repo_name,
+        "source_refs": _split_csv(source_refs),
+    }
+    body = {
+        "pot_id": pot_id,
+        "intent": intent,
+        "scope": {
+            key: value for key, value in scope.items() if value not in (None, [])
+        },
+    }
+    try:
+        return _client().status(body)
+    except PotpieContextApiError as e:
+        return _api_err(e)
+
+
+def _split_csv(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 def main() -> None:

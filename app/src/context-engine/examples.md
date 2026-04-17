@@ -66,6 +66,7 @@ uv run context-engine logout
 ## `init-agent`
 
 Installs `AGENTS.md` and repo-local `.agents/skills/context-engine-*` into a repository (safe by default; skips differing files unless `--force`).
+The installed `context-engine-agent-context` skill teaches agents to use the four-tool context port and `context_resolve` recipes instead of one-off tools for every context type.
 
 ```bash
 uv run context-engine init-agent
@@ -212,6 +213,14 @@ uv run context-engine-mcp
 ```
 
 Pot access control: `CONTEXT_ENGINE_MCP_ALLOWED_POTS` or (dev only) `CONTEXT_ENGINE_MCP_TRUST_ALL_POTS=true`. See [`README.md`](README.md).
+
+Default context gathering should use `context_resolve` with a recipe:
+
+```json
+{"intent":"feature","include":["purpose","feature_map","service_map","docs","tickets","decisions","recent_changes","owners","preferences","source_status"],"mode":"fast","source_policy":"references_only"}
+```
+
+Use `context_status` for cheap readiness and recipe hints, `context_search` only for narrow follow-up lookup, and `context_record` for durable project learnings discovered during the work.
 
 ---
 

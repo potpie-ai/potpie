@@ -242,10 +242,14 @@ def doctor_cmd() -> None:
     db = bool(database_url())
     gh = bool(os.getenv("CONTEXT_ENGINE_GITHUB_TOKEN") or os.getenv("GITHUB_TOKEN"))
 
-    maps_set = bool(os.getenv("CONTEXT_ENGINE_REPO_TO_POT") or os.getenv("CONTEXT_ENGINE_POTS"))
+    maps_set = bool(
+        os.getenv("CONTEXT_ENGINE_REPO_TO_POT") or os.getenv("CONTEXT_ENGINE_POTS")
+    )
 
     health_ok: Optional[bool] = None
     health_msg: Optional[str] = None
+    auth_ok: Optional[bool] = None
+    auth_msg: Optional[str] = None
     try:
         c = PotpieContextApiClient(
             resolve_potpie_api_base_url(),
@@ -255,12 +259,23 @@ def doctor_cmd() -> None:
         code, payload = c.get_health()
         health_ok = code == 200
         health_msg = None if health_ok else f"HTTP {code}"
+        try:
+            c.list_context_pots()
+            auth_ok = True
+            auth_msg = None
+        except PotpieContextApiError as exc:
+            auth_ok = False
+            auth_msg = f"HTTP {exc.status_code}: {_format_api_error(exc)}"
     except ValueError:
         health_ok = None
         health_msg = "skipped (no base URL / API key)"
+        auth_ok = None
+        auth_msg = "skipped (no base URL / API key)"
     except OSError as exc:
         health_ok = False
         health_msg = str(exc)
+        auth_ok = False
+        auth_msg = str(exc)
 
     summary: list[str] = [
         "[dim]search / ingest / pot hard-reset call Potpie POST /api/v2/context/* with X-API-Key.[/dim]",
@@ -268,6 +283,12 @@ def doctor_cmd() -> None:
     ]
     if health_ok is True:
         summary.append("[green]GET /health on Potpie base URL succeeded.[/green]")
+    if auth_ok is True:
+        summary.append("[green]Authenticated /api/v2/context probe succeeded.[/green]")
+    elif auth_ok is False:
+        summary.append(
+            "[red]Authenticated /api/v2/context probe failed; search / ingest / MCP calls will fail.[/red]"
+        )
 
     snap = DoctorSnapshot(
         context_graph_enabled=cg,
@@ -279,12 +300,16 @@ def doctor_cmd() -> None:
         potpie_stored_token=has_stored_key,
         potpie_base_url=base_env or base_stored or None,
         potpie_port_hint=(
-            f"http://127.0.0.1:{port}" if port and not (base_env or base_stored) else None
+            f"http://127.0.0.1:{port}"
+            if port and not (base_env or base_stored)
+            else None
         ),
         database_url_set=db,
         github_token_set=gh,
         potpie_health_ok=health_ok,
         potpie_health_message=health_msg,
+        potpie_auth_ok=auth_ok,
+        potpie_auth_message=auth_msg,
         summary_lines=summary,
     )
     print_doctor_report(snap, as_json=j)
@@ -323,7 +348,9 @@ def init_agent_cmd(
     for rel_path in result.unchanged:
         print_plain_line(f"unchanged {rel_path}", as_json=False)
     for rel_path in result.skipped:
-        print_plain_line(f"skipped {rel_path} (use --force to overwrite)", as_json=False)
+        print_plain_line(
+            f"skipped {rel_path} (use --force to overwrite)", as_json=False
+        )
 
 
 def _pot_id_or_git(explicit: str | None, *, cwd: str | None = None) -> str:
@@ -331,7 +358,9 @@ def _pot_id_or_git(explicit: str | None, *, cwd: str | None = None) -> str:
         resolved, rerr = resolve_cli_pot_ref(explicit)
         if rerr or not resolved:
             _, v = _flags()
-            emit_error("Pot scope required", rerr or "Could not resolve pot id.", verbose=v)
+            emit_error(
+                "Pot scope required", rerr or "Could not resolve pot id.", verbose=v
+            )
             raise typer.Exit(code=1)
         return resolved
     pid, err = resolve_pot_id_from_git_cwd(cwd)
@@ -407,7 +436,7 @@ def pot_pots_cmd() -> None:
         return
     if not rows:
         print_plain_line(
-            "No context pots yet. Run `context-engine pot create \"my-scope\"` to create one on the server.",
+            'No context pots yet. Run `context-engine pot create "my-scope"` to create one on the server.',
             as_json=False,
         )
         return
@@ -530,7 +559,10 @@ def pot_repo_list_cmd(
         print_json_blob({"pot_id": pid, "repositories": rows}, as_json=True)
         return
     if not rows:
-        print_plain_line(f"No repositories for pot {pid}. Try `pot repo add owner/repo`.", as_json=False)
+        print_plain_line(
+            f"No repositories for pot {pid}. Try `pot repo add owner/repo`.",
+            as_json=False,
+        )
         return
     for r in rows:
         print_plain_line(
@@ -649,7 +681,11 @@ def add_repo_cmd(
     cwd = str(Path(path).resolve())
     url = get_git_origin_remote_url(cwd)
     if not url:
-        emit_error("Not a git repository", "Could not read origin remote.", hint="Run from a clone with git remote set.")
+        emit_error(
+            "Not a git repository",
+            "Could not read origin remote.",
+            hint="Run from a clone with git remote set.",
+        )
         raise typer.Exit(code=1)
     parsed = parse_git_remote(url)
     if not parsed:
@@ -758,7 +794,9 @@ def search(
         )
         raise typer.Exit(code=1) from exc
     if not isinstance(rows, list):
-        emit_error("Search failed", f"Unexpected response: {type(rows).__name__}", verbose=v)
+        emit_error(
+            "Search failed", f"Unexpected response: {type(rows).__name__}", verbose=v
+        )
         raise typer.Exit(code=1)
     print_search_results(rows, as_json=j, with_temporal=with_temporal)
 
@@ -787,7 +825,10 @@ def _ingest_resolve_error(code: str) -> tuple[str, str]:
             "With two positional arguments, the first must be a pot UUID.",
         )
     if code == "two_args_empty_body":
-        return ("Episode text required", "Second argument or --episode-body / -b cannot be empty.")
+        return (
+            "Episode text required",
+            "Second argument or --episode-body / -b cannot be empty.",
+        )
     return ("Could not parse ingest arguments", code)
 
 

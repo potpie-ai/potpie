@@ -142,7 +142,9 @@ class PotpieContextApiClient:
     def get_health(self) -> tuple[int, Optional[dict[str, Any]]]:
         """GET /health on the same host as base_url."""
         with httpx.Client(timeout=min(self._timeout, 30.0)) as client:
-            r = client.get(f"{self._base}/health", headers={"Accept": "application/json"})
+            r = client.get(
+                f"{self._base}/health", headers={"Accept": "application/json"}
+            )
         if r.status_code != 200:
             return r.status_code, None
         try:
@@ -179,6 +181,13 @@ class PotpieContextApiClient:
                 return r.status_code, r.json()
             except json.JSONDecodeError:
                 raise PotpieContextApiError(r.status_code, r.text) from None
+        if r.status_code == 409:
+            try:
+                detail = r.json().get("detail", {})
+                if isinstance(detail, dict) and detail.get("error") == "duplicate_ingest":
+                    return r.status_code, detail
+            except Exception:
+                pass
         self._raise_for_status(r)
         return r.status_code, {}
 
@@ -186,6 +195,19 @@ class PotpieContextApiClient:
         r = self.post_context("/reset", json_body=body)
         self._raise_for_status(r)
         return r.json()
+
+    def record(self, body: dict[str, Any], *, sync: bool = False) -> dict[str, Any]:
+        params = {"sync": "true"} if sync else None
+        r = self.post_context("/record", json_body=body, params=params)
+        self._raise_for_status(r)
+        out = r.json()
+        return out if isinstance(out, dict) else {}
+
+    def status(self, body: dict[str, Any]) -> dict[str, Any]:
+        r = self.post_context("/status", json_body=body)
+        self._raise_for_status(r)
+        out = r.json()
+        return out if isinstance(out, dict) else {}
 
     def post_query(self, subpath: str, body: dict[str, Any]) -> Any:
         path = f"/query/{subpath.lstrip('/')}"
