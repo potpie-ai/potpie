@@ -23,6 +23,7 @@ from integrations.adapters.outbound.oauth.linear_oauth import LinearOAuth
 from integrations.adapters.outbound.oauth.jira_oauth import JiraOAuth
 from integrations.adapters.outbound.oauth.confluence_oauth import ConfluenceOAuth
 from integrations.application.integrations_service import IntegrationsService
+from integrations.domain.exceptions import LinearOrganizationAlreadyIntegratedError
 from integrations.domain.integrations_schema import (
     OAuthInitiateRequest,
     OAuthStatusResponse,
@@ -501,7 +502,30 @@ async def linear_oauth_callback(
 
                 return RedirectResponse(url=redirect_url)
 
+            except LinearOrganizationAlreadyIntegratedError as dup:
+                db.close()
+                config = Config()
+                frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
+                if frontend_url and not frontend_url.startswith(
+                    ("http://", "https://")
+                ):
+                    frontend_url = f"https://{frontend_url}"
+                logger.info(
+                    "Linear OAuth callback: organization already integrated, "
+                    "redirecting (integration_id=%s)",
+                    dup.integration_id,
+                )
+                redirect_url = (
+                    f"{frontend_url}/integrations/linear/redirect?"
+                    f"success=true&already_exists=true&integration_id={dup.integration_id}"
+                )
+                return RedirectResponse(url=redirect_url)
+
             except Exception as e:
+                try:
+                    db.close()
+                except Exception:
+                    pass
                 logger.exception("Failed to save Linear integration")
 
                 # Redirect to frontend with error
