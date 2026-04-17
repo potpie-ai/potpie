@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import patch, AsyncMock, MagicMock, ANY
+from fastapi.responses import StreamingResponse
 
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -24,16 +25,29 @@ async def test_post_message_successful_flow(
     with patch(
         "app.celery.tasks.agent_tasks.execute_agent_background.delay"
     ) as mock_celery_task, patch(
+        "app.modules.conversations.conversations_router.MediaController"
+    ) as mock_media_controller_class, patch(
+        "app.modules.conversations.conversations_router.ConversationController"
+    ) as mock_conversation_controller_class, patch(
         "app.modules.media.media_controller.MediaController.upload_file_any",
         new_callable=AsyncMock,
-    ) as mock_upload_file_any:
+    ) as mock_upload_file_any, patch(
+        "app.modules.conversations.conversations_router.start_celery_task_and_stream",
+        new_callable=AsyncMock,
+    ) as mock_start_stream:
         mock_celery_task.return_value.id = "test-task-id-execute"
+        mock_media_controller_class.return_value.upload_file_any = mock_upload_file_any
+        mock_conversation_controller_class.return_value = MagicMock()
         mock_upload_file_any.return_value = AttachmentUploadResponse(
             id="fake_attachment_id",
             attachment_type=AttachmentType.IMAGE,
             file_name="test_image.png",
             mime_type="image/png",
             file_size=1000,
+        )
+        mock_start_stream.return_value = StreamingResponse(
+            iter([b"data: {}\n\n"]),
+            media_type="text/event-stream",
         )
 
         # Prepare request data
@@ -53,7 +67,7 @@ async def test_post_message_successful_flow(
 
         # Assert calls on the mock INSTANCE
         mock_upload_file_any.assert_called_once()
-        mock_celery_task.assert_called_once()
+        mock_start_stream.assert_called_once()
 
 
 # We only need to mock the true external boundaries of the ConversationService
