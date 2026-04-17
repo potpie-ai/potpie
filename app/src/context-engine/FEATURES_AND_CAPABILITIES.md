@@ -68,7 +68,7 @@ Long-running mutations (sync, ingest-pr when queued) go through **`ContextGraphJ
 
 `python -m adapters.inbound.http` with env for Neo4j, Postgres, GitHub token, pot maps, optional `CONTEXT_ENGINE_API_KEY`. Mutations like sync/ingest-pr can run **inline** (no Celery) in this mode—see package README.
 
-### 5.3 CLI (`context-engine`)
+### 5.3 CLI (`potpie`)
 
 Entry: `adapters/inbound/cli/main.py` (Typer).
 
@@ -76,7 +76,7 @@ Entry: `adapters/inbound/cli/main.py` (Typer).
 |---------|---------|
 | `login` / `logout` | Store or clear Potpie base URL + API key for v2 calls. |
 | `doctor` | Credentials, config snapshot, `GET /health` probe. |
-| `init-agent` | Install `AGENTS.md` plus context-engine agent skills, including `context-engine-agent-context` recipes over the minimal context port. |
+| `init-agent` | Install `AGENTS.md` plus context-engine agent skills, including `potpie-agent-context` recipes over the minimal context port. |
 | `pot use` / `unset` / `list` / `pots` / `alias` / `clear-local` | Local pot scope and Potpie-backed pot listing/creation helpers. |
 | `pot repo list` / `pot repo add` | Repositories attached to a pot (Potpie API). |
 | `pot hard-reset` | Calls reset API for the active/scoped pot. |
@@ -86,7 +86,7 @@ Entry: `adapters/inbound/cli/main.py` (Typer).
 
 Global flags: `--json`, `--verbose`, `--source` (default source label for ingest/search).
 
-### 5.4 MCP (`context-engine-mcp`)
+### 5.4 MCP (`potpie-mcp`)
 
 Stdio MCP server (`adapters/inbound/mcp/server.py`): tools call **Potpie `POST /api/v2/context`** with the stored API key. **Pot allowlisting** via `CONTEXT_ENGINE_MCP_ALLOWED_POTS` or dev-only `CONTEXT_ENGINE_MCP_TRUST_ALL_POTS`.
 
@@ -164,7 +164,7 @@ This is the main **“agent-facing”** aggregated API beyond raw search.
 
 ## 9. Reconciliation agent (optional extra)
 
-- Extra: `context-engine[reconciliation-agent]` → **pydantic-deep** based adapter under `adapters/outbound/reconciliation/` (factory, plan schema, null agent for tests).
+- Extra: `potpie[reconciliation-agent]` → **pydantic-deep** based adapter under `adapters/outbound/reconciliation/` (factory, plan schema, null agent for tests).
 - Feature flags: `domain/reconciliation_flags.py` (`CONTEXT_ENGINE_RECONCILIATION_ENABLED`, `CONTEXT_ENGINE_AGENT_PLANNER_ENABLED`, etc.).
 - When disabled or agent is `None`, `/events/reconcile` returns **503** with an explicit message.
 
@@ -200,7 +200,7 @@ This is the main **“agent-facing”** aggregated API beyond raw search.
 - **Two speed modes:** legacy direct Graphiti vs event-store-first async must stay obvious in APIs and CLI output (you already surface `queued` vs `applied` vs `legacy_direct`).
 - **Reconciliation agent:** powerful but optional; product should define when it is required vs PR/episodic-only mode.
 
-Overall, the codebase reads as a **coherent platform** for pot-scoped context: ingestion, query, reset, background processing, and agent-oriented resolution—rather than a one-off script. If your roadmap doubles down on **event-sourced ingestion** and **multi-tenant pots**, the current split between `context-engine` and Potpie `context_graph` wiring is the right direction.
+Overall, the codebase reads as a **coherent platform** for pot-scoped context: ingestion, query, reset, background processing, and agent-oriented resolution—rather than a one-off script. If your roadmap doubles down on **event-sourced ingestion** and **multi-tenant pots**, the current split between `potpie` and Potpie `context_graph` wiring is the right direction.
 
 ---
 

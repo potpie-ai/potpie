@@ -2180,7 +2180,7 @@ Avoid public tools like:
 
 Those are recipes or internal resolver paths. They should be expressed through `context_resolve` parameters and skills.
 
-Current implementation note: Phase 6 adds a code-level context port manifest and recipe catalog. `context_status` returns the manifest plus the recommended recipe for optional intent values, MCP descriptions steer agents toward the four-tool port, and the generated `context-engine-agent-context` skill documents the operating loop and presets.
+Current implementation note: Phase 6 adds a code-level context port manifest and recipe catalog. `context_status` returns the manifest plus the recommended recipe for optional intent values, MCP descriptions steer agents toward the four-tool port, and the generated `potpie-agent-context` skill documents the operating loop and presets.
 
 ## Operational alignment and drift management
 
@@ -2467,7 +2467,7 @@ This section reviews the current `app/src/context-engine` implementation against
 | Use Graphiti temporal/update features but build on top | Covered by Graphiti substrate + Potpie canonical ontology split | Current implementation already uses Graphiti and deterministic structural writes |
 | Avoid huge graph / avoid source duplication | Covered by source-reference-first storage and resolver contract | Implemented for source refs and Phase 4 project-map reads; full source payloads stay external |
 | Good fallbacks for missing/stale data | Covered by coverage gaps, freshness, verification, resolver status, and drift management | Phase 7 quality report adds freshness/source-sync metrics, issues, and maintenance recommendations |
-| Natural agent injection via skills, AGENTS.md, MCP | Covered by the minimal context port and recipe-based skills | Phase 6 recipe manifest, generated `AGENTS.md`, MCP descriptions, and `context-engine-agent-context` skill are implemented |
+| Natural agent injection via skills, AGENTS.md, MCP | Covered by the minimal context port and recipe-based skills | Phase 6 recipe manifest, generated `AGENTS.md`, MCP descriptions, and `potpie-agent-context` skill are implemented |
 
 ### What is already aligned
 
@@ -2602,7 +2602,7 @@ Each should carry scope, owner, source, confidence, and freshness.
 
 ### Phase C: Minimal context port and agent operating workflows
 
-Implementation status: first pass implemented. The MCP agent surface now exposes the four-tool port, `context_resolve` returns the common envelope with budget/as-of support, `context_record` routes generic learnings through reconciliation, and `context_status` reports cheap pot readiness plus a recommended recipe. Generated `AGENTS.md`, CLI docs, MCP descriptions, and the `context-engine-agent-context` skill now guide agents to use parameter presets over `context_resolve`. Dedicated feature/service/operations/debugging evidence families remain Phase D/E expansion work behind the same port.
+Implementation status: first pass implemented. The MCP agent surface now exposes the four-tool port, `context_resolve` returns the common envelope with budget/as-of support, `context_record` routes generic learnings through reconciliation, and `context_status` reports cheap pot readiness plus a recommended recipe. Generated `AGENTS.md`, CLI docs, MCP descriptions, and the `potpie-agent-context` skill now guide agents to use parameter presets over `context_resolve`. Dedicated feature/service/operations/debugging evidence families remain Phase D/E expansion work behind the same port.
 
 - Evolve `context_resolve` into the primary context-wrap orchestrator with `intent`, `scope`, `include`, `exclude`, `mode`, `source_policy`, `budget`, and `as_of`.
 - Extend the intelligence bundle with feature, service, operations, debugging, docs, preferences, and source-status evidence families.

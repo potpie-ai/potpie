@@ -1,8 +1,8 @@
-# context-engine CLI
+# Potpie CLI
 
-Optional command-line entrypoint for the context graph. **`search`**, **`ingest`**, and **`pot hard-reset`** call your **Potpie** server at **`POST /api/v2/context/*`** with **`X-API-Key`** (configure **`POTPIE_API_URL`** + **`POTPIE_API_KEY`** or **`context-engine login`**). You do **not** need local Neo4j/Graphiti for those commands. Local env maps and **`pot use`** still resolve which `pot_id` to send.
+Optional command-line entrypoint for the context graph. **`search`**, **`ingest`**, and **`pot hard-reset`** call your **Potpie** server at **`POST /api/v2/context/*`** with **`X-API-Key`** (configure **`POTPIE_API_URL`** + **`POTPIE_API_KEY`** or **`potpie login`**). You do **not** need local Neo4j/Graphiti for those commands. Local env maps and **`pot use`** still resolve which `pot_id` to send.
 
-The console script is registered as **`context-engine`** (see `pyproject.toml` → `[project.scripts]`).
+The console script is registered as **`potpie`** (see `pyproject.toml` → `[project.scripts]`).
 
 ## Setup
 
@@ -27,39 +27,39 @@ These apply to all subcommands (place them **before** the command name):
 Examples:
 
 ```bash
-context-engine --json doctor
-context-engine -v search "query here"
+potpie --json doctor
+potpie -v search "query here"
 ```
 
 ## Commands
 
 ### `init-agent`
 
-Install the packaged agent bundle into the current repository. This writes a top-level `AGENTS.md` plus the repo-local `.agents/skills/context-engine-*` files used by Codex-style agent workflows.
+Install the packaged agent bundle into the current repository. This writes a top-level `AGENTS.md` plus the repo-local `.agents/skills/potpie-*` files used by Codex-style agent workflows.
 
-The bundle includes a dedicated `context-engine-agent-context` skill for MCP workflows. That skill keeps the public agent surface to `context_resolve`, `context_search`, `context_record`, and `context_status`, and encodes feature, debugging, review, operations, docs, and onboarding workflows as `context_resolve` parameter recipes.
+The bundle includes a dedicated `potpie-agent-context` skill for MCP workflows. That skill keeps the public agent surface to `context_resolve`, `context_search`, `context_record`, and `context_status`, and encodes feature, debugging, review, operations, docs, and onboarding workflows as `context_resolve` parameter recipes.
 
 | Command | Description |
 |---------|-------------|
-| `context-engine init-agent` | Install into the current repo root (auto-detected from the current directory). |
-| `context-engine init-agent path/to/repo` | Install into a specific repository or a subdirectory inside it. |
-| `context-engine init-agent --force` | Overwrite existing agent files when local contents differ. |
+| `potpie init-agent` | Install into the current repo root (auto-detected from the current directory). |
+| `potpie init-agent path/to/repo` | Install into a specific repository or a subdirectory inside it. |
+| `potpie init-agent --force` | Overwrite existing agent files when local contents differ. |
 
 By default, the command is safe: existing files with different contents are skipped and reported. Use `--json` for automation or `--force` to refresh local copies after upgrading the CLI.
 
 ### `login` / `logout`
 
-Persist a **Potpie API key** and optional base URL — **required** for **`search`**, **`ingest`**, and **`pot hard-reset`** unless you set **`POTPIE_API_KEY`** / URL in the environment. **Pot scope** still comes from env maps, **`context-engine pot use`**, or an explicit pot UUID. Credentials live under **`$XDG_CONFIG_HOME/context-engine/credentials.json`**, or **`~/.config/context-engine/credentials.json`**, mode **600**.
+Persist a **Potpie API key** and optional base URL — **required** for **`search`**, **`ingest`**, and **`pot hard-reset`** unless you set **`POTPIE_API_KEY`** / URL in the environment. **Pot scope** still comes from env maps, **`potpie pot use`**, or an explicit pot UUID. Credentials live under **`$XDG_CONFIG_HOME/potpie/credentials.json`**, or **`~/.config/potpie/credentials.json`**, mode **600**.
 
 | Command | Description |
 |---------|-------------|
-| `context-engine login TOKEN` | Save the token. |
-| `context-engine login TOKEN --url http://127.0.0.1:8001` | Save token and default Potpie base URL (no trailing slash). |
-| `context-engine logout` | Delete the stored credentials file (API key, base URL, active pot, aliases). |
-| `context-engine pot clear-local` | Clear only active pot + `pot_aliases`; keep API key / URL. |
-| `context-engine pot create` | `POST /api/v2/context/pots` + local alias. |
-| `context-engine pot pots` | List context pots (`GET /api/v2/context/pots`). |
-| `context-engine pot repo list` / `pot repo add` | List or attach repositories on a pot (`GET`/`POST` `/api/v2/context/pots/.../repositories`). |
+| `potpie login TOKEN` | Save the token. |
+| `potpie login TOKEN --url http://127.0.0.1:8001` | Save token and default Potpie base URL (no trailing slash). |
+| `potpie logout` | Delete the stored credentials file (API key, base URL, active pot, aliases). |
+| `potpie pot clear-local` | Clear only active pot + `pot_aliases`; keep API key / URL. |
+| `potpie pot create` | `POST /api/v2/context/pots` + local alias. |
+| `potpie pot pots` | List context pots (`GET /api/v2/context/pots`). |
+| `potpie pot repo list` / `pot repo add` | List or attach repositories on a pot (`GET`/`POST` `/api/v2/context/pots/.../repositories`). |
 
 **Precedence:** `POTPIE_API_KEY` in the environment **overrides** the stored token (useful for CI). For base URL: **`POTPIE_API_URL` / `POTPIE_BASE_URL`** override a stored URL; otherwise the stored URL from `login --url` is used before `POTPIE_PORT` and localhost guesses.
 
@@ -68,7 +68,7 @@ Persist a **Potpie API key** and optional base URL — **required** for **`searc
 Shows Potpie API URL/key presence, local pot maps, **`GET /health`** on the Potpie host, and an authenticated **`GET /api/v2/context/pots`** probe when URL+key are set. Local Neo4j/Graphiti lines are informational only for other workflows.
 
 ```bash
-uv run context-engine doctor
+uv run potpie doctor
 ```
 
 ### `pot hard-reset`
@@ -82,9 +82,9 @@ uv run context-engine doctor
 | `--cwd` | Git tree used when inferring pot (default: current directory). |
 
 ```bash
-uv run context-engine pot hard-reset
-uv run context-engine pot hard-reset --skip-ledger
-uv run context-engine --json pot hard-reset 00000000-0000-0000-0000-000000000000
+uv run potpie pot hard-reset
+uv run potpie pot hard-reset --skip-ledger
+uv run potpie --json pot hard-reset 00000000-0000-0000-0000-000000000000
 ```
 
 ### `search`
@@ -111,7 +111,7 @@ Semantic search over **Graphiti episodic** entities for a pot via **`POST /api/v
 2. Resolve `owner/repo` → pot UUID in order:
    - **`CONTEXT_ENGINE_REPO_TO_POT`** — JSON `{"owner/repo":"pot-uuid"}`, or
    - **`CONTEXT_ENGINE_POTS`** — JSON `{"pot-uuid":"owner/repo"}` (case-insensitive match on value).
-   - Else **`context-engine pot use <uuid-or-name>`** (stored default; names from **`pot alias`**).
+   - Else **`potpie pot use <uuid-or-name>`** (stored default; names from **`pot alias`**).
    - Else exit with code `1` — pass an explicit pot UUID / registered name, or set maps / `pot use`.
 
 Pot scope is chosen explicitly (maps, **`pot use`**, or a UUID argument); repo → pot mapping uses your server pots and attached repositories.
@@ -124,21 +124,21 @@ Examples:
 
 ```bash
 # Context pot (recommended): created on the server
-context-engine pot create "my-workspace"
-context-engine pot use my-workspace
+potpie pot create "my-workspace"
+potpie pot use my-workspace
 
 # Or list existing context pots and pick an id
-context-engine pot pots
-context-engine pot use 00000000-0000-0000-0000-000000000000
+potpie pot pots
+potpie pot use 00000000-0000-0000-0000-000000000000
 
 # Optional: short name → id (stored in credentials.json)
-context-engine pot alias my-alias 00000000-0000-0000-0000-000000000000
+potpie pot alias my-alias 00000000-0000-0000-0000-000000000000
 
 # From a repo directory with env mapping or active pot (see above)
-uv run context-engine search "how is auth handled?" -n 10
+uv run potpie search "how is auth handled?" -n 10
 
 # Explicit pot UUID
-uv run context-engine search "00000000-0000-0000-0000-000000000000" "how is auth handled?" -n 10
+uv run potpie search "00000000-0000-0000-0000-000000000000" "how is auth handled?" -n 10
 ```
 
 ### `ingest`
@@ -173,28 +173,28 @@ Examples:
 
 ```bash
 # Infer pot from current git repo + env
-uv run context-engine ingest \
+uv run potpie ingest \
   --name "Design note" \
   --episode-body "We chose Postgres for the ledger." \
   --source "cli" \
   --reference-time "2025-03-27T12:00:00Z"
 
 # Explicit pot UUID
-uv run context-engine ingest "00000000-0000-0000-0000-000000000000" \
+uv run potpie ingest "00000000-0000-0000-0000-000000000000" \
   --name "Design note" \
   --episode-body "We chose Postgres for the ledger." \
   --source "cli" \
   --reference-time "2025-03-27T12:00:00Z"
 
 # Episode body from a file (paths relative to the shell cwd)
-uv run context-engine ingest --file ./notes/design.md --name "Design note" --source "cli"
+uv run potpie ingest --file ./notes/design.md --name "Design note" --source "cli"
 ```
 
 ## Related
 
 - Full service and env tables: repository root `app/src/context-engine/README.md`.
 - CLI targets **`/api/v2/context/`** with **`X-API-Key`**. **`/api/v1/context/`** remains for Firebase-authenticated clients.
-- MCP entrypoint: `context-engine-mcp` (stdio server).
+- MCP entrypoint: `potpie-mcp` (stdio server).
 
 ### MCP agent context port
 

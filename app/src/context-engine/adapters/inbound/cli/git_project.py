@@ -113,7 +113,7 @@ def resolve_pot_id_from_git_cwd(cwd: str | None = None) -> tuple[str | None, str
 
     Resolution order:
 
-    1. ``context-engine pot use <uuid-or-name>`` (stored ``active_pot_id``; names from ``pot alias``) — global default for this machine.
+    1. ``potpie pot use <uuid-or-name>`` (stored ``active_pot_id``; names from ``pot alias``) — global default for this machine.
     2. Else ``CONTEXT_ENGINE_REPO_TO_POT`` / ``CONTEXT_ENGINE_POTS`` for ``owner/repo`` from ``git`` ``origin``
        (under ``cwd``, default current directory).
     3. Else error (pass pot UUID explicitly, or set maps / ``pot use``).
@@ -131,7 +131,7 @@ def resolve_pot_id_from_git_cwd(cwd: str | None = None) -> tuple[str | None, str
         return (
             None,
             "Could not read git remote `origin` (are you inside a git repository with origin set?). "
-            "Run `context-engine pot use <pot-uuid>`, set CONTEXT_ENGINE_REPO_TO_POT / CONTEXT_ENGINE_POTS, "
+            "Run `potpie pot use <pot-uuid>`, set CONTEXT_ENGINE_REPO_TO_POT / CONTEXT_ENGINE_POTS, "
             "or pass the pot UUID explicitly.",
         )
     owner_repo = parse_owner_repo_from_remote(url)
@@ -146,6 +146,6 @@ def resolve_pot_id_from_git_cwd(cwd: str | None = None) -> tuple[str | None, str
         None,
         f"No pot for repository {owner_repo!r}. "
         "Set CONTEXT_ENGINE_REPO_TO_POT or CONTEXT_ENGINE_POTS, "
-        "run `context-engine pot use <pot-uuid>`, "
+        "run `potpie pot use <pot-uuid>`, "
         "or pass the pot UUID as the first argument to `search` / `ingest`.",
     )

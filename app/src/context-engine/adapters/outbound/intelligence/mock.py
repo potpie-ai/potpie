@@ -174,7 +174,7 @@ class MockIntelligenceProvider(IntelligenceProvider):
                 kind="Runbook",
                 entity_key="runbook:context-engine-doctor",
                 name="Context engine doctor",
-                summary="Run uv run context-engine --json doctor from app/src/context-engine to check Potpie API connectivity.",
+                summary="Run uv run potpie --json doctor from app/src/context-engine to check Potpie API connectivity.",
                 source_uri="app/src/context-engine/adapters/inbound/cli/README.md",
             ),
             ProjectContextRecord(
@@ -190,7 +190,7 @@ class MockIntelligenceProvider(IntelligenceProvider):
                 kind="ConfigVariable",
                 entity_key="config:potpie-api-url",
                 name="POTPIE_API_URL",
-                summary="Potpie base URL used by context-engine CLI and MCP clients.",
+                summary="Potpie base URL used by Potpie CLI and MCP clients.",
                 source_uri="app/src/context-engine/adapters/inbound/cli/README.md",
             ),
         ]

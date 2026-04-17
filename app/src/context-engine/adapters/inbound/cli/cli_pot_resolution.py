@@ -16,7 +16,7 @@ from domain.ports.pot_resolution import ResolvedPot, single_github_repo_pot
 class CliPotResolution(ExplicitPotResolution):
     """
     Same as :class:`ExplicitPotResolution`, plus when the pot id matches
-    ``context-engine pot use`` and no env row exists, resolve ``owner/repo`` from
+    ``potpie pot use`` and no env row exists, resolve ``owner/repo`` from
     ``git`` ``origin`` under ``cwd``.
     """
 

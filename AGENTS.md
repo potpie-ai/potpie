@@ -2,9 +2,9 @@
 
 ## Scope
 
-This repository contains the Potpie API and an embedded `context-engine` package. When a task mentions the `context-engine` CLI, work from the package sources under [`app/src/context-engine`](app/src/context-engine).
+This repository contains the Potpie API and an embedded `context-engine` package. When a task mentions the `potpie` CLI, work from the package sources under [`app/src/context-engine`](app/src/context-engine).
 
-## Context-Engine CLI
+## Potpie CLI
 
 - Entry point: [`app/src/context-engine/adapters/inbound/cli/main.py`](app/src/context-engine/adapters/inbound/cli/main.py)
 - CLI docs: [`app/src/context-engine/adapters/inbound/cli/README.md`](app/src/context-engine/adapters/inbound/cli/README.md)
@@ -27,9 +27,9 @@ Use the repo-local skills under `.agents/skills/` when the task is about:
 
 ## Working Rules
 
-- Prefer `uv run context-engine ...` from [`app/src/context-engine`](app/src/context-engine).
+- Prefer `uv run potpie ...` from [`app/src/context-engine`](app/src/context-engine).
 - For pot inference, follow the code path in [`app/src/context-engine/adapters/inbound/cli/git_project.py`](app/src/context-engine/adapters/inbound/cli/git_project.py): active pot from `pot use`, then env maps, then git `origin`, else fail.
-- **`search`**, **`ingest`**, and **`pot hard-reset`** call Potpie **`POST /api/v2/context/*`** with **`X-API-Key`** (same auth as [`app/api/router.py`](app/api/router.py)). Set **`POTPIE_API_URL`** / **`POTPIE_BASE_URL`** and **`POTPIE_API_KEY`**, or run **`context-engine login`**. The machine running the CLI does **not** need local Neo4j/Graphiti. Async work runs on the **server** (Celery/Hatchet per host config).
+- **`search`**, **`ingest`**, and **`pot hard-reset`** call Potpie **`POST /api/v2/context/*`** with **`X-API-Key`** (same auth as [`app/api/router.py`](app/api/router.py)). Set **`POTPIE_API_URL`** / **`POTPIE_BASE_URL`** and **`POTPIE_API_KEY`**, or run **`potpie login`**. The machine running the CLI does **not** need local Neo4j/Graphiti. Async work runs on the **server** (Celery/Hatchet per host config).
 - **`doctor`** checks stored credentials, probes **`GET /health`**, and runs an authenticated **`GET /api/v2/context/pots`** probe when URL and key resolve (API readiness, not graph depth).
 - **Potpie server** still mounts **`/api/v1/context`** (Firebase) and **`/api/v2/context`** (API key); CLI/MCP use **v2** only.
 - Agents should use the minimal context port when MCP is available:
@@ -76,4 +76,4 @@ Operations:
 - Potpie-only wiring for the embedded API is under [`app/modules/context_graph`](app/modules/context_graph); see [`app/modules/context_graph/README.md`](app/modules/context_graph/README.md) for what belongs there vs in the package.
 - Common verification:
   - `uv run pytest app/src/context-engine/tests/unit/`
-  - `uv run context-engine doctor`
+  - `uv run potpie doctor`

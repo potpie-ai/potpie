@@ -17,7 +17,7 @@ def build_cli_container(
     cwd: str | None = None,
 ) -> ContextEngineContainer:
     """
-    Container for ``context-engine`` CLI and local MCP ingest: merged pot maps, GitHub when token set.
+    Container for ``potpie`` CLI and local MCP ingest: merged pot maps, GitHub when token set.
 
     Always uses :class:`NoOpJobEnqueue` for the job queue so the CLI never imports Potpie Celery, Redis,
     or worker-only modules. Persisted ingest still writes to Postgres when configured; episode apply
@@ -26,7 +26,7 @@ def build_cli_container(
 
     Raises:
         RuntimeError: if no pot mapping can be built (set CONTEXT_ENGINE_POTS / CONTEXT_ENGINE_REPO_TO_POT
-            or ``context-engine pot use`` with a git checkout for origin fallback).
+            or ``potpie pot use`` with a git checkout for origin fallback).
     """
     mapping = merged_pot_repo_map()
     pots = CliPotResolution(mapping, cwd=cwd)

@@ -12,7 +12,7 @@ from adapters.inbound.cli import credentials_store as cs
 def test_config_dir_respects_xdg(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     cfg = tmp_path / "xdg"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(cfg))
-    assert cs.config_dir() == cfg / "context-engine"
+    assert cs.config_dir() == cfg / "potpie"
 
 
 def test_write_read_roundtrip(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

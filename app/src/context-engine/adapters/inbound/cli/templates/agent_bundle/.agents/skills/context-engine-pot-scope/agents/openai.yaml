@@ -1,4 +1,0 @@
-interface:
-  display_name: "Context-Engine Pot Scope"
-  short_description: "Resolve pot scope for CLI commands"
-  default_prompt: "Use $context-engine-pot-scope to debug or update pot resolution for the context-engine CLI."

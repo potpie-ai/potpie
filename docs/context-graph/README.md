@@ -69,7 +69,7 @@ Phase 6, agent instructions, skills, and operating workflows, is implemented in:
 - [`app/src/context-engine/adapters/inbound/http/api/v1/context/router.py`](../../app/src/context-engine/adapters/inbound/http/api/v1/context/router.py)
 - [`app/src/context-engine/adapters/inbound/mcp/server.py`](../../app/src/context-engine/adapters/inbound/mcp/server.py)
 - [`app/src/context-engine/adapters/inbound/cli/templates/agent_bundle/AGENTS.md`](../../app/src/context-engine/adapters/inbound/cli/templates/agent_bundle/AGENTS.md)
-- [`app/src/context-engine/adapters/inbound/cli/templates/agent_bundle/.agents/skills/context-engine-agent-context/SKILL.md`](../../app/src/context-engine/adapters/inbound/cli/templates/agent_bundle/.agents/skills/context-engine-agent-context/SKILL.md)
+- [`app/src/context-engine/adapters/inbound/cli/templates/agent_bundle/.agents/skills/potpie-agent-context/SKILL.md`](../../app/src/context-engine/adapters/inbound/cli/templates/agent_bundle/.agents/skills/potpie-agent-context/SKILL.md)
 
 The code now exposes a stable agent port manifest and `context_resolve` recipes for feature, debugging, review, operations, docs, and onboarding workflows. `context_status` returns the manifest and recommended recipe for an optional intent, MCP tool descriptions steer agents to the four-tool port, and generated `AGENTS.md` plus repo-local skills explain how to gather bounded context without introducing one-off tools for every context type.
 

@@ -22,7 +22,7 @@ from adapters.inbound.cli.credentials_store import (
     set_active_pot_id,
     write_credentials,
 )
-from adapters.inbound.cli.agent_installer import install_agent_bundle
+from adapters.inbound.cli.agent_installer import AGENT_TYPES, install_agent_bundle
 from adapters.inbound.cli.env_bootstrap import load_cli_env
 from adapters.inbound.cli.git_project import (
     get_git_origin_remote_url,
@@ -63,7 +63,7 @@ except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0"
 
 app = typer.Typer(
-    name="context-engine",
+    name="potpie",
     help="Context graph CLI (configure via env; use HTTP API for full sync).",
     invoke_without_command=True,
     no_args_is_help=False,
@@ -81,7 +81,7 @@ def _flags() -> tuple[bool, bool]:
 
 
 def _resolved_source_label(explicit: Optional[str]) -> Optional[str]:
-    """Subcommand --source wins over global `context-engine --source …`."""
+    """Subcommand --source wins over global `potpie --source …`."""
     if explicit and explicit.strip():
         return explicit.strip()
     g = _cli_state.get("source")
@@ -167,7 +167,7 @@ def _cli(
         "--source",
         "-s",
         help="Default source label for ingest and optional search filter (e.g. cli, mcp). "
-        "May appear before the subcommand, e.g. `context-engine --source cli search …`.",
+        "May appear before the subcommand, e.g. `potpie --source cli search …`.",
     ),
 ) -> None:
     if not _version:
@@ -317,6 +317,14 @@ def doctor_cmd() -> None:
 
 @app.command("init-agent")
 def init_agent_cmd(
+    agent: Optional[str] = typer.Argument(
+        None,
+        help=(
+            "Agent type: 'claude' installs CLAUDE.md section + .claude/commands; "
+            "'codex' or omitted installs AGENTS.md + .agents/skills bundle. "
+            f"Choices: {', '.join(AGENT_TYPES)}"
+        ),
+    ),
     path: str = typer.Argument(
         ".",
         help="Repository path or a subdirectory inside it (default: current directory)",
@@ -324,15 +332,38 @@ def init_agent_cmd(
     force: bool = typer.Option(
         False,
         "--force",
-        help="Overwrite existing AGENTS.md and .agents skill files when contents differ.",
+        help="Overwrite existing files when contents differ (CLAUDE.md: replace Potpie context section).",
     ),
 ) -> None:
-    """Install AGENTS.md and repo-local context-engine skills into a repository."""
+    """Install agent instructions and Potpie context skills into a repository.
+
+    Default / codex: installs AGENTS.md and .agents/skills bundle.
+    Claude: merges a Potpie context section into CLAUDE.md and installs .claude/commands.
+
+    Examples:
+      potpie init-agent              # codex / default bundle
+      potpie init-agent claude       # CLAUDE.md + slash commands
+      potpie init-agent codex .      # explicit codex bundle
+      potpie init-agent claude /path/to/repo
+    """
     j, v = _flags()
+
+    # If agent looks like a path (contains / or . and is not a known type), treat it as path
+    resolved_agent = "default"
+    resolved_path = path
+    if agent is not None:
+        normalized = agent.strip().lower()
+        if normalized in AGENT_TYPES:
+            resolved_agent = normalized
+        else:
+            # Treat it as a path — user omitted the agent type
+            resolved_path = agent
+            resolved_agent = "default"
+
     try:
-        result = install_agent_bundle(path, force=force)
+        result = install_agent_bundle(resolved_path, agent=resolved_agent, force=force)
     except ValueError as exc:
-        emit_error("Invalid install path", str(exc), verbose=v)
+        emit_error("Invalid install path or agent type", str(exc), verbose=v)
         raise typer.Exit(code=1) from exc
 
     payload = result.to_dict()
@@ -436,7 +467,7 @@ def pot_pots_cmd() -> None:
         return
     if not rows:
         print_plain_line(
-            'No context pots yet. Run `context-engine pot create "my-scope"` to create one on the server.',
+            'No context pots yet. Run `potpie pot create "my-scope"` to create one on the server.',
             as_json=False,
         )
         return
@@ -446,7 +477,7 @@ def pot_pots_cmd() -> None:
         repo = p.get("primary_repo_name", "")
         print_plain_line(f"{pid}\t{dn}\t{repo}", as_json=False)
     print_plain_line(
-        "[dim]Use: context-engine pot use <id>  or  pot alias <name> <id>[/dim]",
+        "[dim]Use: potpie pot use <id>  or  pot alias <name> <id>[/dim]",
         as_json=False,
     )
 
@@ -467,7 +498,7 @@ def pot_alias_cmd(
     except ValueError:
         emit_error(
             "Invalid pot id",
-            f"{pot_uuid!r} is not a UUID. Run `context-engine pot pots` to list pots.",
+            f"{pot_uuid!r} is not a UUID. Run `potpie pot pots` to list pots.",
             verbose=v,
         )
         raise typer.Exit(code=1)
@@ -520,14 +551,14 @@ def pot_create_cmd(
         "display_name": row.get("display_name"),
         "primary_repo_name": row.get("primary_repo_name"),
         "alias": name,
-        "message": f"Run `context-engine pot use {name!r}` or `pot use {pid}`.",
+        "message": f"Run `potpie pot use {name!r}` or `pot use {pid}`.",
     }
     if j:
         print_json_blob(data, as_json=True)
     else:
         print_plain_line(
             f"Created context pot {pid} (alias {name!r}). "
-            f"Try: context-engine pot use {name!r}",
+            f"Try: potpie pot use {name!r}",
             as_json=False,
         )
 
@@ -699,7 +730,7 @@ def add_repo_cmd(
         "provider_host": parsed.provider_host,
         "repo_name": parsed.owner_repo,
         "active_pot_id": active or None,
-        "hint": "Map this repo to a pot with CONTEXT_ENGINE_REPO_TO_POT or `context-engine pot use`.",
+        "hint": "Map this repo to a pot with CONTEXT_ENGINE_REPO_TO_POT or `potpie pot use`.",
     }
     print_json_blob(data, as_json=j)
 
@@ -913,7 +944,7 @@ def ingest_cmd(
 ) -> None:
     """Add a raw episode via Potpie POST /api/v2/context/ingest (X-API-Key).
 
-    Quick form: context-engine ingest "Your text" (pot from pot use, env maps, or git --cwd).
+    Quick form: potpie ingest "Your text" (pot from pot use, env maps, or git --cwd).
 
     With no positional pot id, scope is: global pot use, then env repo maps, then git origin under --cwd.
 

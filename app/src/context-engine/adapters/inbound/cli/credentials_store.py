@@ -1,4 +1,4 @@
-"""Persist Potpie API token for context-engine CLI (user config dir)."""
+"""Persist Potpie API token for the Potpie CLI (user config dir)."""
 
 from __future__ import annotations
 
@@ -10,22 +10,45 @@ from pathlib import Path
 from typing import Any, Optional
 
 _CREDENTIALS_FILENAME = "credentials.json"
+_CONFIG_DIR_NAME = "potpie"
+_LEGACY_CONFIG_DIR_NAME = "context-engine"
 
 
 def config_dir() -> Path:
     base = os.getenv("XDG_CONFIG_HOME")
     if base:
-        return Path(base) / "context-engine"
-    return Path.home() / ".config" / "context-engine"
+        return Path(base) / _CONFIG_DIR_NAME
+    return Path.home() / ".config" / _CONFIG_DIR_NAME
+
+
+def legacy_config_dir() -> Path:
+    base = os.getenv("XDG_CONFIG_HOME")
+    if base:
+        return Path(base) / _LEGACY_CONFIG_DIR_NAME
+    return Path.home() / ".config" / _LEGACY_CONFIG_DIR_NAME
 
 
 def credentials_path() -> Path:
     return config_dir() / _CREDENTIALS_FILENAME
 
 
+def legacy_credentials_path() -> Path:
+    return legacy_config_dir() / _CREDENTIALS_FILENAME
+
+
+def readable_credentials_path() -> Path:
+    path = credentials_path()
+    if path.is_file():
+        return path
+    legacy = legacy_credentials_path()
+    if legacy.is_file():
+        return legacy
+    return path
+
+
 def read_credentials() -> dict[str, Any]:
     """Return parsed JSON or empty dict if missing/invalid."""
-    path = credentials_path()
+    path = readable_credentials_path()
     if not path.is_file():
         return {}
     try:
@@ -172,7 +195,7 @@ def register_pot_alias(name: str, pot_id: str) -> None:
 def resolve_cli_pot_ref(ref: str) -> tuple[str | None, str]:
     """Resolve a pot argument to a canonical UUID string.
 
-    Accepts a UUID or a name registered via ``context-engine pot alias``.
+    Accepts a UUID or a name registered via ``potpie pot alias``.
 
     Returns ``(pot_id, "")`` on success, or ``(None, error_message)``.
     """
@@ -194,6 +217,6 @@ def resolve_cli_pot_ref(ref: str) -> tuple[str | None, str]:
         except ValueError:
             return None, f"Stored pot id for alias {s!r} is not a valid UUID."
     return None, (
-        f"Unknown pot {s!r}. Run `context-engine pot create \"<name>\"` (server pot + alias), "
-        f"or `context-engine pot pots` for ids, then `pot use` / `pot alias`."
+        f"Unknown pot {s!r}. Run `potpie pot create \"<name>\"` (server pot + alias), "
+        f"or `potpie pot pots` for ids, then `pot use` / `pot alias`."
     )

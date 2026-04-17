@@ -2,7 +2,7 @@
 
 ## Goal
 
-Move `context-engine` from a single-repo, `project_id`-scoped model to a `pot`-scoped model:
+Move `potpie` from a single-repo, `project_id`-scoped model to a `pot`-scoped model:
 
 - A `pot` is the top-level context boundary.
 - A pot can contain multiple repositories.
@@ -369,7 +369,7 @@ Examples:
 
 ### Add explicit pot management endpoints later
 
-Not required for the first pass inside `context-engine`, but the full architecture will need:
+Not required for the first pass inside `potpie`, but the full architecture will need:
 
 - create pot
 - list pots visible to user
@@ -400,18 +400,18 @@ Files impacted:
 Your proposed direction is correct:
 
 ```bash
-context-engine add .
+potpie add .
 ```
 
 Recommended initial commands:
 
-- `context-engine pot create <name>`
-- `context-engine pot list`
-- `context-engine add <path>`
-- `context-engine search <pot-or-infer> "query"`
-- `context-engine ingest ... --pot <pot_id>`
+- `potpie pot create <name>`
+- `potpie pot list`
+- `potpie add <path>`
+- `potpie search <pot-or-infer> "query"`
+- `potpie ingest ... --pot <pot_id>`
 
-### Behavior of `context-engine add .`
+### Behavior of `potpie add .`
 
 For the current repo:
 
@@ -439,8 +439,8 @@ Important product decision:
 Since you want to skip user-sharing for now, the simplest first version is:
 
 - each user has a default active pot in CLI config
-- `context-engine pot use <pot_id>` sets active pot
-- `context-engine add .` adds current repo to active pot
+- `potpie pot use <pot_id>` sets active pot
+- `potpie add .` adds current repo to active pot
 
 That avoids ambiguity and keeps the command ergonomic.
 
@@ -492,7 +492,7 @@ Recommended responsibility split:
 - graph query APIs
 - repo-aware provenance inside the pot
 
-This keeps tenancy and product state in Potpie, and keeps `context-engine` focused on context operations.
+This keeps tenancy and product state in Potpie, and keeps `potpie` focused on context operations.
 
 ## Suggested Incremental Rollout
 
@@ -562,7 +562,7 @@ Implement:
 
 Deliverable:
 
-- current repo can be attached to active pot with `context-engine add .`
+- current repo can be attached to active pot with `potpie add .`
 
 ## Phase 5: Remove project terminology
 
@@ -621,7 +621,7 @@ should become something closer to:
 
 The future multi-user model should be enforced in Potpie APIs and wiring, not duplicated inside graph adapters.
 
-`context-engine` should receive already-authorized `pot_id` access.
+`potpie` should receive already-authorized `pot_id` access.
 
 ## Concrete Refactor Map
 
@@ -653,7 +653,7 @@ You should settle these before implementation:
 1. Is a pot allowed to contain non-GitHub repos later, or do you want GitHub-only assumptions in the first schema?
 2. Can the same repo be attached to multiple pots?
 3. Should a user have exactly one default pot, or many named pots with explicit selection?
-4. Does `context-engine add .` create a pot automatically if no active pot exists, or fail with guidance?
+4. Does `potpie add .` create a pot automatically if no active pot exists, or fail with guidance?
 5. Are structural queries like file ownership intended to search across repos, or should they require a repo filter when file paths collide?
 
 Recommended defaults:
@@ -673,7 +673,7 @@ If you want the safest path, start here:
 3. Introduce `pot_id` plus provider-aware repo identity into graph adapters and ledger tables.
 4. Update search and ingest use cases to operate on `pot_id`.
 5. Add source-control adapter routing by provider.
-6. Add CLI active-pot state and `context-engine add .`.
+6. Add CLI active-pot state and `potpie add .`.
 
 That slice gets you the core architecture change without taking on user-sharing yet.
 

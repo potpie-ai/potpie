@@ -326,7 +326,7 @@ def _run_api_smoke(args: argparse.Namespace) -> int:
     pot_id = args.pot_id or get_active_pot_id() or data.get("pot_id")
     if not pot_id:
         raise SystemExit(
-            "pot_id missing: pass --pot-id or run `context-engine pot use`"
+            "pot_id missing: pass --pot-id or run `potpie pot use`"
         )
     repo_name = args.repo_name or data.get("repo_name")
     client = PotpieContextApiClient(

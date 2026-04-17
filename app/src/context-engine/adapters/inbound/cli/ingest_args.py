@@ -1,4 +1,4 @@
-"""Resolve `context-engine ingest` positional args vs options (pot UUID vs episode text)."""
+"""Resolve `potpie ingest` positional args vs options (pot UUID vs episode text)."""
 
 from __future__ import annotations
 

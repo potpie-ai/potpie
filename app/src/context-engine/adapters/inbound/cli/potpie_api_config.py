@@ -22,7 +22,7 @@ def resolve_potpie_api_base_url() -> str:
     if not u:
         raise ValueError(
             "Potpie API base URL missing. Set POTPIE_API_URL or POTPIE_BASE_URL, "
-            "use `context-engine login --url …`, or set POTPIE_PORT for http://127.0.0.1:<port>."
+            "use `potpie login --url …`, or set POTPIE_PORT for http://127.0.0.1:<port>."
         )
     return u
 
@@ -31,6 +31,6 @@ def resolve_potpie_api_key() -> str:
     k = (os.getenv("POTPIE_API_KEY") or get_stored_api_key() or "").strip()
     if not k:
         raise ValueError(
-            "Potpie API key missing. Set POTPIE_API_KEY or run `context-engine login <key>`."
+            "Potpie API key missing. Set POTPIE_API_KEY or run `potpie login <key>`."
         )
     return k

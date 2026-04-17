@@ -52,8 +52,8 @@ dev = [
 ]
 
 [project.scripts]
-context-engine = "adapters.inbound.cli.main:main"
-context-engine-mcp = "adapters.inbound.mcp.server:main"
+potpie = "adapters.inbound.cli.main:main"
+potpie-mcp = "adapters.inbound.mcp.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["domain", "application", "adapters", "bootstrap"]

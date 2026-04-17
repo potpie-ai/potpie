@@ -26,7 +26,7 @@ Live API smoke test against the configured Potpie `/api/v2/context` server. This
 
 ```bash
 cd app/src/context-engine
-uv run context-engine --json doctor
+uv run potpie --json doctor
 cd ../../..
 uv run python app/src/context-engine/scripts/context_engine_lab.py api-smoke --print-json
 ```
@@ -83,7 +83,7 @@ The harness exercises:
 | Area | Finding | Fix |
 | --- | --- | --- |
 | Mock operations coverage | `mock-e2e` initially returned partial coverage for the operations recipe because the mock provider did not return `runbooks`, `scripts`, `config`, or `local_workflows` project-map records. | Added representative mock `Runbook`, `Script`, `ConfigVariable`, and `LocalWorkflow` records so operations flow is testable without external services. |
-| CLI readiness signal | `context-engine doctor` previously reported `GET /health` success even when the stored API key was invalid, so authenticated `search`, `ingest`, and MCP calls still failed. | Added authenticated `GET /api/v2/context/pots` probe to `doctor` and surfaced `potpie_auth_ok` / `potpie_auth_message` in JSON and human output. |
+| CLI readiness signal | `potpie doctor` previously reported `GET /health` success even when the stored API key was invalid, so authenticated `search`, `ingest`, and MCP calls still failed. | Added authenticated `GET /api/v2/context/pots` probe to `doctor` and surfaced `potpie_auth_ok` / `potpie_auth_message` in JSON and human output. |
 | No-key API tests | Local tests for the context API were blocked by live Potpie API-key credentials even though they only needed to exercise our own router behavior. | Added `context_engine_lab.py http-e2e`, which mounts the context router with injected lab auth and in-memory graph adapters. This keeps production `/api/v2/context` auth intact while making local API tests deterministic. |
 
 ### Open Bugs / Gaps
@@ -92,7 +92,7 @@ The table below should be updated after each harness run.
 
 | Status | Area | Finding | Impact | Next step |
 | --- | --- | --- | --- | --- |
-| Open | Local credentials | Live `api-smoke` reached `GET /health` on `http://127.0.0.1:8001`, but all authenticated `/api/v2/context` calls returned `401 Invalid API key`. `context-engine --json doctor` now reports `potpie_auth_ok: false`. | Live ingest/query/resolve/record flows cannot be validated until credentials are refreshed. | Run `context-engine login <valid-api-key> --url http://127.0.0.1:8001`, then rerun `api-smoke --write --record`. |
+| Open | Local credentials | Live `api-smoke` reached `GET /health` on `http://127.0.0.1:8001`, but all authenticated `/api/v2/context` calls returned `401 Invalid API key`. `potpie --json doctor` now reports `potpie_auth_ok: false`. | Live ingest/query/resolve/record flows cannot be validated until credentials are refreshed. | Run `potpie login <valid-api-key> --url http://127.0.0.1:8001`, then rerun `api-smoke --write --record`. |
 | Open | Live write coverage | Because authenticated API calls failed, live ingest and `context_record` were not executed. | End-to-end server-side ingestion/reconciliation remains unverified in this environment. | Rerun `api-smoke --write --record` after fixing the API key. |
 
 ## Latest Run
@@ -105,7 +105,7 @@ Commands:
 uv run python app/src/context-engine/scripts/context_engine_lab.py mock-e2e
 uv run python app/src/context-engine/scripts/context_engine_lab.py http-e2e --print-json
 uv run python app/src/context-engine/scripts/context_engine_lab.py api-smoke --print-json
-uv run context-engine --json doctor
+uv run potpie --json doctor
 ```
 
 Results:

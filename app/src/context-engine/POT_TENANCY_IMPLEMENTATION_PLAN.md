@@ -106,14 +106,14 @@ Potpie should own all tenancy and auth concerns:
 
 ### context-engine owns
 
-`context-engine` should own execution inside an already-authorized pot:
+`potpie` should own execution inside an already-authorized pot:
 
 - ingest into a `pot_id`
 - query from a `pot_id`
 - preserve repo-aware provenance within a pot
 - optionally enforce capability checks passed in from Potpie for mutation routes
 
-`context-engine` should not become the system of record for user membership or token auth.
+`potpie` should not become the system of record for user membership or token auth.
 
 ## Current Gaps
 
@@ -165,9 +165,9 @@ That is not sufficient if the same repo can exist in multiple pots.
 
 ### Gap 5: standalone auth is not user-token auth
 
-The CLI client already sends `X-API-Key` to Potpie, but standalone `context-engine` HTTP still uses a single shared env secret.
+The CLI client already sends `X-API-Key` to Potpie, but standalone `potpie` HTTP still uses a single shared env secret.
 
-For your target model, user-scoped API-token auth should happen in Potpie and Potpie should call into `context-engine` with already-authorized pot access.
+For your target model, user-scoped API-token auth should happen in Potpie and Potpie should call into `potpie` with already-authorized pot access.
 
 ## Recommended Architecture
 
@@ -195,9 +195,9 @@ Potpie should authenticate the API token, load the user's pot memberships, and d
 - attach repos/integrations
 - manage members
 
-`context-engine` should receive only authorized requests.
+`potpie` should receive only authorized requests.
 
-For defense in depth, `context-engine` may optionally accept a small capability object from Potpie, such as:
+For defense in depth, `potpie` may optionally accept a small capability object from Potpie, such as:
 
 ```python
 @dataclass(slots=True)
@@ -209,7 +209,7 @@ class PotAccess:
     role: str
 ```
 
-But `context-engine` should not query membership tables directly.
+But `potpie` should not query membership tables directly.
 
 ## 3. Repo-aware write paths
 
@@ -237,7 +237,7 @@ This is already largely aligned in the query API and storage model.
 
 ## Potpie API
 
-These endpoints belong in Potpie, not in `context-engine`.
+These endpoints belong in Potpie, not in `potpie`.
 
 ### Pot lifecycle
 
@@ -267,7 +267,7 @@ These endpoints belong in Potpie, not in `context-engine`.
 
 ### Context execution
 
-These continue to call `context-engine`, but only with already-authorized `pot_id` access:
+These continue to call `potpie`, but only with already-authorized `pot_id` access:
 
 - `POST /api/v2/context/query/search`
 - `POST /api/v2/context/query/change-history`
@@ -318,11 +318,11 @@ Deliverables:
 
 - migration spec in Potpie
 - API contract doc for pot membership and repo/integration attachment
-- deprecation list for `project_id` in `context-engine`
+- deprecation list for `project_id` in `potpie`
 
 ## Phase 2: remove project terminology from context-engine public surfaces
 
-Goal: make `context-engine` externally pot-only.
+Goal: make `potpie` externally pot-only.
 
 Changes:
 
@@ -381,10 +381,10 @@ Changes in Potpie:
 
 1. Authenticate user via API token.
 2. Resolve user's memberships for requested `pot_id`.
-3. Enforce role-based authorization before calling `context-engine`.
+3. Enforce role-based authorization before calling `potpie`.
 4. Restrict pot listing to visible pots for that user.
 
-Optional changes in `context-engine`:
+Optional changes in `potpie`:
 
 1. Add capability-aware mutation guards for embedded use.
 2. Reject mutation attempts when Potpie passes `can_ingest=False` or `can_reset=False`.
@@ -401,12 +401,12 @@ Goal: match the new many-repos-per-pot model.
 
 Changes:
 
-1. Keep `context-engine pot use <pot_id>` as the primary UX.
+1. Keep `potpie pot use <pot_id>` as the primary UX.
 2. Downgrade repo-to-pot env mapping to compatibility mode.
 3. Stop presenting Potpie parsing projects as the normal pot selection path.
 4. Add repo attachment commands through Potpie APIs, for example:
-   - `context-engine pot repo add .`
-   - `context-engine pot repo list`
+   - `potpie pot repo add .`
+   - `potpie pot repo list`
 5. For ambiguous repo membership, require explicit `--pot`.
 
 CLI rules:
@@ -428,7 +428,7 @@ Goal: make non-Potpie entrypoints consistent with tenancy.
 Changes:
 
 1. MCP should eventually use Potpie-authorized pot access instead of raw env allowlists where possible.
-2. Standalone `context-engine` should be treated as a dev/integration mode, not the primary tenancy model.
+2. Standalone `potpie` should be treated as a dev/integration mode, not the primary tenancy model.
 3. If standalone mode remains, document clearly that its auth is not the Potpie user-membership model.
 
 Deliverables:
@@ -539,8 +539,8 @@ Add tests for:
 
 1. Potpie schema and role model
 2. Potpie APIs for pot membership and repo attachment
-3. `context-engine` removal of public `project_id`
-4. `context-engine` repo-aware write path refactor
+3. `potpie` removal of public `project_id`
+4. `potpie` repo-aware write path refactor
 5. Potpie auth enforcement using user API token
 6. CLI cleanup and repo management commands
 7. MCP and standalone cleanup
@@ -552,14 +552,14 @@ These should not be bundled into the first rollout:
 - full cross-provider integration abstraction for every source system
 - interactive CLI pot selection UI
 - automatic pot creation from repo discovery
-- moving all tenancy state into `context-engine`
+- moving all tenancy state into `potpie`
 
 ## Final Direction
 
 The correct long-term model is:
 
 - Potpie owns tenants, memberships, roles, and API-token auth
-- `context-engine` executes within an authorized `pot_id`
+- `potpie` executes within an authorized `pot_id`
 - a pot is independent of parsing projects
 - repositories and integrations are attached resources inside a pot
 - users interact with context graph via their own API token and their authorized pots

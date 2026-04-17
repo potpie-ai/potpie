@@ -18,7 +18,7 @@ from adapters.outbound.http.potpie_context_api_client import (
 )
 
 logger = logging.getLogger(__name__)
-mcp = FastMCP("context-engine")
+mcp = FastMCP("potpie")
 
 
 def _client() -> PotpieContextApiClient:

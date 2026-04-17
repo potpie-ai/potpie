@@ -95,7 +95,7 @@ The goal is to make context gathering fast, bounded, and hard to misuse.
 
 Use `graph.md` for the skill recipes, context-wrap behavior, freshness checks, fallbacks, and source-verification rules.
 
-The current implementation adds `context_port_manifest()` and `context_recipe_for_intent()` in `domain/agent_context_port.py`; `context_status` returns the manifest and recommended recipe for an optional intent. The generated bundle now includes `context-engine-agent-context`, with recipes for feature, debugging, review, operations, docs, and onboarding. Remaining follow-up work should keep new use cases as recipes/includes/providers behind the same four-tool port.
+The current implementation adds `context_port_manifest()` and `context_recipe_for_intent()` in `domain/agent_context_port.py`; `context_status` returns the manifest and recommended recipe for an optional intent. The generated bundle now includes `potpie-agent-context`, with recipes for feature, debugging, review, operations, docs, and onboarding. Remaining follow-up work should keep new use cases as recipes/includes/providers behind the same four-tool port.
 
 ## Phase 7: Quality, Drift Management, and Scale
 

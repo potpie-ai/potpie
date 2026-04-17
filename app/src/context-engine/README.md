@@ -88,10 +88,10 @@ cd app/src/context-engine
 uv sync --all-extras
 
 # CLI
-uv run context-engine doctor
+uv run potpie doctor
 
 # MCP (stdio) — for external agents, not the Potpie HTTP server
-uv run context-engine-mcp
+uv run potpie-mcp
 ```
 
 ### MCP (pot scope)
@@ -176,6 +176,6 @@ The mock mode runs context resolution directly with deterministic data and no ex
 - PyPI name: **context-engine**
 - Import roots: **`domain`**, **`application`**, **`adapters`**, **`bootstrap`**
 
-Potpie depends on `context-engine[all]` (path / editable via `[tool.uv.sources]` in the monorepo).
+Potpie depends on `potpie[all]` (path / editable via `[tool.uv.sources]` in the monorepo).
 
 Optional extras: `postgres`, `graph`, `github`, `all`, `dev`.
