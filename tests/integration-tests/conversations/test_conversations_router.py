@@ -13,33 +13,27 @@ from app.modules.projects.projects_model import Project
 
 
 
-# Patch the router's MediaController instance used by post_message image uploads.
-@patch("app.modules.conversations.conversations_router.MediaController")
 async def test_post_message_successful_flow(
-    mock_media_controller_class, client, db_session, mock_redis_stream_manager
+    client, db_session, mock_redis_stream_manager
 ):
     """
     Tests the complete, successful flow of a user posting a new message
     with an image.
     """
-    # Get the mock instance created when the router code calls MediaController(...).
-    mock_instance = mock_media_controller_class.return_value
-
     # Patch other external dependencies
     with patch(
         "app.celery.tasks.agent_tasks.execute_agent_background.delay"
-    ) as mock_celery_task:
+    ) as mock_celery_task, patch(
+        "app.modules.media.media_controller.MediaController.upload_file_any",
+        new_callable=AsyncMock,
+    ) as mock_upload_file_any:
         mock_celery_task.return_value.id = "test-task-id-execute"
-
-        # Configure the method actually used in post_message.
-        mock_instance.upload_file_any = AsyncMock(
-            return_value=AttachmentUploadResponse(
-                id="fake_attachment_id",
-                attachment_type=AttachmentType.IMAGE,
-                file_name="test_image.png",
-                mime_type="image/png",
-                file_size=1000,
-            )
+        mock_upload_file_any.return_value = AttachmentUploadResponse(
+            id="fake_attachment_id",
+            attachment_type=AttachmentType.IMAGE,
+            file_name="test_image.png",
+            mime_type="image/png",
+            file_size=1000,
         )
 
         # Prepare request data
@@ -58,7 +52,7 @@ async def test_post_message_successful_flow(
         assert "text/event-stream" in response.headers["content-type"]
 
         # Assert calls on the mock INSTANCE
-        mock_instance.upload_file_any.assert_called_once()
+        mock_upload_file_any.assert_called_once()
         mock_celery_task.assert_called_once()
 
 
