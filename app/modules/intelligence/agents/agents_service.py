@@ -30,6 +30,7 @@ from .chat_agent import AgentWithInfo, ChatContext
 from .chat_agents.system_agents import (
     blast_radius_agent,
     code_gen_agent,
+    dead_code_agent,
     debug_agent,
     integration_test_agent,
     low_level_design_agent,
@@ -168,6 +169,14 @@ class AgentsService:
                 name="Specification Generation Agent",
                 description="An agent specialized in generating comprehensive technical specifications from user requests through a systematic 7-step process.",
                 agent=specgen.SpecGenAgent(
+                    llm_provider, tools_provider, prompt_provider
+                ),
+            ),
+            "dead_code_agent": AgentWithInfo(
+                id="dead_code_agent",
+                name="Dead Code Detection Agent",
+                description="Identifies unreachable and unused functions, classes, and interfaces by querying the knowledge graph for nodes with zero incoming edges. Returns a grouped report with file paths, line ranges, and confidence levels.",
+                agent=dead_code_agent.DeadCodeAgent(
                     llm_provider, tools_provider, prompt_provider
                 ),
             ),

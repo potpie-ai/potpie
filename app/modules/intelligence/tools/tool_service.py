@@ -21,6 +21,9 @@ from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_id
 from app.modules.intelligence.tools.code_query_tools.get_node_neighbours_from_node_id_tool import (
     get_node_neighbours_from_node_id_tool,
 )
+from app.modules.intelligence.tools.code_query_tools.find_unreferenced_nodes_tool import (
+    find_unreferenced_nodes_tool,
+)
 from app.modules.intelligence.tools.code_query_tools.intelligent_code_graph_tool import (
     get_intelligent_code_graph_tool,
 )
@@ -209,6 +212,7 @@ class ToolService:
             "get_node_neighbours_from_node_id": get_node_neighbours_from_node_id_tool(
                 self.db
             ),
+            "find_unreferenced_nodes": find_unreferenced_nodes_tool(self.db),
             "get_linear_issue": get_linear_issue_tool(self.db, self.user_id),
             "update_linear_issue": update_linear_issue_tool(self.db, self.user_id),
             "get_jira_issue": get_jira_issue_tool(self.db, self.user_id),
