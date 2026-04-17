@@ -13,17 +13,17 @@ from app.modules.projects.projects_model import Project
 
 
 
-# THIS IS THE FIX: We are patching the name 'MediaService' exactly where it is used.
-@patch("app.modules.conversations.conversations_router.MediaService")
+# Patch the router's MediaController instance used by post_message image uploads.
+@patch("app.modules.conversations.conversations_router.MediaController")
 async def test_post_message_successful_flow(
-    mock_media_service_class, client, db_session, mock_redis_stream_manager
+    mock_media_controller_class, client, db_session, mock_redis_stream_manager
 ):
     """
     Tests the complete, successful flow of a user posting a new message
     with an image.
     """
-    # Get the mock INSTANCE that is created when the router code calls MediaService(db).
-    mock_instance = mock_media_service_class.return_value
+    # Get the mock instance created when the router code calls MediaController(...).
+    mock_instance = mock_media_controller_class.return_value
 
     # Patch other external dependencies
     with patch(
@@ -31,8 +31,8 @@ async def test_post_message_successful_flow(
     ) as mock_celery_task:
         mock_celery_task.return_value.id = "test-task-id-execute"
 
-        # Configure the mock INSTANCE's methods. The __init__ is now completely skipped.
-        mock_instance.upload_image = AsyncMock(
+        # Configure the method actually used in post_message.
+        mock_instance.upload_file_any = AsyncMock(
             return_value=AttachmentUploadResponse(
                 id="fake_attachment_id",
                 attachment_type=AttachmentType.IMAGE,
@@ -47,19 +47,18 @@ async def test_post_message_successful_flow(
         files = {"images": ("test_image.png", b"fake image data", "image/png")}
         data = {"content": "This is a test message."}
 
-        # Make the HTTP request (streaming endpoint: don't consume full body)
-        async with client.stream(
-            "POST",
+        # Make request without entering stream context to avoid middleware teardown
+        # issues in some environments while still validating stream response headers.
+        response = await client.post(
             f"/api/v1/conversations/{conversation_id}/message/",
             files=files,
             data=data,
-        ) as response:
-            # Assert outcomes
-            assert response.status_code == 200
-            assert "text/event-stream" in response.headers["content-type"]
+        )
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers["content-type"]
 
         # Assert calls on the mock INSTANCE
-        mock_instance.upload_image.assert_called_once()
+        mock_instance.upload_file_any.assert_called_once()
         mock_celery_task.assert_called_once()
 
 
