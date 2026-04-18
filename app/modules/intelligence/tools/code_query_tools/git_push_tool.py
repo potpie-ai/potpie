@@ -302,8 +302,17 @@ class GitPushTool:
                     if auth_url and plain_url and self.repo_manager:
                         try:
                             repo.git.remote("set-url", remote, plain_url)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.critical(
+                                "CRITICAL: Failed to restore git remote URL to plain format. "
+                                "OAuth token may remain embedded in .git/config for remote '%s'. "
+                                "Manual fix required: git remote set-url %s <original-url> "
+                                "Error: %s",
+                                remote,
+                                remote,
+                                str(e),
+                            )
+                            raise
 
             # Execute push with safe git operation wrapper
             result = safe_git_repo_operation(
