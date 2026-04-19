@@ -307,10 +307,10 @@ class GitPushTool:
                                 "CRITICAL: Failed to restore git remote URL to plain format. "
                                 "OAuth token may remain embedded in .git/config for remote '%s'. "
                                 "Manual fix required: git remote set-url %s <original-url> "
-                                "Error: %s",
+                                "Error type: %s",
                                 remote,
                                 remote,
-                                str(e),
+                                type(e).__name__,
                             )
                             raise
 

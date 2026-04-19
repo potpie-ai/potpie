@@ -1072,6 +1072,9 @@ class GithubService:
                     status_code=e.status if hasattr(e, "status") else 500,
                     detail=f"GitHub API error: {error_str}",
                 ) from e
+        except HTTPException:
+            # Re-raise HTTPExceptions (e.g., "GitHub account not linked" 400 error)
+            raise
         except Exception as e:
             # Check if this is a 414 error that might have been wrapped
             error_str = str(e)
