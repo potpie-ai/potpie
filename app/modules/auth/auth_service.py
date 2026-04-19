@@ -161,13 +161,23 @@ class AuthService:
                     user_id,
                 )
                 request.state.user = decoded_token
-            except Exception as err:
-                logging.error("Firebase token verification failed")
+            except (ValueError, FirebaseError) as err:
+                # Handle specific token validation errors
+                # Firebase tokens can raise: InvalidIdTokenError, ExpiredIdTokenError, RevokedIdTokenError
+                # All are subclasses of FirebaseError or ValueError
+                logging.warning(
+                    "Firebase token verification failed: %s",
+                    type(err).__name__,
+                )
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid authentication from Firebase.",
                     headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
                 )
+            except Exception as err:
+                # Re-raise unexpected exceptions - don't hide bugs
+                logging.exception("Unexpected error in Firebase token verification")
+                raise
             if res is not None:
                 res.headers["WWW-Authenticate"] = 'Bearer realm="auth_required"'
             return decoded_token
