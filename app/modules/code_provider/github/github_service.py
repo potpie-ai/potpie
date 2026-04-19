@@ -873,9 +873,7 @@ class GithubService:
                                 )
                                 # Fix invalid query string if per_page was the first param
                                 # If query string now starts with & (e.g., ?&other=value), remove the &
-                                repos_url_cleaned = re.sub(
-                                    r"\?&", "?", repos_url_cleaned
-                                )
+                                repos_url_cleaned = repos_url_cleaned.replace("?&", "?")
                                 # Ensure we have proper separator
                                 separator = "&" if "?" in repos_url_cleaned else "?"
                                 first_page_url = (
@@ -1360,7 +1358,7 @@ class GithubService:
             )
 
         try:
-            github, repo = await asyncio.to_thread(self.get_repo, repo_name)
+            _, repo = await asyncio.to_thread(self.get_repo, repo_name)
 
             # If path is provided, verify it exists
             if path:
