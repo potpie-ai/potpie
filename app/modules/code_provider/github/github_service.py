@@ -567,31 +567,12 @@ class GithubService:
                     detail="GitHub username not found. Please ensure your GitHub account is properly linked.",
                 )
 
-            # Fall back to system tokens if user OAuth token not available
+            # Require user OAuth token - no system token fallback (tenant isolation)
             if not github_oauth_token:
-                logger.info(
-                    f"No user OAuth token for {firebase_uid}, falling back to system tokens"
+                raise HTTPException(
+                    status_code=400,
+                    detail="GitHub account not linked. Please link your GitHub account to access repositories.",
                 )
-                # Try GH_TOKEN_LIST first
-                token_list_str = os.getenv("GH_TOKEN_LIST", "")
-                if token_list_str:
-                    tokens = [t.strip() for t in token_list_str.split(",") if t.strip()]
-                    if tokens:
-                        github_oauth_token = secrets.choice(tokens)
-                        logger.info("Using token from GH_TOKEN_LIST as fallback")
-
-                # Fall back to CODE_PROVIDER_TOKEN if GH_TOKEN_LIST not available
-                if not github_oauth_token:
-                    github_oauth_token = os.getenv("CODE_PROVIDER_TOKEN")
-                    if github_oauth_token:
-                        logger.info("Using CODE_PROVIDER_TOKEN as fallback")
-
-                # If still no token, raise error
-                if not github_oauth_token:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="No GitHub authentication available (user OAuth token, GH_TOKEN_LIST, or CODE_PROVIDER_TOKEN)",
-                    )
 
             user_github = Github(github_oauth_token)
 
@@ -1091,6 +1072,9 @@ class GithubService:
                     status_code=e.status if hasattr(e, "status") else 500,
                     detail=f"GitHub API error: {error_str}",
                 ) from e
+        except HTTPException:
+            # Re-raise HTTPExceptions (e.g., "GitHub account not linked" 400 error)
+            raise
         except Exception as e:
             # Check if this is a 414 error that might have been wrapped
             error_str = str(e)
