@@ -103,11 +103,44 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
             return self._init_error
         return None
 
-    async def _close_graphiti_for_running_loop(self) -> None:
-        """Close driver before the ephemeral asyncio.run loop shuts down.
+    @staticmethod
+    async def _await_close_async_http_client(http: Any) -> None:
+        """Close OpenAI/Voyage/etc. async HTTP clients while the loop is still running."""
+        if http is None:
+            return
+        close_fn = getattr(http, "close", None)
+        if close_fn is None or not asyncio.iscoroutinefunction(close_fn):
+            return
+        try:
+            is_closed = getattr(http, "is_closed", None)
+            if callable(is_closed) and is_closed():
+                return
+        except Exception:
+            pass
+        try:
+            await close_fn()
+        except Exception as exc:
+            logger.debug("Async HTTP client close: %s", exc)
 
-        If we skip this, Neo4j async transports may try to schedule cleanup on a
-        loop that asyncio.run() has already closed → RuntimeError: Event loop is closed.
+    async def _close_graphiti_aux_http_clients(self, graphiti: Any) -> None:
+        """Close LLM/embedder/reranker HTTP clients (Graphiti.close() only closes Neo4j).
+
+        If these stay open, their httpx teardown can run after ``asyncio.run`` closes the
+        loop → RuntimeError: Event loop is closed.
+        """
+        for attr in ("llm_client", "embedder", "cross_encoder"):
+            wrapper = getattr(graphiti, attr, None)
+            if wrapper is None:
+                continue
+            sub = getattr(wrapper, "client", None)
+            await self._await_close_async_http_client(sub)
+
+    async def _close_graphiti_for_running_loop(self) -> None:
+        """Close driver and HTTP clients before the ephemeral asyncio.run loop shuts down.
+
+        If we skip this, Neo4j async transports or httpx/OpenAI may try to schedule
+        cleanup on a loop that asyncio.run() has already closed → RuntimeError:
+        Event loop is closed.
         """
         try:
             loop = asyncio.get_running_loop()
@@ -118,6 +151,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
         if client is None or client_loop is not loop:
             return
         try:
+            await self._close_graphiti_aux_http_clients(client)
             await client.close()
         except Exception as exc:
             logger.debug("Graphiti close after sync run: %s", exc)

@@ -25,6 +25,7 @@ from integrations.domain.integrations_schema import (
     IntegrationMetadata,
     IntegrationSaveRequest,
 )
+from integrations.domain.exceptions import LinearOrganizationAlreadyIntegratedError
 from integrations.adapters.outbound.postgres.integration_model import Integration
 from starlette.config import Config
 import time
@@ -1493,28 +1494,31 @@ class IntegrationsService:
             return None
 
     async def check_existing_linear_integration(
-        self, org_id: str
+        self, org_id: str, user_id: str
     ) -> Optional[Dict[str, Any]]:
-        """Check if a Linear organization is already integrated"""
+        """Check if a Linear organization is already integrated by this user."""
         try:
-            # Query for existing integration with this org_id as unique_identifier
             existing_integration = (
                 self.db.query(Integration)
                 .filter(
                     Integration.integration_type == IntegrationType.LINEAR.value,
                     Integration.unique_identifier == org_id,
+                    Integration.created_by == user_id,
+                    Integration.active.is_(True),
                 )
                 .first()
             )
 
             if existing_integration:
                 logger.info(
-                    f"Found existing Linear integration for organization {org_id}: {existing_integration.integration_id}"
+                    f"Found existing Linear integration for organization {org_id} "
+                    f"by user {user_id}: {existing_integration.integration_id}"
                 )
                 return self._db_to_dict(existing_integration)
 
             logger.info(
-                f"No existing Linear integration found for organization {org_id}"
+                f"No existing Linear integration found for organization {org_id} "
+                f"by user {user_id}"
             )
             return None
 
@@ -1641,21 +1645,16 @@ class IntegrationsService:
             org_info = user_info.get("organization", {})
             org_url_key = org_info.get("urlKey") if org_info else None
 
-            # Check if this Linear organization is already integrated
+            # Check if this user already has an integration for this Linear org
             org_id = org_info.get("id") if org_info else None
             if org_id:
                 existing_org_integration = await self.check_existing_linear_integration(
-                    org_id
+                    org_id, user_id
                 )
                 if existing_org_integration:
-                    raise Exception(
-                        f"Linear organization is already integrated. "
-                        f"Existing integration ID: {existing_org_integration['integration_id']}. "
-                        f"Please delete the existing integration first if you want to reconnect."
+                    raise LinearOrganizationAlreadyIntegratedError(
+                        existing_org_integration["integration_id"]
                     )
-
-            # Note: We only check for organization-level duplicates, not user-level duplicates
-            # This allows multiple users from the same organization to create integrations
 
             # Generate a unique integration ID
             integration_id = str(uuid.uuid4())
@@ -1770,6 +1769,9 @@ class IntegrationsService:
                 "has_tokens": True,
                 "requires_oauth": False,
             }
+
+        except LinearOrganizationAlreadyIntegratedError:
+            raise
 
         except Exception as e:
             logger.error(f"Error saving Linear integration: {str(e)}")

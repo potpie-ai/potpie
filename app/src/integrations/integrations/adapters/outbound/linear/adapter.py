@@ -35,8 +35,10 @@ query TeamIssues($teamId: ID!, $after: String) {
 }
 """
 
+# Connection fields (`labels`, `comments`) require pagination args on Linear's schema;
+# omitting `first`/`last` can yield HTTP 400 from api.linear.app/graphql.
 _ISSUE_DETAIL = """
-query IssueDetail($id: ID!) {
+query IssueDetail($id: String!) {
   issue(id: $id) {
     id
     identifier
@@ -47,8 +49,10 @@ query IssueDetail($id: ID!) {
     updatedAt
     state { name }
     assignee { id name email }
-    labels { nodes { id name } }
-    comments {
+    labels(first: 50) {
+      nodes { id name }
+    }
+    comments(first: 100) {
       nodes {
         id
         body
