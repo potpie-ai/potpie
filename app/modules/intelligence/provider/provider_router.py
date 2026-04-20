@@ -12,6 +12,8 @@ from .provider_schema import (
     SetProviderRequest,
     GetProviderResponse,
     AvailableModelsResponse,
+    MermaidRepairRequest,
+    MermaidRepairResponse,
 )
 
 router = APIRouter()
@@ -62,3 +64,15 @@ class ProviderAPI:
         user_id = user["user_id"]
         controller = ProviderController(db, user_id)
         return await controller.get_global_ai_provider(user_id)
+
+    @staticmethod
+    @router.post("/repair-mermaid/", response_model=MermaidRepairResponse)
+    async def repair_mermaid(
+        request: MermaidRepairRequest,
+        db: Session = Depends(get_db),
+        user=Depends(AuthService.check_auth),
+    ):
+        """Repair Mermaid diagram source for client rendering."""
+        user_id = user["user_id"]
+        controller = ProviderController(db, user_id)
+        return await controller.repair_mermaid(request)

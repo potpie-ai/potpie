@@ -632,6 +632,53 @@ class ProviderService:
         }
         return list(providers.values())
 
+    async def repair_mermaid_diagram(
+        self,
+        diagram_code: str,
+        error_message: Optional[str] = None,
+        attempt: int = 1,
+    ) -> str:
+        """Repair Mermaid source using the configured chat model.
+
+        Returns Mermaid code only, without code fences or explanation.
+        """
+        system_prompt = """
+You repair Mermaid diagrams so they parse successfully.
+
+Rules:
+- Return ONLY Mermaid code.
+- Do NOT include markdown fences, backticks, or explanations.
+- Preserve the original meaning and structure as much as possible.
+- Output syntactically valid Mermaid that starts with the diagram type line.
+- For flowcharts/graphs:
+  - Convert decorative separators to Mermaid comments using %%.
+  - Replace literal \\n inside labels with <br/>.
+  - Simplify problematic labels if needed.
+  - Keep node ids stable and ASCII-safe.
+- If the source is malformed, produce the closest valid Mermaid equivalent.
+"""
+        user_prompt = (
+            f"Repair this Mermaid diagram so it parses successfully.\n"
+            f"Attempt: {attempt}\n"
+            f"Parser/render error: {error_message or 'unknown'}\n\n"
+            f"Mermaid source:\n{diagram_code}"
+        )
+
+        response = await self.call_llm(
+            [
+                {"role": "system", "content": system_prompt.strip()},
+                {"role": "user", "content": user_prompt},
+            ],
+            config_type="chat",
+        )
+
+        corrected = str(response).strip()
+        if corrected.startswith("```"):
+            corrected = corrected.removeprefix("```mermaid").removeprefix("```")
+            if corrected.endswith("```"):
+                corrected = corrected[:-3]
+        return corrected.strip()
+
     async def list_available_models(self) -> AvailableModelsResponse:
         return AvailableModelsResponse(models=AVAILABLE_MODELS)
 

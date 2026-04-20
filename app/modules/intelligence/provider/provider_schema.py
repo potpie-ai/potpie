@@ -40,3 +40,13 @@ class GetProviderResponse(BaseModel):
 class DualProviderConfig(BaseModel):
     chat_config: GetProviderResponse
     inference_config: GetProviderResponse
+
+
+class MermaidRepairRequest(BaseModel):
+    diagram_code: str
+    error_message: Optional[str] = None
+    attempt: int = 1
+
+
+class MermaidRepairResponse(BaseModel):
+    corrected_code: str

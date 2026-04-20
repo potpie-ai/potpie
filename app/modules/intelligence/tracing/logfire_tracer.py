@@ -259,14 +259,16 @@ def logfire_trace_metadata(**kwargs: Any):
 
     try:
         import logfire
-
-        with logfire.set_baggage(**str_attrs):
-            yield
+        baggage_ctx = logfire.set_baggage(**str_attrs)
     except Exception as e:
         logger.debug(
             "Logfire set_baggage failed (non-fatal)",
             error=str(e),
         )
+        yield
+        return
+
+    with baggage_ctx:
         yield
 
 
@@ -306,22 +308,25 @@ def logfire_llm_call_metadata(
 
     try:
         import logfire
-
-        with logfire.set_baggage(**attrs):
-            span_attrs = {"environment": attrs["environment"]}
-            if attrs.get("user_id"):
-                span_attrs["user_id"] = attrs["user_id"]
-            for k, v in attrs.items():
-                if k not in ("user_id", "environment") and v:
-                    span_attrs[k] = v
-            with logfire.span("llm_call", **span_attrs):
-                yield
+        baggage_ctx = logfire.set_baggage(**attrs)
+        span_attrs = {"environment": attrs["environment"]}
+        if attrs.get("user_id"):
+            span_attrs["user_id"] = attrs["user_id"]
+        for k, v in attrs.items():
+            if k not in ("user_id", "environment") and v:
+                span_attrs[k] = v
+        span_ctx = logfire.span("llm_call", **span_attrs)
     except Exception as e:
         logger.debug(
             "Logfire LLM metadata failed (non-fatal)",
             error=str(e),
         )
         yield
+        return
+
+    with baggage_ctx:
+        with span_ctx:
+            yield
 
 
 def shutdown_logfire_tracing():

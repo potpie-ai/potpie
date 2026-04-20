@@ -8,6 +8,8 @@ from .provider_schema import (
     ProviderInfo,
     SetProviderRequest,
     AvailableModelsResponse,
+    MermaidRepairRequest,
+    MermaidRepairResponse,
 )
 from .provider_service import ProviderService
 
@@ -56,4 +58,19 @@ class ProviderController:
             raise HTTPException(
                 status_code=500,
                 detail=f"Error getting global AI provider: {str(e)}",
+            )
+
+    async def repair_mermaid(self, request: MermaidRepairRequest) -> MermaidRepairResponse:
+        """Repair Mermaid source so it can be rendered by the client."""
+        try:
+            corrected_code = await self.service.repair_mermaid_diagram(
+                request.diagram_code,
+                error_message=request.error_message,
+                attempt=request.attempt,
+            )
+            return MermaidRepairResponse(corrected_code=corrected_code)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error repairing Mermaid diagram: {str(e)}",
             )
