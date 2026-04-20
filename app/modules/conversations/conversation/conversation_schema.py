@@ -16,6 +16,7 @@ class CreateConversationRequest(BaseModel):
     status: ConversationStatus
     project_ids: List[str]
     agent_ids: List[str]
+    attachment_ids: Optional[List[str]] = None
 
 
 class ConversationAccessType(str, Enum):
@@ -64,6 +65,10 @@ ConversationInfoResponse.update_forward_refs()
 
 class RenameConversationRequest(BaseModel):
     title: str
+
+
+class UpdateAgentRequest(BaseModel):
+    agent_id: str
 
 
 # Frontend-aligned schemas for session endpoints

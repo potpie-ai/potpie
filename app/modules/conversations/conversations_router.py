@@ -23,6 +23,7 @@ from app.modules.conversations.conversation.conversation_controller import (
     ConversationController,
 )
 from app.modules.usage.usage_service import UsageService
+from app.modules.media.media_controller import MediaController
 from app.modules.media.media_service import MediaService
 
 from .conversation.conversation_schema import (
@@ -30,6 +31,7 @@ from .conversation.conversation_schema import (
     CreateConversationRequest,
     CreateConversationResponse,
     RenameConversationRequest,
+    UpdateAgentRequest,
     ActiveSessionResponse,
     ActiveSessionErrorResponse,
     TaskStatusResponse,
@@ -192,6 +194,9 @@ class ConversationAPI:
             None, description="Tunnel URL from VS Code extension for local server routing"
         ),
         images: Optional[List[UploadFile]] = File(None),
+        attachment_ids: Optional[List[str]] = Form(
+            None, description="Pre-uploaded attachment IDs (non-multimodal path)"
+        ),
         stream: bool = Query(True, description="Whether to stream the response"),
         session_id: Optional[str] = Query(
             None, description="Session ID for reconnection"
@@ -218,21 +223,16 @@ class ConversationAPI:
         with log_context(conversation_id=conversation_id, user_id=user_id):
             await UsageService.check_usage_limit(user_id, async_db)
 
-            # Process images if present
-            attachment_ids = []
+            # Process images if present and merge with pre-uploaded attachment_ids
+            attachment_ids = list(attachment_ids) if attachment_ids else []
+            logger.info(f"[post_message] Received {len(images) if images else 0} images, {len(attachment_ids) if attachment_ids else 0} pre-uploaded attachment_ids")
             if images:
-                media_service = MediaService(db)
+                media_controller = MediaController(db, user_id, user_email)
                 for _i, image in enumerate(images):
-                    # Check if image has content by checking filename and content_type
-                    if image.filename and image.content_type:
+                    if image.filename:
                         try:
-                            # Read file data first and pass as bytes to avoid UploadFile issues
-                            file_content = await image.read()
-                            upload_result = await media_service.upload_image(
-                                file=file_content,
-                                file_name=image.filename,
-                                mime_type=image.content_type,
-                                message_id=None,  # Will be linked after message creation
+                            upload_result = await media_controller.upload_file_any(
+                                image, message_id=None
                             )
                             attachment_ids.append(upload_result.id)
                         except Exception as e:
@@ -242,7 +242,7 @@ class ConversationAPI:
                                 conversation_id=conversation_id,
                                 user_id=user_id,
                             )
-                            # Clean up any successfully uploaded attachments
+                            media_service = MediaService(db)
                             for uploaded_id in attachment_ids:
                                 try:
                                     await media_service.delete_attachment(uploaded_id)
@@ -483,6 +483,30 @@ class ConversationAPI:
         user_email = user["email"]
         controller = ConversationController(db, async_db, user_id, user_email)
         return await controller.rename_conversation(conversation_id, request.title)
+
+    @staticmethod
+    @router.patch(
+        "/conversations/{conversation_id}/agent",
+        response_model=ConversationInfoResponse,
+    )
+    async def update_agent(
+        conversation_id: str,
+        request: UpdateAgentRequest,
+        db: DbSession,
+        async_db: AsyncDbSession,
+        user: AuthenticatedUser,
+    ):
+        user_id = user["user_id"]
+        user_email = user["email"]
+        controller = ConversationController(db, async_db, user_id, user_email)
+        try:
+            return await controller.update_agent(conversation_id, request.agent_id)
+        except Exception as e:
+            logger.error(
+                f"Error in update_agent for {conversation_id}: {str(e)}",
+                exc_info=True,
+            )
+            raise
 
     @staticmethod
     @router.get("/conversations/{conversation_id}/active-session")

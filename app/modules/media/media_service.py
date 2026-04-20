@@ -596,13 +596,19 @@ class MediaService:
                 )
             )
 
-            # Set has_attachments only if at least one attachment was linked
-            if updated_count > 0:
-                message.has_attachments = True
+            self.db.flush()
+            # Sync flag from actual rows (handles retries and avoids stale False)
+            attachment_count = (
+                self.db.query(MessageAttachment)
+                .filter(MessageAttachment.message_id == message_id)
+                .count()
+            )
+            message.has_attachments = attachment_count > 0
 
             self.db.commit()
             logger.info(
-                f"Updated message {message_id} with {updated_count} attachments"
+                f"Updated message {message_id}: linked {updated_count} new attachment(s), "
+                f"total on message={attachment_count}, has_attachments={message.has_attachments}"
             )
 
         except Exception as e:
