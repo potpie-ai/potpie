@@ -1,0 +1,19 @@
+[package]
+name = "parsing_rs"
+version = "0.1.0"
+edition = "2024"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "parsing_rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3 = "0.28.2"
+walkdir = "2"
+jwalk = "0.8"
+log = "0.4"
+env_logger = "0.11"
+rayon = "1.10"
+bytecount = "0.6"
+memmap2 = "0.9"
