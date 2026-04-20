@@ -5,7 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "aiohttp>=3.13.3",
+    "aiohttp>=3.13.4",
     "alembic>=1.17.1",
     "anthropic>=0.72.0",
     "logfire[litellm]>=3.2.0",
@@ -14,7 +14,7 @@ dependencies = [
     "boto3>=1.40.67",
     "celery>=5.5.3",
     "chardet>=5.2.0",
-    "cryptography>=46.0.5",
+    "cryptography>=46.0.7",
     "email-inspector>=0.1.4",
     "fastapi>=0.121.0",
     "firebase-admin>=7.1.0",
@@ -27,20 +27,22 @@ dependencies = [
     "gunicorn>=23.0.0",
     "httpx>=0.28.1",
     "instructor>=1.13.0",
+    "mistralai<2.0.0",  # >=2.0.0 breaks instructor import compatibility
     "jiter>=0.11.1",
     "joblib>=1.5.2",
     "kombu>=5.5.4",
     "langchain>=1.0.3",
-    "langchain-core>=1.2.11",
-    "litellm>=1.80",
+    "langchain-core>=1.2.28",
+    "langgraph>=1.0.10",
+    "litellm>=1.83.0",
     "loguru>=0.7.3",
     "neo4j>=5.28.2",
     "networkx>=3.4.2",
     "newrelic>=11.2.0",
-    "nltk>=3.9.2",
+    "nltk>=3.9.4",
     "openai>=2.7.1",
     "pathspec>=0.12.1",
-    "pillow>=12.1.1",
+    "pillow>=12.2.0",
     "postgres>=4.0",
     "posthog>=6.9.0",
     "protobuf>=6.33.5",
@@ -49,15 +51,15 @@ dependencies = [
     "pydantic-ai-todo>=0.1.6",
     "pydantic[email]>=2.12.4",
     "pygithub>=2.8.1",
-    "pygments>=2.19.2",
-    "pyjwt>=2.10.1",
+    "pygments>=2.20.0",
+    "pyjwt>=2.12.1",
     "pynacl>=1.6.2",
     "python-dotenv>=1.2.1",
-    "pyasn1>=0.6.2",
+    "pyasn1>=0.6.3",
     "python-multipart>=0.0.22",
     "redis>=7.0.1",
     "python-socketio>=5.11.0",
-    "requests>=2.32.5",
+    "requests>=2.33.1",
     "resend>=2.19.0",
     "scikit-learn>=1.7.2",
     "sentence-transformers>=5.1.2",
@@ -68,11 +70,22 @@ dependencies = [
     "transformers>=4.57.1",
     "tree-sitter>=0.20.4",
     "tree-sitter-language-pack>=0.13.0",
+    "fastmcp>=3.2.0",
+    "lupa>=2.7",
+    "tornado>=6.5.5",
     "urllib3>=2.6.3",
     "uuid6>=2025.0.1",
     "uvicorn>=0.38.0",
     "greenlet>=3.3.0",
+    "typer>=0.15.0",
+    "create_graph_rs",
 ]
+
+[tool.uv.sources]
+create_graph_rs = { path = "rust/create_graph_rs" }
+
+[project.scripts]
+potpie-seed = "seed.cli:main"
 
 [dependency-groups]
 dev = [
@@ -81,14 +94,14 @@ dev = [
     "isort>=7.0.0",
     "pre-commit>=4.3.0",
     "pylint>=4.0.2",
-    "pytest>=8.4.2",
+    "pytest>=9.0.3",
     "pytest-asyncio>=1.2.0",
     "pytest-cov>=6.0.0",
     "ruff>=0.14.3",
 ]
 
 [tool.setuptools.packages.find]
-include = ["potpie*", "app*"]
+include = ["potpie*", "app*", "seed*"]
 
 [tool.bandit]
 exclude_dirs = ["tests", "app/alembic"]
