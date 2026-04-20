@@ -149,18 +149,32 @@ class InferenceService:
             if not text:
                 continue
 
-            # Normalize text for consistent hashing
-            normalized_text = self._normalize_node_text(text, node_dict)
-            node["normalized_text"] = normalized_text
+            # Use pre-computed content_hash from graph if available
+            content_hash = node.get("content_hash")
 
-            # Check if content is cacheable
-            if not is_content_cacheable(normalized_text):
-                uncacheable_nodes += 1
-                continue
+            if not content_hash:
+                # Normalize text for consistent hashing
+                normalized_text = self._normalize_node_text(text, node_dict)
+                node["normalized_text"] = normalized_text
 
-            # Generate content hash
-            content_hash = generate_content_hash(normalized_text, node.get("node_type"))
-            node["content_hash"] = content_hash
+                # Check if content is cacheable
+                if not is_content_cacheable(normalized_text):
+                    uncacheable_nodes += 1
+                    continue
+
+                # Generate content hash
+                content_hash = generate_content_hash(
+                    normalized_text, node.get("node_type")
+                )
+                node["content_hash"] = content_hash
+            else:
+                # Hash already computed at graph construction time
+                normalized_text = self._normalize_node_text(text, node_dict)
+                node["normalized_text"] = normalized_text
+
+                if not is_content_cacheable(normalized_text):
+                    uncacheable_nodes += 1
+                    continue
 
             # Look up in cache
             node_lookup_start = time.time()
@@ -174,19 +188,19 @@ class InferenceService:
                 # Verify the assignment worked
                 if not node.get("cached_inference"):
                     logger.error(
-                        f"CACHE BUG: cached_inference not set after assignment! node={node['node_id'][:8]}"
+                        f"CACHE BUG: cached_inference not set after assignment! node={(node.get('node_id', 'UNKNOWN') or '')[:8]}"
                     )
                 logger.debug(
-                    f"✅ CACHE HIT | node={node['node_id'][:8]} | "
-                    f"hash={content_hash[:12]} | type={node.get('node_type', 'UNKNOWN')}"
+                    f"✅ CACHE HIT | node={(node.get('node_id', 'UNKNOWN') or '')[:8]} | "
+                    f"hash={(content_hash or 'UNKNOWN')[:12]} | type={node.get('node_type', 'UNKNOWN')}"
                 )
             else:
                 # Cache miss - mark for caching after LLM inference
                 node["should_cache"] = True
                 cache_misses += 1
                 logger.debug(
-                    f"❌ CACHE MISS | node={node['node_id'][:8]} | "
-                    f"hash={content_hash[:12]} | type={node.get('node_type', 'UNKNOWN')}"
+                    f"❌ CACHE MISS | node={(node.get('node_id', 'UNKNOWN') or '')[:8]} | "
+                    f"hash={(content_hash or 'UNKNOWN')[:12]} | type={node.get('node_type', 'UNKNOWN')}"
                 )
 
         total_lookup_time = time.time() - lookup_start
@@ -313,7 +327,7 @@ class InferenceService:
             while True:
                 result = session.run(
                     "MATCH (n:NODE {repoId: $repo_id}) "
-                    "RETURN n.node_id AS node_id, n.text AS text, n.file_path AS file_path, n.start_line AS start_line, n.end_line AS end_line, n.name AS name "
+                    "RETURN n.node_id AS node_id, n.text AS text, n.file_path AS file_path, n.start_line AS start_line, n.end_line AS end_line, n.name AS name, n.content_hash AS content_hash, n.type AS node_type "
                     "SKIP $offset LIMIT $limit",
                     repo_id=repo_id,
                     offset=offset,
@@ -335,14 +349,15 @@ class InferenceService:
             offset = 0
             while True:
                 result = session.run(
-                    f"""
+                    """
                     MATCH (f:FUNCTION)
-                    WHERE f.repoId = '{repo_id}'
+                    WHERE f.repoId = $repo_id
                     AND NOT ()-[:CALLS]->(f)
                     AND (f)-[:CALLS]->()
                     RETURN f.node_id as node_id
                     SKIP $offset LIMIT $limit
                     """,
+                    repo_id=repo_id,
                     offset=offset,
                     limit=batch_size,
                 )
@@ -489,7 +504,9 @@ class InferenceService:
                 all_tags.update(docstring.tags or [])
 
         # Create consolidated docstring
-        if len(all_docstrings) == 1:
+        if len(all_docstrings) == 0:
+            consolidated_text = ""
+        elif len(all_docstrings) == 1:
             consolidated_text = all_docstrings[0]
         else:
             # Combine multiple chunk descriptions intelligently
@@ -568,7 +585,7 @@ class InferenceService:
         Uses normalized_text if available, otherwise normalizes on the fly.
         """
         batch_start_time = time.time()
-        node_dict = {node["node_id"]: node for node in nodes}
+        node_dict = {node.get("node_id"): node for node in nodes if node.get("node_id")}
 
         # Filter to nodes that need LLM inference:
         # - No cache hit (cached_inference not set)
@@ -625,9 +642,9 @@ class InferenceService:
             # Handle large nodes by splitting
             if node_tokens > max_tokens:
                 logger.debug(
-                    f"Node {node['node_id'][:8]} exceeds token limit ({node_tokens}). Splitting..."
+                    f"Node {(node.get('node_id', 'UNKNOWN') or '')[:8]} exceeds token limit ({node_tokens}). Splitting..."
                 )
-                node_chunks = self.split_large_node(text, node["node_id"], max_tokens)
+                node_chunks = self.split_large_node(text, node.get("node_id", ""), max_tokens)
 
                 for chunk in node_chunks:
                     chunk_tokens = self.num_tokens_from_string(chunk["text"], model)
@@ -664,7 +681,7 @@ class InferenceService:
 
             current_batch.append(
                 DocstringRequest(
-                    node_id=node["node_id"],
+                    node_id=node.get("node_id", ""),
                     text=text,
                     metadata={
                         "should_cache": node.get("should_cache", False),
@@ -893,7 +910,7 @@ class InferenceService:
         nodes_to_index = [
             {
                 "project_id": repo_id,
-                "node_id": node["node_id"],
+                "node_id": node.get("node_id"),
                 "name": node.get("name", ""),
                 "file_path": node.get("file_path", ""),
                 "content": f"{node.get('name', '')} {node.get('file_path', '')}",
@@ -929,7 +946,7 @@ class InferenceService:
             project_id=repo_id,
         )
 
-        node_dict = {node["node_id"]: node for node in nodes}
+        node_dict = {node.get("node_id"): node for node in nodes if node.get("node_id")}
         cache_stats = {
             "cache_hits": 0,
             "cache_misses": 0,
@@ -1119,9 +1136,25 @@ class InferenceService:
                             response, batch
                         )
                         if processed_response:
-                            # Pass pre-generated embeddings to avoid regenerating
+                            # Build content_hash mapping from batch requests for Neo4j storage
+                            # Chunk nodes map to their parent's hash; regular nodes use their own
+                            content_hashes = {}
+                            for req in batch:
+                                meta = req.metadata or {}
+                                ch = meta.get("content_hash")
+                                if ch:
+                                    node_key = (
+                                        meta.get("parent_node_id", req.node_id)
+                                        if meta.get("is_chunk")
+                                        else req.node_id
+                                    )
+                                    content_hashes[node_key] = ch
+                            # Pass pre-generated embeddings and content hashes
                             self.update_neo4j_with_docstrings(
-                                repo_id, processed_response, docstring_embeddings
+                                repo_id,
+                                processed_response,
+                                docstring_embeddings,
+                                content_hashes,
                             )
                         neo4j_update_time = time.time() - neo4j_update_start
 
@@ -1309,6 +1342,14 @@ class InferenceService:
                 f"Batch exceeds token limit: {total_tokens} > {MAX_CONTEXT_TOKENS}. "
                 f"Batch size: {len(batch)} nodes. Splitting batch..."
             )
+            # Guard against infinite recursion: a single node that exceeds the limit
+            # cannot be split further, so skip it rather than looping forever.
+            if len(batch) <= 1:
+                logger.warning(
+                    f"Single node exceeds token limit ({total_tokens}). Skipping node."
+                )
+                return DocstringResponse(docstrings=[])
+
             # Split batch in half and process recursively
             mid = len(batch) // 2
             batch1 = batch[:mid]
@@ -1353,6 +1394,8 @@ class InferenceService:
         return result
 
     def generate_embedding(self, text: str) -> List[float]:
+        if not text:
+            return []
         embedding = self.embedding_model.encode(text)
         return embedding.tolist()
 
@@ -1376,7 +1419,8 @@ class InferenceService:
                 if project and isinstance(project, dict)
                 else None
             )
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Could not fetch project info for repo {repo_id}: {e}")
             repo_path = None
         is_local_repo = True if repo_path else False
 
@@ -1403,10 +1447,11 @@ class InferenceService:
 
             batch_data.append(
                 {
-                    "node_id": node["node_id"],
+                    "node_id": node.get("node_id"),
                     "docstring": docstring,
                     "embedding": embedding,
                     "tags": tags,
+                    "content_hash": node.get("content_hash"),
                 }
             )
 
@@ -1419,23 +1464,30 @@ class InferenceService:
         )
 
         # Single Neo4j session for all updates
-        with self.driver.session() as session:
-            # Process in batches of 300 for optimal performance
-            batch_size = 300
-            for i in range(0, len(batch_data), batch_size):
-                batch = batch_data[i : i + batch_size]
-                session.run(
-                    """
-                    UNWIND $batch AS item
-                    MATCH (n:NODE {repoId: $repo_id, node_id: item.node_id})
-                    SET n.docstring = item.docstring,
-                        n.embedding = item.embedding,
-                        n.tags = item.tags
-                    """
-                    + ("" if is_local_repo else ", n.text = null, n.signature = null"),
-                    batch=batch,
-                    repo_id=repo_id,
-                )
+        try:
+            with self.driver.session() as session:
+                # Process in batches of 300 for optimal performance
+                batch_size = 300
+                for i in range(0, len(batch_data), batch_size):
+                    batch = batch_data[i : i + batch_size]
+                    session.run(
+                        """
+                        UNWIND $batch AS item
+                        MATCH (n:NODE {repoId: $repo_id, node_id: item.node_id})
+                        SET n.docstring = item.docstring,
+                            n.embedding = item.embedding,
+                            n.tags = item.tags,
+                            n.content_hash = item.content_hash
+                        """
+                        + ("" if is_local_repo else ", n.text = null, n.signature = null"),
+                        batch=batch,
+                        repo_id=repo_id,
+                    )
+        except Exception as e:
+            logger.error(
+                f"Failed to batch update Neo4j with cached inference for repo {repo_id}: {e}"
+            )
+            return 0
 
         logger.info(
             f"Batch updated {len(batch_data)} cached nodes in Neo4j "
@@ -1469,7 +1521,7 @@ class InferenceService:
             project = self.project_manager.get_project_from_db_by_id_sync(
                 node.get("project_id", "")
             )
-            repo_path = project.get("repo_path") if project else None
+            repo_path = project.get("repo_path") if project and isinstance(project, dict) else None
             is_local_repo = True if repo_path else False
 
             session.run(
@@ -1481,19 +1533,20 @@ class InferenceService:
                 """
                 + ("" if is_local_repo else ", n.text = null, n.signature = null"),
                 repo_id=node.get("project_id", ""),
-                node_id=node["node_id"],
+                node_id=node.get("node_id", ""),
                 docstring=docstring,
                 embedding=embedding,
                 tags=tags,
             )
 
-        logger.debug(f"Updated Neo4j with cached inference for node {node['node_id']}")
+        logger.debug(f"Updated Neo4j with cached inference for node {node.get('node_id', 'unknown')}")
 
     def update_neo4j_with_docstrings(
         self,
         repo_id: str,
         docstrings: DocstringResponse,
         precomputed_embeddings: Optional[Dict[str, List[float]]] = None,
+        content_hashes: Optional[Dict[str, str]] = None,
     ):
         """
         Update Neo4j with docstrings and embeddings.
@@ -1502,52 +1555,64 @@ class InferenceService:
             repo_id: Project/repo ID
             docstrings: DocstringResponse with results
             precomputed_embeddings: Optional dict of node_id -> embedding to avoid regenerating
+            content_hashes: Optional dict of node_id -> content_hash to store alongside inference
         """
-        with self.driver.session() as session:
-            batch_size = 300
-            precomputed = precomputed_embeddings or {}
-            docstring_list = [
-                {
-                    "node_id": n.node_id,
-                    "docstring": n.docstring,
-                    "tags": n.tags,
-                    # Reuse precomputed embedding if available, otherwise generate
-                    "embedding": precomputed.get(n.node_id)
-                    or self.generate_embedding(n.docstring),
-                }
-                for n in docstrings.docstrings
-            ]
-            project = self.project_manager.get_project_from_db_by_id_sync(repo_id)
-            repo_path = project.get("repo_path")
-            is_local_repo = True if repo_path else False
-            for i in range(0, len(docstring_list), batch_size):
-                batch = docstring_list[i : i + batch_size]
-                session.run(
-                    """
-                    UNWIND $batch AS item
-                    MATCH (n:NODE {repoId: $repo_id, node_id: item.node_id})
-                    SET n.docstring = item.docstring,
-                        n.embedding = item.embedding,
-                        n.tags = item.tags
-                    """
-                    + ("" if is_local_repo else "REMOVE n.text, n.signature"),
-                    batch=batch,
-                    repo_id=repo_id,
-                )
+        try:
+            with self.driver.session() as session:
+                batch_size = 300
+                precomputed = precomputed_embeddings or {}
+                hashes = content_hashes or {}
+                docstring_list = [
+                    {
+                        "node_id": n.node_id,
+                        "docstring": n.docstring,
+                        "tags": n.tags,
+                        # Reuse precomputed embedding if available, otherwise generate
+                        "embedding": precomputed.get(n.node_id)
+                        or self.generate_embedding(n.docstring),
+                        "content_hash": hashes.get(n.node_id),
+                    }
+                    for n in docstrings.docstrings
+                ]
+                project = self.project_manager.get_project_from_db_by_id_sync(repo_id)
+                repo_path = project.get("repo_path") if project and isinstance(project, dict) else None
+                is_local_repo = True if repo_path else False
+                for i in range(0, len(docstring_list), batch_size):
+                    batch = docstring_list[i : i + batch_size]
+                    session.run(
+                        """
+                        UNWIND $batch AS item
+                        MATCH (n:NODE {repoId: $repo_id, node_id: item.node_id})
+                        SET n.docstring = item.docstring,
+                            n.embedding = item.embedding,
+                            n.tags = item.tags,
+                            n.content_hash = item.content_hash
+                        """
+                        + ("" if is_local_repo else "REMOVE n.text, n.signature"),
+                        batch=batch,
+                        repo_id=repo_id,
+                    )
+        except Exception as e:
+            logger.error(
+                f"Failed to update Neo4j with docstrings for repo {repo_id}: {e}"
+            )
 
     def create_vector_index(self):
-        with self.driver.session() as session:
-            session.run(
-                """
-                CREATE VECTOR INDEX docstring_embedding IF NOT EXISTS
-                FOR (n:NODE)
-                ON (n.embedding)
-                OPTIONS {indexConfig: {
-                    `vector.dimensions`: 384,
-                    `vector.similarity_function`: 'cosine'
-                }}
-                """
-            )
+        try:
+            with self.driver.session() as session:
+                session.run(
+                    """
+                    CREATE VECTOR INDEX docstring_embedding IF NOT EXISTS
+                    FOR (n:NODE)
+                    ON (n.embedding)
+                    OPTIONS {indexConfig: {
+                        `vector.dimensions`: 384,
+                        `vector.similarity_function`: 'cosine'
+                    }}
+                    """
+                )
+        except Exception as e:
+            logger.error(f"Failed to create vector index: {e}")
 
     async def run_inference(self, repo_id: str):
         run_inference_start = time.time()
