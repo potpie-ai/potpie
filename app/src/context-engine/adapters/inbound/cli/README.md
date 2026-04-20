@@ -24,6 +24,8 @@ These apply to all subcommands (place them **before** the command name):
 | `--json` | Print machine-readable JSON on stdout (for scripting and pipes). Human-friendly tables/panels are the default. |
 | `--verbose` / `-v` | Verbose errors (tracebacks on API failures). |
 
+When `--json` is enabled, command results stay on stdout and errors are emitted as JSON objects on stderr.
+
 Examples:
 
 ```bash
@@ -57,9 +59,11 @@ Persist a **Potpie API key** and optional base URL — **required** for **`searc
 | `potpie login TOKEN --url http://127.0.0.1:8001` | Save token and default Potpie base URL (no trailing slash). |
 | `potpie logout` | Delete the stored credentials file (API key, base URL, active pot, aliases). |
 | `potpie pot clear-local` | Clear only active pot + `pot_aliases`; keep API key / URL. |
-| `potpie pot create` | `POST /api/v2/context/pots` + local alias. |
+| `potpie pot create <slug>` | Check slug availability, then `POST /api/v2/context/pots` + local alias. |
+| `potpie pot slug-available <slug>` | Check whether a pot slug is available on the server. |
 | `potpie pot pots` | List context pots (`GET /api/v2/context/pots`). |
 | `potpie pot repo list` / `pot repo add` | List or attach repositories on a pot (`GET`/`POST` `/api/v2/context/pots/.../repositories`). |
+| `potpie event list` / `event show` / `event wait` | Inspect recent ingestion events, fetch one event, or wait for a queued ingest to finish. |
 
 **Precedence:** `POTPIE_API_KEY` in the environment **overrides** the stored token (useful for CI). For base URL: **`POTPIE_API_URL` / `POTPIE_BASE_URL`** override a stored URL; otherwise the stored URL from `login --url` is used before `POTPIE_PORT` and localhost guesses.
 
@@ -105,16 +109,15 @@ Semantic search over **Graphiti episodic** entities for a pot via **`POST /api/v
 | `--limit` / `-n` | `8` | Max results (clamped 1–50 in the use case). |
 | `--node-labels` | (none) | Comma-separated label filters, e.g. `PullRequest,Decision`. |
 
-**Inferring pot scope from git (one-argument form, and optional `ingest` pot)**
+**Inferring pot scope (one-argument form, and optional `ingest` pot)**
 
-1. Run inside a git checkout with **`origin`** set (e.g. `git@github.com:owner/repo.git`).
-2. Resolve `owner/repo` → pot UUID in order:
+1. Use the active pot from **`potpie pot use <slug-or-uuid>`** when set.
+2. Otherwise, run inside a git checkout with **`origin`** set (e.g. `git@github.com:owner/repo.git`) and resolve `owner/repo` → pot UUID from:
    - **`CONTEXT_ENGINE_REPO_TO_POT`** — JSON `{"owner/repo":"pot-uuid"}`, or
    - **`CONTEXT_ENGINE_POTS`** — JSON `{"pot-uuid":"owner/repo"}` (case-insensitive match on value).
-   - Else **`potpie pot use <uuid-or-name>`** (stored default; names from **`pot alias`**).
-   - Else exit with code `1` — pass an explicit pot UUID / registered name, or set maps / `pot use`.
+3. Else exit with code `1` — pass an explicit pot UUID / registered name, set maps, or run **`potpie pot use`**.
 
-Pot scope is chosen explicitly (maps, **`pot use`**, or a UUID argument); repo → pot mapping uses your server pots and attached repositories.
+Pot scope is chosen explicitly (**`potpie pot use`**, maps, or a UUID argument); repo → pot mapping uses your server pots and attached repositories.
 
 **Output:** JSON array of objects with `uuid`, `name`, `summary`, `fact`.
 
@@ -124,11 +127,12 @@ Examples:
 
 ```bash
 # Context pot (recommended): created on the server
-potpie pot create "my-workspace"
+potpie pot create my-workspace
 potpie pot use my-workspace
 
 # Or list existing context pots and pick an id
 potpie pot pots
+potpie pot use my-workspace
 potpie pot use 00000000-0000-0000-0000-000000000000
 
 # Optional: short name → id (stored in credentials.json)
@@ -149,7 +153,7 @@ Sends **`POST /api/v2/context/ingest`** with your API key. The **server** persis
 
 | Argument | Description |
 |----------|-------------|
-| `POT_ID` | Optional. Pot scope UUID (Graphiti `group_id`). Omit to infer from **git `origin`** using the same resolution order as **`search`** (env maps, then **`pot use`**). |
+| `POT_ID` | Optional. Pot scope UUID (Graphiti `group_id`). Omit to infer using the same resolution order as **`search`** (**`potpie pot use`**, then env maps from git `origin`). |
 
 **Options**
 
@@ -164,6 +168,8 @@ Sends **`POST /api/v2/context/ingest`** with your API key. The **server** persis
 | `--idempotency-key` | No | Optional dedupe key (forwarded to the API). |
 
 **Output (JSON):** includes `status` (`queued` \| `applied` \| `legacy_direct`), `episode_uuid` (when known), and `event_id` / `job_id` when the event store path is used.
+
+When async ingest returns `queued`, use `potpie event wait <event_id>` to block until the server reports `done` or `error`, or `potpie event show <event_id>` to inspect the current event state.
 
 **Exit codes:** `0` on success; `1` if API misconfigured, reference time is invalid, pot inference failed, duplicate ingest (409), or server error.
 
@@ -188,6 +194,34 @@ uv run potpie ingest "00000000-0000-0000-0000-000000000000" \
 
 # Episode body from a file (paths relative to the shell cwd)
 uv run potpie ingest --file ./notes/design.md --name "Design note" --source "cli"
+```
+
+### `event`
+
+Inspect ingestion events created by async ingest and reconciliation flows.
+
+| Command | Description |
+|---------|-------------|
+| `potpie event show EVENT_ID` | Fetch one persisted ingestion event, including episode steps when available. |
+| `potpie event wait EVENT_ID` | Poll until the event reaches `done` or `error`; exits `1` on timeout or error. |
+| `potpie event list` | List recent events for the active/inferred pot. |
+
+Options:
+
+| Option | Command | Description |
+|--------|---------|-------------|
+| `--timeout` | `event wait` | Max seconds to wait (default `60`). |
+| `--interval` | `event wait` | Poll interval in seconds (default `2`). |
+| `--limit` / `-n` | `event list` | Max events to show (default `20`). |
+| `--status` | `event list` | Filter by `queued`, `processing`, `done`, or `error`. |
+| `--kind` | `event list` | Filter by ingestion kind, e.g. `raw_episode`. |
+
+Examples:
+
+```bash
+uv run potpie ingest "Design note" --name "Design note" --source cli
+uv run potpie event wait 00000000-0000-0000-0000-000000000000
+uv run potpie event list --status done -n 10
 ```
 
 ## Related

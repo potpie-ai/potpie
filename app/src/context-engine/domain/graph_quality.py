@@ -109,6 +109,17 @@ def source_of_truth_for_source_type(source_type: str | None) -> str:
     return SOURCE_OF_TRUTH_POLICIES[family]
 
 
+def make_source_ref(source_type: str, **kwargs) -> "SourceReferenceRecord":
+    """Factory that pre-stamps freshness_ttl_hours from the family policy.
+
+    Callers can override by passing freshness_ttl_hours explicitly.
+    """
+    from domain.source_references import SourceReferenceRecord
+
+    kwargs.setdefault("freshness_ttl_hours", freshness_ttl_hours_for_source_type(source_type))
+    return SourceReferenceRecord(source_type=source_type, **kwargs)
+
+
 def is_reference_stale(
     ref: SourceReferenceRecord,
     *,

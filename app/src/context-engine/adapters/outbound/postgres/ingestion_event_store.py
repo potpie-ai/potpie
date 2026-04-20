@@ -149,6 +149,12 @@ class SqlAlchemyIngestionEventStore(IngestionEventStore):
             if filters.statuses:
                 db_set = canonical_statuses_to_db_filters(tuple(filters.statuses))
                 q = q.where(ContextEventModel.status.in_(tuple(db_set)))
+            if filters.source_systems:
+                q = q.where(ContextEventModel.source_system.in_(tuple(filters.source_systems)))
+            if filters.submitted_after:
+                q = q.where(ContextEventModel.received_at >= filters.submitted_after)
+            if filters.submitted_before:
+                q = q.where(ContextEventModel.received_at <= filters.submitted_before)
         if cursor:
             try:
                 ts, eid = _decode_list_cursor(cursor)

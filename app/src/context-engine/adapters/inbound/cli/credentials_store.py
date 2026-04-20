@@ -157,7 +157,7 @@ def _norm_alias_key(name: str) -> str:
 
 
 def get_pot_aliases() -> dict[str, str]:
-    """Lowercase display name -> Potpie project UUID (from ``pot alias``)."""
+    """Lowercase slug/local alias -> context pot UUID (from ``pot alias`` / ``pot create``)."""
     raw = read_credentials().get("pot_aliases")
     if not isinstance(raw, dict):
         return {}
@@ -171,7 +171,7 @@ def get_pot_aliases() -> dict[str, str]:
 
 
 def register_pot_alias(name: str, pot_id: str) -> None:
-    """Store a friendly name -> Potpie project UUID (``pot alias``)."""
+    """Store a slug or friendly name -> context pot UUID (``pot alias``)."""
     key = _norm_alias_key(name)
     if not key:
         raise ValueError("Alias name must be non-empty")
@@ -217,6 +217,6 @@ def resolve_cli_pot_ref(ref: str) -> tuple[str | None, str]:
         except ValueError:
             return None, f"Stored pot id for alias {s!r} is not a valid UUID."
     return None, (
-        f"Unknown pot {s!r}. Run `potpie pot create \"<name>\"` (server pot + alias), "
-        f"or `potpie pot pots` for ids, then `pot use` / `pot alias`."
+        f"Unknown pot {s!r}. Run `potpie pot create <slug>` (server pot + alias), "
+        f"or `potpie pot pots` for slugs/ids, then `pot use` / `pot alias`."
     )

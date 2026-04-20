@@ -132,6 +132,10 @@ class ChangeHistoryQuery(BaseModel):
     file_path: Optional[str] = None
     limit: int = 10
     repo_name: Optional[str] = None
+    as_of: Optional[datetime] = Field(
+        default=None,
+        description="Return only changes that were active at this point in time (ISO 8601).",
+    )
 
 
 class FileOwnersQuery(BaseModel):
@@ -875,6 +879,18 @@ def create_context_router(
             None,
             description="Filter by ingestion_kind (repeat for multiple).",
         ),
+        source_system: list[str] | None = Query(
+            None,
+            description="Filter by source_system (repeat for multiple).",
+        ),
+        from_date: datetime | None = Query(
+            None,
+            description="Only return events submitted at or after this ISO 8601 datetime.",
+        ),
+        to_date: datetime | None = Query(
+            None,
+            description="Only return events submitted at or before this ISO 8601 datetime.",
+        ),
     ) -> dict[str, Any]:
         if enforce_pot_access:
             _require_pot_access(container, pot_id)
@@ -886,6 +902,9 @@ def create_context_router(
         filters = EventListFilters(
             statuses=_parse_event_status_filters(status),
             ingestion_kinds=tuple(ingestion_kind) if ingestion_kind else None,
+            source_systems=tuple(source_system) if source_system else None,
+            submitted_after=from_date,
+            submitted_before=to_date,
         )
         page = container.event_query_service(db).list_events(
             pot_id, filters, cursor=cursor, limit=limit
@@ -1139,6 +1158,7 @@ def create_context_router(
             file_path=body.file_path,
             limit=body.limit,
             repo_name=body.repo_name,
+            as_of=body.as_of,
         )
 
     @router.post("/query/file-owners")

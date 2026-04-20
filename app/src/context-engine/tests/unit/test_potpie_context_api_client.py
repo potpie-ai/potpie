@@ -147,8 +147,8 @@ def test_create_context_pot_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
         def post(self, url: str, **kwargs: Any) -> httpx.Response:
             assert url.endswith("/api/v2/context/pots")
-            assert kwargs["json"] == {"display_name": "n"}
-            return httpx.Response(200, json={"id": "new-id", "display_name": "n"})
+            assert kwargs["json"] == {"slug": "n"}
+            return httpx.Response(200, json={"id": "new-id", "slug": "n"})
 
         def get(self, *a: Any, **k: Any) -> httpx.Response:
             raise AssertionError("unused")
@@ -158,8 +158,36 @@ def test_create_context_pot_success(monkeypatch: pytest.MonkeyPatch) -> None:
         FakeClient,
     )
     c = PotpieContextApiClient("http://example.com", "k")
-    out = c.create_context_pot(display_name="n")
+    out = c.create_context_pot(slug="n")
     assert out["id"] == "new-id"
+
+
+def test_get_context_pot_slug_availability(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeClient:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        def post(self, *a: Any, **k: Any) -> httpx.Response:
+            raise AssertionError("unused")
+
+        def get(self, url: str, **kwargs: Any) -> httpx.Response:
+            assert url.endswith("/api/v2/context/pots/slug-availability/my-pot")
+            assert kwargs["headers"].get("X-API-Key") == "k"
+            return httpx.Response(200, json={"slug": "my-pot", "available": True})
+
+    monkeypatch.setattr(
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client",
+        FakeClient,
+    )
+    c = PotpieContextApiClient("http://example.com", "k")
+    out = c.get_context_pot_slug_availability("my-pot")
+    assert out == {"slug": "my-pot", "available": True}
 
 
 def test_list_pot_repositories_success(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -355,6 +383,64 @@ def test_client_ingest_non_duplicate_409_raises(monkeypatch: pytest.MonkeyPatch)
     with pytest.raises(PotpieContextApiError) as exc_info:
         c.ingest({"pot_id": "p", "name": "n", "episode_body": "b", "source_description": "s"}, sync=True)
     assert exc_info.value.status_code == 409
+
+
+def test_client_get_event_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeClient:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *a: Any) -> None:
+            pass
+
+        def get(self, url: str, **kwargs: Any) -> httpx.Response:
+            assert url.endswith("/api/v2/context/events/e1")
+            assert kwargs["headers"].get("X-API-Key") == "k"
+            return httpx.Response(200, json={"event_id": "e1", "status": "done"})
+
+    monkeypatch.setattr(
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
+    )
+    c = PotpieContextApiClient("http://example.com", "k")
+    out = c.get_event("e1")
+    assert out == {"event_id": "e1", "status": "done"}
+
+
+def test_client_list_events_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    class FakeClient:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *a: Any) -> None:
+            pass
+
+        def get(self, url: str, **kwargs: Any) -> httpx.Response:
+            assert url.endswith("/api/v2/context/pots/p1/events")
+            captured["params"] = kwargs.get("params")
+            return httpx.Response(
+                200,
+                json={"items": [{"event_id": "e1", "status": "queued"}]},
+            )
+
+    monkeypatch.setattr(
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
+    )
+    c = PotpieContextApiClient("http://example.com", "k")
+    out = c.list_events("p1", limit=5, status="queued", ingestion_kind="raw_episode")
+    assert captured["params"] == {
+        "limit": 5,
+        "status": "queued",
+        "ingestion_kind": "raw_episode",
+    }
+    assert out["items"][0]["event_id"] == "e1"
 
 
 def test_client_reset_success(monkeypatch: pytest.MonkeyPatch) -> None:

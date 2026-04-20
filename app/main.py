@@ -52,6 +52,7 @@ from app.modules.usage.usage_router import router as usage_router
 from app.modules.users.user_router import router as user_router
 from app.modules.context_graph.context_engine_http import (
     potpie_context_engine_router,
+    potpie_context_pot_v1_router,
 )
 from app.modules.users.user_service import UserService
 from app.modules.utils.firebase_setup import FirebaseSetup
@@ -199,6 +200,11 @@ class MainApp:
         )
         self.app.include_router(
             potpie_context_engine_router,
+            prefix="/api/v1/context",
+            tags=["Context Graph API"],
+        )
+        self.app.include_router(
+            potpie_context_pot_v1_router,
             prefix="/api/v1/context",
             tags=["Context Graph API"],
         )

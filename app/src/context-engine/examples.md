@@ -102,7 +102,8 @@ uv run potpie --json pot list
 Create and list **context pots** (`POST` / `GET /api/v2/context/pots`), then attach repos as needed.
 
 ```bash
-uv run potpie pot create "myscope"
+uv run potpie pot slug-available myscope
+uv run potpie pot create myscope
 uv run potpie pot use myscope
 uv run potpie pot pots
 uv run potpie pot repo list

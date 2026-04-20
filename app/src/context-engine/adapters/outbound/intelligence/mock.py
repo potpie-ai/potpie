@@ -56,6 +56,7 @@ class MockIntelligenceProvider(IntelligenceProvider):
         scope: ContextScope,
         *,
         limit: int = 10,
+        as_of: str | None = None,
     ) -> list[ChangeRecord]:
         _ = limit
         return [

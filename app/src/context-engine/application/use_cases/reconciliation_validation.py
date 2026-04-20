@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from domain.errors import ReconciliationPlanValidationError
-from domain.ontology import validate_structural_mutations
+from domain.graph_mutations import InvalidationOp
+from domain.ontology import is_canonical_edge_type, validate_structural_mutations
 from domain.reconciliation import ReconciliationPlan
 
 MAX_EPISODES = 32
@@ -47,6 +48,7 @@ def validate_reconciliation_plan(
         plan.edge_upserts,
         plan.edge_deletes,
     )
+    ontology_errors.extend(_validate_invalidations(plan.invalidations))
     if ontology_errors:
         sample = "; ".join(ontology_errors[:8])
         suffix = (
@@ -57,3 +59,17 @@ def validate_reconciliation_plan(
         raise ReconciliationPlanValidationError(
             f"ontology validation failed: {sample}{suffix}"
         )
+
+
+def _validate_invalidations(items: list[InvalidationOp]) -> list[str]:
+    errors: list[str] = []
+    for item in items:
+        if not item.target_entity_key and not item.target_edge:
+            errors.append("invalidation must set target_entity_key or target_edge")
+        if item.target_edge:
+            edge_type = item.target_edge[0]
+            if not is_canonical_edge_type(edge_type):
+                errors.append(
+                    f"invalidation target_edge has non-canonical edge_type: {edge_type!r}"
+                )
+    return errors

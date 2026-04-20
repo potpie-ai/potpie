@@ -47,6 +47,7 @@ class StructuralGraphPort(Protocol):
         limit: int,
         repo_name: str | None = None,
         pr_number: int | None = None,
+        as_of: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
     def get_file_owners(
@@ -110,8 +111,7 @@ class StructuralGraphPort(Protocol):
         pot_id: str,
         items: list[EntityUpsert],
         provenance: ProvenanceRef,
-    ) -> int:
-        """Generic entity upserts (reconciliation). Return rows touched."""
+    ) -> int: ...
 
     def upsert_edges(
         self,

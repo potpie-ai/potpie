@@ -20,6 +20,7 @@ from app.modules.key_management.secrets_schema import (
     UpdateIntegrationKeyRequest,
     UpdateSecretRequest,
 )
+from app.modules.key_management.storage_config import is_gcp_secret_manager_enabled
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.APIRouter import APIRouter
 from app.modules.utils.logger import setup_logger
@@ -48,13 +49,12 @@ class SecretStorageHandler:
             )
 
         # Skip GCP entirely when disabled (e.g. dev without GCP credentials)
-        gcp_disabled = os.environ.get("GCP_SECRET_MANAGER_DISABLED", "false").lower()
-        if gcp_disabled in ("true", "1", "yes", "enabled"):
+        if not is_gcp_secret_manager_enabled():
             SecretStorageHandler._gcp_available = False
             SecretStorageHandler._gcp_client = None
             SecretStorageHandler._gcp_project_id = None
             logger.debug(
-                "GCP Secret Manager disabled via GCP_SECRET_MANAGER_DISABLED"
+                "GCP Secret Manager disabled via environment configuration"
             )
             return None, None
 
@@ -277,6 +277,14 @@ class SecretStorageHandler:
                     # Dev mode - skip GCP
                     if not is_test_user:
                         logger.debug(f"Skipping GCP check for {service} (dev mode)")
+
+            if preferences is None and db:
+                user_pref = (
+                    db.query(UserPreferences)
+                    .filter(UserPreferences.user_id == customer_id)
+                    .first()
+                )
+                preferences = user_pref.preferences if user_pref else {}
 
             if db and preferences is not None:
                 # Fallback: get from UserPreferences

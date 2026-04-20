@@ -124,6 +124,10 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
             "CREATE INDEX entity_key_group_idx IF NOT EXISTS "
             "FOR (e:Entity) ON (e.entity_key, e.group_id)"
         )
+        session.run(
+            "CREATE INDEX entity_valid_to_idx IF NOT EXISTS "
+            "FOR (e:Entity) ON (e.valid_to)"
+        )
 
     def write_bridges(
         self,
@@ -165,7 +169,8 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                             r.status = $status,
                             r.additions = $additions,
                             r.deletions = $deletions,
-                            r.patch_excerpt = $patch_excerpt
+                            r.patch_excerpt = $patch_excerpt,
+                            r.valid_from = $merged_at
                         RETURN count(r) AS cnt
                         """,
                         pot_id=pot_id,
@@ -176,6 +181,7 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                         additions=additions,
                         deletions=deletions,
                         patch_excerpt=patch_excerpt,
+                        merged_at=merged_at,
                     )
                     result.touched_by += _count(res)
 
@@ -191,6 +197,7 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                             MATCH (pr:Entity {group_id: $pot_id, entity_key: $pr_key})
                             MERGE (n)-[r:MODIFIED_IN {pr_number: $pr_number}]->(pr)
                             SET r.merged_at = $merged_at,
+                                r.valid_from = $merged_at,
                                 r.updated_at = timestamp(),
                                 r.is_approximate = $is_approximate
                             RETURN count(r) AS cnt
@@ -644,6 +651,7 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
         limit: int,
         repo_name: str | None = None,
         pr_number: int | None = None,
+        as_of: str | None = None,
     ) -> list[dict[str, Any]]:
         _ = repo_name  # reserved for future repo-scoped history
         if pr_number is not None:
@@ -654,6 +662,10 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                 coalesce(pr.pr_number, toIntegerOrNull(pr.number)) = $pr_number
                 OR toIntegerOrNull(reverse(split(coalesce(pr.entity_key, ''), ':'))[0]) = $pr_number
               )
+              AND CASE
+                WHEN $as_of IS NULL THEN pr.valid_to IS NULL
+                ELSE (pr.valid_to IS NULL OR pr.valid_to > $as_of)
+              END
             OPTIONAL MATCH (pr)-[:HAS_REVIEW_DECISION]->(prdec:Entity)
             WHERE prdec IS NULL OR 'Decision' IN labels(prdec)
             WITH pr, collect(DISTINCT coalesce(prdec.decision_made, prdec.name, prdec.summary)) AS prdecs
@@ -674,18 +686,29 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                 function_name,
                 1,
                 pr_number=pr_number,
+                as_of=as_of,
             )
 
         query = """
         MATCH (n:NODE {repoId: $pot_id})
         WHERE ($file_path IS NULL OR n.file_path = $file_path)
           AND ($function_name IS NULL OR toLower(coalesce(n.name, '')) CONTAINS toLower($function_name))
-        OPTIONAL MATCH (n)-[:MODIFIED_IN]->(pr_direct:Entity)
+        OPTIONAL MATCH (n)-[mod:MODIFIED_IN]->(pr_direct:Entity)
         WHERE 'PullRequest' IN labels(pr_direct)
+          AND CASE
+            WHEN $as_of IS NULL THEN mod.valid_to IS NULL
+            ELSE (mod.valid_from IS NULL OR mod.valid_from <= $as_of)
+             AND (mod.valid_to IS NULL OR mod.valid_to > $as_of)
+          END
         OPTIONAL MATCH (f:FILE {repoId: $pot_id})
         WHERE f.file_path = n.file_path OR f.file_path ENDS WITH ('/' + n.file_path)
-        OPTIONAL MATCH (f)-[:TOUCHED_BY]->(pr_file:Entity)
+        OPTIONAL MATCH (f)-[tb:TOUCHED_BY]->(pr_file:Entity)
         WHERE 'PullRequest' IN labels(pr_file)
+          AND CASE
+            WHEN $as_of IS NULL THEN tb.valid_to IS NULL
+            ELSE (tb.valid_from IS NULL OR tb.valid_from <= $as_of)
+             AND (tb.valid_to IS NULL OR tb.valid_to > $as_of)
+          END
         WITH n, [x IN collect(DISTINCT pr_direct) + collect(DISTINCT pr_file) WHERE x IS NOT NULL] AS prs
         UNWIND prs AS pr
         OPTIONAL MATCH (pr)-[:Fixes]->(iss:Entity)
@@ -696,6 +719,10 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
              collect(DISTINCT coalesce(dec.decision_made, dec.name, dec.summary)) AS node_decisions,
              collect(DISTINCT coalesce(prdec.decision_made, prdec.name, prdec.summary)) AS pr_review_decisions
         WHERE pr IS NOT NULL
+          AND CASE
+            WHEN $as_of IS NULL THEN pr.valid_to IS NULL
+            ELSE (pr.valid_to IS NULL OR pr.valid_to > $as_of)
+          END
         RETURN coalesce(pr.pr_number, pr.number) AS pr_number,
                coalesce(pr.title, pr.name) AS title,
                coalesce(pr.why_summary, pr.summary, pr.description, '') AS why_summary,
@@ -707,7 +734,7 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
         ORDER BY pr_number DESC
         LIMIT $limit
         """
-        return self._run_read(query, pot_id, file_path, function_name, limit)
+        return self._run_read(query, pot_id, file_path, function_name, limit, as_of=as_of)
 
     def get_pr_diff(
         self,
@@ -1261,12 +1288,31 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
         items: list[EntityUpsert],
         provenance: ProvenanceRef,
     ) -> int:
-        del provenance
         if not items:
             return 0
-        raise NotImplementedError(
-            "Neo4jStructuralAdapter.upsert_entities is not implemented in v1; use compat GitHub PR path."
-        )
+        drv = self._open()
+        if drv is None:
+            return 0
+        count = 0
+        try:
+            with drv.session() as session:
+                for item in items:
+                    label_str = ":".join(["Entity"] + list(item.labels))
+                    props = dict(item.properties)
+                    props["group_id"] = pot_id
+                    props["provenance_source_event"] = provenance.source_event_id
+                    session.run(
+                        f"MERGE (e:{label_str} {{group_id: $gid, entity_key: $key}}) "  # pyright: ignore[reportArgumentType]
+                        "ON CREATE SET e.uuid = randomUUID(), e.created_at = timestamp() "
+                        "SET e += $props",
+                        gid=pot_id,
+                        key=item.entity_key,
+                        props=props,
+                    )
+                    count += 1
+        finally:
+            drv.close()
+        return count
 
     def upsert_edges(
         self,
@@ -1274,12 +1320,34 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
         items: list[EdgeUpsert],
         provenance: ProvenanceRef,
     ) -> int:
-        del provenance
         if not items:
             return 0
-        raise NotImplementedError(
-            "Neo4jStructuralAdapter.upsert_edges is not implemented in v1; use compat GitHub PR path."
-        )
+        drv = self._open()
+        if drv is None:
+            return 0
+        count = 0
+        now_iso = _utc_now_iso()
+        try:
+            with drv.session() as session:
+                for item in items:
+                    props = dict(item.properties)
+                    props.setdefault("valid_from", now_iso)
+                    props["provenance_source_event"] = provenance.source_event_id
+                    res = session.run(
+                        f"MATCH (a:Entity {{group_id: $gid, entity_key: $from_key}}) "  # pyright: ignore[reportArgumentType]
+                        f"MATCH (b:Entity {{group_id: $gid, entity_key: $to_key}}) "
+                        f"MERGE (a)-[r:{item.edge_type}]->(b) "
+                        "SET r += $props "
+                        "RETURN count(r) AS cnt",
+                        gid=pot_id,
+                        from_key=item.from_entity_key,
+                        to_key=item.to_entity_key,
+                        props=props,
+                    )
+                    count += _count(res)
+        finally:
+            drv.close()
+        return count
 
     def delete_edges(
         self,
@@ -1290,9 +1358,26 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
         del provenance
         if not items:
             return 0
-        raise NotImplementedError(
-            "Neo4jStructuralAdapter.delete_edges is not implemented in v1; use compat GitHub PR path."
-        )
+        drv = self._open()
+        if drv is None:
+            return 0
+        count = 0
+        try:
+            with drv.session() as session:
+                for item in items:
+                    res = session.run(
+                        f"MATCH (a:Entity {{group_id: $gid, entity_key: $from_key}})"  # pyright: ignore[reportArgumentType]
+                        f"-[r:{item.edge_type}]->"
+                        f"(b:Entity {{group_id: $gid, entity_key: $to_key}}) "
+                        "DELETE r RETURN count(r) AS cnt",
+                        gid=pot_id,
+                        from_key=item.from_entity_key,
+                        to_key=item.to_entity_key,
+                    )
+                    count += _count(res)
+        finally:
+            drv.close()
+        return count
 
     def apply_invalidations(
         self,
@@ -1300,12 +1385,81 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
         items: list[InvalidationOp],
         provenance: ProvenanceRef,
     ) -> int:
-        del provenance
         if not items:
             return 0
-        raise NotImplementedError(
-            "Neo4jStructuralAdapter.apply_invalidations is not implemented in v1; use compat GitHub PR path."
-        )
+        drv = self._open()
+        if drv is None:
+            return 0
+        count = 0
+        now_iso = _utc_now_iso()
+        try:
+            with drv.session() as session:
+                for item in items:
+                    valid_to = item.valid_to or now_iso
+                    if item.target_entity_key:
+                        res = session.run(
+                            "MATCH (e:Entity {group_id: $gid, entity_key: $key}) "
+                            "SET e.valid_to = $valid_to, "
+                            "    e.invalidation_reason = $reason, "
+                            "    e.invalidated_by = $by "
+                            "RETURN count(e) AS cnt",
+                            gid=pot_id,
+                            key=item.target_entity_key,
+                            valid_to=valid_to,
+                            reason=item.reason,
+                            by=provenance.source_event_id,
+                        )
+                        matched = _count(res)
+                        if matched and item.superseded_by_key:
+                            session.run(
+                                "MATCH (new:Entity {group_id: $gid, entity_key: $new_key}) "
+                                "MATCH (old:Entity {group_id: $gid, entity_key: $old_key}) "
+                                "MERGE (new)-[r:SUPERSEDES]->(old) "
+                                "SET r.reason = $reason, r.superseded_at = $valid_to",
+                                gid=pot_id,
+                                new_key=item.superseded_by_key,
+                                old_key=item.target_entity_key,
+                                reason=item.reason,
+                                valid_to=valid_to,
+                            )
+                        count += matched
+                    elif item.target_edge:
+                        edge_type, from_key, to_key = item.target_edge
+                        if not _is_safe_cypher_identifier(edge_type):
+                            logger.warning(
+                                "apply_invalidations: skipping non-canonical edge_type %r", edge_type
+                            )
+                            continue
+                        res = session.run(
+                            f"MATCH (a:Entity {{group_id: $gid, entity_key: $from_key}})"  # pyright: ignore[reportArgumentType]
+                            f"-[r:{edge_type}]->"
+                            f"(b:Entity {{group_id: $gid, entity_key: $to_key}}) "
+                            "SET r.valid_to = $valid_to, "
+                            "    r.invalidation_reason = $reason "
+                            "RETURN count(r) AS cnt",
+                            gid=pot_id,
+                            from_key=from_key,
+                            to_key=to_key,
+                            valid_to=valid_to,
+                            reason=item.reason,
+                        )
+                        matched = _count(res)
+                        if matched and item.superseded_by_key:
+                            session.run(
+                                "MATCH (new:Entity {group_id: $gid, entity_key: $new_key}) "
+                                "MATCH (old:Entity {group_id: $gid, entity_key: $to_key}) "
+                                "MERGE (new)-[r:SUPERSEDES]->(old) "
+                                "SET r.reason = $reason, r.superseded_at = $valid_to",
+                                gid=pot_id,
+                                new_key=item.superseded_by_key,
+                                to_key=to_key,
+                                reason=item.reason,
+                                valid_to=valid_to,
+                            )
+                        count += matched
+        finally:
+            drv.close()
+        return count
 
     def reset_pot(self, pot_id: str) -> dict[str, Any]:
         """Remove structural ``Entity`` / ``FILE`` / ``NODE`` data for this pot (default Neo4j database)."""
@@ -1387,12 +1541,35 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                 }
                 params.update(kwargs)
                 res = session.run(
-                    query,
+                    query,  # pyright: ignore[reportArgumentType]
                     **params,
                 )
                 return [record.data() for record in res]
         finally:
             drv.close()
+
+
+_SAFE_CYPHER_IDENTIFIER_RE = None
+
+
+def _is_safe_cypher_identifier(value: str) -> bool:
+    """Return True only if value is a canonical ontology edge type (no Cypher injection risk)."""
+    import re
+
+    global _SAFE_CYPHER_IDENTIFIER_RE
+    if _SAFE_CYPHER_IDENTIFIER_RE is None:
+        _SAFE_CYPHER_IDENTIFIER_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+    if not _SAFE_CYPHER_IDENTIFIER_RE.match(value):
+        return False
+    from domain.ontology import is_canonical_edge_type
+
+    return is_canonical_edge_type(value)
+
+
+def _utc_now_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _count(neo4j_result) -> int:

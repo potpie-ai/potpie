@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import traceback
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
@@ -17,6 +19,13 @@ from rich.table import Table
 # stderr for errors so stdout stays clean for piping JSON
 _err = Console(stderr=True)
 _out = Console()
+_json_errors = False
+
+
+def configure_error_output(*, as_json: bool) -> None:
+    """Switch stderr errors between human Rich output and JSON lines."""
+    global _json_errors
+    _json_errors = as_json
 
 
 def configure_cli_logging(verbose: bool) -> None:
@@ -62,6 +71,22 @@ def emit_error(
     verbose: bool = False,
     exc: Optional[BaseException] = None,
 ) -> None:
+    if _json_errors:
+        payload: dict[str, Any] = {
+            "ok": False,
+            "error": {
+                "title": title,
+                "message": message,
+            },
+        }
+        if hint:
+            payload["error"]["hint"] = hint
+        if verbose and exc is not None:
+            payload["error"]["traceback"] = "".join(
+                traceback.format_exception(type(exc), exc, exc.__traceback__)
+            )
+        print(json.dumps(payload), file=sys.stderr)
+        return
     _err.print(f"[bold red]{title}[/bold red]")
     _err.print(f"[red]{message}[/red]")
     if hint:
@@ -167,34 +192,30 @@ def print_search_results(
             "[dim]No results (empty graph or no matches for this query / pot).[/dim]"
         )
         return
-    table = Table(title="Search results", show_lines=False)
-    table.add_column("#", style="dim", justify="right")
-    table.add_column("name", max_width=36)
-    table.add_column("summary", max_width=48)
-    table.add_column("uuid", style="dim", max_width=38)
-    if with_temporal:
-        table.add_column("valid_at", style="dim", max_width=24)
-        table.add_column("invalid_at", style="dim", max_width=24)
-        table.add_column("created_at", style="dim", max_width=24)
     for i, row in enumerate(rows, start=1):
-        name = str(row.get("name") or "")
+        name = str(row.get("name") or "(unnamed)")
         summary = str(row.get("summary") or row.get("fact") or "")
         if len(summary) > 200:
             summary = summary[:197] + "..."
         uid = str(row.get("uuid") or "")
+        lines = [escape(summary or "(no summary)")]
+        lines.append(f"[dim]uuid:[/dim] {escape(uid)}")
         if with_temporal:
-            table.add_row(
-                str(i),
-                name,
-                summary,
-                uid,
-                _short_temporal_cell(row.get("valid_at")),
-                _short_temporal_cell(row.get("invalid_at")),
-                _short_temporal_cell(row.get("created_at")),
+            lines.append(
+                "[dim]valid_at:[/dim] "
+                f"{escape(_short_temporal_cell(row.get('valid_at')))}  "
+                "[dim]invalid_at:[/dim] "
+                f"{escape(_short_temporal_cell(row.get('invalid_at')))}  "
+                "[dim]created_at:[/dim] "
+                f"{escape(_short_temporal_cell(row.get('created_at')))}"
             )
-        else:
-            table.add_row(str(i), name, summary, uid)
-    _out.print(table)
+        _out.print(
+            Panel(
+                "\n".join(lines),
+                title=f"{i}. {escape(name)}",
+                border_style="cyan",
+            )
+        )
 
 
 def print_ingest_result(out: dict[str, Any], *, as_json: bool) -> None:
@@ -203,9 +224,14 @@ def print_ingest_result(out: dict[str, Any], *, as_json: bool) -> None:
         return
     status = out.get("status")
     if status == "queued":
+        event_id = out.get("event_id")
         _out.print(
-            f"[green]Episode queued[/green] (async). event_id={out.get('event_id')} job_id={out.get('job_id')}"
+            f"[green]Episode queued[/green] (async). event_id={event_id} job_id={out.get('job_id')}"
         )
+        if event_id:
+            _out.print(
+                f"[dim]Next: potpie event wait {event_id}  or  potpie event show {event_id}[/dim]"
+            )
         return
     ep = out.get("episode_uuid")
     _out.print(f"[green]Episode ingested.[/green] episode_uuid={ep}")

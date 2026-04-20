@@ -179,6 +179,9 @@ class EventListFilters:
 
     statuses: tuple[IngestionEventStatus, ...] | None = None
     ingestion_kinds: tuple[str, ...] | None = None
+    source_systems: tuple[str, ...] | None = None
+    submitted_after: datetime | None = None
+    submitted_before: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

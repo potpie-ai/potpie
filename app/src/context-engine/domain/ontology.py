@@ -822,6 +822,11 @@ EDGE_TYPES: dict[str, EdgeTypeSpec] = {
         "Materialized access path precomputes a query path for an entity.",
         [("MaterializedAccessPath", WILDCARD_ENDPOINT)],
     ),
+    "SUPERSEDES": _edge(
+        "SUPERSEDES",
+        "A fact or entity supersedes a prior version; the target is soft-invalidated with valid_to.",
+        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
+    ),
 }
 
 

@@ -45,9 +45,16 @@ class EdgeDelete:
 
 @dataclass(slots=True)
 class InvalidationOp:
-    """Mark a fact or entity invalidated with provenance."""
+    """Mark a fact or entity invalidated with provenance.
+
+    Either target_entity_key or target_edge must be set.
+    When superseded_by_key is provided a SUPERSEDES edge is created from the
+    new entity to the invalidated one; the invalidated node/edge gets valid_to
+    stamped rather than being deleted, preserving the audit trail.
+    """
 
     target_entity_key: str | None
     target_edge: tuple[str, str, str] | None
     reason: str
-    """Either entity_key or (edge_type, from_key, to_key) should be set."""
+    superseded_by_key: str | None = None
+    valid_to: str | None = None

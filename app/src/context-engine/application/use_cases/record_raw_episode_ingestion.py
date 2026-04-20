@@ -43,6 +43,7 @@ def record_raw_episode_ingestion(
     sync: bool,
     jobs: JobEnqueuePort | None,
     mutation_applier: GraphMutationApplierPort | None = None,
+    source_channel: str | None = None,
 ) -> RawEpisodeIngestOutcome:
     """Persist a ``raw_episode`` event, durable step row, then sync apply or async queue."""
     jq = jobs or NoOpJobEnqueue()
@@ -52,6 +53,7 @@ def record_raw_episode_ingestion(
         event_type="episode",
         action="ingest",
         pot_id=pot_id,
+        source_channel=source_channel,
         provider=scope.provider,
         provider_host=scope.provider_host,
         repo_name=scope.repo_name,

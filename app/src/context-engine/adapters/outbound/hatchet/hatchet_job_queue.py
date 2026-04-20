@@ -10,6 +10,7 @@ from domain.hatchet_events import (
     EVENT_BACKFILL,
     EVENT_INGEST_PR,
     EVENT_INGESTION_AGENT,
+    EVENT_MAINTENANCE,
 )
 
 
@@ -77,3 +78,46 @@ class HatchetContextGraphJobQueue:
                 "sequence": sequence,
             },
         )
+
+    def enqueue_maintenance_sweep(
+        self,
+        pot_id: str,
+        job_family: str,
+        *,
+        reason: str | None = None,
+        triggered_by: str = "quality_report",
+    ) -> None:
+        """Schedule a maintenance job for a pot.
+
+        job_family must be one of MAINTENANCE_JOB_FAMILIES from graph_quality.
+        Workers must register on_events for EVENT_MAINTENANCE.
+        """
+        self._hatchet.event.push(
+            EVENT_MAINTENANCE,
+            {
+                "pot_id": pot_id,
+                "job_family": job_family,
+                "reason": reason or "",
+                "triggered_by": triggered_by,
+            },
+        )
+
+    def dispatch_quality_recommendations(
+        self,
+        pot_id: str,
+        recommendations: list[dict[str, str]],
+    ) -> int:
+        """Dispatch all maintenance jobs recommended by a GraphQualityReport."""
+        count = 0
+        for rec in recommendations:
+            job_family = rec.get("job", "")
+            reason = rec.get("reason", "")
+            if job_family:
+                self.enqueue_maintenance_sweep(
+                    pot_id,
+                    job_family,
+                    reason=reason,
+                    triggered_by="quality_report",
+                )
+                count += 1
+        return count

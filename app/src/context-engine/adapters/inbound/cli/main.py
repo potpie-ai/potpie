@@ -1,6 +1,7 @@
 import importlib.metadata
 import json
 import os
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +38,7 @@ from adapters.inbound.cli.ingest_args import (
 )
 from adapters.inbound.cli.output import (
     DoctorSnapshot,
+    configure_error_output,
     configure_cli_logging,
     emit_error,
     print_doctor_report,
@@ -53,7 +55,6 @@ from adapters.outbound.http.potpie_context_api_client import (
     PotpieContextApiClient,
     PotpieContextApiError,
 )
-from adapters.outbound.postgres.session import database_url
 from adapters.outbound.settings_env import EnvContextEngineSettings
 from bootstrap.http_projects import pot_map_from_env
 
@@ -71,6 +72,7 @@ app = typer.Typer(
 
 pot_app = typer.Typer(help="Active pot and local pot helpers.")
 pot_repo_app = typer.Typer(help="Repositories attached to a context pot (Potpie API).")
+event_app = typer.Typer(help="Inspect and wait for ingestion events.")
 
 # Set by root callback; read by all subcommands (including nested `pot`).
 _cli_state: dict[str, Any] = {"json": False, "verbose": False, "source": None}
@@ -111,6 +113,16 @@ def _format_api_error(exc: PotpieContextApiError) -> str:
             return inner
         return json.dumps(d)
     return str(d)
+
+
+def _database_url_env_set() -> bool:
+    """Return whether local DB env is configured without importing optional SQLAlchemy."""
+    return bool(
+        os.getenv("DATABASE_URL")
+        or os.getenv("POSTGRES_URL")
+        or os.getenv("CONTEXT_ENGINE_DATABASE_URL")
+        or os.getenv("POSTGRES_SERVER")
+    )
 
 
 def _ingest_result_from_http(status_code: int, data: dict[str, Any]) -> dict[str, Any]:
@@ -174,6 +186,7 @@ def _cli(
         _cli_state["json"] = json_output
         _cli_state["verbose"] = verbose
         _cli_state["source"] = source.strip() if source and source.strip() else None
+        configure_error_output(as_json=json_output)
         load_cli_env()
         ve = os.getenv("CONTEXT_ENGINE_VERBOSE_NEO4J", "").strip().lower() in (
             "1",
@@ -239,7 +252,7 @@ def doctor_cmd() -> None:
     base_env = os.getenv("POTPIE_API_URL") or os.getenv("POTPIE_BASE_URL")
     base_stored = get_stored_api_base_url()
     port = os.getenv("POTPIE_PORT") or os.getenv("POTPIE_API_PORT")
-    db = bool(database_url())
+    db = _database_url_env_set()
     gh = bool(os.getenv("CONTEXT_ENGINE_GITHUB_TOKEN") or os.getenv("GITHUB_TOKEN"))
 
     maps_set = bool(
@@ -386,7 +399,7 @@ def init_agent_cmd(
 
 def _pot_id_or_git(explicit: str | None, *, cwd: str | None = None) -> str:
     if explicit:
-        resolved, rerr = resolve_cli_pot_ref(explicit)
+        resolved, rerr = _resolve_cli_pot_ref_with_api(explicit)
         if rerr or not resolved:
             _, v = _flags()
             emit_error(
@@ -402,11 +415,41 @@ def _pot_id_or_git(explicit: str | None, *, cwd: str | None = None) -> str:
     raise typer.Exit(code=1)
 
 
+def _resolve_cli_pot_ref_with_api(ref: str) -> tuple[str | None, str]:
+    """Resolve UUID/local alias first, then an accessible server-side slug."""
+    resolved, rerr = resolve_cli_pot_ref(ref)
+    if resolved and not rerr:
+        return resolved, ""
+    slug = (ref or "").strip().lower()
+    if not slug:
+        return None, rerr
+    try:
+        client = PotpieContextApiClient(
+            resolve_potpie_api_base_url(),
+            resolve_potpie_api_key(),
+            timeout=30.0,
+        )
+        row = client.find_context_pot_by_slug(slug)
+    except (ValueError, OSError, PotpieContextApiError):
+        return None, rerr
+    if not row:
+        return None, rerr
+    pid = row.get("id")
+    if not pid:
+        return None, f"Pot slug {slug!r} resolved to a row without an id."
+    try:
+        uuid.UUID(str(pid))
+    except ValueError:
+        return None, f"Pot slug {slug!r} resolved to invalid id {pid!r}."
+    register_pot_alias(slug, str(pid))
+    return str(pid), ""
+
+
 @pot_app.command("use")
 def pot_use(
     pot_id: str = typer.Argument(
         ...,
-        help="Pot UUID or a name from `pot alias` (see `pot pots`).",
+        help="Pot UUID, slug, or a name from `pot alias` (see `pot pots`).",
     ),
 ) -> None:
     """Remember the active pot for CLI commands (stored in credentials.json).
@@ -415,7 +458,7 @@ def pot_use(
     It takes precedence over CONTEXT_ENGINE_* repo maps. Use `pot unset` to fall back to maps + git.
     """
     j, v = _flags()
-    resolved, rerr = resolve_cli_pot_ref(pot_id)
+    resolved, rerr = _resolve_cli_pot_ref_with_api(pot_id)
     if rerr or not resolved:
         emit_error("Unknown pot", rerr or "Could not resolve pot.", verbose=v)
         raise typer.Exit(code=1)
@@ -467,17 +510,17 @@ def pot_pots_cmd() -> None:
         return
     if not rows:
         print_plain_line(
-            'No context pots yet. Run `potpie pot create "my-scope"` to create one on the server.',
+            "No context pots yet. Run `potpie pot create my-scope` to create one on the server.",
             as_json=False,
         )
         return
     for p in rows:
         pid = p.get("id", "")
-        dn = p.get("display_name", "")
+        slug = p.get("slug", "")
         repo = p.get("primary_repo_name", "")
-        print_plain_line(f"{pid}\t{dn}\t{repo}", as_json=False)
+        print_plain_line(f"{slug}\t{pid}\t{repo}", as_json=False)
     print_plain_line(
-        "[dim]Use: potpie pot use <id>  or  pot alias <name> <id>[/dim]",
+        "[dim]Use: potpie pot use <slug-or-id>  or  pot alias <name> <id>[/dim]",
         as_json=False,
     )
 
@@ -502,7 +545,7 @@ def pot_alias_cmd(
             verbose=v,
         )
         raise typer.Exit(code=1)
-    resolved, rerr = resolve_cli_pot_ref(pot_uuid)
+    resolved, rerr = _resolve_cli_pot_ref_with_api(pot_uuid)
     if rerr or not resolved:
         emit_error("Invalid pot id", rerr or pot_uuid, verbose=v)
         raise typer.Exit(code=1)
@@ -511,6 +554,29 @@ def pot_alias_cmd(
         f"Alias {name!r} -> {resolved}",
         as_json=j,
         json_payload={"ok": True, "name": name, "pot_id": resolved},
+    )
+
+
+@pot_app.command("slug-available")
+def pot_slug_available_cmd(
+    slug: str = typer.Argument(..., help="Candidate globally unique pot slug."),
+) -> None:
+    """Check whether a pot slug is available on the configured Potpie server."""
+    j, v = _flags()
+    client = _cli_client_or_exit(v)
+    try:
+        out = client.get_context_pot_slug_availability(slug)
+    except PotpieContextApiError as exc:
+        emit_error("Could not check slug", _format_api_error(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+    if j:
+        print_json_blob(out, as_json=True)
+        return
+    available = bool(out.get("available"))
+    normalized = out.get("slug") or slug
+    print_plain_line(
+        f"{normalized}: {'available' if available else 'taken'}",
+        as_json=False,
     )
 
 
@@ -528,16 +594,20 @@ def pot_clear_local_cmd() -> None:
 
 @pot_app.command("create")
 def pot_create_cmd(
-    name: str = typer.Argument(
+    slug: str = typer.Argument(
         ...,
-        help="Display name; registers a local alias to the new server pot id",
+        help="Globally unique pot slug; registers it as a local alias to the new server pot id.",
     ),
 ) -> None:
-    """Create a user-owned context pot on Potpie (POST /api/v2/context/pots) and save a local alias."""
+    """Create a user-owned context pot on Potpie (POST /api/v2/context/pots) and save the slug locally."""
     j, v = _flags()
     client = _cli_client_or_exit(v)
     try:
-        row = client.create_context_pot(display_name=name)
+        availability = client.get_context_pot_slug_availability(slug)
+        if not availability.get("available"):
+            emit_error("Slug is already taken", str(availability.get("slug") or slug), verbose=v)
+            raise typer.Exit(code=1)
+        row = client.create_context_pot(slug=str(availability.get("slug") or slug))
     except PotpieContextApiError as exc:
         emit_error("Could not create context pot", _format_api_error(exc), verbose=v)
         raise typer.Exit(code=1) from exc
@@ -545,20 +615,21 @@ def pot_create_cmd(
     if not pid:
         emit_error("Unexpected response", str(row), verbose=v)
         raise typer.Exit(code=1)
-    register_pot_alias(name, str(pid))
+    row_slug = str(row.get("slug") or slug)
+    register_pot_alias(row_slug, str(pid))
     data = {
         "id": pid,
-        "display_name": row.get("display_name"),
+        "slug": row_slug,
         "primary_repo_name": row.get("primary_repo_name"),
-        "alias": name,
-        "message": f"Run `potpie pot use {name!r}` or `pot use {pid}`.",
+        "alias": row_slug,
+        "message": f"Run `potpie pot use {row_slug}` or `potpie pot use {pid}`.",
     }
     if j:
         print_json_blob(data, as_json=True)
     else:
         print_plain_line(
-            f"Created context pot {pid} (alias {name!r}). "
-            f"Try: potpie pot use {name!r}",
+            f"Created context pot {row_slug} ({pid}). "
+            f"Try: potpie pot use {row_slug}",
             as_json=False,
         )
 
@@ -591,7 +662,7 @@ def pot_repo_list_cmd(
         return
     if not rows:
         print_plain_line(
-            f"No repositories for pot {pid}. Try `pot repo add owner/repo`.",
+            f"No repositories for pot {pid}. Try `potpie pot repo add owner/repo`.",
             as_json=False,
         )
         return
@@ -697,6 +768,184 @@ def pot_hard_reset(
 
 
 app.add_typer(pot_app, name="pot")
+
+
+def _event_terminal(status: Any) -> bool:
+    return str(status or "").strip().lower() in {"done", "error"}
+
+
+def _event_lifecycle(event: dict[str, Any]) -> str:
+    return str(event.get("lifecycle_status") or event.get("status") or "").strip()
+
+
+def _print_event(event: dict[str, Any], *, as_json: bool) -> None:
+    if as_json:
+        print_json_blob(event, as_json=True)
+        return
+    status = _event_lifecycle(event) or "(unknown)"
+    stage = event.get("stage") or event.get("raw_status") or ""
+    print_plain_line(
+        f"{event.get('event_id') or event.get('id')}\t{status}\t{stage}",
+        as_json=False,
+    )
+    for key in (
+        "pot_id",
+        "ingestion_kind",
+        "source_channel",
+        "repo_name",
+        "job_id",
+        "status",
+        "lifecycle_status",
+        "submitted_at",
+        "received_at",
+        "started_at",
+        "completed_at",
+        "error",
+    ):
+        value = event.get(key)
+        if value not in (None, "", []):
+            print_plain_line(f"{key}: {value}", as_json=False)
+    steps = event.get("episode_steps")
+    if isinstance(steps, list) and steps:
+        print_plain_line("steps:", as_json=False)
+        for step in steps:
+            if isinstance(step, dict):
+                print_plain_line(
+                    "  "
+                    f"{step.get('sequence')}: {step.get('step_kind')} "
+                    f"{step.get('status')} attempts={step.get('attempt_count')} "
+                    f"error={step.get('error') or ''}",
+                    as_json=False,
+                )
+
+
+@event_app.command("show")
+def event_show_cmd(
+    event_id: str = typer.Argument(..., help="Ingestion event id from `potpie ingest`."),
+) -> None:
+    """Fetch one persisted ingestion event."""
+    j, v = _flags()
+    client = _cli_client_or_exit(v)
+    try:
+        event = client.get_event(event_id)
+    except PotpieContextApiError as exc:
+        emit_error("Could not fetch event", _format_api_error(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+    _print_event(event, as_json=j)
+
+
+@event_app.command("list")
+def event_list_cmd(
+    pot_id: Optional[str] = typer.Argument(
+        None,
+        help="Pot id / slug / alias. Omit to infer from `potpie pot use` or git.",
+    ),
+    limit: int = typer.Option(20, "--limit", "-n", help="Max events to show (1-200)."),
+    status: Optional[str] = typer.Option(
+        None,
+        "--status",
+        help="Filter lifecycle: queued, processing, done, or error.",
+    ),
+    ingestion_kind: Optional[str] = typer.Option(
+        None,
+        "--kind",
+        help="Filter ingestion kind, e.g. raw_episode or agent_reconciliation.",
+    ),
+    cwd: str = typer.Option(
+        ".",
+        "--cwd",
+        help="Git working tree used to infer pot when POT_ID is omitted.",
+    ),
+) -> None:
+    """List recent ingestion events for a pot."""
+    j, v = _flags()
+    resolved = _pot_id_or_git(pot_id, cwd=str(Path(cwd).resolve()))
+    client = _cli_client_or_exit(v)
+    try:
+        page = client.list_events(
+            resolved,
+            limit=limit,
+            status=status,
+            ingestion_kind=ingestion_kind,
+        )
+    except PotpieContextApiError as exc:
+        emit_error("Could not list events", _format_api_error(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+    if j:
+        print_json_blob(page, as_json=True)
+        return
+    items = page.get("items")
+    if not isinstance(items, list) or not items:
+        print_plain_line(f"No events for pot {resolved}.", as_json=False)
+        return
+    for event in items:
+        if not isinstance(event, dict):
+            continue
+        print_plain_line(
+            f"{event.get('event_id') or event.get('id')}\t{event.get('status')}\t"
+            f"{event.get('lifecycle_status')}\t{event.get('ingestion_kind')}\t"
+            f"{event.get('submitted_at') or event.get('received_at')}",
+            as_json=False,
+        )
+
+
+@event_app.command("wait")
+def event_wait_cmd(
+    event_id: str = typer.Argument(..., help="Ingestion event id from `potpie ingest`."),
+    timeout: float = typer.Option(
+        60.0,
+        "--timeout",
+        help="Maximum seconds to wait for done/error.",
+    ),
+    interval: float = typer.Option(
+        2.0,
+        "--interval",
+        help="Polling interval in seconds.",
+    ),
+) -> None:
+    """Poll one event until it reaches done or error."""
+    j, v = _flags()
+    client = _cli_client_or_exit(v)
+    deadline = time.monotonic() + max(timeout, 0.0)
+    last: dict[str, Any] = {}
+    while True:
+        try:
+            last = client.get_event(event_id)
+        except PotpieContextApiError as exc:
+            emit_error("Could not fetch event", _format_api_error(exc), verbose=v)
+            raise typer.Exit(code=1) from exc
+        if _event_terminal(_event_lifecycle(last)):
+            _print_event(last, as_json=j)
+            if _event_lifecycle(last).lower() == "error":
+                raise typer.Exit(code=1)
+            return
+        if time.monotonic() >= deadline:
+            if j:
+                print_json_blob(
+                    {
+                        "ok": False,
+                        "timeout": True,
+                        "event": last,
+                    },
+                    as_json=True,
+                )
+            else:
+                status = _event_lifecycle(last) or "(unknown)"
+                stage = last.get("stage") or last.get("raw_status") or ""
+                print_plain_line(
+                    f"Timed out waiting for {event_id}; current status={status} stage={stage}. "
+                    f"Run `potpie event show {event_id}` to check again.",
+                    as_json=False,
+                )
+            raise typer.Exit(code=1)
+        if not j:
+            status = _event_lifecycle(last) or "(unknown)"
+            stage = last.get("stage") or last.get("raw_status") or ""
+            print_plain_line(f"event {event_id}: {status} {stage}", as_json=False)
+        time.sleep(max(interval, 0.1))
+
+
+app.add_typer(event_app, name="event")
 
 
 @app.command("add")
@@ -1019,6 +1268,15 @@ def ingest_cmd(
             exc=exc if v else None,
         )
         raise typer.Exit(code=1) from exc
+
+    if status_code == 409:
+        ev = data.get("event_id") if isinstance(data, dict) else None
+        emit_error(
+            "Duplicate ingest",
+            f"event_id={ev!r}" if ev else "Server reported a duplicate ingest.",
+            verbose=v,
+        )
+        raise typer.Exit(code=1)
 
     out = _ingest_result_from_http(status_code, data if isinstance(data, dict) else {})
     if out["status"] in ("applied", "legacy_direct") and not out.get("episode_uuid"):

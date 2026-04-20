@@ -22,6 +22,12 @@ from app.modules.context_graph.context_graph_pot_repository_model import (  # no
 from app.modules.context_graph.context_graph_pot_integration_model import (  # noqa
     ContextGraphPotIntegration,
 )
+from app.modules.context_graph.context_graph_pot_invitation_model import (  # noqa
+    ContextGraphPotInvitation,
+)
+from app.modules.context_graph.context_graph_pot_source_model import (  # noqa
+    ContextGraphPotSource,
+)
 from app.modules.media.media_model import MessageAttachment  # noqa
 from app.modules.intelligence.prompts.prompt_model import (  # noqa
     AgentPromptMapping,

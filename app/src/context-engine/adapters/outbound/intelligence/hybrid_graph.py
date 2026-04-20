@@ -362,6 +362,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
         scope: ContextScope,
         *,
         limit: int = 10,
+        as_of: str | None = None,
     ) -> list[ChangeRecord]:
         def _load() -> list[dict[str, Any]]:
             return self._structural.get_change_history(
@@ -371,6 +372,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
                 max(1, min(limit, 100)),
                 repo_name=scope.repo_name,
                 pr_number=scope.pr_number,
+                as_of=as_of,
             )
 
         try:

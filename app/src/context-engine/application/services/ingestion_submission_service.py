@@ -117,6 +117,7 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
             sync=sync,
             jobs=self._c.jobs,
             mutation_applier=self._mutation_applier,
+            source_channel=request.source_channel,
         )
 
         if not out.inserted:

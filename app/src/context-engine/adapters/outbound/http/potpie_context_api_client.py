@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from typing import Any, Optional
+from urllib.parse import quote
 
 import httpx
 
@@ -85,12 +86,13 @@ class PotpieContextApiClient:
     def create_context_pot(
         self,
         *,
+        slug: str,
         display_name: Optional[str] = None,
         pot_id: Optional[str] = None,
         primary_repo_name: Optional[str] = None,
     ) -> dict[str, Any]:
         """POST /api/v2/context/pots."""
-        body: dict[str, Any] = {}
+        body: dict[str, Any] = {"slug": slug}
         if display_name is not None:
             body["display_name"] = display_name
         if pot_id is not None:
@@ -101,6 +103,31 @@ class PotpieContextApiClient:
         self._raise_for_status(r)
         out = r.json()
         return out if isinstance(out, dict) else {}
+
+    def get_context_pot_slug_availability(self, slug: str) -> dict[str, Any]:
+        """GET /api/v2/context/pots/slug-availability/{slug}."""
+        encoded_slug = quote(slug.strip(), safe="")
+        with httpx.Client(timeout=self._timeout) as client:
+            r = client.get(
+                self._url(f"/pots/slug-availability/{encoded_slug}"),
+                headers={
+                    "X-API-Key": self._api_key,
+                    "Accept": "application/json",
+                },
+            )
+        self._raise_for_status(r)
+        out = r.json()
+        return out if isinstance(out, dict) else {}
+
+    def find_context_pot_by_slug(self, slug: str) -> dict[str, Any] | None:
+        """Resolve an accessible pot by slug using the authenticated pot list."""
+        wanted = slug.strip().lower()
+        if not wanted:
+            return None
+        for row in self.list_context_pots():
+            if str(row.get("slug") or "").strip().lower() == wanted:
+                return row
+        return None
 
     def list_pot_repositories(self, pot_id: str) -> list[dict[str, Any]]:
         """GET /api/v2/context/pots/{pot_id}/repositories."""
@@ -168,6 +195,22 @@ class PotpieContextApiClient:
                 params=params,
             )
 
+    def get_context(
+        self,
+        path: str,
+        *,
+        params: Optional[dict[str, Any]] = None,
+    ) -> httpx.Response:
+        with httpx.Client(timeout=self._timeout) as client:
+            return client.get(
+                self._url(path),
+                headers={
+                    "X-API-Key": self._api_key,
+                    "Accept": "application/json",
+                },
+                params=params,
+            )
+
     def search(self, body: dict[str, Any]) -> list[Any]:
         r = self.post_context("/query/search", json_body=body)
         self._raise_for_status(r)
@@ -190,6 +233,32 @@ class PotpieContextApiClient:
                 pass
         self._raise_for_status(r)
         return r.status_code, {}
+
+    def get_event(self, event_id: str) -> dict[str, Any]:
+        encoded_event_id = quote(event_id.strip(), safe="")
+        r = self.get_context(f"/events/{encoded_event_id}")
+        self._raise_for_status(r)
+        out = r.json()
+        return out if isinstance(out, dict) else {}
+
+    def list_events(
+        self,
+        pot_id: str,
+        *,
+        limit: int = 20,
+        status: Optional[str] = None,
+        ingestion_kind: Optional[str] = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"limit": limit}
+        if status:
+            params["status"] = status
+        if ingestion_kind:
+            params["ingestion_kind"] = ingestion_kind
+        encoded_pot_id = quote(pot_id.strip(), safe="")
+        r = self.get_context(f"/pots/{encoded_pot_id}/events", params=params)
+        self._raise_for_status(r)
+        out = r.json()
+        return out if isinstance(out, dict) else {"items": [], "next_cursor": None}
 
     def reset(self, body: dict[str, Any]) -> dict[str, Any]:
         r = self.post_context("/reset", json_body=body)

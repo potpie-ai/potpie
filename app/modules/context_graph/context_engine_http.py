@@ -16,6 +16,7 @@ from adapters.inbound.http.api.v1.context.router import (
 from app.core.database import get_db
 from app.modules.auth.api_key_deps import get_api_key_user
 from app.modules.auth.auth_service import AuthService
+from app.modules.context_graph.context_pot_routes import make_pot_router
 from app.modules.context_graph.pot_access import api_key_user_id, require_pot_ingest
 from app.modules.context_graph.sync_enqueue import enqueue_backfill_with_container
 from app.modules.context_graph.wiring import build_container_for_user_session
@@ -138,3 +139,6 @@ potpie_context_engine_router = create_context_router(
     mutation_handlers=POTPIE_CONTEXT_GRAPH_MUTATIONS,
     enforce_pot_access=True,
 )
+
+# Pots CRUD available at /api/v1/context/pots (Firebase JWT auth)
+potpie_context_pot_v1_router = make_pot_router(AuthService.check_auth)

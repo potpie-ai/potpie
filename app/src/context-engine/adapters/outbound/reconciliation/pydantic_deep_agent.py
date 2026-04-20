@@ -85,7 +85,7 @@ class PydanticDeepReconciliationAgent:
     ) -> None:
         import os
 
-        self._model = model or os.getenv("CONTEXT_ENGINE_RECONCILIATION_MODEL", "openai:gpt-4.1")
+        self._model = model or os.getenv("CONTEXT_ENGINE_RECONCILIATION_MODEL", "openai:gpt-5.4-mini")
         self._instructions = instructions or _RECONCILIATION_INSTRUCTIONS
 
     def capability_metadata(self) -> dict[str, Any]:

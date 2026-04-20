@@ -5,7 +5,9 @@ from unittest.mock import MagicMock
 
 from adapters.inbound.cli.output import (
     DoctorSnapshot,
+    configure_error_output,
     configure_cli_logging,
+    emit_error,
     print_doctor_report,
     print_search_results,
 )
@@ -63,6 +65,32 @@ def test_print_search_results_json_ignores_temporal_flag(capsys) -> None:
     print_search_results(rows, as_json=True, with_temporal=False)
     out = capsys.readouterr().out
     assert '"valid_at"' in out
+
+
+def test_emit_error_json_mode(capsys) -> None:
+    configure_error_output(as_json=True)
+    try:
+        emit_error("Bad thing", "use a better thing", hint="try again")
+        err = capsys.readouterr().err
+        assert '"ok": false' in err
+        assert '"title": "Bad thing"' in err
+        assert '"hint": "try again"' in err
+    finally:
+        configure_error_output(as_json=False)
+
+
+def test_print_search_results_human_uses_cards(capsys) -> None:
+    rows = [
+        {
+            "uuid": "abc",
+            "name": "Edge",
+            "fact": "A long but readable fact that should render inside a result card.",
+        }
+    ]
+    print_search_results(rows, as_json=False)
+    out = capsys.readouterr().out
+    assert "1. Edge" in out
+    assert "uuid:" in out
 
 
 def test_graphiti_failure_reason_disabled() -> None:

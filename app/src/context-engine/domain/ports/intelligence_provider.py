@@ -29,14 +29,14 @@ class IntelligenceProvider(Protocol):
         limit: int = 8,
         node_labels: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Semantic / hybrid search over pot-scoped knowledge."""
+        ...
 
     async def get_artifact_context(
         self,
         pot_id: str,
         artifact: ArtifactRef,
     ) -> ArtifactContext | None:
-        """Load structured context for a known artifact (e.g. PR)."""
+        ...
 
     async def get_change_history(
         self,
@@ -44,8 +44,9 @@ class IntelligenceProvider(Protocol):
         scope: ContextScope,
         *,
         limit: int = 10,
+        as_of: str | None = None,
     ) -> list[ChangeRecord]:
-        """Deterministic change history for optional file/function scope."""
+        ...
 
     async def get_decision_context(
         self,
@@ -54,7 +55,7 @@ class IntelligenceProvider(Protocol):
         *,
         limit: int = 20,
     ) -> list[DecisionRecord]:
-        """Design decisions linked to code or PR review."""
+        ...
 
     async def get_related_discussions(
         self,
@@ -63,7 +64,7 @@ class IntelligenceProvider(Protocol):
         *,
         limit: int = 10,
     ) -> list[DiscussionRecord]:
-        """Review threads / discussions when scope includes PR or file context."""
+        ...
 
     async def get_ownership(
         self,
@@ -72,7 +73,7 @@ class IntelligenceProvider(Protocol):
         *,
         limit: int = 5,
     ) -> list[OwnershipRecord]:
-        """Likely owners for a file path."""
+        ...
 
     async def get_project_map(
         self,
@@ -82,7 +83,7 @@ class IntelligenceProvider(Protocol):
         include: list[str],
         limit: int = 12,
     ) -> list[ProjectContextRecord]:
-        """Canonical project-map records for features, services, docs, operations, and instructions."""
+        ...
 
     async def get_debugging_memory(
         self,
@@ -93,7 +94,7 @@ class IntelligenceProvider(Protocol):
         query: str,
         limit: int = 12,
     ) -> list[DebuggingMemoryRecord]:
-        """Reusable prior fixes, incidents, alerts, investigations, and diagnostic signals."""
+        ...
 
     def get_capabilities(self) -> CapabilitySet:
-        """Static capability flags for this provider."""
+        ...

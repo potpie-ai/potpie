@@ -18,7 +18,9 @@ def get_change_history(
     limit: int = 10,
     repo_name: Optional[str] = None,
     pr_number: Optional[int] = None,
+    as_of: Optional[datetime] = None,
 ) -> list[dict[str, Any]]:
+    as_of_str = as_of.isoformat() if as_of is not None else None
     return structural.get_change_history(
         pot_id=pot_id,
         function_name=function_name,
@@ -26,6 +28,7 @@ def get_change_history(
         limit=max(1, min(limit, 100)),
         repo_name=repo_name,
         pr_number=pr_number,
+        as_of=as_of_str,
     )
 
 
@@ -125,7 +128,8 @@ def _edge_datetime_iso(obj: Any) -> str | None:
     fn = getattr(obj, "isoformat", None)
     if callable(fn):
         try:
-            return fn()
+            result = fn()
+            return str(result) if result is not None else None
         except Exception:
             return None
     return None

@@ -383,6 +383,7 @@ class ContextResolutionService:
                         request.pot_id,
                         plan.scope,
                         limit=request.effective_max_items,
+                        as_of=request.as_of.isoformat() if request.as_of else None,
                     ),
                 )
             )
