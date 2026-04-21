@@ -282,10 +282,15 @@ fn extract_file_graph(file: CodeFile) -> FileGraphData {
                 _ => continue,
             };
 
-            let node_id = if let Some(class_name) = current_class.as_ref() {
-                format!("{}:{}.{}", file.relative_path, class_name, tag.name)
-            } else {
-                format!("{}:{}", file.relative_path, tag.name)
+            let node_id = match tag.tag_type.as_str() {
+                "method" | "function" => {
+                    if let Some(class_name) = current_class.as_ref() {
+                        format!("{}:{}.{}", file.relative_path, class_name, tag.name)
+                    } else {
+                        format!("{}:{}", file.relative_path, tag.name)
+                    }
+                }
+                _ => format!("{}:{}", file.relative_path, tag.name),
             };
 
             if seen_ids.insert(node_id.clone()) {
@@ -437,14 +442,55 @@ fn load_query(lang: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn test_extract_graph() {
-        let graph = extract_graph(".");
-        assert!(!graph.nodes.is_empty(), "Should extract some nodes");
-        assert!(
-            !graph.relationships.is_empty(),
-            "Should extract some relationships"
+        let temp_dir = tempdir().expect("should create temp repo");
+        let file_path = temp_dir.path().join("main.py");
+
+        fs::write(
+            &file_path,
+            "def foo():\n    return 1\n\ndef bar():\n    return foo()\n",
+        )
+        .expect("should write fixture source file");
+
+        let graph = extract_graph(temp_dir.path().to_str().expect("temp path should be utf-8"));
+
+        assert_eq!(graph.nodes.len(), 3, "expected file node and two function nodes");
+        assert_eq!(
+            graph.relationships.len(),
+            3,
+            "expected two CONTAINS edges and one REFERENCES edge"
         );
+
+        let node_ids = graph
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            node_ids,
+            HashSet::from(["main.py", "main.py:foo", "main.py:bar"])
+        );
+
+        assert!(graph.relationships.iter().any(|relationship| {
+            relationship.source_id == "main.py"
+                && relationship.target_id == "main.py:foo"
+                && relationship.relationship_type == "CONTAINS"
+        }));
+        assert!(graph.relationships.iter().any(|relationship| {
+            relationship.source_id == "main.py"
+                && relationship.target_id == "main.py:bar"
+                && relationship.relationship_type == "CONTAINS"
+        }));
+        assert!(graph.relationships.iter().any(|relationship| {
+            relationship.source_id == "main.py:bar"
+                && relationship.target_id == "main.py:foo"
+                && relationship.relationship_type == "REFERENCES"
+                && relationship.ident.as_deref() == Some("foo")
+        }));
     }
 }

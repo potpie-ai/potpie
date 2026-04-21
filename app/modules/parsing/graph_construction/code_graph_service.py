@@ -214,11 +214,6 @@ class CodeGraphService:
 
             # Index nodes to Qdrant (hybrid dense + BM25 + ColBERT embeddings)
             qdrant_index_start = time.time()
-            logger.info(
-                f"[GRAPH GENERATION] Indexing {node_count} nodes to Qdrant",
-                project_id=project_id,
-                total_nodes=node_count,
-            )
             nodes_for_indexing = []
             for node_key, node_data in nx_graph.nodes(data=True):
                 if node_data.get("type", "") not in INDEXABLE_NODE_TYPES:
@@ -234,6 +229,11 @@ class CodeGraphService:
                         "text": node_data.get("text", ""),
                     }
                 )
+            logger.info(
+                f"[GRAPH GENERATION] Indexing {len(nodes_for_indexing)} nodes to Qdrant",
+                project_id=project_id,
+                total_nodes=len(nodes_for_indexing),
+            )
             if nodes_for_indexing:
                 try:
                     collection_name = self.get_qdrant_collection_name(project_id)
@@ -257,7 +257,7 @@ class CodeGraphService:
                         qdrant_index_time_seconds=qdrant_index_time,
                     )
                 except Exception:
-                    logger.warning(
+                    logger.exception(
                         "[GRAPH GENERATION] Qdrant indexing failed (non-fatal): continuing without Qdrant index",
                         project_id=project_id,
                     )
