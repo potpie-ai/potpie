@@ -1,5 +1,5 @@
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ProviderInfo(BaseModel):
@@ -50,3 +50,11 @@ class MermaidRepairRequest(BaseModel):
 
 class MermaidRepairResponse(BaseModel):
     corrected_code: str
+
+
+class MermaidValidationReport(BaseModel):
+    passed: bool
+    corrected_code: Optional[str] = None
+    feedback: str
+    issues: List[str] = Field(default_factory=list)
+    iteration: int = 1

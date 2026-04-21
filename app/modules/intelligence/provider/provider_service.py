@@ -22,6 +22,7 @@ from .provider_schema import (
     AvailableModelOption,
     SetProviderRequest,
     ModelInfo,
+    MermaidValidationReport,
 )
 from .llm_config import (
     LLMProviderConfig,
@@ -31,6 +32,9 @@ from .llm_config import (
     DEFAULT_INFERENCE_MODEL,
 )
 from .exceptions import UnsupportedProviderError
+from app.modules.intelligence.agents.chat_agents.system_agents.mermaid_validator_agent import (
+    MERMAID_VALIDATOR_AGENT_PROMPT,
+)
 
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -638,10 +642,84 @@ class ProviderService:
         error_message: Optional[str] = None,
         attempt: int = 1,
     ) -> str:
-        """Repair Mermaid source using the configured chat model.
+        """Repair Mermaid source using a validate -> correct -> revalidate loop."""
+        latest_code = self._strip_mermaid_fences(diagram_code)
+        latest_feedback = error_message or "unknown"
 
-        Returns Mermaid code only, without code fences or explanation.
-        """
+        for iteration in range(attempt, attempt + 3):
+            report = await self.validate_mermaid_diagram(
+                latest_code,
+                error_message=latest_feedback,
+                iteration=iteration,
+            )
+
+            candidate = self._strip_mermaid_fences(
+                report.corrected_code or latest_code
+            ).strip()
+
+            if report.passed and candidate:
+                return candidate
+
+            if candidate and candidate != latest_code:
+                latest_code = candidate
+                latest_feedback = report.feedback or latest_feedback
+                continue
+
+            legacy_candidate = await self._legacy_repair_mermaid_diagram(
+                latest_code,
+                error_message=report.feedback or latest_feedback,
+                attempt=iteration,
+            )
+            legacy_candidate = self._strip_mermaid_fences(legacy_candidate).strip()
+
+            if legacy_candidate and legacy_candidate != latest_code:
+                latest_code = legacy_candidate
+                latest_feedback = report.feedback or latest_feedback
+                continue
+
+            break
+
+        return latest_code.strip()
+
+    async def validate_mermaid_diagram(
+        self,
+        diagram_code: str,
+        error_message: Optional[str] = None,
+        iteration: int = 1,
+    ) -> MermaidValidationReport:
+        """Validate Mermaid and propose a corrected version when needed."""
+        user_prompt = (
+            f"Validate and, if needed, correct this Mermaid diagram.\n"
+            f"Iteration: {iteration}\n"
+            f"Parser/render error: {error_message or 'unknown'}\n\n"
+            f"Mermaid source:\n{diagram_code}"
+        )
+
+        report = await self.call_llm_with_structured_output(
+            messages=[
+                {
+                    "role": "system",
+                    "content": MERMAID_VALIDATOR_AGENT_PROMPT.strip(),
+                },
+                {"role": "user", "content": user_prompt},
+            ],
+            output_schema=MermaidValidationReport,
+            config_type="chat",
+        )
+
+        report.corrected_code = self._strip_mermaid_fences(
+            report.corrected_code or diagram_code
+        ).strip()
+        report.iteration = iteration
+        return report
+
+    async def _legacy_repair_mermaid_diagram(
+        self,
+        diagram_code: str,
+        error_message: Optional[str] = None,
+        attempt: int = 1,
+    ) -> str:
+        """Fallback freeform Mermaid repair prompt."""
         system_prompt = """
 You repair Mermaid diagrams so they parse successfully.
 
@@ -671,8 +749,11 @@ Rules:
             ],
             config_type="chat",
         )
+        return str(response).strip()
 
-        corrected = str(response).strip()
+    def _strip_mermaid_fences(self, mermaid_source: str) -> str:
+        """Remove markdown code fences if the model adds them."""
+        corrected = str(mermaid_source or "").strip()
         if corrected.startswith("```"):
             corrected = corrected.removeprefix("```mermaid").removeprefix("```")
             if corrected.endswith("```"):
