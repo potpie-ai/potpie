@@ -26,6 +26,13 @@ class ConfigProvider:
             "username": os.getenv("NEO4J_USERNAME") or "",
             "password": os.getenv("NEO4J_PASSWORD") or "",
         }
+        # Qdrant configuration
+        self.qdrant_config = {
+            "host": os.getenv("QDRANT_HOST") or "localhost",
+            "port": int(os.getenv("QDRANT_PORT") or 6333),
+            "api_key": os.getenv("QDRANT_API_KEY") or "",
+            "https": os.getenv("QDRANT_HTTPS", "false").lower() == "true",
+        }
         self.github_key = os.getenv("GITHUB_PRIVATE_KEY")
         self.is_development_mode = os.getenv("isDevelopmentMode", "disabled")
         self.is_multimodal_enabled = os.getenv("isMultimodalEnabled", "auto")
@@ -72,6 +79,10 @@ class ConfigProvider:
         if ConfigProvider._neo4j_override is not None:
             return ConfigProvider._neo4j_override
         return self.neo4j_config
+
+    def get_qdrant_config(self) -> dict:
+        """Get Qdrant configuration dict."""
+        return self.qdrant_config
 
     def get_github_key(self):
         """Return GitHub App private key, with literal \\n converted to newlines.

@@ -5,9 +5,15 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from neo4j import GraphDatabase
+from qdrant_client import QdrantClient
 from sqlalchemy.orm import Session
 
+from app.core.config_provider import config_provider
 from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
+from app.modules.parsing.knowledge_graph.qdrant_indexing_service import (
+    INDEXABLE_NODE_TYPES,
+    index_nodes_to_qdrant,
+)
 from app.modules.search.search_service import SearchService
 from app.modules.utils.logger import setup_logger
 
@@ -18,6 +24,19 @@ class CodeGraphService:
     def __init__(self, neo4j_uri, neo4j_user, neo4j_password, db: Session):
         self.driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
         self.db = db
+        qdrant_config = config_provider.get_qdrant_config()
+        api_key = qdrant_config.get("api_key", "")
+        if api_key:
+            self.qdrant_client = QdrantClient(
+                location=f"{qdrant_config['host']}:{qdrant_config['port']}",
+                api_key=api_key,
+                prefer_grpc=True,
+            )
+        else:
+            self.qdrant_client = QdrantClient(
+                location=f"{qdrant_config['host']}:{qdrant_config['port']}",
+                prefer_grpc=True,
+            )
 
     @staticmethod
     def generate_node_id(path: str, user_id: str):
@@ -35,6 +54,8 @@ class CodeGraphService:
 
     def close(self):
         self.driver.close()
+        if hasattr(self, "qdrant_client"):
+            self.qdrant_client.close()
 
     def create_and_store_graph(self, repo_dir, project_id, user_id):
         graph_start_time = time.time()
@@ -52,7 +73,7 @@ class CodeGraphService:
         # Step 1: Create RepoMap and parse repository
         repo_map_start = time.time()
         logger.info(
-            f"[GRAPH GENERATION] Step 1/4: Initializing RepoMap parser",
+            "[GRAPH GENERATION] Step 1/4: Initializing RepoMap parser",
             project_id=project_id,
         )
         self.repo_map = RepoMap(
@@ -64,7 +85,7 @@ class CodeGraphService:
 
         parse_start = time.time()
         logger.info(
-            f"[GRAPH GENERATION] Step 2/4: Parsing repository structure",
+            "[GRAPH GENERATION] Step 2/4: Parsing repository structure",
             project_id=project_id,
         )
         nx_graph = self.repo_map.create_graph(repo_dir)
@@ -85,7 +106,7 @@ class CodeGraphService:
             # Step 2: Create indices
             index_start = time.time()
             logger.info(
-                f"[GRAPH GENERATION] Step 3/4: Creating Neo4j indices",
+                "[GRAPH GENERATION] Step 3/4: Creating Neo4j indices",
                 project_id=project_id,
             )
             session.run(
@@ -183,6 +204,56 @@ class CodeGraphService:
                 nodes_inserted=nodes_inserted,
                 node_insert_time_seconds=node_insert_time,
             )
+
+            # Index nodes to Qdrant (hybrid dense + BM25 + ColBERT embeddings)
+            qdrant_index_start = time.time()
+            logger.info(
+                f"[GRAPH GENERATION] Indexing {node_count} nodes to Qdrant",
+                project_id=project_id,
+                total_nodes=node_count,
+            )
+            nodes_for_indexing = []
+            for node_key, node_data in nx_graph.nodes(data=True):
+                if node_data.get("type", "") not in INDEXABLE_NODE_TYPES:
+                    continue
+                nodes_for_indexing.append(
+                    {
+                        "node_id": CodeGraphService.generate_node_id(node_key, user_id),
+                        "name": node_data.get("name", ""),
+                        "file": node_data.get("file", ""),
+                        "type": node_data.get("type", ""),
+                        "line": node_data.get("line", -1),
+                        "end_line": node_data.get("end_line", -1),
+                        "text": node_data.get("text", ""),
+                    }
+                )
+            if nodes_for_indexing:
+                try:
+                    collection_name = f"hybrid_{project_id}"
+                    count, n_bm25, n_colbert = index_nodes_to_qdrant(
+                        self.qdrant_client,
+                        collection_name,
+                        nodes_for_indexing,
+                    )
+                    qdrant_index_time = time.time() - qdrant_index_start
+                    logger.info(
+                        f"[GRAPH GENERATION] Qdrant indexing completed: {count} points indexed, {n_bm25} BM25 tokens, {n_colbert} ColBERT tokens in {qdrant_index_time:.2f}s",
+                        project_id=project_id,
+                        indexed_count=count,
+                        bm25_tokens=n_bm25,
+                        colbert_tokens=n_colbert,
+                        qdrant_index_time_seconds=qdrant_index_time,
+                    )
+                except Exception:
+                    logger.warning(
+                        "[GRAPH GENERATION] Qdrant indexing failed (non-fatal): continuing without Qdrant index",
+                        project_id=project_id,
+                    )
+            else:
+                logger.info(
+                    "[GRAPH GENERATION] No indexable nodes found for Qdrant indexing",
+                    project_id=project_id,
+                )
 
             # Step 4: Insert relationships
             rel_insert_start = time.time()
