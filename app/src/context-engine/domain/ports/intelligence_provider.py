@@ -8,6 +8,7 @@ from domain.intelligence_models import (
     ArtifactContext,
     ArtifactRef,
     CapabilitySet,
+    CausalChainItem,
     ChangeRecord,
     ContextScope,
     DebuggingMemoryRecord,
@@ -95,6 +96,21 @@ class IntelligenceProvider(Protocol):
         limit: int = 12,
     ) -> list[DebuggingMemoryRecord]:
         ...
+
+    async def get_causal_chain(
+        self,
+        pot_id: str,
+        scope: ContextScope,
+        *,
+        query: str,
+        max_depth: int = 6,
+        as_of_iso: str | None = None,
+        window_days: int = 180,
+    ) -> list[CausalChainItem]:
+        ...
+
+    async def list_open_conflicts(self, pot_id: str) -> list[dict[str, Any]]:
+        """Open predicate-family ``QualityIssue`` rows for this pot (episodic graph)."""
 
     def get_capabilities(self) -> CapabilitySet:
         ...

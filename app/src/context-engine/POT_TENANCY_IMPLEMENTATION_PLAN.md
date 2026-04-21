@@ -269,10 +269,7 @@ These endpoints belong in Potpie, not in `potpie`.
 
 These continue to call `potpie`, but only with already-authorized `pot_id` access:
 
-- `POST /api/v2/context/query/search`
-- `POST /api/v2/context/query/change-history`
-- `POST /api/v2/context/query/file-owners`
-- `POST /api/v2/context/query/decisions`
+- `POST /api/v2/context/query/context-graph`
 - `POST /api/v2/context/ingest`
 - `POST /api/v2/context/reset`
 

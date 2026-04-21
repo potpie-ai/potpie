@@ -9,12 +9,26 @@ validation helpers defined here.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Iterable
 
 from domain.graph_mutations import EdgeDelete, EdgeUpsert, EntityUpsert
 from domain.source_references import validate_source_reference_properties
 
 ONTOLOGY_VERSION = "2026-04-phase-7"
+
+
+class LifecycleStatus(StrEnum):
+    """Edge-level lifecycle for episodic facts (stored as ``lifecycle_status`` on the edge)."""
+
+    proposed = "proposed"
+    planned = "planned"
+    in_progress = "in_progress"
+    completed = "completed"
+    deprecated = "deprecated"
+    decommissioned = "decommissioned"
+    unknown = "unknown"
+
 
 BASE_GRAPH_LABELS = frozenset({"Entity"})
 CODE_GRAPH_LABELS = frozenset({"CodeAsset", "FILE", "FUNCTION", "CLASS", "NODE"})
@@ -151,6 +165,14 @@ ENTITY_TYPES: dict[str, EntityTypeSpec] = {
         "Logical subsystem, module, package, or bounded context.",
         "repo/service-scoped semantic key",
         ("name", "component_type"),
+        COMMON_LIFECYCLE_STATES,
+    ),
+    "LegacyArtifact": _spec(
+        "LegacyArtifact",
+        "product_architecture",
+        "Deprecated, superseded, or decommissioned resource still referenced in history.",
+        "scoped legacy slug or name",
+        ("name", "status"),
         COMMON_LIFECYCLE_STATES,
     ),
     "Capability": _spec(
@@ -827,7 +849,241 @@ EDGE_TYPES: dict[str, EdgeTypeSpec] = {
         "A fact or entity supersedes a prior version; the target is soft-invalidated with valid_to.",
         [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
     ),
+    # Episodic extraction verbs (Graphiti); wildcard endpoints — see docs/context-graph-improvements/02.
+    "GENERIC_ACTION": _edge(
+        "GENERIC_ACTION",
+        "Fallback when the extractor cannot name a specific predicate; carries lifecycle_status.",
+        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
+    ),
+    "MIGRATED_TO": _edge(
+        "MIGRATED_TO",
+        "Workload or datastore migration to a new system or store.",
+        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
+    ),
+    "DECOMMISSIONED": _edge(
+        "DECOMMISSIONED",
+        "Resource, cluster, or path was shut down or removed from service.",
+        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
+    ),
+    "PLANNED": _edge(
+        "PLANNED",
+        "Future or scheduled work not yet delivered.",
+        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
+    ),
+    "DELIVERED": _edge(
+        "DELIVERED",
+        "Delivered or finished change (past tense, shipped).",
+        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
+    ),
+    "DEPRECATED": _edge(
+        "DEPRECATED",
+        "API, component, or path is deprecated or slated for removal.",
+        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
+    ),
+    "REPLACES": _edge(
+        "REPLACES",
+        "New component or system replaces an older one.",
+        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
+    ),
+    "CAUSED": _edge(
+        "CAUSED",
+        "Causal link between events or changes.",
+        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
+    ),
+    "FIXES": _edge(
+        "FIXES",
+        "Change or release fixes a defect or incident.",
+        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
+    ),
+    "ADDED_TO": _edge(
+        "ADDED_TO",
+        "Capability, instrumentation, or dependency was added to a scope.",
+        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
+    ),
+    "REMOVED_FROM": _edge(
+        "REMOVED_FROM",
+        "Something was removed from a system, path, or dependency set.",
+        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
+    ),
+    "RELATED_TO": _edge(
+        "RELATED_TO",
+        "Catch-all when the extractor emits a non-catalog edge type; preserve "
+        "``original_edge_type`` on edge properties.",
+        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
+    ),
+    "STORED_IN": _edge(
+        "STORED_IN",
+        "Data is persisted in or primarily associated with a store or database.",
+        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
+    ),
+    "DECIDES_FOR": _edge(
+        "DECIDES_FOR",
+        "Decision or policy governs a scope or component.",
+        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
+    ),
 }
+
+
+CANONICAL_LABELS: frozenset[str] = frozenset(ENTITY_TYPES.keys())
+CANONICAL_EDGE_TYPES: frozenset[str] = frozenset(EDGE_TYPES.keys())
+
+
+def _union_entity_lifecycle_strings() -> frozenset[str]:
+    out: set[str] = set()
+    for spec in ENTITY_TYPES.values():
+        out.update(spec.lifecycle_states)
+    out.update(member.value for member in LifecycleStatus)
+    return frozenset(out)
+
+
+ALLOWED_LIFECYCLE_STATUSES: frozenset[str] = _union_entity_lifecycle_strings()
+
+
+# --- Temporal predicate families (auto-supersession + search ranking) ------------
+# See docs/context-graph-improvements/01-temporal-resolution-in-search.md
+
+
+def normalize_graphiti_edge_name(name: str) -> str:
+    """Normalize LLM / Graphiti relation labels for family lookup."""
+    return name.strip().upper().replace(" ", "_").replace("-", "_")
+
+
+# Episodic edge endpoint → canonical node labels (see docs/context-graph-improvements/03).
+# Key: (normalized RELATES_TO.name, "source" | "target") → labels to add on that endpoint.
+# Omit ambiguous rows (multiple equally valid ontology labels → no inference).
+EDGE_ENDPOINT_INFERRED_LABELS: dict[tuple[str, str], tuple[str, ...]] = {
+    ("DECIDES_FOR", "target"): ("Decision",),
+    ("CAUSED", "target"): ("Incident",),
+    ("DEPLOYED_TO", "target"): ("Deployment",),
+    ("DEPRECATED", "target"): ("LegacyArtifact",),
+    ("DECOMMISSIONED", "target"): ("LegacyArtifact",),
+}
+
+
+def inferred_labels_for_episodic_edge_endpoint(
+    edge_name: str, role: str
+) -> tuple[str, ...]:
+    """Return canonical ontology labels to add for a RELATES_TO endpoint, if unambiguous."""
+    if role not in ("source", "target"):
+        return ()
+    key = (normalize_graphiti_edge_name(edge_name), role)
+    return EDGE_ENDPOINT_INFERRED_LABELS.get(key, ())
+
+
+# Hand-curated: same family + same logical subject + different object ⇒ contradiction.
+PREDICATE_FAMILY_EDGE_NAMES: dict[str, frozenset[str]] = {
+    "datastore_binding": frozenset(
+        {
+            "USES_DATA_STORE",
+            "STORED_IN",
+            "PERSISTS_TO",
+            "MIGRATED_TO",
+        }
+    ),
+    "owner_binding": frozenset({"OWNS", "OWNED_BY", "MAINTAINED_BY"}),
+    "deployment_target": frozenset({"DEPLOYED_TO", "RUNS_ON", "HOSTED_ON"}),
+    "lifecycle_status": frozenset(
+        {
+            "PROPOSED",
+            "IN_PROGRESS",
+            "COMPLETED",
+            "DEPRECATED",
+            "DECOMMISSIONED",
+        }
+    ),
+}
+
+
+def predicate_family_for_edge_name(name: str) -> str | None:
+    """Return predicate family id for a Graphiti ``RELATES_TO.name``, if any."""
+    n = normalize_graphiti_edge_name(name)
+    for fam, members in PREDICATE_FAMILY_EDGE_NAMES.items():
+        if n in members:
+            return fam
+    return None
+
+
+# Targets that disambiguate ``CHOSE`` toward datastore / persistence binding (see fix 02).
+_DATASTORE_CHOOSE_TARGET_LABEL_HINTS: frozenset[str] = frozenset({"DataStore"})
+
+
+def predicate_family_for_episodic_supersede(
+    edge_name: str,
+    target_labels: Iterable[str] | None = None,
+) -> str | None:
+    """Predicate family for temporal auto-supersede and pairwise conflict bucketing.
+
+    Graphiti may emit ``CHOSE`` for decisions that are not datastore-related; those must not
+    join ``datastore_binding``. When the target carries no canonical hints, ``CHOSE`` is
+    excluded (strict fallback—matches single-type supersession only for that edge).
+    """
+    n = normalize_graphiti_edge_name(edge_name)
+    if n == "CHOSE":
+        hinted = frozenset(canonical_entity_labels(target_labels or ()))
+        if not hinted:
+            return None
+        if hinted & _DATASTORE_CHOOSE_TARGET_LABEL_HINTS:
+            return "datastore_binding"
+        return None
+    return predicate_family_for_edge_name(edge_name)
+
+
+def object_counterparty_uuid_for_edge(
+    edge_name: str,
+    source_uuid: str,
+    target_uuid: str,
+    *,
+    predicate_family: str | None = None,
+) -> str | None:
+    """Endpoint uuid whose identity differs when the same resource has a conflicting binding."""
+
+    n = normalize_graphiti_edge_name(edge_name)
+    fam = predicate_family if predicate_family is not None else predicate_family_for_edge_name(
+        edge_name
+    )
+    if fam is None:
+        return None
+    if fam in {"datastore_binding", "deployment_target", "lifecycle_status"}:
+        return target_uuid
+    if fam == "owner_binding":
+        if n == "OWNS":
+            return source_uuid
+        if n == "OWNED_BY":
+            return target_uuid
+        if n == "MAINTAINED_BY":
+            return source_uuid
+    return None
+
+
+def temporal_subject_key_for_edge(
+    edge_name: str,
+    source_uuid: str,
+    target_uuid: str,
+    *,
+    predicate_family: str | None = None,
+) -> str | None:
+    """Stable subject node uuid for contradiction grouping within a family.
+
+    * datastore / deployment / lifecycle: subject is the ``source`` entity.
+    * owner edges: the *resource* whose ownership is described (OWNS: target;
+      OWNED_BY / MAINTAINED_BY: source when the edge is Resource -> Actor).
+    """
+    n = normalize_graphiti_edge_name(edge_name)
+    fam = predicate_family if predicate_family is not None else predicate_family_for_edge_name(
+        edge_name
+    )
+    if fam is None:
+        return None
+    if fam in {"datastore_binding", "deployment_target", "lifecycle_status"}:
+        return source_uuid
+    if fam == "owner_binding":
+        if n == "OWNS":
+            return target_uuid
+        if n == "OWNED_BY":
+            return source_uuid
+        if n == "MAINTAINED_BY":
+            return target_uuid
+    return None
 
 
 def canonical_entity_labels(labels: Iterable[str]) -> tuple[str, ...]:
@@ -1019,7 +1275,12 @@ def _validate_lifecycle_state(
 ) -> None:
     if not spec.lifecycle_states:
         return
-    value = properties.get("lifecycle_state") or properties.get("status")
+    # Decision uses ``status`` (ADR-style); do not treat ``lifecycle_state`` from another
+    # co-located label (e.g. Service) as this label's lifecycle value.
+    if label == "Decision":
+        value = properties.get("status")
+    else:
+        value = properties.get("lifecycle_state") or properties.get("status")
     if value is None:
         return
     if str(value) not in spec.lifecycle_states:

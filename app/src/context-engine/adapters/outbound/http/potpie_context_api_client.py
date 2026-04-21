@@ -21,6 +21,16 @@ class PotpieContextApiError(Exception):
         super().__init__(f"HTTP {status_code}: {detail!r}")
 
 
+class IngestRejectedError(Exception):
+    """Server returned HTTP 422 with a structured reconciliation rejection body."""
+
+    def __init__(self, body: dict[str, Any]) -> None:
+        self.body = body
+        super().__init__(
+            str(body.get("status") or body.get("error") or "reconciliation_rejected")
+        )
+
+
 def _json_body_for_httpx(obj: Any) -> Any:
     """Recursively convert datetime to ISO strings for JSON bodies."""
     if isinstance(obj, datetime):
@@ -33,7 +43,7 @@ def _json_body_for_httpx(obj: Any) -> Any:
 
 
 class PotpieContextApiClient:
-    """Thin client: search, ingest, reset, and query/* used by CLI and MCP."""
+    """Thin client for context graph query, ingest, reset, and support APIs."""
 
     def __init__(
         self,
@@ -211,14 +221,36 @@ class PotpieContextApiClient:
                 params=params,
             )
 
-    def search(self, body: dict[str, Any]) -> list[Any]:
-        r = self.post_context("/query/search", json_body=body)
+    def context_graph_query(self, body: dict[str, Any]) -> dict[str, Any]:
+        r = self.post_context("/query/context-graph", json_body=body)
         self._raise_for_status(r)
-        return r.json()
+        out = r.json()
+        return out if isinstance(out, dict) else {}
+
+    def classify_modified_edges(self, body: dict[str, Any]) -> dict[str, Any]:
+        """POST /maintenance/classify-modified-edges (dry-run by default)."""
+        r = self.post_context("/maintenance/classify-modified-edges", json_body=body)
+        self._raise_for_status(r)
+        out = r.json()
+        return out if isinstance(out, dict) else {}
 
     def ingest(self, body: dict[str, Any], *, sync: bool) -> tuple[int, dict[str, Any]]:
         params = {"sync": "true"} if sync else None
         r = self.post_context("/ingest", json_body=body, params=params)
+        if r.status_code == 422:
+            payload: dict[str, Any]
+            try:
+                raw = r.json()
+                payload = raw if isinstance(raw, dict) else {}
+            except json.JSONDecodeError:
+                payload = {
+                    "status": "reconciliation_rejected",
+                    "errors": [],
+                    "event_id": None,
+                    "episode_uuid": None,
+                    "downgrades": [],
+                }
+            raise IngestRejectedError(payload)
         if r.status_code in (200, 202):
             try:
                 return r.status_code, r.json()
@@ -278,20 +310,39 @@ class PotpieContextApiClient:
         out = r.json()
         return out if isinstance(out, dict) else {}
 
-    def post_query(self, subpath: str, body: dict[str, Any]) -> Any:
-        path = f"/query/{subpath.lstrip('/')}"
-        r = self.post_context(path, json_body=body)
+    def conflicts_list(self, pot_id: str) -> dict[str, Any]:
+        r = self.post_context("/conflicts/list", json_body={"pot_id": pot_id})
         self._raise_for_status(r)
-        return r.json()
+        out = r.json()
+        return out if isinstance(out, dict) else {}
 
-    async def post_query_async(self, subpath: str, body: dict[str, Any]) -> Any:
-        path = f"/query/{subpath.lstrip('/')}"
+    def conflicts_resolve(
+        self,
+        pot_id: str,
+        issue_uuid: str,
+        *,
+        action: str = "supersede_older",
+    ) -> dict[str, Any]:
+        r = self.post_context(
+            "/conflicts/resolve",
+            json_body={
+                "pot_id": pot_id,
+                "issue_uuid": issue_uuid,
+                "action": action,
+            },
+        )
+        self._raise_for_status(r)
+        out = r.json()
+        return out if isinstance(out, dict) else {}
+
+    async def context_graph_query_async(self, body: dict[str, Any]) -> dict[str, Any]:
         payload = _json_body_for_httpx(body)
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             r = await client.post(
-                self._url(path),
+                self._url("/query/context-graph"),
                 headers=self._headers(),
                 json=payload,
             )
         self._raise_for_status(r)
-        return r.json()
+        out = r.json()
+        return out if isinstance(out, dict) else {}

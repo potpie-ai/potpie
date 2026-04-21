@@ -3,9 +3,14 @@
 The canonical combined context graph architecture is:
 
 - [Context Graph Architecture](graph.md)
+- [Context Graph Features And Functionalities](features-and-functionalities.md)
+- [Context Graph Planning Next Steps](planning-next-steps.md)
+- [Unified Graphiti Application Architecture](unified-graphiti-application-architecture.md)
 - [Context Engine Test Harness And Findings](testing-and-bugs.md)
 
-That document now combines:
+`graph.md` remains the canonical product architecture. The unified Graphiti application doc is the focused implementation plan for collapsing the application layer onto one Graphiti-backed graph port.
+
+The architecture set now combines:
 
 - the original `docs/context-graph/graph.md` architecture
 - the pot, context-wrap, source-reference, and agent-integration requirements
@@ -13,7 +18,9 @@ That document now combines:
 - the current `app/src/context-engine` implementation review
 - the gap analysis and recommended next steps
 
-Keep future architecture updates in `docs/context-graph/graph.md` so the project does not drift between multiple context graph specs.
+Keep product-level architecture updates in `docs/context-graph/graph.md`. Keep implementation migration details for the one-port Graphiti application layer in `docs/context-graph/unified-graphiti-application-architecture.md`.
+
+Use `docs/context-graph/planning-next-steps.md` for the current refactor plan that separates stable agent/API contracts from UI, ingestion automation, and operator/admin surfaces; moves the product model toward source-first pot management; and wires deeper status, source resolver, and verification behavior behind the existing four-tool agent port.
 
 ## Implementation Status
 

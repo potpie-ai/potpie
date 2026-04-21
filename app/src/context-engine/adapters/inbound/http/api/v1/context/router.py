@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional, Protocol
@@ -17,6 +18,7 @@ from adapters.inbound.http.deps import (
     get_db_optional,
     require_api_key,
 )
+from adapters.outbound.graphiti.episodic import GraphitiEpisodicAdapter
 from adapters.outbound.postgres.ledger import SqlAlchemyIngestionLedger
 from adapters.outbound.postgres.reconciliation_ledger import (
     SqlAlchemyReconciliationLedger,
@@ -25,26 +27,16 @@ from application.use_cases.backfill_pot import backfill_pot_context
 from application.use_cases.event_reconciliation import ingestion_event_to_payload
 from application.use_cases.hard_reset_pot import hard_reset_pot
 from application.use_cases.run_raw_episode_ingestion import run_raw_episode_ingestion
-from application.use_cases.query_context import (
-    get_change_history,
-    get_decisions,
-    get_file_owners,
-    get_pr_diff,
-    get_pr_review_context,
-    get_project_graph,
-    search_pot_context,
-)
 from application.use_cases.replay_context_event import replay_context_event
-from application.use_cases.resolve_context import resolve_context
 from bootstrap.container import ContextEngineContainer
 from domain.agent_context_port import (
     build_context_record_source_id,
-    bundle_to_agent_envelope,
     context_port_manifest,
     context_recipe_for_intent,
     normalize_record_type,
 )
 from domain.graph_quality import assess_graph_quality
+from domain.graph_query import ContextGraphQuery
 from domain.ingestion_event_models import (
     EventListFilters,
     IngestionEventStatus,
@@ -54,13 +46,7 @@ from domain.ingestion_kinds import (
     INGESTION_KIND_AGENT_RECONCILIATION,
     INGESTION_KIND_GITHUB_MERGED_PR,
 )
-from domain.intelligence_models import (
-    ArtifactRef,
-    ContextBudget,
-    ContextResolutionRequest,
-    ContextScope,
-    CoverageReport,
-)
+from domain.intelligence_models import CoverageReport
 from domain.source_references import SourceReferenceRecord
 from domain.reconciliation_flags import agent_planner_enabled, reconciliation_enabled
 
@@ -68,6 +54,16 @@ UNKNOWN_POT_DETAIL = (
     "Unknown pot_id for this user (create with POST /api/v2/context/pots "
     "and attach at least one repository)."
 )
+
+
+def _ingest_rejection_returns_422() -> bool:
+    """When true, sync ingest surfaces structured reconciliation failures as HTTP 422.
+
+    Set ``CONTEXT_ENGINE_INGEST_422=0`` to restore legacy 503 + plain detail string
+    for operators that treat any 2xx as success monitors.
+    """
+    v = os.getenv("CONTEXT_ENGINE_INGEST_422", "1").strip().lower()
+    return v not in ("0", "false", "no", "off")
 
 
 class SyncRequest(BaseModel):
@@ -124,97 +120,20 @@ class IngestEpisodeRequest(BaseModel):
     )
 
 
-class ChangeHistoryQuery(BaseModel):
+class ClassifyModifiedEdgesRequest(BaseModel):
+    """Reclassify vague ``MODIFIED`` episodic edges (Neo4j maintenance)."""
+
     model_config = ConfigDict(populate_by_name=True)
 
     pot_id: str
-    function_name: Optional[str] = None
-    file_path: Optional[str] = None
-    limit: int = 10
-    repo_name: Optional[str] = None
-    as_of: Optional[datetime] = Field(
-        default=None,
-        description="Return only changes that were active at this point in time (ISO 8601).",
+    dry_run: bool = Field(
+        default=True,
+        description=(
+            "If false, updates RELATES_TO.name and lifecycle_status. "
+            "Server must set CONTEXT_ENGINE_CLASSIFY_MODIFIED_EDGES=1 and "
+            "CONTEXT_ENGINE_ALLOW_EDGE_CLASSIFY_WRITE=1."
+        ),
     )
-
-
-class FileOwnersQuery(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    pot_id: str
-    file_path: str
-    limit: int = 5
-    repo_name: Optional[str] = None
-
-
-class DecisionsQuery(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    pot_id: str
-    file_path: Optional[str] = None
-    function_name: Optional[str] = None
-    limit: int = 20
-    repo_name: Optional[str] = None
-
-
-class PrReviewContextQuery(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    pot_id: str
-    pr_number: int = Field(ge=1, description="GitHub pull request number")
-    repo_name: Optional[str] = None
-
-
-class PrDiffQuery(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    pot_id: str
-    pr_number: int = Field(ge=1, description="GitHub pull request number")
-    file_path: Optional[str] = None
-    limit: int = 30
-    repo_name: Optional[str] = None
-
-
-class SearchQuery(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    pot_id: str
-    query: str
-    limit: int = 8
-    node_labels: Optional[list[str]] = None
-    repo_name: Optional[str] = None
-    source_description: Optional[str] = Field(
-        default=None,
-        description="Optional episodic source label filter (matches CLI --source).",
-    )
-    include_invalidated: bool = False
-    as_of: Optional[datetime] = Field(
-        default=None,
-        description="Restrict to Graphiti edges valid at this instant (ISO 8601).",
-    )
-
-
-class ProjectGraphQuery(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    pot_id: str
-    repo_name: Optional[str] = None
-    services: list[str] = Field(default_factory=list)
-    features: list[str] = Field(default_factory=list)
-    environment: Optional[str] = None
-    user: Optional[str] = None
-    include: list[str] = Field(default_factory=list)
-    pr_number: Optional[int] = Field(
-        default=None,
-        ge=1,
-        description="Optional pull request number to focus the graph on",
-    )
-    limit: int = 12
-
-
-class ResolveArtifactBody(BaseModel):
-    kind: str = Field(description="Artifact kind, e.g. pr, issue")
-    identifier: str = Field(description="Artifact identifier, e.g. PR number")
 
 
 class ResolveScopeBody(BaseModel):
@@ -230,31 +149,6 @@ class ResolveScopeBody(BaseModel):
     ticket_ids: list[str] = Field(default_factory=list)
     user: Optional[str] = None
     source_refs: list[str] = Field(default_factory=list)
-
-
-class ResolveBudgetBody(BaseModel):
-    max_items: int = Field(default=12, ge=1, le=50)
-    max_tokens: Optional[int] = Field(default=None, ge=256, le=200000)
-    timeout_ms: int = Field(default=4000, ge=500, le=30000)
-    freshness: str = Field(default="prefer_fresh")
-
-
-class ResolveContextRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    pot_id: str
-    query: str
-    consumer_hint: Optional[str] = None
-    artifact: Optional[ResolveArtifactBody] = None
-    scope: Optional[ResolveScopeBody] = None
-    intent: Optional[str] = None
-    include: list[str] = Field(default_factory=list)
-    exclude: list[str] = Field(default_factory=list)
-    mode: str = Field(default="fast")
-    source_policy: str = Field(default="references_only")
-    budget: ResolveBudgetBody = Field(default_factory=ResolveBudgetBody)
-    as_of: Optional[datetime] = None
-    timeout_ms: int = Field(default=4000, ge=500, le=30000)
 
 
 class ContextRecordPayload(BaseModel):
@@ -285,6 +179,20 @@ class ContextStatusRequest(BaseModel):
         default=None,
         description="Optional task intent used to return the recommended context_resolve recipe.",
     )
+
+
+class ConflictListRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    pot_id: str
+
+
+class ConflictResolveRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    pot_id: str
+    issue_uuid: str
+    action: str = "supersede_older"
 
 
 class ContextEventHttpBody(BaseModel):
@@ -565,6 +473,20 @@ def create_context_router(
                         "message": "Duplicate idempotency key or conflicting event.",
                     },
                 )
+            if result.status == "reconciliation_rejected":
+                payload = {
+                    "status": "reconciliation_rejected",
+                    "event_id": result.event_id,
+                    "episode_uuid": None,
+                    "errors": list(result.reconciliation_errors or []),
+                    "downgrades": list(result.downgrades or []),
+                }
+                if _ingest_rejection_returns_422():
+                    return JSONResponse(status_code=422, content=payload)
+                raise HTTPException(
+                    status_code=503,
+                    detail=result.error or "reconciliation_rejected",
+                )
             err = result.error or "ingest_failed"
             if err == "unknown_pot_id":
                 raise HTTPException(
@@ -590,9 +512,12 @@ def create_context_router(
             return {"episode_uuid": result.episode_uuid}
         if result.status == "applied":
             return {
+                "status": "applied",
                 "episode_uuid": result.episode_uuid,
                 "event_id": result.event_id,
                 "job_id": result.job_id,
+                "errors": [],
+                "downgrades": list(result.downgrades or []),
             }
         return JSONResponse(
             status_code=202,
@@ -600,6 +525,7 @@ def create_context_router(
                 "status": "queued",
                 "event_id": result.event_id,
                 "job_id": result.job_id,
+                "downgrades": list(result.downgrades or []),
             },
         )
 
@@ -759,6 +685,8 @@ def create_context_router(
                 "stamp_counts": r.mutation_summary.stamp_counts,
             },
             "error": r.error,
+            "downgrades": list(r.downgrades or []),
+            "reconciliation_errors": list(r.reconciliation_errors or []),
         }
 
     @router.post(
@@ -825,6 +753,8 @@ def create_context_router(
                 "stamp_counts": r.mutation_summary.stamp_counts,
             },
             "error": r.error,
+            "downgrades": list(r.downgrades or []),
+            "reconciliation_errors": list(r.reconciliation_errors or []),
         }
 
     @router.get("/events/{event_id}", summary="Fetch a persisted context event")
@@ -858,7 +788,45 @@ def create_context_router(
             }
             for s in steps
         ]
-        return ingestion_event_to_payload(ev, episode_steps=step_payload)
+        run_payload = []
+        for run in reco.list_runs_for_event(event_id):
+            work_events = reco.list_work_events_for_run(run.id)
+            run_payload.append(
+                {
+                    "id": run.id,
+                    "attempt_number": run.attempt_number,
+                    "status": run.status,
+                    "agent_name": run.agent_name,
+                    "agent_version": run.agent_version,
+                    "toolset_version": run.toolset_version,
+                    "plan_summary": run.plan_summary,
+                    "episode_count": run.episode_count,
+                    "entity_mutation_count": run.entity_mutation_count,
+                    "edge_mutation_count": run.edge_mutation_count,
+                    "error": run.error,
+                    "started_at": run.started_at.isoformat()
+                    if run.started_at
+                    else None,
+                    "completed_at": run.completed_at.isoformat()
+                    if run.completed_at
+                    else None,
+                    "work_events": [
+                        {
+                            "id": w.id,
+                            "sequence": w.sequence,
+                            "event_kind": w.event_kind,
+                            "title": w.title,
+                            "body": w.body,
+                            "payload": w.payload,
+                            "created_at": w.created_at.isoformat(),
+                        }
+                        for w in work_events
+                    ],
+                }
+            )
+        out = ingestion_event_to_payload(ev, episode_steps=step_payload)
+        out["reconciliation_runs"] = run_payload
+        return out
 
     @router.get(
         "/pots/{pot_id}/events",
@@ -1098,6 +1066,38 @@ def create_context_router(
             coverage=coverage,
             fallbacks=[],
         )
+        open_conflicts: list[dict[str, Any]] = []
+        if container.episodic.enabled:
+            try:
+                open_conflicts = container.episodic.list_open_conflicts(resolved.pot_id)
+            except Exception:
+                open_conflicts = []
+        quality.conflicts = open_conflicts
+        reco: list[dict[str, Any]] = []
+        if not gaps:
+            reco = [
+                {
+                    "action": "resolve",
+                    "intent": recommended_recipe["intent"],
+                    "include": recommended_recipe["include"],
+                    "mode": recommended_recipe["mode"],
+                    "source_policy": recommended_recipe["source_policy"],
+                    "reason": "Gather a bounded context wrap for the task scope.",
+                }
+            ]
+            if open_conflicts and any(
+                isinstance(x, dict) and x.get("auto_resolvable") is False
+                for x in open_conflicts
+            ):
+                reco.append(
+                    {
+                        "action": "review_conflicts",
+                        "reason": (
+                            "Predicate-family conflicts are open; verify or resolve before "
+                            "trusting contradictory facts."
+                        ),
+                    }
+                )
         return {
             "ok": not gaps,
             "pot": {
@@ -1129,207 +1129,114 @@ def create_context_router(
             "agent_port": context_port_manifest(),
             "recommended_recipe": recommended_recipe,
             "fallbacks": gaps,
-            "recommended_next_actions": [
-                {
-                    "action": "resolve",
-                    "intent": recommended_recipe["intent"],
-                    "include": recommended_recipe["include"],
-                    "mode": recommended_recipe["mode"],
-                    "source_policy": recommended_recipe["source_policy"],
-                    "reason": "Gather a bounded context wrap for the task scope.",
-                }
-            ]
-            if not gaps
-            else [],
+            "open_conflicts": open_conflicts,
+            "recommended_next_actions": reco,
         }
 
-    @router.post("/query/change-history")
-    def post_change_history(
-        body: ChangeHistoryQuery,
+    @router.post(
+        "/query/context-graph",
+        summary="Direct ContextGraphQuery endpoint",
+        description=(
+            "Executes the minimal query surface directly: one graph query method "
+            "with goal, strategy, scope, filters, temporal controls, and budget."
+        ),
+    )
+    async def post_context_graph_query(
+        body: ContextGraphQuery,
         _: Any = Depends(require_auth),
         container: ContextEngineContainer = Depends(get_container),
-    ):
+    ) -> dict[str, Any]:
         if enforce_pot_access:
             _require_pot_access(container, body.pot_id)
-        return get_change_history(
-            container.structural,
-            body.pot_id,
-            function_name=body.function_name,
-            file_path=body.file_path,
-            limit=body.limit,
-            repo_name=body.repo_name,
-            as_of=body.as_of,
-        )
-
-    @router.post("/query/file-owners")
-    def post_file_owners(
-        body: FileOwnersQuery,
-        _: Any = Depends(require_auth),
-        container: ContextEngineContainer = Depends(get_container),
-    ):
-        if enforce_pot_access:
-            _require_pot_access(container, body.pot_id)
-        return get_file_owners(
-            container.structural,
-            body.pot_id,
-            body.file_path,
-            body.limit,
-            repo_name=body.repo_name,
-        )
-
-    @router.post("/query/decisions")
-    def post_decisions(
-        body: DecisionsQuery,
-        _: Any = Depends(require_auth),
-        container: ContextEngineContainer = Depends(get_container),
-    ):
-        if enforce_pot_access:
-            _require_pot_access(container, body.pot_id)
-        return get_decisions(
-            container.structural,
-            body.pot_id,
-            file_path=body.file_path,
-            function_name=body.function_name,
-            limit=body.limit,
-            repo_name=body.repo_name,
-        )
-
-    @router.post("/query/pr-review-context")
-    def post_pr_review_context(
-        body: PrReviewContextQuery,
-        _: Any = Depends(require_auth),
-        container: ContextEngineContainer = Depends(get_container),
-    ):
-        if enforce_pot_access:
-            _require_pot_access(container, body.pot_id)
-        return get_pr_review_context(
-            container.structural, body.pot_id, body.pr_number, repo_name=body.repo_name
-        )
-
-    @router.post("/query/pr-diff")
-    def post_pr_diff(
-        body: PrDiffQuery,
-        _: Any = Depends(require_auth),
-        container: ContextEngineContainer = Depends(get_container),
-    ):
-        if enforce_pot_access:
-            _require_pot_access(container, body.pot_id)
-        return get_pr_diff(
-            container.structural,
-            body.pot_id,
-            body.pr_number,
-            file_path=body.file_path,
-            limit=body.limit,
-            repo_name=body.repo_name,
-        )
+        if container.context_graph is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Unified context graph query port is not configured.",
+            )
+        result = await container.context_graph.query_async(body)
+        return result.model_dump()
 
     @router.post(
-        "/query/search",
-        summary="Semantic search (Graphiti episodic)",
+        "/conflicts/list",
+        summary="List open predicate-family conflicts (QualityIssue)",
     )
-    def post_search(
-        body: SearchQuery,
+    def post_conflicts_list(
+        body: ConflictListRequest,
         _: Any = Depends(require_auth),
         container: ContextEngineContainer = Depends(get_container),
-    ):
+    ) -> dict[str, Any]:
+        resolved = container.pots.resolve_pot(body.pot_id)
+        if resolved is None:
+            raise HTTPException(status_code=404, detail=UNKNOWN_POT_DETAIL)
         if enforce_pot_access:
             _require_pot_access(container, body.pot_id)
-        return search_pot_context(
-            container.episodic,
-            body.pot_id,
-            body.query,
-            limit=body.limit,
-            node_labels=body.node_labels,
-            repo_name=body.repo_name,
-            source_description=body.source_description,
-            include_invalidated=body.include_invalidated,
-            as_of=body.as_of,
-        )
+        if not container.episodic.enabled:
+            return {"ok": False, "items": [], "error": "episodic_graph_unavailable"}
+        try:
+            items = container.episodic.list_open_conflicts(resolved.pot_id)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return {"ok": True, "items": items}
 
-    @router.post("/query/project-graph")
-    def post_project_graph(
-        body: ProjectGraphQuery,
+    @router.post(
+        "/conflicts/resolve",
+        summary="Resolve an open predicate-family conflict (e.g. supersede_older)",
+    )
+    def post_conflicts_resolve(
+        body: ConflictResolveRequest,
         _: Any = Depends(require_auth),
         container: ContextEngineContainer = Depends(get_container),
-    ):
+    ) -> dict[str, Any]:
+        resolved = container.pots.resolve_pot(body.pot_id)
+        if resolved is None:
+            raise HTTPException(status_code=404, detail=UNKNOWN_POT_DETAIL)
         if enforce_pot_access:
             _require_pot_access(container, body.pot_id)
-        return get_project_graph(
-            container.structural,
-            body.pot_id,
-            pr_number=body.pr_number,
-            limit=body.limit,
-            scope={
-                "repo_name": body.repo_name,
-                "services": body.services,
-                "features": body.features,
-                "environment": body.environment,
-                "user": body.user,
-            },
-            include=body.include,
-        )
+        if not container.episodic.enabled:
+            raise HTTPException(
+                status_code=503, detail="episodic_graph_unavailable"
+            )
+        try:
+            out = container.episodic.resolve_open_conflict(
+                resolved.pot_id, body.issue_uuid, body.action
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return out
 
-    @router.post("/query/resolve-context")
-    async def post_resolve_context(
-        body: ResolveContextRequest,
+    @router.post(
+        "/maintenance/classify-modified-edges",
+        summary="Reclassify vague MODIFIED episodic edges",
+        description=(
+            "Dry-run by default. Writes require CONTEXT_ENGINE_CLASSIFY_MODIFIED_EDGES=1 and "
+            "CONTEXT_ENGINE_ALLOW_EDGE_CLASSIFY_WRITE=1 on the server."
+        ),
+    )
+    def post_classify_modified_edges(
+        body: ClassifyModifiedEdgesRequest,
         _: Any = Depends(require_auth),
         container: ContextEngineContainer = Depends(get_container),
-    ):
+    ) -> dict[str, Any]:
         if not container.settings.is_enabled():
             raise HTTPException(
                 status_code=503,
-                detail="Context graph is not enabled. Set CONTEXT_GRAPH_ENABLED=true.",
+                detail="Context graph is disabled (CONTEXT_GRAPH_ENABLED).",
             )
         if enforce_pot_access:
             _require_pot_access(container, body.pot_id)
-        if container.resolution_service is None:
+        elif container.pots.resolve_pot(body.pot_id) is None:
             raise HTTPException(
-                status_code=503,
-                detail="Context intelligence resolution is not available.",
+                status_code=404,
+                detail=UNKNOWN_POT_DETAIL,
             )
-        art = (
-            ArtifactRef(kind=body.artifact.kind, identifier=body.artifact.identifier)
-            if body.artifact
-            else None
-        )
-        scope = None
-        if body.scope:
-            scope = ContextScope(
-                repo_name=body.scope.repo_name,
-                branch=body.scope.branch,
-                file_path=body.scope.file_path,
-                function_name=body.scope.function_name,
-                symbol=body.scope.symbol,
-                pr_number=body.scope.pr_number,
-                services=body.scope.services,
-                features=body.scope.features,
-                environment=body.scope.environment,
-                ticket_ids=body.scope.ticket_ids,
-                user=body.scope.user,
-                source_refs=body.scope.source_refs,
+        if not isinstance(container.episodic, GraphitiEpisodicAdapter):
+            raise HTTPException(
+                status_code=501,
+                detail="Episodic backend does not support this maintenance job.",
             )
-        req = ContextResolutionRequest(
-            pot_id=body.pot_id,
-            query=body.query,
-            consumer_hint=body.consumer_hint,
-            artifact_ref=art,
-            scope=scope,
-            intent=body.intent,
-            include=body.include,
-            exclude=body.exclude,
-            mode=body.mode,
-            source_policy=body.source_policy,
-            budget=ContextBudget(
-                max_items=body.budget.max_items,
-                max_tokens=body.budget.max_tokens,
-                timeout_ms=body.budget.timeout_ms,
-                freshness=body.budget.freshness,
-            ),
-            as_of=body.as_of,
-            timeout_ms=body.timeout_ms,
+        return container.episodic.classify_modified_edges_for_pot(
+            body.pot_id, dry_run=body.dry_run
         )
-        bundle = await resolve_context(container.resolution_service, req)
-        return bundle_to_agent_envelope(bundle)
 
     return router
 

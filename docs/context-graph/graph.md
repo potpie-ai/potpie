@@ -151,10 +151,25 @@ The current `app/src/context-engine` package already has many pieces of this sha
 - Postgres-backed context events, ingestion events, reconciliation ledger, and step status
 - Celery/Hatchet queue abstractions for async graph jobs
 - HTTP, CLI, and MCP entrypoints
-- raw episode ingest, merged GitHub PR ingest, semantic search, change history, file owners, decisions, PR review context, PR diff, project graph, and `resolve-context`
+- agent-planned raw episode ingest, merged GitHub PR ingest, semantic search, change history, file owners, decisions, PR review context, project graph, and `resolve-context` (full PR diffs are fetched on demand through source-backed `context_resolve` modes, not stored in the graph)
 - a first provider-neutral context intelligence layer with `IntelligenceBundle`, coverage, errors, and capability metadata
 
 The main implementation gap is not the skeleton. It is the domain breadth: the current graph mostly understands GitHub/code-history context, while the target system needs broader project context around features, users, services, environments, docs, integrations, operations, debugging knowledge, and preferences.
+
+### Event-processing contract
+
+Every persisted context event should enter the same Ingestion Agent flow before any graph write:
+
+1. An entrypoint normalizes source input into a canonical `ContextEvent`.
+2. The event is stored in Postgres with its `ingestion_kind`, source identity, payload, idempotency metadata, and pot scope.
+3. The Ingestion Agent loads the event, reads source/context as needed, and produces a validated reconciliation plan.
+4. The plan is split into durable episode steps.
+5. Episode steps are applied in order to Graphiti and the canonical ontology layer.
+6. Agent work events, including thoughts, tool calls, tool results, plans, and errors, are stored with the reconciliation run for debugging.
+
+This contract includes raw notes and links submitted from the UI through `POST /api/v1/context/pots/{pot_id}/ingest/raw`. The UI should keep using that pot-scoped raw-ingest API for submissions, and should load expanded event details through `GET /api/v1/context/events/{event_id}` so it can show `reconciliation_runs[*].work_events`.
+
+Raw ingest still has its own `raw_episode` event shape and idempotency rules. It should not be coerced into GitHub-style repo/source fields, but once persisted it must still invoke the Ingestion Agent. The only acceptable direct Graphiti fallback is the legacy no-Postgres development path where no durable event row exists.
 
 ## Agent integration and context injection
 
@@ -168,6 +183,15 @@ Supported integration surfaces should include:
 - CLI commands for local workflows and setup checks
 - HTTP APIs for Potpie agents and other services
 - future SDKs for structured integrations
+
+The integration surfaces should be grouped by audience and risk:
+
+- stable agent/API-client contract: unified query, record, status, and simple raw ingest
+- UI/application contract: pots, members, invitations, sources, UI raw ingest, and event reads
+- ingestion/automation contract: sync, PR ingest, normalized event reconciliation, and replay
+- operator/admin contract: reset, conflict resolution, and graph maintenance
+
+These groups can share implementation modules and authentication machinery, but they should not be described as one flat public product API. The agent contract should remain the smallest surface. UI, ingestion automation, and operator routes should be documented and authorized according to their own risk.
 
 The default behavior should be:
 
@@ -186,6 +210,8 @@ The public agent surface should stay intentionally small. Do not add a new MCP o
 - a reviewer skill calls `context_resolve` with `intent: "review"` and includes ownership, familiarity, recent changes, decisions, and team context
 
 This is how context becomes an agent operating layer rather than a search box.
+
+Pot data scope should be source-first. Repositories are an important source subtype because they drive code graph and webhook behavior, but the product model should generalize to GitHub repositories, Linear teams, docs, Slack channels, incident systems, deployment systems, alerts, and future integrations. Repository-specific compatibility APIs may remain for CLI and GitHub workflows, while new integration work should attach source records with resolver and sync metadata.
 
 ### Minimal agent context port
 
@@ -2536,8 +2562,7 @@ Current query kinds are valuable but narrow:
 - change history
 - file owners
 - decisions
-- PR review context
-- PR diff
+- PR review context (full diff detail is fetched on demand via source-backed `context_resolve` modes such as `source_policy=summary` or `source_policy=snippets`, not as a durable graph payload)
 - project graph
 - resolve context
 
@@ -2856,6 +2881,15 @@ Before adding a new source, Potpie should define:
 - redaction strategy
 - whether canonical facts derived from that source are broadly shareable
 - whether source text should be stored raw, summarized, or not stored at all
+
+### Canonical node label inference (episodic)
+
+Graphiti search can filter by Neo4j node labels (`--node-labels`). Ingestion adds canonical ontology labels in two ways:
+
+1. **Edge-pattern inference** — After each episodic ingest (when `CONTEXT_ENGINE_INFER_LABELS=1`), a pass walks `RELATES_TO` edges and adds labels on endpoints per `EDGE_ENDPOINT_INFERRED_LABELS` in `app/src/context-engine/domain/ontology.py` (for example `DECIDES_FOR` → label on the **target** node, `CAUSED` → `Incident` on the target). Maintenance backfill uses `relabel_nodes_from_edges` (same Cypher; ignores the env flag). Ambiguous multi-label rules are omitted from the table.
+2. **Extractor hints** — Entity schemas may include optional `canonical_type`; when persisted on an `Entity` node, the same pass adds that label if it is a known ontology type.
+
+Reconciliation plans can also merge inferred labels into `entity_upserts` when `CONTEXT_ENGINE_INFER_LABELS=1`, before ontology validation.
 
 ## Recommended implementation stance
 

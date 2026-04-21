@@ -53,6 +53,7 @@ CONTEXT_INCLUDE_VALUES: frozenset[str] = frozenset(
         "discussions",
         "artifact",
         "semantic_search",
+        "causal_chain",
     }
 )
 
@@ -119,6 +120,7 @@ DEFAULT_INTENT_INCLUDES: dict[str, tuple[str, ...]] = {
         "diagnostic_signals",
         "incidents",
         "alerts",
+        "causal_chain",
         "recent_changes",
         "config",
         "deployments",
@@ -396,6 +398,8 @@ def _summary(bundle: IntelligenceBundle) -> str:
         parts.append(f"{len(bundle.project_map)} project-map fact")
     if bundle.debugging_memory:
         parts.append(f"{len(bundle.debugging_memory)} debugging memory item")
+    if bundle.causal_chain:
+        parts.append(f"{len(bundle.causal_chain)} causal chain step")
     if bundle.semantic_hits:
         parts.append(f"{len(bundle.semantic_hits)} memory hit")
     if not parts:
@@ -424,6 +428,7 @@ def bundle_to_agent_envelope(bundle: IntelligenceBundle) -> dict[str, Any]:
             "ownership": bundle_dict["ownership"],
             "project_map": bundle_dict["project_map"],
             "debugging_memory": bundle_dict["debugging_memory"],
+            "causal_chain": bundle_dict["causal_chain"],
         },
         "evidence": bundle_dict["semantic_hits"] + bundle_dict["discussions"],
         "source_refs": bundle_dict["source_refs"],

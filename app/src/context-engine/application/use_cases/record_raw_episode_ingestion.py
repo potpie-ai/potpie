@@ -1,4 +1,4 @@
-"""Event-first raw episodic ingest (separate from agent-backed reconciliation)."""
+"""Legacy no-agent raw episodic ingest helper."""
 
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ class RawEpisodeIngestOutcome:
     episode_uuid: str | None
     job_id: str | None
     error: str | None
+    reconciliation_errors: list[dict[str, str]] | None = None
 
 
 def record_raw_episode_ingestion(
@@ -45,7 +46,11 @@ def record_raw_episode_ingestion(
     mutation_applier: GraphMutationApplierPort | None = None,
     source_channel: str | None = None,
 ) -> RawEpisodeIngestOutcome:
-    """Persist a ``raw_episode`` event, durable step row, then sync apply or async queue."""
+    """Persist a ``raw_episode`` event, durable step row, then sync apply or async queue.
+
+    New persisted raw ingest routes through ``DefaultIngestionSubmissionService`` and the
+    Ingestion Agent. This helper remains for legacy/direct fallback tests and adapters.
+    """
     jq = jobs or NoOpJobEnqueue()
     ev = ContextEvent(
         event_id=str(uuid4()),
@@ -111,6 +116,9 @@ def record_raw_episode_ingestion(
             episode_uuid=uid,
             job_id=jid,
             error=r.error,
+            reconciliation_errors=list(r.reconciliation_errors)
+            if r.reconciliation_errors
+            else None,
         )
 
     reco_ledger.mark_event_queued(event_id)
@@ -131,6 +139,9 @@ def record_raw_episode_ingestion(
             episode_uuid=uid,
             job_id=jid,
             error=r.error,
+            reconciliation_errors=list(r.reconciliation_errors)
+            if r.reconciliation_errors
+            else None,
         )
 
     return RawEpisodeIngestOutcome(

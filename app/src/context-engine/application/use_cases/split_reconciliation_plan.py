@@ -32,6 +32,7 @@ def split_reconciliation_plan_into_steps(plan: ReconciliationPlan) -> list[Recon
                 confidence=plan.confidence if is_last else None,
                 warnings=list(plan.warnings) if is_last else [],
                 compat_github_pr_merged=plan.compat_github_pr_merged if is_last else None,
+                ontology_downgrades=[],
             )
         )
     return out

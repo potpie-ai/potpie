@@ -94,16 +94,16 @@ flowchart LR
 - **CLI:** `--sync` → current blocking behavior.
 - **Implementation:** shared use case; sync path **skips enqueue** and runs the pipeline **in-process** (for dev/tests and urgent paths).
 
-### 4.3 Two ingestion families
+### 4.3 Event families under one agent-planned pipeline
 
-The architecture supports two distinct families under one event-first shell:
+The architecture supports multiple event families under one event-first shell. Persisted events go through the Ingestion Agent before any graph write; the event kind controls normalization, dedupe, and planner context, not whether the agent runs.
 
 | Family | Examples | Planner required | Notes |
 |-------|----------|------------------|-------|
-| **Raw episodic ingest** | `POST /ingest`, CLI `ingest` | No | Stores a canonical raw-ingest event, then applies a deterministic single-episode write. |
+| **Raw episodic ingest** | `POST /ingest`, CLI `ingest`, UI raw notes | Yes | Stores a canonical raw-ingest event, runs the Ingestion Agent, emits episode steps, then applies them in order. |
 | **Agent-backed ingest** | `POST /ingest-pr`, `POST /events/reconcile`, future webhook/event entrypoints | Yes | Stores a canonical event, runs the Ingestion Agent, emits episode steps, then applies them in order. |
 
-Raw ingest must not be forced into provider-specific fields such as GitHub repo/source ids. It gets its own normalized event shape and idempotency rules.
+Raw ingest must not be forced into provider-specific fields such as GitHub repo/source ids. It gets its own normalized event shape and idempotency rules, then still enters the same Ingestion Agent planning flow. The only direct Graphiti write fallback is the no-Postgres legacy development path where no durable event can be recorded.
 
 ---
 
@@ -253,7 +253,7 @@ This avoids duplicate later episodes and duplicate structural writes after parti
 
 | Current / planned | Async default | Sync flag |
 |-------------------|---------------|-----------|
-| `POST /ingest` | 202 + enqueue raw-episode event | inline deterministic raw episode write |
+| `POST /ingest` | 202 + enqueue raw-episode event for agent planning | inline agent planning + apply |
 | `POST /ingest-pr` | 202 + enqueue | inline ingest PR |
 | `POST /sync` | 202 + enqueue backfill | inline backfill |
 | `POST /events/reconcile` | 202 + enqueue agent run | inline reconcile |
@@ -267,7 +267,7 @@ Rename **`/events/reconcile`** → e.g. **`/events/ingest`** or **`/ingestion/ev
 ## 10. Phased implementation checklist
 
 1. **Schema first** — Extend `context_events` with ingestion family / state metadata and add durable episode-step storage keyed by `(event_id, sequence)`.
-2. **Separate raw vs agent-backed normalization** — Introduce explicit normalization and idempotency rules for `raw_episode` events instead of forcing `/ingest` through provider/repo semantics.
+2. **Separate event-family normalization** — Preserve explicit normalization and idempotency rules for `raw_episode` events, but route every persisted family through the Ingestion Agent instead of forcing `/ingest` through provider/repo semantics.
 3. **Plan persistence** — Persist validated plans or durable episode-step rows before enqueueing apply work.
 4. **Queue contract** — Extend jobs port for `enqueue_ingestion_event(...)` and `enqueue_episode_apply(...)`; define `pot_id` as the routing/serialization key for apply workers.
 5. **Apply worker** — Split **plan** from **apply**; enforce contiguous per-event sequences and idempotent `(event_id, sequence)` apply.

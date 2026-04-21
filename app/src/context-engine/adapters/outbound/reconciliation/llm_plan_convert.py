@@ -42,10 +42,12 @@ def _invalidation(op: LlmInvalidationOp) -> InvalidationOp:
 
 
 def llm_plan_to_reconciliation_plan(
-    llm: LlmReconciliationPlan,
+    llm: LlmReconciliationPlan | dict,
     *,
     event_ref: EventRef,
 ) -> ReconciliationPlan:
+    llm = LlmReconciliationPlan.model_validate(llm)
+
     inv: list[InvalidationOp] = []
     for raw in llm.invalidations:
         inv.append(_invalidation(raw))

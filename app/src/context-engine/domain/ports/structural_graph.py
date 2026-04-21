@@ -106,6 +106,15 @@ class StructuralGraphPort(Protocol):
         """Remove structural graph nodes (``Entity`` / ``FILE`` / ``NODE``) scoped to this pot."""
         ...
 
+    def get_graph_overview(
+        self,
+        pot_id: str,
+        *,
+        top_entities_limit: int = 20,
+    ) -> dict[str, Any]:
+        """Return aggregate counts per label, per edge type, lifecycle, drift, and top entities."""
+        ...
+
     def upsert_entities(
         self,
         pot_id: str,
@@ -133,3 +142,33 @@ class StructuralGraphPort(Protocol):
         items: list[InvalidationOp],
         provenance: ProvenanceRef,
     ) -> int: ...
+
+    def expand_causal_neighbours(
+        self,
+        pot_id: str,
+        node_uuids: list[str],
+        *,
+        depth: int = 1,
+    ) -> list[dict[str, Any]]: ...
+
+    def walk_causal_chain_backward(
+        self,
+        pot_id: str,
+        focal_node_uuid: str,
+        *,
+        max_depth: int = 6,
+        as_of_iso: str | None = None,
+        window_days: int = 180,
+    ) -> list[dict[str, Any]]: ...
+
+    def resolve_entity_uuid_for_service_hint(
+        self,
+        pot_id: str,
+        service_hint: str,
+    ) -> str | None: ...
+
+    def get_episodic_entity_node(
+        self,
+        pot_id: str,
+        entity_uuid: str,
+    ) -> dict[str, Any] | None: ...

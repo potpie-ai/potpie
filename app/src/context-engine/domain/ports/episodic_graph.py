@@ -51,6 +51,7 @@ class EpisodicGraphPort(Protocol):
         *,
         include_invalidated: bool = False,
         as_of: Optional[datetime] = None,
+        episode_uuid: str | None = None,
     ) -> list[Any]:
         ...
 
@@ -65,6 +66,7 @@ class EpisodicGraphPort(Protocol):
         *,
         include_invalidated: bool = False,
         as_of: Optional[datetime] = None,
+        episode_uuid: str | None = None,
     ) -> list[Any]:
         ...
 
@@ -73,3 +75,11 @@ class EpisodicGraphPort(Protocol):
 
     async def reset_pot_async(self, pot_id: str) -> dict[str, Any]:
         ...
+
+    def list_open_conflicts(self, pot_id: str) -> list[dict[str, Any]]:
+        """Open ``QualityIssue`` rows for predicate-family conflicts in this pot."""
+
+    def resolve_open_conflict(
+        self, pot_id: str, issue_uuid: str, action: str
+    ) -> dict[str, Any]:
+        """Resolve a conflict issues (e.g. ``action=supersede_older``)."""

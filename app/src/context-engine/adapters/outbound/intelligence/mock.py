@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from domain.intelligence_models import (
     ArtifactContext,
     ArtifactRef,
     CapabilitySet,
+    CausalChainItem,
     ChangeRecord,
     ContextScope,
     DebuggingMemoryRecord,
@@ -261,6 +264,28 @@ class MockIntelligenceProvider(IntelligenceProvider):
         ]
         return filtered[:limit]
 
+    async def get_causal_chain(
+        self,
+        pot_id: str,
+        scope: ContextScope,
+        *,
+        query: str,
+        max_depth: int = 6,
+        as_of_iso: str | None = None,
+        window_days: int = 180,
+    ) -> list[CausalChainItem]:
+        _ = pot_id
+        _ = scope
+        _ = query
+        _ = max_depth
+        _ = as_of_iso
+        _ = window_days
+        return []
+
+    async def list_open_conflicts(self, pot_id: str) -> list[dict[str, Any]]:
+        _ = pot_id
+        return []
+
     def get_capabilities(self) -> CapabilitySet:
         return CapabilitySet(
             semantic_search=True,
@@ -271,5 +296,6 @@ class MockIntelligenceProvider(IntelligenceProvider):
             ownership_context=True,
             project_map_context=True,
             debugging_memory_context=True,
+            causal_chain_context=True,
             workflow_context=False,
         )

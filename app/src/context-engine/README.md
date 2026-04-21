@@ -17,10 +17,7 @@ In production, **context-engine runs inside the Potpie API process**. You mount 
 | `POST` | `/api/v1/context/sync` | Enqueues backfill via the configured job queue (optional body: `{ "pot_ids": ["..."] }`; omit to sync all **your** eligible pots) |
 | `POST` | `/api/v1/context/ingest-pr` | Enqueues single-PR ingest (`pot_id`, `pr_number`, optional `is_live_bridge`) |
 | `POST` | `/api/v1/context/reset` | Hard-delete all context-graph data for a pot (`pot_id` in JSON body; Graphiti + structural Neo4j + Postgres ledger when DB is configured) |
-| `POST` | `/api/v1/context/query/change-history` | Neo4j change history |
-| `POST` | `/api/v1/context/query/file-owners` | File owner hints from PR history |
-| `POST` | `/api/v1/context/query/decisions` | Linked decisions |
-| `POST` | `/api/v1/context/query/search` | Graphiti semantic search |
+| `POST` | `/api/v1/context/query/context-graph` | Unified context graph query |
 
 **Pot scope:** Requests only apply to pots the authenticated user may access (enforced in Potpie’s wiring).
 
@@ -74,7 +71,7 @@ Routes on the standalone app:
 - `POST /api/v1/context/sync` — inline backfill (not Celery)
 - `POST /api/v1/context/ingest-pr` — single PR (inline)
 - `POST /api/v1/context/reset` — hard-delete graph + ledger for a pot
-- `POST /api/v1/context/query/*`
+- `POST /api/v1/context/query/context-graph`
 - `POST /webhooks/integrations/github`
 
 **Errors:** `HTTPException` with a string `detail` is returned as JSON `{"error":{"code":"http_error","message":"..."}}`. Unhandled server errors return `500` with `{"error":{"code":"internal_error","message":"Internal server error"}}` (details are logged server-side).
@@ -107,7 +104,7 @@ Omit both → tools raise a clear error (no implicit multi-tenant trust).
 
 ### Raw episode ingest (HTTP / CLI / MCP)
 
-All three use **`application.use_cases.run_raw_episode_ingestion`**: persist **`context_events`** when Postgres is configured, then **enqueue** apply by default (**async**). Use **`sync=true`** (HTTP query), **`--sync`** (CLI), or **`sync=true`** on the MCP tool for inline apply after persist; without Postgres, **sync** is required and performs a **legacy** direct Graphiti write (no event row).
+All three use **`application.use_cases.run_raw_episode_ingestion`**: persist **`context_events`** when Postgres is configured, then run the Ingestion Agent by default (**async**) so raw notes/links follow the same plan → durable steps → apply flow as other events. Use **`sync=true`** (HTTP query), **`--sync`** (CLI), or **`sync=true`** on the MCP tool for inline agent planning and apply after persist; without Postgres, **sync** is required and performs a **legacy** direct Graphiti write (no event row).
 
 ---
 

@@ -4,6 +4,8 @@ This is the high-level implementation plan for moving the current context-engine
 
 Use [graph.md](graph.md) as the detailed source of truth for schema, query contracts, graph architecture, source-reference behavior, and agent-facing examples. This plan is intentionally broad and phase-oriented; it should not duplicate exact implementation details from `graph.md`.
 
+For the current API/product-surface cleanup work, use [`planning-next-steps.md`](planning-next-steps.md). That plan separates stable agent/API contracts from UI, ingestion automation, and operator/admin surfaces, and lays out the refactor path toward source-first pot management and source-backed context resolution.
+
 ## Current Gap Summary
 
 The current implementation has the right platform shape: pot scoping, Graphiti-backed episodic ingestion, HTTP/CLI/MCP entrypoints, queue abstractions, event ledgers, reconciliation flow, and a first `resolve-context` capability.

@@ -81,7 +81,7 @@ Entry: `adapters/inbound/cli/main.py` (Typer).
 | `pot repo list` / `pot repo add` | Repositories attached to a pot (Potpie API). |
 | `pot hard-reset` | Calls reset API for the active/scoped pot. |
 | `add` | Register repo ↔ pot mapping context (see CLI README). |
-| `search` | POST query/search to Potpie. |
+| `search` | POST unified `query/context-graph` to Potpie. |
 | `ingest` | Raw episode ingest via Potpie (async default when server has DB; `--sync` for inline). |
 
 Global flags: `--json`, `--verbose`, `--source` (default source label for ingest/search).
@@ -115,21 +115,14 @@ All routes below are **relative to the mounted prefix** (`/api/v1/context` or `/
 
 | Method | Path | Behavior |
 |--------|------|----------|
-| GET | `/events/{event_id}` | Event payload + reconciliation step rows. |
+| GET | `/events/{event_id}` | Event payload + reconciliation step rows + agent work events for each reconciliation run. |
 | GET | `/pots/{pot_id}/events` | Cursor-paginated list with filters (status, `ingestion_kind`). |
 
-### 6.3 Queries (`/query/*`)
+### 6.3 Query (`/query/context-graph`)
 
 | Path | Backing | Purpose |
 |------|---------|---------|
-| `/query/change-history` | Structural | PR-linked history for symbol/file. |
-| `/query/file-owners` | Structural | Owner hints from PR touches. |
-| `/query/decisions` | Structural | Decision nodes linked to code. |
-| `/query/pr-review-context` | Structural | PR title/summary + review threads. |
-| `/query/pr-diff` | Structural | Stored diff excerpts. |
-| `/query/search` | Episodic (Graphiti) | Semantic search; optional labels, `as_of`, invalidated inclusion. |
-| `/query/project-graph` | Structural | Focused subgraph (optional PR). |
-| `/query/resolve-context` | Hybrid intelligence | LLM-oriented **bundle** from `ContextResolutionService` + `HybridGraphIntelligenceProvider`. |
+| `/query/context-graph` | Unified Graphiti-backed context graph | One graph read endpoint for semantic search, exact scoped reads, timelines, neighborhoods, aggregates, and agent-ready context answers. |
 
 Potpie can set **`enforce_pot_access`** so unknown pots return a clear 404 for the caller’s tenancy.
 
@@ -143,13 +136,13 @@ Potpie can set **`enforce_pot_access`** so unknown pots return a clear 404 for t
 
 The **`DefaultIngestionSubmissionService`** (`application/services/ingestion_submission_service.py`) is the single front door for persisted ingestion:
 
-1. **`raw_episode`** — `record_raw_episode_ingestion` + queue or inline apply (`apply_episode_step` / Graphiti writer paths). Aligns CLI/MCP/HTTP raw ingest.
+1. **`raw_episode`** — raw notes/links from CLI/MCP/HTTP/UI are normalized as raw events, then routed through the Ingestion Agent for plan generation and durable episode steps. The no-Postgres development fallback can still write directly to Graphiti when `sync=true`.
 2. **`github_merged_pr`** — wraps `ingest_single_pr` / merged PR core: GitHub fetch, episodic + structural updates, dedupe by event identity.
 3. **`agent_reconciliation`** (and related) — `record_context_event` + optional **`run_ingestion_agent_for_event`**: build request from event → **reconciliation agent** produces a **plan** → validated → split into **durable steps** → **`JobEnqueuePort.enqueue_episode_apply`** per step.
 
 **Workers** (Celery/Hatchet) call into `application/use_cases/context_graph_jobs.py`: backfill, ingest-pr handler, ingestion agent runner, episode step applier.
 
-Supporting use cases include: `wait_ingestion_event`, `reconcile_event`, `apply_reconciliation_plan`, `build_reconciliation_request`, `reconciliation_validation`, `split_reconciliation_plan`, `reconciliation_plan_codec`, `context_event_mapping`, `record_raw_episode_ingestion`, `replay_context_event`, `event_reconciliation` (HTTP payload shaping).
+Supporting use cases include: `wait_ingestion_event`, `reconcile_event`, `apply_reconciliation_plan`, `build_reconciliation_request`, `reconciliation_validation`, `split_reconciliation_plan`, `reconciliation_plan_codec`, `context_event_mapping`, `replay_context_event`, `event_reconciliation` (HTTP payload shaping), and the legacy no-DB raw fallback.
 
 ---
 

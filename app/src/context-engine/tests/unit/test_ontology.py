@@ -9,15 +9,23 @@ from domain.context_events import EventRef
 from domain.errors import ReconciliationPlanValidationError
 from domain.graph_mutations import EdgeUpsert, EntityUpsert
 from domain.ontology import (
+    ALLOWED_LIFECYCLE_STATUSES,
     EDGE_TYPES,
     ENTITY_TYPES,
     ONTOLOGY_VERSION,
     allowed_edge_types_between,
+    predicate_family_for_episodic_supersede,
+    temporal_subject_key_for_edge,
     validate_structural_mutations,
 )
 from domain.reconciliation import EpisodeDraft, ReconciliationPlan
 
 pytestmark = pytest.mark.unit
+
+
+def test_allowed_lifecycle_statuses_export() -> None:
+    assert "unknown" in ALLOWED_LIFECYCLE_STATUSES
+    assert "accepted" in ALLOWED_LIFECYCLE_STATUSES
 
 
 def test_phase_one_catalog_contains_project_context_domains() -> None:
@@ -39,6 +47,7 @@ def test_phase_one_catalog_contains_project_context_domains() -> None:
         "QualityIssue",
         "MaintenanceJob",
         "MaterializedAccessPath",
+        "LegacyArtifact",
     ):
         assert label in ENTITY_TYPES
 
@@ -54,6 +63,7 @@ def test_phase_one_catalog_contains_project_context_domains() -> None:
         "FLAGS",
         "REPAIRS",
         "MATERIALIZES",
+        "RELATED_TO",
     ):
         assert edge_type in EDGE_TYPES
 
@@ -232,6 +242,28 @@ def test_rejects_invalid_edge_endpoint_labels_when_known_in_batch() -> None:
 
 def test_code_graph_labels_match_code_asset_bridge_edges() -> None:
     assert "TOUCHES_CODE" in allowed_edge_types_between(("Feature",), ("FILE",))
+
+
+def test_predicate_family_episodic_supersede_chose_requires_datastore_hint() -> None:
+    assert predicate_family_for_episodic_supersede("CHOSE", ()) is None
+    assert predicate_family_for_episodic_supersede("CHOSE", ("Entity",)) is None
+    assert (
+        predicate_family_for_episodic_supersede("CHOSE", ("Entity", "DataStore"))
+        == "datastore_binding"
+    )
+    assert predicate_family_for_episodic_supersede("CHOSE", ("Decision",)) is None
+
+
+def test_temporal_subject_key_for_edge_chose_with_resolved_family() -> None:
+    assert (
+        temporal_subject_key_for_edge(
+            "CHOSE",
+            "svc",
+            "mongo",
+            predicate_family="datastore_binding",
+        )
+        == "svc"
+    )
 
 
 def test_reconciliation_plan_validation_uses_ontology_boundary() -> None:

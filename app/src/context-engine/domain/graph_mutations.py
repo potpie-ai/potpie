@@ -26,11 +26,25 @@ class EntityUpsert:
 
 @dataclass(slots=True)
 class EdgeUpsert:
-    """Upsert an edge by deterministic relationship identity."""
+    """Upsert an edge by deterministic relationship identity.
+
+    ``properties`` may include ``lifecycle_status`` for episodic-style edges
+    (see ``domain.ontology.LifecycleStatus``).
+    """
 
     edge_type: str
     from_entity_key: str
     to_entity_key: str
+    properties: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class QualityIssueCreate:
+    """Structural reconciliation hook for ``QualityIssue`` nodes (see Phase 7 ontology)."""
+
+    issue_uuid: str
+    code: str
+    kind: str
     properties: dict[str, Any] = field(default_factory=dict)
 
 
@@ -58,3 +72,14 @@ class InvalidationOp:
     reason: str
     superseded_by_key: str | None = None
     valid_to: str | None = None
+
+
+@dataclass(slots=True)
+class EpisodicSupersessionRecord:
+    """Audit row when auto-supersede stamps ``invalid_at`` on a Graphiti entity edge."""
+
+    group_id: str
+    superseded_edge_uuid: str
+    superseding_edge_uuid: str
+    predicate_family: str
+    reason: str = "predicate_family_contradiction"

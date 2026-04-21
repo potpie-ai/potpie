@@ -9,12 +9,13 @@ import pytest
 
 from adapters.outbound.http.potpie_context_api_client import (
     CONTEXT_API_PREFIX,
+    IngestRejectedError,
     PotpieContextApiClient,
     PotpieContextApiError,
 )
 
 
-def test_client_search_success(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_client_context_graph_query_success(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeClient:
         def __init__(self, *a: Any, **k: Any) -> None:
             pass
@@ -27,11 +28,13 @@ def test_client_search_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
         def post(self, url: str, **kwargs: Any) -> httpx.Response:
             assert CONTEXT_API_PREFIX in url
-            assert url.endswith("/query/search")
+            assert url.endswith("/query/context-graph")
             assert kwargs["headers"].get("X-API-Key") == "k"
             body = kwargs.get("json") or {}
             assert body["pot_id"] == "p1"
-            return httpx.Response(200, json=[{"uuid": "u", "name": "n"}])
+            return httpx.Response(
+                200, json={"kind": "semantic_search", "result": [{"uuid": "u"}]}
+            )
 
         def get(self, *a: Any, **k: Any) -> httpx.Response:
             raise AssertionError("unused")
@@ -41,8 +44,41 @@ def test_client_search_success(monkeypatch: pytest.MonkeyPatch) -> None:
         FakeClient,
     )
     c = PotpieContextApiClient("http://example.com", "k")
-    rows = c.search({"pot_id": "p1", "query": "q", "limit": 8})
-    assert rows == [{"uuid": "u", "name": "n"}]
+    out = c.context_graph_query({"pot_id": "p1", "query": "q", "limit": 8})
+    assert out["result"] == [{"uuid": "u"}]
+
+
+def test_client_classify_modified_edges_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeClient:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *a: Any) -> None:
+            pass
+
+        def post(self, url: str, **kwargs: Any) -> httpx.Response:
+            assert url.endswith("/maintenance/classify-modified-edges")
+            body = kwargs.get("json") or {}
+            assert body["pot_id"] == "p1"
+            assert body["dry_run"] is True
+            return httpx.Response(
+                200,
+                json={"ok": True, "examined": 0, "would_update": 0, "dry_run": True},
+            )
+
+        def get(self, *a: Any, **k: Any) -> httpx.Response:
+            raise AssertionError("unused")
+
+    monkeypatch.setattr(
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client",
+        FakeClient,
+    )
+    c = PotpieContextApiClient("http://example.com", "k")
+    out = c.classify_modified_edges({"pot_id": "p1", "dry_run": True})
+    assert out.get("ok") is True
 
 
 def test_client_ingest_queued(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -102,7 +138,7 @@ def test_client_error_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     c = PotpieContextApiClient("http://example.com", "bad")
     with pytest.raises(PotpieContextApiError) as ei:
-        c.search({"pot_id": "p", "query": "q", "limit": 1})
+        c.context_graph_query({"pot_id": "p", "query": "q", "limit": 1})
     assert ei.value.status_code == 401
 
 
@@ -385,6 +421,42 @@ def test_client_ingest_non_duplicate_409_raises(monkeypatch: pytest.MonkeyPatch)
     assert exc_info.value.status_code == 409
 
 
+def test_client_ingest_422_raises_ingest_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeClient:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        def post(self, *a: Any, **k: Any) -> httpx.Response:
+            return httpx.Response(
+                422,
+                json={
+                    "status": "reconciliation_rejected",
+                    "event_id": "e-rej",
+                    "episode_uuid": None,
+                    "errors": [{"entity": "adr:1", "issue": "unknown canonical labels: X"}],
+                    "downgrades": [],
+                },
+            )
+
+    monkeypatch.setattr(
+        "adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
+    )
+    c = PotpieContextApiClient("http://example.com", "k")
+    with pytest.raises(IngestRejectedError) as exc_info:
+        c.ingest(
+            {"pot_id": "p", "name": "n", "episode_body": "b", "source_description": "s"},
+            sync=True,
+        )
+    assert exc_info.value.body["status"] == "reconciliation_rejected"
+    assert exc_info.value.body["errors"][0]["entity"] == "adr:1"
+
+
 def test_client_get_event_success(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeClient:
         def __init__(self, *a: Any, **k: Any) -> None:
@@ -569,7 +641,9 @@ def test_client_health_non_200_returns_none_body(monkeypatch: pytest.MonkeyPatch
     assert body is None
 
 
-def test_client_post_query_success(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_client_context_graph_query_result_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class FakeClient:
         def __init__(self, *a: Any, **k: Any) -> None:
             pass
@@ -581,14 +655,14 @@ def test_client_post_query_success(monkeypatch: pytest.MonkeyPatch) -> None:
             pass
 
         def post(self, url: str, **kwargs: Any) -> httpx.Response:
-            assert "/query/resolve-context" in url
+            assert "/query/context-graph" in url
             return httpx.Response(200, json={"ok": True, "answer": {}})
 
     monkeypatch.setattr(
         "adapters.outbound.http.potpie_context_api_client.httpx.Client", FakeClient
     )
     c = PotpieContextApiClient("http://example.com", "k")
-    result = c.post_query("resolve-context", {"pot_id": "p", "query": "q"})
+    result = c.context_graph_query({"pot_id": "p", "query": "q"})
     assert result["ok"] is True
 
 
@@ -611,7 +685,7 @@ def test_client_500_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     c = PotpieContextApiClient("http://example.com", "k")
     with pytest.raises(PotpieContextApiError) as exc_info:
-        c.search({"pot_id": "p", "query": "q", "limit": 1})
+        c.context_graph_query({"pot_id": "p", "query": "q", "limit": 1})
     assert exc_info.value.status_code == 500
 
 
@@ -634,6 +708,6 @@ def test_client_error_detail_contains_json_body(monkeypatch: pytest.MonkeyPatch)
     )
     c = PotpieContextApiClient("http://example.com", "k")
     with pytest.raises(PotpieContextApiError) as exc_info:
-        c.search({"pot_id": "p", "query": "q", "limit": 1})
+        c.context_graph_query({"pot_id": "p", "query": "q", "limit": 1})
     assert exc_info.value.status_code == 422
     assert isinstance(exc_info.value.detail, dict)

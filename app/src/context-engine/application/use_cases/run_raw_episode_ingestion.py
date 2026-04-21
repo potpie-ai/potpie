@@ -14,6 +14,7 @@ from bootstrap.container import ContextEngineContainer
 from domain.ingestion_event_models import EventReceipt, IngestionSubmissionRequest
 from domain.ingestion_kinds import INGESTION_KIND_RAW_EPISODE
 from domain.ports.graph_mutation_applier import GraphMutationApplierPort
+from domain.reconciliation import ReconciliationResult
 
 
 @dataclass(slots=True)
@@ -21,12 +22,28 @@ class RunRawEpisodeIngestionResult:
     """Outcome for CLI, HTTP, and MCP raw ingest."""
 
     ok: bool
-    status: Literal["applied", "queued", "legacy_direct", "duplicate", "error"]
+    status: Literal[
+        "applied",
+        "queued",
+        "legacy_direct",
+        "duplicate",
+        "error",
+        "reconciliation_rejected",
+    ]
     episode_uuid: str | None = None
     event_id: str | None = None
     job_id: str | None = None
     error: str | None = None
     duplicate_reason: str | None = None
+    reconciliation_errors: list[dict[str, str]] | None = None
+    downgrades: list[dict[str, str]] | None = None
+
+
+def _downgrades_from_reconciliation(receipt: EventReceipt) -> list[dict[str, str]]:
+    rec = receipt.reconciliation
+    if isinstance(rec, ReconciliationResult) and rec.downgrades:
+        return list(rec.downgrades)
+    return []
 
 
 def _receipt_to_run_result(receipt: EventReceipt) -> RunRawEpisodeIngestionResult:
@@ -39,6 +56,20 @@ def _receipt_to_run_result(receipt: EventReceipt) -> RunRawEpisodeIngestionResul
             duplicate_reason=r.error,
         )
     if r.status == "error" or (r.error and not r.duplicate):
+        rec = r.reconciliation
+        if (
+            isinstance(rec, ReconciliationResult)
+            and (rec.reconciliation_errors or [])
+        ):
+            return RunRawEpisodeIngestionResult(
+                ok=False,
+                status="reconciliation_rejected",
+                event_id=r.event_id,
+                job_id=r.job_id,
+                error=r.error,
+                reconciliation_errors=list(rec.reconciliation_errors),
+                downgrades=_downgrades_from_reconciliation(r),
+            )
         return RunRawEpisodeIngestionResult(
             ok=False,
             status="error",
@@ -54,6 +85,7 @@ def _receipt_to_run_result(receipt: EventReceipt) -> RunRawEpisodeIngestionResul
             event_id=r.event_id,
             job_id=r.job_id,
             error=None,
+            downgrades=_downgrades_from_reconciliation(r),
         )
     return RunRawEpisodeIngestionResult(
         ok=True,
@@ -62,6 +94,7 @@ def _receipt_to_run_result(receipt: EventReceipt) -> RunRawEpisodeIngestionResul
         event_id=r.event_id,
         job_id=r.job_id,
         error=None,
+        downgrades=_downgrades_from_reconciliation(r),
     )
 
 

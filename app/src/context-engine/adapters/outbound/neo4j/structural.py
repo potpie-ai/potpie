@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from neo4j import Driver, GraphDatabase
@@ -16,6 +17,7 @@ from domain.graph_mutations import (
     ProvenanceRef,
 )
 from domain.ingestion import BridgeResult
+from domain.ontology import ENTITY_TYPES, is_canonical_entity_label
 from domain.ports.settings import ContextEngineSettingsPort
 from domain.ports.structural_graph import StructuralGraphPort
 
@@ -1153,6 +1155,144 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
         finally:
             drv.close()
 
+    def get_graph_overview(
+        self,
+        pot_id: str,
+        *,
+        top_entities_limit: int = 20,
+    ) -> dict[str, Any]:
+        """Aggregate per-label / per-edge / drift stats for a pot's structural graph.
+
+        Returns counts keyed by raw Neo4j labels and edge types; the caller
+        (``query_context.get_graph_overview``) merges ontology metadata
+        (category, required properties, predicate family) on top.
+        """
+        empty: dict[str, Any] = {
+            "pot_id": pot_id,
+            "totals": {"entities": 0, "edges": 0, "entities_without_canonical_label": 0},
+            "label_counts": {},
+            "edge_counts": {},
+            "lifecycle_distribution": {},
+            "top_entities_by_degree": [],
+            "message": "ok",
+        }
+        drv = self._open()
+        if drv is None:
+            empty["message"] = "neo4j_unavailable"
+            return empty
+        canonical_labels = list(ENTITY_TYPES.keys())
+        try:
+            with drv.session() as session:
+                totals_row = session.run(
+                    "MATCH (n:Entity {group_id: $pid}) RETURN count(n) AS cnt",
+                    pid=pot_id,
+                ).single()
+                entity_total = int(totals_row["cnt"]) if totals_row else 0
+
+                edge_total_row = session.run(
+                    "MATCH (:Entity {group_id: $pid})-[r]->(:Entity {group_id: $pid}) "
+                    "RETURN count(r) AS cnt",
+                    pid=pot_id,
+                ).single()
+                edge_total = int(edge_total_row["cnt"]) if edge_total_row else 0
+
+                label_rows = session.run(
+                    "MATCH (n:Entity {group_id: $pid}) "
+                    "UNWIND labels(n) AS lbl "
+                    "RETURN lbl AS label, count(*) AS cnt",
+                    pid=pot_id,
+                ).data()
+                label_counts: dict[str, int] = {}
+                for row in label_rows:
+                    lbl = row.get("label")
+                    if lbl:
+                        label_counts[str(lbl)] = int(row.get("cnt") or 0)
+
+                no_canonical_row = session.run(
+                    "MATCH (n:Entity {group_id: $pid}) "
+                    "WHERE NONE(l IN labels(n) WHERE l IN $canon) "
+                    "RETURN count(n) AS cnt",
+                    pid=pot_id,
+                    canon=canonical_labels,
+                ).single()
+                no_canonical = (
+                    int(no_canonical_row["cnt"]) if no_canonical_row else 0
+                )
+
+                edge_rows = session.run(
+                    "MATCH (:Entity {group_id: $pid})-[r]->(:Entity {group_id: $pid}) "
+                    "RETURN type(r) AS etype, count(*) AS cnt",
+                    pid=pot_id,
+                ).data()
+                edge_counts: dict[str, int] = {}
+                for row in edge_rows:
+                    et = row.get("etype")
+                    if et:
+                        edge_counts[str(et)] = int(row.get("cnt") or 0)
+
+                lifecycle_rows = session.run(
+                    "MATCH (:Entity {group_id: $pid})-[r]->(:Entity {group_id: $pid}) "
+                    "WHERE r.lifecycle_status IS NOT NULL "
+                    "RETURN r.lifecycle_status AS status, count(*) AS cnt",
+                    pid=pot_id,
+                ).data()
+                lifecycle: dict[str, int] = {}
+                for row in lifecycle_rows:
+                    st = row.get("status")
+                    if st:
+                        lifecycle[str(st)] = int(row.get("cnt") or 0)
+
+                top_limit = max(1, min(top_entities_limit, 100))
+                top_rows = session.run(
+                    """
+                    MATCH (n:Entity {group_id: $pid})
+                    OPTIONAL MATCH (n)-[out]->(:Entity {group_id: $pid})
+                    WITH n, count(out) AS out_degree
+                    OPTIONAL MATCH (:Entity {group_id: $pid})-[inr]->(n)
+                    WITH n, out_degree, count(inr) AS in_degree
+                    WITH n, out_degree + in_degree AS degree
+                    WHERE degree > 0
+                    RETURN
+                      coalesce(n.entity_key, elementId(n)) AS entity_key,
+                      labels(n) AS labels,
+                      coalesce(n.name, n.title, n.statement, n.entity_key) AS name,
+                      degree
+                    ORDER BY degree DESC
+                    LIMIT $lim
+                    """,
+                    pid=pot_id,
+                    lim=top_limit,
+                ).data()
+                top_entities = [
+                    {
+                        "entity_key": r.get("entity_key"),
+                        "labels": list(r.get("labels") or []),
+                        "name": r.get("name"),
+                        "degree": int(r.get("degree") or 0),
+                    }
+                    for r in top_rows
+                ]
+
+                return {
+                    "pot_id": pot_id,
+                    "totals": {
+                        "entities": entity_total,
+                        "edges": edge_total,
+                        "entities_without_canonical_label": no_canonical,
+                    },
+                    "label_counts": label_counts,
+                    "edge_counts": edge_counts,
+                    "lifecycle_distribution": lifecycle,
+                    "top_entities_by_degree": top_entities,
+                    "message": "ok",
+                }
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("get_graph_overview failed pot=%s", pot_id)
+            empty["message"] = str(exc)
+            return empty
+        finally:
+            drv.close()
+
     def get_debugging_memory(
         self,
         pot_id: str,
@@ -1297,18 +1437,27 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
         try:
             with drv.session() as session:
                 for item in items:
-                    label_str = ":".join(["Entity"] + list(item.labels))
                     props = dict(item.properties)
                     props["group_id"] = pot_id
                     props["provenance_source_event"] = provenance.source_event_id
                     session.run(
-                        f"MERGE (e:{label_str} {{group_id: $gid, entity_key: $key}}) "  # pyright: ignore[reportArgumentType]
+                        "MERGE (e:Entity {group_id: $gid, entity_key: $key}) "
                         "ON CREATE SET e.uuid = randomUUID(), e.created_at = timestamp() "
                         "SET e += $props",
                         gid=pot_id,
                         key=item.entity_key,
                         props=props,
                     )
+                    for lbl in item.labels:
+                        if lbl == "Entity":
+                            continue
+                        if not is_canonical_entity_label(lbl) or lbl not in ENTITY_TYPES:
+                            continue
+                        session.run(
+                            f"MATCH (e:Entity {{group_id: $gid, entity_key: $key}}) SET e:{lbl}",  # pyright: ignore[reportArgumentType]
+                            gid=pot_id,
+                            key=item.entity_key,
+                        )
                     count += 1
         finally:
             drv.close()
@@ -1518,6 +1667,252 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
             "file_deleted": file_deleted,
             "node_deleted": node_deleted,
         }
+
+    def expand_causal_neighbours(
+        self,
+        pot_id: str,
+        node_uuids: list[str],
+        *,
+        depth: int = 1,
+    ) -> list[dict[str, Any]]:
+        """One-hop episodic ``RELATES_TO`` expansion for hybrid search (see 04-causal-multihop)."""
+        del depth  # reserved for future variable-length hops
+        seeds = [str(u) for u in node_uuids if u][:12]
+        if not seeds:
+            return []
+        drv = self._open()
+        if drv is None:
+            return []
+        forward = sorted(
+            {"CAUSED", "CAUSES", "PRECEDES", "TRIGGERED_BY"},
+        )
+        backward = sorted(
+            {"CAUSED", "CAUSES", "PRECEDES", "TRIGGERED_BY", "DECIDES_FOR", "FIXES"},
+        )
+        query = """
+        MATCH (seed:Entity {group_id: $gid})
+        WHERE seed.uuid IN $seeds
+        MATCH (seed)-[e:RELATES_TO]->(nb:Entity {group_id: $gid})
+        WHERE toUpper(trim(e.name)) IN $forward_names
+        RETURN nb.uuid AS neighbor_uuid,
+               nb.name AS name,
+               coalesce(nb.summary, nb.description, '') AS summary,
+               e.uuid AS edge_uuid,
+               toUpper(trim(e.name)) AS edge_name,
+               seed.uuid AS seed_uuid,
+               labels(nb) AS labels
+        UNION
+        MATCH (seed:Entity {group_id: $gid})
+        WHERE seed.uuid IN $seeds
+        MATCH (pred:Entity {group_id: $gid})-[e:RELATES_TO]->(seed)
+        WHERE toUpper(trim(e.name)) IN $backward_names
+        RETURN pred.uuid AS neighbor_uuid,
+               pred.name AS name,
+               coalesce(pred.summary, pred.description, '') AS summary,
+               e.uuid AS edge_uuid,
+               toUpper(trim(e.name)) AS edge_name,
+               seed.uuid AS seed_uuid,
+               labels(pred) AS labels
+        """
+        try:
+            with drv.session() as session:
+                res = session.run(
+                    query,
+                    gid=pot_id,
+                    seeds=seeds,
+                    forward_names=forward,
+                    backward_names=backward,
+                )
+                return [record.data() for record in res]
+        except Exception as exc:
+            logger.exception("expand_causal_neighbours failed pot=%s: %s", pot_id, exc)
+            return []
+        finally:
+            drv.close()
+
+    @staticmethod
+    def _causal_step_in_as_of_window(
+        row: dict[str, Any],
+        *,
+        window_lo: datetime | None,
+        window_hi: datetime | None,
+    ) -> bool:
+        """If ``as_of`` bounds are set, keep steps whose edge (or predecessor) time lies in-window."""
+        if window_lo is None or window_hi is None:
+            return True
+        raw = row.get("valid_at")
+        if raw is None:
+            raw = row.get("pred_valid_at")
+        if raw is None:
+            return True
+        try:
+            if isinstance(raw, datetime):
+                t = raw
+                if t.tzinfo is None:
+                    t = t.replace(tzinfo=timezone.utc)
+            else:
+                s = str(raw).replace("Z", "+00:00")
+                t = datetime.fromisoformat(s)
+                if t.tzinfo is None:
+                    t = t.replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            return True
+        return window_lo <= t <= window_hi
+
+    @staticmethod
+    def _as_of_window_bounds(
+        as_of_iso: str | None, window_days: int
+    ) -> tuple[datetime | None, datetime | None]:
+        if not as_of_iso or not str(as_of_iso).strip() or window_days < 1:
+            return None, None
+        try:
+            s = str(as_of_iso).strip().replace("Z", "+00:00")
+            as_of = datetime.fromisoformat(s)
+            if as_of.tzinfo is None:
+                as_of = as_of.replace(tzinfo=timezone.utc)
+            delta = timedelta(days=window_days)
+            return as_of - delta, as_of + delta
+        except (ValueError, TypeError):
+            return None, None
+
+    def walk_causal_chain_backward(
+        self,
+        pot_id: str,
+        focal_node_uuid: str,
+        *,
+        max_depth: int = 6,
+        as_of_iso: str | None = None,
+        window_days: int = 180,
+    ) -> list[dict[str, Any]]:
+        """Walk predecessors along causal edge names; returns rows root → focal order."""
+        cur = str(focal_node_uuid).strip()
+        if not cur:
+            return []
+        drv = self._open()
+        if drv is None:
+            return []
+        window_lo, window_hi = self._as_of_window_bounds(as_of_iso, window_days)
+        allowed = sorted({"CAUSED", "CAUSES", "TRIGGERED_BY", "PRECEDES"})
+        step_query = """
+        MATCH (pred:Entity {group_id: $gid})-[e:RELATES_TO]->(cur:Entity {uuid: $cur, group_id: $gid})
+        WHERE toUpper(trim(e.name)) IN $allowed
+        RETURN pred.uuid AS uuid,
+               pred.name AS name,
+               coalesce(pred.summary, pred.description, '') AS summary,
+               pred.source_ref AS source_ref,
+               e.uuid AS edge_uuid,
+               toUpper(trim(e.name)) AS edge_name,
+               e.valid_at AS valid_at,
+               e.invalid_at AS invalid_at,
+               pred.valid_at AS pred_valid_at
+        ORDER BY e.valid_at DESC NULLS LAST, pred.valid_at DESC NULLS LAST
+        LIMIT 24
+        """
+        chain: list[dict[str, Any]] = []
+        visited: set[str] = {cur}
+        try:
+            with drv.session() as session:
+                for _ in range(max(1, min(max_depth, 20))):
+                    rec = session.run(
+                        step_query,
+                        gid=pot_id,
+                        cur=cur,
+                        allowed=allowed,
+                    )
+                    rows = [record.data() for record in rec]
+                    chosen: dict[str, Any] | None = None
+                    for data in rows:
+                        if not self._causal_step_in_as_of_window(
+                            data, window_lo=window_lo, window_hi=window_hi
+                        ):
+                            continue
+                        nxt = str(data.get("uuid") or "")
+                        if not nxt or nxt in visited:
+                            continue
+                        chosen = data
+                        break
+                    if chosen is None:
+                        break
+                    data = chosen
+                    nxt = str(data.get("uuid") or "")
+                    visited.add(nxt)
+                    chain.append(data)
+                    cur = nxt
+        except Exception as exc:
+            logger.exception("walk_causal_chain_backward failed pot=%s: %s", pot_id, exc)
+            return []
+        finally:
+            drv.close()
+        chain.reverse()
+        return chain
+
+    def resolve_entity_uuid_for_service_hint(
+        self,
+        pot_id: str,
+        service_hint: str,
+    ) -> str | None:
+        hint = (service_hint or "").strip()
+        if not hint:
+            return None
+        drv = self._open()
+        if drv is None:
+            return None
+        q = """
+        MATCH (n:Entity {group_id: $gid})
+        WHERE toLower(n.name) = $hl
+           OR toLower(coalesce(n.entity_key, '')) CONTAINS $hp
+        RETURN n.uuid AS uuid
+        LIMIT 1
+        """
+        try:
+            with drv.session() as session:
+                rec = session.run(
+                    q,
+                    gid=pot_id,
+                    hl=hint.lower(),
+                    hp=hint.lower().replace(" ", "_"),
+                )
+                one = rec.single()
+                if one is None:
+                    return None
+                uid = one.data().get("uuid")
+                return str(uid) if uid else None
+        except Exception as exc:
+            logger.exception("resolve_entity_uuid_for_service_hint failed: %s", exc)
+            return None
+        finally:
+            drv.close()
+
+    def get_episodic_entity_node(
+        self,
+        pot_id: str,
+        entity_uuid: str,
+    ) -> dict[str, Any] | None:
+        uid = str(entity_uuid).strip()
+        if not uid:
+            return None
+        drv = self._open()
+        if drv is None:
+            return None
+        q = """
+        MATCH (n:Entity {group_id: $gid, uuid: $uid})
+        RETURN n.uuid AS uuid,
+               n.name AS name,
+               coalesce(n.summary, n.description, '') AS summary,
+               n.valid_at AS valid_at,
+               n.source_ref AS source_ref
+        LIMIT 1
+        """
+        try:
+            with drv.session() as session:
+                rec = session.run(q, gid=pot_id, uid=uid)
+                row = rec.single()
+                return row.data() if row is not None else None
+        except Exception as exc:
+            logger.exception("get_episodic_entity_node failed: %s", exc)
+            return None
+        finally:
+            drv.close()
 
     def _run_read(
         self,

@@ -9,7 +9,6 @@ from domain.ingestion_kinds import (
     EPISODE_STEP_APPLIED,
     EPISODE_STEP_APPLYING,
     EPISODE_STEP_FAILED,
-    INGESTION_KIND_RAW_EPISODE,
     STEP_KIND_AGENT_PLAN_SLICE,
     STEP_KIND_RAW_EPISODE,
 )
@@ -18,6 +17,7 @@ from domain.ports.graph_mutation_applier import GraphMutationApplierPort
 from domain.ports.reconciliation_ledger import ReconciliationLedgerPort
 from domain.ports.structural_graph import StructuralGraphPort
 from domain.reconciliation import EpisodeDraft, MutationSummary, ReconciliationResult
+from domain.reconciliation_issues import validation_line_to_issue
 
 from adapters.outbound.context_graph_writer_adapter import DefaultContextGraphWriter
 from application.use_cases.reconciliation_plan_codec import reconciliation_plan_from_dict
@@ -73,7 +73,7 @@ def apply_episode_step_for_event(
     writer = DefaultContextGraphWriter(episodic, structural, mutation_applier)
 
     try:
-        if row.ingestion_kind == INGESTION_KIND_RAW_EPISODE or step.step_kind == STEP_KIND_RAW_EPISODE:
+        if step.step_kind == STEP_KIND_RAW_EPISODE:
             data = step.step_json
             ref = data.get("reference_time")
             if isinstance(ref, str):
@@ -138,7 +138,26 @@ def apply_episode_step_for_event(
         reco_ledger.update_episode_step_status(event_id, sequence, status=EPISODE_STEP_APPLIED)
         _maybe_finish_event(reco_ledger, event_id)
         return result
-    except (ReconciliationPlanValidationError, ReconciliationApplyError) as exc:
+    except ReconciliationPlanValidationError as exc:
+        reco_ledger.update_episode_step_status(
+            event_id,
+            sequence,
+            status=EPISODE_STEP_FAILED,
+            error=str(exc),
+        )
+        reco_ledger.record_event_failed(event_id, str(exc))
+        if exc.structured_issues:
+            errs = [dict(x) for x in exc.structured_issues]
+        else:
+            errs = [validation_line_to_issue(str(exc))]
+        return ReconciliationResult(
+            ok=False,
+            episode_uuids=[],
+            mutation_summary=MutationSummary(),
+            error=str(exc),
+            reconciliation_errors=errs,
+        )
+    except ReconciliationApplyError as exc:
         reco_ledger.update_episode_step_status(
             event_id,
             sequence,
@@ -151,6 +170,7 @@ def apply_episode_step_for_event(
             episode_uuids=[],
             mutation_summary=MutationSummary(),
             error=str(exc),
+            reconciliation_errors=[validation_line_to_issue(str(exc))],
         )
     except Exception as exc:
         reco_ledger.update_episode_step_status(

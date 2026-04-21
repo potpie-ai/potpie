@@ -83,4 +83,5 @@ def apply_reconciliation_plan(
         episode_uuids=episode_uuids,
         mutation_summary=summary,
         error=None,
+        downgrades=list(plan.ontology_downgrades),
     )

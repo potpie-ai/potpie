@@ -3,17 +3,28 @@
 from __future__ import annotations
 
 from domain.errors import ReconciliationApplyError, ReconciliationPlanValidationError
+from domain.reconciliation_issues import validation_line_to_issue
 from domain.ports.episodic_graph import EpisodicGraphPort
 from domain.ports.graph_mutation_applier import GraphMutationApplierPort
 from domain.ports.reconciliation_agent import ReconciliationAgentPort
 from domain.ports.reconciliation_ledger import ReconciliationLedgerPort
 from domain.ports.structural_graph import StructuralGraphPort
-from domain.reconciliation import MutationSummary, ReconciliationRequest, ReconciliationResult
+from domain.reconciliation import (
+    MutationSummary,
+    ReconciliationRequest,
+    ReconciliationResult,
+)
 from domain.reconciliation_flags import reconciliation_enabled
 
 from adapters.outbound.context_graph_writer_adapter import DefaultContextGraphWriter
+from application.use_cases.agent_work_capture import (
+    bind_agent_work_recorder,
+    clear_agent_work_recorder,
+)
 from application.use_cases.reconciliation_validation import validate_reconciliation_plan
-from application.use_cases.split_reconciliation_plan import split_reconciliation_plan_into_steps
+from application.use_cases.split_reconciliation_plan import (
+    split_reconciliation_plan_into_steps,
+)
 
 
 def _merge_mutation_summary(acc: MutationSummary, nxt: MutationSummary) -> None:
@@ -64,6 +75,8 @@ def reconcile_event(
         )
 
     try:
+        if reco_ledger is not None and run_id is not None:
+            bind_agent_work_recorder(agent, reco_ledger, run_id)
         plan = agent.run_reconciliation(request)
         validate_reconciliation_plan(plan, request.pot_id)
         slices = split_reconciliation_plan_into_steps(plan)
@@ -87,12 +100,29 @@ def reconcile_event(
             episode_uuids=episode_uuids,
             mutation_summary=combined_summary,
             error=None,
+            downgrades=list(plan.ontology_downgrades),
         )
         if reco_ledger is not None and run_id is not None:
             reco_ledger.record_run_success(run_id)
             reco_ledger.record_event_reconciled(request.event.event_id)
         return result
-    except (ReconciliationPlanValidationError, ReconciliationApplyError) as exc:
+    except ReconciliationPlanValidationError as exc:
+        if reco_ledger is not None and run_id is not None:
+            reco_ledger.record_run_failure(run_id, str(exc))
+            reco_ledger.record_event_failed(request.event.event_id, str(exc))
+        if exc.structured_issues:
+            errs = [dict(x) for x in exc.structured_issues]
+        else:
+            errs = [validation_line_to_issue(str(exc))]
+        return ReconciliationResult(
+            ok=False,
+            episode_uuids=[],
+            mutation_summary=MutationSummary(),
+            error=str(exc),
+            reconciliation_errors=errs,
+            downgrades=[],
+        )
+    except ReconciliationApplyError as exc:
         if reco_ledger is not None and run_id is not None:
             reco_ledger.record_run_failure(run_id, str(exc))
             reco_ledger.record_event_failed(request.event.event_id, str(exc))
@@ -101,9 +131,13 @@ def reconcile_event(
             episode_uuids=[],
             mutation_summary=MutationSummary(),
             error=str(exc),
+            reconciliation_errors=[validation_line_to_issue(str(exc))],
+            downgrades=[],
         )
     except Exception as exc:
         if reco_ledger is not None and run_id is not None:
             reco_ledger.record_run_failure(run_id, str(exc))
             reco_ledger.record_event_failed(request.event.event_id, str(exc))
         raise
+    finally:
+        clear_agent_work_recorder(agent)

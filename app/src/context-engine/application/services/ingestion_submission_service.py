@@ -8,14 +8,23 @@ from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
-from adapters.outbound.postgres.ingestion_event_store import SqlAlchemyIngestionEventStore
-from adapters.outbound.postgres.reconciliation_ledger import SqlAlchemyReconciliationLedger
-from application.use_cases.event_reconciliation import record_and_reconcile_context_event
+from adapters.outbound.postgres.ingestion_event_store import (
+    SqlAlchemyIngestionEventStore,
+)
+from adapters.outbound.postgres.reconciliation_ledger import (
+    SqlAlchemyReconciliationLedger,
+)
+from application.use_cases.event_reconciliation import (
+    record_and_reconcile_context_event,
+)
 from application.use_cases.ingest_single_pr import run_merged_pr_ingest_core
 from application.use_cases.record_context_event import record_context_event
-from application.use_cases.record_raw_episode_ingestion import record_raw_episode_ingestion
 from application.use_cases.wait_ingestion_event import wait_for_terminal_ingestion_event
-from domain.context_events import ContextEvent, EventScope, event_scope_from_resolved_pot
+from domain.context_events import (
+    ContextEvent,
+    EventScope,
+    event_scope_from_resolved_pot,
+)
 from domain.ingestion_kinds import (
     INGESTION_KIND_AGENT_RECONCILIATION,
     INGESTION_KIND_GITHUB_MERGED_PR,
@@ -97,101 +106,41 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
             raise ValueError(f"raw_episode payload missing field: {e.args[0]}") from e
         ref = _parse_iso_or_now(p.get("reference_time"))
 
-        resolved = self._c.pots.resolve_pot(request.pot_id)
-        if resolved is None:
-            raise ValueError("unknown_pot_id")
-
-        scope = event_scope_from_resolved_pot(request.pot_id, resolved)
-
-        out = record_raw_episode_ingestion(
-            self._c.episodic,
-            self._c.structural,
-            self._reco,
-            scope,
-            pot_id=request.pot_id,
-            name=name,
-            episode_body=episode_body,
-            source_description=source_description,
-            reference_time=ref,
-            idempotency_key=request.idempotency_key,
+        source_id = request.source_id or f"raw_episode_{uuid4()}"
+        payload = dict(p)
+        payload.update(
+            {
+                "name": name,
+                "episode_body": episode_body,
+                "source_description": source_description,
+                "reference_time": ref.isoformat(),
+            }
+        )
+        return self._submit_agent_reconciliation(
+            IngestionSubmissionRequest(
+                pot_id=request.pot_id,
+                ingestion_kind=INGESTION_KIND_RAW_EPISODE,
+                source_channel=request.source_channel,
+                source_system=request.source_system or "context_engine_raw",
+                event_type=request.event_type or "raw_episode",
+                action=request.action or "ingest",
+                payload=payload,
+                metadata=request.metadata,
+                idempotency_key=request.idempotency_key,
+                dedup_key=request.dedup_key,
+                event_id=request.event_id,
+                source_id=source_id,
+                provider=request.provider,
+                provider_host=request.provider_host,
+                repo_name=request.repo_name,
+                source_event_id=request.source_event_id,
+                artifact_refs=request.artifact_refs,
+                occurred_at=request.occurred_at or ref,
+            ),
             sync=sync,
-            jobs=self._c.jobs,
-            mutation_applier=self._mutation_applier,
-            source_channel=request.source_channel,
+            wait=wait,
+            timeout_seconds=timeout_seconds,
         )
-
-        if not out.inserted:
-            ev = self._events.get_event(out.event_id)
-            return EventReceipt(
-                event_id=out.event_id,
-                status=ev.status if ev else "queued",
-                terminal_event=ev,
-                error=out.error,
-                duplicate=True,
-            )
-
-        if sync:
-            ev = self._events.get_event(out.event_id)
-            if out.error:
-                return EventReceipt(
-                    event_id=out.event_id,
-                    status="error",
-                    terminal_event=ev,
-                    error=out.error,
-                    job_id=out.job_id,
-                    episode_uuid=out.episode_uuid,
-                )
-            return EventReceipt(
-                event_id=out.event_id,
-                status=ev.status if ev else "done",
-                terminal_event=ev,
-                job_id=out.job_id,
-                episode_uuid=out.episode_uuid,
-            )
-
-        # True async (broker): no episode uuid until a worker runs. No-op / CLI queue: apply is in-process.
-        if out.error:
-            ev = self._events.get_event(out.event_id)
-            return EventReceipt(
-                event_id=out.event_id,
-                status="error",
-                terminal_event=ev,
-                error=out.error,
-                job_id=out.job_id,
-                episode_uuid=out.episode_uuid,
-            )
-        if out.episode_uuid is not None:
-            ev = self._events.get_event(out.event_id)
-            return EventReceipt(
-                event_id=out.event_id,
-                status=ev.status if ev else "done",
-                terminal_event=ev,
-                job_id=out.job_id,
-                episode_uuid=out.episode_uuid,
-            )
-
-        receipt = EventReceipt(
-            event_id=out.event_id,
-            status="queued",
-            job_id=out.job_id,
-            episode_uuid=out.episode_uuid,
-        )
-        if wait:
-            terminal = wait_for_terminal_ingestion_event(
-                self._events,
-                out.event_id,
-                timeout_seconds=timeout_seconds if timeout_seconds is not None else 300.0,
-            )
-            if terminal is None:
-                return receipt
-            return EventReceipt(
-                event_id=out.event_id,
-                status=terminal.status,
-                terminal_event=terminal,
-                job_id=out.job_id,
-                episode_uuid=out.episode_uuid,
-            )
-        return receipt
 
     def _submit_github_merged_pr(
         self,
@@ -206,7 +155,9 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
         try:
             pr_number = int(p["pr_number"])
         except (KeyError, TypeError, ValueError) as e:
-            raise ValueError("github_merged_pr payload requires integer pr_number") from e
+            raise ValueError(
+                "github_merged_pr payload requires integer pr_number"
+            ) from e
 
         if not self._c.settings.is_enabled():
             raise ValueError("context_graph_disabled")
@@ -218,9 +169,7 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
         primary = resolve_write_repo(resolved, repo_name=explicit)
         if primary is None:
             raise ValueError(
-                "ambiguous_or_unknown_repo"
-                if not explicit
-                else "repo_not_in_pot"
+                "ambiguous_or_unknown_repo" if not explicit else "repo_not_in_pot"
             )
 
         scope = EventScope(
@@ -306,7 +255,9 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
             terminal = wait_for_terminal_ingestion_event(
                 self._events,
                 eid,
-                timeout_seconds=timeout_seconds if timeout_seconds is not None else 300.0,
+                timeout_seconds=timeout_seconds
+                if timeout_seconds is not None
+                else 300.0,
             )
             if terminal is not None:
                 receipt = EventReceipt(
@@ -327,22 +278,28 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
         timeout_seconds: float | None,
     ) -> EventReceipt:
         if not request.source_id:
-            raise ValueError("source_id is required for agent reconciliation submissions")
+            raise ValueError(
+                "source_id is required for agent reconciliation submissions"
+            )
+        if self._c.reconciliation_agent is None:
+            raise ValueError("no_reconciliation_agent")
 
         resolved = self._c.pots.resolve_pot(request.pot_id)
-        if resolved is None or not resolved.repos:
+        if resolved is None:
             raise ValueError("unknown_pot_id")
-        primary = resolve_write_repo(resolved, repo_name=request.repo_name)
+        explicit_repo = (request.repo_name or "").strip() or None
+        primary = resolve_write_repo(resolved, repo_name=explicit_repo)
         if primary is None:
-            raise ValueError(
-                "ambiguous_or_unknown_repo"
-                if not (request.repo_name or "").strip()
-                else "repo_not_in_pot"
-            )
-
-        provider = request.provider or primary.provider
-        provider_host = request.provider_host or primary.provider_host
-        repo_name = request.repo_name or primary.repo_name
+            if explicit_repo:
+                raise ValueError("repo_not_in_pot")
+            scope = event_scope_from_resolved_pot(request.pot_id, resolved)
+            provider = request.provider or scope.provider
+            provider_host = request.provider_host or scope.provider_host
+            repo_name = scope.repo_name
+        else:
+            provider = request.provider or primary.provider
+            provider_host = request.provider_host or primary.provider_host
+            repo_name = request.repo_name or primary.repo_name
 
         eid = request.event_id or str(uuid4())
         kind = request.ingestion_kind or INGESTION_KIND_AGENT_RECONCILIATION
@@ -403,7 +360,9 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
                 terminal = wait_for_terminal_ingestion_event(
                     self._events,
                     out.event_id,
-                    timeout_seconds=timeout_seconds if timeout_seconds is not None else 300.0,
+                    timeout_seconds=timeout_seconds
+                    if timeout_seconds is not None
+                    else 300.0,
                 )
                 if terminal is None:
                     return receipt

@@ -26,7 +26,20 @@ class PotNotFound(ContextEngineError):
 
 
 class ReconciliationPlanValidationError(ContextEngineError):
-    """Reconciliation plan failed validation."""
+    """Reconciliation plan failed validation.
+
+    When validation is driven by ontology checks, ``structured_issues`` carries
+    ``{"entity", "issue"}`` rows aligned with :func:`domain.reconciliation_issues.validation_lines_to_issues`.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        structured_issues: tuple[dict[str, str], ...] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.structured_issues = structured_issues or ()
 
 
 class ReconciliationApplyError(ContextEngineError):

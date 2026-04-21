@@ -90,6 +90,7 @@ class CapabilitySet:
     ownership_context: bool = True
     project_map_context: bool = False
     debugging_memory_context: bool = False
+    causal_chain_context: bool = False
     workflow_context: bool = False
 
 
@@ -188,6 +189,19 @@ class ProjectContextRecord:
 
 
 @dataclass
+class CausalChainItem:
+    """One step in a backwards-walked causal chain (cause → effect order)."""
+
+    node_uuid: str
+    name: str | None = None
+    summary: str | None = None
+    reference_time: str | None = None
+    source_refs: list[str] = field(default_factory=list)
+    confidence: float = 0.7
+    relation_from_previous: str | None = None
+
+
+@dataclass
 class DebuggingMemoryRecord:
     """Reusable debugging knowledge for incidents, symptoms, and fixes."""
 
@@ -220,6 +234,7 @@ class IntelligenceBundle:
     ownership: list[OwnershipRecord] = field(default_factory=list)
     project_map: list[ProjectContextRecord] = field(default_factory=list)
     debugging_memory: list[DebuggingMemoryRecord] = field(default_factory=list)
+    causal_chain: list[CausalChainItem] = field(default_factory=list)
     source_refs: list[SourceReferenceRecord] = field(default_factory=list)
     coverage: CoverageReport = field(
         default_factory=lambda: CoverageReport(status="empty")

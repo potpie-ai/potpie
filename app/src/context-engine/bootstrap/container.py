@@ -8,6 +8,7 @@ from typing import Callable
 from sqlalchemy.orm import Session
 
 from adapters.outbound.github.source_control import PyGithubSourceControl
+from adapters.outbound.graphiti.context_graph import GraphitiContextGraphAdapter
 from adapters.outbound.graphiti.episodic import GraphitiEpisodicAdapter
 from adapters.outbound.intelligence.hybrid_graph import HybridGraphIntelligenceProvider
 from adapters.outbound.neo4j.structural import Neo4jStructuralAdapter
@@ -24,6 +25,7 @@ from adapters.outbound.postgres.reconciliation_ledger import (
 from adapters.outbound.settings_env import EnvContextEngineSettings
 from application.services.context_resolution import ContextResolutionService
 from domain.ports.event_query_service import EventQueryService
+from domain.ports.context_graph import ContextGraphPort
 from domain.ports.episodic_graph import EpisodicGraphPort
 from domain.ports.intelligence_provider import IntelligenceProvider
 from domain.ports.ingestion_submission import IngestionSubmissionService
@@ -49,6 +51,7 @@ class ContextEngineContainer:
     resolution_service: ContextResolutionService | None = None
     reconciliation_agent: ReconciliationAgentPort | None = None
     jobs: JobEnqueuePort | None = None
+    context_graph: ContextGraphPort | None = None
 
     def ledger(self, session: Session) -> SqlAlchemyIngestionLedger:
         return SqlAlchemyIngestionLedger(session)
@@ -86,10 +89,16 @@ def build_container(
         structural=structural,
     )
     resolution_service = ContextResolutionService(intelligence_provider)
+    context_graph = GraphitiContextGraphAdapter(
+        episodic=episodic,
+        structural=structural,
+        resolution_service=resolution_service,
+    )
     return ContextEngineContainer(
         settings=s,
         episodic=episodic,
         structural=structural,
+        context_graph=context_graph,
         pots=pots,
         source_for_repo=source_for_repo,
         intelligence_provider=intelligence_provider,

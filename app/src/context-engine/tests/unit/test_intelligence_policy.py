@@ -31,6 +31,7 @@ def _full_caps(**overrides: bool) -> CapabilitySet:
         ownership_context=True,
         project_map_context=True,
         debugging_memory_context=True,
+        causal_chain_context=True,
     )
     base.update(overrides)
     return CapabilitySet(**base)
@@ -46,6 +47,7 @@ def _no_caps() -> CapabilitySet:
         ownership_context=False,
         project_map_context=False,
         debugging_memory_context=False,
+        causal_chain_context=False,
     )
 
 
@@ -69,6 +71,7 @@ def test_build_evidence_plan_no_caps_disables_all() -> None:
     assert not plan.run_ownership
     assert not plan.run_project_map
     assert not plan.run_debugging_memory
+    assert not plan.run_causal_chain
 
 
 def test_build_evidence_plan_semantic_search_requires_cap() -> None:
@@ -247,6 +250,18 @@ def test_build_evidence_plan_debugging_memory_requires_cap() -> None:
     req = _req(include=["prior_fixes"])
     plan = build_evidence_plan(req, caps=_full_caps(debugging_memory_context=False))
     assert not plan.run_debugging_memory
+
+
+def test_build_evidence_plan_causal_chain_from_include() -> None:
+    req = _req(include=["causal_chain"])
+    plan = build_evidence_plan(req, caps=_full_caps())
+    assert plan.run_causal_chain
+
+
+def test_build_evidence_plan_causal_chain_requires_cap() -> None:
+    req = _req(include=["causal_chain"])
+    plan = build_evidence_plan(req, caps=_full_caps(causal_chain_context=False))
+    assert not plan.run_causal_chain
 
 
 # ---------------------------------------------------------------------------

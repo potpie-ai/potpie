@@ -6,10 +6,13 @@ import asyncio
 import logging
 from typing import Any
 
+from application.use_cases.query_context import search_pot_context_async
+
 from domain.intelligence_models import (
     ArtifactContext,
     ArtifactRef,
     CapabilitySet,
+    CausalChainItem,
     ChangeRecord,
     ContextScope,
     DebuggingMemoryRecord,
@@ -72,20 +75,6 @@ _DEBUGGING_MEMORY_FAMILIES_BY_LABEL = {
     "Incident": "incidents",
     "Alert": "alerts",
 }
-
-
-def _semantic_hits_to_dicts(items: list[Any]) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for item in items:
-        rows.append(
-            {
-                "uuid": str(getattr(item, "uuid", "")),
-                "name": getattr(item, "name", None),
-                "summary": getattr(item, "summary", None),
-                "fact": getattr(item, "fact", None),
-            }
-        )
-    return rows
 
 
 def _row_to_change_record(r: dict[str, Any]) -> ChangeRecord:
@@ -317,20 +306,19 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
         limit: int = 8,
         node_labels: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        if not self._episodic.enabled:
-            return []
         labels = node_labels or _DEFAULT_NODE_LABELS
         try:
-            items = await self._episodic.search_async(
-                pot_id=pot_id,
-                query=query,
+            return await search_pot_context_async(
+                self._episodic,
+                pot_id,
+                query,
                 limit=max(1, min(limit, 50)),
                 node_labels=labels,
+                structural=self._structural,
             )
         except Exception as exc:
-            logger.exception("search_async failed: %s", exc)
+            logger.exception("search_context failed: %s", exc)
             return []
-        return _semantic_hits_to_dicts(items)
 
     async def get_artifact_context(
         self,
@@ -518,6 +506,118 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
             out.append(item)
         return out[:limit]
 
+    async def get_causal_chain(
+        self,
+        pot_id: str,
+        scope: ContextScope,
+        *,
+        query: str,
+        max_depth: int = 6,
+        as_of_iso: str | None = None,
+        window_days: int = 180,
+    ) -> list[CausalChainItem]:
+        focal: str | None = None
+        if scope.services:
+            try:
+                focal = self._structural.resolve_entity_uuid_for_service_hint(
+                    pot_id, scope.services[0]
+                )
+            except Exception as exc:
+                logger.debug("resolve_entity_uuid_for_service_hint: %s", exc)
+        if not focal and self._episodic.enabled:
+            try:
+                edges = await self._episodic.search_async(
+                    pot_id,
+                    query,
+                    limit=1,
+                    node_labels=_DEFAULT_NODE_LABELS,
+                )
+            except Exception as exc:
+                logger.exception("get_causal_chain semantic seed failed: %s", exc)
+                edges = []
+            if edges:
+                e0 = edges[0]
+                focal = str(
+                    getattr(e0, "target_node_uuid", None)
+                    or getattr(e0, "source_node_uuid", None)
+                    or ""
+                ).strip() or None
+        if not focal:
+            return []
+
+        def _load() -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+            chain = self._structural.walk_causal_chain_backward(
+                pot_id,
+                focal,
+                max_depth=max_depth,
+                as_of_iso=as_of_iso,
+                window_days=window_days,
+            )
+            focal_row = self._structural.get_episodic_entity_node(pot_id, focal)
+            return chain, focal_row
+
+        try:
+            chain, focal_row = await asyncio.to_thread(_load)
+        except Exception as exc:
+            logger.exception("get_causal_chain structural failed: %s", exc)
+            return []
+
+        def _ref_time(row: dict[str, Any]) -> str | None:
+            raw = row.get("valid_at") or row.get("pred_valid_at")
+            if raw is None:
+                return None
+            return str(raw)
+
+        def _src_refs(row: dict[str, Any]) -> list[str]:
+            ref = row.get("source_ref")
+            return [str(ref)] if ref else []
+
+        items: list[CausalChainItem] = []
+        for i, row in enumerate(chain):
+            rel = chain[i - 1].get("edge_name") if i > 0 else None
+            uid = str(row.get("uuid") or "")
+            if not uid:
+                continue
+            items.append(
+                CausalChainItem(
+                    node_uuid=uid,
+                    name=row.get("name"),
+                    summary=(row.get("summary") or "").strip() or None,
+                    reference_time=_ref_time(row),
+                    source_refs=_src_refs(row),
+                    confidence=0.72,
+                    relation_from_previous=str(rel) if rel else None,
+                )
+            )
+        fr = focal_row or {}
+        rel_f = chain[-1].get("edge_name") if chain else None
+        items.append(
+            CausalChainItem(
+                node_uuid=str(fr.get("uuid") or focal),
+                name=fr.get("name"),
+                summary=(fr.get("summary") or "").strip() or None,
+                reference_time=_ref_time(fr) if fr else None,
+                source_refs=_src_refs(fr),
+                confidence=0.75,
+                relation_from_previous=str(rel_f) if rel_f else None,
+            )
+        )
+        return items
+
+    async def list_open_conflicts(self, pot_id: str) -> list[dict[str, Any]]:
+        def _load() -> list[dict[str, Any]]:
+            try:
+                return self._episodic.list_open_conflicts(pot_id)
+            except Exception as exc:
+                logger.exception("list_open_conflicts failed: %s", exc)
+                return []
+
+        try:
+            return await asyncio.to_thread(_load)
+        except Exception as exc:
+            logger.exception("list_open_conflicts thread failed: %s", exc)
+            return []
+
     async def get_debugging_memory(
         self,
         pot_id: str,
@@ -575,5 +675,6 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
             ownership_context=True,
             project_map_context=True,
             debugging_memory_context=True,
+            causal_chain_context=True,
             workflow_context=False,
         )

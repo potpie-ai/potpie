@@ -25,7 +25,9 @@ from app.modules.context_graph.context_graph_pot_invitation_model import (
     INVITATION_STATUS_REVOKED,
     ContextGraphPotInvitation,
 )
-from app.modules.context_graph.context_graph_pot_member_model import ContextGraphPotMember
+from app.modules.context_graph.context_graph_pot_member_model import (
+    ContextGraphPotMember,
+)
 from app.modules.context_graph.context_graph_pot_model import ContextGraphPot
 from app.modules.context_graph.context_graph_pot_repository_model import (
     ContextGraphPotRepository,
@@ -34,19 +36,14 @@ from app.modules.context_graph.context_graph_pot_source_model import (
     ContextGraphPotSource,
 )
 from app.modules.context_graph.pot_access import (
-    api_key_user_id,
     normalize_role,
     parse_assignable_role,
     require_manage_integrations,
     require_manage_members,
     require_manage_repos,
     require_pot_member,
-    user_role_on_context_graph_pot,
 )
-from app.modules.context_graph.pot_member_roles import (
-    POT_ROLE_OWNER,
-    POT_ROLE_USER,
-)
+from app.modules.context_graph.pot_member_roles import POT_ROLE_OWNER
 from app.modules.context_graph.pot_sources_service import (
     attach_linear_team_source,
     mirror_repository_into_sources,
@@ -73,7 +70,9 @@ def _normalize_pot_slug(raw: str | None) -> str:
     return slug
 
 
-def _pot_slug_exists(db: Session, slug: str, *, exclude_pot_id: str | None = None) -> bool:
+def _pot_slug_exists(
+    db: Session, slug: str, *, exclude_pot_id: str | None = None
+) -> bool:
     q = db.query(ContextGraphPot).filter(ContextGraphPot.slug == slug)
     if exclude_pot_id:
         q = q.filter(ContextGraphPot.id != exclude_pot_id)
@@ -175,7 +174,10 @@ class PatchContextPotBody(BaseModel):
 
 class AddMemberBody(BaseModel):
     user_id: str = Field(description="Potpie user uid to add.")
-    role: str = Field(default="user", description="Assignable role ('user' only; owner cannot be assigned).")
+    role: str = Field(
+        default="user",
+        description="Assignable role ('user' only; owner cannot be assigned).",
+    )
 
 
 class PatchMemberBody(BaseModel):
@@ -208,9 +210,12 @@ class InviteBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     email: EmailStr
-    role: str = Field(default="user", description="Assignable role (only 'user' is accepted).")
+    role: str = Field(
+        default="user", description="Assignable role (only 'user' is accepted)."
+    )
     expires_in_days: Optional[int] = Field(
-        default=None, description="Invite lifetime; defaults to the server-configured TTL."
+        default=None,
+        description="Invite lifetime; defaults to the server-configured TTL.",
     )
 
 
@@ -228,7 +233,9 @@ class AddGithubRepositorySourceBody(BaseModel):
 class AddLinearTeamSourceBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    integration_id: str = Field(..., description="integrations.integration_id for Linear")
+    integration_id: str = Field(
+        ..., description="integrations.integration_id for Linear"
+    )
     team_id: str = Field(..., min_length=1, description="Linear team UUID")
     team_name: Optional[str] = None
 
@@ -274,7 +281,9 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
         try:
             return str(user["user_id"])
         except KeyError as exc:
-            raise HTTPException(status_code=401, detail="Missing user_id on credentials") from exc
+            raise HTTPException(
+                status_code=401, detail="Missing user_id on credentials"
+            ) from exc
 
     @r.get("/pots")
     def list_context_pots(
@@ -284,7 +293,10 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
         uid = _uid(user)
         rows = (
             db.query(ContextGraphPot, ContextGraphPotMember.role)
-            .join(ContextGraphPotMember, ContextGraphPotMember.pot_id == ContextGraphPot.id)
+            .join(
+                ContextGraphPotMember,
+                ContextGraphPotMember.pot_id == ContextGraphPot.id,
+            )
             .filter(
                 ContextGraphPotMember.user_id == uid,
                 ContextGraphPot.archived_at.is_(None),
@@ -307,9 +319,13 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
                 pot_id = str(uuid.UUID(pot_id))
             except ValueError as e:
                 raise HTTPException(status_code=400, detail="id must be a UUID") from e
-            existing = db.query(ContextGraphPot).filter(ContextGraphPot.id == pot_id).first()
+            existing = (
+                db.query(ContextGraphPot).filter(ContextGraphPot.id == pot_id).first()
+            )
             if existing is not None:
-                raise HTTPException(status_code=409, detail="A pot with this id already exists")
+                raise HTTPException(
+                    status_code=409, detail="A pot with this id already exists"
+                )
         else:
             pot_id = str(uuid.uuid4())
 
@@ -387,6 +403,7 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
             row.slug = s
         if body.archived is not None:
             from datetime import datetime, timezone
+
             row.archived_at = datetime.now(timezone.utc) if body.archived else None
         db.commit()
         db.refresh(row)
@@ -439,16 +456,25 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
             raise HTTPException(status_code=404, detail="User not found")
         exists = (
             db.query(ContextGraphPotMember)
-            .filter(ContextGraphPotMember.pot_id == pot_id, ContextGraphPotMember.user_id == target)
+            .filter(
+                ContextGraphPotMember.pot_id == pot_id,
+                ContextGraphPotMember.user_id == target,
+            )
             .first()
         )
         if exists is not None:
             raise HTTPException(status_code=409, detail="User is already a member")
-        m = ContextGraphPotMember(pot_id=pot_id, user_id=target, role=new_role, invited_by_user_id=uid)
+        m = ContextGraphPotMember(
+            pot_id=pot_id, user_id=target, role=new_role, invited_by_user_id=uid
+        )
         db.add(m)
         db.commit()
         db.refresh(m)
-        return {"user_id": m.user_id, "role": m.role, "invited_by_user_id": m.invited_by_user_id}
+        return {
+            "user_id": m.user_id,
+            "role": m.role,
+            "invited_by_user_id": m.invited_by_user_id,
+        }
 
     @r.patch("/pots/{pot_id}/members/{member_user_id}")
     def patch_pot_member(
@@ -464,15 +490,23 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
         new_role = parse_assignable_role(body.role)
         m = (
             db.query(ContextGraphPotMember)
-            .filter(ContextGraphPotMember.pot_id == pot_id, ContextGraphPotMember.user_id == member_user_id)
+            .filter(
+                ContextGraphPotMember.pot_id == pot_id,
+                ContextGraphPotMember.user_id == member_user_id,
+            )
             .first()
         )
         if m is None:
             raise HTTPException(status_code=404, detail="Member not found")
         if m.role == POT_ROLE_OWNER and new_role != POT_ROLE_OWNER:
-            raise HTTPException(status_code=400, detail="owner role cannot be changed via this endpoint")
+            raise HTTPException(
+                status_code=400, detail="owner role cannot be changed via this endpoint"
+            )
         if new_role == POT_ROLE_OWNER and m.role != POT_ROLE_OWNER:
-            raise HTTPException(status_code=400, detail="owner role cannot be assigned via this endpoint")
+            raise HTTPException(
+                status_code=400,
+                detail="owner role cannot be assigned via this endpoint",
+            )
         m.role = new_role
         db.commit()
         db.refresh(m)
@@ -490,13 +524,19 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
         _context_graph_pot_row_or_404(db, pot_id)
         m = (
             db.query(ContextGraphPotMember)
-            .filter(ContextGraphPotMember.pot_id == pot_id, ContextGraphPotMember.user_id == member_user_id)
+            .filter(
+                ContextGraphPotMember.pot_id == pot_id,
+                ContextGraphPotMember.user_id == member_user_id,
+            )
             .first()
         )
         if m is None:
             raise HTTPException(status_code=404, detail="Member not found")
         if m.role == POT_ROLE_OWNER:
-            raise HTTPException(status_code=400, detail="owner cannot be removed; ownership transfer is not implemented")
+            raise HTTPException(
+                status_code=400,
+                detail="owner cannot be removed; ownership transfer is not implemented",
+            )
         db.delete(m)
         db.commit()
         return {"ok": True, "removed_user_id": member_user_id}
@@ -601,7 +641,10 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
         _context_graph_pot_row_or_404(db, pot_id)
         row = (
             db.query(ContextGraphPotRepository)
-            .filter(ContextGraphPotRepository.pot_id == pot_id, ContextGraphPotRepository.id == repository_id)
+            .filter(
+                ContextGraphPotRepository.pot_id == pot_id,
+                ContextGraphPotRepository.id == repository_id,
+            )
             .first()
         )
         if row is None:
@@ -680,7 +723,10 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
         _context_graph_pot_row_or_404(db, pot_id)
         row = (
             db.query(ContextGraphPotIntegration)
-            .filter(ContextGraphPotIntegration.pot_id == pot_id, ContextGraphPotIntegration.id == integration_id)
+            .filter(
+                ContextGraphPotIntegration.pot_id == pot_id,
+                ContextGraphPotIntegration.id == integration_id,
+            )
             .first()
         )
         if row is None:
@@ -749,7 +795,10 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
             .first()
         )
         if pending is not None:
-            raise HTTPException(status_code=409, detail="An invitation for this email is already pending.")
+            raise HTTPException(
+                status_code=409,
+                detail="An invitation for this email is already pending.",
+            )
 
         ttl_days = body.expires_in_days or INVITATION_DEFAULT_TTL_DAYS
         token, token_hash = _mint_invitation_token()
@@ -793,7 +842,9 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
         if row is None:
             raise HTTPException(status_code=404, detail="Invitation not found")
         if row.status != INVITATION_STATUS_PENDING:
-            raise HTTPException(status_code=400, detail="Only pending invitations can be revoked")
+            raise HTTPException(
+                status_code=400, detail="Only pending invitations can be revoked"
+            )
         row.status = INVITATION_STATUS_REVOKED
         db.commit()
         return {"ok": True, "invitation_id": invitation_id}
@@ -809,7 +860,9 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
             raise HTTPException(status_code=400, detail="Invalid invitation token")
         row = (
             db.query(ContextGraphPotInvitation)
-            .filter(ContextGraphPotInvitation.token_hash == _invitation_token_hash(token))
+            .filter(
+                ContextGraphPotInvitation.token_hash == _invitation_token_hash(token)
+            )
             .first()
         )
         if row is None:
@@ -908,7 +961,9 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
             .first()
         )
         if existing_repo is not None:
-            source = mirror_repository_into_sources(db, existing_repo, added_by_user_id=uid)
+            source = mirror_repository_into_sources(
+                db, existing_repo, added_by_user_id=uid
+            )
             db.commit()
             return {
                 "id": source.id,
@@ -960,7 +1015,9 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
         """
         from integrations.adapters.outbound.crypto.token_encryption import decrypt_token
         from integrations.adapters.outbound.linear.graphql_client import linear_graphql
-        from integrations.adapters.outbound.postgres.integration_model import Integration
+        from integrations.adapters.outbound.postgres.integration_model import (
+            Integration,
+        )
         from integrations.domain.integrations_schema import AuthData, IntegrationType
 
         uid = _uid(user)
@@ -1005,7 +1062,9 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
         db: Session = Depends(get_db),
         user: dict[str, Any] = Depends(auth_dep),
     ) -> dict[str, Any]:
-        from integrations.adapters.outbound.postgres.integration_model import Integration
+        from integrations.adapters.outbound.postgres.integration_model import (
+            Integration,
+        )
         from integrations.domain.integrations_schema import IntegrationType
 
         uid = _uid(user)
@@ -1096,13 +1155,16 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
         # row so the pot no longer routes webhooks there.
         if row.source_kind == "repository" and row.provider == "github":
             import json as _json
+
             try:
                 scope = _json.loads(row.scope_json) if row.scope_json else {}
             except (TypeError, ValueError):
                 scope = {}
             owner = (scope.get("owner") or "").strip()
             repo = (scope.get("repo") or "").strip()
-            provider_host = (scope.get("provider_host") or "github.com").strip() or "github.com"
+            provider_host = (
+                scope.get("provider_host") or "github.com"
+            ).strip() or "github.com"
             if owner and repo:
                 repo_row = (
                     db.query(ContextGraphPotRepository)
@@ -1140,10 +1202,7 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
         """
         from app.modules.context_graph.pot_access import require_pot_raw_ingest
         from app.modules.context_graph.wiring import build_container_for_user_session
-        from domain.ingestion_kinds import (
-            INGESTION_KIND_AGENT_RECONCILIATION,
-            INGESTION_KIND_RAW_EPISODE,
-        )
+        from domain.ingestion_kinds import INGESTION_KIND_RAW_EPISODE
         from domain.ingestion_event_models import IngestionSubmissionRequest
 
         uid = _uid(user)
@@ -1163,40 +1222,29 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
 
         container = build_container_for_user_session(db, uid)
         try:
-            if url and not content:
-                request = IngestionSubmissionRequest(
-                    pot_id=pot_id,
-                    ingestion_kind=INGESTION_KIND_AGENT_RECONCILIATION,
-                    source_channel="ui_raw_ingest",
-                    source_system="manual",
-                    event_type="manual_submission",
-                    action="ingest",
-                    source_id=f"manual_url_{uuid.uuid4()}",
-                    repo_name=(body.repo_name or None),
-                    payload={
-                        "url": url,
-                        "title": name,
-                        "submitted_text": content or None,
-                        "content_type_guess": "link",
-                        "submitted_by_user_id": uid,
-                    },
-                )
-            else:
-                request = IngestionSubmissionRequest(
-                    pot_id=pot_id,
-                    ingestion_kind=INGESTION_KIND_RAW_EPISODE,
-                    source_channel="ui_raw_ingest",
-                    source_system="manual",
-                    event_type="raw_episode",
-                    action="submit",
-                    repo_name=(body.repo_name or None),
-                    payload={
-                        "name": name,
-                        "episode_body": content,
-                        "source_description": body.source_description
-                        or f"manual raw note by {uid}",
-                    },
-                )
+            request = IngestionSubmissionRequest(
+                pot_id=pot_id,
+                ingestion_kind=INGESTION_KIND_RAW_EPISODE,
+                source_channel="ui_raw_ingest",
+                source_system="manual",
+                event_type="manual_submission"
+                if url and not content
+                else "raw_episode",
+                action="ingest" if url and not content else "submit",
+                source_id=f"manual_{uuid.uuid4()}",
+                repo_name=(body.repo_name or None),
+                payload={
+                    "name": name,
+                    "episode_body": content or url,
+                    "source_description": body.source_description
+                    or f"manual raw note by {uid}",
+                    "url": url or None,
+                    "title": name,
+                    "submitted_text": content or None,
+                    "content_type_guess": "link" if url and not content else "text",
+                    "submitted_by_user_id": uid,
+                },
+            )
             receipt = container.ingestion_submission(db).submit(
                 request,
                 sync=False,
@@ -1204,6 +1252,8 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
                 timeout_seconds=45.0 if body.wait_for_terminal else None,
             )
         except ValueError as e:
+            if str(e) == "no_reconciliation_agent":
+                raise HTTPException(status_code=503, detail=str(e)) from e
             raise HTTPException(status_code=400, detail=str(e)) from e
         return {
             "event_id": receipt.event_id,

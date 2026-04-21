@@ -52,6 +52,7 @@ from adapters.inbound.cli.potpie_api_config import (
     resolve_potpie_api_key,
 )
 from adapters.outbound.http.potpie_context_api_client import (
+    IngestRejectedError,
     PotpieContextApiClient,
     PotpieContextApiError,
 )
@@ -73,6 +74,7 @@ app = typer.Typer(
 pot_app = typer.Typer(help="Active pot and local pot helpers.")
 pot_repo_app = typer.Typer(help="Repositories attached to a context pot (Potpie API).")
 event_app = typer.Typer(help="Inspect and wait for ingestion events.")
+conflict_app = typer.Typer(help="Predicate-family conflicts (QualityIssue).")
 
 # Set by root callback; read by all subcommands (including nested `pot`).
 _cli_state: dict[str, Any] = {"json": False, "verbose": False, "source": None}
@@ -132,19 +134,23 @@ def _ingest_result_from_http(status_code: int, data: dict[str, Any]) -> dict[str
             "episode_uuid": data.get("episode_uuid"),
             "event_id": data.get("event_id"),
             "job_id": data.get("job_id"),
+            "downgrades": list(data.get("downgrades") or []),
         }
     if "event_id" in data or "job_id" in data:
         return {
-            "status": "applied",
+            "status": data.get("status") or "applied",
             "episode_uuid": data.get("episode_uuid"),
             "event_id": data.get("event_id"),
             "job_id": data.get("job_id"),
+            "downgrades": list(data.get("downgrades") or []),
+            "errors": list(data.get("errors") or []),
         }
     return {
         "status": "legacy_direct",
         "episode_uuid": data.get("episode_uuid"),
         "event_id": data.get("event_id"),
         "job_id": data.get("job_id"),
+        "downgrades": list(data.get("downgrades") or []),
     }
 
 
@@ -605,7 +611,11 @@ def pot_create_cmd(
     try:
         availability = client.get_context_pot_slug_availability(slug)
         if not availability.get("available"):
-            emit_error("Slug is already taken", str(availability.get("slug") or slug), verbose=v)
+            emit_error(
+                "Slug is already taken",
+                str(availability.get("slug") or slug),
+                verbose=v,
+            )
             raise typer.Exit(code=1)
         row = client.create_context_pot(slug=str(availability.get("slug") or slug))
     except PotpieContextApiError as exc:
@@ -628,8 +638,7 @@ def pot_create_cmd(
         print_json_blob(data, as_json=True)
     else:
         print_plain_line(
-            f"Created context pot {row_slug} ({pid}). "
-            f"Try: potpie pot use {row_slug}",
+            f"Created context pot {row_slug} ({pid}). Try: potpie pot use {row_slug}",
             as_json=False,
         )
 
@@ -817,11 +826,27 @@ def _print_event(event: dict[str, Any], *, as_json: bool) -> None:
                     f"error={step.get('error') or ''}",
                     as_json=False,
                 )
+    runs = event.get("reconciliation_runs")
+    if isinstance(runs, list) and runs:
+        print_plain_line("reconciliation runs:", as_json=False)
+        for run in runs:
+            if isinstance(run, dict):
+                work_events = run.get("work_events")
+                count = len(work_events) if isinstance(work_events, list) else 0
+                print_plain_line(
+                    "  "
+                    f"attempt={run.get('attempt_number')} status={run.get('status')} "
+                    f"agent={run.get('agent_name') or ''} work_events={count} "
+                    f"error={run.get('error') or ''}",
+                    as_json=False,
+                )
 
 
 @event_app.command("show")
 def event_show_cmd(
-    event_id: str = typer.Argument(..., help="Ingestion event id from `potpie ingest`."),
+    event_id: str = typer.Argument(
+        ..., help="Ingestion event id from `potpie ingest`."
+    ),
 ) -> None:
     """Fetch one persisted ingestion event."""
     j, v = _flags()
@@ -891,7 +916,9 @@ def event_list_cmd(
 
 @event_app.command("wait")
 def event_wait_cmd(
-    event_id: str = typer.Argument(..., help="Ingestion event id from `potpie ingest`."),
+    event_id: str = typer.Argument(
+        ..., help="Ingestion event id from `potpie ingest`."
+    ),
     timeout: float = typer.Option(
         60.0,
         "--timeout",
@@ -946,6 +973,60 @@ def event_wait_cmd(
 
 
 app.add_typer(event_app, name="event")
+
+
+@conflict_app.command("list")
+def conflict_list_cmd(
+    cwd: str = typer.Option(
+        ".",
+        "--cwd",
+        help="Git working tree used when inferring pot from remote / env",
+    ),
+) -> None:
+    """List open predicate-family conflicts for the active pot."""
+    load_cli_env()
+    j, v = _flags()
+    cwd_resolved = str(Path(cwd).resolve())
+    pot_id = _pot_id_or_git(None, cwd=cwd_resolved)
+    client = _cli_client_or_exit(v)
+    try:
+        out = client.conflicts_list(pot_id)
+    except PotpieContextApiError as exc:
+        emit_error("Could not list conflicts", _format_api_error(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+    print_json_blob(out, as_json=j)
+
+
+@conflict_app.command("resolve")
+def conflict_resolve_cmd(
+    issue_uuid: str = typer.Argument(..., help="QualityIssue uuid"),
+    action: str = typer.Option(
+        "supersede_older",
+        "--action",
+        "-a",
+        help="Resolution strategy (supersede_older stamps invalid_at on the older edge)",
+    ),
+    cwd: str = typer.Option(
+        ".",
+        "--cwd",
+        help="Git working tree used when inferring pot from remote / env",
+    ),
+) -> None:
+    """Resolve one open conflict (default: supersede the older episodic edge)."""
+    load_cli_env()
+    j, v = _flags()
+    cwd_resolved = str(Path(cwd).resolve())
+    pot_id = _pot_id_or_git(None, cwd=cwd_resolved)
+    client = _cli_client_or_exit(v)
+    try:
+        out = client.conflicts_resolve(pot_id, issue_uuid, action=action)
+    except PotpieContextApiError as exc:
+        emit_error("Could not resolve conflict", _format_api_error(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+    print_json_blob(out, as_json=j)
+
+
+app.add_typer(conflict_app, name="conflict")
 
 
 @app.command("add")
@@ -1020,12 +1101,23 @@ def search(
     with_temporal: bool = typer.Option(
         False,
         "--with-temporal",
-        help="Plain output: show valid_at, invalid_at, created_at columns (JSON always includes them when present).",
+        help="Plain output: also show created_at (valid/invalid are compact by default; JSON includes temporal_flag when present).",
     ),
     as_of: Optional[str] = typer.Option(
         None,
         "--as-of",
         help="ISO 8601 instant; restrict results to edges valid at that time (valid_at/invalid_at window).",
+    ),
+    episode_uuid: Optional[str] = typer.Option(
+        None,
+        "--episode",
+        "-e",
+        help="Only facts linked to this ingested episode UUID (server-side filter).",
+    ),
+    no_provenance: bool = typer.Option(
+        False,
+        "--no-provenance",
+        help="Hide source / reference_time / episode line in plain (non-JSON) output.",
     ),
     cwd: str = typer.Option(
         ".",
@@ -1033,7 +1125,7 @@ def search(
         help="Git working tree used to read `origin` when inferring pot (ignored when pot UUID is explicit)",
     ),
 ) -> None:
-    """Semantic search over Graphiti episodic entities (Potpie POST /api/v2/context/query/search)."""
+    """Semantic search through the unified context graph query endpoint."""
     j, v = _flags()
     cwd_resolved = str(Path(cwd).resolve())
     if second is None:
@@ -1055,16 +1147,23 @@ def search(
     body: dict[str, Any] = {
         "pot_id": pot_id,
         "query": query,
+        "goal": "retrieve",
+        "strategy": "semantic",
         "limit": limit,
         "node_labels": labels,
-        "repo_name": repo_name,
-        "source_description": _resolved_source_label(source_description),
+        "scope": {"repo_name": repo_name} if repo_name else {},
+        "source_descriptions": [_resolved_source_label(source_description)]
+        if _resolved_source_label(source_description)
+        else [],
+        "episode_uuids": [episode_uuid.strip()]
+        if episode_uuid and episode_uuid.strip()
+        else [],
         "include_invalidated": include_invalidated,
         "as_of": as_of_dt,
     }
     client = _cli_client_or_exit(v)
     try:
-        rows = client.search(body)
+        response = client.context_graph_query(body)
     except PotpieContextApiError as exc:
         emit_error(
             "Search failed",
@@ -1073,12 +1172,18 @@ def search(
             exc=exc if v else None,
         )
         raise typer.Exit(code=1) from exc
+    rows = response.get("result")
     if not isinstance(rows, list):
         emit_error(
             "Search failed", f"Unexpected response: {type(rows).__name__}", verbose=v
         )
         raise typer.Exit(code=1)
-    print_search_results(rows, as_json=j, with_temporal=with_temporal)
+    print_search_results(
+        rows,
+        as_json=j,
+        with_temporal=with_temporal,
+        show_provenance=not no_provenance,
+    )
 
 
 def _parse_iso_datetime(value: str) -> datetime:
@@ -1247,6 +1352,12 @@ def ingest_cmd(
     client = _cli_client_or_exit(v)
     try:
         status_code, data = client.ingest(body, sync=sync)
+    except IngestRejectedError as exc:
+        pl = dict(exc.body)
+        if pl.get("status") is None:
+            pl["status"] = "reconciliation_rejected"
+        print_ingest_result(pl, as_json=j)
+        raise typer.Exit(code=2) from None
     except PotpieContextApiError as exc:
         if exc.status_code == 409:
             detail = exc.detail
@@ -1279,10 +1390,18 @@ def ingest_cmd(
         raise typer.Exit(code=1)
 
     out = _ingest_result_from_http(status_code, data if isinstance(data, dict) else {})
-    if out["status"] in ("applied", "legacy_direct") and not out.get("episode_uuid"):
+    if out.get("errors"):
+        out["status"] = "reconciliation_rejected"
+        print_ingest_result(out, as_json=j)
+        raise typer.Exit(code=2)
+    if (
+        out["status"] in ("applied", "legacy_direct")
+        and not out.get("episode_uuid")
+        and not out.get("event_id")
+    ):
         emit_error(
             "Ingest failed",
-            "Server returned no episode UUID (check Potpie logs or use --sync).",
+            "Server returned no episode UUID or event_id (check Potpie logs).",
             verbose=v,
         )
         raise typer.Exit(code=1)

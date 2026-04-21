@@ -38,6 +38,7 @@ from adapters.inbound.cli.potpie_api_config import (  # noqa: E402
     resolve_potpie_api_key,
 )
 from adapters.outbound.http.potpie_context_api_client import (  # noqa: E402
+    IngestRejectedError,
     PotpieContextApiClient,
     PotpieContextApiError,
 )
@@ -272,12 +273,14 @@ def _http_e2e(data: dict[str, Any]) -> dict[str, Any]:
         "search",
         client,
         "POST",
-        "/context/query/search",
+        "/context/query/context-graph",
         json={
             "pot_id": pot_id,
             "query": "repository ingestion timeout",
+            "goal": "retrieve",
+            "strategy": "semantic",
             "limit": 5,
-            "repo_name": repo_name,
+            "scope": {"repo_name": repo_name} if repo_name else {},
         },
     )
 
@@ -288,10 +291,12 @@ def _http_e2e(data: dict[str, Any]) -> dict[str, Any]:
             f"resolve:{query['name']}",
             client,
             "POST",
-            "/context/query/resolve-context",
+            "/context/query/context-graph",
             json={
                 "pot_id": pot_id,
                 "query": query["query"],
+                "goal": "answer",
+                "strategy": "hybrid",
                 "intent": query.get("intent"),
                 "scope": {
                     "repo_name": repo_name,
@@ -299,7 +304,6 @@ def _http_e2e(data: dict[str, Any]) -> dict[str, Any]:
                     "environment": "staging",
                 },
                 "include": query.get("include") or recipe["include"],
-                "mode": recipe["mode"],
                 "source_policy": recipe["source_policy"],
                 "budget": {"max_items": 8, "timeout_ms": 3000},
             },
@@ -374,12 +378,14 @@ def _run_api_smoke(args: argparse.Namespace) -> int:
     _api_step(
         result,
         "search",
-        lambda: client.search(
+        lambda: client.context_graph_query(
             {
                 "pot_id": pot_id,
                 "query": "repository ingestion timeout context-engine",
+                "goal": "retrieve",
+                "strategy": "semantic",
                 "limit": 5,
-                "repo_name": repo_name,
+                "scope": {"repo_name": repo_name} if repo_name else {},
             }
         ),
     )
@@ -389,11 +395,12 @@ def _run_api_smoke(args: argparse.Namespace) -> int:
         _api_step(
             result,
             f"resolve:{query['name']}",
-            lambda query=query, recipe=recipe: client.post_query(
-                "resolve-context",
+            lambda query=query, recipe=recipe: client.context_graph_query(
                 {
                     "pot_id": pot_id,
                     "query": query["query"],
+                    "goal": "answer",
+                    "strategy": "hybrid",
                     "intent": query.get("intent"),
                     "scope": {
                         key: value
@@ -405,7 +412,6 @@ def _run_api_smoke(args: argparse.Namespace) -> int:
                         if value
                     },
                     "include": query.get("include") or recipe["include"],
-                    "mode": recipe["mode"],
                     "source_policy": recipe["source_policy"],
                     "budget": {"max_items": 8, "timeout_ms": 3000},
                 },
@@ -533,6 +539,16 @@ def _record_step(
 def _api_step(result: dict[str, Any], name: str, fn: Any) -> None:
     try:
         payload = fn()
+    except IngestRejectedError as exc:
+        result["failures"].append(
+            {
+                "step": name,
+                "status_code": 422,
+                "detail": exc.body,
+            }
+        )
+        result["steps"].append({"name": name, "ok": False})
+        return
     except PotpieContextApiError as exc:
         result["failures"].append(
             {
@@ -726,11 +742,15 @@ class _InMemoryEpisodicGraph:
         *,
         include_invalidated: bool = False,
         as_of: datetime | None = None,
+        episode_uuid: str | None = None,
     ) -> list[Any]:
         terms = {term.lower() for term in query.split() if len(term) > 2}
         rows = []
+        want_ep = episode_uuid.strip() if episode_uuid and episode_uuid.strip() else None
         for episode in self._episodes:
             if episode["pot_id"] != pot_id:
+                continue
+            if want_ep and episode["uuid"] != want_ep:
                 continue
             if (
                 source_description
@@ -740,14 +760,24 @@ class _InMemoryEpisodicGraph:
             text = f"{episode['name']} {episode['body']}".lower()
             if terms and not any(term in text for term in terms):
                 continue
+            rt = episode["reference_time"]
+            rt_iso = rt.isoformat() if hasattr(rt, "isoformat") else str(rt)
             rows.append(
                 SimpleNamespace(
-                    uuid=episode["uuid"],
+                    uuid=f"{episode['uuid']}-edge",
                     name=episode["name"],
                     summary=episode["body"],
                     fact=episode["body"],
                     created_at=episode["reference_time"],
                     valid_at=episode["reference_time"],
+                    episodes=[episode["uuid"]],
+                    source_node_uuid=None,
+                    target_node_uuid=None,
+                    attributes={
+                        "source_refs": [episode["source_description"]],
+                        "reference_time": rt_iso,
+                        "episode_uuid": episode["uuid"],
+                    },
                 )
             )
             if len(rows) >= limit:
@@ -765,6 +795,7 @@ class _InMemoryEpisodicGraph:
         *,
         include_invalidated: bool = False,
         as_of: datetime | None = None,
+        episode_uuid: str | None = None,
     ) -> list[Any]:
         return self.search(
             pot_id,
@@ -775,6 +806,7 @@ class _InMemoryEpisodicGraph:
             source_description=source_description,
             include_invalidated=include_invalidated,
             as_of=as_of,
+            episode_uuid=episode_uuid,
         )
 
     def reset_pot(self, pot_id: str) -> dict[str, Any]:
@@ -909,6 +941,52 @@ class _InMemoryStructuralGraph:
         self, pot_id: str, items: list[Any], provenance: Any
     ) -> int:
         return len(items)
+
+    def expand_causal_neighbours(
+        self,
+        pot_id: str,
+        node_uuids: list[str],
+        *,
+        depth: int = 1,
+    ) -> list[dict[str, Any]]:
+        _ = pot_id
+        _ = node_uuids
+        _ = depth
+        return []
+
+    def walk_causal_chain_backward(
+        self,
+        pot_id: str,
+        focal_node_uuid: str,
+        *,
+        max_depth: int = 6,
+        as_of_iso: str | None = None,
+        window_days: int = 180,
+    ) -> list[dict[str, Any]]:
+        _ = pot_id
+        _ = focal_node_uuid
+        _ = max_depth
+        _ = as_of_iso
+        _ = window_days
+        return []
+
+    def resolve_entity_uuid_for_service_hint(
+        self,
+        pot_id: str,
+        service_hint: str,
+    ) -> str | None:
+        _ = pot_id
+        _ = service_hint
+        return None
+
+    def get_episodic_entity_node(
+        self,
+        pot_id: str,
+        entity_uuid: str,
+    ) -> dict[str, Any] | None:
+        _ = pot_id
+        _ = entity_uuid
+        return None
 
 
 if __name__ == "__main__":

@@ -181,8 +181,67 @@ def _short_temporal_cell(value: Any) -> str:
     return s
 
 
+def _lifecycle_cli_tag(status: Any) -> str | None:
+    """Short bracket tag for edge lifecycle (completed / unknown → no tag)."""
+    if status is None or status == "":
+        return None
+    s = str(status).strip().lower()
+    if s in ("completed", "unknown"):
+        return None
+    labels = {
+        "planned": "[planned]",
+        "proposed": "[planned]",
+        "in_progress": "[active]",
+        "deprecated": "[deprecated]",
+        "decommissioned": "[decommissioned]",
+    }
+    return labels.get(s, f"[{s}]")
+
+
+def _format_search_provenance_line(row: dict[str, Any]) -> str | None:
+    """Human line: ``source: … • ref: YYYY-MM-DD • episode: shortuuid``."""
+    parts: list[str] = []
+    refs = row.get("source_refs")
+    if isinstance(refs, list) and refs:
+        labels = [str(x).strip() for x in refs if x is not None and str(x).strip()]
+        if labels:
+            parts.append("source: " + ", ".join(escape(lab) for lab in labels))
+    rt = row.get("reference_time")
+    if rt is not None and str(rt).strip():
+        s = str(rt).strip()
+        if "T" in s:
+            date_part = s.split("T", 1)[0]
+        else:
+            date_part = s[:10] if len(s) >= 10 else s
+        parts.append(f"ref: {escape(date_part)}")
+    ep = row.get("episode_uuid")
+    if ep:
+        s = str(ep)
+        short = s[:8] if len(s) >= 8 else s
+        parts.append(f"episode: {escape(short)}")
+    if not parts:
+        return None
+    return " • ".join(parts)
+
+
+def _compact_valid_expired_line(row: dict[str, Any]) -> str | None:
+    """One-line ``valid … • expired …`` when any temporal field is present."""
+    va = row.get("valid_at")
+    inv = row.get("invalid_at")
+    if va is None and inv is None:
+        return None
+    return (
+        f"valid {_short_temporal_cell(va)} • "
+        f"expired {_short_temporal_cell(inv)}"
+    )
+
+
 def print_search_results(
-    rows: list[dict[str, Any]], *, as_json: bool, with_temporal: bool = False
+    rows: list[dict[str, Any]],
+    *,
+    as_json: bool,
+    with_temporal: bool = False,
+    show_provenance: bool = True,
 ) -> None:
     if as_json:
         print(json.dumps(rows))
@@ -195,17 +254,36 @@ def print_search_results(
     for i, row in enumerate(rows, start=1):
         name = str(row.get("name") or "(unnamed)")
         summary = str(row.get("summary") or row.get("fact") or "")
+        cref = row.get("conflict_with_rows")
+        if isinstance(cref, list) and cref:
+            nums = ", ".join(str(int(x)) for x in cref if isinstance(x, int))
+            if nums:
+                summary = f"[!] conflict with row {nums} — {summary}".strip()
+        tag = _lifecycle_cli_tag(row.get("lifecycle_status"))
+        if tag:
+            summary = f"{tag} {summary}".strip()
+        if row.get("superseded_label"):
+            summary = f"{row.get('superseded_label')} {summary}".strip()
         if len(summary) > 200:
             summary = summary[:197] + "..."
         uid = str(row.get("uuid") or "")
         lines = [escape(summary or "(no summary)")]
+        if show_provenance:
+            prov = _format_search_provenance_line(row)
+            if prov:
+                lines.append(f"[dim]{prov}[/dim]")
         lines.append(f"[dim]uuid:[/dim] {escape(uid)}")
+        compact = _compact_valid_expired_line(row)
+        if compact:
+            lines.append(f"[dim]{escape(compact)}[/dim]")
+        via = row.get("causal_via")
+        if isinstance(via, dict):
+            rel = via.get("relation") or "related"
+            lines.append(
+                f"[dim]↳ because:[/dim] {escape(str(rel))} (causal expansion)"
+            )
         if with_temporal:
             lines.append(
-                "[dim]valid_at:[/dim] "
-                f"{escape(_short_temporal_cell(row.get('valid_at')))}  "
-                "[dim]invalid_at:[/dim] "
-                f"{escape(_short_temporal_cell(row.get('invalid_at')))}  "
                 "[dim]created_at:[/dim] "
                 f"{escape(_short_temporal_cell(row.get('created_at')))}"
             )
@@ -223,6 +301,24 @@ def print_ingest_result(out: dict[str, Any], *, as_json: bool) -> None:
         print(json.dumps(out))
         return
     status = out.get("status")
+    if status == "reconciliation_rejected":
+        ev = str(out.get("event_id") or "")
+        short = ev[:8] if len(ev) >= 8 else ev
+        _err.print(
+            f"[yellow]Ingest rejected (reconciliation).[/yellow] event_id={short}"
+        )
+        for row in out.get("errors") or []:
+            if isinstance(row, dict):
+                ent = str(row.get("entity") or "")
+                issue = str(row.get("issue") or "")
+                _err.print(f"  {ent:<18} {issue}")
+            else:
+                _err.print(f"  {row}")
+        _err.print(
+            "[dim]Hint: widen ontology (see docs/context-graph/graph.md) "
+            "or rephrase the episode.[/dim]"
+        )
+        return
     if status == "queued":
         event_id = out.get("event_id")
         _out.print(
@@ -234,7 +330,19 @@ def print_ingest_result(out: dict[str, Any], *, as_json: bool) -> None:
             )
         return
     ep = out.get("episode_uuid")
-    _out.print(f"[green]Episode ingested.[/green] episode_uuid={ep}")
+    ev = out.get("event_id")
+    if ep:
+        _out.print(f"[green]Episode ingested.[/green] episode_uuid={ep}")
+    elif ev:
+        _out.print(f"[green]Episode ingested.[/green] event_id={ev}")
+    else:
+        _out.print("[green]Episode ingested.[/green]")
+    dgs = out.get("downgrades") or []
+    if isinstance(dgs, list) and dgs:
+        _out.print(
+            f"[dim]{len(dgs)} downgrades applied "
+            "(ontology soft-fail; see API downgrades / QualityIssue feed).[/dim]"
+        )
 
 
 def print_json_blob(data: dict[str, Any], *, as_json: bool) -> None:

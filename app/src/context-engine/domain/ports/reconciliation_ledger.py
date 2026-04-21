@@ -65,12 +65,24 @@ class ReconciliationRunRow:
     plan_json: dict[str, Any] | None = None
 
 
+@dataclass(slots=True)
+class ReconciliationWorkEventRow:
+    id: str
+    run_id: str
+    event_id: str
+    sequence: int
+    event_kind: str
+    title: str | None
+    body: str | None
+    payload: dict[str, Any]
+    created_at: datetime
+
+
 class ReconciliationLedgerPort(Protocol):
     def append_event(self, scope: EventScope, event: ContextEvent) -> tuple[str, bool]:
         """Insert canonical event. Returns ``(event_row_id, inserted)``; False if duplicate."""
 
-    def get_event_by_id(self, event_id: str) -> Optional[ContextEventRow]:
-        ...
+    def get_event_by_id(self, event_id: str) -> Optional[ContextEventRow]: ...
 
     def claim_event_for_processing(self, event_id: str) -> bool:
         """Mark event as processing if still claimable; return False if already terminal."""
@@ -94,26 +106,35 @@ class ReconciliationLedgerPort(Protocol):
         episode_count: int,
         entity_mutation_count: int,
         edge_mutation_count: int,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     def record_run_plan_json(self, run_id: str, body: dict[str, Any]) -> None:
         """Persist full planner output JSON on the reconciliation run (audit / replay)."""
 
-    def record_run_success(self, run_id: str) -> None:
-        ...
+    def record_run_work_event(
+        self,
+        run_id: str,
+        *,
+        event_kind: str,
+        title: str | None = None,
+        body: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> str:
+        """Append an ordered agent-working event for a reconciliation run."""
 
-    def record_run_failure(self, run_id: str, error: str) -> None:
-        ...
+    def record_run_success(self, run_id: str) -> None: ...
 
-    def record_event_reconciled(self, event_id: str) -> None:
-        ...
+    def record_run_failure(self, run_id: str, error: str) -> None: ...
 
-    def record_event_failed(self, event_id: str, error: str) -> None:
-        ...
+    def record_event_reconciled(self, event_id: str) -> None: ...
 
-    def list_runs_for_event(self, event_id: str) -> list[ReconciliationRunRow]:
-        ...
+    def record_event_failed(self, event_id: str, error: str) -> None: ...
+
+    def list_runs_for_event(self, event_id: str) -> list[ReconciliationRunRow]: ...
+
+    def list_work_events_for_run(
+        self, run_id: str
+    ) -> list[ReconciliationWorkEventRow]: ...
 
     def next_attempt_number(self, event_id: str) -> int:
         """Next ``attempt_number`` for a new reconciliation run (1-based)."""
@@ -148,11 +169,11 @@ class ReconciliationLedgerPort(Protocol):
     ) -> None:
         """Replace all steps for an event: ``(sequence, step_kind, step_json)``."""
 
-    def list_episode_steps(self, event_id: str) -> list[EpisodeStepRow]:
-        ...
+    def list_episode_steps(self, event_id: str) -> list[EpisodeStepRow]: ...
 
-    def get_episode_step(self, event_id: str, sequence: int) -> EpisodeStepRow | None:
-        ...
+    def get_episode_step(
+        self, event_id: str, sequence: int
+    ) -> EpisodeStepRow | None: ...
 
     def max_applied_sequence(self, event_id: str) -> int | None:
         """Highest ``sequence`` with status ``applied``, or ``None`` if none."""
@@ -165,5 +186,4 @@ class ReconciliationLedgerPort(Protocol):
         status: str,
         error: str | None = None,
         increment_attempt: bool = False,
-    ) -> None:
-        ...
+    ) -> None: ...

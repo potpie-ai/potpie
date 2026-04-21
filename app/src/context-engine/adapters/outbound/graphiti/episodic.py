@@ -10,7 +10,15 @@ from datetime import datetime
 from collections.abc import Coroutine
 from typing import Any, Callable, Optional, TypeVar
 
-from domain.entity_schema import EDGE_TYPE_MAP, EDGE_TYPES, ENTITY_TYPES
+from adapters.outbound.graphiti.edge_extraction_normalize import (
+    install_extract_edges_normalize_patch,
+)
+from domain.entity_schema import (
+    EDGE_TYPE_MAP,
+    EDGE_TYPES,
+    ENTITY_TYPES,
+    GRAPHITI_CUSTOM_EXTRACTION_INSTRUCTIONS,
+)
 from domain.graph_mutations import ProvenanceRef
 from domain.ports.episodic_graph import EpisodicGraphPort
 from domain.ports.settings import ContextEngineSettingsPort
@@ -150,6 +158,21 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
         client_loop = getattr(self._thread_local, "graphiti_loop", None)
         if client is None or client_loop is not loop:
             return
+        # Graphiti's Neo4jDriver.__init__ schedules build_indices_and_constraints()
+        # as a background task on this loop. Closing the driver while that task is
+        # still mid-commit yields IncompleteCommit (defunct connection). Drain all
+        # pending tasks on this loop before tearing the driver down.
+        try:
+            current = asyncio.current_task()
+            pending = [
+                t
+                for t in asyncio.all_tasks(loop)
+                if t is not current and not t.done()
+            ]
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+        except Exception as exc:
+            logger.debug("Graphiti pending-task drain: %s", exc)
         try:
             await self._close_graphiti_aux_http_clients(client)
             await client.close()
@@ -188,6 +211,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
         if g is None:
             return None
 
+        install_extract_edges_normalize_patch()
         result = await g.add_episode(
             name=name,
             episode_body=episode_body,
@@ -197,9 +221,34 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
             entity_types=ENTITY_TYPES,
             edge_types=EDGE_TYPES,
             edge_type_map=EDGE_TYPE_MAP,
+            custom_extraction_instructions=GRAPHITI_CUSTOM_EXTRACTION_INSTRUCTIONS,
         )
         episode = getattr(result, "episode", None)
         episode_uuid = getattr(episode, "uuid", None)
+        try:
+            from adapters.outbound.graphiti.temporal_supersede import (
+                apply_predicate_family_auto_supersede,
+            )
+
+            await apply_predicate_family_auto_supersede(g.driver, pot_id)
+        except Exception as exc:
+            logger.warning("Predicate-family auto-supersede failed: %s", exc)
+        try:
+            from adapters.outbound.graphiti.apply_canonical_labels import (
+                apply_episodic_canonical_labels,
+            )
+
+            await apply_episodic_canonical_labels(g.driver, pot_id)
+        except Exception as exc:
+            logger.warning("Canonical label inference failed: %s", exc)
+        try:
+            from adapters.outbound.graphiti.family_conflict_detection import (
+                apply_family_conflict_detection,
+            )
+
+            await apply_family_conflict_detection(g.driver, pot_id)
+        except Exception as exc:
+            logger.warning("Family conflict detection failed: %s", exc)
         return str(episode_uuid) if episode_uuid else None
 
     def add_episode(
@@ -249,19 +298,22 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
     def _build_search_filters(
         self,
         node_labels: Optional[list[str]],
-        source_description: Optional[str],
         *,
         include_invalidated: bool,
         as_of: Optional[datetime] = None,
     ) -> Any | None:
         """Graphiti search filters; by default exclude edges with ``invalid_at`` set.
 
-        During ingestion, ``resolve_extracted_edges`` can mark older contradicting
-        facts invalid; hybrid search still matched them unless we filter here.
+        During ingestion, Graphiti may mark contradicted facts invalid; optional
+        ``temporal_supersede`` can also stamp ``invalid_at`` (Neo4j). Hybrid search
+        would still match invalidated edges unless we filter here.
 
         When ``as_of`` is set, restrict to edges valid at that instant (valid_at
         unset or <= as_of, and invalid_at unset or > as_of). ``include_invalidated``
         is ignored in that case.
+
+        Episodic ``source_description`` filtering is applied after search by joining
+        ``Episodic`` nodes (Graphiti edge search does not apply ``property_filters``).
         """
         if not self._search_filters_cls or not self._comparison_operator_cls or not self._date_filter_cls:
             return None
@@ -279,21 +331,227 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
             ]
         elif not include_invalidated:
             kwargs["invalid_at"] = [[DF(date=None, comparison_operator=CO.is_null)]]
-        if node_labels:
-            kwargs["node_labels"] = node_labels
-        if source_description and source_description.strip():
-            from graphiti_core.search.search_filters import ComparisonOperator, PropertyFilter
-
-            kwargs["property_filters"] = [
-                PropertyFilter(
-                    property_name="source_description",
-                    property_value=source_description.strip(),
-                    comparison_operator=ComparisonOperator.equals,
-                )
-            ]
+        # node_labels intentionally NOT passed to Graphiti filters: upstream builds
+        # `n:Label AND m:Label`, requiring both endpoints to carry it. Our inferred
+        # labels (e.g. CAUSED→Incident) sit only on one endpoint, so we post-filter
+        # in `_finalize_search_edges` using an OR-match on native Neo4j labels.
         if not kwargs:
             return None
         return self._search_filters_cls(**kwargs)
+
+    @staticmethod
+    def _datetime_like_to_iso(val: Any) -> Optional[str]:
+        if val is None:
+            return None
+        fn = getattr(val, "isoformat", None)
+        if callable(fn):
+            try:
+                out = fn()
+                return str(out) if out is not None else None
+            except Exception:
+                return None
+        s = str(val).strip()
+        return s or None
+
+    async def _load_episodic_metadata(
+        self,
+        driver: Any,
+        pot_id: str,
+        episode_uuids: list[str],
+    ) -> dict[str, dict[str, Any]]:
+        """Map episode uuid → ``source_description`` and ``valid_at`` (observation time)."""
+        if not episode_uuids:
+            return {}
+        out: dict[str, dict[str, Any]] = {}
+        try:
+            async with driver.session() as session:
+                res = await session.run(
+                    """
+                    MATCH (ep:Episodic)
+                    WHERE ep.uuid IN $uuids AND ep.group_id = $gid
+                    RETURN ep.uuid AS uuid,
+                           ep.source_description AS source_description,
+                           ep.valid_at AS valid_at
+                    """,
+                    uuids=episode_uuids,
+                    gid=pot_id,
+                )
+                async for record in res:
+                    uid = record.get("uuid")
+                    if uid is None:
+                        continue
+                    out[str(uid)] = {
+                        "source_description": record.get("source_description"),
+                        "valid_at": record.get("valid_at"),
+                    }
+        except Exception as exc:
+            logger.warning("episodic provenance lookup failed: %s", exc)
+        return out
+
+    @staticmethod
+    def _ordered_unique_sources(
+        episode_order: list[str], meta: dict[str, dict[str, Any]]
+    ) -> list[str]:
+        seen: set[str] = set()
+        sources: list[str] = []
+        for uid in episode_order:
+            row = meta.get(str(uid))
+            if not row:
+                continue
+            sd = row.get("source_description")
+            if sd is None:
+                continue
+            s = str(sd).strip()
+            if not s or s in seen:
+                continue
+            seen.add(s)
+            sources.append(s)
+        return sources
+
+    async def _enrich_edges_with_episode_provenance(
+        self,
+        driver: Any,
+        pot_id: str,
+        edges: list[Any],
+    ) -> None:
+        """Attach ``source_refs``, ``reference_time``, ``episode_uuid`` on each edge's ``attributes``."""
+        if not edges:
+            return
+        collected: list[str] = []
+        seen: set[str] = set()
+        for edge in edges:
+            eps = getattr(edge, "episodes", None) or []
+            for u in eps:
+                if not u:
+                    continue
+                s = str(u)
+                if s not in seen:
+                    seen.add(s)
+                    collected.append(s)
+        meta = await self._load_episodic_metadata(driver, pot_id, collected)
+        for edge in edges:
+            eps = [str(u) for u in (getattr(edge, "episodes", None) or []) if u]
+            base = dict(edge.attributes) if isinstance(edge.attributes, dict) else {}
+            sources = self._ordered_unique_sources(eps, meta)
+            if sources:
+                base["source_refs"] = sources
+            primary_ep = eps[0] if eps else None
+            ref_iso: Optional[str] = None
+            if primary_ep:
+                row = meta.get(str(primary_ep))
+                if row:
+                    ref_iso = self._datetime_like_to_iso(row.get("valid_at"))
+            if ref_iso:
+                base["reference_time"] = ref_iso
+            if primary_ep:
+                base["episode_uuid"] = primary_ep
+            edge.attributes = base
+
+    @staticmethod
+    def _edge_matches_post_filters(
+        edge: Any,
+        *,
+        source_description: Optional[str],
+        episode_uuid: Optional[str],
+    ) -> bool:
+        want_ep = episode_uuid.strip() if episode_uuid and episode_uuid.strip() else None
+        if want_ep:
+            eps = [str(x) for x in (getattr(edge, "episodes", None) or [])]
+            if want_ep not in eps:
+                return False
+        want_src = source_description.strip() if source_description and source_description.strip() else None
+        if not want_src:
+            return True
+        attrs = getattr(edge, "attributes", None)
+        refs: list[str] = []
+        if isinstance(attrs, dict):
+            raw = attrs.get("source_refs")
+            if isinstance(raw, list):
+                refs = [str(x) for x in raw if x is not None and str(x).strip()]
+        return want_src in refs
+
+    async def _finalize_search_edges(
+        self,
+        g: Any,
+        pot_id: str,
+        edges: list[Any],
+        scores: list[float],
+        *,
+        limit: int,
+        source_description: Optional[str],
+        episode_uuid: Optional[str],
+        node_labels: Optional[list[str]] = None,
+    ) -> list[Any]:
+        await self._enrich_edges_with_episode_provenance(g.driver, pot_id, edges)
+        for i, edge in enumerate(edges):
+            sc = float(scores[i]) if i < len(scores) else 0.0
+            base = dict(edge.attributes) if isinstance(edge.attributes, dict) else {}
+            base["_context_similarity_score"] = sc
+            edge.attributes = base
+        if node_labels:
+            edges = await self._filter_edges_by_endpoint_labels(
+                g.driver, pot_id, edges, node_labels
+            )
+        filtered = [
+            e
+            for e in edges
+            if self._edge_matches_post_filters(
+                e, source_description=source_description, episode_uuid=episode_uuid
+            )
+        ]
+        return filtered[: max(1, min(limit, 50))]
+
+    @staticmethod
+    async def _filter_edges_by_endpoint_labels(
+        driver: Any,
+        pot_id: str,
+        edges: list[Any],
+        node_labels: list[str],
+    ) -> list[Any]:
+        """Keep edges where either endpoint carries any of the requested native labels.
+
+        Worked around because graphiti_core builds ``n:Label AND m:Label`` (both
+        endpoints). Our canonical-label inference usually labels only one end
+        (e.g. CAUSED→Incident targets, DECIDES_FOR→Decision targets).
+        """
+        uuids: set[str] = set()
+        for e in edges:
+            s = getattr(e, "source_node_uuid", None)
+            t = getattr(e, "target_node_uuid", None)
+            if s:
+                uuids.add(str(s))
+            if t:
+                uuids.add(str(t))
+        if not uuids:
+            return edges
+        query = """
+        MATCH (n:Entity {group_id: $gid})
+        WHERE n.uuid IN $uuids
+        RETURN n.uuid AS uuid, labels(n) AS labels
+        """
+        try:
+            records, _, _ = await driver.execute_query(
+                query, gid=pot_id, uuids=list(uuids)
+            )
+        except Exception as exc:
+            logger.warning("Endpoint-label post-filter query failed: %s", exc)
+            return edges
+        wanted = {str(lb) for lb in node_labels}
+        labels_by_uuid: dict[str, set[str]] = {}
+        for row in records or []:
+            u = row.get("uuid")
+            lbls = row.get("labels") or []
+            if u is not None:
+                labels_by_uuid[str(u)] = {str(lb) for lb in lbls}
+        out: list[Any] = []
+        for e in edges:
+            s = str(getattr(e, "source_node_uuid", "") or "")
+            t = str(getattr(e, "target_node_uuid", "") or "")
+            s_lbls = labels_by_uuid.get(s, set())
+            t_lbls = labels_by_uuid.get(t, set())
+            if (s_lbls & wanted) or (t_lbls & wanted):
+                out.append(e)
+        return out
 
     async def search_async(
         self,
@@ -306,24 +564,72 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
         *,
         include_invalidated: bool = False,
         as_of: Optional[datetime] = None,
+        episode_uuid: Optional[str] = None,
     ) -> list[Any]:
         del repo_name  # optional future filter; Graphiti search is pot-scoped
         g = self._get_graphiti()
         if g is None:
             return []
 
+        need_wide = (
+            (source_description and source_description.strip())
+            or (episode_uuid and episode_uuid.strip())
+            or (node_labels and len(node_labels) > 0)
+        )
+        fetch_limit = min(50, max(limit * 8, 16)) if need_wide else limit
+        fetch_limit = max(1, min(fetch_limit, 50))
+
         search_filter = self._build_search_filters(
             node_labels,
-            source_description,
             include_invalidated=include_invalidated,
             as_of=as_of,
         )
 
-        return await g.search(
-            query=query,
-            group_ids=[pot_id],
-            num_results=limit,
-            search_filter=search_filter,
+        try:
+            from graphiti_core.search.search import search as graphiti_search
+            from graphiti_core.search.search_config import SearchFilters
+            from graphiti_core.search.search_config_recipes import EDGE_HYBRID_SEARCH_RRF
+        except Exception as exc:
+            logger.warning("graphiti search helpers unavailable: %s", exc)
+            edges = await g.search(
+                query=query,
+                group_ids=[pot_id],
+                num_results=fetch_limit,
+                search_filter=search_filter,
+            )
+            scores = [1.0 / (1 + i) for i in range(len(edges))]
+            return await self._finalize_search_edges(
+                g,
+                pot_id,
+                list(edges),
+                scores,
+                limit=limit,
+                source_description=source_description,
+                episode_uuid=episode_uuid,
+                node_labels=node_labels,
+            )
+
+        search_config = EDGE_HYBRID_SEARCH_RRF.model_copy()
+        search_config.limit = fetch_limit
+        sf = search_filter if search_filter is not None else SearchFilters()
+        sr = await graphiti_search(
+            g.clients,
+            query,
+            [pot_id],
+            search_config,
+            sf,
+            driver=g.driver,
+        )
+        edges = list(sr.edges)
+        scores = list(sr.edge_reranker_scores)
+        return await self._finalize_search_edges(
+            g,
+            pot_id,
+            edges,
+            scores,
+            limit=limit,
+            source_description=source_description,
+            episode_uuid=episode_uuid,
         )
 
     def search(
@@ -337,6 +643,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
         *,
         include_invalidated: bool = False,
         as_of: Optional[datetime] = None,
+        episode_uuid: Optional[str] = None,
     ) -> list[Any]:
         if not self.enabled:
             return []
@@ -351,6 +658,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
                 source_description=source_description,
                 include_invalidated=include_invalidated,
                 as_of=as_of,
+                episode_uuid=episode_uuid,
             )
 
         return self._sync_run(_run)
@@ -455,5 +763,99 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
 
         async def _run():
             return await self.reset_pot_async(pot_id)
+
+        return self._sync_run(_run)
+
+    def list_open_conflicts(self, pot_id: str) -> list[dict[str, Any]]:
+        if not self.enabled:
+            return []
+
+        async def _run() -> list[dict[str, Any]]:
+            g = self._get_graphiti()
+            if g is None:
+                return []
+            from adapters.outbound.graphiti.family_conflict_detection import (
+                list_open_conflicts_async,
+            )
+
+            return await list_open_conflicts_async(g.driver, pot_id)
+
+        try:
+            return self._sync_run(_run)
+        except Exception as exc:
+            logger.warning("list_open_conflicts failed: %s", exc)
+            return []
+
+    def resolve_open_conflict(
+        self, pot_id: str, issue_uuid: str, action: str
+    ) -> dict[str, Any]:
+        if not self.enabled:
+            return {"ok": False, "error": "graphiti_disabled"}
+
+        async def _run() -> dict[str, Any]:
+            g = self._get_graphiti()
+            if g is None:
+                return {
+                    "ok": False,
+                    "error": self.failure_reason() or "graphiti_unavailable",
+                }
+            from adapters.outbound.graphiti.family_conflict_detection import (
+                resolve_conflict_supersede_older_async,
+            )
+
+            a = action.strip().lower()
+            if a in ("supersede_older", "supersede"):
+                return await resolve_conflict_supersede_older_async(
+                    g.driver, pot_id, issue_uuid
+                )
+            return {"ok": False, "error": "unsupported_action"}
+
+        try:
+            return self._sync_run(_run)
+        except Exception as exc:
+            logger.warning("resolve_open_conflict failed: %s", exc)
+            return {"ok": False, "error": str(exc)}
+
+    def relabel_nodes_from_edges_for_pot(self, pot_id: str) -> dict[str, Any]:
+        """Backfill canonical labels from episodic edge patterns (idempotent; ignores infer flag)."""
+        if not self._enabled:
+            return {"ok": False, "error": "graphiti_disabled"}
+
+        async def _run():
+            g = self._get_graphiti()
+            if g is None:
+                return {
+                    "ok": False,
+                    "error": self.failure_reason() or "graphiti_unavailable",
+                }
+            from adapters.outbound.graphiti.apply_canonical_labels import (
+                relabel_nodes_from_edges,
+            )
+
+            return await relabel_nodes_from_edges(g.driver, pot_id)
+
+        return self._sync_run(_run)
+
+    def classify_modified_edges_for_pot(
+        self, pot_id: str, *, dry_run: bool = True
+    ) -> dict[str, Any]:
+        """Reclassify ``MODIFIED`` episodic edges for this pot (Neo4j)."""
+        if not self.enabled:
+            return {"ok": False, "error": "graphiti_disabled"}
+
+        async def _run():
+            g = self._get_graphiti()
+            if g is None:
+                return {
+                    "ok": False,
+                    "error": self.failure_reason() or "graphiti_unavailable",
+                }
+            from adapters.outbound.graphiti.classify_modified_edges import (
+                classify_modified_edges_for_group,
+            )
+
+            return await classify_modified_edges_for_group(
+                g.driver, pot_id, dry_run=dry_run
+            )
 
         return self._sync_run(_run)

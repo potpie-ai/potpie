@@ -9,6 +9,7 @@ from typing import Any
 
 from domain.intelligence_models import (
     ArtifactContext,
+    CausalChainItem,
     ChangeRecord,
     ContextResolutionRequest,
     CoverageReport,
@@ -82,6 +83,9 @@ def _compute_coverage(
     def _has_debugging_memory() -> bool:
         return bool(bundle.debugging_memory)
 
+    def _has_causal_chain() -> bool:
+        return bool(bundle.causal_chain)
+
     checks: list[tuple[str, bool, bool]] = [
         ("semantic_search", plan.run_semantic_search, _has_semantic()),
         ("artifact_context", plan.run_artifact, _has_artifact()),
@@ -94,6 +98,11 @@ def _compute_coverage(
             "debugging_memory_context",
             plan.run_debugging_memory,
             _has_debugging_memory(),
+        ),
+        (
+            "causal_chain_context",
+            plan.run_causal_chain,
+            _has_causal_chain(),
         ),
     ]
 
@@ -323,6 +332,7 @@ class ContextResolutionService:
         ownership: list[OwnershipRecord] = []
         project_map: list[ProjectContextRecord] = []
         debugging_memory: list[DebuggingMemoryRecord] = []
+        causal_chain: list[CausalChainItem] = []
         errors: list[ResolutionError] = []
         per_lat: dict[str, int] = {}
         capabilities_used: list[str] = []
@@ -451,6 +461,22 @@ class ContextResolutionService:
                 )
             )
 
+        if plan.run_causal_chain:
+            depth = max(2, min(request.effective_max_items, 12))
+            coros.append(
+                _timed(
+                    "causal_chain_context",
+                    provider.get_causal_chain(
+                        request.pot_id,
+                        plan.scope,
+                        query=request.query,
+                        max_depth=depth,
+                        as_of_iso=request.as_of.isoformat() if request.as_of else None,
+                        window_days=180,
+                    ),
+                )
+            )
+
         if coros:
             tasks = [asyncio.create_task(c) for c in coros]
             done: set[asyncio.Task[Any]]
@@ -512,6 +538,8 @@ class ContextResolutionService:
                     project_map = list(payload)
                 elif name == "debugging_memory_context" and isinstance(payload, list):
                     debugging_memory = list(payload)
+                elif name == "causal_chain_context" and isinstance(payload, list):
+                    causal_chain = list(payload)
 
         total_ms = int(sum(per_lat.values()))
         meta = ResolutionMeta(
@@ -571,6 +599,7 @@ class ContextResolutionService:
             ownership=ownership,
             project_map=project_map,
             debugging_memory=debugging_memory,
+            causal_chain=causal_chain,
             source_refs=source_refs,
             freshness=freshness,
             fallbacks=fallbacks,
@@ -587,4 +616,23 @@ class ContextResolutionService:
             coverage=bundle.coverage,
             fallbacks=bundle.fallbacks,
         )
+        open_cf: list[dict[str, Any]] = []
+        try:
+            open_cf = await self._provider.list_open_conflicts(request.pot_id)
+        except Exception as exc:
+            logger.warning("list_open_conflicts failed: %s", exc)
+        bundle.open_conflicts = open_cf
+        bundle.quality.conflicts = open_cf
+        if open_cf and any(
+            isinstance(x, dict) and x.get("auto_resolvable") is False for x in open_cf
+        ):
+            bundle.recommended_next_actions.append(
+                {
+                    "action": "review_conflicts",
+                    "reason": (
+                        "Open predicate-family conflicts need human review or "
+                        "`supersede_older` resolution before relying on those facts."
+                    ),
+                }
+            )
         return bundle

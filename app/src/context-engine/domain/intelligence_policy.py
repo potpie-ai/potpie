@@ -34,6 +34,7 @@ class EvidencePlan:
     project_map_includes: list[str] = field(default_factory=list)
     run_debugging_memory: bool = False
     debugging_memory_includes: list[str] = field(default_factory=list)
+    run_causal_chain: bool = False
     scope: ContextScope = field(default_factory=ContextScope)
     mandatory: list[str] = field(default_factory=list)
     timeout_budget_ms: int = 4000
@@ -150,6 +151,9 @@ def build_evidence_plan(
     if debugging_memory_includes and caps.debugging_memory_context:
         plan.run_debugging_memory = True
         plan.debugging_memory_includes = debugging_memory_includes
+
+    if "causal_chain" in includes and caps.causal_chain_context:
+        plan.run_causal_chain = True
 
     if scope.pr_number is not None:
         plan.mandatory.extend(["artifact_context", "discussion_context"])

@@ -6,7 +6,10 @@ import importlib
 import logging
 import os
 
-from domain.ports.context_graph_job_queue import ContextGraphJobQueuePort, NoOpContextGraphJobQueue
+from domain.ports.context_graph_job_queue import (
+    ContextGraphJobQueuePort,
+    NoOpContextGraphJobQueue,
+)
 
 from bootstrap.potpie_path import ensure_potpie_repo_on_sys_path
 
@@ -65,8 +68,8 @@ def get_context_graph_job_queue() -> ContextGraphJobQueuePort:
 
     Implicit **celery** (env unset): if the host Celery module cannot be imported, falls back to **noop**.
     Explicit **celery**: raises if the module is missing. **Hatchet** failures fall through to Celery
-    then noop as documented in ``_resolve_hatchet``. Noop: enqueue is a no-op; async raw ingest may
-    still apply episode steps inline (see ``record_raw_episode_ingestion``).
+    then noop as documented in ``_resolve_hatchet``. Noop: enqueue is a no-op; async ingest may
+    still run agent planning and episode apply inline.
     """
     ensure_potpie_repo_on_sys_path()
     explicit = os.getenv("CONTEXT_GRAPH_JOB_QUEUE_BACKEND")
@@ -78,7 +81,9 @@ def get_context_graph_job_queue() -> ContextGraphJobQueuePort:
     if raw == "celery":
         return _resolve_celery(explicit_backend_was_set=explicit_set)
     if raw == "hatchet":
-        return _resolve_hatchet(explicit_backend_was_set=bool(explicit and explicit.strip()))
+        return _resolve_hatchet(
+            explicit_backend_was_set=bool(explicit and explicit.strip())
+        )
     raise ValueError(
         f"Unknown CONTEXT_GRAPH_JOB_QUEUE_BACKEND={raw!r}; expected hatchet, celery, or noop"
     )

@@ -165,6 +165,7 @@ def test_context_port_manifest_keeps_recipe_surface_small() -> None:
             "diagnostic_signals",
             "incidents",
             "alerts",
+            "causal_chain",
             "recent_changes",
             "config",
             "deployments",

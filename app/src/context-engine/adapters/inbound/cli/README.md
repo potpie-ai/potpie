@@ -91,9 +91,22 @@ uv run potpie pot hard-reset --skip-ledger
 uv run potpie --json pot hard-reset 00000000-0000-0000-0000-000000000000
 ```
 
+### `add`
+
+Inspect the current git working tree and print the provider-scoped repo identity (`provider`, `provider_host`, `repo_name`) along with the active pot if any. **This does not ingest content** — to ingest, use `potpie ingest` (raw episodes) or attach a repository source via `potpie pot repo add` (compatibility GitHub flow) or the source-first `/pots/{pot_id}/sources/github/repository` API.
+
+| Argument | Description |
+|----------|-------------|
+| `PATH` | Optional path to a git working tree (default: current directory). |
+
+```bash
+uv run potpie add
+uv run potpie --json add ./path/to/clone
+```
+
 ### `search`
 
-Semantic search over **Graphiti episodic** entities for a pot via **`POST /api/v2/context/query/search`**. This CLI command returns raw search rows; the MCP **`context_search`** tool wraps those rows in the common agent context envelope.
+Semantic search over the unified context graph via **`POST /api/v2/context/query/context-graph`**. This CLI command returns raw search rows from the unified query result; the MCP **`context_search`** tool wraps those rows in the common agent context envelope.
 
 **Arguments**
 
@@ -108,6 +121,14 @@ Semantic search over **Graphiti episodic** entities for a pot via **`POST /api/v
 |--------|---------|-------------|
 | `--limit` / `-n` | `8` | Max results (clamped 1–50 in the use case). |
 | `--node-labels` | (none) | Comma-separated label filters, e.g. `PullRequest,Decision`. |
+| `--repo` / `-r` | (none) | Optional `owner/repo` when the pot spans multiple repositories. |
+| `--source` / `-s` | (none) | Episodic source label filter (ingest `--source`). Subcommand wins over global `potpie --source`. |
+| `--episode` / `-e` | (none) | Only edges tied to this ingested episode UUID (server-side). |
+| `--include-invalidated` | off | Include superseded Graphiti edges (`invalid_at` set). Ignored with `--as-of`. |
+| `--as-of` | (none) | ISO instant; only edges valid at that time. |
+| `--with-temporal` | off | Plain output: also print `created_at` (temporal flags still apply in JSON). |
+| `--no-provenance` | off | Hide the dim provenance line (`source` / `ref` / `episode`) in plain output. |
+| `--cwd` | `.` | Git root used to infer pot when the query is a single argument. |
 
 **Inferring pot scope (one-argument form, and optional `ingest` pot)**
 
@@ -119,7 +140,7 @@ Semantic search over **Graphiti episodic** entities for a pot via **`POST /api/v
 
 Pot scope is chosen explicitly (**`potpie pot use`**, maps, or a UUID argument); repo → pot mapping uses your server pots and attached repositories.
 
-**Output:** JSON array of objects with `uuid`, `name`, `summary`, `fact`.
+**Output:** Human-readable cards: summary, an optional dim line `source: … • ref: YYYY-MM-DD • episode: shortuuid` (from Graphiti episodic metadata), `uuid`, and compact valid/expired times when present. **`--json`** prints the API response array. Each row includes **`source_refs`**, **`reference_time`**, and **`episode_uuid`** when the server can resolve them from episodic ingest, plus `uuid`, `name`, `summary`, `fact`, and temporal fields as before.
 
 **Exit codes:** `0` on success; `1` if Potpie API is not configured, request failed (401/404/503, etc.), or pot inference failed.
 
@@ -164,10 +185,10 @@ Sends **`POST /api/v2/context/ingest`** with your API key. The **server** persis
 | `--file` / `-f` | No | Read episode body from this path (UTF-8). Cannot be combined with `-b` or inline episode text (except an optional leading pot UUID). |
 | `--source` / `-s` | Yes | Short source description / label. |
 | `--reference-time` / `-t` | No | ISO 8601 timestamp; defaults to **UTC now**. `Z` suffix is accepted. |
-| `--sync` | No | Maps to HTTP **`sync=true`** (inline apply on the server when supported). |
+| `--sync` | No | Maps to HTTP **`sync=true`** (inline agent planning and apply on the server when supported). |
 | `--idempotency-key` | No | Optional dedupe key (forwarded to the API). |
 
-**Output (JSON):** includes `status` (`queued` \| `applied` \| `legacy_direct`), `episode_uuid` (when known), and `event_id` / `job_id` when the event store path is used.
+**Output (JSON):** includes `status` (`queued` \| `applied` \| `legacy_direct`), `episode_uuid` (when known), and `event_id` / `job_id` when the event store path is used. With Postgres configured, raw ingest is agent-planned; `legacy_direct` only applies to the no-Postgres development fallback.
 
 When async ingest returns `queued`, use `potpie event wait <event_id>` to block until the server reports `done` or `error`, or `potpie event show <event_id>` to inspect the current event state.
 
@@ -202,7 +223,7 @@ Inspect ingestion events created by async ingest and reconciliation flows.
 
 | Command | Description |
 |---------|-------------|
-| `potpie event show EVENT_ID` | Fetch one persisted ingestion event, including episode steps when available. |
+| `potpie event show EVENT_ID` | Fetch one persisted ingestion event, including episode steps and reconciliation run work-event counts when available. |
 | `potpie event wait EVENT_ID` | Poll until the event reaches `done` or `error`; exits `1` on timeout or error. |
 | `potpie event list` | List recent events for the active/inferred pot. |
 

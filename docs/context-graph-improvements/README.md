@@ -11,6 +11,8 @@ Focused plans for gaps surfaced during the 2026-04-20 CLI test pass against a fr
 | 5 | [05-provenance-in-cli-output.md](05-provenance-in-cli-output.md) | Show `source`, `reference_time`, `episode_uuid` in `search` by default | S |
 | 6 | [06-conflict-surfacing.md](06-conflict-surfacing.md) | Detect and emit `open_conflicts` when facts contradict; integrate with quality report | M |
 
+Post-implementation test findings (2026-04-21) and concrete fixes for the remaining gaps live in a separate folder: [`../context-graph-fixes/`](../context-graph-fixes/README.md).
+
 ## Reading order
 
 If you only pick two: **#5** (provenance) is the cheapest visible win; **#1** (temporal) is the highest value-per-line because every downstream agent workflow silently trusts stale facts today.

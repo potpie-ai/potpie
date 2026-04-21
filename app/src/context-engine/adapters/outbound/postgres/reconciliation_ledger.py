@@ -15,6 +15,7 @@ from adapters.outbound.postgres.models import (
     ContextEpisodeStepModel,
     ContextEventModel,
     ContextReconciliationRun,
+    ContextReconciliationWorkEvent,
 )
 from domain.context_events import ContextEvent, EventScope
 from domain.ingestion_kinds import (
@@ -27,6 +28,7 @@ from domain.ports.reconciliation_ledger import (
     EpisodeStepRow,
     ReconciliationLedgerPort,
     ReconciliationRunRow,
+    ReconciliationWorkEventRow,
 )
 
 logger = logging.getLogger(__name__)
@@ -106,7 +108,9 @@ class SqlAlchemyReconciliationLedger(ReconciliationLedgerPort):
             return (str(existing) if existing else event.event_id, False)
 
     def get_event_by_id(self, event_id: str) -> ContextEventRow | None:
-        row = self._db.scalar(select(ContextEventModel).where(ContextEventModel.id == event_id))
+        row = self._db.scalar(
+            select(ContextEventModel).where(ContextEventModel.id == event_id)
+        )
         if row is None:
             return None
         return self._to_event_row(row)
@@ -179,6 +183,43 @@ class SqlAlchemyReconciliationLedger(ReconciliationLedgerPort):
         )
         self._db.commit()
 
+    def record_run_work_event(
+        self,
+        run_id: str,
+        *,
+        event_kind: str,
+        title: str | None = None,
+        body: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> str:
+        event_id = self._db.scalar(
+            select(ContextReconciliationRun.event_id).where(
+                ContextReconciliationRun.id == run_id
+            )
+        )
+        if event_id is None:
+            raise ValueError(f"unknown reconciliation run: {run_id}")
+        current = self._db.scalar(
+            select(func.max(ContextReconciliationWorkEvent.sequence)).where(
+                ContextReconciliationWorkEvent.run_id == run_id
+            )
+        )
+        row_id = str(uuid4())
+        row = ContextReconciliationWorkEvent(
+            id=row_id,
+            run_id=run_id,
+            event_id=str(event_id),
+            sequence=int(current or 0) + 1,
+            event_kind=event_kind[:64],
+            title=title[:255] if title else None,
+            body=body[:20000] if body else None,
+            payload=dict(payload or {}),
+            created_at=_utcnow(),
+        )
+        self._db.add(row)
+        self._db.commit()
+        return row_id
+
     def record_run_success(self, run_id: str) -> None:
         self._db.execute(
             update(ContextReconciliationRun)
@@ -204,7 +245,9 @@ class SqlAlchemyReconciliationLedger(ReconciliationLedgerPort):
         self._db.commit()
 
     def record_event_failed(self, event_id: str, error: str) -> None:
-        logger.warning("context event %s reconciliation failed: %s", event_id, error[:2000])
+        logger.warning(
+            "context event %s reconciliation failed: %s", event_id, error[:2000]
+        )
         self._db.execute(
             update(ContextEventModel)
             .where(ContextEventModel.id == event_id)
@@ -220,15 +263,35 @@ class SqlAlchemyReconciliationLedger(ReconciliationLedgerPort):
         ).all()
         return [self._to_run_row(r) for r in rows]
 
+    def list_work_events_for_run(self, run_id: str) -> list[ReconciliationWorkEventRow]:
+        rows = self._db.scalars(
+            select(ContextReconciliationWorkEvent)
+            .where(ContextReconciliationWorkEvent.run_id == run_id)
+            .order_by(ContextReconciliationWorkEvent.sequence.asc())
+        ).all()
+        return [self._to_work_event_row(r) for r in rows]
+
     def delete_all_for_pot(self, pot_id: str) -> int:
         """Delete reconciliation rows for ``pot_id`` (runs → events; episode steps cascade)."""
-        event_ids = self._db.scalars(select(ContextEventModel.id).where(ContextEventModel.pot_id == pot_id)).all()
+        event_ids = self._db.scalars(
+            select(ContextEventModel.id).where(ContextEventModel.pot_id == pot_id)
+        ).all()
         if not event_ids:
             return 0
-        n_run = self._db.execute(
-            delete(ContextReconciliationRun).where(ContextReconciliationRun.event_id.in_(event_ids))
-        ).rowcount or 0
-        n_ev = self._db.execute(delete(ContextEventModel).where(ContextEventModel.pot_id == pot_id)).rowcount or 0
+        n_run = (
+            self._db.execute(
+                delete(ContextReconciliationRun).where(
+                    ContextReconciliationRun.event_id.in_(event_ids)
+                )
+            ).rowcount
+            or 0
+        )
+        n_ev = (
+            self._db.execute(
+                delete(ContextEventModel).where(ContextEventModel.pot_id == pot_id)
+            ).rowcount
+            or 0
+        )
         self._db.commit()
         return int(n_run + n_ev)
 
@@ -252,7 +315,9 @@ class SqlAlchemyReconciliationLedger(ReconciliationLedgerPort):
     def mark_event_queued(self, event_id: str) -> None:
         self._db.execute(
             update(ContextEventModel)
-            .where(ContextEventModel.id == event_id, ContextEventModel.status == "received")
+            .where(
+                ContextEventModel.id == event_id, ContextEventModel.status == "received"
+            )
             .values(status="queued")
         )
         self._db.commit()
@@ -278,7 +343,11 @@ class SqlAlchemyReconciliationLedger(ReconciliationLedgerPort):
         if correlation_id is not None:
             vals["correlation_id"] = correlation_id
         if vals:
-            self._db.execute(update(ContextEventModel).where(ContextEventModel.id == event_id).values(**vals))
+            self._db.execute(
+                update(ContextEventModel)
+                .where(ContextEventModel.id == event_id)
+                .values(**vals)
+            )
             self._db.commit()
 
     def replace_episode_steps_for_event(
@@ -288,7 +357,11 @@ class SqlAlchemyReconciliationLedger(ReconciliationLedgerPort):
         run_id: str | None,
         steps: list[tuple[int, str, dict[str, Any]]],
     ) -> None:
-        self._db.execute(delete(ContextEpisodeStepModel).where(ContextEpisodeStepModel.event_id == event_id))
+        self._db.execute(
+            delete(ContextEpisodeStepModel).where(
+                ContextEpisodeStepModel.event_id == event_id
+            )
+        )
         for seq, step_kind, step_json in steps:
             self._db.add(
                 ContextEpisodeStepModel(
@@ -389,7 +462,8 @@ class SqlAlchemyReconciliationLedger(ReconciliationLedgerPort):
             occurred_at=row.occurred_at,
             received_at=row.received_at,
             status=row.status,
-            ingestion_kind=getattr(row, "ingestion_kind", None) or "agent_reconciliation",
+            ingestion_kind=getattr(row, "ingestion_kind", None)
+            or "agent_reconciliation",
             job_id=getattr(row, "job_id", None),
             correlation_id=getattr(row, "correlation_id", None),
             idempotency_key=getattr(row, "idempotency_key", None),
@@ -416,4 +490,23 @@ class SqlAlchemyReconciliationLedger(ReconciliationLedgerPort):
             started_at=row.started_at,
             completed_at=row.completed_at,
             plan_json=pj,
+        )
+
+    @staticmethod
+    def _to_work_event_row(
+        row: ContextReconciliationWorkEvent,
+    ) -> ReconciliationWorkEventRow:
+        payload = row.payload
+        if not isinstance(payload, dict):
+            payload = {}
+        return ReconciliationWorkEventRow(
+            id=row.id,
+            run_id=row.run_id,
+            event_id=row.event_id,
+            sequence=row.sequence,
+            event_kind=row.event_kind,
+            title=row.title,
+            body=row.body,
+            payload=payload,
+            created_at=row.created_at,
         )

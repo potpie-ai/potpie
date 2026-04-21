@@ -10,6 +10,7 @@ from adapters.outbound.reconciliation.github_pr_compat import (
 )
 from application.use_cases.apply_reconciliation_plan import apply_reconciliation_plan
 from application.use_cases.reconcile_event import reconcile_event
+from application.use_cases.agent_work_capture import bind_agent_work_recorder
 from application.use_cases.reconciliation_validation import validate_reconciliation_plan
 from domain.context_events import ContextEvent, EventRef, EventScope
 from domain.errors import ReconciliationPlanValidationError
@@ -214,6 +215,30 @@ def test_event_scope_matches_context_event() -> None:
     assert ev.pot_id == scope.pot_id
 
 
+def test_agent_work_recorder_binds_to_supported_agent() -> None:
+    class AgentWithRecorder:
+        def __init__(self) -> None:
+            self.recorder = None
+
+        def set_work_event_recorder(self, recorder) -> None:  # type: ignore[no-untyped-def]
+            self.recorder = recorder
+
+    ledger = MagicMock()
+    agent = AgentWithRecorder()
+
+    bind_agent_work_recorder(agent, ledger, "run-1")  # type: ignore[arg-type]
+    assert agent.recorder is not None
+    agent.recorder.record("thought", title="t", body="b", payload={"x": 1})
+
+    ledger.record_run_work_event.assert_called_once_with(
+        "run-1",
+        event_kind="thought",
+        title="t",
+        body="b",
+        payload={"x": 1},
+    )
+
+
 def test_ledger_scope_compatible_with_event_scope() -> None:
     lr = LedgerScope(
         pot_id="p",
@@ -298,3 +323,25 @@ def test_llm_plan_convert_roundtrip() -> None:
         "source-ref:github:pr:1",
         "source-system:github",
     )
+
+
+def test_llm_plan_convert_accepts_dict_output() -> None:
+    ref = EventRef(event_id="e1", source_system="manual", pot_id="pot-a")
+    plan = llm_plan_to_reconciliation_plan(
+        {
+            "summary": "record manual note",
+            "episodes": [
+                {
+                    "name": "manual_note",
+                    "episode_body": "deepesh deleted the database",
+                    "source_description": "manual raw note",
+                }
+            ],
+        },
+        event_ref=ref,
+    )
+
+    validate_reconciliation_plan(plan, "pot-a")
+    assert plan.summary == "record manual note"
+    assert len(plan.episodes) == 1
+    assert plan.invalidations == []

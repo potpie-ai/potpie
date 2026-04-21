@@ -72,6 +72,8 @@ class ReconciliationPlan:
     warnings: list[str] = field(default_factory=list)
     compat_github_pr_merged: GitHubPrMergedCompat | None = None
     """When set, apply uses legacy ``stamp_pr_entities`` after episodes (v1 GitHub PR path)."""
+    ontology_downgrades: list[dict[str, str]] = field(default_factory=list)
+    """Populated when soft ontology downgrade runs (API surface); not persisted on plan slices."""
 
 
 @dataclass(slots=True)
@@ -94,6 +96,10 @@ class ReconciliationResult:
     episode_uuids: list[str | None]
     mutation_summary: MutationSummary
     error: str | None = None
+    reconciliation_errors: list[dict[str, str]] = field(default_factory=list)
+    """Structured validation failures (entity + issue) when ``ok`` is false."""
+    downgrades: list[dict[str, str]] = field(default_factory=list)
+    """Ontology soft-fail rewrites applied (sync reconcile / apply)."""
 
 
 # Phase A alias (INGESTION_ASYNC_PLAN — Ingestion Agent terminology)

@@ -8,12 +8,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any
+from typing import Any, Protocol
 
 from domain.context_events import EventRef
 from domain.reconciliation import ReconciliationPlan, ReconciliationRequest
 
-from adapters.outbound.reconciliation.llm_plan_convert import llm_plan_to_reconciliation_plan
+from adapters.outbound.reconciliation.llm_plan_convert import (
+    llm_plan_to_reconciliation_plan,
+)
 from adapters.outbound.reconciliation.llm_plan_schema import LlmReconciliationPlan
 
 logger = logging.getLogger(__name__)
@@ -74,6 +76,30 @@ def _pydantic_deep_version() -> str:
         return "unknown"
 
 
+class AgentWorkRecorder(Protocol):
+    def record(
+        self,
+        event_kind: str,
+        *,
+        title: str | None = None,
+        body: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> None: ...
+
+
+def _jsonable(value: Any) -> Any:
+    try:
+        return json.loads(json.dumps(value, default=str))
+    except TypeError:
+        return str(value)
+
+
+def _json_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    return {"value": _jsonable(value)}
+
+
 class PydanticDeepReconciliationAgent:
     """`ReconciliationAgentPort` using pydantic-deep structured output."""
 
@@ -85,8 +111,34 @@ class PydanticDeepReconciliationAgent:
     ) -> None:
         import os
 
-        self._model = model or os.getenv("CONTEXT_ENGINE_RECONCILIATION_MODEL", "openai:gpt-5.4-mini")
+        self._model = model or os.getenv(
+            "CONTEXT_ENGINE_RECONCILIATION_MODEL", "openai:gpt-5.4-mini"
+        )
         self._instructions = instructions or _RECONCILIATION_INSTRUCTIONS
+        self._work_recorder: AgentWorkRecorder | None = None
+
+    def set_work_event_recorder(self, recorder: AgentWorkRecorder | None) -> None:
+        self._work_recorder = recorder
+
+    def _record_work_event(
+        self,
+        event_kind: str,
+        *,
+        title: str | None = None,
+        body: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        if self._work_recorder is None:
+            return
+        try:
+            self._work_recorder.record(
+                event_kind,
+                title=title,
+                body=body,
+                payload=payload,
+            )
+        except Exception:
+            logger.exception("failed to record reconciliation agent work event")
 
     def capability_metadata(self) -> dict[str, Any]:
         return {
@@ -98,12 +150,45 @@ class PydanticDeepReconciliationAgent:
 
     def run_reconciliation(self, request: ReconciliationRequest) -> ReconciliationPlan:
         try:
-            from pydantic_deep import create_deep_agent, create_default_deps
+            from pydantic_deep import (
+                Hook,
+                HookEvent,
+                HookResult,
+                create_deep_agent,
+                create_default_deps,
+            )
         except ImportError as exc:
             raise ImportError(
                 "pydantic-deep is required for PydanticDeepReconciliationAgent. "
                 "Install: pip install 'context-engine[reconciliation-agent]'"
             ) from exc
+
+        async def _record_pre_tool_use(hook_input: Any) -> Any:
+            self._record_work_event(
+                "tool_call",
+                title=getattr(hook_input, "tool_name", None),
+                payload={
+                    "event": getattr(hook_input, "event", None),
+                    "tool_name": getattr(hook_input, "tool_name", None),
+                    "tool_input": _json_dict(getattr(hook_input, "tool_input", {})),
+                },
+            )
+            return HookResult(allow=True)
+
+        async def _record_post_tool_use(hook_input: Any) -> Any:
+            result = getattr(hook_input, "tool_result", None)
+            self._record_work_event(
+                "tool_result",
+                title=getattr(hook_input, "tool_name", None),
+                body=str(result)[:20000] if result is not None else None,
+                payload={
+                    "event": getattr(hook_input, "event", None),
+                    "tool_name": getattr(hook_input, "tool_name", None),
+                    "tool_input": _json_dict(getattr(hook_input, "tool_input", {})),
+                    "tool_error": getattr(hook_input, "tool_error", None),
+                },
+            )
+            return HookResult(allow=True)
 
         agent = create_deep_agent(
             model=self._model,
@@ -122,19 +207,67 @@ class PydanticDeepReconciliationAgent:
             context_manager=False,
             cost_tracking=False,
             include_history_archive=False,
+            hooks=[
+                Hook(event=HookEvent.PRE_TOOL_USE, handler=_record_pre_tool_use),
+                Hook(event=HookEvent.POST_TOOL_USE, handler=_record_post_tool_use),
+                Hook(
+                    event=HookEvent.POST_TOOL_USE_FAILURE, handler=_record_post_tool_use
+                ),
+            ],
         )
         deps = create_default_deps()
         prompt = _user_prompt(request)
+        self._record_work_event(
+            "prompt",
+            title="reconciliation request",
+            body=prompt,
+            payload={
+                "model": self._model,
+                "pot_id": request.pot_id,
+                "repo_name": request.repo_name,
+                "event_id": request.event.event_id,
+                "source_system": request.event.source_system,
+            },
+        )
 
         async def _run() -> LlmReconciliationPlan:
             result = await agent.run(prompt, deps=deps)
+            try:
+                messages = json.loads(result.new_messages_json().decode("utf-8"))
+            except Exception:
+                logger.exception(
+                    "failed to serialize pydantic-deep reconciliation messages"
+                )
+                messages = []
+            self._record_work_event(
+                "model_messages",
+                title="agent message history",
+                payload={
+                    "messages": messages,
+                    "usage": _json_dict(result.usage()),
+                    "pydantic_ai_run_id": getattr(result, "run_id", None),
+                },
+            )
             return result.output
 
         try:
             llm_plan = asyncio.run(_run())
         except Exception:
+            self._record_work_event("error", title="agent run failed")
             logger.exception("pydantic-deep reconciliation run failed")
             raise
 
         ref = _event_ref(request)
-        return llm_plan_to_reconciliation_plan(llm_plan, event_ref=ref)
+        plan = llm_plan_to_reconciliation_plan(llm_plan, event_ref=ref)
+        self._record_work_event(
+            "plan_output",
+            title="structured reconciliation plan",
+            body=plan.summary,
+            payload={
+                "episode_count": len(plan.episodes),
+                "entity_mutation_count": len(plan.entity_upserts),
+                "edge_mutation_count": len(plan.edge_upserts) + len(plan.edge_deletes),
+                "warning_count": len(plan.warnings),
+            },
+        )
+        return plan

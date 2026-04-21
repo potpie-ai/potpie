@@ -13,6 +13,7 @@ from adapters.inbound.cli.potpie_api_config import (
 )
 from adapters.inbound.mcp.project_access import assert_mcp_pot_allowed
 from adapters.outbound.http.potpie_context_api_client import (
+    IngestRejectedError,
     PotpieContextApiClient,
     PotpieContextApiError,
 )
@@ -35,105 +36,6 @@ def _api_err(e: PotpieContextApiError) -> dict:
         "status_code": e.status_code,
         "detail": e.detail,
     }
-
-
-def context_get_change_history(
-    pot_id: str,
-    file_path: str | None = None,
-    function_name: str | None = None,
-    limit: int = 10,
-    repo_name: str | None = None,
-) -> list[dict] | dict:
-    """Return PR-linked change history for a pot (Neo4j structural graph)."""
-    assert_mcp_pot_allowed(pot_id)
-    body = {
-        "pot_id": pot_id,
-        "function_name": function_name,
-        "file_path": file_path,
-        "limit": limit,
-        "repo_name": repo_name,
-    }
-    try:
-        out = _client().post_query("change-history", body)
-        return out if isinstance(out, list) else []
-    except PotpieContextApiError as e:
-        return _api_err(e)
-
-
-def context_get_file_owners(
-    pot_id: str, file_path: str, limit: int = 5, repo_name: str | None = None
-) -> list[dict] | dict:
-    """Return likely file owners from PR touch history."""
-    assert_mcp_pot_allowed(pot_id)
-    body = {
-        "pot_id": pot_id,
-        "file_path": file_path,
-        "limit": limit,
-        "repo_name": repo_name,
-    }
-    try:
-        out = _client().post_query("file-owners", body)
-        return out if isinstance(out, list) else []
-    except PotpieContextApiError as e:
-        return _api_err(e)
-
-
-def context_get_decisions(
-    pot_id: str,
-    file_path: str | None = None,
-    function_name: str | None = None,
-    limit: int = 20,
-    repo_name: str | None = None,
-) -> list[dict] | dict:
-    """Return design decisions linked to code nodes."""
-    assert_mcp_pot_allowed(pot_id)
-    body = {
-        "pot_id": pot_id,
-        "file_path": file_path,
-        "function_name": function_name,
-        "limit": limit,
-        "repo_name": repo_name,
-    }
-    try:
-        out = _client().post_query("decisions", body)
-        return out if isinstance(out, list) else []
-    except PotpieContextApiError as e:
-        return _api_err(e)
-
-
-def context_get_pr_review_context(
-    pot_id: str, pr_number: int, repo_name: str | None = None
-) -> dict:
-    """Return a PR's title/summary plus linked review-thread discussions (Decision nodes)."""
-    assert_mcp_pot_allowed(pot_id)
-    body = {"pot_id": pot_id, "pr_number": pr_number, "repo_name": repo_name}
-    try:
-        return _client().post_query("pr-review-context", body)
-    except PotpieContextApiError as e:
-        return _api_err(e)
-
-
-def context_get_pr_diff(
-    pot_id: str,
-    pr_number: int,
-    file_path: str | None = None,
-    limit: int = 30,
-    repo_name: str | None = None,
-) -> list[dict] | dict:
-    """Return file-level PR diff excerpts captured during ingestion."""
-    assert_mcp_pot_allowed(pot_id)
-    body = {
-        "pot_id": pot_id,
-        "pr_number": pr_number,
-        "file_path": file_path,
-        "limit": limit,
-        "repo_name": repo_name,
-    }
-    try:
-        out = _client().post_query("pr-diff", body)
-        return out if isinstance(out, list) else []
-    except PotpieContextApiError as e:
-        return _api_err(e)
 
 
 def _parse_as_of_iso(value: str | None) -> datetime | None:
@@ -170,16 +72,19 @@ def context_search(
     body = {
         "pot_id": pot_id,
         "query": query,
+        "goal": "retrieve",
+        "strategy": "semantic",
         "limit": limit,
         "node_labels": labels,
-        "repo_name": repo_name,
-        "source_description": source_description,
+        "scope": {"repo_name": repo_name} if repo_name else {},
+        "source_descriptions": [source_description] if source_description else [],
         "include_invalidated": include_invalidated,
         "as_of": as_of_dt,
     }
     try:
-        out = _client().search(body)
-        rows = out if isinstance(out, list) else []
+        out = _client().context_graph_query(body)
+        rows = out.get("result") if isinstance(out, dict) else []
+        rows = rows if isinstance(rows, list) else []
         return {
             "ok": True,
             "answer": {"summary": f"Found {len(rows)} context search result(s)."},
@@ -238,6 +143,11 @@ def context_ingest_episode(
         body["idempotency_key"] = idempotency_key.strip()
     try:
         status_code, data = _client().ingest(body, sync=sync)
+    except IngestRejectedError as exc:
+        out = {"ok": False, **exc.body}
+        if out.get("status") is None:
+            out["status"] = "reconciliation_rejected"
+        return out
     except PotpieContextApiError as exc:
         return {
             "ok": False,
@@ -323,7 +233,8 @@ async def context_resolve(
         },
         "include": _split_csv(include),
         "exclude": _split_csv(exclude),
-        "mode": mode,
+        "goal": "answer",
+        "strategy": "hybrid" if mode == "balanced" else "auto",
         "source_policy": source_policy,
         "budget": {
             "max_items": max_items,
@@ -332,11 +243,12 @@ async def context_resolve(
             "freshness": freshness,
         },
         "as_of": as_of_dt,
-        "timeout_ms": timeout_ms,
     }
     client = _client()
     try:
-        return await client.post_query_async("resolve-context", body)
+        out = await client.context_graph_query_async(body)
+        result = out.get("result") if isinstance(out, dict) else None
+        return result if isinstance(result, dict) else out
     except PotpieContextApiError as e:
         return _api_err(e)
 

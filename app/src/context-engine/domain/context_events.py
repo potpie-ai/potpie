@@ -73,7 +73,7 @@ class ContextEvent:
     received_at: datetime | None = None
     payload: dict[str, Any] = field(default_factory=dict)
     ingestion_kind: str | None = None
-    """``agent_reconciliation`` (default) or ``raw_episode`` (event-first raw ingest)."""
+    """Event family such as ``agent_reconciliation`` or ``raw_episode``; persisted events are agent-planned."""
     idempotency_key: str | None = None
     """Optional client idempotency token (raw_episode family)."""
     source_channel: str | None = None
