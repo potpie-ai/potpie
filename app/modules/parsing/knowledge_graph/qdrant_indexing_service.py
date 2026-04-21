@@ -52,11 +52,15 @@ Qdrant Hybrid Indexing Service
 
 from __future__ import annotations
 
+import json
 import math
 import re
+import uuid
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+import torch
 from sentence_transformers import SentenceTransformer
 
 from app.modules.utils.logger import setup_logger
@@ -79,6 +83,110 @@ BM25_B = 0.75
 
 # Node types to index (FILE nodes are excluded from indexing)
 INDEXABLE_NODE_TYPES = {"FUNCTION", "CLASS", "INTERFACE"}
+
+_VOCAB_DIR = Path.home() / ".potpie" / "qdrant_vocabs"
+
+
+def _get_vocab_path(collection_name: str) -> Path:
+    return _VOCAB_DIR / f"{collection_name}_bm25_vocabulary.json"
+
+
+def _load_token_vocabulary(collection_name: str) -> Optional[List[str]]:
+    vocab_path = _get_vocab_path(collection_name)
+    if vocab_path.exists():
+        try:
+            with open(vocab_path) as f:
+                data = json.load(f)
+            return data.get("token_vocabulary")
+        except (json.JSONDecodeError, IOError) as e:
+            logger.warning(f"Failed to load vocabulary from {vocab_path}: {e}")
+    return None
+
+
+def _save_token_vocabulary(collection_name: str, token_vocabulary: List[str]) -> None:
+    _VOCAB_DIR.mkdir(parents=True, exist_ok=True)
+    vocab_path = _get_vocab_path(collection_name)
+    with open(vocab_path, "w") as f:
+        json.dump({"token_vocabulary": token_vocabulary}, f)
+
+
+def _delete_token_vocabulary(collection_name: str) -> None:
+    vocab_path = _get_vocab_path(collection_name)
+    try:
+        vocab_path.unlink(missing_ok=True)
+    except OSError as e:
+        logger.warning(f"Failed to delete vocabulary file {vocab_path}: {e}")
+
+
+def _build_staging_collection_name(collection_name: str) -> str:
+    return f"{collection_name}__rebuild_{uuid.uuid4().hex}"
+
+
+def _get_alias_target(client: Any, alias_name: str) -> Optional[str]:
+    aliases = client.get_aliases().aliases
+    for alias in aliases:
+        if alias.alias_name == alias_name:
+            return alias.collection_name
+    return None
+
+
+def _activate_collection_alias(
+    client: Any,
+    alias_name: str,
+    new_collection_name: str,
+) -> Optional[str]:
+    from qdrant_client import models  # type: ignore
+
+    previous_collection = _get_alias_target(client, alias_name)
+    operations: List[Any] = []
+
+    if previous_collection is not None:
+        operations.append(
+            models.DeleteAliasOperation(
+                delete_alias=models.DeleteAlias(alias_name=alias_name)
+            )
+        )
+
+    operations.append(
+        models.CreateAliasOperation(
+            create_alias=models.CreateAlias(
+                collection_name=new_collection_name,
+                alias_name=alias_name,
+            )
+        )
+    )
+
+    client.update_collection_aliases(operations)
+    return previous_collection
+
+
+def delete_hybrid_collection(
+    client: Any,
+    collection_name: str,
+    alias_name: Optional[str] = None,
+) -> None:
+    from qdrant_client import models  # type: ignore
+
+    alias_target = _get_alias_target(client, alias_name) if alias_name else None
+
+    if alias_name and alias_target is not None:
+        client.update_collection_aliases(
+            [
+                models.DeleteAliasOperation(
+                    delete_alias=models.DeleteAlias(alias_name=alias_name)
+                )
+            ]
+        )
+
+    collections_to_delete = {collection_name}
+    if alias_target is not None:
+        collections_to_delete.add(alias_target)
+
+    for target_collection in collections_to_delete:
+        if client.collection_exists(target_collection):
+            client.delete_collection(target_collection)
+        _delete_token_vocabulary(target_collection)
+
 
 # ---------------------------------------------------------------------------
 # Text builders  (different views per modality)
@@ -244,15 +352,7 @@ def _compute_bm25_scores(
 def build_bm25_vectors(
     nodes: List[Dict[str, Any]],
     text_field: str = "_bm25_text",
-) -> Dict[str, Dict[str, float]]:
-    """
-    Compute BM25 sparse vectors for a list of nodes.
-
-    Returns:
-        Dict mapping node_id -> {token: bm25_score}.
-        Tokens are stored as string keys with integer indices in the separate
-        index list (needed for Qdrant SparseVector).
-    """
+) -> Dict[str, Any]:
     filtered = []
     for node in nodes:
         if node.get("type", "") not in INDEXABLE_NODE_TYPES:
@@ -271,11 +371,16 @@ def build_bm25_vectors(
     all_tokens: set[str] = set()
     for doc in texts:
         all_tokens.update(_tokenize(doc))
-    token_to_idx = {t: i for i, t in enumerate(sorted(all_tokens))}
+    sorted_tokens = sorted(all_tokens)
+    token_to_idx = {t: i for i, t in enumerate(sorted_tokens)}
 
     bm25_scores = _compute_bm25_scores(texts, avg_dl, doc_lens, token_to_idx)
 
-    return {n["node_id"]: scores for n, scores in zip(filtered, bm25_scores)}
+    result: Dict[str, Any] = {
+        n["node_id"]: scores for n, scores in zip(filtered, bm25_scores)
+    }
+    result["__token_vocabulary__"] = sorted_tokens
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -340,6 +445,7 @@ def build_colbert_embeddings(
 
     model, tokenizer = _get_colbert_model_and_tokenizer()
     assert model is not None and tokenizer is not None
+    model.eval()
     texts = [n[text_field] for n in filtered]
 
     logger.info(f"Encoding {len(texts)} ColBERT documents with {COLBERT_MODEL}")
@@ -361,16 +467,19 @@ def build_colbert_embeddings(
             max_length=COLBERT_MAX_TOKENS,
         )
 
-        with np.errstate(divide="ignore", invalid="ignore"):
+        with torch.no_grad():
             outputs = model(**inputs)  # type: ignore
-            hidden = outputs.last_hidden_state.float().numpy()
+            hidden = outputs.last_hidden_state.detach().cpu().float().numpy()
+
+        attention_mask = inputs["attention_mask"].cpu().numpy()
 
         norms = np.linalg.norm(hidden, axis=-1, keepdims=True)
         norms = np.where(norms == 0, 1, norms)
         emb = hidden / norms
 
         for j, node in enumerate(batch_nodes):
-            token_vecs = emb[j].tolist()
+            mask = attention_mask[j]
+            token_vecs = emb[j][mask == 1].tolist()
             results[node["node_id"]] = token_vecs
 
     logger.info(f"ColBERT encoded {len(results)} documents")
@@ -467,11 +576,19 @@ def upsert_hybrid_points(
     """
     from qdrant_client import models  # type: ignore
 
-    # Build token->index map from all tokens across all BM25 vectors
-    all_tokens: set[str] = set()
-    for scores in bm25_vectors.values():
-        all_tokens.update(scores.keys())
-    token_to_idx = {t: i for i, t in enumerate(sorted(all_tokens))}
+    stored_vocab = bm25_vectors.get("__token_vocabulary__")
+    if stored_vocab:
+        token_vocabulary = stored_vocab
+    else:
+        token_vocabulary = _load_token_vocabulary(collection_name)
+    if token_vocabulary is None:
+        all_tokens: set[str] = set()
+        for node_id, scores in bm25_vectors.items():
+            if node_id == "__token_vocabulary__":
+                continue
+            all_tokens.update(scores.keys())
+        token_vocabulary = sorted(all_tokens)
+    token_to_idx = {t: i for i, t in enumerate(token_vocabulary)}
 
     points_to_upsert = []
     for node in nodes:
@@ -494,7 +611,7 @@ def upsert_hybrid_points(
             sparse_vec = models.SparseVector(indices=[], values=[])
 
         point = models.PointStruct(
-            id=node_id,
+            id=str(uuid.UUID(bytes=bytes.fromhex(node_id))),
             vector={
                 "dense_vector": dense_vectors[node_id],
                 "colbert_multivector": colbert_vectors.get(node_id, []),
@@ -534,6 +651,7 @@ def index_nodes_to_qdrant(
     collection_name: str,
     nodes: List[Dict[str, Any]],
     recreate_collection: bool = False,
+    alias_name: Optional[str] = None,
 ) -> Tuple[int, int, int]:
     """
     Full pipeline: build all three embedding types and upsert to Qdrant.
@@ -543,25 +661,61 @@ def index_nodes_to_qdrant(
         collection_name: target Qdrant collection
         nodes: list of node dicts from create_graph()
         recreate_collection: whether to recreate the collection schema
+        alias_name: optional stable alias name for staged rebuilds
 
     Returns:
         Tuple of (num_nodes_indexed, num_bm25_tokens, num_colbert_dims)
     """
-    # 1. Ensure collection exists
-    create_hybrid_collection(client, collection_name, recreate=recreate_collection)
+    target_collection_name = collection_name
+    previous_collection_name: Optional[str] = None
 
-    # 2. Build embeddings
+    if alias_name and recreate_collection:
+        target_collection_name = _build_staging_collection_name(collection_name)
+        create_hybrid_collection(client, target_collection_name, recreate=True)
+        previous_collection_name = _get_alias_target(client, alias_name)
+        if previous_collection_name is None and client.collection_exists(
+            collection_name
+        ):
+            previous_collection_name = collection_name
+    else:
+        # 1. Ensure collection exists
+        create_hybrid_collection(
+            client, target_collection_name, recreate=recreate_collection
+        )
+
     dense_vecs = build_dense_embeddings(nodes)
     bm25_vecs = build_bm25_vectors(nodes)
     colbert_vecs = build_colbert_embeddings(nodes)
 
-    # 3. Upsert
+    if "__token_vocabulary__" in bm25_vecs:
+        _save_token_vocabulary(
+            target_collection_name, bm25_vecs["__token_vocabulary__"]
+        )
+
     count = upsert_hybrid_points(
-        client, collection_name, nodes, dense_vecs, bm25_vecs, colbert_vecs
+        client,
+        target_collection_name,
+        nodes,
+        dense_vecs,
+        bm25_vecs,
+        colbert_vecs,
     )
 
-    # 4. Stats
-    n_bm25_tokens = sum(len(scores) for scores in bm25_vecs.values())
+    if alias_name and recreate_collection:
+        _ = _activate_collection_alias(client, alias_name, target_collection_name)
+        if (
+            previous_collection_name is not None
+            and previous_collection_name != target_collection_name
+            and client.collection_exists(previous_collection_name)
+        ):
+            client.delete_collection(previous_collection_name)
+            _delete_token_vocabulary(previous_collection_name)
+
+    n_bm25_tokens = sum(
+        len(scores)
+        for node_id, scores in bm25_vecs.items()
+        if node_id != "__token_vocabulary__"
+    )
     n_colbert_toks = (
         sum(len(vecs) for vecs in colbert_vecs.values()) if colbert_vecs else 0
     )

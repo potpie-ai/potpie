@@ -12,6 +12,7 @@ from app.core.config_provider import config_provider
 from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
 from app.modules.parsing.knowledge_graph.qdrant_indexing_service import (
     INDEXABLE_NODE_TYPES,
+    delete_hybrid_collection,
     index_nodes_to_qdrant,
 )
 from app.modules.search.search_service import SearchService
@@ -26,17 +27,23 @@ class CodeGraphService:
         self.db = db
         qdrant_config = config_provider.get_qdrant_config()
         api_key = qdrant_config.get("api_key", "")
-        if api_key:
-            self.qdrant_client = QdrantClient(
-                location=f"{qdrant_config['host']}:{qdrant_config['port']}",
-                api_key=api_key,
-                prefer_grpc=True,
-            )
-        else:
-            self.qdrant_client = QdrantClient(
-                location=f"{qdrant_config['host']}:{qdrant_config['port']}",
-                prefer_grpc=True,
-            )
+        grpc_port = qdrant_config.get("grpc_port")
+        self.qdrant_client = QdrantClient(
+            host=qdrant_config["host"],
+            port=int(qdrant_config["port"]),
+            **({"grpc_port": int(grpc_port)} if grpc_port else {}),
+            https=bool(qdrant_config.get("https", False)),
+            prefer_grpc=bool(grpc_port),
+            **({"api_key": api_key} if api_key else {}),
+        )
+
+    @staticmethod
+    def get_qdrant_collection_name(project_id: str) -> str:
+        return f"hybrid_{project_id}"
+
+    @staticmethod
+    def get_qdrant_collection_alias(project_id: str) -> str:
+        return f"hybrid_active_{project_id}"
 
     @staticmethod
     def generate_node_id(path: str, user_id: str):
@@ -229,11 +236,16 @@ class CodeGraphService:
                 )
             if nodes_for_indexing:
                 try:
-                    collection_name = f"hybrid_{project_id}"
+                    collection_name = self.get_qdrant_collection_name(project_id)
+                    collection_alias = self.get_qdrant_collection_alias(project_id)
+                    # Build a replacement collection first and only switch the
+                    # live alias after the new index is fully written.
                     count, n_bm25, n_colbert = index_nodes_to_qdrant(
                         self.qdrant_client,
                         collection_name,
                         nodes_for_indexing,
+                        recreate_collection=True,
+                        alias_name=collection_alias,
                     )
                     qdrant_index_time = time.time() - qdrant_index_start
                     logger.info(
@@ -383,6 +395,13 @@ class CodeGraphService:
         # Clean up search index
         search_service = SearchService(self.db)
         search_service.delete_project_index(project_id)
+
+        if hasattr(self, "qdrant_client"):
+            delete_hybrid_collection(
+                self.qdrant_client,
+                self.get_qdrant_collection_name(project_id),
+                alias_name=self.get_qdrant_collection_alias(project_id),
+            )
 
     async def get_node_by_id(self, node_id: str, project_id: str) -> Optional[Dict]:
         with self.driver.session() as session:
