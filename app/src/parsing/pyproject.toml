@@ -17,6 +17,7 @@ dependencies = [
 
 [tool.uv]
 package = true
+cache-keys = [{file = "pyproject.toml"}, {file = "Cargo.toml"}, {file = "**/*.rs"}]
 
 [dependency-groups]
 dev = [

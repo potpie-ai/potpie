@@ -1,7 +1,3 @@
-"""
-Parsing package.
+from .py_graph import create_graph as create_graph_py
 
-Standalone parsing package linked from the repository root pyproject.
-"""
-
-__all__: list[str] = []
+__all__: list[str] = ["create_graph_py"]
