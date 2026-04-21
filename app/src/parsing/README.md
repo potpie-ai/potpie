@@ -43,3 +43,13 @@ G = create_graph("/path/to/repo")  # Returns NetworkX MultiDiGraph
 ## Supported Languages
 
 Python, Rust, JavaScript, TypeScript, Go, Java, C, C++, Ruby, PHP, C#, Elixir, OCaml, Elisp, Elm, QL
+
+## Build
+
+```bash
+cd app/src/parsing && maturin develop
+```
+
+## Note
+
+This crate creates **graphs only**. Embeddings and search are handled by the parent `feat/colbert` module (uses Qdrant + Neo4j).
