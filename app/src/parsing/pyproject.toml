@@ -4,15 +4,15 @@ build-backend = "maturin"
 
 [project]
 name = "parsing"
-requires-python = ">=3.13"
+requires-python = ">=3.10"
 dynamic = ["version"]
 dependencies = [
-    "grep-ast>=0.9.0",
+    "grep-ast>=0.6.0",
     "loguru>=0.7.3",
-    "networkx>=3.6.1",
+    "networkx>=3.4.2",
     "pygments>=2.20.0",
-    "tree-sitter>=0.25.2",
-    "tree-sitter-language-pack>=1.6.0",
+    "tree-sitter>=0.20.4",
+    "tree-sitter-language-pack>=0.13.0",
 ]
 
 [tool.uv]

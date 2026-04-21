@@ -55,7 +55,11 @@ def build_node_attrs(node):
 
 def build_edge_attrs(edge):
     """Build edge_attrs dict for a graph edge from Rust payload."""
-    edge_attrs = {"type": edge.edge_type}
+    edge_type = getattr(edge, "edge_type", None)
+    if edge_type is None:
+        edge_type = getattr(edge, "relationship_type")
+
+    edge_attrs = {"type": edge_type}
     if edge.ident is not None:
         edge_attrs["ident"] = edge.ident
     if edge.ref_line is not None:
@@ -71,7 +75,10 @@ def _reconstruct_graph_from_payload(payload) -> nx.MultiDiGraph:
     for node in payload.nodes:
         node_attrs = build_node_attrs(node)
         G.add_node(node.id, **node_attrs)
-    for edge in payload.edges:
+    edges = getattr(payload, "edges", None)
+    if edges is None:
+        edges = getattr(payload, "relationships")
+    for edge in edges:
         edge_attrs = build_edge_attrs(edge)
         G.add_edge(edge.source_id, edge.target_id, **edge_attrs)
     return G
@@ -675,10 +682,10 @@ class RepoMap:
         import importlib
 
         try:
-            create_graph_rs = importlib.import_module("create_graph_rs")
+            parsing_rs = importlib.import_module("parsing_rs")
         except ImportError:
             return self.create_graph_python(repo_dir)
-        payload = create_graph_rs.build_graph_payload(repo_dir)
+        payload = parsing_rs.extract_graph(repo_dir)
         return _reconstruct_graph_from_payload(payload)
 
     def create_graph_python(self, repo_dir):

@@ -78,11 +78,11 @@ dependencies = [
     "uvicorn>=0.38.0",
     "greenlet>=3.3.0",
     "typer>=0.15.0",
-    "create_graph_rs",
+    "parsing",
 ]
 
 [tool.uv.sources]
-create_graph_rs = { path = "rust/create_graph_rs" }
+parsing = { path = "app/src/parsing" }
 
 [project.scripts]
 potpie-seed = "seed.cli:main"

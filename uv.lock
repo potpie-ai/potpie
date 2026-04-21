@@ -1020,11 +1020,6 @@ toml = [
 ]
 
 [[package]]
-name = "create-graph-rs"
-version = "0.1.0"
-source = { directory = "rust/create_graph_rs" }
-
-[[package]]
 name = "cryptography"
 version = "46.0.7"
 source = { registry = "https://pypi.org/simple" }
@@ -3969,6 +3964,32 @@ wheels = [
 ]
 
 [[package]]
+name = "parsing"
+source = { directory = "app/src/parsing" }
+dependencies = [
+    { name = "grep-ast" },
+    { name = "loguru" },
+    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pygments" },
+    { name = "tree-sitter" },
+    { name = "tree-sitter-language-pack" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "grep-ast", specifier = ">=0.6.0" },
+    { name = "loguru", specifier = ">=0.7.3" },
+    { name = "networkx", specifier = ">=3.4.2" },
+    { name = "pygments", specifier = ">=2.20.0" },
+    { name = "tree-sitter", specifier = ">=0.20.4" },
+    { name = "tree-sitter-language-pack", specifier = ">=0.13.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest-benchmark", specifier = ">=5.2.3" }]
+
+[[package]]
 name = "pathable"
 version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4145,7 +4166,6 @@ dependencies = [
     { name = "boto3" },
     { name = "celery" },
     { name = "chardet" },
-    { name = "create-graph-rs" },
     { name = "cryptography" },
     { name = "email-inspector" },
     { name = "fastapi" },
@@ -4178,6 +4198,7 @@ dependencies = [
     { name = "newrelic" },
     { name = "nltk" },
     { name = "openai" },
+    { name = "parsing" },
     { name = "pathspec" },
     { name = "pillow" },
     { name = "postgres" },
@@ -4238,7 +4259,6 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.40.67" },
     { name = "celery", specifier = ">=5.5.3" },
     { name = "chardet", specifier = ">=5.2.0" },
-    { name = "create-graph-rs", directory = "rust/create_graph_rs" },
     { name = "cryptography", specifier = ">=46.0.7" },
     { name = "email-inspector", specifier = ">=0.1.4" },
     { name = "fastapi", specifier = ">=0.121.0" },
@@ -4270,6 +4290,7 @@ requires-dist = [
     { name = "newrelic", specifier = ">=11.2.0" },
     { name = "nltk", specifier = ">=3.9.4" },
     { name = "openai", specifier = ">=2.7.1" },
+    { name = "parsing", directory = "app/src/parsing" },
     { name = "pathspec", specifier = ">=0.12.1" },
     { name = "pillow", specifier = ">=12.2.0" },
     { name = "postgres", specifier = ">=4.0" },

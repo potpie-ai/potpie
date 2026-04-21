@@ -10,7 +10,7 @@ pub use tag_extract::{extract_graph, extract_tags, GraphPayload, NodePayload, Re
 mod parsing_rs {
     use pyo3::prelude::*;
 
-    #[pyo3::pyclass]
+    #[pyo3::pyclass(from_py_object)]
     #[derive(Clone, Debug, PartialEq)]
     pub struct TagPayload {
         #[pyo3(get, set)]
@@ -25,7 +25,7 @@ mod parsing_rs {
         pub end_line: u32,
     }
 
-    #[pyo3::pyclass]
+    #[pyo3::pyclass(from_py_object)]
     #[derive(Clone, Debug, PartialEq)]
     pub struct NodePayload {
         #[pyo3(get, set)]
@@ -46,7 +46,7 @@ mod parsing_rs {
         pub text: Option<String>,
     }
 
-    #[pyo3::pyclass]
+    #[pyo3::pyclass(from_py_object)]
     #[derive(Clone, Debug, PartialEq)]
     pub struct RelationshipPayload {
         #[pyo3(get, set)]
@@ -63,7 +63,7 @@ mod parsing_rs {
         pub end_ref_line: Option<u32>,
     }
 
-    #[pyo3::pyclass]
+    #[pyo3::pyclass(from_py_object)]
     #[derive(Clone, Debug, PartialEq)]
     pub struct GraphPayload {
         #[pyo3(get, set)]

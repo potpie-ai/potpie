@@ -380,6 +380,9 @@ fn filename_to_lang(path: &str) -> Option<&'static str> {
         "php" => Some("php"),
         "rb" => Some("ruby"),
         "rs" => Some("rust"),
+        "el" => Some("elisp"),
+        "elm" => Some("elm"),
+        "ql" => Some("ql"),
         _ => None,
     }
 }
@@ -400,6 +403,9 @@ fn language_for_lang(lang: &str) -> Option<Language> {
         "php" => Some(tree_sitter_php::LANGUAGE_PHP.into()),
         "ruby" => Some(tree_sitter_ruby::LANGUAGE.into()),
         "rust" => Some(tree_sitter_rust::LANGUAGE.into()),
+        "elisp" => Some(tree_sitter_elisp::LANGUAGE.into()),
+        "elm" => Some(tree_sitter_elm::LANGUAGE.into()),
+        "ql" => Some(tree_sitter_ql::LANGUAGE.into()),
         _ => None,
     }
 }
@@ -421,6 +427,9 @@ fn load_query(lang: &str) -> Option<&'static str> {
         "php" => Some(include_str!("../parsing/queries/tree-sitter-php-tags.scm")),
         "ruby" => Some(include_str!("../parsing/queries/tree-sitter-ruby-tags.scm")),
         "rust" => Some(include_str!("../parsing/queries/tree-sitter-rust-tags.scm")),
+        "elisp" => Some(include_str!("../parsing/queries/tree-sitter-elisp-tags.scm")),
+        "elm" => Some(include_str!("../parsing/queries/tree-sitter-elm-tags.scm")),
+        "ql" => Some(include_str!("../parsing/queries/tree-sitter-ql-tags.scm")),
         _ => None,
     }
 }

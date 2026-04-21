@@ -7,8 +7,11 @@ edition = "2021"
 name = "parsing_rs"
 crate-type = ["cdylib", "rlib"]
 
+[package.metadata.maturin]
+name = "parsing_rs"
+
 [dependencies]
-pyo3 = "0.28.2"
+pyo3 = { version = "0.28.2", features = ["extension-module"] }
 walkdir = "2"
 jwalk = "0.8"
 log = "0.4"
@@ -33,6 +36,9 @@ tree-sitter-php = "0.24"
 tree-sitter-c-sharp = "0.23"
 tree-sitter-elixir = "0.3"
 tree-sitter-ocaml = "0.24"
+tree-sitter-elisp = "1.6"
+tree-sitter-elm = "5.9"
+tree-sitter-ql = "0.23"
 
 [dev-dependencies]
 tempfile = "3"
