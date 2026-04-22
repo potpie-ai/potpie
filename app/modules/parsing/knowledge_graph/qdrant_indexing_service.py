@@ -239,12 +239,25 @@ def build_colbert_text(node: Dict[str, Any]) -> str:
 
 def _strip_comments_and_docstrings(code: str) -> str:
     """Remove docstrings and line comments to reduce ColBERT noise."""
-    # Remove triple-quoted strings (docstrings)
     code = re.sub(r'"""[\s\S]*?"""', "", code)
     code = re.sub(r"'''[\s\S]*?'''", "", code)
-    # Remove line comments
+
+    def _remove_hash_comment(line: str) -> str:
+        """Remove # comments that are not inside string literals.
+
+        Uses quote-counting heuristic: a # preceded by an even number of
+        quotes is a comment; preceded by odd quotes is inside a string.
+        """
+        hash_pos = line.find("#")
+        if hash_pos == -1:
+            return line
+        before_hash = line[:hash_pos]
+        if before_hash.count('"') % 2 == 0 and before_hash.count("'") % 2 == 0:
+            return before_hash.rstrip()
+        return line
+
+    code = "\n".join(_remove_hash_comment(line) for line in code.splitlines())
     code = re.sub(r"//.*", "", code)
-    code = re.sub(r"#.*", "", code)
     return code.strip()
 
 
@@ -323,7 +336,7 @@ def _compute_bm25_scores(
     term_doc_freqs: Dict[str, int] = {}
     term_doc_scores: Dict[int, Dict[str, float]] = {i: {} for i in range(N)}
 
-    for doc_idx, doc in enumerate(corpus):
+    for doc in corpus:
         tokens = _tokenize(doc)
         unique_terms = set(tokens)
         for term in unique_terms:
@@ -416,8 +429,8 @@ def _get_colbert_model_and_tokenizer():
     Load ColBERT model and tokenizer lazily.
     Uses the LateOn-Code-edge model (17M params, code-specialized).
 
-    Falls back to transformers AutoModel / AutoTokenizer only when PyLate itself
-    is not installed. Other PyLate import/runtime issues are raised explicitly.
+    Requires pylate to be installed. Other PyLate import/runtime issues
+    are raised explicitly.
     """
     global _colbert_model, _colbert_tokenizer
     if _colbert_model is None:
@@ -426,24 +439,18 @@ def _get_colbert_model_and_tokenizer():
         except ModuleNotFoundError as exc:
             if exc.name != "pylate":
                 raise
-
-            from transformers import AutoModel, AutoTokenizer
-
-            logger.info(
-                "PyLate is not installed; falling back to transformers for %s",
-                COLBERT_MODEL,
+            raise RuntimeError(
+                "pylate is required for ColBERT embeddings. "
+                "Install it with: pip install pylate"
             )
-            _colbert_tokenizer = AutoTokenizer.from_pretrained(COLBERT_MODEL)
-            _colbert_model = AutoModel.from_pretrained(COLBERT_MODEL)
-            logger.info("ColBERT model loaded via transformers")
-        else:
-            logger.info(
-                "Loading ColBERT model via pylate models.ColBERT: %s",
-                COLBERT_MODEL,
-            )
-            _colbert_model = pylate_models.ColBERT(model_name_or_path=COLBERT_MODEL)
-            _colbert_tokenizer = getattr(_colbert_model, "tokenizer", None)
-            logger.info("ColBERT model loaded via pylate")
+
+        logger.info(
+            "Loading ColBERT model via pylate models.ColBERT: %s",
+            COLBERT_MODEL,
+        )
+        _colbert_model = pylate_models.ColBERT(model_name_or_path=COLBERT_MODEL)
+        _colbert_tokenizer = getattr(_colbert_model, "tokenizer", None)
+        logger.info("ColBERT model loaded via pylate")
     return _colbert_model, _colbert_tokenizer
 
 
@@ -659,14 +666,9 @@ def upsert_hybrid_points(
             sparse_vec = models.SparseVector(indices=[], values=[])
 
         colbert_multivector = colbert_vectors.get(node_id, [])
-        if colbert_multivector:
-            colbert_multivector = _normalize_colbert_multivector(
-                colbert_multivector,
-                node_id=node_id,
-            )
 
         point = models.PointStruct(
-            id=str(uuid.UUID(bytes=bytes.fromhex(node_id))),
+            id=str(uuid.uuid5(uuid.NAMESPACE_OID, node_id)),
             vector={
                 "dense_vector": dense_vectors[node_id],
                 "colbert_multivector": colbert_multivector,

@@ -271,7 +271,7 @@ def is_text_file(file_path):
         # If all encodings fail, likely a binary file
         return False
 
-    _, _, ext = file_path.rpartition(".")
+    _, _, ext = os.path.basename(file_path).rpartition(".")
     ext = ext.lower()
     exclude_extensions = [
         "png",
@@ -445,7 +445,7 @@ def get_tags_raw(fname, rel_fname):
             kind=kind,
             line=node.start_point[0],
             end_line=node.end_point[0],
-            type=type,
+            type=node_type,
             byte_start=node.start_byte,
             byte_end=node.end_byte,
         )

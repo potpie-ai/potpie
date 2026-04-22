@@ -124,15 +124,31 @@ pub fn extract_graph(repo_dir: &str) -> GraphPayload {
             // Extract source file from reference.source_id for scope filtering
             let source_file = reference.source_id.split(':').next().unwrap_or(&reference.source_id);
 
-            for target_metadata in target_nodes {
-                if source_file != target_metadata.file {
-                    continue;
-                }
+            // Separate same-file and cross-file targets
+            // Prefer same-file matches but allow cross-file when no same-file target exists
+            let mut same_file_targets: Vec<&DefinitionMetadata> = Vec::new();
+            let mut cross_file_targets: Vec<&DefinitionMetadata> = Vec::new();
 
+            for target_metadata in target_nodes {
                 if reference.source_id == target_metadata.node_id {
                     continue;
                 }
 
+                if source_file == target_metadata.file {
+                    same_file_targets.push(target_metadata);
+                } else {
+                    cross_file_targets.push(target_metadata);
+                }
+            }
+
+            // Use same-file targets if available, otherwise fall back to cross-file
+            let targets_to_use: Vec<&DefinitionMetadata> = if !same_file_targets.is_empty() {
+                same_file_targets
+            } else {
+                cross_file_targets
+            };
+
+            for target_metadata in targets_to_use {
                 let Some(source_type) = node_types.get(&reference.source_id) else {
                     continue;
                 };
@@ -365,27 +381,30 @@ fn extract_file_graph(file: CodeFile) -> FileGraphData {
         (None, None)
     };
 
-    // First pass: collect definitions and build scope context
-    let mut current_class: Option<String> = None;
-
+    // First pass: collect definitions using AST-based scope resolution
     for tag in &all_tags {
         if tag.kind == "def" {
-            let node_type = match tag.tag_type.as_str() {
+            let enclosing_class = find_enclosing_scope(tag.byte_start).0;
+
+            let (node_type, class_for_id) = match tag.tag_type.as_str() {
                 "class" => {
-                    current_class = Some(tag.name.clone());
-                    "CLASS"
+                    // For class definitions, find_enclosing_scope returns the class
+                    // itself (not an enclosing class) - use None to avoid self-reference
+                    ("CLASS", None)
                 }
                 "interface" => {
-                    current_class = Some(tag.name.clone());
-                    "INTERFACE"
+                    // For interface definitions, similarly avoid self-reference
+                    ("INTERFACE", None)
                 }
-                "method" | "function" => "FUNCTION",
+                "method" | "function" => {
+                    ("FUNCTION", enclosing_class)
+                }
                 _ => continue,
             };
 
             let node_id = match tag.tag_type.as_str() {
                 "method" | "function" => {
-                    if let Some(class_name) = current_class.as_ref() {
+                    if let Some(ref class_name) = class_for_id {
                         format!("{}:{}.{}", file.relative_path, class_name, tag.name)
                     } else {
                         format!("{}:{}", file.relative_path, tag.name)
@@ -402,7 +421,7 @@ fn extract_file_graph(file: CodeFile) -> FileGraphData {
                     line: tag.line,
                     end_line: tag.end_line,
                     name: tag.name.clone(),
-                    class_name: current_class.clone(),
+                    class_name: class_for_id,
                     text: None,
                 });
 
@@ -599,5 +618,217 @@ mod tests {
                 && relationship.relationship_type == "REFERENCES"
                 && relationship.ident.as_deref() == Some("foo")
         }));
+    }
+
+    #[test]
+    fn test_extract_graph_cross_file_references() {
+        let temp_dir = tempdir().expect("should create temp repo");
+
+        // Create two files: helper.py defines foo(), main.py calls foo() from helper
+        let helper_path = temp_dir.path().join("helper.py");
+        fs::write(
+            &helper_path,
+            "def foo():\n    return 1\n",
+        )
+        .expect("should write helper fixture source file");
+
+        let main_path = temp_dir.path().join("main.py");
+        fs::write(
+            &main_path,
+            "from helper import foo\n\ndef bar():\n    return foo()\n",
+        )
+        .expect("should write main fixture source file");
+
+        let graph = extract_graph(temp_dir.path().to_str().expect("temp path should be utf-8"));
+
+        // We expect: 1 file node for main.py, 1 file node for helper.py,
+        // 1 function node for bar (in main.py), 1 function node for foo (in helper.py)
+        // Plus CONTAINS edges for each file
+        // Plus a cross-file REFERENCES edge from bar to foo
+        let node_ids: HashSet<_> = graph
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect();
+
+        assert!(
+            node_ids.contains("main.py"),
+            "expected main.py file node, got: {:?}",
+            node_ids
+        );
+        assert!(
+            node_ids.contains("helper.py"),
+            "expected helper.py file node, got: {:?}",
+            node_ids
+        );
+        assert!(
+            node_ids.contains("main.py:bar"),
+            "expected main.py:bar function node, got: {:?}",
+            node_ids
+        );
+        assert!(
+            node_ids.contains("helper.py:foo"),
+            "expected helper.py:foo function node, got: {:?}",
+            node_ids
+        );
+
+        // Check for CONTAINS relationships
+        assert!(graph.relationships.iter().any(|relationship| {
+            relationship.source_id == "main.py"
+                && relationship.target_id == "main.py:bar"
+                && relationship.relationship_type == "CONTAINS"
+        }));
+        assert!(graph.relationships.iter().any(|relationship| {
+            relationship.source_id == "helper.py"
+                && relationship.target_id == "helper.py:foo"
+                && relationship.relationship_type == "CONTAINS"
+        }));
+
+        // Check for cross-file REFERENCES edge from bar to foo
+        assert!(
+            graph.relationships.iter().any(|relationship| {
+                relationship.source_id == "main.py:bar"
+                    && relationship.target_id == "helper.py:foo"
+                    && relationship.relationship_type == "REFERENCES"
+                    && relationship.ident.as_deref() == Some("foo")
+            }),
+            "expected cross-file REFERENCE from bar to foo, got: {:?}",
+            graph
+                .relationships
+                .iter()
+                .filter(|r| r.relationship_type == "REFERENCES")
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_extract_graph_prefers_same_file_reference_when_duplicate_exists() {
+        let temp_dir = tempdir().expect("should create temp repo");
+
+        fs::write(
+            temp_dir.path().join("helper.py"),
+            "def foo():\n    return 2\n",
+        )
+        .expect("should write helper fixture source file");
+
+        fs::write(
+            temp_dir.path().join("main.py"),
+            "def foo():\n    return 1\n\n\ndef bar():\n    return foo()\n",
+        )
+        .expect("should write main fixture source file");
+
+        let graph = extract_graph(temp_dir.path().to_str().expect("temp path should be utf-8"));
+
+        let references: Vec<_> = graph
+            .relationships
+            .iter()
+            .filter(|relationship| relationship.relationship_type == "REFERENCES")
+            .collect();
+
+        assert!(
+            references.iter().any(|relationship| {
+                relationship.source_id == "main.py:bar"
+                    && relationship.target_id == "main.py:foo"
+                    && relationship.ident.as_deref() == Some("foo")
+            }),
+            "expected same-file reference to win when duplicate names exist, got: {:?}",
+            references
+        );
+        assert!(
+            !references.iter().any(|relationship| {
+                relationship.source_id == "main.py:bar"
+                    && relationship.target_id == "helper.py:foo"
+                    && relationship.ident.as_deref() == Some("foo")
+            }),
+            "did not expect duplicate cross-file reference when same-file target exists, got: {:?}",
+            references
+        );
+    }
+
+    #[test]
+    fn test_extract_graph_cross_file_references_across_directories() {
+        let temp_dir = tempdir().expect("should create temp repo");
+        let pkg_dir = temp_dir.path().join("pkg");
+        let lib_dir = pkg_dir.join("lib");
+        fs::create_dir_all(&lib_dir).expect("should create nested fixture directories");
+
+        fs::write(
+            pkg_dir.join("main.py"),
+            "def local_only():\n    return 0\n\nfrom lib.helpers import foo\n\ndef bar():\n    return foo()\n",
+        )
+        .expect("should write nested main fixture source file");
+
+        fs::write(
+            lib_dir.join("helpers.py"),
+            "def foo():\n    return 1\n",
+        )
+        .expect("should write nested helper fixture source file");
+
+        let graph = extract_graph(temp_dir.path().to_str().expect("temp path should be utf-8"));
+
+        let node_ids: HashSet<_> = graph
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect();
+        assert!(node_ids.contains("pkg/main.py:bar"), "expected nested bar node, got: {:?}", node_ids);
+        assert!(
+            node_ids.contains("pkg/lib/helpers.py:foo"),
+            "expected nested helper foo node, got: {:?}",
+            node_ids
+        );
+
+        assert!(
+            graph.relationships.iter().any(|relationship| {
+                relationship.source_id == "pkg/main.py:bar"
+                    && relationship.target_id == "pkg/lib/helpers.py:foo"
+                    && relationship.relationship_type == "REFERENCES"
+                    && relationship.ident.as_deref() == Some("foo")
+            }),
+            "expected cross-directory REFERENCE from bar to foo, got: {:?}",
+            graph
+                .relationships
+                .iter()
+                .filter(|relationship| relationship.relationship_type == "REFERENCES")
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_extract_graph_cross_file_class_reference_from_function() {
+        let temp_dir = tempdir().expect("should create temp repo");
+        let models_dir = temp_dir.path().join("models");
+        let services_dir = temp_dir.path().join("services");
+        fs::create_dir_all(&models_dir).expect("should create models fixture directory");
+        fs::create_dir_all(&services_dir).expect("should create services fixture directory");
+
+        fs::write(
+            models_dir.join("user.py"),
+            "class User:\n    pass\n",
+        )
+        .expect("should write model fixture source file");
+
+        fs::write(
+            services_dir.join("factory.py"),
+            "def build_user():\n    return User()\n",
+        )
+        .expect("should write service fixture source file");
+
+        let graph = extract_graph(temp_dir.path().to_str().expect("temp path should be utf-8"));
+
+        assert!(
+            graph.relationships.iter().any(|relationship| {
+                relationship.source_id == "services/factory.py:build_user"
+                    && relationship.target_id == "models/user.py:User"
+                    && relationship.relationship_type == "REFERENCES"
+                    && relationship.ident.as_deref() == Some("User")
+            }),
+            "expected FUNCTION -> CLASS cross-file reference, got: {:?}",
+            graph
+                .relationships
+                .iter()
+                .filter(|relationship| relationship.relationship_type == "REFERENCES")
+                .collect::<Vec<_>>()
+        );
     }
 }
