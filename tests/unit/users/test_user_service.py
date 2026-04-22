@@ -109,3 +109,56 @@ class TestUserServiceUpdateLastLogin:
         message, error = user_service.update_last_login("nonexistent", "token")
         assert error is True
         assert "not found" in message.lower()
+
+
+class TestSetupDummyUser:
+    def test_create_user_called_once_when_user_does_not_exist(self, mock_db, monkeypatch):
+        """create_user must be called exactly once — the duplicate call bug (issue #726)."""
+        import os
+        monkeypatch.setenv("defaultUsername", "dummy-uid")
+
+        # get_user_by_uid returns None → user doesn't exist yet
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        service = UserService(mock_db)
+
+        call_count = 0
+
+        def fake_create_user(user):
+            nonlocal call_count
+            call_count += 1
+            return ("dummy-uid", "User created successfully", False)
+
+        monkeypatch.setattr(service, "create_user", lambda u: fake_create_user(u))
+
+        # We need the inner UserService (created inside setup_dummy_user) to also use
+        # the patched create_user, so patch at the class level.
+        monkeypatch.setattr(UserService, "create_user", lambda self, u: fake_create_user(u))
+
+        service.setup_dummy_user()
+
+        assert call_count == 1, (
+            f"create_user was called {call_count} time(s); expected exactly 1 (duplicate call bug #726)"
+        )
+
+    def test_setup_skips_creation_when_user_already_exists(self, mock_db, monkeypatch):
+        """setup_dummy_user must be a no-op when the user already exists."""
+        import os
+        monkeypatch.setenv("defaultUsername", "dummy-uid")
+
+        existing_user = User(uid="dummy-uid", email="defaultuser@potpie.ai", display_name="Dummy User")
+        mock_db.query.return_value.filter.return_value.first.return_value = existing_user
+
+        service = UserService(mock_db)
+        call_count = 0
+
+        def fake_create_user(user):
+            nonlocal call_count
+            call_count += 1
+            return ("dummy-uid", "User created successfully", False)
+
+        monkeypatch.setattr(UserService, "create_user", lambda self, u: fake_create_user(u))
+
+        service.setup_dummy_user()
+
+        assert call_count == 0, "create_user should not be called when user already exists"
