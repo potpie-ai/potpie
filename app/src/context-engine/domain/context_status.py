@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Protocol, Sequence
 
 
 @dataclass(slots=True)
@@ -84,7 +84,84 @@ def resolver_capabilities_to_payload(
     return [asdict(c) for c in capabilities]
 
 
-def status_source_to_payload(source: StatusSource) -> dict[str, Any]:
+# Per-(provider, source_kind) capability matrix. Today no source-backed
+# resolvers are wired (Phase 4 of planning-next-steps.md), so all source kinds
+# advertise the same baseline as the global default. Once richer resolvers land
+# this map flips entries to ``available=True`` per source kind that supports
+# them, letting agents see *why* one source can do ``snippets`` while another
+# can only do ``references_only``.
+_SOURCE_CAPABILITY_OVERRIDES: dict[tuple[str, str], dict[str, ResolverCapability]] = {}
+
+
+class ResolverCapabilityAdvertiser(Protocol):
+    """Narrow read-only view of :class:`SourceResolverPort.capabilities`.
+
+    Declared here (not imported) to avoid a cycle between ``context_status``
+    and ``domain.ports.source_resolver``. The only thing the status layer
+    needs is the list of ``(provider, source_kind, policies)`` triples.
+    """
+
+    def capabilities(self) -> Sequence[Any]:
+        ...
+
+
+def _resolver_capability_map(
+    resolver: ResolverCapabilityAdvertiser | None,
+) -> dict[tuple[str, str], frozenset[str]]:
+    if resolver is None:
+        return {}
+    out: dict[tuple[str, str], frozenset[str]] = {}
+    for entry in resolver.capabilities():
+        provider = getattr(entry, "provider", "")
+        source_kind = getattr(entry, "source_kind", "")
+        policies = getattr(entry, "policies", frozenset())
+        if not provider or not source_kind:
+            continue
+        out[(provider.lower(), source_kind.lower())] = frozenset(policies)
+    return out
+
+
+def source_capabilities_for(
+    source: "StatusSource",
+    *,
+    resolver: ResolverCapabilityAdvertiser | None = None,
+) -> list[ResolverCapability]:
+    """Resolver capability matrix for one source.
+
+    When a ``resolver`` is supplied, its :meth:`capabilities` output upgrades
+    the baseline: any policy the resolver advertises for
+    ``(source.provider, source.source_kind)`` is reported as available with
+    no placeholder reason. ``sync_enabled=False`` still flips every entry to
+    unavailable so agents do not request a policy that cannot be served right
+    now.
+    """
+    overrides = _SOURCE_CAPABILITY_OVERRIDES.get(
+        (source.provider, source.source_kind), {}
+    )
+    advertised = _resolver_capability_map(resolver).get(
+        (source.provider.lower(), source.source_kind.lower()),
+        frozenset(),
+    )
+    out: list[ResolverCapability] = []
+    for default in DEFAULT_RESOLVER_CAPABILITIES:
+        cap = overrides.get(default.policy, default)
+        if default.policy in advertised and not cap.available:
+            cap = ResolverCapability(policy=default.policy, available=True, reason=None)
+        if not source.sync_enabled and cap.available:
+            cap = ResolverCapability(
+                policy=cap.policy,
+                available=False,
+                reason="Source sync is disabled.",
+            )
+        out.append(cap)
+    return out
+
+
+def status_source_to_payload(
+    source: StatusSource,
+    *,
+    resolver: ResolverCapabilityAdvertiser | None = None,
+) -> dict[str, Any]:
     payload = asdict(source)
     for k in (
         "last_sync_at",
@@ -95,6 +172,9 @@ def status_source_to_payload(source: StatusSource) -> dict[str, Any]:
         v = payload.get(k)
         if isinstance(v, datetime):
             payload[k] = v.isoformat()
+    payload["capabilities"] = resolver_capabilities_to_payload(
+        source_capabilities_for(source, resolver=resolver)
+    )
     return payload
 
 

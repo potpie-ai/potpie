@@ -7,13 +7,11 @@ from typing import Any
 from uuid import uuid4
 
 from domain.context_events import ContextEvent, EventScope
-from domain.ports.episodic_graph import EpisodicGraphPort
-from domain.ports.graph_mutation_applier import GraphMutationApplierPort
+from domain.ports.context_graph import ContextGraphPort
 from domain.ports.jobs import JobEnqueuePort, NoOpJobEnqueue
 from domain.ports.reconciliation_agent import ReconciliationAgentPort
 from domain.ingestion_event_models import IngestionEvent
 from domain.ports.reconciliation_ledger import ContextEventRow, ReconciliationLedgerPort
-from domain.ports.structural_graph import StructuralGraphPort
 from domain.reconciliation import ReconciliationResult
 
 from application.use_cases.build_reconciliation_request import build_reconciliation_request
@@ -32,14 +30,12 @@ class RecordReconcileOutcome:
 
 
 def record_and_reconcile_context_event(
-    episodic: EpisodicGraphPort,
-    structural: StructuralGraphPort,
+    context_graph: ContextGraphPort,
     agent: ReconciliationAgentPort,
     reco_ledger: ReconciliationLedgerPort,
     scope: EventScope,
     event: ContextEvent,
     *,
-    mutation_applier: GraphMutationApplierPort | None = None,
     sync: bool = True,
     jobs: JobEnqueuePort | None = None,
 ) -> RecordReconcileOutcome:
@@ -65,13 +61,10 @@ def record_and_reconcile_context_event(
             from application.use_cases.run_ingestion_agent_worker import run_ingestion_agent_for_event
 
             run_ingestion_agent_for_event(
-                episodic,
-                structural,
                 agent,
                 reco_ledger,
                 event_id,
                 jq,
-                mutation_applier=mutation_applier,
             )
         return RecordReconcileOutcome(
             inserted=True,
@@ -81,12 +74,10 @@ def record_and_reconcile_context_event(
         )
     request = build_reconciliation_request(event)
     result = reconcile_event(
-        episodic,
-        structural,
+        context_graph,
         agent,
         request,
         reco_ledger=reco_ledger,
-        mutation_applier=mutation_applier,
     )
     return RecordReconcileOutcome(
         inserted=True,

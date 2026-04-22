@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from domain.errors import ReconciliationApplyError, ReconciliationPlanValidationError
+from domain.graph_mutations import ProvenanceContext
 from domain.reconciliation_issues import validation_line_to_issue
-from domain.ports.episodic_graph import EpisodicGraphPort
-from domain.ports.graph_mutation_applier import GraphMutationApplierPort
+from domain.ports.context_graph import ContextGraphPort
 from domain.ports.reconciliation_agent import ReconciliationAgentPort
 from domain.ports.reconciliation_ledger import ReconciliationLedgerPort
-from domain.ports.structural_graph import StructuralGraphPort
 from domain.reconciliation import (
     MutationSummary,
     ReconciliationRequest,
@@ -16,7 +15,6 @@ from domain.reconciliation import (
 )
 from domain.reconciliation_flags import reconciliation_enabled
 
-from adapters.outbound.context_graph_writer_adapter import DefaultContextGraphWriter
 from application.use_cases.agent_work_capture import (
     bind_agent_work_recorder,
     clear_agent_work_recorder,
@@ -38,13 +36,11 @@ def _merge_mutation_summary(acc: MutationSummary, nxt: MutationSummary) -> None:
 
 
 def reconcile_event(
-    episodic: EpisodicGraphPort,
-    structural: StructuralGraphPort,
+    context_graph: ContextGraphPort,
     agent: ReconciliationAgentPort,
     request: ReconciliationRequest,
     *,
     reco_ledger: ReconciliationLedgerPort | None = None,
-    mutation_applier: GraphMutationApplierPort | None = None,
 ) -> ReconciliationResult:
     """Invoke agent, validate plan, apply deterministically, optionally record run metadata."""
     if not reconciliation_enabled():
@@ -56,6 +52,7 @@ def reconcile_event(
         )
 
     run_id: str | None = None
+    meta: dict | None = None
     if reco_ledger is not None:
         if not reco_ledger.claim_event_for_processing(request.event.event_id):
             return ReconciliationResult(
@@ -90,9 +87,20 @@ def reconcile_event(
             )
         combined_summary = MutationSummary()
         episode_uuids: list[str | None] = []
-        writer = DefaultContextGraphWriter(episodic, structural, mutation_applier)
+        prov_ctx = ProvenanceContext(
+            source_kind=request.event.event_type or request.event.ingestion_kind,
+            source_ref=request.event.source_id or request.event.source_event_id,
+            event_occurred_at=request.event.occurred_at,
+            event_received_at=request.event.received_at,
+            created_by_agent=str(meta.get("agent")) if meta else None,
+            reconciliation_run_id=run_id,
+        )
         for sl in slices:
-            part = writer.apply_plan(sl, expected_pot_id=request.pot_id)
+            part = context_graph.apply_plan(
+                sl,
+                expected_pot_id=request.pot_id,
+                provenance_context=prov_ctx,
+            )
             episode_uuids.extend(part.episode_uuids)
             _merge_mutation_summary(combined_summary, part.mutation_summary)
         result = ReconciliationResult(

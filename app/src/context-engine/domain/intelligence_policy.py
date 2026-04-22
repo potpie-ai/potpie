@@ -38,6 +38,8 @@ class EvidencePlan:
     scope: ContextScope = field(default_factory=ContextScope)
     mandatory: list[str] = field(default_factory=list)
     timeout_budget_ms: int = 4000
+    max_items: int | None = None
+    source_policy: str | None = None
 
 
 def _merge_scope(
@@ -90,7 +92,18 @@ def build_evidence_plan(
     )
     excludes = set(normalize_context_values(request.exclude))
 
+    if request.mode == "deep":
+        timeout = max(timeout, 8_000)
+    elif request.mode == "verify":
+        timeout = max(timeout, 6_000)
+
     plan = EvidencePlan(scope=scope, timeout_budget_ms=timeout)
+
+    if request.mode == "deep":
+        plan.max_items = request.effective_max_items * 2
+
+    if request.mode == "verify" and request.source_policy == "references_only":
+        plan.source_policy = "verify"
 
     # Semantic search: align with QnA prefetch — use when episodic layer is available
     plan.run_semantic_search = (
@@ -159,5 +172,33 @@ def build_evidence_plan(
         plan.mandatory.extend(["artifact_context", "discussion_context"])
     elif sig.needs_history and (scope.file_path or scope.function_name):
         plan.mandatory.append("change_history")
+
+    if request.mode == "deep":
+        # Mark every activated family as mandatory so partial failures surface.
+        activated: list[str] = []
+        if plan.run_semantic_search:
+            activated.append("semantic_search")
+        if plan.run_artifact:
+            activated.append("artifact_context")
+        if plan.run_change_history:
+            activated.append("change_history")
+        if plan.run_decisions:
+            activated.append("decision_context")
+        if plan.run_discussions:
+            activated.append("discussion_context")
+        if plan.run_ownership:
+            activated.append("ownership_context")
+        if plan.run_project_map:
+            activated.append("project_map_context")
+        if plan.run_debugging_memory:
+            activated.append("debugging_memory_context")
+        if plan.run_causal_chain:
+            activated.append("causal_chain_context")
+        # Preserve order, deduplicate against existing mandatory entries.
+        seen = set(plan.mandatory)
+        for name in activated:
+            if name not in seen:
+                plan.mandatory.append(name)
+                seen.add(name)
 
     return plan

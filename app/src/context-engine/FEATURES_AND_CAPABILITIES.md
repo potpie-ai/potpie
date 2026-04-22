@@ -108,7 +108,8 @@ All routes below are **relative to the mounted prefix** (`/api/v1/context` or `/
 | POST | `/ingest-pr` | Merged PR ingest via `IngestionSubmissionService` (persist + reconcile or queue). |
 | POST | `/ingest` | Raw Graphiti episode: event store + **202 queued** vs **200 applied** (`sync` / `X-Context-Ingest-Sync`). |
 | POST | `/reset` | Hard reset: Graphiti + structural Neo4j + optional Postgres ledgers. |
-| POST | `/events/reconcile` (alias `/events/ingest`) | Normalize **context event** → agent reconciliation (feature-flagged; requires reconciliation agent on container). |
+| POST | `/events/reconcile` | Canonical event submission path. Normalize **context event** → agent reconciliation (feature-flagged; requires reconciliation agent on container). |
+| POST | `/events/ingest` | **Deprecated** compatibility alias of `/events/reconcile`. Hidden from OpenAPI; responses include `Deprecation: true`, `Warning`, and `Link` headers. Each call increments a counter and logs a WARNING. |
 | POST | `/events/replay` | Re-run reconciliation for an existing `context_events` row. |
 
 ### 6.2 Event observability
@@ -190,7 +191,7 @@ This is the main **“agent-facing”** aggregated API beyond raw search.
 **Risks / things to keep watching**
 
 - **Operational complexity:** Graphiti + Neo4j + Postgres + optional Hatchet + feature flags is a lot; teams need a “happy path” doc and minimal env for dev.
-- **Two speed modes:** legacy direct Graphiti vs event-store-first async must stay obvious in APIs and CLI output (you already surface `queued` vs `applied` vs `legacy_direct`).
+- **Two speed modes:** direct unified graph writes vs event-store-first async must stay obvious in APIs and CLI output (the surface now uses `queued` vs `applied`).
 - **Reconciliation agent:** powerful but optional; product should define when it is required vs PR/episodic-only mode.
 
 Overall, the codebase reads as a **coherent platform** for pot-scoped context: ingestion, query, reset, background processing, and agent-oriented resolution—rather than a one-off script. If your roadmap doubles down on **event-sourced ingestion** and **multi-tenant pots**, the current split between `potpie` and Potpie `context_graph` wiring is the right direction.

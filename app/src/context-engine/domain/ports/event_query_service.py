@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from domain.context_status import EventLedgerHealth
 from domain.ingestion_event_models import EventListFilters, EventListPage, IngestionEvent
 
 
@@ -25,4 +26,13 @@ class EventQueryService(Protocol):
         cursor: str | None,
         limit: int,
     ) -> EventListPage:
+        ...
+
+    def summarize_pot_events(
+        self,
+        pot_id: str,
+        *,
+        recent_error_limit: int = 5,
+    ) -> EventLedgerHealth:
+        """Aggregate ingestion-event lifecycle for status responses."""
         ...

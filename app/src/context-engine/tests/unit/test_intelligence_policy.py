@@ -7,6 +7,7 @@ import pytest
 from domain.intelligence_models import (
     ArtifactRef,
     CapabilitySet,
+    ContextBudget,
     ContextResolutionRequest,
     ContextScope,
 )
@@ -231,6 +232,13 @@ def test_build_evidence_plan_project_map_includes_filtered() -> None:
     assert "prior_fixes" not in plan.project_map_includes
 
 
+def test_build_evidence_plan_tickets_include_activates_project_map() -> None:
+    req = _req(include=["tickets"])
+    plan = build_evidence_plan(req, caps=_full_caps())
+    assert plan.run_project_map
+    assert "tickets" in plan.project_map_includes
+
+
 def test_build_evidence_plan_debugging_memory_includes_filtered() -> None:
     req = _req(include=["prior_fixes", "diagnostic_signals", "purpose"])
     plan = build_evidence_plan(req, caps=_full_caps())
@@ -270,24 +278,18 @@ def test_build_evidence_plan_causal_chain_requires_cap() -> None:
 
 
 def test_build_evidence_plan_timeout_clamped_to_minimum() -> None:
-    from domain.intelligence_models import ContextBudget
-
     req = _req(budget=ContextBudget(timeout_ms=0))
     plan = build_evidence_plan(req, caps=_no_caps())
     assert plan.timeout_budget_ms >= 500
 
 
 def test_build_evidence_plan_timeout_clamped_to_maximum() -> None:
-    from domain.intelligence_models import ContextBudget
-
     req = _req(budget=ContextBudget(timeout_ms=999_999))
     plan = build_evidence_plan(req, caps=_no_caps())
     assert plan.timeout_budget_ms <= 30_000
 
 
 def test_build_evidence_plan_timeout_within_range_is_preserved() -> None:
-    from domain.intelligence_models import ContextBudget
-
     req = _req(budget=ContextBudget(timeout_ms=6_000))
     plan = build_evidence_plan(req, caps=_no_caps())
     assert plan.timeout_budget_ms == 6_000
@@ -372,3 +374,82 @@ def test_build_evidence_plan_null_signals_falls_back_to_extraction() -> None:
     req = _req(query="Tell me about PR #8")
     plan = build_evidence_plan(req, signals=None, caps=_full_caps())
     assert plan.scope.pr_number == 8
+
+
+# ---------------------------------------------------------------------------
+# Mode behaviour
+# ---------------------------------------------------------------------------
+
+
+def test_build_evidence_plan_deep_increases_timeout() -> None:
+    req = _req(mode="deep", budget=ContextBudget(timeout_ms=2_000))
+    plan = build_evidence_plan(req, caps=_no_caps())
+    assert plan.timeout_budget_ms >= 8_000
+
+
+def test_build_evidence_plan_verify_increases_timeout() -> None:
+    req = _req(mode="verify", budget=ContextBudget(timeout_ms=2_000))
+    plan = build_evidence_plan(req, caps=_no_caps())
+    assert plan.timeout_budget_ms >= 6_000
+
+
+def test_build_evidence_plan_fast_and_balanced_preserve_timeout() -> None:
+    req_fast = _req(mode="fast", budget=ContextBudget(timeout_ms=3_000))
+    req_balanced = _req(mode="balanced", budget=ContextBudget(timeout_ms=3_000))
+    plan_fast = build_evidence_plan(req_fast, caps=_no_caps())
+    plan_balanced = build_evidence_plan(req_balanced, caps=_no_caps())
+    assert plan_fast.timeout_budget_ms == 3_000
+    assert plan_balanced.timeout_budget_ms == 3_000
+
+
+def test_build_evidence_plan_deep_doubles_max_items() -> None:
+    req = _req(mode="deep", include=["recent_changes"], budget=ContextBudget(max_items=10))
+    plan = build_evidence_plan(req, caps=_full_caps())
+    assert plan.max_items == 20
+
+
+def test_build_evidence_plan_non_deep_leaves_max_items_none() -> None:
+    req = _req(mode="fast", include=["recent_changes"], budget=ContextBudget(max_items=10))
+    plan = build_evidence_plan(req, caps=_full_caps())
+    assert plan.max_items is None
+
+
+def test_build_evidence_plan_deep_marks_activated_families_mandatory() -> None:
+    req = _req(
+        mode="deep",
+        include=["recent_changes", "decisions", "owners"],
+        scope=ContextScope(file_path="src/foo.py"),
+    )
+    plan = build_evidence_plan(req, caps=_full_caps())
+    assert "change_history" in plan.mandatory
+    assert "decision_context" in plan.mandatory
+    assert "ownership_context" in plan.mandatory
+
+
+def test_build_evidence_plan_deep_mandatory_does_not_duplicate_existing() -> None:
+    req = _req(
+        mode="deep",
+        scope=ContextScope(pr_number=5),
+    )
+    plan = build_evidence_plan(req, caps=_full_caps())
+    # artifact_context and discussion_context are already mandatory from PR scope.
+    assert plan.mandatory.count("artifact_context") == 1
+    assert plan.mandatory.count("discussion_context") == 1
+
+
+def test_build_evidence_plan_verify_elevates_default_source_policy() -> None:
+    req = _req(mode="verify", source_policy="references_only")
+    plan = build_evidence_plan(req, caps=_no_caps())
+    assert plan.source_policy == "verify"
+
+
+def test_build_evidence_plan_verify_does_not_override_explicit_source_policy() -> None:
+    req = _req(mode="verify", source_policy="summary")
+    plan = build_evidence_plan(req, caps=_no_caps())
+    assert plan.source_policy is None
+
+
+def test_build_evidence_plan_non_verify_leaves_source_policy_none() -> None:
+    req = _req(mode="fast", source_policy="references_only")
+    plan = build_evidence_plan(req, caps=_no_caps())
+    assert plan.source_policy is None

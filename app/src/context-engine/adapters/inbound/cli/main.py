@@ -146,7 +146,7 @@ def _ingest_result_from_http(status_code: int, data: dict[str, Any]) -> dict[str
             "errors": list(data.get("errors") or []),
         }
     return {
-        "status": "legacy_direct",
+        "status": "applied",
         "episode_uuid": data.get("episode_uuid"),
         "event_id": data.get("event_id"),
         "job_id": data.get("job_id"),
@@ -734,7 +734,10 @@ pot_app.add_typer(pot_repo_app, name="repo")
 def pot_hard_reset(
     pot_id: Optional[str] = typer.Argument(
         None,
-        help="Pot id (omit to infer from pot use / git --cwd, same as ingest).",
+        help=(
+            "Pot id to reset. Strongly recommended to pass explicitly; omit only "
+            "when you are inside the pot's git working tree and have passed --yes."
+        ),
     ),
     skip_ledger: bool = typer.Option(
         False,
@@ -746,11 +749,44 @@ def pot_hard_reset(
         "--cwd",
         help="Git working tree when inferring pot (ignored when pot id is passed).",
     ),
+    assume_yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip the destructive-action confirmation prompt.",
+    ),
 ) -> None:
-    """Delete all context-graph data for this pot (Potpie POST /api/v2/context/reset)."""
+    """[DESTRUCTIVE] Delete ALL context-graph data for this pot.
+
+    Operator/admin command. Calls Potpie POST ``/api/v2/context/reset`` and
+    triggers a ``context_engine.operator_audit`` log entry on the server.
+    Prompts for confirmation unless ``--yes`` is passed.
+    """
     j, v = _flags()
     cwd_resolved = str(Path(cwd).resolve())
     resolved = _pot_id_or_git(pot_id, cwd=cwd_resolved)
+    pot_was_inferred = pot_id is None
+    if not assume_yes:
+        scope_note = (
+            f"pot {resolved} (inferred from {cwd_resolved})"
+            if pot_was_inferred
+            else f"pot {resolved}"
+        )
+        try:
+            confirmed = typer.confirm(
+                f"This will DELETE all context-graph data for {scope_note}. "
+                "This cannot be undone. Continue?",
+                default=False,
+            )
+        except typer.Abort:
+            confirmed = False
+        if not confirmed:
+            emit_error(
+                "Hard reset aborted",
+                "Confirmation declined; re-run with --yes to skip the prompt.",
+                verbose=v,
+            )
+            raise typer.Exit(code=1)
     client = _cli_client_or_exit(v)
     try:
         out = client.reset({"pot_id": resolved, "skip_ledger": skip_ledger})
@@ -1134,7 +1170,7 @@ def search(
     else:
         pot_id = _pot_id_or_git(first, cwd=cwd_resolved)
         query = second
-    labels = None
+    labels: list[str] = []
     if node_labels:
         labels = [x.strip() for x in node_labels.split(",") if x.strip()]
     as_of_dt: Optional[datetime] = None
@@ -1395,7 +1431,7 @@ def ingest_cmd(
         print_ingest_result(out, as_json=j)
         raise typer.Exit(code=2)
     if (
-        out["status"] in ("applied", "legacy_direct")
+        out["status"] == "applied"
         and not out.get("episode_uuid")
         and not out.get("event_id")
     ):

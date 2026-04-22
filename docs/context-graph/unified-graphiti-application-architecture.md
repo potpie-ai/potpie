@@ -9,7 +9,7 @@ The broader product architecture is in [`graph.md`](graph.md). This document is 
 - `EpisodicGraphPort`
 - `StructuralGraphPort`
 
-with a single graph application port whose default adapter writes and reads from Graphiti-backed Neo4j.
+with a single graph application layer whose default adapter writes and reads from Graphiti-backed Neo4j. Compatibility branches are not part of the target design.
 
 ## Current State
 
@@ -21,7 +21,7 @@ The implementation already stores both layers in Neo4j and often uses the same `
 - PR ingest writes an episode, receives an `episode_uuid`, stamps canonical PR/commit/decision entities, then writes code bridges.
 - `context_resolve` already composes Graphiti search and structural reads through `HybridGraphIntelligenceProvider`.
 
-So storage is partially unified, but the application layer is not. The code still has two mental models:
+So storage is partially unified, but the application layer is not. The code still has two mental models, and the current `GraphitiContextGraphAdapter` is a facade over these older surfaces:
 
 ```text
 application/use_cases
@@ -58,6 +58,16 @@ This does not mean every write must go through Graphiti's LLM extraction. It mea
 - semantic search and exact reads operate over the same entity space
 - code graph bridges are treated as bridge facts into the context graph, not a second context graph
 
+Source-specific behavior belongs before or after this graph layer:
+
+- planners translate incoming GitHub, Linear, Slack, docs, incident, deployment,
+  or alert events into generic reconciliation plans
+- source resolvers fetch, summarize, verify, and snippet source payloads on
+  demand
+- graph apply code receives only ontology-validated generic mutations
+
+The graph apply path must not branch on provider-specific compatibility bundles.
+
 ## Design Principles
 
 1. One application graph port.
@@ -71,9 +81,10 @@ This does not mean every write must go through Graphiti's LLM extraction. It mea
 
 ## New Domain Port
 
-Introduce `domain/ports/context_graph.py`.
+Use `domain/ports/context_graph.py` as the application graph boundary.
 
-The port should group graph operations by use, not by storage technology:
+The port should group graph operations by use, not by storage technology. The
+read side already has the minimal shape:
 
 ```python
 class ContextGraphPort(Protocol):
@@ -84,7 +95,11 @@ class ContextGraphPort(Protocol):
     async def query_async(self, request: ContextGraphQuery) -> ContextGraphResult: ...
 ```
 
-The first implementation slice intentionally keeps this as a read port only. Write unification should be handled separately after the query surface is stable.
+Write unification is now the highest-priority migration step. Either extend this
+port with a bounded write operation such as `apply_plan()`, or create a sibling
+write port owned by the same Graphiti adapter. In both cases, application use
+cases should depend on one graph abstraction rather than accepting episodic and
+structural ports separately.
 
 ## Adapter Shape
 
@@ -95,9 +110,9 @@ The adapter should replace the current combination of:
 - `GraphitiEpisodicAdapter`
 - most of `Neo4jStructuralAdapter`
 - `StructuralGraphMutationApplier`
-- `DefaultContextGraphWriter`
+- the deleted `DefaultContextGraphWriter` wrapper
 
-The first version can internally delegate to existing code to reduce risk:
+The current version internally delegates to existing code to reduce risk:
 
 ```text
 GraphitiContextGraphAdapter
@@ -107,7 +122,8 @@ GraphitiContextGraphAdapter
     +-- Neo4jCodeBridgeStore for FILE/NODE bridge reads/writes
 ```
 
-After the port is stable, the delegated classes can be merged or renamed.
+After the write path is unified, the delegated classes should become adapter
+internals or be deleted. They should not remain application-facing ports.
 
 ## Data Model
 
@@ -474,11 +490,14 @@ Merged PR ingestion should stop being a special two-graph path.
 Target:
 
 1. Fetch PR bundle.
-2. Build a compatibility reconciliation plan.
+2. Build a provider-specific planner input.
 3. Apply the plan through `ContextGraphPort`.
 4. Record ingestion ledger.
 
-The compatibility plan may still use deterministic PR stamping logic, but that logic should live behind the Graphiti context graph adapter.
+The planner must emit generic ontology mutations, not a GitHub compatibility
+bundle. Deterministic PR stamping logic should be deleted or reduced to a
+planner helper that produces `EntityUpsert`, `EdgeUpsert`, and invalidation
+operations.
 
 ### Raw Episode Ingest
 
@@ -519,7 +538,9 @@ Change these to depend on `ContextGraphPort`:
 - `query_context.py`
 - `resolve_context.py` / `context_resolution.py`
 
-Do this incrementally. The first pass can use compatibility adapters so the diff stays controlled.
+Do this incrementally, but do not add new provider-specific write branches while
+migrating. Temporary adapters are acceptable only as internal implementation
+details on the path to deleting the old application ports.
 
 ### Container Wiring
 
@@ -529,7 +550,7 @@ Do this incrementally. The first pass can use compatibility adapters so the diff
 context_graph: ContextGraphPort
 ```
 
-Compatibility properties can remain during migration:
+Temporary migration properties can remain during migration:
 
 ```python
 episodic -> context_graph.episodic_compat
@@ -563,7 +584,7 @@ Do not add tools for the unified graph. The unification is internal.
 
 ## Migration Plan
 
-### Phase 0: Freeze Public Behavior
+### Phase 0: Freeze Public Behavior And Target Invariants
 
 Before changing internals, add characterization tests for:
 
@@ -572,14 +593,15 @@ Before changing internals, add characterization tests for:
 - file owners
 - decisions
 - PR review context
-- PR diff
 - project graph
 - graph overview
 - context resolve envelope
 - reset behavior
-- merged PR ingest counts
+- merged PR ingest entity/edge effects
 
-These tests should assert response shape and important fields, not implementation details.
+These tests should assert response shape, important fields, provenance, and the
+absence of source-specific graph apply branches. Do not add new tests that bless
+compatibility branches as permanent behavior.
 
 ### Phase 1: Add Unified Port And Delegating Adapter
 
@@ -597,7 +619,9 @@ No behavior change yet.
 
 Change reconciliation apply paths to receive `ContextGraphPort`.
 
-Keep compatibility methods under the adapter if needed, but make the application use case one-graph aware.
+Keep temporary methods under the adapter only while the application dependency is
+being collapsed. They should not be called by application use cases once the
+phase is complete.
 
 Success criteria:
 
@@ -627,8 +651,9 @@ Convert merged PR ingest and backfill to produce/apply a reconciliation plan thr
 
 Success criteria:
 
-- PR ingest no longer manually calls `episodic.add_episode` and then `structural.stamp_pr_entities` in application code.
-- compatibility PR stamping is hidden behind the adapter or compatibility planner.
+- PR ingest no longer manually calls `episodic.add_episode` and then a
+  provider-specific structural stamping branch in application code.
+- PR-specific planning emits generic canonical mutations.
 - code bridge writes are explicit graph mutations or bridge mutations.
 
 ### Phase 5: Retire Old Ports From Application
@@ -652,23 +677,25 @@ Replace direct structural Cypher writes with a Graphiti ontology adapter where G
 
 Keep controlled Cypher for performance-sensitive bridge writes if needed. The application should not care.
 
-## Compatibility Strategy
+## Migration Strategy
 
 Do not attempt a big-bang rewrite.
 
-Use compatibility shims:
+Use temporary shims only to preserve behavior while removing application
+dependencies on the old ports:
 
 ```text
 ContextGraphPort
     |
     +-- semantic search      -> existing GraphitiEpisodicAdapter
     +-- canonical exact read -> existing Neo4jStructuralAdapter
-    +-- mutations            -> existing Neo4jStructuralAdapter
+    +-- mutations            -> generic canonical mutation applier
 ```
 
-Then pull logic inward behind the unified adapter over time.
+Then pull logic inward behind the unified adapter and delete the old surfaces.
 
-This lets the repo keep shipping while the application dependency graph changes.
+This lets the repo keep shipping while the application dependency graph changes,
+but source-specific compatibility branches should shrink on every migration PR.
 
 ## Testing Strategy
 
@@ -682,7 +709,7 @@ Add fake `ContextGraphPort` tests for:
 - provenance propagation
 - query dispatch
 - result normalization
-- compatibility response shape
+- provenance response shape
 
 ### Integration Tests
 
@@ -732,17 +759,21 @@ If Graphiti extraction writes unknown labels or generic edges, those should rema
 
 Changing all application use cases at once will be risky. The delegating adapter phase is required.
 
-## Recommended First Pull Request
+## Recommended Next Pull Request
 
-The first implementation PR should be small:
+The highest-risk PR compatibility write path has been removed, and ingestion
+writes now go through `ContextGraphPort.apply_plan()` / `write_raw_episode()`.
+Hard reset is also routed through the unified graph port, and the first
+`ContextGraphQuery` presets are in place for the old exact-read shapes. The
+next implementation PR should keep shrinking direct low-level graph access:
 
-1. Add `ContextGraphPort`.
-2. Add `GraphitiContextGraphAdapter` that delegates to existing episodic/structural adapters.
-3. Wire `ContextEngineContainer.context_graph`.
-4. Add tests proving the adapter delegates existing query behavior.
-5. Change only one read use case or endpoint to use the unified port.
-
-Do not rewrite PR ingest or context resolution in the first PR.
+1. Replace the named query handlers with planner objects for exact, traversal,
+   temporal, semantic, hybrid, and answer goals.
+2. Move remaining intelligence/context consumers off direct `query_context.py`
+   imports.
+3. Rename or retire bridge-specific ledger fields from the old PR path.
+4. Keep low-level Graphiti/Neo4j helpers as adapter internals until they can be
+   deleted.
 
 ## End State
 

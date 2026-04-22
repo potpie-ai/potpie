@@ -19,6 +19,7 @@ class EpisodicGraphPort(Protocol):
         episode_body: str,
         source_description: str,
         reference_time: datetime,
+        provenance: ProvenanceRef | None = None,
     ) -> Optional[str]:
         """Return episode UUID or None if disabled/failed."""
 
@@ -37,6 +38,7 @@ class EpisodicGraphPort(Protocol):
         episode_body: str,
         source_description: str,
         reference_time: datetime,
+        provenance: ProvenanceRef | None = None,
     ) -> Optional[str]:
         ...
 

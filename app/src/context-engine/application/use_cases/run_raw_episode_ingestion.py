@@ -1,4 +1,4 @@
-"""Single entry for raw episodic ingest: event store + queue or legacy direct Graphiti."""
+"""Single entry for raw episodic ingest: event store + queue or direct graph apply."""
 
 from __future__ import annotations
 
@@ -9,11 +9,9 @@ from typing import Literal
 from sqlalchemy.orm import Session
 
 from application.services.ingestion_submission_service import DefaultIngestionSubmissionService
-from application.use_cases.ingest_episode import ingest_episode
 from bootstrap.container import ContextEngineContainer
 from domain.ingestion_event_models import EventReceipt, IngestionSubmissionRequest
 from domain.ingestion_kinds import INGESTION_KIND_RAW_EPISODE
-from domain.ports.graph_mutation_applier import GraphMutationApplierPort
 from domain.reconciliation import ReconciliationResult
 
 
@@ -25,7 +23,6 @@ class RunRawEpisodeIngestionResult:
     status: Literal[
         "applied",
         "queued",
-        "legacy_direct",
         "duplicate",
         "error",
         "reconciliation_rejected",
@@ -109,7 +106,6 @@ def run_raw_episode_ingestion(
     reference_time: datetime,
     idempotency_key: str | None,
     sync: bool,
-    mutation_applier: GraphMutationApplierPort | None = None,
     source_channel: str = "http",
 ) -> RunRawEpisodeIngestionResult:
     """
@@ -118,7 +114,7 @@ def run_raw_episode_ingestion(
     - With ``DATABASE_URL`` / ``db``: persist ``context_events`` + step, then
       ``sync=True`` applies inline; ``sync=False`` enqueues apply (or inline when
       job queue is no-op).
-    - Without ``db`` and ``sync=True``: legacy direct ``ingest_episode`` (Graphiti only).
+    - Without ``db`` and ``sync=True``: direct unified graph write.
     - Without ``db`` and ``sync=False``: error (async requires Postgres).
     """
     if not container.settings.is_enabled():
@@ -143,8 +139,13 @@ def run_raw_episode_ingestion(
                 status="error",
                 error="async_requires_database",
             )
-        out = ingest_episode(
-            container.episodic,
+        if container.context_graph is None:
+            return RunRawEpisodeIngestionResult(
+                ok=False,
+                status="error",
+                error="context_graph_unavailable",
+            )
+        out = container.context_graph.write_raw_episode(
             pot_id,
             name,
             episode_body,
@@ -160,11 +161,11 @@ def run_raw_episode_ingestion(
             )
         return RunRawEpisodeIngestionResult(
             ok=True,
-            status="legacy_direct",
+            status="applied",
             episode_uuid=uid,
         )
 
-    svc = DefaultIngestionSubmissionService(container, db, mutation_applier=mutation_applier)
+    svc = DefaultIngestionSubmissionService(container, db)
     req = IngestionSubmissionRequest(
         pot_id=pot_id,
         ingestion_kind=INGESTION_KIND_RAW_EPISODE,

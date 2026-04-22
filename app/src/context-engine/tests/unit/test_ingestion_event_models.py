@@ -21,7 +21,7 @@ from domain.ports.event_planner import EventPlanner
 from domain.ports.event_query_service import EventQueryService
 from domain.ports.ingestion_event_queue import IngestionQueue
 from domain.ports.ingestion_event_store import IngestionEventStore
-from domain.ports.context_graph_writer import ContextGraphWriter
+from domain.ports.context_graph import ContextGraphPort
 from domain.ports.ingestion_submission import IngestionSubmissionService
 from domain.ports.step_executor import StepExecutor
 
@@ -141,4 +141,4 @@ def test_protocols_are_importable() -> None:
     assert EventPlanner is not None
     assert StepExecutor is not None
     assert EventQueryService is not None
-    assert ContextGraphWriter is not None
+    assert ContextGraphPort is not None

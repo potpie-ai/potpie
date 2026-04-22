@@ -1,4 +1,4 @@
-"""Neo4j code graph + Entity bridges (port)."""
+"""Neo4j structural graph read and generic mutation port."""
 
 from typing import Any, Protocol
 
@@ -9,36 +9,9 @@ from domain.graph_mutations import (
     InvalidationOp,
     ProvenanceRef,
 )
-from domain.ingestion import BridgeResult
 
 
 class StructuralGraphPort(Protocol):
-    def write_bridges(
-        self,
-        pot_id: str,
-        pr_entity_key: str,
-        pr_number: int,
-        repo_name: str,
-        files_with_patches: list[dict[str, Any]],
-        review_threads: list[dict[str, Any]],
-        merged_at: str | None,
-        is_live: bool,
-    ) -> BridgeResult: ...
-
-    def stamp_pr_entities(
-        self,
-        pot_id: str,
-        episode_uuid: str,
-        repo_name: str,
-        pr_number: int,
-        commits: list[dict[str, Any]],
-        review_threads: list[dict[str, Any]],
-        pr_data: dict[str, Any] | None = None,
-        author: str | None = None,
-        pr_title: str | None = None,
-        issue_comments: list[dict[str, Any]] | None = None,
-    ) -> dict[str, int]: ...
-
     def get_change_history(
         self,
         pot_id: str,

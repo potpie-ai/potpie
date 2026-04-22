@@ -10,6 +10,12 @@ Primary script:
 uv run python app/src/context-engine/scripts/context_engine_lab.py --help
 ```
 
+Comprehensive benchmark script:
+
+```bash
+uv run python app/src/context-engine/scripts/benchmark_context_engine.py --help
+```
+
 Mock-only E2E, no Potpie server or Neo4j required:
 
 ```bash
@@ -49,10 +55,22 @@ Reports are written to:
 app/src/context-engine/.tmp/context-engine-lab-report.json
 ```
 
+Benchmark reports are written to:
+
+```text
+app/src/context-engine/.tmp/context-graph-benchmark-report.json
+```
+
 Mock data lives at:
 
 ```text
 app/src/context-engine/scripts/mock_context_data.json
+```
+
+Benchmark data lives at:
+
+```text
+app/src/context-engine/benchmarks/data/context_graph_benchmark_dataset.json
 ```
 
 ## Coverage
@@ -75,6 +93,44 @@ The harness exercises:
 - live `context_resolve` for bundled recipes
 - optional live raw episode ingest
 - optional live `context_record`
+
+The benchmark harness exercises and scores:
+
+- feature, debugging, review, operations, semantic search, and readiness/quality scenarios
+- the stable `ContextGraphQuery` answer and retrieve contracts
+- the agent-facing `context_resolve` recipe shape through `intent`, `include`, `scope`, `source_policy`, and `budget`
+- PR-shaped source data as it arrives through `SourceControlPort`: PR metadata, changed files, commits, review comments, issue comments, linked issues, and optional diff snippets
+- source-reference-first behavior: compact graph memory plus source refs, freshness, fallbacks, and quality metadata
+- latency percentiles per scenario and regression comparison against a prior JSON report
+
+Benchmark modes:
+
+```bash
+# Fast deterministic provider, no HTTP.
+uv run python app/src/context-engine/scripts/benchmark_context_engine.py mock
+
+# In-process FastAPI router with injected auth and an in-memory ContextGraphPort.
+uv run python app/src/context-engine/scripts/benchmark_context_engine.py http-e2e
+
+# Live Potpie /api/v2/context API using POTPIE_API_KEY or stored potpie login credentials.
+uv run python app/src/context-engine/scripts/benchmark_context_engine.py api --pot-id <pot-id> --repo-name <owner/repo>
+```
+
+Regression workflow:
+
+```bash
+uv run python app/src/context-engine/scripts/benchmark_context_engine.py http-e2e \
+  --report app/src/context-engine/.tmp/context-graph-baseline.json
+
+uv run python app/src/context-engine/scripts/benchmark_context_engine.py http-e2e \
+  --baseline app/src/context-engine/.tmp/context-graph-baseline.json
+```
+
+For live PR ingestion, the benchmark defaults to converting PR fixtures into
+bounded PR episodes so it can run without GitHub credentials. Use
+`--ingest-pr-live` only against an API host with source-control adapters and
+repository-to-pot mapping configured; that mode calls `/api/v2/context/ingest-pr`
+for the fixture PR numbers.
 
 ## Findings
 

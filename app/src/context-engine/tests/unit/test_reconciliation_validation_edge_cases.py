@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -190,35 +189,6 @@ def test_validate_exceeds_max_invalidations_raises() -> None:
     plan = _valid_plan(invalidations=invalidations)
     with pytest.raises(ReconciliationPlanValidationError, match="invalidation cap"):
         validate_reconciliation_plan(plan, "p1")
-
-
-# ---------------------------------------------------------------------------
-# Compat plan bypasses structural caps
-# ---------------------------------------------------------------------------
-
-
-def test_validate_compat_plan_skips_structural_validation() -> None:
-    compat = MagicMock()
-    plan = ReconciliationPlan(
-        event_ref=_ref(),
-        summary="compat",
-        episodes=[_episode()] * (MAX_EPISODES + 10),  # episodes still capped
-        compat_github_pr_merged=compat,
-    )
-    # episodes > MAX_EPISODES should still fail
-    with pytest.raises(ReconciliationPlanValidationError, match="too many episodes"):
-        validate_reconciliation_plan(plan, "p1")
-
-
-def test_validate_compat_plan_within_episode_cap_passes() -> None:
-    compat = MagicMock()
-    plan = ReconciliationPlan(
-        event_ref=_ref(),
-        summary="compat",
-        episodes=[_episode()],
-        compat_github_pr_merged=compat,
-    )
-    validate_reconciliation_plan(plan, "p1")
 
 
 # ---------------------------------------------------------------------------

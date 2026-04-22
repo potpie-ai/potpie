@@ -1,13 +1,11 @@
 from typing import Any, Optional
 
-from adapters.outbound.graphiti.episodic import GraphitiEpisodicAdapter
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.modules.context_graph.wiring import PotpieContextEngineSettings
-from app.modules.projects.projects_model import Project
-from application.use_cases.query_context import search_pot_context, search_pot_context_async
+from app.modules.context_graph.wiring import build_container_for_user_session
+from domain.graph_query import preset_semantic_search
 
 
 class GetPotContextInput(BaseModel):
@@ -26,11 +24,12 @@ class GetPotContextTool:
     def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db
         self.user_id = user_id
-        self._episodic = GraphitiEpisodicAdapter(PotpieContextEngineSettings())
+        self._container = build_container_for_user_session(sql_db, user_id)
+        self._settings = self._container.settings
+        self._context_graph = self._container.context_graph
 
     def _assert_pot_access(self, pot_id: str) -> None:
-        project = self.sql_db.query(Project).filter(Project.id == pot_id).first()
-        if not project or project.user_id != self.user_id:
+        if self._container.pots.resolve_pot(pot_id) is None:
             raise ValueError("Pot scope not found for user")
 
     async def arun(
@@ -41,13 +40,17 @@ class GetPotContextTool:
         node_labels: Optional[list[str]] = None,
     ) -> list[dict[str, Any]]:
         self._assert_pot_access(pot_id)
-        return await search_pot_context_async(
-            self._episodic,
-            pot_id,
-            query,
-            limit=max(1, min(limit, 50)),
-            node_labels=node_labels,
+        if not self._settings.is_enabled() or self._context_graph is None:
+            return []
+        out = await self._context_graph.query_async(
+            preset_semantic_search(
+                pot_id=pot_id,
+                query=query,
+                limit=max(1, min(limit, 50)),
+                node_labels=node_labels,
+            )
         )
+        return list(out.result or [])
 
     def run(
         self,
@@ -57,13 +60,17 @@ class GetPotContextTool:
         node_labels: Optional[list[str]] = None,
     ) -> list[dict[str, Any]]:
         self._assert_pot_access(pot_id)
-        return search_pot_context(
-            self._episodic,
-            pot_id,
-            query,
-            limit=max(1, min(limit, 50)),
-            node_labels=node_labels,
+        if not self._settings.is_enabled() or self._context_graph is None:
+            return []
+        out = self._context_graph.query(
+            preset_semantic_search(
+                pot_id=pot_id,
+                query=query,
+                limit=max(1, min(limit, 50)),
+                node_labels=node_labels,
+            )
         )
+        return list(out.result or [])
 
 
 def get_pot_context_tool(sql_db: Session, user_id: str) -> StructuredTool:

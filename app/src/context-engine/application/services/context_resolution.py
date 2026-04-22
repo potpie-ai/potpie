@@ -35,6 +35,7 @@ from domain.graph_quality import (
 from domain.intelligence_policy import EvidencePlan, build_evidence_plan
 from domain.intelligence_signals import extract_signals
 from domain.ports.intelligence_provider import IntelligenceProvider
+from domain.ports.source_resolver import SourceResolverPort
 from domain.source_references import (
     assess_freshness,
     dedupe_source_references,
@@ -44,6 +45,12 @@ from domain.source_references import (
     source_reference_from_mapping,
     SourceFallback,
     SourceReferenceRecord,
+)
+from domain.source_resolution import (
+    ResolverAuthContext,
+    ResolverBudget,
+    ResolverFallback,
+    SourceResolutionResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -138,6 +145,27 @@ def _compute_coverage(
     )
 
 
+def _infer_source_system(kind: str | None, url: str | None) -> str | None:
+    """Pick a ``source_system`` so the composite resolver can dispatch.
+
+    Phase 5 routes diff/snippet detail through ``artifact={kind:'pr'}`` plus
+    ``source_policy=summary``/``snippets``. For that to work the artifact ref
+    must carry a ``source_system`` the resolver chain matches on. PR-shaped
+    artifacts default to GitHub today; other kinds inherit only if their URL
+    obviously belongs to a known host.
+    """
+    k = (kind or "").lower()
+    if k in {"pr", "pull_request", "pullrequest"}:
+        return "github"
+    if url:
+        host = url.lower()
+        if "github.com" in host:
+            return "github"
+        if "gitlab" in host:
+            return "gitlab"
+    return None
+
+
 def _collect_source_references(
     request: ContextResolutionRequest,
     semantic_hits: list[dict[str, Any]],
@@ -164,10 +192,16 @@ def _collect_source_references(
             refs.append(ref)
 
     for artifact in artifacts:
+        artifact_system = _infer_source_system(artifact.kind, artifact.url)
         refs.append(
             SourceReferenceRecord(
-                ref=source_ref_key(artifact.kind, artifact.identifier),
+                ref=source_ref_key(
+                    artifact.kind,
+                    artifact.identifier,
+                    source_system=artifact_system,
+                ),
                 source_type=artifact.kind,
+                source_system=artifact_system,
                 external_id=artifact.identifier,
                 uri=artifact.url,
                 retrieval_uri=artifact.url,
@@ -190,10 +224,12 @@ def _collect_source_references(
             ref_value = f"PR #{change.pr_number}"
         if not ref_value:
             continue
+        change_system = "github" if change.pr_number is not None else None
         refs.append(
             SourceReferenceRecord(
                 ref=source_ref_key("change", ref_value),
                 source_type="change",
+                source_system=change_system,
                 external_id=ref_value,
                 title=change.title,
                 summary=change.summary,
@@ -315,9 +351,115 @@ def _recommended_next_actions(
     return []
 
 
+def _resolver_fallbacks_as_source_fallbacks(
+    result: SourceResolutionResult,
+) -> list[SourceFallback]:
+    """Surface resolver-level fallbacks under the same public shape.
+
+    Resolver fallbacks live on ``bundle.source_resolution.fallbacks`` with a
+    richer shape (codes, per-ref detail); they are also flattened into
+    ``bundle.fallbacks`` so agent clients that only read ``fallbacks`` still
+    see "source-backed read failed" signals.
+    """
+    return [
+        SourceFallback(
+            code=rf.code,
+            message=rf.message,
+            impact=rf.impact,
+            ref=rf.ref,
+        )
+        for rf in result.fallbacks
+    ]
+
+
+def _apply_verifications_to_refs(
+    refs: list[SourceReferenceRecord],
+    result: SourceResolutionResult,
+) -> None:
+    """Update each ref's ``verification_state`` from resolver output."""
+    by_ref = {v.ref: v for v in result.verifications}
+    for ref in refs:
+        v = by_ref.get(ref.ref)
+        if v is None:
+            continue
+        ref.verification_state = v.verification_state
+        if v.checked_at:
+            ref.last_verified_at = v.checked_at
+
+
 class ContextResolutionService:
-    def __init__(self, provider: IntelligenceProvider) -> None:
+    def __init__(
+        self,
+        provider: IntelligenceProvider,
+        *,
+        source_resolver: SourceResolverPort | None = None,
+    ) -> None:
         self._provider = provider
+        self._source_resolver = source_resolver
+
+    @property
+    def source_resolver(self) -> SourceResolverPort | None:
+        return self._source_resolver
+
+    def set_source_resolver(self, resolver: SourceResolverPort | None) -> None:
+        """Late-bind a resolver (the host wires this after container build)."""
+        self._source_resolver = resolver
+
+    async def _run_source_resolver(
+        self,
+        *,
+        pot_id: str,
+        refs: list[SourceReferenceRecord],
+        source_policy: str,
+        request: ContextResolutionRequest,
+    ) -> SourceResolutionResult:
+        """Dispatch source-backed reads when policy != references_only.
+
+        When no resolver is wired the method returns an empty result and
+        relies on :func:`source_policy_fallbacks` to add the user-facing
+        ``source_resolver_unavailable`` signal. When a resolver is wired it
+        owns the fallback taxonomy and the service only times/guards it.
+        """
+        if source_policy == "references_only" or not refs:
+            return SourceResolutionResult()
+        resolver = self._source_resolver
+        if resolver is None:
+            return SourceResolutionResult()
+
+        budget = ResolverBudget(
+            timeout_ms=max(500, request.budget.timeout_ms // 2),
+        )
+        auth = ResolverAuthContext()
+        try:
+            task = asyncio.create_task(
+                resolver.resolve(
+                    pot_id=pot_id,
+                    refs=refs,
+                    source_policy=source_policy,
+                    budget=budget,
+                    auth=auth,
+                )
+            )
+            return await asyncio.wait_for(task, timeout=budget.timeout_ms / 1000.0)
+        except asyncio.TimeoutError:
+            return SourceResolutionResult(
+                fallbacks=[
+                    ResolverFallback(
+                        code="source_resolver_timeout",
+                        message=f"Source resolver exceeded {budget.timeout_ms}ms.",
+                    )
+                ]
+            )
+        except Exception as exc:
+            logger.exception("source_resolver failed: %s", exc)
+            return SourceResolutionResult(
+                fallbacks=[
+                    ResolverFallback(
+                        code="source_resolver_error",
+                        message=f"Source resolver raised: {exc}",
+                    )
+                ]
+            )
 
     async def resolve(self, request: ContextResolutionRequest) -> IntelligenceBundle:
         sig = extract_signals(request.query)
@@ -339,6 +481,9 @@ class ContextResolutionService:
 
         deadline = plan.timeout_budget_ms / 1000.0
         provider = self._provider
+        effective_max_items = (
+            plan.max_items if plan.max_items is not None else request.effective_max_items
+        )
 
         async def _timed(name: str, coro: Any) -> tuple[str, Any]:
             t0 = time.perf_counter()
@@ -368,7 +513,7 @@ class ContextResolutionService:
                     provider.search_context(
                         request.pot_id,
                         request.query,
-                        limit=request.effective_max_items,
+                        limit=effective_max_items,
                         node_labels=None,
                     ),
                 )
@@ -392,7 +537,7 @@ class ContextResolutionService:
                     provider.get_change_history(
                         request.pot_id,
                         plan.scope,
-                        limit=request.effective_max_items,
+                        limit=effective_max_items,
                         as_of=request.as_of.isoformat() if request.as_of else None,
                     ),
                 )
@@ -405,7 +550,7 @@ class ContextResolutionService:
                     provider.get_decision_context(
                         request.pot_id,
                         plan.scope,
-                        limit=max(request.effective_max_items, 20),
+                        limit=max(effective_max_items, 20),
                     ),
                 )
             )
@@ -417,7 +562,7 @@ class ContextResolutionService:
                     provider.get_related_discussions(
                         request.pot_id,
                         plan.scope,
-                        limit=request.effective_max_items,
+                        limit=effective_max_items,
                     ),
                 )
             )
@@ -429,7 +574,7 @@ class ContextResolutionService:
                     provider.get_ownership(
                         request.pot_id,
                         plan.scope,
-                        limit=min(request.effective_max_items, 10),
+                        limit=min(effective_max_items, 10),
                     ),
                 )
             )
@@ -442,7 +587,7 @@ class ContextResolutionService:
                         request.pot_id,
                         plan.scope,
                         include=plan.project_map_includes,
-                        limit=request.effective_max_items,
+                        limit=effective_max_items,
                     ),
                 )
             )
@@ -456,13 +601,13 @@ class ContextResolutionService:
                         plan.scope,
                         include=plan.debugging_memory_includes,
                         query=request.query,
-                        limit=request.effective_max_items,
+                        limit=effective_max_items,
                     ),
                 )
             )
 
         if plan.run_causal_chain:
-            depth = max(2, min(request.effective_max_items, 12))
+            depth = max(2, min(effective_max_items, 12))
             coros.append(
                 _timed(
                     "causal_chain_context",
@@ -549,7 +694,9 @@ class ContextResolutionService:
             capabilities_used=capabilities_used,
             schema_version="4",
         )
-        source_policy = normalize_source_policy(request.source_policy)
+        source_policy = normalize_source_policy(
+            plan.source_policy or request.source_policy
+        )
         source_refs = _collect_source_references(
             request,
             semantic_hits,
@@ -560,11 +707,20 @@ class ContextResolutionService:
             project_map,
             debugging_memory,
         )
-        freshness = assess_freshness(source_refs)
+        resolution_result = await self._run_source_resolver(
+            pot_id=request.pot_id,
+            refs=source_refs,
+            source_policy=source_policy,
+            request=request,
+        )
+        if resolution_result.verifications:
+            _apply_verifications_to_refs(source_refs, resolution_result)
+        freshness = assess_freshness(source_refs, evidence_rows=semantic_hits)
         fallbacks = source_policy_fallbacks(
             source_policy=source_policy,
             refs=source_refs,
         )
+        fallbacks.extend(_resolver_fallbacks_as_source_fallbacks(resolution_result))
         requested_includes = set(
             includes_for_request(request.intent, request.include, request.exclude)
         )
@@ -603,6 +759,7 @@ class ContextResolutionService:
             source_refs=source_refs,
             freshness=freshness,
             fallbacks=fallbacks,
+            source_resolution=resolution_result,
             recommended_next_actions=_recommended_next_actions(
                 source_policy=source_policy,
                 fallbacks=fallbacks,

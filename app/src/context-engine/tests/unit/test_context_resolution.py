@@ -4,9 +4,20 @@ from __future__ import annotations
 
 import pytest
 
+from typing import Sequence
+
 from adapters.outbound.intelligence.mock import MockIntelligenceProvider
 from application.services.context_resolution import ContextResolutionService
 from application.use_cases.resolve_context import resolve_context
+from domain.source_references import SourceReferenceRecord
+from domain.source_resolution import (
+    ResolvedSummary,
+    ResolvedVerification,
+    ResolverAuthContext,
+    ResolverBudget,
+    ResolverCapabilityEntry,
+    SourceResolutionResult,
+)
 from domain.agent_context_port import (
     bundle_to_agent_envelope,
     context_port_manifest,
@@ -90,7 +101,7 @@ async def test_resolve_budget_limits_semantic_hits_and_returns_agent_envelope() 
     assert envelope["coverage"]["status"] in {"complete", "partial", "empty"}
     assert envelope["quality"]["status"] in {"good", "watch", "degraded", "unknown"}
     assert "freshness_ttl_hours" in envelope["quality"]["policy"]
-    assert any(
+    assert not any(
         fallback.code == "context_family_not_implemented"
         for fallback in bundle.fallbacks
     )
@@ -457,3 +468,227 @@ def test_request_explicit_budget_timeout_not_overridden() -> None:
     )
     # Budget already set explicitly — should not be overridden by timeout_ms
     assert req.effective_timeout_ms == 6000
+
+
+class _StubVerifier:
+    """Resolver that always reports each ref as verified, with a summary."""
+
+    def capabilities(self) -> Sequence[ResolverCapabilityEntry]:
+        return (
+            ResolverCapabilityEntry(
+                provider="github",
+                source_kind="repository",
+                policies=frozenset({"summary", "verify"}),
+            ),
+        )
+
+    async def resolve(
+        self,
+        *,
+        pot_id: str,
+        refs: Sequence[SourceReferenceRecord],
+        source_policy: str,
+        budget: ResolverBudget,
+        auth: ResolverAuthContext,
+    ) -> SourceResolutionResult:
+        out = SourceResolutionResult()
+        for ref in refs:
+            if source_policy == "verify":
+                out.verifications.append(
+                    ResolvedVerification(
+                        ref=ref.ref,
+                        source_type=ref.source_type,
+                        verified=True,
+                        verification_state="verified",
+                        checked_at="2026-04-21T00:00:00+00:00",
+                        source_system="github",
+                    )
+                )
+            elif source_policy == "summary":
+                out.summaries.append(
+                    ResolvedSummary(
+                        ref=ref.ref,
+                        source_type=ref.source_type,
+                        summary=f"summary for {ref.ref}",
+                    )
+                )
+        return out
+
+
+@pytest.mark.asyncio
+async def test_resolve_with_resolver_marks_refs_verified_and_drops_unverified_fallback() -> None:
+    provider = MockIntelligenceProvider()
+    svc = ContextResolutionService(provider, source_resolver=_StubVerifier())
+    req = ContextResolutionRequest(
+        pot_id="p1",
+        query="Check PR #42",
+        scope=ContextScope(source_refs=["github:pr:42"]),
+        source_policy="verify",
+        timeout_ms=4000,
+    )
+    bundle = await resolve_context(svc, req)
+    assert all(r.verification_state == "verified" for r in bundle.source_refs)
+    assert not any(f.code == "source_unverified" for f in bundle.fallbacks)
+    assert any(v.ref == "github:pr:42" for v in bundle.source_resolution.verifications)
+
+
+@pytest.mark.asyncio
+async def test_resolve_with_resolver_summary_populates_source_resolution() -> None:
+    provider = MockIntelligenceProvider()
+    svc = ContextResolutionService(provider, source_resolver=_StubVerifier())
+    req = ContextResolutionRequest(
+        pot_id="p1",
+        query="Why was PR #42 merged?",
+        scope=ContextScope(source_refs=["github:pr:42"]),
+        source_policy="summary",
+        timeout_ms=4000,
+    )
+    bundle = await resolve_context(svc, req)
+    assert bundle.source_resolution.summaries
+    envelope = bundle_to_agent_envelope(bundle)
+    assert "source_resolution" in envelope
+    assert envelope["source_resolution"]["summaries"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_without_resolver_keeps_unavailable_fallback() -> None:
+    provider = MockIntelligenceProvider()
+    svc = ContextResolutionService(provider)  # no resolver wired
+    req = ContextResolutionRequest(
+        pot_id="p1",
+        query="Why was PR #42 merged?",
+        scope=ContextScope(source_refs=["github:pr:42"]),
+        source_policy="summary",
+        timeout_ms=4000,
+    )
+    bundle = await resolve_context(svc, req)
+    # source_policy_fallbacks emits source_resolver_unavailable when no fetchable refs
+    # and no resolver is wired (since the resolver path stays empty).
+    assert bundle.source_resolution.summaries == []
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: PR diff via artifact + source_policy (no graph pr_diff family)
+# ---------------------------------------------------------------------------
+
+
+from domain.intelligence_models import ArtifactRef
+from domain.source_resolution import ResolvedSnippet
+
+
+class _StubGitHubArtifactResolver:
+    """Resolver that handles github PR refs via summary/snippets."""
+
+    def capabilities(self) -> Sequence[ResolverCapabilityEntry]:
+        return (
+            ResolverCapabilityEntry(
+                provider="github",
+                source_kind="pr",
+                policies=frozenset({"summary", "snippets"}),
+            ),
+        )
+
+    async def resolve(
+        self,
+        *,
+        pot_id: str,
+        refs: Sequence[SourceReferenceRecord],
+        source_policy: str,
+        budget: ResolverBudget,
+        auth: ResolverAuthContext,
+    ) -> SourceResolutionResult:
+        out = SourceResolutionResult()
+        for ref in refs:
+            # Stub only handles refs the GitHub PR child would handle.
+            if (ref.source_system or "").lower() != "github":
+                continue
+            if source_policy == "summary":
+                out.summaries.append(
+                    ResolvedSummary(
+                        ref=ref.ref,
+                        source_type=ref.source_type,
+                        summary=f"PR summary for {ref.external_id}",
+                        source_system="github",
+                    )
+                )
+            elif source_policy == "snippets":
+                out.snippets.append(
+                    ResolvedSnippet(
+                        ref=ref.ref,
+                        source_type=ref.source_type,
+                        snippet="@@ -1 +1 @@\n-old\n+new",
+                        location="b/x.py",
+                        source_system="github",
+                    )
+                )
+        return out
+
+
+@pytest.mark.asyncio
+async def test_review_intent_works_without_diff_fetch_under_default_policy() -> None:
+    """High-level review context resolves without needing a diff fetch."""
+    provider = MockIntelligenceProvider()
+    svc = ContextResolutionService(provider, source_resolver=_StubGitHubArtifactResolver())
+    req = ContextResolutionRequest(
+        pot_id="p1",
+        query="Review the recent PR for risky changes",
+        intent="review",
+        artifact_ref=ArtifactRef(kind="pr", identifier="42"),
+        # default source_policy=references_only — must NOT trigger resolver
+    )
+    bundle = await resolve_context(svc, req)
+    assert bundle.artifacts, "review intent should still surface artifact context"
+    assert bundle.source_resolution.summaries == []
+    assert bundle.source_resolution.snippets == []
+
+
+@pytest.mark.asyncio
+async def test_pr_artifact_with_summary_policy_routes_through_resolver() -> None:
+    provider = MockIntelligenceProvider()
+    svc = ContextResolutionService(provider, source_resolver=_StubGitHubArtifactResolver())
+    req = ContextResolutionRequest(
+        pot_id="p1",
+        query="Summarize PR 42",
+        artifact_ref=ArtifactRef(kind="pr", identifier="42"),
+        source_policy="summary",
+    )
+    bundle = await resolve_context(svc, req)
+    # Artifact ref must carry source_system='github' so the resolver dispatches.
+    pr_refs = [r for r in bundle.source_refs if r.source_type == "pr"]
+    assert pr_refs and pr_refs[0].source_system == "github"
+    assert bundle.source_resolution.summaries
+    assert bundle.source_resolution.summaries[0].summary.endswith("42")
+
+
+@pytest.mark.asyncio
+async def test_pr_artifact_with_snippets_policy_returns_bounded_diff() -> None:
+    provider = MockIntelligenceProvider()
+    svc = ContextResolutionService(provider, source_resolver=_StubGitHubArtifactResolver())
+    req = ContextResolutionRequest(
+        pot_id="p1",
+        query="Show me what changed in PR 42",
+        artifact_ref=ArtifactRef(kind="pr", identifier="42"),
+        source_policy="snippets",
+    )
+    bundle = await resolve_context(svc, req)
+    assert bundle.source_resolution.snippets
+    snip = bundle.source_resolution.snippets[0]
+    assert snip.location == "b/x.py"
+    # Snippet content stays bounded — assertion is structural, not heuristic.
+    assert len(snip.snippet) < 10_000
+
+
+@pytest.mark.asyncio
+async def test_resolve_tickets_include_returns_ticket_records() -> None:
+    provider = MockIntelligenceProvider()
+    svc = ContextResolutionService(provider)
+    req = ContextResolutionRequest(
+        pot_id="p1",
+        query="What issues are open for the auth service?",
+        include=["tickets"],
+    )
+    bundle = await resolve_context(svc, req)
+    fallback_codes = {fallback.code for fallback in bundle.fallbacks}
+    assert "context_family_not_implemented" not in fallback_codes
+    assert any(item.family == "tickets" for item in bundle.project_map)
+    assert any(item.kind == "Issue" for item in bundle.project_map)

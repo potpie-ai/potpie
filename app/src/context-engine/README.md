@@ -104,7 +104,7 @@ Omit both → tools raise a clear error (no implicit multi-tenant trust).
 
 ### Raw episode ingest (HTTP / CLI / MCP)
 
-All three use **`application.use_cases.run_raw_episode_ingestion`**: persist **`context_events`** when Postgres is configured, then run the Ingestion Agent by default (**async**) so raw notes/links follow the same plan → durable steps → apply flow as other events. Use **`sync=true`** (HTTP query), **`--sync`** (CLI), or **`sync=true`** on the MCP tool for inline agent planning and apply after persist; without Postgres, **sync** is required and performs a **legacy** direct Graphiti write (no event row).
+All three use **`application.use_cases.run_raw_episode_ingestion`**: persist **`context_events`** when Postgres is configured, then run the Ingestion Agent by default (**async**) so raw notes/links follow the same plan → durable steps → apply flow as other events. Use **`sync=true`** (HTTP query), **`--sync`** (CLI), or **`sync=true`** on the MCP tool for inline agent planning and apply after persist; without Postgres, **sync** is required and writes through the unified context graph adapter without creating an event row.
 
 ---
 

@@ -44,16 +44,14 @@ def test_backfill_pot_wide_runs_all_repos() -> None:
     sync.last_synced_at = None
     ledger.get_or_create_sync_state.return_value = sync
 
-    episodic = MagicMock()
-    structural = MagicMock()
+    context_graph = MagicMock()
 
     out = backfill_pot_context(
         settings,
         pots,
         source_for_repo,
         ledger,
-        episodic,
-        structural,
+        context_graph,
         "p1",
         target_repo_name=None,
     )
@@ -88,16 +86,14 @@ def test_backfill_target_repo_name_single_repo() -> None:
     sync.last_synced_at = None
     ledger.get_or_create_sync_state.return_value = sync
 
-    episodic = MagicMock()
-    structural = MagicMock()
+    context_graph = MagicMock()
 
     out = backfill_pot_context(
         settings,
         pots,
         source_for_repo,
         ledger,
-        episodic,
-        structural,
+        context_graph,
         "p1",
         target_repo_name="o/r2",
     )
@@ -124,7 +120,6 @@ def test_backfill_unknown_target_repo() -> None:
         settings,
         pots,
         lambda _n: MagicMock(),
-        MagicMock(),
         MagicMock(),
         MagicMock(),
         "p1",

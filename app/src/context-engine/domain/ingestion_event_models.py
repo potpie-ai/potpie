@@ -130,7 +130,7 @@ class EventReceipt:
     reconciliation: Any | None = None
     """Agent reconciliation: populated on synchronous inline reconcile."""
     extras: dict[str, Any] | None = None
-    """Opaque per-kind details (e.g. merged PR ``bridges`` / ``repo_name``)."""
+    """Opaque per-kind details such as merged PR mutation counts or repo name."""
 
 
 @dataclass(frozen=True, slots=True)

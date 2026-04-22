@@ -59,9 +59,6 @@ def validate_reconciliation_plan(
     plan.ontology_downgrades.clear()
     _validate_hard(plan, expected_pot_id)
 
-    if plan.compat_github_pr_merged is not None:
-        return
-
     if infer_canonical_labels_enabled():
         enrich_reconciliation_plan_entity_labels(plan)
 
@@ -100,18 +97,6 @@ def _validate_hard(plan: ReconciliationPlan, expected_pot_id: str) -> None:
 
     if len(plan.episodes) > MAX_EPISODES:
         raise ReconciliationPlanValidationError("too many episodes in plan")
-
-    if plan.compat_github_pr_merged is not None:
-        if (
-            plan.entity_upserts
-            or plan.edge_upserts
-            or plan.edge_deletes
-            or plan.invalidations
-        ):
-            raise ReconciliationPlanValidationError(
-                "compat_github_pr_merged cannot be combined with generic structural mutations"
-            )
-        return
 
     if len(plan.entity_upserts) > MAX_GENERIC_ENTITY_UPSERTS:
         raise ReconciliationPlanValidationError("entity upsert cap exceeded")
@@ -341,5 +326,4 @@ def _validate_invalidations(items: list[InvalidationOp]) -> list[str]:
                     f"invalidation target_edge has non-canonical edge_type: {edge_type!r}"
                 )
     return errors
-
 

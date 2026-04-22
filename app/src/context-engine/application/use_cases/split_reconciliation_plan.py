@@ -7,7 +7,7 @@ from domain.reconciliation import ReconciliationPlan
 
 def split_reconciliation_plan_into_steps(plan: ReconciliationPlan) -> list[ReconciliationPlan]:
     """
-    One slice per episode; structural mutations and compat path attach only to the last slice.
+    One slice per episode; structural mutations attach only to the last slice.
 
     This matches the ingestion async contract: queue and apply episodes in sequence without
     skipping structural work that belongs to the full reconciliation.
@@ -31,7 +31,6 @@ def split_reconciliation_plan_into_steps(plan: ReconciliationPlan) -> list[Recon
                 evidence=list(plan.evidence) if is_last else [],
                 confidence=plan.confidence if is_last else None,
                 warnings=list(plan.warnings) if is_last else [],
-                compat_github_pr_merged=plan.compat_github_pr_merged if is_last else None,
                 ontology_downgrades=[],
             )
         )

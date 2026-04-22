@@ -11,7 +11,6 @@ from domain.graph_mutations import EdgeDelete, EdgeUpsert, EntityUpsert, Invalid
 from domain.reconciliation import (
     EpisodeDraft,
     EvidenceRef,
-    GitHubPrMergedCompat,
     ReconciliationPlan,
 )
 
@@ -67,17 +66,6 @@ def reconciliation_plan_to_dict(plan: ReconciliationPlan) -> dict[str, Any]:
             }
         )
     evidence = [{"kind": e.kind, "ref": e.ref, "metadata": dict(e.metadata)} for e in plan.evidence]
-    compat: dict[str, Any] | None = None
-    if plan.compat_github_pr_merged is not None:
-        c = plan.compat_github_pr_merged
-        compat = {
-            "repo_name": c.repo_name,
-            "pr_data": dict(c.pr_data),
-            "commits": list(c.commits),
-            "review_threads": list(c.review_threads),
-            "linked_issues": list(c.linked_issues),
-            "issue_comments": list(c.issue_comments or []),
-        }
     return {
         "version": 1,
         "event_ref": {
@@ -94,7 +82,6 @@ def reconciliation_plan_to_dict(plan: ReconciliationPlan) -> dict[str, Any]:
         "evidence": evidence,
         "confidence": plan.confidence,
         "warnings": list(plan.warnings),
-        "compat_github_pr_merged": compat,
     }
 
 
@@ -145,17 +132,6 @@ def reconciliation_plan_from_dict(data: dict[str, Any]) -> ReconciliationPlan:
         EvidenceRef(kind=str(x["kind"]), ref=str(x["ref"]), metadata=dict(x.get("metadata") or {}))
         for x in data.get("evidence") or []
     ]
-    compat: GitHubPrMergedCompat | None = None
-    rawc = data.get("compat_github_pr_merged")
-    if rawc:
-        compat = GitHubPrMergedCompat(
-            repo_name=str(rawc["repo_name"]),
-            pr_data=dict(rawc["pr_data"]),
-            commits=list(rawc.get("commits") or []),
-            review_threads=list(rawc.get("review_threads") or []),
-            linked_issues=list(rawc.get("linked_issues") or []),
-            issue_comments=list(rawc.get("issue_comments") or []),
-        )
     return ReconciliationPlan(
         event_ref=event_ref,
         summary=str(data.get("summary") or ""),
@@ -167,5 +143,4 @@ def reconciliation_plan_from_dict(data: dict[str, Any]) -> ReconciliationPlan:
         evidence=evidence,
         confidence=data.get("confidence"),
         warnings=list(data.get("warnings") or []),
-        compat_github_pr_merged=compat,
     )

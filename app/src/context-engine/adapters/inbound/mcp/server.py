@@ -166,7 +166,7 @@ def context_ingest_episode(
         }
     return {
         "ok": True,
-        "status": "applied" if "event_id" in data else "legacy_direct",
+        "status": "applied",
         "episode_uuid": data.get("episode_uuid"),
         "event_id": data.get("event_id"),
         "job_id": data.get("job_id"),

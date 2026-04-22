@@ -2,19 +2,14 @@ import asyncio
 import os
 from typing import AsyncGenerator, Optional
 
-from adapters.outbound.neo4j.structural import Neo4jStructuralAdapter
-from application.use_cases.query_context import (
-    get_change_history as ce_get_change_history,
-    get_decisions as ce_get_decisions,
-)
 from dataclasses import asdict
 
-from app.modules.context_graph.wiring import PotpieContextEngineSettings
 from app.modules.context_graph.wiring import build_container_for_session
 from app.modules.context_graph.bundle_renderer import (
     prefetch_runtime_banner,
     render_intelligence_bundle,
 )
+from domain.graph_query import preset_change_history, preset_decisions
 from app.modules.intelligence.agents.chat_agents.agent_config import (
     AgentConfig,
     TaskConfig,
@@ -248,34 +243,40 @@ class QnAAgent(ChatAgent):
         except Exception:
             logger.exception("Failed prefetching pot context for QnA agent")
 
-        # Neo4j structural layer (PR-linked decisions, change history) — same DB Graphiti uses for
-        # episodes, but not returned by semantic search alone. Without this, the model only sees
-        # Graphiti snippets unless it happens to call get_decisions / get_change_history.
+        # Exact graph prefetch for decisions and change history. This is routed
+        # through ContextGraphPort so the QnA agent does not depend on Neo4j
+        # helper methods directly.
         try:
-            cg_settings = PotpieContextEngineSettings()
-            if cg_settings.is_enabled() and ctx.project_id:
-                structural = Neo4jStructuralAdapter(cg_settings)
+            if ctx.project_id:
+                from app.core.database import SessionLocal
 
-                def _structural_snapshot() -> tuple[list, list]:
-                    dec = ce_get_decisions(
-                        structural, ctx.project_id, limit=12
-                    )
-                    hist = ce_get_change_history(
-                        structural,
-                        ctx.project_id,
-                        limit=6,
-                    )
-                    return dec, hist
+                db = SessionLocal()
+                try:
+                    container = build_container_for_session(db)
+                    if (
+                        container.settings.is_enabled()
+                        and container.context_graph is not None
+                    ):
+                        def _graph_snapshot() -> tuple[list, list]:
+                            dec = container.context_graph.query(
+                                preset_decisions(pot_id=ctx.project_id, limit=12)
+                            )
+                            hist = container.context_graph.query(
+                                preset_change_history(pot_id=ctx.project_id, limit=6)
+                            )
+                            return list(dec.result or []), list(hist.result or [])
 
-                decisions_preview, change_hist_preview = await asyncio.to_thread(
-                    _structural_snapshot
-                )
-                ctx.additional_context += (
-                    "\nContext graph — structural (Neo4j) pre-fetch "
-                    "(code-linked + PR review/conversation decisions; recent PR↔code rows):\n"
-                    f"- get_decisions-style rows (limit 12): {decisions_preview}\n"
-                    f"- get_change_history-style rows (limit 6): {change_hist_preview}\n"
-                )
+                        decisions_preview, change_hist_preview = await asyncio.to_thread(
+                            _graph_snapshot
+                        )
+                        ctx.additional_context += (
+                            "\nContext graph pre-fetch "
+                            "(code-linked + PR review/conversation decisions; recent PR-code rows):\n"
+                            f"- decisions rows (limit 12): {decisions_preview}\n"
+                            f"- change history rows (limit 6): {change_hist_preview}\n"
+                        )
+                finally:
+                    db.close()
         except Exception:
             logger.exception("Failed prefetching structural context graph for QnA agent")
 

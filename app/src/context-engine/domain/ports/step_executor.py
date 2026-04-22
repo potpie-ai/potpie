@@ -8,7 +8,7 @@ from domain.ingestion_event_models import EpisodeStep, ExecutionResult
 
 
 class StepExecutor(Protocol):
-    """Single-step deterministic application (invokes :class:`ContextGraphWriter` internally)."""
+    """Single-step deterministic application through the unified context graph."""
 
     def execute(self, step: EpisodeStep) -> ExecutionResult:
         ...

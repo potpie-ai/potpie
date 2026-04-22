@@ -30,6 +30,25 @@ Rules:
 - Use stable entity_key strings (e.g. github:pr:owner/repo:123) when upserting entities.
 - Only include structural mutations that are justified by the event payload and safe for the repository.
 - If unsure, add a warning and keep the plan minimal rather than inventing facts.
+
+Ontology guidance for entity upserts:
+- Always add at least one canonical label from the vocabulary below. Do NOT use only generic "Entity".
+- Use multiple labels when an entity spans categories (e.g., ["Decision", "Feature"]).
+
+Canonical label vocabulary:
+- Decision: architectural choices, strategy decisions, ADRs, design choices
+- Feature: product features, capabilities, functionality, user-facing work
+- Fix: bug fixes, patches, resolutions to specific problems
+- BugPattern: recurring bugs, anti-patterns, known failure modes
+- DiagnosticSignal: metrics, monitoring signals, observability data, health checks
+- Incident: outages, failures, post-mortems, on-call events, production issues
+- Alert: alert rules, thresholds, paging rules, monitoring alerts
+- Runbook: operational procedures, playbooks, operational guides
+- Service: microservices, components, backends, systems, APIs
+- Deployment: deployment configs, release strategies, environments
+- Document: documentation, guides, READMEs, API docs, wikis
+- Environment: staging, production, dev, QA environments
+- Person / Team: owners, maintainers, reviewers, stakeholders
 """
 
 

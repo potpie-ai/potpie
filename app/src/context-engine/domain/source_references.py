@@ -70,10 +70,18 @@ class SourceReferenceRecord:
 
 @dataclass(slots=True)
 class FreshnessReport:
-    """Overall freshness summary for a context resolution result."""
+    """Overall freshness summary for a context resolution result.
+
+    ``last_graph_update`` is when we last wrote to the graph for this
+    scope. ``last_source_event_at`` is the most recent *source event*
+    time observed — distinct from the write time because an event can
+    arrive late. ``last_source_verification`` is the last time a resolver
+    verified a fact against source of truth.
+    """
 
     status: str = "unknown"
     last_graph_update: str | None = None
+    last_source_event_at: str | None = None
     last_source_verification: str | None = None
     stale_refs: list[str] = field(default_factory=list)
     needs_verification_refs: list[str] = field(default_factory=list)
@@ -256,13 +264,57 @@ def dedupe_source_references(
     return out
 
 
-def assess_freshness(refs: Iterable[SourceReferenceRecord]) -> FreshnessReport:
+def _latest_source_event_at_from_evidence(
+    evidence_rows: Iterable[dict] | None,
+) -> str | None:
+    """Pull the freshest ``event_occurred_at`` from evidence-row provenance.
+
+    ``last_graph_update`` tracks when we wrote to the graph;
+    ``last_source_event_at`` tracks when the source actually produced the
+    event we're serving. They diverge when events arrive late, so expose
+    both so the agent can reason about freshness correctly.
+    """
+    if not evidence_rows:
+        return None
+    candidates: list[str] = []
+    for row in evidence_rows:
+        prov = row.get("provenance") if isinstance(row, dict) else None
+        if not isinstance(prov, dict):
+            continue
+        occurred = prov.get("event_occurred_at")
+        if occurred is None:
+            continue
+        if isinstance(occurred, str):
+            s = occurred.strip()
+            if s:
+                candidates.append(s)
+        else:
+            iso = getattr(occurred, "isoformat", None)
+            if callable(iso):
+                try:
+                    value = iso()
+                except Exception:
+                    continue
+                if isinstance(value, str) and value.strip():
+                    candidates.append(value)
+    return _latest_timestamp(candidates) if candidates else None
+
+
+def assess_freshness(
+    refs: Iterable[SourceReferenceRecord],
+    *,
+    evidence_rows: Iterable[dict] | None = None,
+) -> FreshnessReport:
     refs_list = list(refs)
     if not refs_list:
-        return FreshnessReport(status="unknown")
+        return FreshnessReport(
+            status="unknown",
+            last_source_event_at=_latest_source_event_at_from_evidence(evidence_rows),
+        )
 
     latest_seen = _latest_timestamp(ref.last_seen_at for ref in refs_list)
     latest_verified = _latest_timestamp(ref.last_verified_at for ref in refs_list)
+    latest_source_event = _latest_source_event_at_from_evidence(evidence_rows)
     stale = [ref.ref for ref in refs_list if ref.freshness == "stale"]
     unreachable = [
         ref.ref
@@ -293,6 +345,7 @@ def assess_freshness(refs: Iterable[SourceReferenceRecord]) -> FreshnessReport:
     return FreshnessReport(
         status=status,
         last_graph_update=latest_seen,
+        last_source_event_at=latest_source_event,
         last_source_verification=latest_verified,
         stale_refs=stale,
         needs_verification_refs=needs,

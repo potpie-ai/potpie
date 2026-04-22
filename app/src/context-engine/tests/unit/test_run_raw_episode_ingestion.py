@@ -11,7 +11,7 @@ from domain.ports.pot_resolution import ResolvedPot, ResolvedPotRepo
 
 
 def _container(
-    episodic: MagicMock, *, jobs: MagicMock | None = None
+    episodic: MagicMock, *, jobs: MagicMock | None = None, context_graph: MagicMock | None = None
 ) -> ContextEngineContainer:
     settings = MagicMock()
     settings.is_enabled.return_value = True
@@ -33,6 +33,7 @@ def _container(
         pots=pots,
         source_for_repo=lambda _r: MagicMock(),
         jobs=j,
+        context_graph=context_graph,
     )
 
 
@@ -53,11 +54,12 @@ def test_async_without_database_errors():
     assert out.error == "async_requires_database"
 
 
-def test_legacy_direct_without_database():
+def test_direct_graph_write_without_database():
     episodic = MagicMock()
     episodic.enabled = True
-    episodic.add_episode.return_value = "uuid-1"
-    c = _container(episodic)
+    graph = MagicMock()
+    graph.write_raw_episode.return_value = {"episode_uuid": "uuid-1"}
+    c = _container(episodic, context_graph=graph)
     t = datetime(2025, 1, 2, tzinfo=timezone.utc)
     out = run_raw_episode_ingestion(
         container=c,
@@ -71,15 +73,17 @@ def test_legacy_direct_without_database():
         sync=True,
     )
     assert out.ok
-    assert out.status == "legacy_direct"
+    assert out.status == "applied"
     assert out.episode_uuid == "uuid-1"
+    graph.write_raw_episode.assert_called_once()
 
 
-def test_legacy_direct_standalone_pot_no_repo():
+def test_direct_graph_write_standalone_pot_no_repo():
     """Raw ingest allows pots with no linked GitHub repo (context_graph_pots)."""
     episodic = MagicMock()
     episodic.enabled = True
-    episodic.add_episode.return_value = "uuid-solo"
+    graph = MagicMock()
+    graph.write_raw_episode.return_value = {"episode_uuid": "uuid-solo"}
     settings = MagicMock()
     settings.is_enabled.return_value = True
     pots = MagicMock()
@@ -91,6 +95,7 @@ def test_legacy_direct_standalone_pot_no_repo():
         pots=pots,
         source_for_repo=lambda _r: MagicMock(),
         jobs=MagicMock(),
+        context_graph=graph,
     )
     t = datetime(2025, 1, 2, tzinfo=timezone.utc)
     out = run_raw_episode_ingestion(
@@ -105,8 +110,8 @@ def test_legacy_direct_standalone_pot_no_repo():
         sync=True,
     )
     assert out.ok
-    assert out.status == "legacy_direct"
-    episodic.add_episode.assert_called_once()
+    assert out.status == "applied"
+    graph.write_raw_episode.assert_called_once()
 
 
 def test_unknown_pot():

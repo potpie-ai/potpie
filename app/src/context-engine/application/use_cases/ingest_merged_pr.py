@@ -6,16 +6,13 @@ import logging
 from typing import Any
 from uuid import uuid4
 
-from adapters.outbound.reconciliation.github_pr_compat import build_github_pr_merged_compatibility_plan
-from application.use_cases.apply_reconciliation_plan import apply_reconciliation_plan
+from adapters.outbound.reconciliation.github_pr_plan import build_github_pr_merged_plan
 from application.use_cases.reconciliation_validation import validate_reconciliation_plan
 from domain.context_events import EventRef
 from domain.errors import ReconciliationApplyError
 from domain.ingestion import IngestionResult
-from domain.ports.episodic_graph import EpisodicGraphPort
+from domain.ports.context_graph import ContextGraphPort
 from domain.ports.ingestion_ledger import IngestionLedgerPort, LedgerScope
-from domain.ports.structural_graph import StructuralGraphPort
-from domain.reconciliation_flags import compat_pr_reconciler_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +21,7 @@ SOURCE_TYPE = "github"
 
 def ingest_merged_pull_request(
     ledger: IngestionLedgerPort,
-    episodic: EpisodicGraphPort,
-    structural: StructuralGraphPort,
+    context_graph: ContextGraphPort,
     scope: LedgerScope,
     repo_name: str,
     pr_data: dict[str, Any],
@@ -60,65 +56,47 @@ def ingest_merged_pull_request(
         "issue_comments": issue_comments or [],
     }
 
-    if compat_pr_reconciler_enabled():
-        event_ref = EventRef(
-            event_id=str(uuid4()),
-            source_system="github",
-            pot_id=scope.pot_id,
-        )
-        plan = build_github_pr_merged_compatibility_plan(
-            event_ref=event_ref,
-            repo_name=repo_name,
-            pr_data=pr_data,
-            commits=commits,
-            review_threads=review_threads,
-            linked_issues=linked_issues,
-            issue_comments=issue_comments,
-        )
-        validate_reconciliation_plan(plan, scope.pot_id)
-        try:
-            result = apply_reconciliation_plan(
-                episodic,
-                structural,
-                plan,
-                expected_pot_id=scope.pot_id,
-            )
-        except ReconciliationApplyError:
-            logger.exception("reconciliation apply failed for merged PR ingest")
-            raise
-        episode_uuid = result.episode_uuids[0] if result.episode_uuids else None
-        stamp_counts = result.mutation_summary.stamp_counts
-    else:
-        from domain.episode_formatters import build_pr_episode
+    event_ref = EventRef(
+        event_id=str(uuid4()),
+        source_system="github",
+        pot_id=scope.pot_id,
+    )
+    plan = build_github_pr_merged_plan(
+        event_ref=event_ref,
+        repo_name=repo_name,
+        pr_data=pr_data,
+        commits=commits,
+        review_threads=review_threads,
+        linked_issues=linked_issues,
+        issue_comments=issue_comments,
+    )
+    validate_reconciliation_plan(plan, scope.pot_id)
+    try:
+        from datetime import datetime, timezone
 
-        episode = build_pr_episode(
-            pr_data=pr_data,
-            commits=commits,
-            review_threads=review_threads,
-            linked_issues=linked_issues,
-            issue_comments=issue_comments,
-        )
+        from domain.graph_mutations import ProvenanceContext
 
-        episode_uuid = episodic.add_episode(
-            pot_id=scope.pot_id,
-            name=episode["name"],
-            episode_body=episode["episode_body"],
-            source_description=episode["source_description"],
-            reference_time=episode["reference_time"],
+        prov_ctx = ProvenanceContext(
+            source_kind="pull_request",
+            source_ref=source_id,
+            event_received_at=datetime.now(timezone.utc),
+            created_by_agent="github_pr_merged_planner",
         )
-
-        stamp_counts = structural.stamp_pr_entities(
-            pot_id=scope.pot_id,
-            episode_uuid=episode_uuid or "",
-            repo_name=repo_name,
-            pr_number=pr_number,
-            commits=commits,
-            review_threads=review_threads,
-            pr_data=pr_data,
-            author=pr_data.get("author"),
-            pr_title=pr_data.get("title"),
-            issue_comments=issue_comments or [],
+        result = context_graph.apply_plan(
+            plan,
+            expected_pot_id=scope.pot_id,
+            provenance_context=prov_ctx,
         )
+    except ReconciliationApplyError:
+        logger.exception("reconciliation apply failed for merged PR ingest")
+        raise
+    episode_uuid = result.episode_uuids[0] if result.episode_uuids else None
+    stamp_counts = {
+        "entity_upserts_applied": result.mutation_summary.entity_upserts_applied,
+        "edge_upserts_applied": result.mutation_summary.edge_upserts_applied,
+        "edge_deletes_applied": result.mutation_summary.edge_deletes_applied,
+        "invalidations_applied": result.mutation_summary.invalidations_applied,
+    }
 
     ok = ledger.try_append_ingestion_and_raw_event(
         scope=scope,

@@ -9,6 +9,9 @@ Refactor the current context graph feature into a cleaner product and architectu
 - Treat graph data as source-reference-first memory, not copied source payloads.
 - Separate stable agent/API contracts from UI, ingestion automation, and operator endpoints.
 - Wire readiness, freshness, quality, and source verification deeply enough that agents can trust the response envelope.
+- Treat compatibility routes and provider-specific write branches as temporary
+  migration scaffolding. The target system has one Graphiti-backed graph layer
+  and generic ontology-validated graph mutations.
 
 This plan builds on [`graph.md`](graph.md) and the clarified feature contract in [`features-and-functionalities.md`](features-and-functionalities.md).
 
@@ -38,7 +41,7 @@ The HTTP API is grouped by intent:
 
 ### Source Model
 
-`ContextGraphPotSource` becomes the primary source-of-truth for what a pot is connected to. Repositories remain a source subtype with code-graph behavior and compatibility routing.
+`ContextGraphPotSource` becomes the primary source-of-truth for what a pot is connected to. Repositories remain a source subtype with code-graph behavior during the migration; they should not define the broader source model.
 
 Supported source classes should converge on one shape:
 
@@ -140,7 +143,8 @@ Tasks:
 
 - Audit all routes that create repository rows and source rows.
 - Make `/pots/{pot_id}/sources/*` the preferred app path for source attachment.
-- Keep `/pots/{pot_id}/repositories` for compatibility and CLI GitHub convenience.
+- Keep `/pots/{pot_id}/repositories` only until CLI GitHub and webhook clients
+  can use source-first routing.
 - Add source capability metadata needed by context resolution and status.
 - Ensure deleting a source consistently updates repository routing when the source is a GitHub repository.
 - Update CLI docs to explain repository compatibility versus source-first model.
@@ -152,6 +156,13 @@ Acceptance criteria:
 - Future sources such as docs, Slack, incidents, deployments, and alerts fit the same source model.
 
 ### Phase 4: Source Resolver Port
+
+Status: implemented. `domain.ports.source_resolver.SourceResolverPort` is wired
+into `ContextResolutionService` and the host container; default
+`NullSourceResolver` plus a `CompositeSourceResolver` dispatching to
+`GitHubPullRequestResolver` and `DocumentationUriResolver` are registered in
+host wiring. Capability advertisement upgrades `context_status` per
+`(provider, source_kind)`.
 
 Add a source resolver layer behind `context_resolve`.
 
@@ -172,6 +183,15 @@ Acceptance criteria:
 
 ### Phase 5: PR Diff Refactor
 
+Status: implemented. Diff snippets now flow through
+`artifact={kind:"pr", identifier:N}` plus `source_policy=summary`/`snippets`,
+served by `GitHubPullRequestResolver`. Artifact-derived source refs carry
+`source_system="github"` so the composite resolver dispatches them. The
+legacy `include=["pr_diff"]` graph-query branch is annotated as
+compatibility-only — the graph keeps changed files, touched symbols, PR/review
+summaries, and decisions, but full diff text is no longer a documented graph
+family.
+
 Move detailed PR diff behavior behind source-backed artifact resolution.
 
 Tasks:
@@ -189,6 +209,15 @@ Acceptance criteria:
 
 ### Phase 6: Event API Clarification
 
+Status: implemented. ``POST /events/reconcile`` is the canonical path. The
+alias ``POST /events/ingest`` is hidden from OpenAPI
+(``include_in_schema=False``, ``deprecated=True``), attaches
+``Deprecation: true`` plus an RFC 7234 ``Warning`` header and a ``Link``
+header pointing at the successor route, and increments a process-local
+``_EVENTS_INGEST_ALIAS_CALLS`` counter (exposed via
+``events_ingest_alias_call_count``) with a ``logging.WARNING`` on each
+call. Docs route readers to ``/events/reconcile``.
+
 Make normalized event reconciliation the single primary event write path.
 
 Tasks:
@@ -205,6 +234,21 @@ Acceptance criteria:
 - Docs no longer promote two equivalent event-write APIs.
 
 ### Phase 7: Operator Surface Hardening
+
+Status: implemented. Operator routes (``/reset``, ``/conflicts/list``,
+``/conflicts/resolve``, ``/maintenance/classify-modified-edges``) now carry
+the OpenAPI tag ``context:operator`` and a ``[operator]`` prefix on their
+summaries, so they surface as a distinct group in docs/SDKs rather than
+alongside agent/product routes. Every destructive or graph-mutating call
+emits a structured audit log via the dedicated
+``context_engine.operator_audit`` logger (see
+``_audit_operator_action`` in ``router.py``), with action, pot_id, actor
+identity, ``dry_run`` flag, and per-action details. Dry-run behavior of
+``/maintenance/classify-modified-edges`` is now explicit in the route
+description and audited on every invocation. The CLI ``potpie pot
+hard-reset`` now prompts for destructive confirmation unless ``--yes`` is
+passed, and the help text calls the command out as destructive and
+operator/admin.
 
 Separate operator/admin actions from normal product APIs.
 
@@ -224,7 +268,27 @@ Acceptance criteria:
 
 ### Phase 8: Test And Migration Coverage
 
-Add tests around the desired contracts before broad implementation churn.
+Status: implemented. Contract coverage for the stable agent surface lives in
+`tests/unit/test_agent_surface_contract.py`: it introspects the live
+`FastMCP` instance to assert the tool set is exactly
+`{context_resolve, context_search, context_record, context_status}`,
+pins `context_ingest_episode` as a non-tool module-level helper, validates
+every `CONTEXT_RESOLVE_RECIPES` entry against `CONTEXT_INCLUDE_VALUES` and
+the allowed `mode`/`source_policy` vocabularies (with no smuggled-in
+per-intent `tool` field), asserts `context_port_manifest()` advertises
+exactly the four tools and mirrors the recipe catalog, and confirms
+`context_recipe_for_intent` returns a defensive copy so callers cannot
+mutate the shared include list. Existing coverage already addressed the
+other Phase 8 items: `tests/unit/test_context_status.py` covers readiness
+states and resolver-capability upgrades; `tests/unit/test_source_resolvers.py`
+covers source-policy fallbacks (`RESOLVER_UNAVAILABLE`,
+`UNSUPPORTED_SOURCE_POLICY`, `UNSUPPORTED_SOURCE_TYPE`, `BUDGET_EXCEEDED`)
+across the null/composite/github/docs resolvers;
+`tests/unit/test_context_resolution.py` Phase-5 block covers review-intent
+context working without diff fetch under `references_only` plus PR artifact
+routing through `summary`/`snippets`; `tests/unit/test_events_ingest_alias.py`
+pins the deprecated-alias contract; and
+`tests/unit/test_operator_audit.py` pins the operator tag/audit contract.
 
 Tasks:
 

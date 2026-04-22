@@ -12,6 +12,7 @@ from domain.source_references import (
     SourceFallback,
     SourceReferenceRecord,
 )
+from domain.source_resolution import SourceResolutionResult
 
 
 @dataclass
@@ -91,7 +92,6 @@ class CapabilitySet:
     project_map_context: bool = False
     debugging_memory_context: bool = False
     causal_chain_context: bool = False
-    workflow_context: bool = False
 
 
 @dataclass
@@ -242,6 +242,9 @@ class IntelligenceBundle:
     freshness: FreshnessReport = field(default_factory=FreshnessReport)
     quality: GraphQualityReport = field(default_factory=GraphQualityReport)
     fallbacks: list[SourceFallback] = field(default_factory=list)
+    source_resolution: SourceResolutionResult = field(
+        default_factory=SourceResolutionResult
+    )
     open_conflicts: list[dict[str, Any]] = field(default_factory=list)
     recommended_next_actions: list[dict[str, Any]] = field(default_factory=list)
     errors: list[ResolutionError] = field(default_factory=list)

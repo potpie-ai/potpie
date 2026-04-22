@@ -62,7 +62,7 @@ Persist a **Potpie API key** and optional base URL — **required** for **`searc
 | `potpie pot create <slug>` | Check slug availability, then `POST /api/v2/context/pots` + local alias. |
 | `potpie pot slug-available <slug>` | Check whether a pot slug is available on the server. |
 | `potpie pot pots` | List context pots (`GET /api/v2/context/pots`). |
-| `potpie pot repo list` / `pot repo add` | List or attach repositories on a pot (`GET`/`POST` `/api/v2/context/pots/.../repositories`). |
+| `potpie pot repo list` / `pot repo add` | List or attach repositories on a pot (`GET`/`POST` `/api/v2/context/pots/.../repositories`). The repository routes are a CLI/GitHub compatibility surface; the server mirrors the new repository into the pot's source list automatically. Non-GitHub source kinds (Linear teams, docs, etc.) should be attached via the source-first API at `/api/v2/context/pots/{pot_id}/sources/*`. |
 | `potpie event list` / `event show` / `event wait` | Inspect recent ingestion events, fetch one event, or wait for a queued ingest to finish. |
 
 **Precedence:** `POTPIE_API_KEY` in the environment **overrides** the stored token (useful for CI). For base URL: **`POTPIE_API_URL` / `POTPIE_BASE_URL`** override a stored URL; otherwise the stored URL from `login --url` is used before `POTPIE_PORT` and localhost guesses.
@@ -93,7 +93,7 @@ uv run potpie --json pot hard-reset 00000000-0000-0000-0000-000000000000
 
 ### `add`
 
-Inspect the current git working tree and print the provider-scoped repo identity (`provider`, `provider_host`, `repo_name`) along with the active pot if any. **This does not ingest content** — to ingest, use `potpie ingest` (raw episodes) or attach a repository source via `potpie pot repo add` (compatibility GitHub flow) or the source-first `/pots/{pot_id}/sources/github/repository` API.
+Inspect the current git working tree and print the provider-scoped repo identity (`provider`, `provider_host`, `repo_name`) along with the active pot if any. **This does not ingest content** — to ingest, use `potpie ingest` (raw episodes) or attach a source. GitHub repositories: `potpie pot repo add` (compatibility flow) or the equivalent source-first `POST /pots/{pot_id}/sources/github/repository`. Non-GitHub kinds: source-first `POST /pots/{pot_id}/sources/*` only.
 
 | Argument | Description |
 |----------|-------------|
@@ -188,7 +188,7 @@ Sends **`POST /api/v2/context/ingest`** with your API key. The **server** persis
 | `--sync` | No | Maps to HTTP **`sync=true`** (inline agent planning and apply on the server when supported). |
 | `--idempotency-key` | No | Optional dedupe key (forwarded to the API). |
 
-**Output (JSON):** includes `status` (`queued` \| `applied` \| `legacy_direct`), `episode_uuid` (when known), and `event_id` / `job_id` when the event store path is used. With Postgres configured, raw ingest is agent-planned; `legacy_direct` only applies to the no-Postgres development fallback.
+**Output (JSON):** includes `status` (`queued` \| `applied`), `episode_uuid` (when known), and `event_id` / `job_id` when the event store path is used. With Postgres configured, raw ingest is agent-planned; without Postgres, synchronous ingest writes through the same context graph adapter without creating an event row.
 
 When async ingest returns `queued`, use `potpie event wait <event_id>` to block until the server reports `done` or `error`, or `potpie event show <event_id>` to inspect the current event state.
 

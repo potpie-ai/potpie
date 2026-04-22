@@ -31,7 +31,6 @@ from domain.ingestion_kinds import (
     INGESTION_KIND_RAW_EPISODE,
 )
 from domain.ingestion_event_models import EventReceipt, IngestionSubmissionRequest
-from domain.ports.graph_mutation_applier import GraphMutationApplierPort
 from domain.ports.pot_resolution import resolve_write_repo
 from domain.ports.ingestion_submission import IngestionSubmissionService
 
@@ -59,14 +58,11 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
         self,
         container: "ContextEngineContainer",
         session: Session,
-        *,
-        mutation_applier: GraphMutationApplierPort | None = None,
     ) -> None:
         self._c = container
         self._session = session
         self._reco = SqlAlchemyReconciliationLedger(session)
         self._events = SqlAlchemyIngestionEventStore(session)
-        self._mutation_applier = mutation_applier
 
     def submit(
         self,
@@ -214,8 +210,7 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
             self._c.pots,
             source,
             ledger,
-            self._c.episodic,
-            self._c.structural,
+            self._context_graph(),
             request.pot_id,
             pr_number,
             repo_name=explicit,
@@ -330,15 +325,13 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
         )
 
         out = record_and_reconcile_context_event(
-            self._c.episodic,
-            self._c.structural,
+            self._context_graph(),
             self._c.reconciliation_agent,
             self._reco,
             scope,
             event,
             sync=sync,
             jobs=self._c.jobs,
-            mutation_applier=self._mutation_applier,
         )
 
         if not out.inserted:
@@ -391,3 +384,8 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
             terminal_event=ev,
             reconciliation=r,
         )
+
+    def _context_graph(self):
+        if self._c.context_graph is None:
+            raise ValueError("context_graph_unavailable")
+        return self._c.context_graph

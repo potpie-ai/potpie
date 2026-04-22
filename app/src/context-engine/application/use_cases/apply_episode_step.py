@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from domain.errors import ReconciliationApplyError, ReconciliationPlanValidationError
+from domain.graph_mutations import ProvenanceContext
 from domain.ingestion_kinds import (
     EPISODE_STEP_APPLIED,
     EPISODE_STEP_APPLYING,
@@ -12,26 +13,20 @@ from domain.ingestion_kinds import (
     STEP_KIND_AGENT_PLAN_SLICE,
     STEP_KIND_RAW_EPISODE,
 )
-from domain.ports.episodic_graph import EpisodicGraphPort
-from domain.ports.graph_mutation_applier import GraphMutationApplierPort
+from domain.ports.context_graph import ContextGraphPort
 from domain.ports.reconciliation_ledger import ReconciliationLedgerPort
-from domain.ports.structural_graph import StructuralGraphPort
 from domain.reconciliation import EpisodeDraft, MutationSummary, ReconciliationResult
 from domain.reconciliation_issues import validation_line_to_issue
 
-from adapters.outbound.context_graph_writer_adapter import DefaultContextGraphWriter
 from application.use_cases.reconciliation_plan_codec import reconciliation_plan_from_dict
 from application.use_cases.reconciliation_validation import validate_reconciliation_plan
 
 
 def apply_episode_step_for_event(
-    episodic: EpisodicGraphPort,
-    structural: StructuralGraphPort,
+    context_graph: ContextGraphPort,
     reco_ledger: ReconciliationLedgerPort,
     event_id: str,
     sequence: int,
-    *,
-    mutation_applier: GraphMutationApplierPort | None = None,
 ) -> ReconciliationResult:
     """Apply a single step if prior sequences for this event are already applied."""
     row = reco_ledger.get_event_by_id(event_id)
@@ -70,8 +65,6 @@ def apply_episode_step_for_event(
         increment_attempt=True,
     )
 
-    writer = DefaultContextGraphWriter(episodic, structural, mutation_applier)
-
     try:
         if step.step_kind == STEP_KIND_RAW_EPISODE:
             data = step.step_json
@@ -88,7 +81,7 @@ def apply_episode_step_for_event(
                 source_description=str(data["source_description"]),
                 reference_time=rt,
             )
-            out = writer.write_raw_episode(
+            out = context_graph.write_raw_episode(
                 row.pot_id,
                 draft.name,
                 draft.episode_body,
@@ -124,7 +117,17 @@ def apply_episode_step_for_event(
 
         plan = reconciliation_plan_from_dict(step.step_json)
         validate_reconciliation_plan(plan, row.pot_id)
-        result = writer.apply_plan(plan, expected_pot_id=row.pot_id)
+        prov_ctx = ProvenanceContext(
+            source_kind=row.event_type or row.ingestion_kind,
+            source_ref=row.source_id or row.source_event_id,
+            event_occurred_at=row.occurred_at,
+            event_received_at=row.received_at,
+        )
+        result = context_graph.apply_plan(
+            plan,
+            expected_pot_id=row.pot_id,
+            provenance_context=prov_ctx,
+        )
         if not result.ok:
             reco_ledger.update_episode_step_status(
                 event_id,

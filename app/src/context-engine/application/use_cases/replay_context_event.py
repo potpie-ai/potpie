@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from domain.errors import ReconciliationApplyError
 from domain.context_events import ContextEvent
-from domain.ports.episodic_graph import EpisodicGraphPort
-from domain.ports.graph_mutation_applier import GraphMutationApplierPort
+from domain.ports.context_graph import ContextGraphPort
 from domain.ports.reconciliation_agent import ReconciliationAgentPort
 from domain.ports.reconciliation_ledger import ContextEventRow, ReconciliationLedgerPort
-from domain.ports.structural_graph import StructuralGraphPort
 from domain.reconciliation import ReconciliationResult
 
 from application.use_cases.build_reconciliation_request import build_reconciliation_request
@@ -34,13 +32,11 @@ def _row_to_event(row: ContextEventRow) -> ContextEvent:
 
 
 def replay_context_event(
-    episodic: EpisodicGraphPort,
-    structural: StructuralGraphPort,
+    context_graph: ContextGraphPort,
     agent: ReconciliationAgentPort,
     reco_ledger: ReconciliationLedgerPort,
     event_id: str,
     *,
-    mutation_applier: GraphMutationApplierPort | None = None,
     reset_for_retry: bool = True,
 ) -> ReconciliationResult:
     """Load event by id, optionally mark for retry, then ``reconcile_event``."""
@@ -52,10 +48,8 @@ def replay_context_event(
     event = _row_to_event(row)
     request = build_reconciliation_request(event)
     return reconcile_event(
-        episodic,
-        structural,
+        context_graph,
         agent,
         request,
         reco_ledger=reco_ledger,
-        mutation_applier=mutation_applier,
     )

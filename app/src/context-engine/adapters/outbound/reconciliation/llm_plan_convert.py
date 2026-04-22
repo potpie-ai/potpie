@@ -87,5 +87,4 @@ def llm_plan_to_reconciliation_plan(
         ],
         confidence=llm.confidence,
         warnings=list(llm.warnings),
-        compat_github_pr_merged=None,
     )

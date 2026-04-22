@@ -35,18 +35,6 @@ class EpisodeDraft:
 
 
 @dataclass(slots=True)
-class GitHubPrMergedCompat:
-    """Compatibility bundle: same inputs as ``stamp_pr_entities`` / PR episode build."""
-
-    repo_name: str
-    pr_data: dict[str, Any]
-    commits: list[dict[str, Any]]
-    review_threads: list[dict[str, Any]]
-    linked_issues: list[dict[str, Any]]
-    issue_comments: list[dict[str, Any]] | None = None
-
-
-@dataclass(slots=True)
 class ReconciliationRequest:
     """Input to ``ReconciliationAgentPort``."""
 
@@ -58,7 +46,7 @@ class ReconciliationRequest:
 
 @dataclass(slots=True)
 class ReconciliationPlan:
-    """Constrained mutation plan produced by an agent or compatibility planner."""
+    """Constrained mutation plan produced by an agent or deterministic planner."""
 
     event_ref: EventRef
     summary: str
@@ -70,8 +58,6 @@ class ReconciliationPlan:
     evidence: list[EvidenceRef] = field(default_factory=list)
     confidence: float | None = None
     warnings: list[str] = field(default_factory=list)
-    compat_github_pr_merged: GitHubPrMergedCompat | None = None
-    """When set, apply uses legacy ``stamp_pr_entities`` after episodes (v1 GitHub PR path)."""
     ontology_downgrades: list[dict[str, str]] = field(default_factory=list)
     """Populated when soft ontology downgrade runs (API surface); not persisted on plan slices."""
 

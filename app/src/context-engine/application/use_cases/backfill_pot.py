@@ -10,12 +10,11 @@ from typing import Any
 
 from application.services.pr_bundle import fetch_full_pr
 from application.use_cases.ingest_merged_pr import ingest_merged_pull_request
-from domain.ports.episodic_graph import EpisodicGraphPort
+from domain.ports.context_graph import ContextGraphPort
 from domain.ports.ingestion_ledger import IngestionLedgerPort, ledger_scope_from_pot_repo
 from domain.ports.pot_resolution import PotResolutionPort, ResolvedPotRepo, resolve_write_repo
 from domain.ports.settings import ContextEngineSettingsPort
 from domain.ports.source_control import SourceControlPort
-from domain.ports.structural_graph import StructuralGraphPort
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +26,7 @@ def _backfill_one_repo(
     settings: ContextEngineSettingsPort,
     source: SourceControlPort,
     ledger: IngestionLedgerPort,
-    episodic: EpisodicGraphPort,
-    structural: StructuralGraphPort,
+    context_graph: ContextGraphPort,
     pot_id: str,
     primary: ResolvedPotRepo,
     rate_limit_sleep_s: float,
@@ -60,8 +58,7 @@ def _backfill_one_repo(
                 payload = fetch_full_pr(source, repo_name, pr.number)
                 result = ingest_merged_pull_request(
                     ledger=ledger,
-                    episodic=episodic,
-                    structural=structural,
+                    context_graph=context_graph,
                     scope=scope,
                     repo_name=repo_name,
                     pr_data=payload["pr_data"],
@@ -71,23 +68,12 @@ def _backfill_one_repo(
                     issue_comments=payload["issue_comments"],
                 )
 
-                merged_at = pr.merged_at.isoformat() if pr.merged_at else None
-                bridge_result = structural.write_bridges(
-                    pot_id=pot_id,
-                    pr_entity_key=result.pr_entity_key,
-                    pr_number=pr.number,
-                    repo_name=repo_name,
-                    files_with_patches=payload["pr_data"].get("files", []),
-                    review_threads=payload["review_threads"],
-                    merged_at=merged_at,
-                    is_live=False,
-                )
                 ledger.update_bridge_status(
                     scope,
                     SOURCE_TYPE,
                     source_id,
                     entity_key=result.pr_entity_key,
-                    bridge_result=bridge_result,
+                    bridge_result=None,
                     error=None,
                 )
                 ingested += 1
@@ -139,8 +125,7 @@ def backfill_pot_context(
     pots: PotResolutionPort,
     source_for_repo: Callable[[str], SourceControlPort],
     ledger: IngestionLedgerPort,
-    episodic: EpisodicGraphPort,
-    structural: StructuralGraphPort,
+    context_graph: ContextGraphPort,
     pot_id: str,
     *,
     target_repo_name: str | None = None,
@@ -203,8 +188,7 @@ def backfill_pot_context(
             settings=settings,
             source=src,
             ledger=ledger,
-            episodic=episodic,
-            structural=structural,
+            context_graph=context_graph,
             pot_id=pot_id,
             primary=rr,
             rate_limit_sleep_s=rate_limit_sleep_s,

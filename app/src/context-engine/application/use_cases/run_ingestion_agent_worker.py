@@ -9,12 +9,9 @@ from domain.ingestion_kinds import (
     EPISODE_STEP_APPLIED,
     STEP_KIND_AGENT_PLAN_SLICE,
 )
-from domain.ports.episodic_graph import EpisodicGraphPort
-from domain.ports.graph_mutation_applier import GraphMutationApplierPort
 from domain.ports.jobs import JobEnqueuePort
 from domain.ports.reconciliation_agent import ReconciliationAgentPort
 from domain.ports.reconciliation_ledger import ReconciliationLedgerPort
-from domain.ports.structural_graph import StructuralGraphPort
 from domain.reconciliation_flags import reconciliation_enabled
 
 from application.use_cases.agent_work_capture import (
@@ -33,23 +30,17 @@ from application.use_cases.split_reconciliation_plan import (
 
 
 def run_ingestion_agent_for_event(
-    episodic: EpisodicGraphPort,
-    structural: StructuralGraphPort,
     agent: ReconciliationAgentPort,
     reco_ledger: ReconciliationLedgerPort,
     event_id: str,
     jobs: JobEnqueuePort,
-    *,
-    mutation_applier: GraphMutationApplierPort | None = None,
 ) -> dict[str, Any]:
     """
     Run planner for an agent-backed event, persist episode steps, enqueue apply jobs.
 
-    ``mutation_applier`` is reserved for future parity with sync ``reconcile_event``; apply workers
-    receive graph ports directly.
+    Apply workers receive the unified context graph port when executing the
+    generated steps.
     """
-    del episodic, structural, mutation_applier
-
     row = reco_ledger.get_event_by_id(event_id)
     if row is None:
         return {"ok": False, "error": "unknown_event"}

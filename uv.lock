@@ -914,6 +914,9 @@ requires-dist = [
 ]
 provides-extras = ["postgres", "graph", "github", "reconciliation-agent", "hatchet", "all", "dev"]
 
+[package.metadata.requires-dev]
+dev = [{ name = "pytest-cov", specifier = ">=7.1.0" }]
+
 [[package]]
 name = "coverage"
 version = "7.13.4"

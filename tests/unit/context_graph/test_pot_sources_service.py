@@ -11,6 +11,7 @@ from app.modules.context_graph.pot_sources_service import (
     github_repo_scope_hash,
     github_repo_scope_json,
 )
+from app.modules.context_graph.wiring import pot_source_row_to_status_source
 
 pytestmark = pytest.mark.unit
 
@@ -60,3 +61,49 @@ class TestScopeJson:
         a = github_repo_scope_json(_fake_repo())
         b = github_repo_scope_json(_fake_repo())
         assert a == b
+
+
+class TestPotSourceRowToStatusSource:
+    def _row(self, **overrides: object) -> object:
+        base: dict[str, object] = {
+            "id": "src_1",
+            "pot_id": "pot_1",
+            "provider": "github",
+            "source_kind": "repository",
+            "scope_json": json.dumps(
+                {
+                    "owner": "acme",
+                    "repo": "widget",
+                    "repo_name": "acme/widget",
+                    "provider_host": "github.com",
+                }
+            ),
+            "sync_enabled": True,
+            "sync_mode": None,
+            "last_sync_at": None,
+            "last_error": None,
+            "health_score": None,
+        }
+        base.update(overrides)
+        return SimpleNamespace(**base)
+
+    def test_extracts_provider_host_and_scope_summary_for_repo(self) -> None:
+        out = pot_source_row_to_status_source(self._row())  # type: ignore[arg-type]
+        assert out.source_id == "src_1"
+        assert out.provider_host == "github.com"
+        assert out.scope_summary == "acme/widget"
+
+    def test_handles_missing_scope_json(self) -> None:
+        out = pot_source_row_to_status_source(self._row(scope_json=None))  # type: ignore[arg-type]
+        assert out.provider_host is None
+        assert out.scope_summary is None
+
+    def test_summary_for_linear_team(self) -> None:
+        out = pot_source_row_to_status_source(  # type: ignore[arg-type]
+            self._row(
+                provider="linear",
+                source_kind="issue_tracker_team",
+                scope_json=json.dumps({"team_id": "T1", "team_name": "Core"}),
+            )
+        )
+        assert out.scope_summary == "team:Core"

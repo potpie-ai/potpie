@@ -319,6 +319,46 @@ def _edge_datetime_iso(obj: Any) -> str | None:
     return None
 
 
+_PROVENANCE_ATTR_KEYS: tuple[tuple[str, str], ...] = (
+    ("pot_id", "prov_pot_id"),
+    ("source_event_id", "prov_source_event_id"),
+    ("episode_uuid", "prov_episode_uuid"),
+    ("source_system", "prov_source_system"),
+    ("source_kind", "prov_source_kind"),
+    ("source_ref", "prov_source_ref"),
+    ("event_occurred_at", "prov_event_occurred_at"),
+    ("event_received_at", "prov_event_received_at"),
+    ("graph_updated_at", "prov_graph_updated_at"),
+    ("valid_from", "prov_valid_from"),
+    ("valid_to", "prov_valid_to"),
+    ("confidence", "prov_confidence"),
+    ("created_by_agent", "prov_created_by_agent"),
+    ("reconciliation_run_id", "prov_reconciliation_run_id"),
+)
+
+
+def _extract_provenance(attrs: dict[str, Any]) -> dict[str, Any]:
+    """Pull ``prov_*`` fields from Graphiti edge attributes into a compact dict.
+
+    Surfacing the 13-field provenance contract on every evidence row means
+    consumers can answer where a fact came from and how fresh it is without
+    walking back to the event ledger.
+    """
+    out: dict[str, Any] = {}
+    for public_key, attr_key in _PROVENANCE_ATTR_KEYS:
+        val = attrs.get(attr_key)
+        if val is None or (isinstance(val, str) and not val.strip()):
+            continue
+        if public_key == "confidence":
+            try:
+                out[public_key] = float(val)
+            except (TypeError, ValueError):
+                continue
+        else:
+            out[public_key] = str(val).strip() if isinstance(val, str) else val
+    return out
+
+
 def _search_result_row(item: Any) -> dict[str, Any]:
     row: dict[str, Any] = {
         "uuid": str(getattr(item, "uuid", "")),
@@ -351,6 +391,9 @@ def _search_result_row(item: Any) -> dict[str, Any]:
         epu = attrs.get("episode_uuid")
         if epu:
             row["episode_uuid"] = str(epu)
+        provenance = _extract_provenance(attrs)
+        if provenance:
+            row["provenance"] = provenance
     for key in ("created_at", "valid_at", "invalid_at", "expired_at"):
         val = getattr(item, key, None)
         if val is not None:

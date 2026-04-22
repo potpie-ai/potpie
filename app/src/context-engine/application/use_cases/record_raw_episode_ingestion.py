@@ -1,4 +1,4 @@
-"""Legacy no-agent raw episodic ingest helper."""
+"""Persist and apply raw episodic ingest steps through the unified graph port."""
 
 from __future__ import annotations
 
@@ -9,11 +9,9 @@ from uuid import uuid4
 
 from domain.context_events import ContextEvent, EventScope
 from domain.ingestion_kinds import INGESTION_KIND_RAW_EPISODE, STEP_KIND_RAW_EPISODE
-from domain.ports.episodic_graph import EpisodicGraphPort
-from domain.ports.graph_mutation_applier import GraphMutationApplierPort
+from domain.ports.context_graph import ContextGraphPort
 from domain.ports.jobs import JobEnqueuePort, NoOpJobEnqueue
 from domain.ports.reconciliation_ledger import ReconciliationLedgerPort
-from domain.ports.structural_graph import StructuralGraphPort
 
 from application.use_cases.apply_episode_step import apply_episode_step_for_event
 from application.use_cases.record_context_event import record_context_event
@@ -30,8 +28,7 @@ class RawEpisodeIngestOutcome:
 
 
 def record_raw_episode_ingestion(
-    episodic: EpisodicGraphPort,
-    structural: StructuralGraphPort,
+    context_graph: ContextGraphPort,
     reco_ledger: ReconciliationLedgerPort,
     scope: EventScope,
     *,
@@ -43,13 +40,12 @@ def record_raw_episode_ingestion(
     idempotency_key: str | None,
     sync: bool,
     jobs: JobEnqueuePort | None,
-    mutation_applier: GraphMutationApplierPort | None = None,
     source_channel: str | None = None,
 ) -> RawEpisodeIngestOutcome:
     """Persist a ``raw_episode`` event, durable step row, then sync apply or async queue.
 
     New persisted raw ingest routes through ``DefaultIngestionSubmissionService`` and the
-    Ingestion Agent. This helper remains for legacy/direct fallback tests and adapters.
+    Ingestion Agent. This helper is retained for direct use-case tests and non-HTTP adapters.
     """
     jq = jobs or NoOpJobEnqueue()
     ev = ContextEvent(
@@ -102,12 +98,10 @@ def record_raw_episode_ingestion(
 
     if sync:
         r = apply_episode_step_for_event(
-            episodic,
-            structural,
+            context_graph,
             reco_ledger,
             event_id,
             1,
-            mutation_applier=mutation_applier,
         )
         uid = r.episode_uuids[0] if r.episode_uuids else None
         return RawEpisodeIngestOutcome(
@@ -125,12 +119,10 @@ def record_raw_episode_ingestion(
     jq.enqueue_episode_apply(pot_id, event_id, 1)
     if isinstance(jq, NoOpJobEnqueue):
         r = apply_episode_step_for_event(
-            episodic,
-            structural,
+            context_graph,
             reco_ledger,
             event_id,
             1,
-            mutation_applier=mutation_applier,
         )
         uid = r.episode_uuids[0] if r.episode_uuids else None
         return RawEpisodeIngestOutcome(

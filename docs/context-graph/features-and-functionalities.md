@@ -25,6 +25,10 @@ The desired public contract is:
 - One small agent tool port: `context_resolve`, `context_search`, `context_record`, and `context_status`.
 - Source-reference-first storage: graph reads return compact facts, relationships, source refs, freshness, and fallbacks; full source payloads are fetched through source resolvers only when requested and authorized.
 - New use cases should add `intent`, `include`, `scope`, provider, or resolver support, not new public agent tools.
+- Compatibility routes and provider-specific graph write branches are temporary
+  migration aids, not product architecture. New implementation should target
+  source events, generic reconciliation plans, and the unified graph query/write
+  layer.
 
 ## Surface Boundaries
 
@@ -58,13 +62,16 @@ This surface supports the Potpie product UI and app workflows. It is public to t
 | --- | --- | --- |
 | List/create/update pots | `/api/v2/context/pots*` | Pot tenancy and project boundary |
 | Manage members and invitations | `/api/v2/context/pots/{pot_id}/members*`, `/invitations*` | Application authorization workflow |
-| Manage sources | `/api/v2/context/pots/{pot_id}/sources*` | Preferred extensible source model |
-| Attach GitHub repo source | `POST /api/v2/context/pots/{pot_id}/sources/github/repository` | Creates both source and repository routing data |
+| Manage sources (preferred) | `/api/v2/context/pots/{pot_id}/sources*` | Source-first attachment path; covers every supported source kind |
+| Attach GitHub repo source | `POST /api/v2/context/pots/{pot_id}/sources/github/repository` | Creates the source row and mirrors a repository routing row for code-graph behavior |
 | Attach Linear team source | `POST /api/v2/context/pots/{pot_id}/sources/linear/team` | Example non-code source |
+| Patch source sync | `PATCH /api/v2/context/pots/{pot_id}/sources/{source_id}` | Toggle `sync_enabled` |
+| Detach source | `DELETE /api/v2/context/pots/{pot_id}/sources/{source_id}` | For repository sources, also removes the mirrored repository routing row |
+| Transitional repository routes | `/api/v2/context/pots/{pot_id}/repositories*` | Temporary GitHub/code-graph routing surface while clients move to source-first APIs |
 | UI raw ingest | `POST /api/v2/context/pots/{pot_id}/ingest/raw` | Pot-scoped note/link submission for the app |
 | Inspect events | `GET /api/v2/context/events/{event_id}`, `GET /api/v2/context/pots/{pot_id}/events` | UI and CLI event inspection |
 
-The long-term product model should make **source** the primary data-scope concept. Repositories should be modeled as a source subtype with code-graph capabilities, not as the only first-class source. The older repository endpoints can remain for CLI compatibility and GitHub-only flows.
+**Source-first model.** New UI and integration flows should attach data via `/pots/{pot_id}/sources/*`. Repository routes are transitional for existing GitHub/code-graph flows; creating a repository there mirrors a row into the source table automatically, and deleting either side keeps the two consistent while the migration is active. Future source kinds (docs, Slack, incidents, deployments, alerts) only need source rows — they must not synthesize repository-shaped records.
 
 ### 3. Ingestion And Automation Surface
 
@@ -75,23 +82,34 @@ This surface is used by webhooks, workers, scheduled jobs, and trusted automatio
 | Repository/code backfill | `POST /api/v2/context/sync` | Enqueues configured context-graph job queue in Potpie |
 | Merged PR ingest | `POST /api/v2/context/ingest-pr` | Also driven by GitHub webhook events when mapped to a pot |
 | Normalized event reconcile | `POST /api/v2/context/events/reconcile` | Canonical event submission path |
-| Compatibility event alias | `POST /api/v2/context/events/ingest` | Compatibility only; do not document as primary |
+| Compatibility event alias | `POST /api/v2/context/events/ingest` | Deprecated alias; hidden from OpenAPI, emits `Deprecation`/`Warning`/`Link` headers, counted + logged for migration tracking |
 | Replay event | `POST /api/v2/context/events/replay` | Operational retry/debug path |
 
 These endpoints are necessary, but they should be described as ingestion workflow APIs rather than as the primary agent-facing feature surface.
 
 ### 4. Operator And Admin Surface
 
-This surface is for graph repair, reset, and maintenance. It should be protected, documented separately, and treated as an operational escape hatch.
+This surface is for graph repair, reset, and maintenance. It is protected,
+documented separately, and treated as an operational escape hatch. Every
+route is grouped under the OpenAPI tag **`context:operator`** and carries an
+``[operator]`` prefix in its summary so clients and generated SDKs see the
+admin boundary clearly.
 
 | Capability | Method And Path | Notes |
 | --- | --- | --- |
-| Reset pot graph | `POST /api/v2/context/reset` | Destructive; clears graph and optionally ledger rows |
-| List conflicts | `POST /api/v2/context/conflicts/list` | Quality/repair workflow |
-| Resolve conflicts | `POST /api/v2/context/conflicts/resolve` | Requires careful authorization and auditability |
-| Edge classification maintenance | `POST /api/v2/context/maintenance/classify-modified-edges` | Dry-run by default; write-gated by env flags |
+| Reset pot graph | `POST /api/v2/context/reset` | Destructive; clears graph and optionally ledger rows. No dry-run. Audited. |
+| List conflicts | `POST /api/v2/context/conflicts/list` | Quality/repair read. Pair with `/conflicts/resolve`. |
+| Resolve conflicts | `POST /api/v2/context/conflicts/resolve` | Mutates graph state. Audited with actor, pot, issue uuid, and action. |
+| Edge classification maintenance | `POST /api/v2/context/maintenance/classify-modified-edges` | Dry-run by default (`dry_run=true`). Writes require BOTH `CONTEXT_ENGINE_CLASSIFY_MODIFIED_EDGES=1` and `CONTEXT_ENGINE_ALLOW_EDGE_CLASSIFY_WRITE=1`. Audited. |
 
-These APIs should not be framed as the everyday context graph product contract.
+**Audit trail.** Each destructive or graph-mutating call emits a structured
+log record via the `context_engine.operator_audit` logger with fields:
+`action`, `pot_id`, `actor` (email/id where available), `dry_run`, and
+action-specific details (`skip_ledger`, `issue_uuid`, `conflict_action`,
+`outcome`, `error`). Operators can tail this logger or route it to a
+durable audit store.
+
+These APIs are not the everyday context graph product contract.
 
 ## Public Entrypoints
 
@@ -114,13 +132,13 @@ Common commands:
 - `potpie doctor`: validate configuration and API readiness.
 - `potpie pot use`: select an active context pot.
 - `potpie pot create`: create a server-side context pot and store a local alias.
-- `potpie pot repo add`: attach a GitHub repository to a pot through the compatibility repository flow.
+- `potpie pot repo add`: transitional GitHub repository attachment for CLI users. The server mirrors the repository into the pot's source list automatically; non-GitHub source kinds should be attached via `/pots/{pot_id}/sources/*`.
 - `potpie add`: inspect the current git remote and print provider-scoped repo identity; this does not ingest content.
 - `potpie ingest`: submit raw context episodes.
 - `potpie search`: run semantic graph search.
 - `potpie event show`, `potpie event list`, `potpie event wait`: inspect ingestion and reconciliation events.
 - `potpie conflict list`, `potpie conflict resolve`: inspect and resolve graph conflicts.
-- `potpie pot hard-reset`: destructive operator command to reset context graph data for a pot.
+- `potpie pot hard-reset`: **destructive** operator command that deletes all context-graph data for a pot. Prompts for confirmation unless `--yes`/`-y` is passed. Server-side logs a `context_engine.operator_audit` entry.
 
 ### MCP
 
@@ -154,7 +172,7 @@ Sources describe what external systems belong to a pot. A source can be a GitHub
 The preferred extensible model is:
 
 - `ContextGraphPotSource` stores source type, provider, scope, sync settings, and source state.
-- Repository rows remain available for GitHub/code-graph routing and compatibility.
+- Repository rows remain available only for GitHub/code-graph routing during the source-first migration.
 - Source resolvers should later use source rows to fetch summaries, verification signals, and bounded snippets for `context_resolve`.
 
 ### 3. Repository And Codebase Ingestion
@@ -244,13 +262,23 @@ Primary API:
 POST /api/v2/context/events/reconcile
 ```
 
-Compatibility alias:
+Deprecated transitional alias:
 
 ```http
 POST /api/v2/context/events/ingest
 ```
 
-The alias should remain compatibility-only and should not be promoted in new product docs.
+The alias is hidden from the OpenAPI schema and attaches deprecation
+signalling on every response:
+
+- ``Deprecation: true``
+- ``Warning: 299 - "POST /events/ingest is a deprecated alias of /events/reconcile; migrate clients to /events/reconcile."``
+- ``Link: </api/v2/context/events/reconcile>; rel="successor-version"``
+
+Each alias call also increments a process-local counter
+(``events_ingest_alias_call_count()``) and logs a WARNING so operators can
+track migration. New clients and docs must target ``/events/reconcile``. The
+alias should be removed after known clients migrate.
 
 ### 7. Unified Graph Querying
 
@@ -505,7 +533,7 @@ Use `intent: "review"` or `include: ["artifact", "discussions", "recent_changes"
 
 ### Pull Request Diff Detail
 
-Do not model full PR diffs as a normal graph payload. For detailed diff inspection, request source-backed context for a PR artifact with bounded budget.
+Full PR diffs are not a documented graph family. The graph stores changed files, touched symbols, PR/review summaries, and decisions; diff text is fetched on demand from GitHub through the source resolver layer. Request it by combining `artifact={kind:"pr", identifier:"<n>"}` with `source_policy="summary"` (compact PR summary) or `source_policy="snippets"` (bounded hunks). Both are clamped by `ResolverBudget` (`max_chars_per_item`, `max_total_chars`, `max_snippets_per_ref`).
 
 ```json
 {
@@ -751,4 +779,3 @@ Consumers should inspect coverage, freshness, quality, fallbacks, open conflicts
 | Resolve conflict | `POST /api/v2/context/conflicts/resolve` |
 | Classify modified edges | `POST /api/v2/context/maintenance/classify-modified-edges` |
 | Reset pot graph | `POST /api/v2/context/reset` |
-

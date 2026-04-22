@@ -89,3 +89,176 @@ class ContextGraphResult(BaseModel):
     result: Any = None
     error: str | None = None
     meta: dict[str, Any] = Field(default_factory=dict)
+
+
+def preset_semantic_search(
+    *,
+    pot_id: str,
+    query: str,
+    limit: int = 12,
+    repo_name: str | None = None,
+    node_labels: list[str] | None = None,
+    source_description: str | None = None,
+    include_invalidated: bool = False,
+    as_of: datetime | None = None,
+) -> ContextGraphQuery:
+    return ContextGraphQuery(
+        pot_id=pot_id,
+        query=query,
+        goal=ContextGraphGoal.RETRIEVE,
+        strategy=ContextGraphStrategy.SEMANTIC,
+        include=["semantic_search"],
+        scope=ContextGraphScope(repo_name=repo_name),
+        node_labels=list(node_labels or []),
+        source_descriptions=[source_description] if source_description else [],
+        include_invalidated=include_invalidated,
+        as_of=as_of,
+        limit=limit,
+    )
+
+
+def preset_change_history(
+    *,
+    pot_id: str,
+    file_path: str | None = None,
+    function_name: str | None = None,
+    repo_name: str | None = None,
+    pr_number: int | None = None,
+    limit: int = 10,
+    as_of: datetime | None = None,
+) -> ContextGraphQuery:
+    return ContextGraphQuery(
+        pot_id=pot_id,
+        goal=ContextGraphGoal.TIMELINE,
+        strategy=ContextGraphStrategy.TEMPORAL,
+        include=["change_history"],
+        scope=ContextGraphScope(
+            repo_name=repo_name,
+            file_path=file_path,
+            function_name=function_name,
+            pr_number=pr_number,
+        ),
+        limit=limit,
+        as_of=as_of,
+    )
+
+
+def preset_file_owners(
+    *,
+    pot_id: str,
+    file_path: str,
+    repo_name: str | None = None,
+    limit: int = 5,
+) -> ContextGraphQuery:
+    return ContextGraphQuery(
+        pot_id=pot_id,
+        goal=ContextGraphGoal.AGGREGATE,
+        strategy=ContextGraphStrategy.EXACT,
+        include=["owners"],
+        scope=ContextGraphScope(repo_name=repo_name, file_path=file_path),
+        limit=limit,
+    )
+
+
+def preset_decisions(
+    *,
+    pot_id: str,
+    file_path: str | None = None,
+    function_name: str | None = None,
+    repo_name: str | None = None,
+    pr_number: int | None = None,
+    limit: int = 20,
+) -> ContextGraphQuery:
+    return ContextGraphQuery(
+        pot_id=pot_id,
+        goal=ContextGraphGoal.RETRIEVE,
+        strategy=ContextGraphStrategy.EXACT,
+        include=["decisions"],
+        scope=ContextGraphScope(
+            repo_name=repo_name,
+            file_path=file_path,
+            function_name=function_name,
+            pr_number=pr_number,
+        ),
+        limit=limit,
+    )
+
+
+def preset_pr_review_context(
+    *,
+    pot_id: str,
+    pr_number: int,
+    repo_name: str | None = None,
+) -> ContextGraphQuery:
+    return ContextGraphQuery(
+        pot_id=pot_id,
+        goal=ContextGraphGoal.RETRIEVE,
+        strategy=ContextGraphStrategy.EXACT,
+        include=["pr_review_context"],
+        scope=ContextGraphScope(repo_name=repo_name, pr_number=pr_number),
+    )
+
+
+def preset_pr_diff(
+    *,
+    pot_id: str,
+    pr_number: int,
+    file_path: str | None = None,
+    repo_name: str | None = None,
+    limit: int = 30,
+) -> ContextGraphQuery:
+    return ContextGraphQuery(
+        pot_id=pot_id,
+        goal=ContextGraphGoal.RETRIEVE,
+        strategy=ContextGraphStrategy.EXACT,
+        include=["pr_diff"],
+        scope=ContextGraphScope(
+            repo_name=repo_name,
+            file_path=file_path,
+            pr_number=pr_number,
+        ),
+        limit=limit,
+    )
+
+
+def preset_project_graph(
+    *,
+    pot_id: str,
+    repo_name: str | None = None,
+    pr_number: int | None = None,
+    services: list[str] | None = None,
+    features: list[str] | None = None,
+    environment: str | None = None,
+    user: str | None = None,
+    include: list[str] | None = None,
+    limit: int = 12,
+) -> ContextGraphQuery:
+    return ContextGraphQuery(
+        pot_id=pot_id,
+        goal=ContextGraphGoal.NEIGHBORHOOD,
+        strategy=ContextGraphStrategy.TRAVERSAL,
+        include=list(include or []),
+        scope=ContextGraphScope(
+            repo_name=repo_name,
+            pr_number=pr_number,
+            services=list(services or []),
+            features=list(features or []),
+            environment=environment,
+            user=user,
+        ),
+        limit=limit,
+    )
+
+
+def preset_graph_overview(
+    *,
+    pot_id: str,
+    limit: int = 20,
+) -> ContextGraphQuery:
+    return ContextGraphQuery(
+        pot_id=pot_id,
+        goal=ContextGraphGoal.AGGREGATE,
+        strategy=ContextGraphStrategy.EXACT,
+        include=["graph_overview"],
+        limit=limit,
+    )

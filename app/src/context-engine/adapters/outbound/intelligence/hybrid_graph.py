@@ -45,6 +45,7 @@ _PROJECT_MAP_FAMILIES_BY_LABEL = {
     "Integration": "service_map",
     "Dependency": "service_map",
     "Document": "docs",
+    "Issue": "tickets",
     "Deployment": "deployments",
     "DeploymentTarget": "deployments",
     "DeploymentStrategy": "deployments",
@@ -676,5 +677,4 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
             project_map_context=True,
             debugging_memory_context=True,
             causal_chain_context=True,
-            workflow_context=False,
         )

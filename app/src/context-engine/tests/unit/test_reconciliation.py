@@ -1,20 +1,19 @@
-"""Reconciliation plan, compat planner, and apply."""
+"""Reconciliation plan, deterministic GitHub planner, and apply."""
 
 from unittest.mock import MagicMock
 
 import pytest
 
-from adapters.outbound.reconciliation.github_pr_compat import (
-    GitHubPrMergedCompatAgent,
-    build_github_pr_merged_compatibility_plan,
+from adapters.outbound.reconciliation.github_pr_plan import (
+    GitHubPrMergedPlannerAgent,
+    build_github_pr_merged_plan,
 )
+from application.use_cases.ingest_merged_pr import ingest_merged_pull_request
 from application.use_cases.apply_reconciliation_plan import apply_reconciliation_plan
 from application.use_cases.reconcile_event import reconcile_event
 from application.use_cases.agent_work_capture import bind_agent_work_recorder
 from application.use_cases.reconciliation_validation import validate_reconciliation_plan
 from domain.context_events import ContextEvent, EventRef, EventScope
-from domain.errors import ReconciliationPlanValidationError
-from domain.graph_mutations import EntityUpsert
 from domain.ports.ingestion_ledger import LedgerScope
 from adapters.outbound.reconciliation.llm_plan_convert import (
     llm_plan_to_reconciliation_plan,
@@ -28,25 +27,15 @@ from adapters.outbound.reconciliation.llm_plan_schema import (
     LlmInvalidationOp,
     LlmReconciliationPlan,
 )
-from domain.reconciliation import ReconciliationPlan, ReconciliationRequest
+from domain.reconciliation import (
+    MutationSummary,
+    ReconciliationPlan,
+    ReconciliationRequest,
+    ReconciliationResult,
+)
 
 
-def test_validate_compat_mutually_exclusive_with_generic() -> None:
-    ref = EventRef(event_id="e1", source_system="github", pot_id="p1")
-    plan = ReconciliationPlan(
-        event_ref=ref,
-        summary="s",
-        episodes=[],
-        entity_upserts=[
-            EntityUpsert(entity_key="k", labels=("Entity",), properties={})
-        ],
-        compat_github_pr_merged=MagicMock(),
-    )
-    with pytest.raises(ReconciliationPlanValidationError):
-        validate_reconciliation_plan(plan, "p1")
-
-
-def test_compat_plan_build_roundtrip() -> None:
+def test_github_pr_plan_builds_generic_mutations() -> None:
     ref = EventRef(event_id="e1", source_system="github", pot_id="pot-a")
     pr_data = {
         "number": 7,
@@ -54,28 +43,40 @@ def test_compat_plan_build_roundtrip() -> None:
         "author": "a",
         "merged_at": "2024-01-01T00:00:00Z",
         "body": "x",
-        "files": [],
+        "files": [{"filename": "app.py", "status": "modified", "additions": 2}],
         "labels": [],
         "milestone": None,
     }
-    plan = build_github_pr_merged_compatibility_plan(
+    plan = build_github_pr_merged_plan(
         event_ref=ref,
         repo_name="o/r",
         pr_data=pr_data,
-        commits=[],
-        review_threads=[],
-        linked_issues=[],
+        commits=[{"sha": "abc123", "message": "change app", "author": "a"}],
+        review_threads=[
+            {
+                "thread_id": "t1",
+                "path": "app.py",
+                "line": 10,
+                "comments": [{"author": "b", "body": "Use the shared helper."}],
+            }
+        ],
+        linked_issues=[{"number": 4, "title": "Bug", "state": "closed"}],
         issue_comments=[],
     )
     validate_reconciliation_plan(plan, "pot-a")
-    assert plan.compat_github_pr_merged is not None
     assert len(plan.episodes) == 1
     assert plan.episodes[0].name == "pr_7_merged"
+    keys = {x.entity_key for x in plan.entity_upserts}
+    assert "github:pr:o/r:7" in keys
+    assert "github:commit:o/r:abc123" in keys
+    assert "code:file:o/r:app.py" in keys
+    edge_types = {x.edge_type for x in plan.edge_upserts}
+    assert {"HAS_COMMIT", "HAS_REVIEW_DECISION", "MODIFIED", "ADDRESSES"} <= edge_types
 
 
-def test_apply_reconciliation_plan_compat_calls_stamp() -> None:
+def test_apply_reconciliation_plan_applies_generic_pr_mutations() -> None:
     ref = EventRef(event_id="e1", source_system="github", pot_id="p1")
-    plan = build_github_pr_merged_compatibility_plan(
+    plan = build_github_pr_merged_plan(
         event_ref=ref,
         repo_name="o/r",
         pr_data={
@@ -96,18 +97,85 @@ def test_apply_reconciliation_plan_compat_calls_stamp() -> None:
     episodic = MagicMock()
     episodic.write_episode_drafts.return_value = ["uuid-1"]
     structural = MagicMock()
-    structural.stamp_pr_entities.return_value = {"stamped_pr": 1}
+    mutation_applier = MagicMock()
+    mutation_applier.apply_entity_upserts.return_value = len(plan.entity_upserts)
+    mutation_applier.apply_edge_upserts.return_value = len(plan.edge_upserts)
+    mutation_applier.apply_edge_deletes.return_value = 0
+    mutation_applier.apply_invalidations.return_value = 0
 
-    out = apply_reconciliation_plan(episodic, structural, plan, expected_pot_id="p1")
+    out = apply_reconciliation_plan(
+        episodic,
+        structural,
+        plan,
+        expected_pot_id="p1",
+        mutation_applier=mutation_applier,
+    )
 
     assert out.ok
     assert out.episode_uuids == ["uuid-1"]
-    structural.stamp_pr_entities.assert_called_once()
+    assert out.mutation_summary.entity_upserts_applied == len(plan.entity_upserts)
+    assert out.mutation_summary.edge_upserts_applied == len(plan.edge_upserts)
+    mutation_applier.apply_entity_upserts.assert_called_once()
+    mutation_applier.apply_edge_upserts.assert_called_once()
     episodic.write_episode_drafts.assert_called_once()
 
 
-def test_compat_agent_from_payload() -> None:
-    agent = GitHubPrMergedCompatAgent(repo_name="o/r")
+def test_ingest_merged_pull_request_applies_through_context_graph() -> None:
+    ledger = MagicMock()
+    ledger.get_ingestion_log.return_value = None
+    ledger.try_append_ingestion_and_raw_event.return_value = True
+    context_graph = MagicMock()
+    context_graph.apply_plan.return_value = ReconciliationResult(
+        ok=True,
+        episode_uuids=["episode-1"],
+        mutation_summary=MutationSummary(
+            episodes_written=1,
+            entity_upserts_applied=2,
+            edge_upserts_applied=3,
+        ),
+        error=None,
+    )
+
+    out = ingest_merged_pull_request(
+        ledger=ledger,
+        context_graph=context_graph,
+        scope=LedgerScope(
+            pot_id="p1",
+            provider="github",
+            provider_host="github.com",
+            repo_name="o/r",
+        ),
+        repo_name="o/r",
+        pr_data={
+            "number": 2,
+            "title": "t",
+            "author": "u",
+            "merged_at": "2024-01-02T00:00:00Z",
+            "body": "",
+            "files": [],
+            "labels": [],
+            "milestone": None,
+        },
+        commits=[],
+        review_threads=[],
+        linked_issues=[],
+        issue_comments=[],
+    )
+
+    assert out.episode_uuid == "episode-1"
+    assert out.pr_entity_key == "github:pr:o/r:2"
+    assert out.stamp_counts == {
+        "entity_upserts_applied": 2,
+        "edge_upserts_applied": 3,
+        "edge_deletes_applied": 0,
+        "invalidations_applied": 0,
+    }
+    context_graph.apply_plan.assert_called_once()
+    ledger.try_append_ingestion_and_raw_event.assert_called_once()
+
+
+def test_github_pr_planner_agent_from_payload() -> None:
+    agent = GitHubPrMergedPlannerAgent(repo_name="o/r")
     ev = ContextEvent(
         event_id="evt-1",
         source_system="github",
@@ -137,15 +205,20 @@ def test_compat_agent_from_payload() -> None:
     )
     req = ReconciliationRequest(event=ev, pot_id="p1", repo_name="o/r")
     plan = agent.run_reconciliation(req)
-    assert plan.compat_github_pr_merged is not None
+    assert any(x.entity_key == "github:pr:o/r:3" for x in plan.entity_upserts)
 
 
 def test_reconcile_event_with_mock_ledger(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_RECONCILIATION_ENABLED", "1")
-    episodic = MagicMock()
-    episodic.write_episode_drafts.return_value = ["u1"]
-    structural = MagicMock()
-    structural.stamp_pr_entities.return_value = {}
+    context_graph = MagicMock()
+    context_graph.apply_plan.return_value.ok = True
+    context_graph.apply_plan.return_value.episode_uuids = ["u1"]
+    context_graph.apply_plan.return_value.mutation_summary.episodes_written = 1
+    context_graph.apply_plan.return_value.mutation_summary.entity_upserts_applied = 1
+    context_graph.apply_plan.return_value.mutation_summary.edge_upserts_applied = 1
+    context_graph.apply_plan.return_value.mutation_summary.edge_deletes_applied = 0
+    context_graph.apply_plan.return_value.mutation_summary.invalidations_applied = 0
+    context_graph.apply_plan.return_value.mutation_summary.stamp_counts = {}
 
     ev = ContextEvent(
         event_id="evt-2",
@@ -174,7 +247,7 @@ def test_reconcile_event_with_mock_ledger(monkeypatch: pytest.MonkeyPatch) -> No
             "issue_comments": [],
         },
     )
-    agent = GitHubPrMergedCompatAgent(repo_name="o/r")
+    agent = GitHubPrMergedPlannerAgent(repo_name="o/r")
     req = ReconciliationRequest(event=ev, pot_id="p1", repo_name="o/r")
 
     ledger = MagicMock()
@@ -183,8 +256,7 @@ def test_reconcile_event_with_mock_ledger(monkeypatch: pytest.MonkeyPatch) -> No
     ledger.start_reconciliation_run.return_value = "run-1"
 
     result = reconcile_event(
-        episodic,
-        structural,
+        context_graph,
         agent,
         req,
         reco_ledger=ledger,

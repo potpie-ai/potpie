@@ -141,12 +141,13 @@ def test_raw_event_agent_plan_slice_applies_as_plan() -> None:
             run_id=step.run_id,
         )
     ]
-    episodic = MagicMock()
-    episodic.write_episode_drafts.return_value = ["episode-1"]
+    context_graph = MagicMock()
+    context_graph.apply_plan.return_value.ok = True
+    context_graph.apply_plan.return_value.episode_uuids = ["episode-1"]
+    context_graph.apply_plan.return_value.mutation_summary = MagicMock()
 
     result = apply_episode_step_for_event(
-        episodic,
-        MagicMock(),
+        context_graph,
         ledger,
         "e1",
         1,
@@ -154,5 +155,5 @@ def test_raw_event_agent_plan_slice_applies_as_plan() -> None:
 
     assert result.ok
     assert result.episode_uuids == ["episode-1"]
-    episodic.write_episode_drafts.assert_called_once()
+    context_graph.apply_plan.assert_called_once()
     ledger.record_event_reconciled.assert_called_once_with("e1")

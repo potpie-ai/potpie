@@ -7,12 +7,11 @@ from typing import Any
 
 from application.services.pr_bundle import fetch_full_pr
 from application.use_cases.ingest_merged_pr import ingest_merged_pull_request
-from domain.ports.episodic_graph import EpisodicGraphPort
+from domain.ports.context_graph import ContextGraphPort
 from domain.ports.ingestion_ledger import IngestionLedgerPort, ledger_scope_from_pot_repo
 from domain.ports.pot_resolution import PotResolutionPort, resolve_write_repo
 from domain.ports.settings import ContextEngineSettingsPort
 from domain.ports.source_control import SourceControlPort
-from domain.ports.structural_graph import StructuralGraphPort
 
 logger = logging.getLogger(__name__)
 
@@ -24,15 +23,16 @@ def run_merged_pr_ingest_core(
     pots: PotResolutionPort,
     source: SourceControlPort,
     ledger: IngestionLedgerPort,
-    episodic: EpisodicGraphPort,
-    structural: StructuralGraphPort,
+    context_graph: ContextGraphPort,
     pot_id: str,
     pr_number: int,
     *,
     repo_name: str | None = None,
     is_live_bridge: bool = True,
 ) -> dict[str, Any]:
-    """Fetch merged PR data, write episodes + structural bridges (shared by HTTP and submission service)."""
+    """Fetch merged PR data and apply its generic graph mutations."""
+    del is_live_bridge
+
     if not settings.is_enabled():
         return {
             "status": "skipped",
@@ -76,8 +76,7 @@ def run_merged_pr_ingest_core(
         payload = fetch_full_pr(source, repo_name, pr_number)
         result = ingest_merged_pull_request(
             ledger=ledger,
-            episodic=episodic,
-            structural=structural,
+            context_graph=context_graph,
             scope=scope,
             repo_name=repo_name,
             pr_data=payload["pr_data"],
@@ -87,23 +86,12 @@ def run_merged_pr_ingest_core(
             issue_comments=payload["issue_comments"],
         )
 
-        merged_at = payload["pr_data"].get("merged_at")
-        bridge_result = structural.write_bridges(
-            pot_id=pot_id,
-            pr_entity_key=result.pr_entity_key,
-            pr_number=pr_number,
-            repo_name=repo_name,
-            files_with_patches=payload["pr_data"].get("files", []),
-            review_threads=payload["review_threads"],
-            merged_at=merged_at,
-            is_live=is_live_bridge,
-        )
         ledger.update_bridge_status(
             scope,
             SOURCE_TYPE,
             source_id,
             entity_key=result.pr_entity_key,
-            bridge_result=bridge_result,
+            bridge_result=None,
             error=None,
         )
         return {
@@ -111,7 +99,7 @@ def run_merged_pr_ingest_core(
             "pot_id": pot_id,
             "repo_name": repo_name,
             "pr_number": pr_number,
-            "bridges": bridge_result.as_dict(),
+            "mutations": dict(result.stamp_counts),
         }
     except Exception as exc:
         ledger.update_bridge_status(
@@ -140,8 +128,7 @@ def ingest_single_pull_request(
     pots: PotResolutionPort,
     source: SourceControlPort,
     ledger: IngestionLedgerPort,
-    episodic: EpisodicGraphPort,
-    structural: StructuralGraphPort,
+    context_graph: ContextGraphPort,
     pot_id: str,
     pr_number: int,
     is_live_bridge: bool = True,
@@ -153,8 +140,7 @@ def ingest_single_pull_request(
         pots,
         source,
         ledger,
-        episodic,
-        structural,
+        context_graph,
         pot_id,
         pr_number,
         repo_name=repo_name,

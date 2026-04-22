@@ -91,6 +91,7 @@ PROJECT_MAP_INCLUDES: frozenset[str] = frozenset(
         "service_map",
         "repo_map",
         "docs",
+        "tickets",
         "deployments",
         "runbooks",
         "local_workflows",
@@ -236,13 +237,44 @@ CONTEXT_RESOLVE_RECIPES: dict[str, dict[str, Any]] = {
         "source_policy": "references_only",
         "when": "When entering an unfamiliar pot, repo, service, or local workflow.",
     },
+    "planning": {
+        "intent": "planning",
+        "include": list(DEFAULT_INTENT_INCLUDES["planning"]),
+        "mode": "balanced",
+        "source_policy": "references_only",
+        "when": "Before roadmap, sprint, architecture, or cross-team coordination work.",
+    },
+    "refactor": {
+        "intent": "refactor",
+        "include": list(DEFAULT_INTENT_INCLUDES["refactor"]),
+        "mode": "balanced",
+        "source_policy": "references_only",
+        "when": "Before restructuring code, migrating services, or cleaning up technical debt.",
+    },
+    "test": {
+        "intent": "test",
+        "include": list(DEFAULT_INTENT_INCLUDES["test"]),
+        "mode": "fast",
+        "source_policy": "references_only",
+        "when": "Before writing, modifying, or reviewing tests and test infrastructure.",
+    },
+    "security": {
+        "intent": "security",
+        "include": list(DEFAULT_INTENT_INCLUDES["security"]),
+        "mode": "balanced",
+        "source_policy": "verify",
+        "when": "Before security review, audit, vulnerability assessment, or hardening work.",
+    },
+    "unknown": {
+        "intent": "unknown",
+        "include": list(DEFAULT_INTENT_INCLUDES["unknown"]),
+        "mode": "fast",
+        "source_policy": "references_only",
+        "when": "When the task does not match a more specific recipe.",
+    },
 }
 
-FALLBACK_ONLY_INCLUDES: frozenset[str] = frozenset(
-    {
-        "tickets",
-    }
-)
+FALLBACK_ONLY_INCLUDES: frozenset[str] = frozenset()
 
 
 def normalize_context_intent(intent: str | None) -> str:
@@ -432,6 +464,7 @@ def bundle_to_agent_envelope(bundle: IntelligenceBundle) -> dict[str, Any]:
         },
         "evidence": bundle_dict["semantic_hits"] + bundle_dict["discussions"],
         "source_refs": bundle_dict["source_refs"],
+        "source_resolution": bundle_dict["source_resolution"],
         "confidence": _confidence_for_coverage(bundle.coverage.status),
         "as_of": _iso_or_none(bundle.request.as_of),
         "open_conflicts": bundle_dict["open_conflicts"],

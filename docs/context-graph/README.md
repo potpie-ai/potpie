@@ -4,11 +4,12 @@ The canonical combined context graph architecture is:
 
 - [Context Graph Architecture](graph.md)
 - [Context Graph Features And Functionalities](features-and-functionalities.md)
-- [Context Graph Planning Next Steps](planning-next-steps.md)
 - [Unified Graphiti Application Architecture](unified-graphiti-application-architecture.md)
+- [Context Graph Implementation Next Steps](implementation-next-steps.md)
+- [Context Graph Planning Next Steps](planning-next-steps.md)
 - [Context Engine Test Harness And Findings](testing-and-bugs.md)
 
-`graph.md` remains the canonical product architecture. The unified Graphiti application doc is the focused implementation plan for collapsing the application layer onto one Graphiti-backed graph port.
+`graph.md` remains the canonical product architecture. The unified Graphiti application doc is the focused implementation plan for collapsing the application layer onto one Graphiti-backed graph port. `implementation-next-steps.md` is the current code-reviewed migration plan and should be treated as the priority list when implementation and older planning docs disagree.
 
 The architecture set now combines:
 
@@ -18,9 +19,25 @@ The architecture set now combines:
 - the current `app/src/context-engine` implementation review
 - the gap analysis and recommended next steps
 
-Keep product-level architecture updates in `docs/context-graph/graph.md`. Keep implementation migration details for the one-port Graphiti application layer in `docs/context-graph/unified-graphiti-application-architecture.md`.
+Keep product-level architecture updates in `docs/context-graph/graph.md`. Keep implementation migration details for the one-port Graphiti application layer in `docs/context-graph/unified-graphiti-application-architecture.md` and the current code-backed priority order in `docs/context-graph/implementation-next-steps.md`.
 
-Use `docs/context-graph/planning-next-steps.md` for the current refactor plan that separates stable agent/API contracts from UI, ingestion automation, and operator/admin surfaces; moves the product model toward source-first pot management; and wires deeper status, source resolver, and verification behavior behind the existing four-tool agent port.
+Use `docs/context-graph/planning-next-steps.md` for API/product-surface grouping. Use `implementation-next-steps.md` for the current engineering direction: remove compatibility graph write branches, collapse reads and writes behind the Graphiti-backed graph layer, deepen the ingestion agent, and expose provenance/freshness/conflict state to consumers.
+
+## Benchmarks
+
+Comprehensive benchmark support lives under
+`app/src/context-engine/benchmarks/`. The script entrypoint is:
+
+```bash
+uv run python app/src/context-engine/scripts/benchmark_context_engine.py http-e2e
+```
+
+The benchmark dataset models the intended product contract, including PR data
+as it arrives through `SourceControlPort` (PR metadata, changed files, commits,
+review comments, issue comments, linked issues, and bounded diff snippets) and
+agent recipes expressed through `context_resolve` parameters. Reports include
+scenario scores, assertion details, latency percentiles, source/fallback checks,
+and optional baseline regression detection.
 
 ## Implementation Status
 

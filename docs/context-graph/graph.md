@@ -154,7 +154,18 @@ The current `app/src/context-engine` package already has many pieces of this sha
 - agent-planned raw episode ingest, merged GitHub PR ingest, semantic search, change history, file owners, decisions, PR review context, project graph, and `resolve-context` (full PR diffs are fetched on demand through source-backed `context_resolve` modes, not stored in the graph)
 - a first provider-neutral context intelligence layer with `IntelligenceBundle`, coverage, errors, and capability metadata
 
-The main implementation gap is not the skeleton. It is the domain breadth: the current graph mostly understands GitHub/code-history context, while the target system needs broader project context around features, users, services, environments, docs, integrations, operations, debugging knowledge, and preferences.
+The main implementation gap is not the skeleton. It is the migration from old
+episodic/structural application surfaces and source-specific compatibility
+branches into one Graphiti-backed graph layer. The current graph also mostly
+understands GitHub/code-history context, while the target system needs broader
+project context around features, users, services, environments, docs,
+integrations, operations, debugging knowledge, and preferences.
+
+Compatibility paths are not part of the target architecture. They may exist
+temporarily while clients migrate, but ingestion and graph writes should
+converge on generic events, generic reconciliation plans, and ontology-validated
+canonical mutations. Source-specific logic belongs in planners and source
+resolvers, not in graph apply code.
 
 ### Event-processing contract
 
@@ -167,9 +178,30 @@ Every persisted context event should enter the same Ingestion Agent flow before 
 5. Episode steps are applied in order to Graphiti and the canonical ontology layer.
 6. Agent work events, including thoughts, tool calls, tool results, plans, and errors, are stored with the reconciliation run for debugging.
 
-This contract includes raw notes and links submitted from the UI through `POST /api/v1/context/pots/{pot_id}/ingest/raw`. The UI should keep using that pot-scoped raw-ingest API for submissions, and should load expanded event details through `GET /api/v1/context/events/{event_id}` so it can show `reconciliation_runs[*].work_events`.
+This contract includes raw notes and links submitted from the UI through
+`POST /api/v1/context/pots/{pot_id}/ingest/raw`. The UI should keep using that
+pot-scoped raw-ingest API for submissions, and should load expanded event
+details through `GET /api/v1/context/events/{event_id}` so it can show
+`reconciliation_runs[*].work_events`.
 
 Raw ingest still has its own `raw_episode` event shape and idempotency rules. It should not be coerced into GitHub-style repo/source fields, but once persisted it must still invoke the Ingestion Agent. The only acceptable direct Graphiti fallback is the legacy no-Postgres development path where no durable event row exists.
+
+Every canonical entity and relationship written by the apply step should carry
+enough provenance for downstream consumers to understand the fact:
+
+- pot id
+- source ref and source kind
+- source event id when available
+- episode uuid
+- event occurrence time
+- event receipt time
+- graph update time
+- validity window
+- confidence
+- reconciliation run id when available
+
+Query responses should preserve this metadata in compact form instead of
+stripping it away during rendering.
 
 ## Agent integration and context injection
 
@@ -211,7 +243,7 @@ The public agent surface should stay intentionally small. Do not add a new MCP o
 
 This is how context becomes an agent operating layer rather than a search box.
 
-Pot data scope should be source-first. Repositories are an important source subtype because they drive code graph and webhook behavior, but the product model should generalize to GitHub repositories, Linear teams, docs, Slack channels, incident systems, deployment systems, alerts, and future integrations. Repository-specific compatibility APIs may remain for CLI and GitHub workflows, while new integration work should attach source records with resolver and sync metadata.
+Pot data scope should be source-first. Repositories are an important source subtype because they drive code graph and webhook behavior, but the product model should generalize to GitHub repositories, Linear teams, docs, Slack channels, incident systems, deployment systems, alerts, and future integrations. Repository-specific APIs should be transitional for CLI and GitHub workflows; new integration work should attach source records with resolver and sync metadata.
 
 ### Minimal agent context port
 
@@ -2741,8 +2773,9 @@ Recommended rules:
 
 - every canonical type and edge belongs to an ontology version
 - additive changes are preferred
-- breaking changes require compatibility strategy
-- deprecated types remain readable before they stop being writable
+- breaking changes require an explicit migration strategy
+- deprecated types remain readable only for a bounded migration window before
+  they stop being writable
 
 ### Introducing new canonical types
 

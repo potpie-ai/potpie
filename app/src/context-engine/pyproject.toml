@@ -56,12 +56,13 @@ potpie = "adapters.inbound.cli.main:main"
 potpie-mcp = "adapters.inbound.mcp.server:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["domain", "application", "adapters", "bootstrap"]
+packages = ["domain", "application", "adapters", "bootstrap", "benchmarks"]
 include = [
     "adapters/inbound/cli/templates/**/*.md",
     "adapters/inbound/cli/templates/**/*.yaml",
     "scripts/**/*.py",
     "scripts/**/*.json",
+    "benchmarks/data/**/*.json",
 ]
 
 [tool.hatch.build.targets.sdist]
@@ -70,6 +71,7 @@ include = [
     "application",
     "adapters",
     "bootstrap",
+    "benchmarks",
     "adapters/inbound/cli/templates/**/*.md",
     "adapters/inbound/cli/templates/**/*.yaml",
     "scripts/**/*.py",
@@ -87,4 +89,9 @@ addopts = "-v --tb=short"
 asyncio_mode = "auto"
 markers = [
     "unit: unit tests",
+]
+
+[dependency-groups]
+dev = [
+    "pytest-cov>=7.1.0",
 ]

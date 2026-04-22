@@ -1,4 +1,4 @@
-"""Neo4j structural graph: bridges, entity stamping, agent queries."""
+"""Neo4j structural graph: canonical mutations and agent queries."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from typing import Any, Optional
 
 from neo4j import Driver, GraphDatabase
 
-from domain.deterministic_extractors import parse_diff_hunks
 from domain.graph_mutations import (
     EdgeDelete,
     EdgeUpsert,
@@ -16,7 +15,6 @@ from domain.graph_mutations import (
     InvalidationOp,
     ProvenanceRef,
 )
-from domain.ingestion import BridgeResult
 from domain.ontology import ENTITY_TYPES, is_canonical_entity_label
 from domain.ports.settings import ContextEngineSettingsPort
 from domain.ports.structural_graph import StructuralGraphPort
@@ -42,6 +40,7 @@ _PROJECT_MAP_LABELS_BY_INCLUDE: dict[str, tuple[str, ...]] = {
         "RoadmapItem",
     ),
     "docs": ("Document",),
+    "tickets": ("Issue",),
     "deployments": (
         "Deployment",
         "DeploymentTarget",
@@ -130,520 +129,6 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
             "CREATE INDEX entity_valid_to_idx IF NOT EXISTS "
             "FOR (e:Entity) ON (e.valid_to)"
         )
-
-    def write_bridges(
-        self,
-        pot_id: str,
-        pr_entity_key: str,
-        pr_number: int,
-        repo_name: str,
-        files_with_patches: list[dict[str, Any]],
-        review_threads: list[dict[str, Any]],
-        merged_at: str | None,
-        is_live: bool,
-    ) -> BridgeResult:
-        result = BridgeResult()
-        drv = self._open()
-        if drv is None:
-            return result
-        try:
-            with drv.session() as session:
-                self._ensure_indexes(session)
-
-                for f in files_with_patches or []:
-                    file_path = f.get("filename")
-                    if not file_path:
-                        continue
-                    patch = f.get("patch") or ""
-                    patch_excerpt = patch[:3000]
-                    status = f.get("status")
-                    additions = f.get("additions")
-                    deletions = f.get("deletions")
-
-                    res = session.run(
-                        """
-                        MATCH (file:FILE {repoId: $pot_id})
-                        WHERE file.file_path = $file_path
-                           OR file.file_path ENDS WITH ('/' + $file_path)
-                        MATCH (pr:Entity {group_id: $pot_id, entity_key: $pr_key})
-                        MERGE (file)-[r:TOUCHED_BY {pr_number: $pr_number}]->(pr)
-                        SET r.updated_at = timestamp(),
-                            r.status = $status,
-                            r.additions = $additions,
-                            r.deletions = $deletions,
-                            r.patch_excerpt = $patch_excerpt,
-                            r.valid_from = $merged_at
-                        RETURN count(r) AS cnt
-                        """,
-                        pot_id=pot_id,
-                        file_path=file_path,
-                        pr_key=pr_entity_key,
-                        pr_number=pr_number,
-                        status=status,
-                        additions=additions,
-                        deletions=deletions,
-                        patch_excerpt=patch_excerpt,
-                        merged_at=merged_at,
-                    )
-                    result.touched_by += _count(res)
-
-                    for start_line, end_line in parse_diff_hunks(f.get("patch")):
-                        res = session.run(
-                            """
-                            MATCH (n:NODE {repoId: $pot_id})
-                            WHERE (n.file_path = $file_path
-                                   OR n.file_path ENDS WITH ('/' + $file_path))
-                              AND any(lbl IN labels(n) WHERE lbl IN ['FUNCTION', 'CLASS'])
-                              AND n.start_line <= $end_line
-                              AND n.end_line >= $start_line
-                            MATCH (pr:Entity {group_id: $pot_id, entity_key: $pr_key})
-                            MERGE (n)-[r:MODIFIED_IN {pr_number: $pr_number}]->(pr)
-                            SET r.merged_at = $merged_at,
-                                r.valid_from = $merged_at,
-                                r.updated_at = timestamp(),
-                                r.is_approximate = $is_approximate
-                            RETURN count(r) AS cnt
-                            """,
-                            pot_id=pot_id,
-                            file_path=file_path,
-                            start_line=start_line,
-                            end_line=end_line,
-                            pr_key=pr_entity_key,
-                            pr_number=pr_number,
-                            merged_at=merged_at,
-                            is_approximate=not is_live,
-                        )
-                        result.modified_in += _count(res)
-
-                for thread in review_threads or []:
-                    thread_id = thread.get("thread_id")
-                    path = thread.get("path")
-                    line = thread.get("line")
-                    if not path or line is None or thread_id is None:
-                        continue
-
-                    decision_key = (
-                        f"github:decision:{repo_name}:{pr_number}:{thread_id!s}"
-                    )
-
-                    res = session.run(
-                        """
-                        MATCH (n:NODE {repoId: $pot_id})
-                        WHERE (n.file_path = $file_path
-                               OR n.file_path ENDS WITH ('/' + $file_path))
-                          AND any(lbl IN labels(n) WHERE lbl IN ['FUNCTION', 'CLASS'])
-                          AND n.start_line <= $line
-                          AND n.end_line >= $line
-                        WITH n
-                        MATCH (d:Entity {group_id: $pot_id, entity_key: $decision_key})
-                        MERGE (n)-[r:HAS_DECISION]->(d)
-                        SET r.updated_at = timestamp()
-                        RETURN count(r) AS cnt
-                        """,
-                        pot_id=pot_id,
-                        file_path=path,
-                        line=line,
-                        decision_key=decision_key,
-                    )
-                    result.has_decision += _count(res)
-
-        except Exception:
-            logger.exception("write_bridges failed project=%s pr=%s", pot_id, pr_number)
-            raise
-        finally:
-            drv.close()
-
-        logger.info(
-            "Bridge write complete project=%s pr=%s edges=%s",
-            pot_id,
-            pr_number,
-            result.as_dict(),
-        )
-        return result
-
-    def stamp_pr_entities(
-        self,
-        pot_id: str,
-        episode_uuid: str,
-        repo_name: str,
-        pr_number: int,
-        commits: list[dict[str, Any]],
-        review_threads: list[dict[str, Any]],
-        pr_data: dict[str, Any] | None = None,
-        author: str | None = None,
-        pr_title: str | None = None,
-        issue_comments: list[dict[str, Any]] | None = None,
-    ) -> dict[str, int]:
-        pr_key = f"github:pr:{repo_name}:{pr_number}"
-        counts: dict[str, int] = {
-            "stamped_pr": 0,
-            "stamped_commits": 0,
-            "stamped_developers": 0,
-            "stamped_decisions": 0,
-            "review_threads_linked": 0,
-            "pr_conversation_linked": 0,
-        }
-
-        drv = self._open()
-        if drv is None:
-            return counts
-
-        try:
-            with drv.session() as session:
-                session.run(
-                    "CREATE INDEX entity_key_group_idx IF NOT EXISTS "
-                    "FOR (e:Entity) ON (e.entity_key, e.group_id)"
-                )
-
-                if episode_uuid:
-                    result = session.run(
-                        """
-                        MATCH (ep:Episodic {uuid: $ep_uuid})-[:MENTIONS]->(e:Entity {group_id: $gid})
-                        WHERE 'PullRequest' IN labels(e)
-                        SET e.entity_key = $key
-                        RETURN count(e) AS cnt
-                        """,
-                        ep_uuid=episode_uuid,
-                        gid=pot_id,
-                        key=pr_key,
-                    )
-                    counts["stamped_pr"] = _int(result)
-
-                if counts["stamped_pr"] == 0:
-                    result = session.run(
-                        """
-                        MATCH (e:Entity {group_id: $gid})
-                        WHERE 'PullRequest' IN labels(e)
-                          AND (e.entity_key IS NULL OR e.entity_key = '')
-                          AND (toLower(coalesce(e.name,'')) CONTAINS $needle
-                               OR toLower(coalesce(e.summary,'')) CONTAINS $needle)
-                        SET e.entity_key = $key
-                        RETURN count(e) AS cnt
-                        """,
-                        gid=pot_id,
-                        needle=str(pr_number),
-                        key=pr_key,
-                    )
-                    counts["stamped_pr"] = _int(result)
-
-                if counts["stamped_pr"] == 0:
-                    # Graphiti extraction can omit PullRequest entities and/or the ep->MENTIONS link.
-                    # If we don't ensure a canonical PR entity keyed by github:pr:repo:N, bridges will
-                    # write 0 edges even when FILE nodes exist.
-                    session.run(
-                        """
-                        MERGE (pr:Entity:PullRequest {group_id: $gid, entity_key: $key})
-                        ON CREATE SET
-                          pr.uuid = randomUUID(),
-                          pr.pr_number = $pr_num,
-                          pr.name = CASE
-                            WHEN $title IS NULL OR trim($title) = '' THEN 'PR #' + toString($pr_num)
-                            ELSE $title
-                          END,
-                          pr.summary = '',
-                          pr.created_at = timestamp()
-                        SET pr.summary = coalesce(pr.summary, '')
-                        """,
-                        gid=pot_id,
-                        key=pr_key,
-                        pr_num=pr_number,
-                        title=pr_title or "",
-                    )
-                    if episode_uuid:
-                        session.run(
-                            """
-                            MATCH (ep:Episodic {uuid: $ep_uuid})
-                            MATCH (pr:Entity:PullRequest {group_id: $gid, entity_key: $key})
-                            MERGE (ep)-[:MENTIONS]->(pr)
-                            """,
-                            ep_uuid=episode_uuid,
-                            gid=pot_id,
-                            key=pr_key,
-                        )
-                    counts["stamped_pr"] = 1
-
-                canonical_author = author or (pr_data or {}).get("author") or "unknown"
-                canonical_title = pr_title or (pr_data or {}).get("title") or ""
-                canonical_body = (pr_data or {}).get("body") or ""
-                canonical_merged_at = (pr_data or {}).get("merged_at")
-                canonical_head = (pr_data or {}).get("head_branch") or ""
-                canonical_base = (pr_data or {}).get("base_branch") or ""
-                canonical_url = (pr_data or {}).get("url") or ""
-                session.run(
-                    """
-                    MATCH (pr:Entity:PullRequest {group_id: $gid, entity_key: $key})
-                    SET pr.pr_number = $pr_num,
-                        pr.name = CASE
-                          WHEN $title IS NULL OR trim($title) = '' THEN 'PR #' + toString($pr_num)
-                          ELSE $title
-                        END,
-                        pr.title = CASE
-                          WHEN $title IS NULL OR trim($title) = '' THEN pr.title
-                          ELSE $title
-                        END,
-                        pr.author = $author,
-                        pr.description = $body,
-                        pr.merged_at = $merged_at,
-                        pr.head_branch = $head_branch,
-                        pr.base_branch = $base_branch,
-                        pr.url = $url,
-                        pr.summary = coalesce(pr.summary, '')
-                    """,
-                    gid=pot_id,
-                    key=pr_key,
-                    pr_num=pr_number,
-                    title=canonical_title,
-                    author=canonical_author,
-                    body=canonical_body,
-                    merged_at=canonical_merged_at,
-                    head_branch=canonical_head,
-                    base_branch=canonical_base,
-                    url=canonical_url,
-                )
-
-                # Graphiti's EntityNode model expects summary to be a string.
-                # Normalize historical/null values to avoid pydantic validation errors on search.
-                session.run(
-                    """
-                    MATCH (e:Entity {group_id: $gid})
-                    WHERE 'PullRequest' IN labels(e)
-                      AND (e.summary IS NULL)
-                    SET e.summary = ''
-                    """,
-                    gid=pot_id,
-                )
-
-                for commit in commits or []:
-                    sha = commit.get("sha")
-                    if not sha:
-                        continue
-                    commit_key = f"github:commit:{repo_name}:{sha}"
-                    result = session.run(
-                        """
-                        MATCH (e:Entity {group_id: $gid})
-                        WHERE 'Commit' IN labels(e)
-                          AND (toLower(coalesce(e.name,'')) CONTAINS toLower($sha)
-                               OR toLower(coalesce(e.summary,'')) CONTAINS toLower($sha))
-                        SET e.entity_key = $key
-                        RETURN count(e) AS cnt
-                        """,
-                        gid=pot_id,
-                        sha=sha[:12],
-                        key=commit_key,
-                    )
-                    counts["stamped_commits"] += _int(result)
-                    message = (commit.get("message") or "").strip()
-                    first_line = (
-                        message.splitlines()[0] if message else f"Commit {sha[:12]}"
-                    )
-                    commit_author = commit.get("author") or "unknown"
-                    session.run(
-                        """
-                        MERGE (c:Entity:Commit {group_id: $gid, entity_key: $key})
-                        ON CREATE SET
-                          c.uuid = randomUUID(),
-                          c.created_at = timestamp()
-                        SET c.sha = $sha,
-                            c.name = $name,
-                            c.summary = $summary,
-                            c.author = $author
-                        WITH c
-                        MATCH (pr:Entity:PullRequest {group_id: $gid, entity_key: $pkey})
-                        MERGE (pr)-[:HAS_COMMIT]->(c)
-                        """,
-                        gid=pot_id,
-                        key=commit_key,
-                        sha=sha,
-                        name=first_line[:300],
-                        summary=message[:16000],
-                        author=commit_author,
-                        pkey=pr_key,
-                    )
-
-                dev_logins: set[str] = set()
-                if author:
-                    dev_logins.add(author.lower())
-                for commit in commits or []:
-                    commit_author = commit.get("author")
-                    if commit_author:
-                        dev_logins.add(commit_author.lower())
-
-                for login in dev_logins:
-                    dev_key = f"github:user:{login}"
-                    result = session.run(
-                        """
-                        MATCH (e:Entity {group_id: $gid})
-                        WHERE 'Developer' IN labels(e)
-                          AND toLower(coalesce(e.name, '')) = toLower($login)
-                        SET e.entity_key = $key
-                        RETURN count(e) AS cnt
-                        """,
-                        gid=pot_id,
-                        login=login,
-                        key=dev_key,
-                    )
-                    counts["stamped_developers"] += _int(result)
-
-                for thread in review_threads or []:
-                    thread_id = thread.get("thread_id")
-                    if thread_id is None:
-                        continue
-                    decision_key = (
-                        f"github:decision:{repo_name}:{pr_number}:{thread_id!s}"
-                    )
-
-                    first_body = ""
-                    comments = thread.get("comments") or []
-                    if comments:
-                        first_body = (
-                            (comments[0].get("body") or "").strip()[:120].lower()
-                        )
-
-                    if not first_body:
-                        continue
-
-                    result = session.run(
-                        """
-                        MATCH (e:Entity {group_id: $gid})
-                        WHERE 'Decision' IN labels(e)
-                          AND (e.entity_key IS NULL OR e.entity_key = '')
-                          AND toLower(
-                            coalesce(e.name,'') + ' ' +
-                            coalesce(e.summary,'') + ' ' +
-                            coalesce(e.decision_made,'')
-                          ) CONTAINS $needle
-                        WITH e LIMIT 1
-                        SET e.entity_key = $key
-                        RETURN count(e) AS cnt
-                        """,
-                        gid=pot_id,
-                        needle=first_body,
-                        key=decision_key,
-                    )
-                    counts["stamped_decisions"] += _int(result)
-
-                # Deterministic Decision nodes + PR linkage for review discussions (not only Graphiti fuzzy match).
-                for thread in review_threads or []:
-                    tid = thread.get("thread_id")
-                    if tid is None:
-                        continue
-                    tid_s = str(tid)
-                    decision_key = f"github:decision:{repo_name}:{pr_number}:{tid_s}"
-                    comments = thread.get("comments") or []
-                    lines: list[str] = []
-                    for c in comments:
-                        who = c.get("author") or "unknown"
-                        body = (c.get("body") or "").strip()
-                        if body:
-                            lines.append(f"{who}: {body}")
-                    full_text = "\n\n".join(lines).strip()
-                    if not full_text:
-                        full_text = "(empty thread)"
-                    if len(full_text) > 16000:
-                        full_text = full_text[:16000] + "\n…"
-                    first_excerpt = ""
-                    if comments:
-                        first_body = (comments[0].get("body") or "").strip()
-                        first_excerpt = first_body[:500] if first_body else ""
-                    if not first_excerpt:
-                        first_excerpt = (
-                            full_text[:240]
-                            if full_text != "(empty thread)"
-                            else "(no text in thread)"
-                        )
-                    path = thread.get("path")
-                    line = thread.get("line")
-                    session.run(
-                        """
-                        MERGE (d:Entity:Decision {group_id: $gid, entity_key: $dkey})
-                        ON CREATE SET
-                          d.uuid = randomUUID(),
-                          d.alternatives_rejected = '',
-                          d.rationale = '',
-                          d.created_at = timestamp()
-                        SET d.name = $dname,
-                            d.summary = $full,
-                            d.decision_made = $excerpt,
-                            d.thread_id = $tid,
-                            d.review_path = $path,
-                            d.review_line = $line
-                        WITH d
-                        MATCH (pr:Entity:PullRequest {group_id: $gid, entity_key: $pkey})
-                        MERGE (pr)-[r:HAS_REVIEW_DECISION]->(d)
-                        SET r.thread_id = $tid
-                        """,
-                        gid=pot_id,
-                        dkey=decision_key,
-                        dname=(f"PR #{pr_number} review thread {tid_s}")[:200],
-                        full=full_text,
-                        excerpt=first_excerpt,
-                        tid=tid_s,
-                        path=path,
-                        line=line,
-                        pkey=pr_key,
-                    )
-                    counts["review_threads_linked"] += 1
-
-                # Main PR conversation (issue comments) — not the same as line-level review threads.
-                conv_lines: list[str] = []
-                for c in issue_comments or []:
-                    user = c.get("user") or {}
-                    login = user.get("login") if isinstance(user, dict) else None
-                    who = login or "unknown"
-                    body = (c.get("body") or "").strip()
-                    if body:
-                        conv_lines.append(f"{who}: {body}")
-                conv_full = "\n\n".join(conv_lines).strip()
-                if conv_full:
-                    if len(conv_full) > 16000:
-                        conv_full = conv_full[:16000] + "\n…"
-                    conv_key = (
-                        f"github:decision:{repo_name}:{pr_number}:pr_conversation"
-                    )
-                    conv_excerpt = conv_lines[0][:500] if conv_lines else ""
-                    session.run(
-                        """
-                        MERGE (d:Entity:Decision {group_id: $gid, entity_key: $dkey})
-                        ON CREATE SET
-                          d.uuid = randomUUID(),
-                          d.alternatives_rejected = '',
-                          d.rationale = '',
-                          d.created_at = timestamp()
-                        SET d.name = $dname,
-                            d.summary = $full,
-                            d.decision_made = $excerpt,
-                            d.thread_id = 'pr_conversation',
-                            d.review_path = NULL,
-                            d.review_line = NULL
-                        WITH d
-                        MATCH (pr:Entity:PullRequest {group_id: $gid, entity_key: $pkey})
-                        MERGE (pr)-[r:HAS_REVIEW_DECISION]->(d)
-                        SET r.thread_id = 'pr_conversation'
-                        """,
-                        gid=pot_id,
-                        dkey=conv_key,
-                        dname=(f"PR #{pr_number} conversation")[:200],
-                        full=conv_full,
-                        excerpt=conv_excerpt or "PR timeline comments",
-                        pkey=pr_key,
-                    )
-                    counts["pr_conversation_linked"] = 1
-
-        except Exception:
-            logger.exception(
-                "stamp_pr_entities failed project=%s episode=%s", pot_id, episode_uuid
-            )
-            raise
-        finally:
-            drv.close()
-
-        logger.info(
-            "Entity key stamping complete project=%s pr=%s counts=%s",
-            pot_id,
-            pr_number,
-            counts,
-        )
-        return counts
 
     def get_change_history(
         self,
@@ -1434,12 +919,14 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
         if drv is None:
             return 0
         count = 0
+        prov_props = provenance.to_properties()
         try:
             with drv.session() as session:
                 for item in items:
                     props = dict(item.properties)
                     props["group_id"] = pot_id
                     props["provenance_source_event"] = provenance.source_event_id
+                    props.update(prov_props)
                     session.run(
                         "MERGE (e:Entity {group_id: $gid, entity_key: $key}) "
                         "ON CREATE SET e.uuid = randomUUID(), e.created_at = timestamp() "
@@ -1476,12 +963,14 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
             return 0
         count = 0
         now_iso = _utc_now_iso()
+        prov_props = provenance.to_properties()
         try:
             with drv.session() as session:
                 for item in items:
                     props = dict(item.properties)
                     props.setdefault("valid_from", now_iso)
                     props["provenance_source_event"] = provenance.source_event_id
+                    props.update(prov_props)
                     res = session.run(
                         f"MATCH (a:Entity {{group_id: $gid, entity_key: $from_key}}) "  # pyright: ignore[reportArgumentType]
                         f"MATCH (b:Entity {{group_id: $gid, entity_key: $to_key}}) "
@@ -1504,13 +993,19 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
         items: list[EdgeDelete],
         provenance: ProvenanceRef,
     ) -> int:
-        del provenance
         if not items:
             return 0
         drv = self._open()
         if drv is None:
             return 0
         count = 0
+        # Stamp audit fields on the edge *before* DELETE so a query run in
+        # the same transaction against an APOC/edge-history side store can
+        # capture who deleted it. We also accept hard delete as today's
+        # default; the superseding invalidation path (``apply_invalidations``)
+        # is the preferred audit-preserving flow.
+        deleted_by = provenance.source_event_id
+        deleted_at = _utc_now_iso()
         try:
             with drv.session() as session:
                 for item in items:
@@ -1518,10 +1013,14 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                         f"MATCH (a:Entity {{group_id: $gid, entity_key: $from_key}})"  # pyright: ignore[reportArgumentType]
                         f"-[r:{item.edge_type}]->"
                         f"(b:Entity {{group_id: $gid, entity_key: $to_key}}) "
-                        "DELETE r RETURN count(r) AS cnt",
+                        "SET r.prov_deleted_by = $deleted_by, "
+                        "    r.prov_deleted_at = $deleted_at "
+                        "WITH r DELETE r RETURN count(r) AS cnt",
                         gid=pot_id,
                         from_key=item.from_entity_key,
                         to_key=item.to_entity_key,
+                        deleted_by=deleted_by,
+                        deleted_at=deleted_at,
                     )
                     count += _count(res)
         finally:
@@ -1541,22 +1040,24 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
             return 0
         count = 0
         now_iso = _utc_now_iso()
+        prov_props = provenance.to_properties()
         try:
             with drv.session() as session:
                 for item in items:
                     valid_to = item.valid_to or now_iso
+                    inv_props = dict(prov_props)
+                    inv_props["valid_to"] = valid_to
+                    inv_props["invalidation_reason"] = item.reason
+                    inv_props["invalidated_by"] = provenance.source_event_id
+                    inv_props["prov_valid_to"] = valid_to
                     if item.target_entity_key:
                         res = session.run(
                             "MATCH (e:Entity {group_id: $gid, entity_key: $key}) "
-                            "SET e.valid_to = $valid_to, "
-                            "    e.invalidation_reason = $reason, "
-                            "    e.invalidated_by = $by "
+                            "SET e += $props "
                             "RETURN count(e) AS cnt",
                             gid=pot_id,
                             key=item.target_entity_key,
-                            valid_to=valid_to,
-                            reason=item.reason,
-                            by=provenance.source_event_id,
+                            props=inv_props,
                         )
                         matched = _count(res)
                         if matched and item.superseded_by_key:
@@ -1583,14 +1084,12 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                             f"MATCH (a:Entity {{group_id: $gid, entity_key: $from_key}})"  # pyright: ignore[reportArgumentType]
                             f"-[r:{edge_type}]->"
                             f"(b:Entity {{group_id: $gid, entity_key: $to_key}}) "
-                            "SET r.valid_to = $valid_to, "
-                            "    r.invalidation_reason = $reason "
+                            "SET r += $props "
                             "RETURN count(r) AS cnt",
                             gid=pot_id,
                             from_key=from_key,
                             to_key=to_key,
-                            valid_to=valid_to,
-                            reason=item.reason,
+                            props=inv_props,
                         )
                         matched = _count(res)
                         if matched and item.superseded_by_key:

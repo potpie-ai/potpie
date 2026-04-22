@@ -23,13 +23,14 @@ def handle_backfill_pot(
     build_container: Callable[[Session], ContextEngineContainer],
 ) -> dict[str, Any]:
     container = build_container(db)
+    if container.context_graph is None:
+        return {"status": "error", "error": "context_graph_unavailable"}
     return backfill_pot_context(
         settings=container.settings,
         pots=container.pots,
         source_for_repo=container.source_for_repo,
         ledger=container.ledger(db),
-        episodic=container.episodic,
-        structural=container.structural,
+        context_graph=container.context_graph,
         pot_id=pot_id,
         target_repo_name=target_repo_name,
     )
@@ -95,13 +96,10 @@ def handle_ingestion_agent_run(
     if agent is None:
         return {"ok": False, "error": "no_reconciliation_agent"}
     return run_ingestion_agent_for_event(
-        container.episodic,
-        container.structural,
         agent,
         container.reconciliation_ledger(db),
         event_id,
         container.jobs,
-        mutation_applier=None,
     )
 
 
@@ -114,13 +112,13 @@ def handle_apply_episode(
     build_container: Callable[[Session], ContextEngineContainer],
 ) -> dict[str, Any]:
     container = build_container(db)
+    if container.context_graph is None:
+        return {"ok": False, "error": "context_graph_unavailable"}
     r = apply_episode_step_for_event(
-        container.episodic,
-        container.structural,
+        container.context_graph,
         container.reconciliation_ledger(db),
         event_id,
         sequence,
-        mutation_applier=None,
     )
     return {
         "ok": r.ok,

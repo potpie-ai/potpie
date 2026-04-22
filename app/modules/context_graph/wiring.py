@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 
 from sqlalchemy import func
@@ -19,13 +20,24 @@ from app.modules.context_graph.context_graph_pot_model import ContextGraphPot
 from app.modules.context_graph.context_graph_pot_repository_model import (
     ContextGraphPotRepository,
 )
+from app.modules.context_graph.context_graph_pot_source_model import (
+    ContextGraphPotSource,
+)
+from adapters.outbound.source_resolvers import (
+    CompositeSourceResolver,
+    DocumentationUriResolver,
+    GitHubPullRequestResolver,
+)
 from bootstrap.container import ContextEngineContainer, build_container
+from domain.context_status import StatusSource
+from domain.source_references import SourceReferenceRecord
 from domain.ports.pot_resolution import (
     PotResolutionPort,
     RepoRef,
     ResolvedPot,
     ResolvedPotRepo,
 )
+from domain.ports.pot_source_listing import PotSourceListingPort
 from domain.ports.settings import ContextEngineSettingsPort
 
 
@@ -259,18 +271,143 @@ class UserScopedContextGraphPotResolution(PotResolutionPort):
         return None
 
 
+class SqlalchemyPotSourceListing(PotSourceListingPort):
+    """Map ``ContextGraphPotSource`` rows to the engine's compact ``StatusSource`` view."""
+
+    def __init__(self, db: Session) -> None:
+        self._db = db
+
+    def list_pot_sources(self, pot_id: str) -> list[StatusSource]:
+        rows = (
+            self._db.query(ContextGraphPotSource)
+            .filter(ContextGraphPotSource.pot_id == pot_id)
+            .order_by(ContextGraphPotSource.created_at.asc())
+            .all()
+        )
+        return [pot_source_row_to_status_source(r) for r in rows]
+
+
+def pot_source_row_to_status_source(row: ContextGraphPotSource) -> StatusSource:
+    provider_host: str | None = None
+    scope_summary: str | None = None
+    if row.scope_json:
+        try:
+            scope = json.loads(row.scope_json)
+        except (TypeError, ValueError):
+            scope = {}
+        if isinstance(scope, dict):
+            host_val = scope.get("provider_host")
+            if isinstance(host_val, str) and host_val.strip():
+                provider_host = host_val.strip()
+            scope_summary = _scope_summary_for(row.source_kind, scope)
+    return StatusSource(
+        source_id=row.id,
+        pot_id=row.pot_id,
+        source_kind=row.source_kind,
+        provider=row.provider,
+        provider_host=provider_host,
+        sync_enabled=bool(row.sync_enabled),
+        sync_mode=row.sync_mode,
+        last_sync_at=row.last_sync_at,
+        last_success_at=None,
+        last_error_at=None,
+        last_error=row.last_error,
+        last_verified_at=None,
+        verification_state=None,
+        scope_summary=scope_summary,
+        health_score=row.health_score,
+    )
+
+
+def _scope_summary_for(source_kind: str, scope: dict) -> str | None:
+    if source_kind == "repository":
+        repo_name = scope.get("repo_name")
+        if isinstance(repo_name, str) and repo_name:
+            return repo_name
+    if source_kind == "issue_tracker_team":
+        name = scope.get("team_name") or scope.get("team_id")
+        if isinstance(name, str) and name:
+            return f"team:{name}"
+    return None
+
+
+def _resolve_repo_for_pot(db: Session) -> "callable":
+    """Return a ``(pot_id, ref) -> repo_name | None`` closure over ``db``.
+
+    The GitHub PR resolver needs the pot's primary GitHub repo to actually
+    fetch the PR. If a pot is multi-repo, callers can stamp the desired repo
+    on a ref via ``resolver_hint['repo_name']``. Otherwise we pick the first
+    GitHub repository source attached to the pot.
+    """
+
+    def _resolver(pot_id: str, ref: SourceReferenceRecord) -> str | None:
+        hint = ref.resolver_hint or {}
+        repo_hint = hint.get("repo_name")
+        if isinstance(repo_hint, str) and repo_hint:
+            return repo_hint
+        rows = (
+            db.query(ContextGraphPotSource)
+            .filter(
+                ContextGraphPotSource.pot_id == pot_id,
+                ContextGraphPotSource.provider == "github",
+                ContextGraphPotSource.source_kind == "repository",
+            )
+            .order_by(ContextGraphPotSource.created_at.asc())
+            .all()
+        )
+        for row in rows:
+            if not row.scope_json:
+                continue
+            try:
+                scope = json.loads(row.scope_json)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(scope, dict):
+                repo_name = scope.get("repo_name")
+                if isinstance(repo_name, str) and repo_name:
+                    return repo_name
+        return None
+
+    return _resolver
+
+
+def _build_source_resolver(db: Session, source_for_repo):
+    """Compose the default host source-resolver chain.
+
+    ``GitHubPullRequestResolver`` covers ``github:pr:*`` and legacy ``change``
+    refs that embed PR numbers; ``DocumentationUriResolver`` covers docs
+    refs with a stored summary/title (no live fetch by default). Adding a
+    ``content_fetcher`` here later enables live doc snippets.
+    """
+    return CompositeSourceResolver(
+        children=[
+            GitHubPullRequestResolver(
+                source_for_repo=source_for_repo,
+                repo_resolver=_resolve_repo_for_pot(db),
+            ),
+            DocumentationUriResolver(),
+        ]
+    )
+
+
 def build_container_for_session(db: Session) -> ContextEngineContainer:
     def source_for_repo(repo_name: str):
         provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
         return CodeProviderSourceControl(provider)
 
-    return build_container(
+    container = build_container(
         settings=PotpieContextEngineSettings(),
         pots=SqlalchemyPotResolution(db),
         source_for_repo=source_for_repo,
         reconciliation_agent=try_pydantic_deep_reconciliation_agent(),
         jobs=get_context_graph_job_queue(),
     )
+    container.pot_source_listing = SqlalchemyPotSourceListing(db)
+    resolver = _build_source_resolver(db, source_for_repo)
+    container.source_resolver = resolver
+    if container.resolution_service is not None:
+        container.resolution_service.set_source_resolver(resolver)
+    return container
 
 
 def build_container_for_user_session(db: Session, user_id: str) -> ContextEngineContainer:
@@ -278,10 +415,16 @@ def build_container_for_user_session(db: Session, user_id: str) -> ContextEngine
         provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
         return CodeProviderSourceControl(provider)
 
-    return build_container(
+    container = build_container(
         settings=PotpieContextEngineSettings(),
         pots=UserScopedContextGraphPotResolution(db, user_id),
         source_for_repo=source_for_repo,
         reconciliation_agent=try_pydantic_deep_reconciliation_agent(),
         jobs=get_context_graph_job_queue(),
     )
+    container.pot_source_listing = SqlalchemyPotSourceListing(db)
+    resolver = _build_source_resolver(db, source_for_repo)
+    container.source_resolver = resolver
+    if container.resolution_service is not None:
+        container.resolution_service.set_source_resolver(resolver)
+    return container

@@ -21,11 +21,6 @@ def reconciliation_enabled() -> bool:
     return _truthy(os.getenv("CONTEXT_ENGINE_RECONCILIATION_ENABLED"), True)
 
 
-def compat_pr_reconciler_enabled() -> bool:
-    """Use compatibility planner path for merged GitHub PRs (default: on)."""
-    return _truthy(os.getenv("CONTEXT_ENGINE_COMPAT_PR_RECONCILER_ENABLED"), True)
-
-
 def agent_planner_enabled() -> bool:
     """LLM-backed planner (default: on). Set false to disable the agent path."""
     return _truthy(os.getenv("CONTEXT_ENGINE_AGENT_PLANNER_ENABLED"), True)

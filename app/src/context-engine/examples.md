@@ -167,7 +167,7 @@ Requires `CONTEXT_GRAPH_ENABLED` and working Graphiti/Neo4j configuration.
 
 ## `ingest`
 
-Adds a **raw episode** through the same pipeline as HTTP ingest: with Postgres, default is **async** (event row + Ingestion Agent planning + queued apply); **`--sync`** runs agent planning and apply inline, or uses a legacy direct Graphiti write when no DB is configured.
+Adds a **raw episode** through the same pipeline as HTTP ingest: with Postgres, default is **async** (event row + Ingestion Agent planning + queued apply); **`--sync`** runs agent planning and apply inline, or uses a direct unified context graph write when no DB is configured.
 
 **Pot scope:** omit positional pot id to infer from git + env + `pot use` (via `--cwd`).  
 **Body:** positional text, or `--episode-body` / `-b`, or `--file` / `-f` (UTF-8). Quick form: `potpie ingest "Your episode text"`.

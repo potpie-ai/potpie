@@ -206,6 +206,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
         episode_body: str,
         source_description: str,
         reference_time: datetime,
+        provenance: ProvenanceRef | None = None,
     ) -> Optional[str]:
         g = self._get_graphiti()
         if g is None:
@@ -225,6 +226,17 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
         )
         episode = getattr(result, "episode", None)
         episode_uuid = getattr(episode, "uuid", None)
+        if episode_uuid and provenance is not None:
+            try:
+                from adapters.outbound.graphiti.apply_episode_provenance import (
+                    apply_episode_provenance,
+                )
+
+                await apply_episode_provenance(
+                    g.driver, pot_id, str(episode_uuid), provenance
+                )
+            except Exception as exc:
+                logger.warning("Episode provenance stamp failed: %s", exc)
         try:
             from adapters.outbound.graphiti.temporal_supersede import (
                 apply_predicate_family_auto_supersede,
@@ -258,6 +270,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
         episode_body: str,
         source_description: str,
         reference_time: datetime,
+        provenance: ProvenanceRef | None = None,
     ) -> Optional[str]:
         if not self.enabled:
             return None
@@ -269,6 +282,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
                 episode_body=episode_body,
                 source_description=source_description,
                 reference_time=reference_time,
+                provenance=provenance,
             )
 
         return self._sync_run(_run)
@@ -279,7 +293,6 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
         drafts: list[EpisodeDraft],
         provenance: ProvenanceRef | None = None,
     ) -> list[Optional[str]]:
-        del provenance  # reserved for future Graphiti tagging / provenance metadata
         if not self.enabled or not drafts:
             return [None] * len(drafts)
         out: list[Optional[str]] = []
@@ -291,6 +304,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
                     episode_body=d.episode_body,
                     source_description=d.source_description,
                     reference_time=d.reference_time,
+                    provenance=provenance,
                 )
             )
         return out

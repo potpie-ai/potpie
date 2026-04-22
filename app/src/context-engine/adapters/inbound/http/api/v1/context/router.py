@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional, Protocol
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
@@ -35,6 +36,15 @@ from domain.agent_context_port import (
     context_recipe_for_intent,
     normalize_record_type,
 )
+from domain.context_status import (
+    DEFAULT_RESOLVER_CAPABILITIES,
+    EventLedgerHealth,
+    ResolverCapability,
+    derive_pot_last_success_at,
+    event_ledger_health_to_payload,
+    resolver_capabilities_to_payload,
+    status_source_to_payload,
+)
 from domain.graph_quality import assess_graph_quality
 from domain.graph_query import ContextGraphQuery
 from domain.ingestion_event_models import (
@@ -54,6 +64,123 @@ UNKNOWN_POT_DETAIL = (
     "Unknown pot_id for this user (create with POST /api/v2/context/pots "
     "and attach at least one repository)."
 )
+
+_logger = logging.getLogger(__name__)
+
+# Phase 6: event API clarification. ``/events/ingest`` is retained as a hidden
+# compatibility alias of the canonical ``/events/reconcile`` path. Aliased
+# requests emit deprecation headers and increment this counter so operators
+# can track migration progress.
+_EVENTS_INGEST_ALIAS_CALLS = 0
+_EVENTS_INGEST_ALIAS_WARNING = (
+    '299 - "POST /events/ingest is a deprecated alias of /events/reconcile; '
+    'migrate clients to /events/reconcile."'
+)
+
+
+def events_ingest_alias_call_count() -> int:
+    """Return the number of times the ``/events/ingest`` alias has been called.
+
+    Exposed for tests and lightweight operational introspection.
+    """
+
+    return _EVENTS_INGEST_ALIAS_CALLS
+
+
+def reset_events_ingest_alias_counter() -> None:
+    """Reset the alias usage counter (tests only)."""
+
+    global _EVENTS_INGEST_ALIAS_CALLS
+    _EVENTS_INGEST_ALIAS_CALLS = 0
+
+
+def _mark_events_ingest_alias(request: Request) -> bool:
+    """Return ``True`` if the current request hit the deprecated alias path.
+
+    Also increments the alias counter and logs a single warning per call.
+    """
+
+    try:
+        path = request.url.path
+    except Exception:
+        return False
+    if not path.endswith("/events/ingest"):
+        return False
+    global _EVENTS_INGEST_ALIAS_CALLS
+    _EVENTS_INGEST_ALIAS_CALLS += 1
+    _logger.warning(
+        "context-engine: deprecated alias POST /events/ingest used; "
+        "clients should migrate to POST /events/reconcile"
+    )
+    return True
+
+
+def _apply_events_ingest_alias_headers(response: Response) -> None:
+    """Attach RFC-style deprecation headers to a response for the alias path."""
+
+    response.headers["Deprecation"] = "true"
+    response.headers["Warning"] = _EVENTS_INGEST_ALIAS_WARNING
+    response.headers["Link"] = '</api/v2/context/events/reconcile>; rel="successor-version"'
+
+
+# Phase 7: operator surface hardening. Operator/admin routes (``/reset``,
+# ``/conflicts/*``, ``/maintenance/*``) are grouped under a distinct OpenAPI
+# tag so product docs and SDKs do not conflate them with everyday agent
+# flows. Every destructive or graph-mutating call goes through
+# ``_audit_operator_action`` so there is a single structured log line per
+# action that operators and on-call can scrape.
+OPERATOR_TAG = "context:operator"
+
+_AUDIT_LOGGER_NAME = "context_engine.operator_audit"
+_audit_logger = logging.getLogger(_AUDIT_LOGGER_NAME)
+
+
+def _actor_identity(actor: Any) -> str:
+    """Best-effort extraction of an actor label for audit logs."""
+
+    if actor is None:
+        return "anonymous"
+    for attr in ("email", "username", "sub", "id"):
+        v = getattr(actor, attr, None)
+        if v:
+            return str(v)
+    if isinstance(actor, dict):
+        for key in ("email", "username", "sub", "id"):
+            if actor.get(key):
+                return str(actor[key])
+    return repr(actor)[:64]
+
+
+def _audit_operator_action(
+    *,
+    action: str,
+    pot_id: str,
+    actor: Any = None,
+    dry_run: bool | None = None,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    """Emit a structured audit log for a destructive or admin operator action.
+
+    This is deliberately a log-first implementation: it gives operators a
+    single scrape-friendly line per action (``extra`` fields attached via the
+    logging ``extra=`` mechanism) without coupling to a metrics or event-store
+    backend. Hosts can attach a richer handler if they want to persist audit
+    rows.
+    """
+
+    fields: dict[str, Any] = {
+        "action": action,
+        "pot_id": pot_id,
+        "actor": _actor_identity(actor),
+    }
+    if dry_run is not None:
+        fields["dry_run"] = bool(dry_run)
+    if extra:
+        for k, v in extra.items():
+            if k in fields:
+                continue
+            fields[k] = v
+    _audit_logger.warning("operator_action %s", action, extra={"audit": fields})
 
 
 def _ingest_rejection_returns_422() -> bool:
@@ -312,13 +439,21 @@ def _inline_sync(
                 }
             )
             continue
+        if container.context_graph is None:
+            results.append(
+                {
+                    "status": "error",
+                    "pot_id": pid,
+                    "reason": "context_graph_unavailable",
+                }
+            )
+            continue
         out = backfill_pot_context(
             settings=container.settings,
             pots=container.pots,
             source_for_repo=container.source_for_repo,
             ledger=container.ledger(db),
-            episodic=container.episodic,
-            structural=container.structural,
+            context_graph=container.context_graph,
             pot_id=pid,
         )
         results.append(out)
@@ -496,7 +631,7 @@ def create_context_router(
             if err == "async_requires_database":
                 raise HTTPException(
                     status_code=503,
-                    detail="Async raw ingest requires DATABASE_URL (or pass sync=true for inline Graphiti write).",
+                    detail="Async raw ingest requires DATABASE_URL (or pass sync=true for inline context graph write).",
                 )
             if err == "context_graph_disabled":
                 raise HTTPException(
@@ -508,8 +643,6 @@ def create_context_router(
                 detail=err,
             )
 
-        if result.status == "legacy_direct":
-            return {"episode_uuid": result.episode_uuid}
         if result.status == "applied":
             return {
                 "status": "applied",
@@ -531,16 +664,20 @@ def create_context_router(
 
     @router.post(
         "/reset",
-        summary="Hard-reset pot context graph",
+        summary="[operator] Hard-reset pot context graph",
         description=(
+            "**Operator/admin action — destructive and not part of the agent surface.** "
             "Deletes Postgres reconciliation/ingestion rows for the pot first (so async "
             "workers cannot re-apply after the graph is cleared), then Graphiti episodic data "
-            "and structural Entity/FILE/NODE nodes in the default Neo4j database."
+            "and structural Entity/FILE/NODE nodes in the default Neo4j database. "
+            "There is no dry-run mode: callers must scope to exactly one ``pot_id``. "
+            "Each successful call emits a ``context_engine.operator_audit`` log record."
         ),
+        tags=[OPERATOR_TAG],
     )
     def post_hard_reset(
         body: HardResetRequest,
-        _: Any = Depends(require_auth),
+        actor: Any = Depends(require_auth),
         container: ContextEngineContainer = Depends(get_container),
         db: Session | None = Depends(get_db_optional),
     ) -> dict[str, Any]:
@@ -561,35 +698,68 @@ def create_context_router(
         reconciliation_ledger = (
             SqlAlchemyReconciliationLedger(db) if use_ledger else None
         )
+        if container.context_graph is None:
+            raise HTTPException(status_code=503, detail="context_graph_unavailable")
         out = hard_reset_pot(
-            container.episodic,
-            container.structural,
+            container.context_graph,
             body.pot_id,
             ledger=ledger,
             reconciliation_ledger=reconciliation_ledger,
         )
         if not out.get("ok"):
+            _audit_operator_action(
+                action="hard_reset_pot",
+                pot_id=body.pot_id,
+                actor=actor,
+                dry_run=False,
+                extra={
+                    "skip_ledger": bool(body.skip_ledger),
+                    "outcome": "failed",
+                    "error": out.get("error"),
+                },
+            )
             raise HTTPException(
                 status_code=502,
                 detail=out.get("error") or "reset_failed",
             )
+        _audit_operator_action(
+            action="hard_reset_pot",
+            pot_id=body.pot_id,
+            actor=actor,
+            dry_run=False,
+            extra={
+                "skip_ledger": bool(body.skip_ledger),
+                "outcome": "ok",
+            },
+        )
         return out
 
     @router.post(
         "/events/reconcile",
         summary="Record event and run ingestion agent (reconciliation)",
         description=(
-            "Persists a canonical row in ``context_events`` (deduped by scope + source_system + source_id), "
-            "then runs the configured ingestion agent and applies the plan (async by default)."
+            "Canonical event submission path. Persists a row in ``context_events`` "
+            "(deduped by scope + source_system + source_id), then runs the configured "
+            "ingestion agent and applies the plan (async by default). New clients must "
+            "use this route; ``/events/ingest`` is a deprecated alias retained for "
+            "backwards compatibility."
         ),
     )
     @router.post(
         "/events/ingest",
-        summary="Alias of /events/reconcile (ingestion agent)",
+        summary="Deprecated alias of /events/reconcile (compatibility only)",
+        description=(
+            "Compatibility alias of ``/events/reconcile``. Responses include "
+            "``Deprecation: true`` plus a ``Warning`` header. New clients must use "
+            "``/events/reconcile``."
+        ),
         include_in_schema=False,
+        deprecated=True,
     )
     def post_events_reconcile(
         body: ContextEventHttpBody,
+        request: Request,
+        response: Response,
         _: Any = Depends(require_auth),
         container: ContextEngineContainer = Depends(get_container),
         db: Session = Depends(get_db),
@@ -601,6 +771,9 @@ def create_context_router(
             alias="X-Context-Ingest-Sync",
         ),
     ):
+        is_alias = _mark_events_ingest_alias(request)
+        if is_alias:
+            _apply_events_ingest_alias_headers(response)
         if not reconciliation_enabled():
             raise HTTPException(
                 status_code=503,
@@ -662,7 +835,7 @@ def create_context_router(
                 },
             )
         if not want_sync:
-            return JSONResponse(
+            queued = JSONResponse(
                 status_code=202,
                 content={
                     "status": "queued",
@@ -670,6 +843,9 @@ def create_context_router(
                     "job_id": out.job_id,
                 },
             )
+            if is_alias:
+                _apply_events_ingest_alias_headers(queued)
+            return queued
         r = out.reconciliation
         assert r is not None
         return {
@@ -730,10 +906,11 @@ def create_context_router(
                 detail=UNKNOWN_POT_DETAIL,
             )
         reco = SqlAlchemyReconciliationLedger(db)
+        if container.context_graph is None:
+            raise HTTPException(status_code=503, detail="Context graph unavailable.")
         try:
             r = replay_context_event(
-                container.episodic,
-                container.structural,
+                container.context_graph,
                 container.reconciliation_agent,
                 reco,
                 body.event_id,
@@ -1000,12 +1177,13 @@ def create_context_router(
 
     @router.post(
         "/status",
-        summary="Lightweight context readiness and freshness status",
+        summary="Pot readiness, source health, event ledger, resolver capabilities",
     )
     def post_context_status(
         body: ContextStatusRequest,
         _: Any = Depends(require_auth),
         container: ContextEngineContainer = Depends(get_container),
+        db: Session | None = Depends(get_db_optional),
     ) -> dict[str, Any]:
         resolved = container.pots.resolve_pot(body.pot_id)
         if resolved is None:
@@ -1043,10 +1221,77 @@ def create_context_router(
                 }
             )
 
+        sources = []
+        if container.pot_source_listing is not None:
+            try:
+                sources = container.pot_source_listing.list_pot_sources(body.pot_id)
+            except Exception:
+                sources = []
+
+        ledger_health = EventLedgerHealth()
+        if db is not None:
+            try:
+                ledger_health = container.event_query_service(db).summarize_pot_events(
+                    body.pot_id
+                )
+            except Exception:
+                ledger_health = EventLedgerHealth()
+
+        if ledger_health.counts.get("error"):
+            gaps.append(
+                {
+                    "code": "event_errors_present",
+                    "message": (
+                        f"{ledger_health.counts['error']} event(s) currently in error state; "
+                        "review recent_errors and consider replay."
+                    ),
+                }
+            )
+        for s in sources:
+            if not s.sync_enabled:
+                continue
+            if s.last_error:
+                gaps.append(
+                    {
+                        "code": "source_sync_error",
+                        "message": (
+                            f"Source {s.source_kind}:{s.source_id} reported an error: "
+                            f"{s.last_error[:200]}"
+                        ),
+                    }
+                )
+
+        if container.resolution_service is None:
+            capabilities = [
+                ResolverCapability(
+                    policy=c.policy,
+                    available=False,
+                    reason="Context resolution service is not configured.",
+                )
+                for c in DEFAULT_RESOLVER_CAPABILITIES
+            ]
+        else:
+            advertised_policies: set[str] = set()
+            if container.source_resolver is not None:
+                for entry in container.source_resolver.capabilities():
+                    advertised_policies.update(entry.policies)
+            capabilities = []
+            for c in DEFAULT_RESOLVER_CAPABILITIES:
+                if c.policy in advertised_policies and not c.available:
+                    capabilities.append(
+                        ResolverCapability(
+                            policy=c.policy, available=True, reason=None
+                        )
+                    )
+                else:
+                    capabilities.append(c)
+
         recommended_recipe = context_recipe_for_intent(body.intent)
         coverage = CoverageReport(
             status="partial" if gaps else "complete",
-            available=["pot", "repositories"],
+            available=["pot", "repositories"]
+            + (["sources"] if sources else [])
+            + (["event_ledger"] if db is not None else []),
             missing=[gap["code"] for gap in gaps],
             missing_reasons={gap["code"]: gap["message"] for gap in gaps},
         )
@@ -1098,6 +1343,13 @@ def create_context_router(
                         ),
                     }
                 )
+        last_pot_success_at = derive_pot_last_success_at(sources, ledger_health)
+        last_verifications = [
+            s.last_verified_at.isoformat()
+            for s in sources
+            if s.last_verified_at is not None
+        ]
+        last_source_verification = max(last_verifications) if last_verifications else None
         return {
             "ok": not gaps,
             "pot": {
@@ -1114,13 +1366,28 @@ def create_context_router(
                     }
                     for repo in resolved.repos
                 ],
+                "last_success_at": (
+                    last_pot_success_at.isoformat() if last_pot_success_at else None
+                ),
             },
+            "sources": [
+                status_source_to_payload(s, resolver=container.source_resolver)
+                for s in sources
+            ],
+            "event_ledger": event_ledger_health_to_payload(ledger_health),
+            "resolver_capabilities": resolver_capabilities_to_payload(capabilities),
             "scope": body.scope.model_dump(exclude_none=True),
             "coverage": asdict(coverage),
             "freshness": {
-                "status": "unknown",
-                "last_graph_update": None,
-                "last_source_verification": None,
+                "status": "unknown" if last_pot_success_at is None else "known",
+                "last_graph_update": (
+                    last_pot_success_at.isoformat() if last_pot_success_at else None
+                ),
+                # last_source_event_at is distinct from last_graph_update: it
+                # answers "when did the source actually produce this?" vs
+                # "when did we last ingest". No sources attached yet → unknown.
+                "last_source_event_at": None,
+                "last_source_verification": last_source_verification,
                 "stale_refs": [],
                 "needs_verification_refs": body.scope.source_refs,
             },
@@ -1158,7 +1425,13 @@ def create_context_router(
 
     @router.post(
         "/conflicts/list",
-        summary="List open predicate-family conflicts (QualityIssue)",
+        summary="[operator] List open predicate-family conflicts (QualityIssue)",
+        description=(
+            "Operator/admin read for graph hygiene. Returns open conflicts "
+            "surfaced by predicate-family invariants. Paired with "
+            "``/conflicts/resolve`` for repair workflows."
+        ),
+        tags=[OPERATOR_TAG],
     )
     def post_conflicts_list(
         body: ConflictListRequest,
@@ -1180,11 +1453,19 @@ def create_context_router(
 
     @router.post(
         "/conflicts/resolve",
-        summary="Resolve an open predicate-family conflict (e.g. supersede_older)",
+        summary="[operator] Resolve an open predicate-family conflict",
+        description=(
+            "**Operator/admin action — mutates graph state.** Resolves one "
+            "conflict (default action ``supersede_older``). Each call emits "
+            "a ``context_engine.operator_audit`` log record with the actor, "
+            "pot, issue uuid, and action. No dry-run: operators list first "
+            "via ``/conflicts/list`` and resolve targeted rows."
+        ),
+        tags=[OPERATOR_TAG],
     )
     def post_conflicts_resolve(
         body: ConflictResolveRequest,
-        _: Any = Depends(require_auth),
+        actor: Any = Depends(require_auth),
         container: ContextEngineContainer = Depends(get_container),
     ) -> dict[str, Any]:
         resolved = container.pots.resolve_pot(body.pot_id)
@@ -1201,20 +1482,47 @@ def create_context_router(
                 resolved.pot_id, body.issue_uuid, body.action
             )
         except Exception as exc:
+            _audit_operator_action(
+                action="resolve_conflict",
+                pot_id=body.pot_id,
+                actor=actor,
+                extra={
+                    "issue_uuid": body.issue_uuid,
+                    "conflict_action": body.action,
+                    "outcome": "error",
+                    "error": str(exc),
+                },
+            )
             raise HTTPException(status_code=500, detail=str(exc)) from exc
+        _audit_operator_action(
+            action="resolve_conflict",
+            pot_id=body.pot_id,
+            actor=actor,
+            extra={
+                "issue_uuid": body.issue_uuid,
+                "conflict_action": body.action,
+                "outcome": "ok" if out.get("ok", True) else "failed",
+            },
+        )
         return out
 
     @router.post(
         "/maintenance/classify-modified-edges",
-        summary="Reclassify vague MODIFIED episodic edges",
+        summary="[operator] Reclassify vague MODIFIED episodic edges",
         description=(
-            "Dry-run by default. Writes require CONTEXT_ENGINE_CLASSIFY_MODIFIED_EDGES=1 and "
-            "CONTEXT_ENGINE_ALLOW_EDGE_CLASSIFY_WRITE=1 on the server."
+            "**Operator/admin maintenance job.** Dry-run by default "
+            "(``dry_run=true``); the response summarises proposed changes "
+            "without touching Neo4j. Writes require BOTH "
+            "``CONTEXT_ENGINE_CLASSIFY_MODIFIED_EDGES=1`` and "
+            "``CONTEXT_ENGINE_ALLOW_EDGE_CLASSIFY_WRITE=1`` on the server. "
+            "Every invocation emits a ``context_engine.operator_audit`` log "
+            "record carrying the actor, pot, and ``dry_run`` flag."
         ),
+        tags=[OPERATOR_TAG],
     )
     def post_classify_modified_edges(
         body: ClassifyModifiedEdgesRequest,
-        _: Any = Depends(require_auth),
+        actor: Any = Depends(require_auth),
         container: ContextEngineContainer = Depends(get_container),
     ) -> dict[str, Any]:
         if not container.settings.is_enabled():
@@ -1234,9 +1542,17 @@ def create_context_router(
                 status_code=501,
                 detail="Episodic backend does not support this maintenance job.",
             )
-        return container.episodic.classify_modified_edges_for_pot(
+        result = container.episodic.classify_modified_edges_for_pot(
             body.pot_id, dry_run=body.dry_run
         )
+        _audit_operator_action(
+            action="maintenance_classify_modified_edges",
+            pot_id=body.pot_id,
+            actor=actor,
+            dry_run=bool(body.dry_run),
+            extra={"outcome": "ok" if result.get("ok", True) else "failed"},
+        )
+        return result
 
     return router
 

@@ -335,6 +335,13 @@ ENTITY_TYPES: dict[str, EntityTypeSpec] = {
         "repo/service-scoped workflow slug",
         ("name", "workflow_type"),
     ),
+    "CodeAsset": _spec(
+        "CodeAsset",
+        "code_topology",
+        "File, function, class, or other code asset referenced by context facts.",
+        "provider/repo/path/symbol identity",
+        ("name", "asset_type"),
+    ),
     "Document": _spec(
         "Document",
         "knowledge_evidence",
@@ -641,6 +648,16 @@ EDGE_TYPES: dict[str, EdgeTypeSpec] = {
         "ADDRESSES",
         "Pull request addresses issue.",
         [("PullRequest", "Issue"), ("Change", "Issue")],
+    ),
+    "HAS_COMMIT": _edge(
+        "HAS_COMMIT",
+        "Pull request contains a commit.",
+        [("PullRequest", "Commit")],
+    ),
+    "HAS_REVIEW_DECISION": _edge(
+        "HAS_REVIEW_DECISION",
+        "Pull request review discussion produced a decision.",
+        [("PullRequest", "Decision")],
     ),
     "PART_OF": _edge(
         "PART_OF",
