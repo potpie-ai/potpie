@@ -4,7 +4,7 @@ import os
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import Depends, Request
+from fastapi import BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import HTTPException
 from sqlalchemy.orm import Session
@@ -99,6 +99,7 @@ class AuthAPI:
     @auth_router.post("/signup")
     async def signup(
         request: Request,
+        background_tasks: BackgroundTasks,
         db: Session = Depends(get_db),
         async_db: AsyncSession = Depends(get_async_db),
     ):
@@ -395,7 +396,9 @@ class AuthAPI:
 
                 logger.info(f"Created new user {new_user.uid} with GitHub")
 
-                await send_slack_message(f"New signup: {email} ({display_name})")
+                background_tasks.add_task(
+                    send_slack_message, f"New signup: {email} ({display_name})"
+                )
                 PostHogClient().send_event(
                     new_user.uid,
                     "signup_event",
@@ -465,7 +468,9 @@ class AuthAPI:
                 )
 
                 logger.info(f"Created email/password user: {new_user.uid}")
-                await send_slack_message(f"New signup: {email} ({display_name})")
+                background_tasks.add_task(
+                    send_slack_message, f"New signup: {email} ({display_name})"
+                )
 
                 return Response(
                     content=json.dumps(
