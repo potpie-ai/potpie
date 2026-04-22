@@ -13,6 +13,8 @@ pub struct TagPayload {
     pub name: String,
     pub line: u32,
     pub end_line: u32,
+    pub byte_start: usize,
+    pub byte_end: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -48,8 +50,12 @@ struct ReferenceRecord {
     source_id: String,
     line: u32,
     end_line: u32,
-    current_class: Option<String>,
-    current_method: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct DefinitionMetadata {
+    node_id: String,
+    file: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -69,7 +75,7 @@ pub fn extract_graph(repo_dir: &str) -> GraphPayload {
 
     let mut nodes = Vec::new();
     let mut relationships = Vec::new();
-    let mut defines: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut defines: HashMap<String, Vec<DefinitionMetadata>> = HashMap::new();
     let mut references: HashMap<String, HashSet<ReferenceRecord>> = HashMap::new();
     let mut node_types: HashMap<String, String> = HashMap::new();
     let mut seen_relationships: HashSet<(String, String, String)> = HashSet::new();
@@ -90,7 +96,11 @@ pub fn extract_graph(repo_dir: &str) -> GraphPayload {
         }
 
         for (ident, node_id) in file_graph.definitions {
-            defines.entry(ident).or_default().insert(node_id);
+            let file = node_id.split(':').next().unwrap_or(&node_id).to_string();
+            defines.entry(ident).or_default().push(DefinitionMetadata {
+                node_id,
+                file,
+            });
         }
 
         for (ident, reference) in file_graph.references {
@@ -99,20 +109,34 @@ pub fn extract_graph(repo_dir: &str) -> GraphPayload {
     }
 
     for (ident, refs) in references {
-        let Some(target_nodes) = defines.get(&ident) else {
+        // For method references, use the unqualified method name for lookup
+        // since definitions are keyed by plain method names (e.g., "method" not "object.method")
+        let lookup_ident = if ident.contains('.') {
+            ident.split('.').last().unwrap_or(&ident)
+        } else {
+            &ident
+        };
+        let Some(target_nodes) = defines.get(lookup_ident) else {
             continue;
         };
 
         for reference in refs {
-            for target_id in target_nodes {
-                if reference.source_id == *target_id {
+            // Extract source file from reference.source_id for scope filtering
+            let source_file = reference.source_id.split(':').next().unwrap_or(&reference.source_id);
+
+            for target_metadata in target_nodes {
+                if source_file != target_metadata.file {
+                    continue;
+                }
+
+                if reference.source_id == target_metadata.node_id {
                     continue;
                 }
 
                 let Some(source_type) = node_types.get(&reference.source_id) else {
                     continue;
                 };
-                let Some(target_type) = node_types.get(target_id) else {
+                let Some(target_type) = node_types.get(&target_metadata.node_id) else {
                     continue;
                 };
 
@@ -122,11 +146,11 @@ pub fn extract_graph(repo_dir: &str) -> GraphPayload {
 
                 let relationship_key = (
                     reference.source_id.clone(),
-                    target_id.clone(),
+                    target_metadata.node_id.clone(),
                     "REFERENCES".to_string(),
                 );
                 let reverse_key = (
-                    target_id.clone(),
+                    target_metadata.node_id.clone(),
                     reference.source_id.clone(),
                     "REFERENCES".to_string(),
                 );
@@ -140,7 +164,7 @@ pub fn extract_graph(repo_dir: &str) -> GraphPayload {
                 seen_relationships.insert(relationship_key);
                 relationships.push(RelationshipPayload {
                     source_id: reference.source_id.clone(),
-                    target_id: target_id.clone(),
+                    target_id: target_metadata.node_id.clone(),
                     relationship_type: "REFERENCES".to_string(),
                     ident: Some(ident.clone()),
                     ref_line: Some(reference.line),
@@ -225,6 +249,8 @@ pub fn extract_tags(relative_path: &str, text: &str) -> Vec<TagPayload> {
                 name: node_text,
                 line: capture.node.start_position().row as u32,
                 end_line: capture.node.end_position().row as u32,
+                byte_start: capture.node.start_byte(),
+                byte_end: capture.node.end_byte(),
             });
         }
     }
@@ -258,27 +284,102 @@ fn extract_file_graph(file: CodeFile) -> FileGraphData {
     seen_ids.insert(file_node.id.clone());
     nodes.push(file_node);
 
-    let mut current_class: Option<String> = None;
-    let mut current_method: Option<String> = None;
     let file_node_id = file.relative_path.clone();
 
-    for tag in extract_tags(&file.relative_path, &file.text) {
+    // Parse the file once to get the tree for proper scope containment
+    let lang = match filename_to_lang(&file.relative_path) {
+        Some(l) => l,
+        None => return FileGraphData { nodes, relationships, definitions, references },
+    };
+    let language = match language_for_lang(lang) {
+        Some(l) => l,
+        None => return FileGraphData { nodes, relationships, definitions, references },
+    };
+    if load_query(lang).is_none() {
+        return FileGraphData { nodes, relationships, definitions, references };
+    }
+
+    let mut parser = Parser::new();
+    if parser.set_language(&language).is_err() {
+        return FileGraphData { nodes, relationships, definitions, references };
+    }
+    let tree = match parser.parse(&file.text, None) {
+        Some(t) => t,
+        None => return FileGraphData { nodes, relationships, definitions, references },
+    };
+    let root_node = tree.root_node();
+    let bytes = file.text.as_bytes();
+
+    // Collect all definition tags with their byte positions for scope building
+    let all_tags = extract_tags(&file.relative_path, &file.text);
+
+    // Helper to find enclosing scope for a reference using AST containment
+    let find_enclosing_scope = |ref_byte_pos: usize| -> (Option<String>, Option<String>) {
+        // Use descendant_for_byte_range to find the node at this position
+        // Then walk up to find enclosing class/method
+        if let Some(node_at_pos) = root_node.descendant_for_byte_range(ref_byte_pos, ref_byte_pos) {
+            let mut enclosing_class: Option<String> = None;
+            let mut enclosing_method: Option<String> = None;
+
+            let mut current: Option<tree_sitter::Node> = Some(node_at_pos);
+            while let Some(node) = current {
+                let kind = node.kind();
+                match kind {
+                    // Class definitions
+                    "class_definition" | "class_declaration" | "class_specifier" => {
+                        if enclosing_class.is_none() {
+                            if let Some(name_node) = node.child_by_field_name("name") {
+                                if let Ok(name) = name_node.utf8_text(bytes) {
+                                    enclosing_class = Some(name.to_string());
+                                }
+                            }
+                        }
+                    }
+                    // Interface definitions
+                    "interface_declaration" => {
+                        if enclosing_class.is_none() {
+                            if let Some(name_node) = node.child_by_field_name("name") {
+                                if let Ok(name) = name_node.utf8_text(bytes) {
+                                    enclosing_class = Some(name.to_string());
+                                }
+                            }
+                        }
+                    }
+                    // Method/function definitions
+                    "method_declaration" | "function_definition" | "function_declaration"
+                    | "method_definition" | "constructor_declaration" => {
+                        if enclosing_method.is_none() {
+                            if let Some(name_node) = node.child_by_field_name("name") {
+                                if let Ok(name) = name_node.utf8_text(bytes) {
+                                    enclosing_method = Some(name.to_string());
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                current = node.parent();
+            }
+            return (enclosing_class, enclosing_method);
+        }
+        (None, None)
+    };
+
+    // First pass: collect definitions and build scope context
+    let mut current_class: Option<String> = None;
+
+    for tag in &all_tags {
         if tag.kind == "def" {
             let node_type = match tag.tag_type.as_str() {
                 "class" => {
                     current_class = Some(tag.name.clone());
-                    current_method = None;
                     "CLASS"
                 }
                 "interface" => {
                     current_class = Some(tag.name.clone());
-                    current_method = None;
                     "INTERFACE"
                 }
-                "method" | "function" => {
-                    current_method = Some(tag.name.clone());
-                    "FUNCTION"
-                }
+                "method" | "function" => "FUNCTION",
                 _ => continue,
             };
 
@@ -315,26 +416,32 @@ fn extract_file_graph(file: CodeFile) -> FileGraphData {
                 });
             }
 
-            definitions.push((tag.name, node_id));
-        } else if tag.kind == "ref" {
+            definitions.push((tag.name.clone(), node_id));
+        }
+    }
+
+    // Second pass: process references with proper AST containment
+    for tag in &all_tags {
+        if tag.kind == "ref" {
+            // Use AST containment to find the correct enclosing scope
+            let (enclosing_class, enclosing_method) = find_enclosing_scope(tag.byte_start);
+
             let source_id = if let (Some(class_name), Some(method_name)) =
-                (current_class.as_ref(), current_method.as_ref())
+                (enclosing_class.as_ref(), enclosing_method.as_ref())
             {
                 format!("{}:{}.{}", file.relative_path, class_name, method_name)
-            } else if let Some(method_name) = current_method.as_ref() {
+            } else if let Some(method_name) = enclosing_method.as_ref() {
                 format!("{}:{}", file.relative_path, method_name)
             } else {
                 file.relative_path.clone()
             };
 
             references.push((
-                tag.name,
+                tag.name.clone(),
                 ReferenceRecord {
                     source_id,
                     line: tag.line,
                     end_line: tag.end_line,
-                    current_class: current_class.clone(),
-                    current_method: current_method.clone(),
                 },
             ));
         }

@@ -3,7 +3,7 @@ use log::{error, info};
 use memmap2::Mmap;
 use rayon::prelude::*;
 use std::fs::File;
-use std::io::Read;
+use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -24,7 +24,11 @@ pub fn process_file(path: &Path) -> std::io::Result<usize> {
         return Ok(bytecount::count(&mmap, b'\n'));
     }
 
-    let mut buf = Vec::with_capacity(len as usize);
+    let capacity: usize = len.try_into().unwrap_or_else(|_| {
+        debug_assert!(false, "File size {} exceeds usize::MAX, truncating capacity", len);
+        usize::MAX
+    });
+    let mut buf = Vec::with_capacity(capacity);
     let mut f = file;
     f.read_to_end(&mut buf)?;
     Ok(bytecount::count(&buf, b'\n'))
@@ -37,14 +41,22 @@ pub fn index(folder: &str) -> std::io::Result<()> {
     let path = Path::new(folder);
     if !path.exists() {
         error!("Folder does not exist: {}", folder);
-        return Ok(());
+        return Err(ErrorKind::NotFound.into());
     }
 
+    let mut walk_error_count: usize = 0;
     let files: Vec<PathBuf> = WalkDir::new(path)
         .follow_links(true)
         .skip_hidden(false)
         .into_iter()
-        .filter_map(|e| e.ok())
+        .filter_map(|e| match e {
+            Ok(entry) => Some(entry),
+            Err(e) => {
+                walk_error_count += 1;
+                error!("WalkDir error: {}", e);
+                None
+            }
+        })
         .filter(|e| e.file_type().is_file())
         .map(|e| e.path())
         .collect();
@@ -65,12 +77,21 @@ pub fn index(folder: &str) -> std::io::Result<()> {
         })
         .sum();
 
-    info!(
-        "Completed index for {}: {} files, {} total lines",
-        folder,
-        file_count.load(Ordering::Relaxed),
-        total_lines
-    );
-    println!("Total lines: {}", total_lines);
+    if walk_error_count > 0 {
+        info!(
+            "Completed index for {}: {} files, {} total lines, {} walk errors",
+            folder,
+            file_count.load(Ordering::Relaxed),
+            total_lines,
+            walk_error_count
+        );
+    } else {
+        info!(
+            "Completed index for {}: {} files, {} total lines",
+            folder,
+            file_count.load(Ordering::Relaxed),
+            total_lines
+        );
+    }
     Ok(())
 }

@@ -392,7 +392,9 @@ _colbert_model: Optional[Any] = None  # typed as Any; loaded via transformers
 _colbert_tokenizer: Optional[Any] = None
 
 
-def _normalize_colbert_multivector(token_vectors: Any, *, node_id: str) -> List[List[float]]:
+def _normalize_colbert_multivector(
+    token_vectors: Any, *, node_id: str
+) -> List[List[float]]:
     arr = np.asarray(token_vectors, dtype=np.float32)
 
     if arr.ndim != 2:

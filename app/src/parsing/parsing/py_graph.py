@@ -11,7 +11,9 @@ from pygments.util import ClassNotFound
 from tree_sitter import Query, QueryCursor
 from tree_sitter_language_pack import get_language, get_parser
 
-Tag = namedtuple("Tag", "rel_fname fname line end_line name kind type".split())
+Tag = namedtuple(
+    "Tag", "rel_fname fname line end_line name kind type byte_start byte_end".split()
+)
 
 
 def create_graph(repo_dir):
@@ -149,11 +151,11 @@ def create_graph(repo_dir):
                         )
                     )
 
-    print(f"DEBUG: references count={len(references)}, defines count={len(defines)}")
+    logger.debug(f"references count={len(references)}, defines count={len(defines)}")
     if references:
-        print(f"DEBUG: sample ref idents: {list(references.keys())[:5]}")
+        logger.debug(f"sample ref idents: {list(references.keys())[:5]}")
     if defines:
-        print(f"DEBUG: sample define idents: {list(defines.keys())[:5]}")
+        logger.debug(f"sample define idents: {list(defines.keys())[:5]}")
 
     for ident, refs in references.items():
         target_nodes = defines.get(ident, set())
@@ -164,10 +166,10 @@ def create_graph(repo_dir):
                     continue
 
                 if not G.has_node(source):
-                    print(f"MISSING source node: {source}")
+                    logger.warning(f"MISSING source node: {source}")
                     continue
                 if not G.has_node(target):
-                    print(f"MISSING target node: {target}")
+                    logger.warning(f"MISSING target node: {target}")
                     continue
 
                 create_relationship(
@@ -269,7 +271,8 @@ def is_text_file(file_path):
         # If all encodings fail, likely a binary file
         return False
 
-    ext = file_path.split(".")[-1]
+    _, _, ext = file_path.rpartition(".")
+    ext = ext.lower()
     exclude_extensions = [
         "png",
         "jpg",
@@ -443,6 +446,8 @@ def get_tags_raw(fname, rel_fname):
             line=node.start_point[0],
             end_line=node.end_point[0],
             type=type,
+            byte_start=node.start_byte,
+            byte_end=node.end_byte,
         )
 
         yield result
@@ -469,6 +474,8 @@ def get_tags_raw(fname, rel_fname):
             line=-1,
             end_line=-1,
             type="unknown",
+            byte_start=0,
+            byte_end=0,
         )
 
 
