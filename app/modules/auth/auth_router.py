@@ -39,8 +39,6 @@ from app.modules.utils.email_helper import is_personal_email_domain
 
 logger = logging.getLogger(__name__)
 
-SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", None)
-
 auth_router = APIRouter()
 load_dotenv(override=True)
 
@@ -55,12 +53,25 @@ def _signup_response_with_custom_token(payload: dict) -> dict:
     return payload
 
 
+def _get_slack_webhook_url() -> str | None:
+    """Resolve Slack webhook URL at call time so dotenv/env changes are respected."""
+    return os.getenv("SLACK_WEBHOOK_URL")
+
+
 async def send_slack_message(message: str):
     payload = {"text": message}
-    if SLACK_WEBHOOK_URL:
+    webhook_url = _get_slack_webhook_url()
+    if webhook_url:
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                await client.post(SLACK_WEBHOOK_URL, json=payload)
+                response = await client.post(webhook_url, json=payload)
+                response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            logger.warning(
+                "Slack webhook returned non-2xx status: %s body=%s",
+                e.response.status_code,
+                e.response.text,
+            )
         except Exception as e:
             logger.warning("Failed to send Slack signup notification: %s", e)
 
@@ -454,6 +465,7 @@ class AuthAPI:
                 )
 
                 logger.info(f"Created email/password user: {new_user.uid}")
+                await send_slack_message(f"New signup: {email} ({display_name})")
 
                 return Response(
                     content=json.dumps(

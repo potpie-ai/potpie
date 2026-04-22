@@ -33,13 +33,19 @@ class TestSignupResponseWithCustomToken:
 class TestSendSlackMessage:
     @pytest.mark.asyncio
     async def test_no_webhook_url_does_nothing(self):
-        with patch("app.modules.auth.auth_router.SLACK_WEBHOOK_URL", None):
+        with patch("app.modules.auth.auth_router._get_slack_webhook_url", return_value=None):
             await send_slack_message("test message")
 
     @pytest.mark.asyncio
     async def test_with_webhook_url_posts(self):
-        with patch("app.modules.auth.auth_router.SLACK_WEBHOOK_URL", "https://hooks.slack.com/x"):
+        with patch(
+            "app.modules.auth.auth_router._get_slack_webhook_url",
+            return_value="https://hooks.slack.com/x",
+        ):
             mock_post = AsyncMock()
+            mock_response = MagicMock()
+            mock_response.raise_for_status = MagicMock()
+            mock_post.return_value = mock_response
             mock_ctx = MagicMock()
             mock_ctx.post = mock_post
             mock_ctx.__aenter__ = AsyncMock(return_value=mock_ctx)
@@ -47,5 +53,6 @@ class TestSendSlackMessage:
             with patch("app.modules.auth.auth_router.httpx.AsyncClient", return_value=mock_ctx):
                 await send_slack_message("hello")
             mock_post.assert_called_once()
+            mock_response.raise_for_status.assert_called_once()
             call_args = mock_post.call_args
             assert call_args[1]["json"] == {"text": "hello"}
