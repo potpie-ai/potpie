@@ -1893,6 +1893,11 @@ class ParseHelper:
                 method="environment_token_bare_clone",
             )
 
+            # Import Repo before clone_from: a later `Repo = ...` assignment in this
+            # block would make `Repo` local for the whole function and cause
+            # UnboundLocalError on Repo.clone_from (see Priority 3 bare clone path).
+            _, _, Repo = _get_git_imports()
+
             try:
                 # Clone as bare repository
                 Repo.clone_from(
@@ -1911,7 +1916,6 @@ class ParseHelper:
                 )
 
                 # Configure the bare repo to fetch all refs
-                _, _, Repo = _get_git_imports()
                 bare_repo = Repo(str(bare_repo_path))
                 if bare_repo.remotes:
                     origin = bare_repo.remotes.origin
