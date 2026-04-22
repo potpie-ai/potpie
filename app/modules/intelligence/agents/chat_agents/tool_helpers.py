@@ -108,6 +108,13 @@ def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
                 display_cmd = command if len(command) <= 60 else command[:57] + "..."
                 return f"Executing search command: {display_cmd}"
             return "Executing bash search command"
+        case "search_colgrep":
+            query = args.get("query") if args else None
+            if query:
+                return f"Searching ColGREP index: {query[:60]}"
+            return "Searching ColGREP index"
+        case "check_colgrep_health":
+            return "Checking ColGREP service health"
         case "semantic_search":
             query = args.get("query") if args else None
             if query:
@@ -553,6 +560,27 @@ def get_tool_response_message(
                 if exit_code is not None:
                     return f"Bash search command completed (exit {exit_code})"
             return "Bash search command executed"
+        case "search_colgrep":
+            query = args.get("query") if args else None
+            base = (
+                f"ColGREP search completed: {query[:50]}"
+                if query
+                else "ColGREP search completed"
+            )
+            if isinstance(result, str) and result:
+                ranked_match = re.search(r"Ranked paths \((\d+)\):", result)
+                if ranked_match:
+                    base += f" — {ranked_match.group(1)} ranked path(s)"
+                elif "no results" in result.lower():
+                    base += " — no results"
+            return base
+        case "check_colgrep_health":
+            if isinstance(result, str):
+                if result.startswith("✅"):
+                    return "ColGREP health check passed"
+                if result.startswith("❌"):
+                    return "ColGREP health check failed"
+            return "ColGREP health check completed"
         case "semantic_search":
             query = args.get("query") if args else None
             top_k = args.get("top_k") if args else None
@@ -981,6 +1009,25 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
                 dir_info = f" in directory '{working_dir}'" if working_dir else ""
                 return f"-> executing bash search command: {command}{dir_info}\n"
             return "-> executing bash search command\n"
+        case "search_colgrep":
+            query = args.get("query", "")
+            target_paths = args.get("target_paths")
+            working_directory = args.get("working_directory")
+            top_k = args.get("top_k")
+            timeout_ms = args.get("timeout_ms")
+            scope = ""
+            if target_paths:
+                scope = f" within target paths {target_paths}"
+            elif working_directory:
+                scope = f" within '{working_directory}'"
+            top_k_info = f" (top {top_k})" if top_k else ""
+            timeout_info = f" (timeout: {timeout_ms}ms)" if timeout_ms else ""
+            return (
+                f"-> searching ColGREP index for '{query}'"
+                f"{scope}{top_k_info}{timeout_info}\n"
+            )
+        case "check_colgrep_health":
+            return "-> checking ColGREP service health endpoint\n"
         case "semantic_search":
             query = args.get("query", "")
             project_id = args.get("project_id", "")
@@ -1411,6 +1458,18 @@ description:
                     preview = "\n".join(lines[:100])
                     return f"{preview}\n... ({len(lines) - 100} more lines)"
                 return content
+            return ""
+        case "search_colgrep":
+            if isinstance(content, str):
+                return content[: min(len(content), 1500)] + (
+                    " ..." if len(content) > 1500 else ""
+                )
+            return ""
+        case "check_colgrep_health":
+            if isinstance(content, str):
+                return content[: min(len(content), 600)] + (
+                    " ..." if len(content) > 600 else ""
+                )
             return ""
         case "semantic_search":
             if isinstance(content, str):
