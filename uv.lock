@@ -1020,11 +1020,6 @@ toml = [
 ]
 
 [[package]]
-name = "create-graph-rs"
-version = "0.1.0"
-source = { directory = "rust/create_graph_rs" }
-
-[[package]]
 name = "cryptography"
 version = "46.0.7"
 source = { registry = "https://pypi.org/simple" }
@@ -3969,6 +3964,32 @@ wheels = [
 ]
 
 [[package]]
+name = "parsing"
+source = { directory = "app/src/parsing" }
+dependencies = [
+    { name = "grep-ast" },
+    { name = "loguru" },
+    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pygments" },
+    { name = "tree-sitter" },
+    { name = "tree-sitter-language-pack" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "grep-ast", specifier = ">=0.6.0" },
+    { name = "loguru", specifier = ">=0.7.3" },
+    { name = "networkx", specifier = ">=3.4.2" },
+    { name = "pygments", specifier = ">=2.20.0" },
+    { name = "tree-sitter", specifier = ">=0.20.4" },
+    { name = "tree-sitter-language-pack", specifier = ">=0.13.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest-benchmark", specifier = ">=5.2.3" }]
+
+[[package]]
 name = "pathable"
 version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4103,6 +4124,18 @@ wheels = [
 ]
 
 [[package]]
+name = "portalocker"
+version = "3.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pywin32", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5e/77/65b857a69ed876e1951e88aaba60f5ce6120c33703f7cb61a3c894b8c1b6/portalocker-3.2.0.tar.gz", hash = "sha256:1f3002956a54a8c3730586c5c77bf18fae4149e07eaf1c29fc3faf4d5a3f89ac", size = 95644, upload-time = "2025-06-14T13:20:40.03Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4b/a6/38c8e2f318bf67d338f4d629e93b0b4b9af331f455f0390ea8ce4a099b26/portalocker-3.2.0-py3-none-any.whl", hash = "sha256:3cdc5f565312224bc570c49337bd21428bba0ef363bbcf58b9ef4a9f11779968", size = 22424, upload-time = "2025-06-14T13:20:38.083Z" },
+]
+
+[[package]]
 name = "postgres"
 version = "4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4145,7 +4178,6 @@ dependencies = [
     { name = "boto3" },
     { name = "celery" },
     { name = "chardet" },
-    { name = "create-graph-rs" },
     { name = "cryptography" },
     { name = "email-inspector" },
     { name = "fastapi" },
@@ -4178,6 +4210,7 @@ dependencies = [
     { name = "newrelic" },
     { name = "nltk" },
     { name = "openai" },
+    { name = "parsing" },
     { name = "pathspec" },
     { name = "pillow" },
     { name = "postgres" },
@@ -4195,6 +4228,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "python-multipart" },
     { name = "python-socketio" },
+    { name = "qdrant-client" },
     { name = "redis" },
     { name = "requests" },
     { name = "resend" },
@@ -4238,7 +4272,6 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.40.67" },
     { name = "celery", specifier = ">=5.5.3" },
     { name = "chardet", specifier = ">=5.2.0" },
-    { name = "create-graph-rs", directory = "rust/create_graph_rs" },
     { name = "cryptography", specifier = ">=46.0.7" },
     { name = "email-inspector", specifier = ">=0.1.4" },
     { name = "fastapi", specifier = ">=0.121.0" },
@@ -4270,6 +4303,7 @@ requires-dist = [
     { name = "newrelic", specifier = ">=11.2.0" },
     { name = "nltk", specifier = ">=3.9.4" },
     { name = "openai", specifier = ">=2.7.1" },
+    { name = "parsing", directory = "app/src/parsing" },
     { name = "pathspec", specifier = ">=0.12.1" },
     { name = "pillow", specifier = ">=12.2.0" },
     { name = "postgres", specifier = ">=4.0" },
@@ -4287,6 +4321,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "python-multipart", specifier = ">=0.0.22" },
     { name = "python-socketio", specifier = ">=5.11.0" },
+    { name = "qdrant-client", specifier = ">=1.12.0" },
     { name = "redis", specifier = ">=7.0.1" },
     { name = "requests", specifier = ">=2.33.1" },
     { name = "resend", specifier = ">=2.19.0" },
@@ -5358,6 +5393,25 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/da/92/1446574745d74df0c92e6aa4a7b0b3130706a4142b2d1a5869f2eaa423c6/pyyaml-6.0.3-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:16249ee61e95f858e83976573de0f5b2893b3677ba71c9dd36b9cf8be9ac6d65", size = 829923, upload-time = "2025-09-25T21:32:54.537Z" },
     { url = "https://files.pythonhosted.org/packages/f0/7a/1c7270340330e575b92f397352af856a8c06f230aa3e76f86b39d01b416a/pyyaml-6.0.3-cp314-cp314t-win_amd64.whl", hash = "sha256:4ad1906908f2f5ae4e5a8ddfce73c320c2a1429ec52eafd27138b7f1cbe341c9", size = 174062, upload-time = "2025-09-25T21:32:55.767Z" },
     { url = "https://files.pythonhosted.org/packages/f1/12/de94a39c2ef588c7e6455cfbe7343d3b2dc9d6b6b2f40c4c6565744c873d/pyyaml-6.0.3-cp314-cp314t-win_arm64.whl", hash = "sha256:ebc55a14a21cb14062aa4162f906cd962b28e2e9ea38f9b4391244cd8de4ae0b", size = 149341, upload-time = "2025-09-25T21:32:56.828Z" },
+]
+
+[[package]]
+name = "qdrant-client"
+version = "1.17.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "grpcio" },
+    { name = "httpx", extra = ["http2"] },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "portalocker" },
+    { name = "protobuf" },
+    { name = "pydantic" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/30/dd/f8a8261b83946af3cd65943c93c4f83e044f01184e8525404989d22a81a5/qdrant_client-1.17.1.tar.gz", hash = "sha256:22f990bbd63485ed97ba551a4c498181fcb723f71dcab5d6e4e43fe1050a2bc0", size = 344979, upload-time = "2026-03-13T17:13:44.678Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/68/69/77d1a971c4b933e8c79403e99bcbb790463da5e48333cc4fd5d412c63c98/qdrant_client-1.17.1-py3-none-any.whl", hash = "sha256:6cda4064adfeaf211c751f3fbc00edbbdb499850918c7aff4855a9a759d56cbd", size = 389947, upload-time = "2026-03-13T17:13:43.156Z" },
 ]
 
 [[package]]

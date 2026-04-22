@@ -1,0 +1,25 @@
+[build-system]
+requires = ["maturin>=1.13,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "parsing"
+requires-python = ">=3.10"
+dynamic = ["version"]
+dependencies = [
+    "grep-ast>=0.6.0",
+    "loguru>=0.7.3",
+    "networkx>=3.4.2",
+    "pygments>=2.20.0",
+    "tree-sitter>=0.20.4",
+    "tree-sitter-language-pack>=0.13.0",
+]
+
+[tool.uv]
+package = true
+cache-keys = [{file = "pyproject.toml"}, {file = "Cargo.toml"}, {file = "**/*.rs"}]
+
+[dependency-groups]
+dev = [
+    "pytest-benchmark>=5.2.3",
+]

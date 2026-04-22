@@ -50,6 +50,7 @@ dependencies = [
     "pydantic-ai>=1.56.0",
     "pydantic-ai-todo>=0.1.6",
     "pydantic[email]>=2.12.4",
+    "qdrant-client>=1.12.0",
     "pygithub>=2.8.1",
     "pygments>=2.20.0",
     "pyjwt>=2.12.1",
@@ -78,11 +79,11 @@ dependencies = [
     "uvicorn>=0.38.0",
     "greenlet>=3.3.0",
     "typer>=0.15.0",
-    "create_graph_rs",
+    "parsing",
 ]
 
 [tool.uv.sources]
-create_graph_rs = { path = "rust/create_graph_rs" }
+parsing = { path = "app/src/parsing" }
 
 [project.scripts]
 potpie-seed = "seed.cli:main"

@@ -18,7 +18,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.9.6 /uv /uvx /bin/
 
 # Copy dependency metadata first for better layer caching
 COPY pyproject.toml uv.lock ./
-COPY rust/create_graph_rs ./rust/create_graph_rs
+COPY app/src/parsing ./app/src/parsing
 
 # Install dependency layers first, including the local Rust extension
 RUN uv sync --frozen --no-install-project
