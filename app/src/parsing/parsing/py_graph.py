@@ -418,11 +418,11 @@ def get_tags_raw(fname, rel_fname):
 
         if tag.startswith("name.definition."):
             kind = "def"
-            type = tag.split(".")[-1]
+            node_type = tag.split(".")[-1]
 
         elif tag.startswith("name.reference."):
             kind = "ref"
-            type = tag.split(".")[-1]
+            node_type = tag.split(".")[-1]
 
         else:
             continue
@@ -430,7 +430,7 @@ def get_tags_raw(fname, rel_fname):
         saw.add(kind)
 
         # Enhanced node text extraction for Java methods
-        if lang == "java" and type == "method":
+        if lang == "java" and node_type == "method":
             # Handle method calls with object references (e.g., productService.listAllProducts())
             parent = node.parent
             if parent and parent.type == "method_invocation":

@@ -227,7 +227,7 @@ def build_colbert_text(node: Dict[str, Any]) -> str:
     """
     code = node.get("text", "") or ""
     # Strip docstrings / comments to reduce noise
-    code = _strip_comments_and_docstrings(code, node.get("type", ""))
+    code = _strip_comments_and_docstrings(code)
     parts = [
         node.get("name", ""),
         node.get("type", ""),
@@ -237,7 +237,7 @@ def build_colbert_text(node: Dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def _strip_comments_and_docstrings(code: str, node_type: str) -> str:
+def _strip_comments_and_docstrings(code: str) -> str:
     """Remove docstrings and line comments to reduce ColBERT noise."""
     # Remove triple-quoted strings (docstrings)
     code = re.sub(r'"""[\s\S]*?"""', "", code)
@@ -313,7 +313,6 @@ def _compute_bm25_scores(
     corpus: List[str],
     avg_dl: float,
     doc_lens: List[int],
-    token_to_idx: Dict[str, int],
 ) -> List[Dict[str, float]]:
     """
     Compute per-document BM25 scores for all term-doc pairs.
@@ -373,9 +372,8 @@ def build_bm25_vectors(
     for doc in texts:
         all_tokens.update(_tokenize(doc))
     sorted_tokens = sorted(all_tokens)
-    token_to_idx = {t: i for i, t in enumerate(sorted_tokens)}
 
-    bm25_scores = _compute_bm25_scores(texts, avg_dl, doc_lens, token_to_idx)
+    bm25_scores = _compute_bm25_scores(texts, avg_dl, doc_lens)
 
     result: Dict[str, Any] = {
         n["node_id"]: scores for n, scores in zip(filtered, bm25_scores)
