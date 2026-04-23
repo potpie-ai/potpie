@@ -124,6 +124,13 @@ def production_log_sink(message):
     exception = None
     exc = record.get("exception")
     if exc:
+        # Truncate traceback to last 10 lines to reduce log volume
+        # while preserving the most relevant error frames
+        traceback_str = str(exc.get("traceback", ""))
+        traceback_lines = traceback_str.split("\n")
+        if len(traceback_lines) > 10:
+            traceback_str = "\n".join(traceback_lines[-10:])
+
         exception = {
             "type": (
                 exc.get("type", {}).get("name", "Exception")
@@ -131,7 +138,7 @@ def production_log_sink(message):
                 else str(exc.get("type", "Exception"))
             ),
             "value": filter_sensitive_data(str(exc.get("value", ""))),
-            "traceback": filter_sensitive_data(str(exc.get("traceback", ""))),
+            "traceback": filter_sensitive_data(traceback_str),
         }
 
     # Build flat JSON structure - easier for log parsers
