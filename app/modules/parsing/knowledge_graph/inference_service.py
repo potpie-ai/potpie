@@ -127,7 +127,8 @@ class InferenceService:
         project_id: str,
     ) -> Dict[str, Any]:
         """
-        Look up cache for all nodes and mark them with cache hit/miss status.
+        Look up cache for all nodes using batch query, then mark nodes with
+        cache hit/miss status. Branch-aware: only re-infers changed nodes.
 
         Mutates nodes in place, adding:
         - cached_inference: The cached inference data (if hit)
@@ -140,61 +141,71 @@ class InferenceService:
         cache_hits = 0
         cache_misses = 0
         uncacheable_nodes = 0
-        cache_lookup_time = 0.0
 
         lookup_start = time.time()
 
+        # Phase 1: Normalize text and compute hashes for all cacheable nodes
+        hash_to_nodes: Dict[str, List[Dict]] = {}
         for node in nodes:
             text = node.get("text")
             if not text:
                 continue
 
-            # Normalize text for consistent hashing
             normalized_text = self._normalize_node_text(text, node_dict)
             node["normalized_text"] = normalized_text
 
-            # Check if content is cacheable
             if not is_content_cacheable(normalized_text):
                 uncacheable_nodes += 1
                 continue
 
-            # Generate content hash
             content_hash = generate_content_hash(normalized_text, node.get("node_type"))
             node["content_hash"] = content_hash
+            hash_to_nodes.setdefault(content_hash, []).append(node)
 
-            # Look up in cache
-            node_lookup_start = time.time()
-            cached_inference = cache_service.get_cached_inference(content_hash)
-            cache_lookup_time += time.time() - node_lookup_start
+        # Phase 2: Branch-aware diff — detect which hashes are new vs cached
+        all_hashes = list(hash_to_nodes.keys())
+        if all_hashes:
+            diff_result = cache_service.diff_hashes(all_hashes, project_id=project_id)
+            removed_hashes = set(diff_result["removed_hashes"])
+            logger.info(
+                f"[CACHE DIFF] Branch-aware: {len(diff_result['unchanged_hashes'])} unchanged, "
+                f"{len(diff_result['new_hashes'])} new, {len(diff_result['removed_hashes'])} removed",
+                project_id=project_id,
+            )
+        else:
+            removed_hashes = set()
 
-            if cached_inference:
-                # Cache hit - store the inference data on the node
-                node["cached_inference"] = cached_inference
-                cache_hits += 1
-                # Verify the assignment worked
-                if not node.get("cached_inference"):
-                    logger.error(
-                        f"CACHE BUG: cached_inference not set after assignment! node={node['node_id'][:8]}"
+        # Phase 3: Batch cache lookup for all hashes
+        cached_map: Dict[str, Dict[str, Any]] = {}
+        if all_hashes:
+            cached_map = cache_service.batch_get_cached_inferences(all_hashes)
+
+        # Phase 4: Assign cache results to nodes
+        for content_hash, node_list in hash_to_nodes.items():
+            cached_data = cached_map.get(content_hash)
+            if cached_data:
+                for node in node_list:
+                    node["cached_inference"] = cached_data
+                    cache_hits += 1
+                    logger.debug(
+                        f"✅ CACHE HIT | node={node['node_id'][:8]} | "
+                        f"hash={content_hash[:12]} | type={node.get('node_type', 'UNKNOWN')}"
                     )
-                logger.debug(
-                    f"✅ CACHE HIT | node={node['node_id'][:8]} | "
-                    f"hash={content_hash[:12]} | type={node.get('node_type', 'UNKNOWN')}"
-                )
             else:
-                # Cache miss - mark for caching after LLM inference
-                node["should_cache"] = True
-                cache_misses += 1
-                logger.debug(
-                    f"❌ CACHE MISS | node={node['node_id'][:8]} | "
-                    f"hash={content_hash[:12]} | type={node.get('node_type', 'UNKNOWN')}"
-                )
+                for node in node_list:
+                    node["should_cache"] = True
+                    cache_misses += 1
+                    logger.debug(
+                        f"❌ CACHE MISS | node={node['node_id'][:8]} | "
+                        f"hash={content_hash[:12]} | type={node.get('node_type', 'UNKNOWN')}"
+                    )
 
         total_lookup_time = time.time() - lookup_start
         total_cacheable = cache_hits + cache_misses
         hit_rate = (cache_hits / total_cacheable * 100) if total_cacheable > 0 else 0
 
         logger.info(
-            f"[CACHE LOOKUP] Completed cache lookup for {len(nodes)} nodes: "
+            f"[CACHE LOOKUP] Completed batch cache lookup for {len(nodes)} nodes: "
             f"Hits: {cache_hits} ({hit_rate:.1f}%), Misses: {cache_misses}, "
             f"Uncacheable: {uncacheable_nodes}, Total time: {total_lookup_time:.2f}s",
             project_id=project_id,
@@ -209,8 +220,9 @@ class InferenceService:
             "cache_misses": cache_misses,
             "uncacheable_nodes": uncacheable_nodes,
             "total_nodes": len(nodes),
-            "cache_lookup_time": cache_lookup_time,
+            "cache_lookup_time": total_lookup_time,
             "cache_hit_rate": hit_rate,
+            "removed_hashes": len(removed_hashes),
         }
 
     def _store_inference_in_cache(
@@ -1068,6 +1080,8 @@ class InferenceService:
                             )
                             docstring_embeddings[docstring_result.node_id] = embedding
 
+                        # Batch store cache entries (single commit)
+                        batch_cache_entries: List[Dict[str, Any]] = []
                         for request, docstring_result in zip(
                             batch, response.docstrings
                         ):
@@ -1076,40 +1090,39 @@ class InferenceService:
                                 docstring_result.node_id
                             )
 
-                            # Store in cache if eligible (includes embedding for future reuse)
                             if (
                                 cache_service
                                 and metadata.get("should_cache")
                                 and metadata.get("content_hash")
                             ):
-                                try:
-                                    store_start = time.time()
-                                    # Convert DocstringResult to dictionary for caching
-                                    inference_data = {
+                                batch_cache_entries.append({
+                                    "content_hash": metadata["content_hash"],
+                                    "inference_data": {
                                         "node_id": docstring_result.node_id,
                                         "docstring": docstring_result.docstring,
                                         "tags": docstring_result.tags,
-                                    }
+                                    },
+                                    "project_id": repo_id,
+                                    "node_type": metadata.get("node_type"),
+                                    "content_length": len(request.text),
+                                    "embedding_vector": embedding,
+                                    "tags": docstring_result.tags,
+                                })
 
-                                    # Store with embedding for future cache hits
-                                    cache_service.store_inference(
-                                        content_hash=metadata["content_hash"],
-                                        inference_data=inference_data,
-                                        project_id=repo_id,
-                                        node_type=metadata.get("node_type"),
-                                        content_length=len(request.text),
-                                        embedding_vector=embedding,
-                                        tags=docstring_result.tags,
-                                    )
-                                    cache_store_times.append(time.time() - store_start)
-                                    batch_cache_stored += 1
-                                    total_cache_stored_count += 1
-                                except Exception as cache_error:
-                                    logger.warning(
-                                        f"[INFERENCE] Failed to cache inference for node {request.node_id}: {cache_error}",
-                                        project_id=repo_id,
-                                        node_id=request.node_id,
-                                    )
+                        if batch_cache_entries and cache_service:
+                            try:
+                                cache_store_start = time.time()
+                                stored, _ = cache_service.batch_store_inferences(
+                                    batch_cache_entries
+                                )
+                                batch_cache_stored = stored
+                                total_cache_stored_count += stored
+                                cache_store_times.append(time.time() - cache_store_start)
+                            except Exception as cache_error:
+                                logger.warning(
+                                    f"[INFERENCE] Failed to batch cache inferences: {cache_error}",
+                                    project_id=repo_id,
+                                )
 
                         cache_store_time = time.time() - cache_store_start
 
