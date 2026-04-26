@@ -107,6 +107,73 @@ class ParseHelper:
                 total_size += os.path.getsize(fp)
         return total_size
 
+    def check_commit_status_sync(self, project_id: str) -> bool:
+        """
+        Synchronous version of check_commit_status for use with asyncio.to_thread.
+        Avoids blocking the event loop when called from async contexts.
+        """
+        logger.info(
+            f"check_commit_status_sync: Checking commit status for project {project_id}"
+        )
+
+        project = self.project_manager.get_project_from_db_by_id_sync(int(project_id) if isinstance(project_id, str) else project_id)
+        if not project:
+            logger.error(f"Project with ID {project_id} not found")
+            return False
+
+        current_commit_id = project.get("commit_id")
+        repo_name = project.get("project_name")
+        branch_name = project.get("branch_name")
+
+        logger.info(
+            f"check_commit_status_sync: Project {project_id} - repo={repo_name}, "
+            f"branch={branch_name}, current_commit_id={current_commit_id}"
+        )
+
+        # If no branch, it's a pinned commit
+        if not branch_name:
+            logger.info(
+                f"check_commit_status_sync: Branch is empty (pinned commit parse) - "
+                f"sticking to commit and not updating it for: {project_id}"
+            )
+            return True
+
+        if not repo_name or len(repo_name.split("/")) < 2:
+            # Local repo, always parse local repos
+            logger.info("check_commit_status_sync: Local repo detected, forcing reparse")
+            return False
+
+        try:
+            if current_commit_id is None:
+                logger.info(
+                    f"check_commit_status_sync: Project {project_id} has no commit_id, will reparse"
+                )
+                return False
+
+            # Use HTTP-only GitHub API (synchronous version)
+            logger.info(
+                f"check_commit_status_sync: Branch-based parse - getting repo info for {repo_name}"
+            )
+            # Run the blocking HTTP call in a thread pool
+            latest_commit_id = _fetch_github_branch_head_sha_http(repo_name, branch_name)
+
+            is_up_to_date = current_commit_id == latest_commit_id
+            logger.info(
+                f"check_commit_status_sync: Project {project_id} commit status for branch {branch_name}: "
+                f"{'Up to date' if is_up_to_date else 'Outdated'} - "
+                f"Current: {current_commit_id}, Latest: {latest_commit_id}"
+            )
+
+            return is_up_to_date
+        except Exception:
+            logger.exception(
+                "check_commit_status_sync: Error fetching latest commit",
+                repo_name=repo_name,
+                branch_name=branch_name,
+                project_id=project_id,
+            )
+            return False
+
     async def clone_or_copy_repository(
         self,
         repo_details: RepoDetails,

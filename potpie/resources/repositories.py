@@ -46,7 +46,7 @@ class RepositoriesResource(BaseResource):
         self._repo_manager = None
 
     def _get_repo_manager(self):
-        """Get RepoManager instance if enabled."""
+        """Get a RepoManager instance configured from RuntimeConfig."""
         if self._repo_manager is not None:
             return self._repo_manager
         enabled = os.getenv("REPO_MANAGER_ENABLED", "false").lower() in (
@@ -58,10 +58,10 @@ class RepositoriesResource(BaseResource):
         if not enabled:
             return None
         try:
-            from app.modules.repo_manager import RepoManager
+            from app.modules.repo_manager.repo_manager import RepoManager
 
-            self._repo_manager = RepoManager()
-            logger.info("RepositoriesResource: RepoManager initialized")
+            self._repo_manager = RepoManager(repos_base_path=self._config.repos_base_path)
+            logger.info("RepositoriesResource: RepoManager initialized with repos_base_path=%s", self._config.repos_base_path)
             return self._repo_manager
         except Exception as e:
             logger.warning(
