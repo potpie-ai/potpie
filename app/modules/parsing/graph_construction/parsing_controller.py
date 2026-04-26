@@ -441,8 +441,12 @@ class ParsingController:
                 )
 
             project_status = row.status
+            # Use asyncio.to_thread to avoid blocking the event loop with
+            # synchronous DB operations in ParseHelper
             parse_helper = ParseHelper(db)
-            is_latest = await parse_helper.check_commit_status(project_id)
+            is_latest = await asyncio.to_thread(
+                parse_helper.check_commit_status_sync, project_id
+            )
 
             # Auto-recover: if a project has been stuck in "submitted" with no active
             # Celery task (task was lost due to worker crash/restart), re-submit the
