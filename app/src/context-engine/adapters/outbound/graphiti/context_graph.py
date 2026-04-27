@@ -12,10 +12,10 @@ import asyncio
 from datetime import datetime
 from typing import Any, Callable
 
-from application.services.graph_query_planner import GraphQueryPlanner
-from application.use_cases.apply_reconciliation_plan import apply_reconciliation_plan
-from application.use_cases.ingest_episode import ingest_episode as ingest_episode_uc
-from application.use_cases.query_context import (
+from adapters.outbound.graphiti.apply_plan import apply_reconciliation_plan
+from adapters.outbound.graphiti.ingest_episode import ingest_episode as ingest_episode_uc
+from adapters.outbound.graphiti.port import EpisodicGraphPort
+from adapters.outbound.graphiti.query_helpers import (
     get_change_history,
     get_decisions,
     get_file_owners,
@@ -23,8 +23,11 @@ from application.use_cases.query_context import (
     get_pr_diff,
     get_pr_review_context,
     get_project_graph,
+    get_timeline,
     search_pot_context,
 )
+from adapters.outbound.neo4j.port import StructuralGraphPort
+from application.services.graph_query_planner import GraphQueryPlanner
 from application.use_cases.resolve_context import resolve_context
 from domain.agent_context_port import bundle_to_agent_envelope
 from domain.graph_query import (
@@ -39,6 +42,7 @@ from domain.graph_query_plan import (
     MergePolicy,
     QueryLeg,
 )
+from domain.actor import Actor
 from domain.graph_mutations import ProvenanceContext
 from domain.intelligence_models import (
     ArtifactRef,
@@ -46,10 +50,9 @@ from domain.intelligence_models import (
     ContextResolutionRequest,
     ContextScope,
 )
+from domain.ports.answer_synthesizer import AnswerSynthesizerPort
 from domain.ports.context_graph import ContextGraphPort
-from domain.ports.episodic_graph import EpisodicGraphPort
 from domain.ports.graph_mutation_applier import GraphMutationApplierPort
-from domain.ports.structural_graph import StructuralGraphPort
 from domain.reconciliation import ReconciliationPlan, ReconciliationResult
 
 
@@ -64,15 +67,18 @@ class GraphitiContextGraphAdapter(ContextGraphPort):
         resolution_service: Any | None = None,
         mutation_applier: GraphMutationApplierPort | None = None,
         planner: GraphQueryPlanner | None = None,
+        answer_synthesizer: AnswerSynthesizerPort | None = None,
     ) -> None:
         self._episodic = episodic
         self._structural = structural
         self._resolution_service = resolution_service
         self._mutation_applier = mutation_applier
         self._planner = planner or GraphQueryPlanner()
+        self._answer_synthesizer = answer_synthesizer
         self._executors: dict[str, Callable[[QueryLeg, ContextGraphQuery], LegOutcome]] = {
             "semantic_search": self._exec_semantic_search,
             "change_history": self._exec_change_history,
+            "timeline": self._exec_timeline,
             "owners": self._exec_owners,
             "decisions": self._exec_decisions,
             "pr_review_context": self._exec_pr_review_context,
@@ -127,6 +133,8 @@ class GraphitiContextGraphAdapter(ContextGraphPort):
         episode_body: str,
         source_description: str,
         reference_time: datetime,
+        *,
+        actor: Actor | None = None,
     ) -> dict[str, Any]:
         return ingest_episode_uc(
             self._episodic,
@@ -135,6 +143,7 @@ class GraphitiContextGraphAdapter(ContextGraphPort):
             episode_body,
             source_description,
             reference_time,
+            actor=actor,
         )
 
     def reset_pot(self, pot_id: str) -> dict[str, Any]:
@@ -306,6 +315,8 @@ class GraphitiContextGraphAdapter(ContextGraphPort):
             repo_name=request.scope.repo_name,
             pr_number=request.scope.pr_number,
             as_of=leg.as_of,
+            episodic=self._episodic,
+            query=request.query,
         )
         return LegOutcome(
             name=leg.name,
@@ -313,6 +324,33 @@ class GraphitiContextGraphAdapter(ContextGraphPort):
             strategy=leg.strategy.value,
             result=rows,
             count=len(rows) if isinstance(rows, list) else None,
+            fallback_reason=_fallback_reason(rows),
+        )
+
+    def _exec_timeline(
+        self, leg: QueryLeg, request: ContextGraphQuery
+    ) -> LegOutcome:
+        params = leg.params or {}
+        bundle = get_timeline(
+            self._structural,
+            request.pot_id,
+            since_iso=str(params.get("since_iso") or ""),
+            until_iso=str(params.get("until_iso") or ""),
+            limit=leg.limit,
+            user=params.get("user"),
+            feature=params.get("feature"),
+            file_path=params.get("file_path"),
+            branch=params.get("branch"),
+            verbs=list(params.get("verbs") or []) or None,
+        )
+        activities = bundle.get("activities") if isinstance(bundle, dict) else None
+        count = len(activities) if isinstance(activities, list) else None
+        return LegOutcome(
+            name=leg.name,
+            family=leg.family,
+            strategy=leg.strategy.value,
+            result=bundle,
+            count=count,
         )
 
     def _exec_owners(self, leg: QueryLeg, request: ContextGraphQuery) -> LegOutcome:
@@ -340,6 +378,8 @@ class GraphitiContextGraphAdapter(ContextGraphPort):
             limit=leg.limit,
             repo_name=request.scope.repo_name,
             pr_number=request.scope.pr_number,
+            episodic=self._episodic,
+            query=request.query,
         )
         return LegOutcome(
             name=leg.name,
@@ -347,6 +387,7 @@ class GraphitiContextGraphAdapter(ContextGraphPort):
             strategy=leg.strategy.value,
             result=rows,
             count=len(rows) if isinstance(rows, list) else None,
+            fallback_reason=_fallback_reason(rows),
         )
 
     def _exec_pr_review_context(
@@ -480,6 +521,9 @@ class GraphitiContextGraphAdapter(ContextGraphPort):
             timeout_ms=request.budget.timeout_ms,
         )
         bundle = await resolve_context(self._resolution_service, req)
+        synthesized: str | None = None
+        if self._answer_synthesizer is not None:
+            synthesized = await self._answer_synthesizer.synthesize(bundle)
         meta: dict[str, Any] = {
             "legs": [
                 {
@@ -487,7 +531,8 @@ class GraphitiContextGraphAdapter(ContextGraphPort):
                     "family": leg.family,
                     "strategy": leg.strategy.value,
                 }
-            ]
+            ],
+            "answer_summary_source": "synthesized" if synthesized else "counts",
         }
         if plan.planner_fallbacks:
             meta["fallbacks"] = list(plan.planner_fallbacks)
@@ -495,13 +540,21 @@ class GraphitiContextGraphAdapter(ContextGraphPort):
             kind="resolve_context",
             goal=request.goal.value,
             strategy=request.strategy.value,
-            result=bundle_to_agent_envelope(bundle),
+            result=bundle_to_agent_envelope(bundle, answer_summary=synthesized),
             meta=meta,
         )
 
 
 def _first(values: list[str]) -> str | None:
     return values[0] if values else None
+
+
+def _fallback_reason(rows: Any) -> str | None:
+    """Surface ``semantic_fallback`` at leg-merge time so consumers see the mode."""
+    if isinstance(rows, list) and rows and isinstance(rows[0], dict):
+        if rows[0].get("source_method") == "semantic_fallback":
+            return "semantic_fallback"
+    return None
 
 
 def _mode_for_strategy(strategy: ContextGraphStrategy) -> str:

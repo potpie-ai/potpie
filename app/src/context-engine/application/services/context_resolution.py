@@ -539,6 +539,7 @@ class ContextResolutionService:
                         plan.scope,
                         limit=effective_max_items,
                         as_of=request.as_of.isoformat() if request.as_of else None,
+                        query=request.query or None,
                     ),
                 )
             )
@@ -551,6 +552,7 @@ class ContextResolutionService:
                         request.pot_id,
                         plan.scope,
                         limit=max(effective_max_items, 20),
+                        query=request.query or None,
                     ),
                 )
             )

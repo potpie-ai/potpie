@@ -260,6 +260,8 @@ The recommended public tool surface is:
 
 Do not create public tools such as `context_get_feature_context`, `context_get_debugging_context`, `context_get_operational_context`, or `context_get_source`. Those concepts should be expressed through `context_resolve` parameters.
 
+The CLI mirrors the same four-tool surface so local developer/agent workflows don't diverge from MCP or HTTP: `potpie status`, `potpie resolve`, `potpie overview`, and `potpie record` are thin wrappers over `POST /status`, `POST /query/context-graph` (with `goal=answer` and `goal=aggregate`), and `POST /record`. See `adapters/inbound/cli/main.py`.
+
 The extension points are:
 
 - `intent`
@@ -496,6 +498,18 @@ Recommended shape:
 ```
 
 Agents should always inspect `coverage`, `freshness`, `quality`, `fallbacks`, `open_conflicts`, and `source_refs` before relying on the answer.
+
+The `answer.summary` field is produced by an `AnswerSynthesizerPort` hook
+(`domain/ports/answer_synthesizer.py`, adapters under
+`adapters/outbound/synthesis/`). When `CONTEXT_ENGINE_ANSWER_SYNTHESIS_MODEL` is
+set, `GraphitiContextGraphAdapter._answer_async` runs the configured
+`PydanticAIAnswerSynthesizer` over a bounded payload built by
+`build_synthesis_payload` (decisions, recent_changes, project_map,
+debugging_memory, ownership, fallbacks, source_refs) and the result overrides
+the bundle envelope via `bundle_to_agent_envelope`. When the model is unset, or
+any synthesizer call fails, the adapter falls back to `NullAnswerSynthesizer` and
+returns a count-string summary. `meta.answer_summary_source` is stamped
+`"synthesized"` or `"counts"` accordingly so consumers can distinguish.
 
 As of Phase 4, project-map includes are backed by a canonical `project_map_context` read path. When `context_resolve` is called with `intent: "feature"`, `intent: "operations"`, `intent: "onboarding"`, or includes such as `service_map`, `feature_map`, `docs`, `deployments`, `runbooks`, `local_workflows`, `scripts`, `config`, `preferences`, or `agent_instructions`, the response envelope can include:
 
@@ -1495,6 +1509,11 @@ Validation should check:
 - provenance presence
 - confidence thresholds for sensitive facts
 
+Before ontology checks run, `validate_reconciliation_plan` passes the plan through two deterministic normalization steps:
+
+1. **Entity canonicalization** (`domain/entity_canonicalization.canonicalize_reconciliation_plan`). Trim + lowercase + collapse whitespace on entity keys, merge duplicate keys (union labels, first-seen-wins properties), rewrite edge and invalidation endpoints to the merged key, drop self-loops, and dedupe edges. Merge counts are surfaced via `plan.warnings`. The `SYNONYMS` table in the same module is the extension point for known cross-spelling collapses.
+2. **Label inference / soft-ontology downgrade** (`enrich_reconciliation_plan_entity_labels`). Map drift labels emitted by Graphiti extraction back onto `CANONICAL_LABELS` when property presence and text cues make the canonical type unambiguous, so a plain decision episode lands as `Decision` rather than as a generic `Feature`.
+
 Useful policy split:
 
 - high confidence -> write canonical fact
@@ -1514,6 +1533,15 @@ Best practice for agent tools:
 2. Query canonical graph first.
 3. Use episodic search to enrich or justify.
 4. Return both facts and evidence references.
+
+When the caller cannot supply structural scope (no `file_path`, `pr_number`,
+service, feature, or ticket), structural legs should not return empty. The
+decision and change-history legs in `HybridGraphIntelligenceProvider`
+(`adapters/outbound/intelligence/hybrid_graph.py`) fall back to semantic
+seeding: run the top-K semantic hits, unpack their `source_node_uuid` /
+`target_node_uuid`, and rerun the structural lookup (`get_decisions` /
+`get_change_history` in `adapters/outbound/neo4j/structural.py`) against those
+nodes. This mirrors the existing causal-expand bridge.
 
 The later `Agent query contract` section defines the public read surface in more detail.
 
@@ -2923,6 +2951,8 @@ Graphiti search can filter by Neo4j node labels (`--node-labels`). Ingestion add
 2. **Extractor hints** — Entity schemas may include optional `canonical_type`; when persisted on an `Entity` node, the same pass adds that label if it is a known ontology type.
 
 Reconciliation plans can also merge inferred labels into `entity_upserts` when `CONTEXT_ENGINE_INFER_LABELS=1`, before ontology validation.
+
+A third pass runs at reconciliation-plan validation time: `enrich_reconciliation_plan_entity_labels` in `application/use_cases/reconciliation_validation.py` deterministically rewrites drift labels onto `CANONICAL_LABELS` before apply, with the drift label kept as a fallback attribute. Together with the plan canonicalization step (see "Validation rules for the reconciliation agent" above), this is the current response to the extraction / ontology-classifier gap called out in `implementation-next-steps.md`.
 
 ## Recommended implementation stance
 

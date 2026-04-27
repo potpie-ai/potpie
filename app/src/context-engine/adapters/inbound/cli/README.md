@@ -64,6 +64,10 @@ Persist a **Potpie API key** and optional base URL — **required** for **`searc
 | `potpie pot pots` | List context pots (`GET /api/v2/context/pots`). |
 | `potpie pot repo list` / `pot repo add` | List or attach repositories on a pot (`GET`/`POST` `/api/v2/context/pots/.../repositories`). The repository routes are a CLI/GitHub compatibility surface; the server mirrors the new repository into the pot's source list automatically. Non-GitHub source kinds (Linear teams, docs, etc.) should be attached via the source-first API at `/api/v2/context/pots/{pot_id}/sources/*`. |
 | `potpie event list` / `event show` / `event wait` | Inspect recent ingestion events, fetch one event, or wait for a queued ingest to finish. |
+| `potpie status [POT] [--intent STR --repo O/R --file PATH --pr N]` | Readiness / capability envelope (`POST /status`). |
+| `potpie resolve [POT] QUERY [--file … --services a,b --include …]` | Answer a query with synthesized summary + evidence (`goal=answer`). Plain mode prints `answer.summary`; `--json` returns the full envelope. |
+| `potpie overview [POT] [--repo O/R]` | Graph-wide readiness / activity snapshot (`goal=aggregate`, `include=[graph_overview]`). |
+| `potpie record --type TYPE --summary STR [--details '{…}' --source-refs pr:7,issue:12 --sync]` | Record a durable context fact (`POST /record`). |
 
 **Precedence:** `POTPIE_API_KEY` in the environment **overrides** the stored token (useful for CI). For base URL: **`POTPIE_API_URL` / `POTPIE_BASE_URL`** override a stored URL; otherwise the stored URL from `login --url` is used before `POTPIE_PORT` and localhost guesses.
 

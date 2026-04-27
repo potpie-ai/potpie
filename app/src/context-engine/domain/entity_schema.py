@@ -237,7 +237,37 @@ GRAPHITI_CUSTOM_EXTRACTION_INSTRUCTIONS = """
    spam like MODIFIED).
 4. Prefer tense that matches reality: future/modal → PLANNED; past shipped → DELIVERED or
    MIGRATED_TO; scheduled removal → DEPRECATED or DECOMMISSIONED.
-5. Optional: set ``canonical_type`` on an entity to a single governed ontology label (e.g.
-   ``Decision``, ``Incident``) when the node should be indexed under that type for search;
-   omit when unsure.
+
+## canonical_type is how you pin a node to the governed vocabulary
+
+Set ``canonical_type`` on **every** entity you create. Pick the single label
+that best matches what the node represents. If the node is generic project
+context you cannot otherwise classify, leave ``canonical_type`` unset and the
+downstream ontology classifier will infer it from edge structure, text cues,
+and properties.
+
+Prefer these labels when the signals below are present:
+
+- ``Decision`` — the text says "we decided", "we chose", "adopted", "selected
+  X over Y", "ADR", "architecture decision", "design decision". **Do not
+  label an architectural choice as ``Feature`` just because it touches
+  features** — the node is the decision itself, not the feature.
+- ``Fix`` — hotfix, patch for a specific bug, workaround, mitigation.
+- ``Incident`` — outage, downtime, postmortem, SEV/P0-P4 event.
+- ``Alert`` — alerting rule, pager rule, threshold alert.
+- ``Runbook`` — runbook, playbook, on-call procedure.
+- ``BugPattern`` — recurring failure mode, flaky-test pattern, known bad
+  pattern.
+- ``Constraint`` — hard constraint, compliance requirement, "must not" rule.
+- ``Preference`` — team preference or style choice.
+- ``AgentInstruction`` — AGENTS.md section, skill definition, agent guidance.
+- ``Service`` / ``Component`` — named microservice or code module with
+  operational significance.
+- ``Feature`` / ``Capability`` — a user-facing deliverable area. **Do not
+  fall back to ``Feature`` for decisions, fixes, incidents, constraints, or
+  preferences** — those have their own labels above.
+
+Rule of thumb: if the entity could plausibly be a Decision, Fix, Incident, or
+Constraint, prefer that over ``Feature``. The Feature label is for concrete
+product deliverables, not for abstract engineering work.
 """.strip()

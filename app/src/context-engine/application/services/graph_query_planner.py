@@ -9,6 +9,7 @@ merges into one envelope with consistent provenance and fallbacks.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from domain.graph_query import (
@@ -28,6 +29,7 @@ from domain.graph_query_plan import (
 # plan so multi-family responses come back in a stable shape.
 _FAMILY_ORDER: tuple[str, ...] = (
     "semantic_search",
+    "timeline",
     "change_history",
     "owners",
     "decisions",
@@ -36,6 +38,9 @@ _FAMILY_ORDER: tuple[str, ...] = (
     "project_graph",
     "graph_overview",
 )
+
+# Default look-back window for timeline when the caller passes nothing.
+_DEFAULT_TIMELINE_WINDOW = timedelta(days=7)
 
 
 class GraphQueryPlanner:
@@ -126,7 +131,21 @@ class GraphQueryPlanner:
             families.add("semantic_search")
 
         if request.goal == ContextGraphGoal.TIMELINE:
-            families.add("change_history")
+            # When the caller gave a specific code-scoped anchor (file /
+            # function / pr_number) we keep the legacy PR-centric
+            # ``change_history`` family. For any other shape — actor-wise
+            # (scope.user), feature-wise, branch-wise, or unscoped pulse —
+            # dispatch to the first-class ``timeline`` family.
+            scope = request.scope
+            code_scoped = bool(
+                (scope.file_path and scope.file_path.strip())
+                or (scope.function_name and scope.function_name.strip())
+                or scope.pr_number is not None
+            )
+            if "timeline" in families or not code_scoped:
+                families.add("timeline")
+            else:
+                families.add("change_history")
         elif request.goal == ContextGraphGoal.NEIGHBORHOOD:
             families.add("project_graph")
         elif request.goal == ContextGraphGoal.AGGREGATE and not families:
@@ -176,6 +195,32 @@ class GraphQueryPlanner:
                     limit=request.limit,
                     as_of=request.as_of,
                     requires_scope=frozenset(),
+                ),
+                None,
+            )
+
+        if family == "timeline":
+            since, until = _resolve_timeline_window(request)
+            params: dict[str, Any] = {
+                "since_iso": since.isoformat(),
+                "until_iso": until.isoformat(),
+                "user": (scope.user or "").strip() or None,
+                "feature": (
+                    (scope.features[0] or "").strip() if scope.features else None
+                ),
+                "file_path": (scope.file_path or "").strip() or None,
+                "branch": (scope.branch or "").strip() or None,
+                "verbs": [v for v in (request.verbs or []) if v and v.strip()],
+            }
+            return (
+                QueryLeg(
+                    name="timeline",
+                    family="timeline",
+                    strategy=LegStrategy.TEMPORAL,
+                    limit=request.limit,
+                    as_of=request.as_of,
+                    requires_scope=frozenset(),
+                    params=params,
                 ),
                 None,
             )
@@ -277,6 +322,38 @@ class GraphQueryPlanner:
             "reason": "unsupported_include",
             "detail": f"no executor for family '{family}'",
         }
+
+
+def _resolve_timeline_window(request: ContextGraphQuery) -> tuple[datetime, datetime]:
+    """Collapse ``since``/``until``/``window``/``as_of`` into a concrete range."""
+    until = request.until or request.as_of or datetime.now(timezone.utc)
+    if until.tzinfo is None:
+        until = until.replace(tzinfo=timezone.utc)
+    since = request.since
+    if since is None:
+        delta = _parse_window(request.window) or _DEFAULT_TIMELINE_WINDOW
+        since = until - delta
+    if since.tzinfo is None:
+        since = since.replace(tzinfo=timezone.utc)
+    return since, until
+
+
+def _parse_window(raw: str | None) -> timedelta | None:
+    if not raw or not raw.strip():
+        return None
+    value = raw.strip().lower()
+    try:
+        if value.endswith("d"):
+            return timedelta(days=int(value[:-1] or "0"))
+        if value.endswith("h"):
+            return timedelta(hours=int(value[:-1] or "0"))
+        if value.endswith("m"):
+            return timedelta(minutes=int(value[:-1] or "0"))
+        if value.endswith("w"):
+            return timedelta(weeks=int(value[:-1] or "0"))
+    except ValueError:
+        return None
+    return None
 
 
 __all__ = ["GraphQueryPlanner"]

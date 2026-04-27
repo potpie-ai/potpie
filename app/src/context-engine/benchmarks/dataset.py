@@ -35,11 +35,18 @@ def load_dataset(path: Path) -> BenchmarkDataset:
             "seed_records": [],
             "pr_bundles": [],
             "scenarios": [],
+            "linear_issues": [],
         }
         for rel_path in raw["files"]:
             file_path = base / rel_path
             part = json.loads(file_path.read_text(encoding="utf-8"))
-            for key in ("seed_episodes", "seed_records", "pr_bundles", "scenarios"):
+            for key in (
+                "seed_episodes",
+                "seed_records",
+                "pr_bundles",
+                "scenarios",
+                "linear_issues",
+            ):
                 if key in part:
                     merged[key].extend(part[key])
         return BenchmarkDataset.from_dict(merged)

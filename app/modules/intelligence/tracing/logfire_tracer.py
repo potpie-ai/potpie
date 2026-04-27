@@ -260,14 +260,24 @@ def logfire_trace_metadata(**kwargs: Any):
     try:
         import logfire
 
-        with logfire.set_baggage(**str_attrs):
-            yield
+        baggage = logfire.set_baggage(**str_attrs)
+        baggage.__enter__()
     except Exception as e:
         logger.debug(
             "Logfire set_baggage failed (non-fatal)",
             error=str(e),
         )
         yield
+        return
+
+    try:
+        yield
+    except BaseException as exc:
+        suppress = baggage.__exit__(type(exc), exc, exc.__traceback__)
+        if not suppress:
+            raise
+    else:
+        baggage.__exit__(None, None, None)
 
 
 @contextmanager

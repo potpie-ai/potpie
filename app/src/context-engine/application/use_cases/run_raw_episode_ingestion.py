@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from application.services.ingestion_submission_service import DefaultIngestionSubmissionService
 from bootstrap.container import ContextEngineContainer
+from domain.actor import Actor
 from domain.ingestion_event_models import EventReceipt, IngestionSubmissionRequest
 from domain.ingestion_kinds import INGESTION_KIND_RAW_EPISODE
 from domain.reconciliation import ReconciliationResult
@@ -107,6 +108,7 @@ def run_raw_episode_ingestion(
     idempotency_key: str | None,
     sync: bool,
     source_channel: str = "http",
+    actor: Actor | None = None,
 ) -> RunRawEpisodeIngestionResult:
     """
     Unified raw episode ingest.
@@ -151,6 +153,7 @@ def run_raw_episode_ingestion(
             episode_body,
             source_description,
             reference_time,
+            actor=actor,
         )
         uid = out.get("episode_uuid")
         if uid is None:
@@ -181,6 +184,7 @@ def run_raw_episode_ingestion(
         },
         idempotency_key=idempotency_key,
         dedup_key=idempotency_key,
+        actor=actor,
     )
     try:
         receipt = svc.submit(req, sync=sync)

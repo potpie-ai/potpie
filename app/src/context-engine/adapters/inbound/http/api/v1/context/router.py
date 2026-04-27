@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Callable, Optional, Protocol
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
@@ -25,6 +25,7 @@ from adapters.outbound.postgres.reconciliation_ledger import (
     SqlAlchemyReconciliationLedger,
 )
 from application.use_cases.backfill_pot import backfill_pot_context
+from domain.actor import Actor, normalize_surface
 from application.use_cases.event_reconciliation import ingestion_event_to_payload
 from application.use_cases.hard_reset_pot import hard_reset_pot
 from application.use_cases.run_raw_episode_ingestion import run_raw_episode_ingestion
@@ -39,10 +40,16 @@ from domain.agent_context_port import (
 from domain.context_status import (
     DEFAULT_RESOLVER_CAPABILITIES,
     EventLedgerHealth,
+    ReconciliationLedgerHealth,
     ResolverCapability,
+    build_source_capability_matrix,
+    derive_maintenance_jobs,
     derive_pot_last_success_at,
     event_ledger_health_to_payload,
+    maintenance_jobs_to_payload,
+    reconciliation_ledger_health_to_payload,
     resolver_capabilities_to_payload,
+    source_capability_matrix_to_payload,
     status_source_to_payload,
 )
 from domain.graph_quality import assess_graph_quality
@@ -191,6 +198,31 @@ def _ingest_rejection_returns_422() -> bool:
     """
     v = os.getenv("CONTEXT_ENGINE_INGEST_422", "1").strip().lower()
     return v not in ("0", "false", "no", "off")
+
+
+def _context_graph_jsonable(value: Any) -> Any:
+    """Convert graph adapter payloads, including Neo4j temporal values, to JSON-safe data."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    isoformat = getattr(value, "isoformat", None)
+    if callable(isoformat):
+        try:
+            return str(isoformat())
+        except Exception:
+            pass
+    iso_format = getattr(value, "iso_format", None)
+    if callable(iso_format):
+        try:
+            return str(iso_format())
+        except Exception:
+            pass
+    if isinstance(value, dict):
+        return {str(k): _context_graph_jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_context_graph_jsonable(v) for v in value]
+    return str(value)
 
 
 class SyncRequest(BaseModel):
@@ -524,6 +556,37 @@ def create_context_router(
 
     router = APIRouter()
 
+    def _resolve_actor(auth_user: Any, request: Request) -> Actor:
+        """Derive Actor from auth principal + self-declared client headers.
+
+        - ``user_id`` from ``auth_user["user_id"]`` (dict) / attribute / str.
+        - ``surface`` from ``X-Potpie-Client`` (``cli``/``mcp``/``http``/``webhook``);
+          defaults to ``http`` for direct API callers that don't self-declare.
+        - ``client_name`` from ``X-Potpie-Client-Name`` (free-form, e.g. ``claude-code``).
+        - ``auth_method`` = ``api_key`` because ``require_auth`` is an API-key check.
+        """
+        user_id: str
+        if isinstance(auth_user, dict):
+            user_id = str(auth_user.get("user_id") or auth_user.get("id") or "unknown")
+        elif hasattr(auth_user, "user_id"):
+            user_id = str(getattr(auth_user, "user_id"))
+        elif isinstance(auth_user, str):
+            user_id = auth_user
+        else:
+            user_id = "unknown"
+        declared = request.headers.get("x-potpie-client") if request else None
+        surface = normalize_surface(declared) or "http"
+        client_name = (
+            request.headers.get("x-potpie-client-name") if request else None
+        )
+        client_name = client_name.strip() if client_name and client_name.strip() else None
+        return Actor(
+            user_id=user_id,
+            surface=surface,
+            client_name=client_name,
+            auth_method="api_key",
+        )
+
     @router.post("/sync")
     def post_sync(
         payload: Optional[SyncRequest] = None,
@@ -561,7 +624,8 @@ def create_context_router(
     )
     def post_ingest_episode(
         body: IngestEpisodeRequest,
-        _: Any = Depends(require_auth),
+        request: Request,
+        auth_user: Any = Depends(require_auth),
         container: ContextEngineContainer = Depends(get_container),
         db: Session | None = Depends(get_db_optional),
         sync: bool = Query(
@@ -575,6 +639,7 @@ def create_context_router(
         ),
     ):
         want_sync = _wants_sync(sync, x_context_ingest_sync)
+        actor = _resolve_actor(auth_user, request)
         try:
             result = run_raw_episode_ingestion(
                 container=container,
@@ -586,7 +651,8 @@ def create_context_router(
                 reference_time=body.reference_time,
                 idempotency_key=body.idempotency_key,
                 sync=want_sync,
-                source_channel="http",
+                source_channel=actor.surface,
+                actor=actor,
             )
             if db is not None:
                 if result.ok:
@@ -1028,6 +1094,18 @@ def create_context_router(
             None,
             description="Filter by source_system (repeat for multiple).",
         ),
+        source_channel: list[str] | None = Query(
+            None,
+            description="Filter by source_channel (cli/mcp/http/webhook).",
+        ),
+        actor_user_id: list[str] | None = Query(
+            None,
+            description="Filter by Potpie user id that submitted the event.",
+        ),
+        actor_surface: list[str] | None = Query(
+            None,
+            description="Filter by actor surface (cli/mcp/http/webhook/system).",
+        ),
         from_date: datetime | None = Query(
             None,
             description="Only return events submitted at or after this ISO 8601 datetime.",
@@ -1048,6 +1126,9 @@ def create_context_router(
             statuses=_parse_event_status_filters(status),
             ingestion_kinds=tuple(ingestion_kind) if ingestion_kind else None,
             source_systems=tuple(source_system) if source_system else None,
+            source_channels=tuple(source_channel) if source_channel else None,
+            actor_user_ids=tuple(actor_user_id) if actor_user_id else None,
+            actor_surfaces=tuple(actor_surface) if actor_surface else None,
             submitted_after=from_date,
             submitted_before=to_date,
         )
@@ -1065,7 +1146,8 @@ def create_context_router(
     )
     def post_context_record(
         body: ContextRecordRequest,
-        _: Any = Depends(require_auth),
+        request: Request,
+        auth_user: Any = Depends(require_auth),
         container: ContextEngineContainer = Depends(get_container),
         db: Session = Depends(get_db),
         sync: bool = Query(
@@ -1114,10 +1196,11 @@ def create_context_router(
             source_refs=source_refs,
             idempotency_key=body.idempotency_key,
         )
+        actor = _resolve_actor(auth_user, request)
         req = IngestionSubmissionRequest(
             pot_id=body.pot_id,
             ingestion_kind=INGESTION_KIND_AGENT_RECONCILIATION,
-            source_channel="http",
+            source_channel=actor.surface,
             source_system="agent",
             event_type="context_record",
             action=record_type,
@@ -1126,6 +1209,7 @@ def create_context_router(
             artifact_refs=tuple(source_refs),
             occurred_at=body.occurred_at,
             idempotency_key=body.idempotency_key,
+            actor=actor,
             payload={
                 "record": {
                     "type": record_type,
@@ -1237,6 +1321,15 @@ def create_context_router(
             except Exception:
                 ledger_health = EventLedgerHealth()
 
+        reconciliation_health = ReconciliationLedgerHealth()
+        if db is not None:
+            try:
+                reconciliation_health = SqlAlchemyReconciliationLedger(
+                    db
+                ).summarize_pot_reconciliation(body.pot_id)
+            except Exception:
+                reconciliation_health = ReconciliationLedgerHealth()
+
         if ledger_health.counts.get("error"):
             gaps.append(
                 {
@@ -1244,6 +1337,26 @@ def create_context_router(
                     "message": (
                         f"{ledger_health.counts['error']} event(s) currently in error state; "
                         "review recent_errors and consider replay."
+                    ),
+                }
+            )
+        if reconciliation_health.run_counts.get("failed"):
+            gaps.append(
+                {
+                    "code": "reconciliation_runs_failed",
+                    "message": (
+                        f"{reconciliation_health.run_counts['failed']} reconciliation run(s) "
+                        "have failed; see recent_failed_runs and replay affected events."
+                    ),
+                }
+            )
+        if reconciliation_health.stuck_step_samples:
+            gaps.append(
+                {
+                    "code": "apply_steps_stuck",
+                    "message": (
+                        f"{len(reconciliation_health.stuck_step_samples)} apply step(s) "
+                        "are stuck in applying/failed state; triage stuck_step_samples."
                     ),
                 }
             )
@@ -1375,7 +1488,15 @@ def create_context_router(
                 for s in sources
             ],
             "event_ledger": event_ledger_health_to_payload(ledger_health),
+            "reconciliation_ledger": reconciliation_ledger_health_to_payload(
+                reconciliation_health
+            ),
             "resolver_capabilities": resolver_capabilities_to_payload(capabilities),
+            "source_capability_matrix": source_capability_matrix_to_payload(
+                build_source_capability_matrix(
+                    sources, resolver=container.source_resolver
+                )
+            ),
             "scope": body.scope.model_dump(exclude_none=True),
             "coverage": asdict(coverage),
             "freshness": {
@@ -1398,6 +1519,13 @@ def create_context_router(
             "fallbacks": gaps,
             "open_conflicts": open_conflicts,
             "recommended_next_actions": reco,
+            "recommended_maintenance_jobs": maintenance_jobs_to_payload(
+                derive_maintenance_jobs(
+                    event_ledger=ledger_health,
+                    reconciliation=reconciliation_health,
+                    open_conflicts=open_conflicts,
+                )
+            ),
         }
 
     @router.post(
@@ -1421,7 +1549,7 @@ def create_context_router(
                 detail="Unified context graph query port is not configured.",
             )
         result = await container.context_graph.query_async(body)
-        return result.model_dump()
+        return _context_graph_jsonable(result.model_dump())
 
     @router.post(
         "/conflicts/list",

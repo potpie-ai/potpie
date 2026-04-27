@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from adapters.outbound.graphiti.port import EpisodicGraphPort
 from domain.graph_mutations import ProvenanceRef
-from domain.ports.episodic_graph import EpisodicGraphPort
 from domain.ports.episode_writer import EpisodeWriterPort
 from domain.reconciliation import EpisodeDraft
 

@@ -60,8 +60,10 @@ class MockIntelligenceProvider(IntelligenceProvider):
         *,
         limit: int = 10,
         as_of: str | None = None,
+        query: str | None = None,
     ) -> list[ChangeRecord]:
         _ = limit
+        _ = query
         return [
             ChangeRecord(
                 pr_number=1,
@@ -77,9 +79,11 @@ class MockIntelligenceProvider(IntelligenceProvider):
         scope: ContextScope,
         *,
         limit: int = 20,
+        query: str | None = None,
     ) -> list[DecisionRecord]:
         _ = pot_id
         _ = scope
+        _ = query
         records = [
             DecisionRecord(
                 decision="Use Neo4j for graph storage and Postgres for the event ledger",

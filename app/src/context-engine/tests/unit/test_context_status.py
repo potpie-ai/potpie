@@ -10,12 +10,19 @@ import pytest
 from domain.context_status import (
     DEFAULT_RESOLVER_CAPABILITIES,
     EventLedgerHealth,
+    MaintenanceJob,
+    ReconciliationLedgerHealth,
     ResolverCapability,
     StatusSource,
+    build_source_capability_matrix,
+    derive_maintenance_jobs,
     derive_pot_last_success_at,
     event_ledger_health_to_payload,
+    maintenance_jobs_to_payload,
+    reconciliation_ledger_health_to_payload,
     resolver_capabilities_to_payload,
     source_capabilities_for,
+    source_capability_matrix_to_payload,
     status_source_to_payload,
 )
 
@@ -181,3 +188,102 @@ def test_status_source_to_payload_passes_resolver() -> None:
     )
     summary_cap = next(c for c in payload["capabilities"] if c["policy"] == "summary")
     assert summary_cap["available"] is True
+
+
+def test_reconciliation_ledger_health_to_payload_empty() -> None:
+    out = reconciliation_ledger_health_to_payload(ReconciliationLedgerHealth())
+    assert out == {
+        "run_counts": {},
+        "step_counts": {},
+        "last_run_success_at": None,
+        "last_run_failure_at": None,
+        "recent_failed_runs": [],
+        "stuck_step_samples": [],
+    }
+
+
+def test_reconciliation_ledger_health_to_payload_serializes_timestamps() -> None:
+    ts = datetime(2026, 4, 21, 9, 0, tzinfo=timezone.utc)
+    h = ReconciliationLedgerHealth(
+        run_counts={"succeeded": 3, "failed": 1},
+        step_counts={"applied": 8, "failed": 2},
+        last_run_success_at=ts,
+        last_run_failure_at=ts,
+        recent_failed_runs=[{"run_id": "r1", "error": "boom"}],
+        stuck_step_samples=[{"step_id": "s1", "status": "applying"}],
+    )
+    out = reconciliation_ledger_health_to_payload(h)
+    assert out["run_counts"] == {"succeeded": 3, "failed": 1}
+    assert out["step_counts"] == {"applied": 8, "failed": 2}
+    assert out["last_run_success_at"] == ts.isoformat()
+    assert out["last_run_failure_at"] == ts.isoformat()
+    assert out["recent_failed_runs"][0]["run_id"] == "r1"
+    assert out["stuck_step_samples"][0]["status"] == "applying"
+
+
+def test_build_source_capability_matrix_dedupes_by_provider_and_kind() -> None:
+    sources = [
+        _src(source_id="a", provider="github", source_kind="repository"),
+        _src(source_id="b", provider="github", source_kind="repository"),
+        _src(source_id="c", provider="linear", source_kind="workspace"),
+    ]
+    entries = build_source_capability_matrix(sources)
+    keys = {(e.provider, e.source_kind) for e in entries}
+    assert keys == {("github", "repository"), ("linear", "workspace")}
+
+
+def test_source_capability_matrix_to_payload_includes_capabilities() -> None:
+    sources = [_src(provider="github", source_kind="repository")]
+    payload = source_capability_matrix_to_payload(
+        build_source_capability_matrix(sources)
+    )
+    assert payload[0]["provider"] == "github"
+    assert payload[0]["source_kind"] == "repository"
+    policies = {c["policy"] for c in payload[0]["capabilities"]}
+    assert policies == {"references_only", "summary", "verify", "snippets"}
+
+
+def test_derive_maintenance_jobs_flags_event_errors_and_failed_runs() -> None:
+    jobs = derive_maintenance_jobs(
+        event_ledger=EventLedgerHealth(counts={"error": 3}),
+        reconciliation=ReconciliationLedgerHealth(
+            run_counts={"failed": 2},
+            stuck_step_samples=[{"step_id": "s1"}],
+        ),
+        open_conflicts=[{"auto_resolvable": False, "issue_uuid": "i1"}],
+    )
+    actions = [j.action for j in jobs]
+    assert actions == [
+        "events.replay",
+        "reconciliation.retry_failed_runs",
+        "reconciliation.retry_stuck_steps",
+        "conflicts.resolve",
+    ]
+    assert all(j.severity == "warning" for j in jobs)
+
+
+def test_derive_maintenance_jobs_empty_when_healthy() -> None:
+    jobs = derive_maintenance_jobs(
+        event_ledger=EventLedgerHealth(counts={"done": 10}),
+        reconciliation=ReconciliationLedgerHealth(run_counts={"succeeded": 10}),
+        open_conflicts=[],
+    )
+    assert jobs == []
+
+
+def test_derive_maintenance_jobs_ignores_auto_resolvable_conflicts() -> None:
+    jobs = derive_maintenance_jobs(
+        event_ledger=EventLedgerHealth(),
+        reconciliation=ReconciliationLedgerHealth(),
+        open_conflicts=[{"auto_resolvable": True, "issue_uuid": "i1"}],
+    )
+    assert jobs == []
+
+
+def test_maintenance_jobs_to_payload_round_trips() -> None:
+    payload = maintenance_jobs_to_payload(
+        [MaintenanceJob(action="events.replay", reason="r", severity="warning", params={"n": 1})]
+    )
+    assert payload == [
+        {"action": "events.replay", "reason": "r", "severity": "warning", "params": {"n": 1}}
+    ]

@@ -136,9 +136,16 @@ Common commands:
 - `potpie add`: inspect the current git remote and print provider-scoped repo identity; this does not ingest content.
 - `potpie ingest`: submit raw context episodes.
 - `potpie search`: run semantic graph search.
-- `potpie event show`, `potpie event list`, `potpie event wait`: inspect ingestion and reconciliation events.
+- `potpie event show`, `potpie event list`, `potpie event wait`: inspect ingestion and reconciliation events. `event list` prints a tab-separated header plus `source_channel` and `source_system` columns so operators can see which durable actor submitted each event.
+- `potpie status`: readiness/freshness/quality envelope for the active pot. Thin wrapper over `POST /status`; parity with the MCP `context_status` tool.
+- `potpie resolve QUERY`: task-oriented context wrap. Thin wrapper over `POST /query/context-graph` with `goal=answer`; plain mode prints `result.answer.summary`, `--json` returns the full envelope.
+- `potpie overview`: graph-wide orientation. Thin wrapper over `POST /query/context-graph` with `goal=aggregate` and `include=["graph_overview"]`.
+- `potpie record --type … --summary …`: durable memory write. Thin wrapper over `POST /record`, supports `--details` JSON, `--source-refs`, `--sync`, and `--idempotency-key`.
+- `potpie ingest --sync`: raw episode ingest. In sync mode the receipt now carries both `episode_uuid` (first non-null from the reconciliation result) and `job_id`, so no follow-up `event show` is needed to recover them.
 - `potpie conflict list`, `potpie conflict resolve`: inspect and resolve graph conflicts.
 - `potpie pot hard-reset`: **destructive** operator command that deletes all context-graph data for a pot. Prompts for confirmation unless `--yes`/`-y` is passed. Server-side logs a `context_engine.operator_audit` entry.
+
+The four-command cluster (`status`, `resolve`, `overview`, `record`) is the CLI parity layer for the stable skill/MCP surface; agents working locally should reach for these before shelling out to the HTTP API.
 
 ### MCP
 
@@ -255,6 +262,11 @@ Supported operations:
 - Inspect reconciliation runs.
 - Inspect episode apply steps.
 - Track work events and failures.
+
+Plan validation (`validate_reconciliation_plan`) runs two deterministic passes before ontology validation:
+
+- **Entity canonicalization** (`domain/entity_canonicalization.py`): trims and lowercases entity keys, collapses internal whitespace, merges duplicate keys (union labels, first-seen-wins properties), rewrites edge and invalidation endpoints, drops self-loops, and dedupes edges. Merge counts surface via `plan.warnings`. The `SYNONYMS` table is the extension point for cross-spelling merges.
+- **Label inference / soft-ontology downgrade** (`enrich_reconciliation_plan_entity_labels`): maps drift labels emitted by Graphiti extraction back onto `CANONICAL_LABELS` where property presence and text cues make the canonical type unambiguous, so plain decision episodes can land as `Decision` rather than as drift `Feature` nodes.
 
 Primary API:
 
@@ -472,7 +484,7 @@ Use semantic retrieval for fuzzy search across project memory.
 
 ### Task-Oriented Context Resolution
 
-Use answer-style queries when an agent or application needs a bounded context bundle for a task.
+Use answer-style queries when an agent or application needs a bounded context bundle for a task. When `CONTEXT_ENGINE_ANSWER_SYNTHESIS_MODEL` is configured, `goal=answer` routes the assembled bundle through an LLM synthesizer (`AnswerSynthesizerPort` / `PydanticAIAnswerSynthesizer`) and returns a written `answer.summary`; otherwise it falls back to a compact count-string summary. The response stamps `meta.answer_summary_source` as `"synthesized"` or `"counts"` so callers can tell which path produced the summary.
 
 ```json
 {
@@ -497,7 +509,7 @@ Use answer-style queries when an agent or application needs a bounded context bu
 
 ### Decisions
 
-Use `include: ["decisions"]` to retrieve decision records.
+Use `include: ["decisions"]` to retrieve decision records. When scope is empty, the structural decision leg falls back to semantic seeds: top-K semantic hits are expanded via their `source_node_uuid` / `target_node_uuid` into a structural lookup, mirroring the existing causal-expand bridge. The same fallback is wired for `change_history`.
 
 ```json
 {

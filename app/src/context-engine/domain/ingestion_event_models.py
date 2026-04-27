@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
+from domain.actor import Actor
+
 # --- Public lifecycle (stable API / dashboard) ---
 
 IngestionEventStatus = Literal["queued", "processing", "done", "error"]
@@ -67,6 +69,8 @@ class IngestionEvent:
     """When the source says the event occurred (if known)."""
     raw_status: str | None = None
     """Stored ``context_events.status`` before canonical mapping (legacy pipeline strings)."""
+    actor: Actor | None = None
+    """Principal that submitted the event (user + surface + client)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +164,8 @@ class IngestionSubmissionRequest:
     source_event_id: str | None = None
     artifact_refs: tuple[str, ...] = ()
     occurred_at: datetime | None = None
+    actor: Actor | None = None
+    """Principal submitting this request; ingest paths should always set it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +186,9 @@ class EventListFilters:
     statuses: tuple[IngestionEventStatus, ...] | None = None
     ingestion_kinds: tuple[str, ...] | None = None
     source_systems: tuple[str, ...] | None = None
+    source_channels: tuple[str, ...] | None = None
+    actor_user_ids: tuple[str, ...] | None = None
+    actor_surfaces: tuple[str, ...] | None = None
     submitted_after: datetime | None = None
     submitted_before: datetime | None = None
 
@@ -230,3 +239,4 @@ class CreateIngestionEventParams:
     provider: str = "github"
     provider_host: str = "github.com"
     repo_name: str = ""
+    actor: Actor | None = None

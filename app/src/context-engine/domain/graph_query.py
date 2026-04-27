@@ -71,6 +71,14 @@ class ContextGraphQuery(BaseModel):
     source_descriptions: list[str] = Field(default_factory=list)
     episode_uuids: list[str] = Field(default_factory=list)
     as_of: datetime | None = None
+    # Optional temporal window for timeline queries. ``since`` and ``until``
+    # compose with ``as_of`` (which remains a point-in-time snapshot pointer
+    # used by bi-temporal reads). When only ``window`` is provided it is
+    # interpreted relative to ``until`` or ``as_of`` or ``now``.
+    since: datetime | None = None
+    until: datetime | None = None
+    window: str | None = None  # "7d", "24h", "30d"
+    verbs: list[str] = Field(default_factory=list)
     include_invalidated: bool = False
     limit: int = Field(default=12, ge=1, le=200)
     consumer_hint: str | None = None
@@ -246,6 +254,44 @@ def preset_project_graph(
             environment=environment,
             user=user,
         ),
+        limit=limit,
+    )
+
+
+def preset_timeline(
+    *,
+    pot_id: str,
+    user: str | None = None,
+    feature: str | None = None,
+    file_path: str | None = None,
+    branch: str | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    window: str | None = None,
+    verbs: list[str] | None = None,
+    limit: int = 20,
+) -> ContextGraphQuery:
+    """Preset for timeline subgraph queries.
+
+    Scoping knobs compose: omit everything to get the global pulse for the
+    window; pass ``user`` to filter by actor; pass ``feature``/``file_path``
+    to filter by touched subject; pass ``verbs`` to filter by action type.
+    """
+    return ContextGraphQuery(
+        pot_id=pot_id,
+        goal=ContextGraphGoal.TIMELINE,
+        strategy=ContextGraphStrategy.TEMPORAL,
+        include=["timeline"],
+        scope=ContextGraphScope(
+            user=user,
+            features=[feature] if feature else [],
+            file_path=file_path,
+            branch=branch,
+        ),
+        since=since,
+        until=until,
+        window=window,
+        verbs=list(verbs or []),
         limit=limit,
     )
 

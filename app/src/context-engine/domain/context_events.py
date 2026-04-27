@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from domain.actor import Actor
 from domain.ports.pot_resolution import ResolvedPot
 
 
@@ -78,3 +79,5 @@ class ContextEvent:
     """Optional client idempotency token (raw_episode family)."""
     source_channel: str | None = None
     """Inbound surface (``cli``, ``http``, ``webhook``); stored on ``context_events``."""
+    actor: Actor | None = None
+    """Principal that submitted the event (user + surface + client)."""

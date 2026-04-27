@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from application.use_cases.query_context import search_pot_context
+from adapters.outbound.graphiti.query_helpers import search_pot_context
 
 
 def test_search_pot_context_maps_provenance_from_edge_attributes() -> None:

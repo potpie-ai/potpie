@@ -29,10 +29,14 @@ from adapters.outbound.postgres.reconciliation_ledger import (
     SqlAlchemyReconciliationLedger,
 )
 from adapters.outbound.settings_env import EnvContextEngineSettings
+from adapters.outbound.synthesis.null import NullAnswerSynthesizer
+from adapters.outbound.synthesis.pydantic_ai_answer import (
+    PydanticAIAnswerSynthesizer,
+)
 from application.services.context_resolution import ContextResolutionService
 from domain.ports.event_query_service import EventQueryService
 from domain.ports.context_graph import ContextGraphPort
-from domain.ports.episodic_graph import EpisodicGraphPort
+from adapters.outbound.graphiti.port import EpisodicGraphPort
 from domain.ports.intelligence_provider import IntelligenceProvider
 from domain.ports.ingestion_submission import IngestionSubmissionService
 from domain.ports.jobs import JobEnqueuePort, NoOpJobEnqueue
@@ -42,7 +46,7 @@ from domain.ports.reconciliation_agent import ReconciliationAgentPort
 from domain.ports.source_resolver import SourceResolverPort
 from domain.ports.settings import ContextEngineSettingsPort
 from domain.ports.source_control import SourceControlPort
-from domain.ports.structural_graph import StructuralGraphPort
+from adapters.outbound.neo4j.port import StructuralGraphPort
 from domain.source_references import SourceReferenceRecord
 
 
@@ -86,6 +90,15 @@ class ContextEngineContainer:
         return DefaultIngestionSubmissionService(self, session)
 
 
+def _build_answer_synthesizer():
+    """Return an LLM synthesizer when CONTEXT_ENGINE_ANSWER_SYNTHESIS_MODEL is set, else Null."""
+    import os
+
+    if os.getenv("CONTEXT_ENGINE_ANSWER_SYNTHESIS_MODEL"):
+        return PydanticAIAnswerSynthesizer()
+    return NullAnswerSynthesizer()
+
+
 def build_container(
     *,
     settings: ContextEngineSettingsPort | None = None,
@@ -110,6 +123,7 @@ def build_container(
         episodic=episodic,
         structural=structural,
         resolution_service=resolution_service,
+        answer_synthesizer=_build_answer_synthesizer(),
     )
     return ContextEngineContainer(
         settings=s,

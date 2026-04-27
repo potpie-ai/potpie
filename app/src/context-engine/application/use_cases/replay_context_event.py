@@ -28,6 +28,8 @@ def _row_to_event(row: ContextEventRow) -> ContextEvent:
         payload=row.payload,
         occurred_at=row.occurred_at,
         received_at=row.received_at,
+        source_channel=row.source_channel,
+        actor=row.actor,
     )
 
 

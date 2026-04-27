@@ -17,7 +17,7 @@ from domain.graph_mutations import (
 )
 from domain.ontology import ENTITY_TYPES, is_canonical_entity_label
 from domain.ports.settings import ContextEngineSettingsPort
-from domain.ports.structural_graph import StructuralGraphPort
+from adapters.outbound.neo4j.port import StructuralGraphPort
 
 logger = logging.getLogger(__name__)
 
@@ -139,8 +139,24 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
         repo_name: str | None = None,
         pr_number: int | None = None,
         as_of: str | None = None,
+        node_uuids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         _ = repo_name  # reserved for future repo-scoped history
+
+        # Semantic-seeded branch: when no structural scope is given but the
+        # caller handed us uuids from a semantic search, walk from those seeds
+        # to nearby PullRequests so unscoped ``goal=answer`` queries still
+        # surface change history. See docs/context-graph/implementation-next-steps.md #2.
+        if (
+            node_uuids
+            and file_path is None
+            and function_name is None
+            and pr_number is None
+        ):
+            return self._get_change_history_by_node_uuids(
+                pot_id, list(node_uuids), limit=max(1, min(limit, 100)), as_of=as_of
+            )
+
         if pr_number is not None:
             query = """
             MATCH (pr:Entity {group_id: $pot_id})
@@ -223,6 +239,154 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
         """
         return self._run_read(query, pot_id, file_path, function_name, limit, as_of=as_of)
 
+    def get_timeline(
+        self,
+        pot_id: str,
+        *,
+        since_iso: str,
+        until_iso: str,
+        limit: int,
+        user: str | None = None,
+        feature: str | None = None,
+        file_path: str | None = None,
+        branch: str | None = None,
+        verbs: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Return a compact timeline bundle: activities + period rollups.
+
+        Activities are filtered by (pot, time range, optional actor, optional
+        subject, optional verb, optional branch). The result has two slices:
+
+        * ``activities``: up to ``limit`` rows, most-recent first, with verb /
+          actor / touched subjects / summary so an agent can walk them.
+        * ``periods``: rollup buckets (daily) inside the window, with
+          event-count and top actors — used for pulse-style overviews.
+
+        Activity/Period nodes are pot-scoped via graphiti's ``group_id``.
+        """
+        lim = max(1, min(limit, 200))
+        verbs_clean = [v for v in (verbs or []) if v and v.strip()]
+        query = """
+        MATCH (a:Entity {group_id: $pot_id})
+        WHERE 'Activity' IN labels(a)
+          AND a.occurred_at >= $since_iso
+          AND a.occurred_at <= $until_iso
+          AND ($verbs = [] OR a.verb IN $verbs)
+          AND ($branch IS NULL OR coalesce(a.branch, '') = $branch)
+        OPTIONAL MATCH (actor:Entity)-[:PERFORMED]->(a)
+        WITH a, collect(DISTINCT actor) AS actors
+        WHERE $user IS NULL
+          OR any(ac IN actors WHERE
+                toLower(coalesce(ac.github_login, '')) = toLower($user)
+             OR toLower(coalesce(ac.linear_user_id, '')) = toLower($user)
+             OR toLower(coalesce(ac.name, '')) = toLower($user)
+             OR toLower(coalesce(ac.entity_key, '')) CONTAINS toLower($user)
+          )
+        OPTIONAL MATCH (a)-[:TOUCHED]->(sub:Entity)
+        WITH a, actors, collect(DISTINCT sub) AS subjects
+        WHERE (
+                $feature IS NULL
+                OR any(s IN subjects WHERE 'Feature' IN labels(s)
+                       AND toLower(coalesce(s.name, '')) CONTAINS toLower($feature))
+              )
+          AND (
+                $file_path IS NULL
+                OR any(s IN subjects WHERE 'CodeAsset' IN labels(s)
+                       AND (s.file_path = $file_path
+                            OR coalesce(s.file_path, '') ENDS WITH ('/' + $file_path)))
+              )
+        OPTIONAL MATCH (a)-[:IN_PERIOD]->(p:Entity)
+        WHERE 'Period' IN labels(p)
+        RETURN a.entity_key AS entity_key,
+               a.verb AS verb,
+               a.occurred_at AS occurred_at,
+               a.summary AS summary,
+               a.branch AS branch,
+               a.environment AS environment,
+               a.source_ref AS source_ref,
+               coalesce(a.confidence, 0.0) AS confidence,
+               [ac IN actors | {
+                   handle: coalesce(ac.github_login, ac.linear_user_id,
+                                    ac.name, ac.entity_key),
+                   name: coalesce(ac.name, ac.github_login),
+                   kind: head([lbl IN labels(ac) WHERE lbl IN
+                       ['Person','Agent','Team']])
+               }] AS actors,
+               [s IN subjects | {
+                   entity_key: s.entity_key,
+                   name: coalesce(s.name, s.title, s.entity_key),
+                   labels: [lbl IN labels(s) WHERE lbl <> 'Entity']
+               }] AS touched,
+               p.label AS period_label
+        ORDER BY occurred_at DESC
+        LIMIT $limit
+        """
+        drv = self._open()
+        if drv is None:
+            return {
+                "activities": [],
+                "periods": [],
+                "window": {"since": since_iso, "until": until_iso},
+            }
+        try:
+            with drv.session() as session:
+                res = session.run(
+                    query,
+                    pot_id=pot_id,
+                    since_iso=since_iso,
+                    until_iso=until_iso,
+                    verbs=verbs_clean,
+                    user=user,
+                    feature=feature,
+                    file_path=file_path,
+                    branch=branch,
+                    limit=lim,
+                )
+                activities = [record.data() for record in res]
+
+                period_q = """
+                MATCH (p:Entity {group_id: $pot_id})
+                WHERE 'Period' IN labels(p)
+                  AND p.period_kind = 'daily'
+                  AND p.opened_at >= $since_iso
+                  AND p.opened_at <= $until_iso
+                OPTIONAL MATCH (a:Entity)-[:IN_PERIOD]->(p)
+                WHERE 'Activity' IN labels(a)
+                OPTIONAL MATCH (actor:Entity)-[:PERFORMED]->(a)
+                WITH p,
+                     collect(DISTINCT a) AS acts,
+                     collect(DISTINCT coalesce(actor.github_login,
+                                               actor.linear_user_id,
+                                               actor.name)) AS handles,
+                     collect(DISTINCT a.verb) AS verbs
+                RETURN p.label AS label,
+                       p.opened_at AS opened_at,
+                       p.closed_at AS closed_at,
+                       p.lifecycle_state AS lifecycle_state,
+                       p.summary AS summary,
+                       size(acts) AS event_count,
+                       [h IN handles WHERE h IS NOT NULL AND toString(h) <> ''][..5] AS top_actors,
+                       [v IN verbs WHERE v IS NOT NULL][..10] AS verbs
+                ORDER BY opened_at DESC
+                LIMIT 31
+                """
+                pres = session.run(
+                    period_q,
+                    pot_id=pot_id,
+                    since_iso=since_iso,
+                    until_iso=until_iso,
+                )
+                periods = [record.data() for record in pres]
+
+                return {
+                    "activities": activities,
+                    "periods": periods,
+                    "window": {"since": since_iso, "until": until_iso},
+                    "total_activities": len(activities),
+                }
+        finally:
+            drv.close()
+
     def get_pr_diff(
         self,
         pot_id: str,
@@ -298,8 +462,20 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
         limit: int,
         repo_name: str | None = None,
         pr_number: int | None = None,
+        node_uuids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         lim = max(1, min(limit, 100))
+
+        if (
+            node_uuids
+            and file_path is None
+            and function_name is None
+            and pr_number is None
+        ):
+            return self._get_decisions_by_node_uuids(
+                pot_id, list(node_uuids), limit=lim
+            )
+
         if pr_number is not None:
             pr_only = """
             MATCH (pr:Entity {group_id: $pot_id})-[:HAS_REVIEW_DECISION]->(d:Entity)
@@ -399,6 +575,116 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                 for r in merged:
                     r.pop("_dedupe", None)
                 return merged
+        finally:
+            drv.close()
+
+    def _get_decisions_by_node_uuids(
+        self,
+        pot_id: str,
+        node_uuids: list[str],
+        *,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Decisions reachable from a set of semantic seed uuids (0-1 RELATES_TO hop).
+
+        Seeds are provided by a semantic search. A decision matches when the seed
+        IS the Decision or sits one RELATES_TO hop away (any direction). The extra
+        hop catches the common case where the semantic hit is the *topic* of a
+        decision rather than the decision node itself.
+        """
+        query = """
+        MATCH (d:Entity {group_id: $pot_id})
+        WHERE 'Decision' IN labels(d)
+          AND (
+            d.uuid IN $node_uuids
+            OR EXISTS {
+              MATCH (d)-[:RELATES_TO]-(s:Entity {group_id: $pot_id})
+              WHERE s.uuid IN $node_uuids AND s <> d
+            }
+          )
+        OPTIONAL MATCH (pr:Entity {group_id: $pot_id})-[:HAS_REVIEW_DECISION]->(d)
+        WHERE 'PullRequest' IN labels(pr)
+        RETURN DISTINCT
+            coalesce(d.entity_key, elementId(d)) AS _dedupe,
+            coalesce(d.decision_made, d.name, d.summary) AS decision_made,
+            coalesce(d.alternatives_rejected, '') AS alternatives_rejected,
+            coalesce(d.rationale, d.summary, '') AS rationale,
+            coalesce(pr.pr_number, pr.number) AS pr_number
+        LIMIT $limit
+        """
+        drv = self._open()
+        if drv is None:
+            return []
+        try:
+            with drv.session() as session:
+                rows = [
+                    r.data()
+                    for r in session.run(
+                        query,
+                        pot_id=pot_id,
+                        node_uuids=list(node_uuids),
+                        limit=limit,
+                    )
+                ]
+                for r in rows:
+                    r.pop("_dedupe", None)
+                return rows
+        finally:
+            drv.close()
+
+    def _get_change_history_by_node_uuids(
+        self,
+        pot_id: str,
+        node_uuids: list[str],
+        *,
+        limit: int,
+        as_of: str | None,
+    ) -> list[dict[str, Any]]:
+        """PullRequests reachable from a set of semantic seed uuids (0-1 RELATES_TO hop)."""
+        query = """
+        MATCH (pr:Entity {group_id: $pot_id})
+        WHERE 'PullRequest' IN labels(pr)
+          AND CASE
+            WHEN $as_of IS NULL THEN pr.valid_to IS NULL
+            ELSE (pr.valid_to IS NULL OR pr.valid_to > $as_of)
+          END
+          AND (
+            pr.uuid IN $node_uuids
+            OR EXISTS {
+              MATCH (pr)-[:RELATES_TO]-(s:Entity {group_id: $pot_id})
+              WHERE s.uuid IN $node_uuids AND s <> pr
+            }
+          )
+        OPTIONAL MATCH (pr)-[:HAS_REVIEW_DECISION]->(prdec:Entity)
+        WHERE prdec IS NULL OR 'Decision' IN labels(prdec)
+        WITH pr,
+             collect(DISTINCT coalesce(prdec.decision_made, prdec.name, prdec.summary)) AS prdecs
+        RETURN
+            coalesce(pr.pr_number, pr.number) AS pr_number,
+            coalesce(pr.title, pr.name) AS title,
+            coalesce(pr.why_summary, pr.summary, pr.description, '') AS why_summary,
+            coalesce(pr.change_type, '') AS change_type,
+            coalesce(pr.feature_area, '') AS feature_area,
+            [] AS fixed_issues,
+            [x IN prdecs WHERE x IS NOT NULL AND toString(x) <> ''] AS decisions
+        ORDER BY pr_number DESC
+        LIMIT $limit
+        """
+        drv = self._open()
+        if drv is None:
+            return []
+        try:
+            with drv.session() as session:
+                return [
+                    r.data()
+                    for r in session.run(
+                        query,
+                        pot_id=pot_id,
+                        node_uuids=list(node_uuids),
+                        as_of=as_of,
+                        limit=limit,
+                    )
+                ]
         finally:
             drv.close()
 
@@ -927,6 +1213,9 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                     props["group_id"] = pot_id
                     props["provenance_source_event"] = provenance.source_event_id
                     props.update(prov_props)
+                    # Graphiti expects every :Entity node to have a non-null name.
+                    # Structural upserts may not include one, so fall back to entity_key.
+                    props.setdefault("name", item.entity_key)
                     session.run(
                         "MERGE (e:Entity {group_id: $gid, entity_key: $key}) "
                         "ON CREATE SET e.uuid = randomUUID(), e.created_at = timestamp() "

@@ -25,6 +25,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo-name", default=None)
     parser.add_argument("--iterations", "-i", type=int, default=3)
     parser.add_argument("--concurrency", "-c", type=int, default=4)
+    parser.add_argument(
+        "--scenario-concurrency",
+        "-s",
+        type=int,
+        default=1,
+        help="How many scenarios to run in parallel (default: 1).",
+    )
     parser.add_argument("--no-seed", action="store_true", help="Skip fixture seeding.")
     parser.add_argument(
         "--ingest-pr-live",
@@ -70,6 +77,7 @@ def main(argv: list[str] | None = None) -> int:
                 mode=args.mode,
                 iterations=max(1, args.iterations),
                 concurrency=max(1, args.concurrency),
+                scenario_concurrency=max(1, args.scenario_concurrency),
                 seed=not args.no_seed,
                 ingest_pr_live=args.ingest_pr_live,
                 baseline=baseline,
@@ -118,6 +126,7 @@ def _print_report(report: dict[str, Any]) -> None:
     print("\nContext Graph Benchmark")
     print(f"dataset={report['dataset']['name']}@{report['dataset']['version']} mode={target['mode']} pot={target['pot_id']}")
     print(f"score={summary['score']:.2%} grade={summary['grade']} ok={summary['ok']} errors={summary['error_count']}")
+    print(f"iterations={target['iterations']} concurrency={target['concurrency']} scenario_concurrency={target.get('scenario_concurrency', 1)}")
     print("")
     print(f"{'Scenario':<35} {'Feature':<20} {'Grade':<10} {'Score':>8} {'p95 ms':>10} {'Err':>5}")
     print("-" * 92)

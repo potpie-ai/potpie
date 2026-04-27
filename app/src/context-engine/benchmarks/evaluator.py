@@ -159,6 +159,54 @@ def evaluate_response(
     return score, max_score, checks
 
 
+def ontology_quality(
+    nodes: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Measure how well extracted nodes/edges are pinned to the canonical ontology.
+
+    Inputs are flat dicts as produced by post-ingest graph dumps:
+      * ``nodes``: each row carries ``labels`` (list[str]).
+      * ``edges``: each row carries ``name`` (str, RELATES_TO.name).
+
+    Produces three ratios plus absolute counts so regressions are easy to read:
+      * ``label_canonicity`` — share of nodes with at least one canonical label
+        beyond the generic ``Feature`` / ``Entity`` pair.
+      * ``feature_fallback_share`` — share of nodes whose only canonical label
+        is ``Feature`` (the E2E symptom from 2026-04-22).
+      * ``edge_canonicity`` — share of edges whose normalized name is a
+        canonical episodic or ontology edge type.
+    """
+    from domain.ontology import CANONICAL_EDGE_TYPES, ENTITY_TYPES, normalize_graphiti_edge_name
+
+    non_generic = {label for label in ENTITY_TYPES} - {"Feature"}
+    node_total = len(nodes) or 1
+    with_canonical = 0
+    feature_only = 0
+    for node in nodes:
+        labels = {str(lb) for lb in (node.get("labels") or ())}
+        canonical = labels & set(ENTITY_TYPES)
+        if canonical & non_generic:
+            with_canonical += 1
+        elif canonical == {"Feature"}:
+            feature_only += 1
+
+    edge_total = len(edges) or 1
+    canonical_edges = 0
+    for edge in edges:
+        name = edge.get("name") or edge.get("edge_type") or ""
+        if normalize_graphiti_edge_name(str(name)) in CANONICAL_EDGE_TYPES:
+            canonical_edges += 1
+
+    return {
+        "nodes": len(nodes),
+        "edges": len(edges),
+        "label_canonicity": round(with_canonical / node_total, 4),
+        "feature_fallback_share": round(feature_only / node_total, 4),
+        "edge_canonicity": round(canonical_edges / edge_total, 4),
+    }
+
+
 def grade(score: float, max_score: float) -> str:
     ratio = score / max_score if max_score else 0.0
     if ratio >= 0.90:

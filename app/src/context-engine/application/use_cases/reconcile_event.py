@@ -87,6 +87,7 @@ def reconcile_event(
             )
         combined_summary = MutationSummary()
         episode_uuids: list[str | None] = []
+        ev_actor = getattr(request.event, "actor", None)
         prov_ctx = ProvenanceContext(
             source_kind=request.event.event_type or request.event.ingestion_kind,
             source_ref=request.event.source_id or request.event.source_event_id,
@@ -94,6 +95,10 @@ def reconcile_event(
             event_received_at=request.event.received_at,
             created_by_agent=str(meta.get("agent")) if meta else None,
             reconciliation_run_id=run_id,
+            actor_user_id=ev_actor.user_id if ev_actor else None,
+            actor_surface=ev_actor.surface if ev_actor else None,
+            actor_client_name=ev_actor.client_name if ev_actor else None,
+            actor_auth_method=ev_actor.auth_method if ev_actor else None,
         )
         for sl in slices:
             part = context_graph.apply_plan(

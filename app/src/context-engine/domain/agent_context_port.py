@@ -439,13 +439,22 @@ def _summary(bundle: IntelligenceBundle) -> str:
     return "Resolved " + ", ".join(parts) + " for this request."
 
 
-def bundle_to_agent_envelope(bundle: IntelligenceBundle) -> dict[str, Any]:
-    """Return the stable minimal-port response envelope for agents."""
+def bundle_to_agent_envelope(
+    bundle: IntelligenceBundle,
+    *,
+    answer_summary: str | None = None,
+) -> dict[str, Any]:
+    """Return the stable minimal-port response envelope for agents.
+
+    ``answer_summary`` overrides the deterministic count-string fallback when
+    an LLM synthesizer produced a real answer. Pass ``None`` (default) to keep
+    the fallback — ensuring the envelope never carries an empty summary.
+    """
     bundle_dict = asdict(bundle)
     return {
         "ok": True,
         "answer": {
-            "summary": _summary(bundle),
+            "summary": answer_summary or _summary(bundle),
             "artifacts": bundle_dict["artifacts"],
             "recent_changes": bundle_dict["changes"],
             "decisions": bundle_dict["decisions"],

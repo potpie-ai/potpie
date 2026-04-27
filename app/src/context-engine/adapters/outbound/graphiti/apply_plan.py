@@ -4,15 +4,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from adapters.outbound.graphiti.port import EpisodicGraphPort
+from adapters.outbound.neo4j.mutation_applier import StructuralGraphMutationApplier
+from adapters.outbound.neo4j.port import StructuralGraphPort
+from application.use_cases.reconciliation_validation import validate_reconciliation_plan
 from domain.errors import ReconciliationApplyError
 from domain.graph_mutations import ProvenanceContext, ProvenanceRef
-from domain.ports.episodic_graph import EpisodicGraphPort
 from domain.ports.graph_mutation_applier import GraphMutationApplierPort
-from domain.ports.structural_graph import StructuralGraphPort
 from domain.reconciliation import MutationSummary, ReconciliationPlan, ReconciliationResult
-from domain.structural_graph_mutation_applier import StructuralGraphMutationApplier
-
-from application.use_cases.reconciliation_validation import validate_reconciliation_plan
 
 
 def _build_provenance(
@@ -39,6 +38,10 @@ def _build_provenance(
         confidence=plan.confidence,
         created_by_agent=ctx.created_by_agent,
         reconciliation_run_id=ctx.reconciliation_run_id,
+        actor_user_id=ctx.actor_user_id,
+        actor_surface=ctx.actor_surface,
+        actor_client_name=ctx.actor_client_name,
+        actor_auth_method=ctx.actor_auth_method,
     )
 
 

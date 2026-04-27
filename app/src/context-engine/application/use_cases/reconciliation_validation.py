@@ -23,6 +23,7 @@ from domain.canonical_label_inference import (
     _ensure_required_properties_for_label,
     enrich_reconciliation_plan_entity_labels,
 )
+from domain.entity_canonicalization import canonicalize_reconciliation_plan
 from domain.errors import ReconciliationPlanValidationError
 from domain.graph_mutations import EdgeUpsert, EntityUpsert, InvalidationOp
 from domain.ontology import (
@@ -57,10 +58,20 @@ def validate_reconciliation_plan(
     plan: ReconciliationPlan, expected_pot_id: str
 ) -> None:
     plan.ontology_downgrades.clear()
+    canonicalize_reconciliation_plan(plan)
     _validate_hard(plan, expected_pot_id)
+    _augment_evidence_warnings(plan)
 
     if infer_canonical_labels_enabled():
         enrich_reconciliation_plan_entity_labels(plan)
+
+    # Backfill missing required properties with safe defaults so that agent plans
+    # that choose the right canonical labels but omit required fields do not fail
+    # validation. This keeps the ontology strict for direct API callers while
+    # being lenient for LLM-generated reconciliation plans.
+    for ent in plan.entity_upserts:
+        for label in canonical_entity_labels(ent.labels):
+            _ensure_required_properties_for_label(ent.properties, label, ent.entity_key)
 
     soft = ontology_soft_fail_enabled() and not ontology_strict_enabled()
     if soft:
@@ -180,8 +191,30 @@ def _apply_soft_ontology_downgrades(plan: ReconciliationPlan) -> None:
                 ent.properties, label, ent.entity_key
             )
 
+    entity_labels_by_key = {eu.entity_key: eu.labels for eu in plan.entity_upserts}
+    kept_edges: list[EdgeUpsert] = []
     for edge in plan.edge_upserts:
         _maybe_rewrite_unknown_edge(edge, out)
+        spec = EDGE_TYPES.get(edge.edge_type)
+        if spec is not None:
+            from_labels = entity_labels_by_key.get(edge.from_entity_key)
+            to_labels = entity_labels_by_key.get(edge.to_entity_key)
+            if (
+                from_labels is not None
+                and to_labels is not None
+                and not spec.allows(from_labels, to_labels)
+            ):
+                out.append(
+                    {
+                        "entity_uuid": f"{edge.from_entity_key}->{edge.to_entity_key}",
+                        "kind": "edge_endpoint_mismatch",
+                        "from": edge.edge_type,
+                        "to": "dropped",
+                    }
+                )
+                continue
+        kept_edges.append(edge)
+    plan.edge_upserts = kept_edges
 
 
 def _try_adr_document_fallback(
@@ -312,6 +345,38 @@ def _attach_ontology_downgrade_quality_issues(plan: ReconciliationPlan) -> None:
                 },
             )
         )
+
+
+_MATERIAL_PLAN_THRESHOLD = 3
+
+
+def _augment_evidence_warnings(plan: ReconciliationPlan) -> None:
+    """Append non-blocking warnings when material plans ship without provenance hints.
+
+    Non-blocking on purpose: deterministic planners (e.g. merged-PR) carry
+    ``event_ref`` provenance on apply, and not every plan can attach richer
+    evidence. This surfaces to the reconciliation ledger so operators can see
+    which agent runs are flying blind without failing the pipeline.
+    """
+    mutation_count = (
+        len(plan.entity_upserts)
+        + len(plan.edge_upserts)
+        + len(plan.edge_deletes)
+        + len(plan.invalidations)
+    )
+    if mutation_count < _MATERIAL_PLAN_THRESHOLD:
+        return
+    if plan.evidence:
+        return
+    if plan.confidence is not None and plan.confidence >= 0.0:
+        # Having an explicit confidence (even from a deterministic planner)
+        # counts as provenance signal — skip the warning.
+        return
+    warning = (
+        f"material plan ({mutation_count} mutations) emitted without evidence refs or confidence"
+    )
+    if warning not in plan.warnings:
+        plan.warnings.append(warning)
 
 
 def _validate_invalidations(items: list[InvalidationOp]) -> list[str]:

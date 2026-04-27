@@ -6,6 +6,9 @@ import os
 
 from adapters.inbound.cli.cli_pot_resolution import CliPotResolution
 from adapters.outbound.github.unavailable_source_control import UnavailableSourceControl
+from adapters.outbound.reconciliation.context_graph_tools import (
+    ContextGraphReconciliationTools,
+)
 from adapters.outbound.reconciliation.factory import (
     try_pydantic_deep_reconciliation_agent,
 )
@@ -42,15 +45,21 @@ def build_cli_container(
         os.getenv("CONTEXT_ENGINE_GITHUB_TOKEN") or os.getenv("GITHUB_TOKEN") or ""
     ).strip()
     if token:
-        return build_container_with_github_token(
+        container = build_container_with_github_token(
             token=token,
             pots=pots,
             reconciliation_agent=reco,
             jobs=jobs,
         )
-    return build_container(
-        pots=pots,
-        source_for_repo=lambda _repo: UnavailableSourceControl(),
-        reconciliation_agent=reco,
-        jobs=jobs,
-    )
+    else:
+        container = build_container(
+            pots=pots,
+            source_for_repo=lambda _repo: UnavailableSourceControl(),
+            reconciliation_agent=reco,
+            jobs=jobs,
+        )
+    if reco is not None and container.context_graph is not None:
+        setter = getattr(reco, "set_context_tools", None)
+        if setter is not None:
+            setter(ContextGraphReconciliationTools(container.context_graph))
+    return container

@@ -11,6 +11,7 @@ from sqlalchemy import and_, or_, select, update
 from sqlalchemy.orm import Session
 
 from adapters.outbound.postgres.models import ContextEventModel
+from domain.actor import Actor, normalize_surface
 from domain.ingestion_db_status import (
     canonical_status_to_db,
     canonical_statuses_to_db_filters,
@@ -85,6 +86,10 @@ class SqlAlchemyIngestionEventStore(IngestionEventStore):
             step_error=0,
             event_metadata=dict(params.metadata),
             idempotency_key=None,
+            actor_user_id=params.actor.user_id if params.actor else None,
+            actor_surface=params.actor.surface if params.actor else None,
+            actor_client_name=params.actor.client_name if params.actor else None,
+            actor_auth_method=params.actor.auth_method if params.actor else None,
         )
         self._db.add(row)
         self._db.commit()
@@ -151,6 +156,12 @@ class SqlAlchemyIngestionEventStore(IngestionEventStore):
                 q = q.where(ContextEventModel.status.in_(tuple(db_set)))
             if filters.source_systems:
                 q = q.where(ContextEventModel.source_system.in_(tuple(filters.source_systems)))
+            if filters.source_channels:
+                q = q.where(ContextEventModel.source_channel.in_(tuple(filters.source_channels)))
+            if filters.actor_user_ids:
+                q = q.where(ContextEventModel.actor_user_id.in_(tuple(filters.actor_user_ids)))
+            if filters.actor_surfaces:
+                q = q.where(ContextEventModel.actor_surface.in_(tuple(filters.actor_surfaces)))
             if filters.submitted_after:
                 q = q.where(ContextEventModel.received_at >= filters.submitted_after)
             if filters.submitted_before:
@@ -243,4 +254,21 @@ class SqlAlchemyIngestionEventStore(IngestionEventStore):
             idempotency_key=getattr(row, "idempotency_key", None),
             occurred_at=row.occurred_at if isinstance(getattr(row, "occurred_at", None), datetime) else None,
             raw_status=row.status,
+            actor=_row_to_actor(row),
         )
+
+
+def _row_to_actor(row: ContextEventModel) -> Actor | None:
+    uid = getattr(row, "actor_user_id", None)
+    if not uid:
+        return None
+    surface = normalize_surface(getattr(row, "actor_surface", None)) or "http"
+    auth = getattr(row, "actor_auth_method", None) or "api_key"
+    if auth not in ("api_key", "session", "webhook_signature", "system"):
+        auth = "api_key"
+    return Actor(
+        user_id=str(uid),
+        surface=surface,
+        client_name=getattr(row, "actor_client_name", None),
+        auth_method=auth,  # type: ignore[arg-type]
+    )

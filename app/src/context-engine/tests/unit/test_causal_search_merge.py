@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from application.use_cases.query_context import merge_causal_expanded_search_rows
+from adapters.outbound.graphiti.query_helpers import merge_causal_expanded_search_rows
 
 
 class _StubStructural:

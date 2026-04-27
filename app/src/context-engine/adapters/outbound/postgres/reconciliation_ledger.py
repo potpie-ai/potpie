@@ -18,8 +18,11 @@ from adapters.outbound.postgres.models import (
     ContextReconciliationWorkEvent,
 )
 from domain.context_events import ContextEvent, EventScope
+from domain.context_status import ReconciliationLedgerHealth
 from domain.ingestion_kinds import (
     EPISODE_STEP_APPLIED,
+    EPISODE_STEP_APPLYING as EPISODE_STEP_APPLYING_VALUE,
+    EPISODE_STEP_FAILED as EPISODE_STEP_FAILED_VALUE,
     EVENT_STATUS_EPISODES_QUEUED,
     INGESTION_KIND_RAW_EPISODE,
 )
@@ -36,6 +39,12 @@ logger = logging.getLogger(__name__)
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _ensure_aware(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 class SqlAlchemyReconciliationLedger(ReconciliationLedgerPort):
@@ -81,6 +90,10 @@ class SqlAlchemyReconciliationLedger(ReconciliationLedgerPort):
             ingestion_kind=kind,
             idempotency_key=event.idempotency_key,
             source_channel=(event.source_channel or "unknown").strip() or "unknown",
+            actor_user_id=event.actor.user_id if event.actor else None,
+            actor_surface=event.actor.surface if event.actor else None,
+            actor_client_name=event.actor.client_name if event.actor else None,
+            actor_auth_method=event.actor.auth_method if event.actor else None,
         )
         self._db.add(row)
         try:
@@ -429,6 +442,150 @@ class SqlAlchemyReconciliationLedger(ReconciliationLedgerPort):
         )
         self._db.commit()
 
+    def summarize_pot_reconciliation(
+        self,
+        pot_id: str,
+        *,
+        recent_failure_limit: int = 5,
+        stuck_step_limit: int = 5,
+    ) -> ReconciliationLedgerHealth:
+        run_count_rows = self._db.execute(
+            select(ContextReconciliationRun.status, func.count())
+            .join(
+                ContextEventModel,
+                ContextEventModel.id == ContextReconciliationRun.event_id,
+            )
+            .where(ContextEventModel.pot_id == pot_id)
+            .group_by(ContextReconciliationRun.status)
+        ).all()
+        run_counts: dict[str, int] = {}
+        for status_value, n in run_count_rows:
+            run_counts[str(status_value)] = int(n or 0)
+
+        step_count_rows = self._db.execute(
+            select(ContextEpisodeStepModel.status, func.count())
+            .where(ContextEpisodeStepModel.pot_id == pot_id)
+            .group_by(ContextEpisodeStepModel.status)
+        ).all()
+        step_counts: dict[str, int] = {}
+        for status_value, n in step_count_rows:
+            step_counts[str(status_value)] = int(n or 0)
+
+        last_success = self._db.scalar(
+            select(func.max(ContextReconciliationRun.completed_at))
+            .join(
+                ContextEventModel,
+                ContextEventModel.id == ContextReconciliationRun.event_id,
+            )
+            .where(
+                ContextEventModel.pot_id == pot_id,
+                ContextReconciliationRun.status == "succeeded",
+            )
+        )
+        last_failure = self._db.scalar(
+            select(func.max(ContextReconciliationRun.completed_at))
+            .join(
+                ContextEventModel,
+                ContextEventModel.id == ContextReconciliationRun.event_id,
+            )
+            .where(
+                ContextEventModel.pot_id == pot_id,
+                ContextReconciliationRun.status == "failed",
+            )
+        )
+
+        failed_rows = self._db.execute(
+            select(
+                ContextReconciliationRun.id,
+                ContextReconciliationRun.event_id,
+                ContextReconciliationRun.attempt_number,
+                ContextReconciliationRun.agent_name,
+                ContextReconciliationRun.error,
+                ContextReconciliationRun.completed_at,
+                ContextReconciliationRun.started_at,
+            )
+            .join(
+                ContextEventModel,
+                ContextEventModel.id == ContextReconciliationRun.event_id,
+            )
+            .where(
+                ContextEventModel.pot_id == pot_id,
+                ContextReconciliationRun.status == "failed",
+            )
+            .order_by(
+                func.coalesce(
+                    ContextReconciliationRun.completed_at,
+                    ContextReconciliationRun.started_at,
+                ).desc()
+            )
+            .limit(max(recent_failure_limit, 0))
+        ).all()
+        recent_failed_runs = []
+        for r in failed_rows:
+            ts = r.completed_at or r.started_at
+            recent_failed_runs.append(
+                {
+                    "run_id": r.id,
+                    "event_id": r.event_id,
+                    "attempt_number": r.attempt_number,
+                    "agent_name": r.agent_name,
+                    "error": r.error,
+                    "at": _ensure_aware(ts).isoformat() if isinstance(ts, datetime) else None,
+                }
+            )
+
+        stuck_rows = self._db.execute(
+            select(
+                ContextEpisodeStepModel.id,
+                ContextEpisodeStepModel.event_id,
+                ContextEpisodeStepModel.sequence,
+                ContextEpisodeStepModel.step_kind,
+                ContextEpisodeStepModel.status,
+                ContextEpisodeStepModel.attempt_count,
+                ContextEpisodeStepModel.error,
+                ContextEpisodeStepModel.queued_at,
+                ContextEpisodeStepModel.started_at,
+            )
+            .where(
+                ContextEpisodeStepModel.pot_id == pot_id,
+                or_(
+                    ContextEpisodeStepModel.status == EPISODE_STEP_FAILED_VALUE,
+                    ContextEpisodeStepModel.status == EPISODE_STEP_APPLYING_VALUE,
+                ),
+            )
+            .order_by(
+                func.coalesce(
+                    ContextEpisodeStepModel.started_at,
+                    ContextEpisodeStepModel.queued_at,
+                ).desc()
+            )
+            .limit(max(stuck_step_limit, 0))
+        ).all()
+        stuck_step_samples = []
+        for r in stuck_rows:
+            ts = r.started_at or r.queued_at
+            stuck_step_samples.append(
+                {
+                    "step_id": r.id,
+                    "event_id": r.event_id,
+                    "sequence": r.sequence,
+                    "step_kind": r.step_kind,
+                    "status": r.status,
+                    "attempt_count": r.attempt_count,
+                    "error": r.error,
+                    "at": _ensure_aware(ts).isoformat() if isinstance(ts, datetime) else None,
+                }
+            )
+
+        return ReconciliationLedgerHealth(
+            run_counts=run_counts,
+            step_counts=step_counts,
+            last_run_success_at=_ensure_aware(last_success) if isinstance(last_success, datetime) else None,
+            last_run_failure_at=_ensure_aware(last_failure) if isinstance(last_failure, datetime) else None,
+            recent_failed_runs=recent_failed_runs,
+            stuck_step_samples=stuck_step_samples,
+        )
+
     @staticmethod
     def _to_episode_row(row: ContextEpisodeStepModel) -> EpisodeStepRow:
         return EpisodeStepRow(
@@ -447,6 +604,8 @@ class SqlAlchemyReconciliationLedger(ReconciliationLedgerPort):
 
     @staticmethod
     def _to_event_row(row: ContextEventModel) -> ContextEventRow:
+        from adapters.outbound.postgres.ingestion_event_store import _row_to_actor
+
         return ContextEventRow(
             id=row.id,
             pot_id=row.pot_id,
@@ -467,6 +626,8 @@ class SqlAlchemyReconciliationLedger(ReconciliationLedgerPort):
             job_id=getattr(row, "job_id", None),
             correlation_id=getattr(row, "correlation_id", None),
             idempotency_key=getattr(row, "idempotency_key", None),
+            source_channel=getattr(row, "source_channel", None),
+            actor=_row_to_actor(row),
         )
 
     @staticmethod

@@ -7,6 +7,7 @@ The canonical combined context graph architecture is:
 - [Unified Graphiti Application Architecture](unified-graphiti-application-architecture.md)
 - [Context Graph Implementation Next Steps](implementation-next-steps.md)
 - [Context Graph Planning Next Steps](planning-next-steps.md)
+- [Timeline Subgraph](timeline.md)
 - [Context Engine Test Harness And Findings](testing-and-bugs.md)
 
 `graph.md` remains the canonical product architecture. The unified Graphiti application doc is the focused implementation plan for collapsing the application layer onto one Graphiti-backed graph port. `implementation-next-steps.md` is the current code-reviewed migration plan and should be treated as the priority list when implementation and older planning docs disagree.

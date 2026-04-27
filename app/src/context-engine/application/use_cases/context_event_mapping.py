@@ -25,4 +25,6 @@ def context_event_row_to_domain(row: ContextEventRow) -> ContextEvent:
         payload=dict(row.payload),
         ingestion_kind=row.ingestion_kind,
         idempotency_key=row.idempotency_key,
+        source_channel=row.source_channel,
+        actor=row.actor,
     )

@@ -94,11 +94,22 @@ def _resolved_source_label(explicit: Optional[str]) -> Optional[str]:
     return None
 
 
+def _cli_client_name() -> str:
+    """Identify the concrete CLI client (env override, else ``potpie-cli``)."""
+    for var in ("POTPIE_CLIENT_NAME", "CONTEXT_ENGINE_CLIENT_NAME"):
+        v = os.getenv(var)
+        if v and v.strip():
+            return v.strip()
+    return "potpie-cli"
+
+
 def _cli_client_or_exit(verbose: bool) -> PotpieContextApiClient:
     try:
         return PotpieContextApiClient(
             resolve_potpie_api_base_url(),
             resolve_potpie_api_key(),
+            client_surface="cli",
+            client_name=_cli_client_name(),
         )
     except ValueError as exc:
         emit_error("Potpie API not configured", str(exc), verbose=verbose)
@@ -274,6 +285,8 @@ def doctor_cmd() -> None:
             resolve_potpie_api_base_url(),
             resolve_potpie_api_key(),
             timeout=15.0,
+            client_surface="cli",
+            client_name=_cli_client_name(),
         )
         code, payload = c.get_health()
         health_ok = code == 200
@@ -434,6 +447,8 @@ def _resolve_cli_pot_ref_with_api(ref: str) -> tuple[str | None, str]:
             resolve_potpie_api_base_url(),
             resolve_potpie_api_key(),
             timeout=30.0,
+            client_surface="cli",
+            client_name=_cli_client_name(),
         )
         row = client.find_context_pot_by_slug(slug)
     except (ValueError, OSError, PotpieContextApiError):
@@ -939,12 +954,17 @@ def event_list_cmd(
     if not isinstance(items, list) or not items:
         print_plain_line(f"No events for pot {resolved}.", as_json=False)
         return
+    print_plain_line(
+        "event_id\tstatus\tlifecycle\tkind\tsource_channel\tsource_system\tsubmitted_at",
+        as_json=False,
+    )
     for event in items:
         if not isinstance(event, dict):
             continue
         print_plain_line(
             f"{event.get('event_id') or event.get('id')}\t{event.get('status')}\t"
             f"{event.get('lifecycle_status')}\t{event.get('ingestion_kind')}\t"
+            f"{event.get('source_channel') or ''}\t{event.get('source_system') or ''}\t"
             f"{event.get('submitted_at') or event.get('received_at')}",
             as_json=False,
         )
@@ -1220,6 +1240,249 @@ def search(
         with_temporal=with_temporal,
         show_provenance=not no_provenance,
     )
+
+
+def _resolve_scope_body(
+    *,
+    repo_name: Optional[str] = None,
+    file_path: Optional[str] = None,
+    function_name: Optional[str] = None,
+    pr_number: Optional[int] = None,
+    services: Optional[list[str]] = None,
+    features: Optional[list[str]] = None,
+    environment: Optional[str] = None,
+    ticket_ids: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    if repo_name:
+        out["repo_name"] = repo_name
+    if file_path:
+        out["file_path"] = file_path
+    if function_name:
+        out["function_name"] = function_name
+    if pr_number is not None:
+        out["pr_number"] = pr_number
+    if services:
+        out["services"] = services
+    if features:
+        out["features"] = features
+    if environment:
+        out["environment"] = environment
+    if ticket_ids:
+        out["ticket_ids"] = ticket_ids
+    return out
+
+
+def _split_csv(value: Optional[str]) -> list[str]:
+    if not value:
+        return []
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+@app.command("status")
+def status_cmd(
+    pot: Optional[str] = typer.Argument(
+        None,
+        help="Pot UUID or alias; inferred from `pot use` / env / git when omitted.",
+    ),
+    intent: Optional[str] = typer.Option(
+        None,
+        "--intent",
+        help="Optional task intent; surfaces the recommended context_resolve recipe.",
+    ),
+    repo_name: Optional[str] = typer.Option(None, "--repo", "-r"),
+    file_path: Optional[str] = typer.Option(None, "--file", "-f"),
+    pr_number: Optional[int] = typer.Option(None, "--pr"),
+    cwd: str = typer.Option(".", "--cwd"),
+) -> None:
+    """Fetch readiness / capability envelope (POST /status)."""
+    j, v = _flags()
+    pot_id = _pot_id_or_git(pot, cwd=str(Path(cwd).resolve()))
+    body: dict[str, Any] = {
+        "pot_id": pot_id,
+        "scope": _resolve_scope_body(
+            repo_name=repo_name, file_path=file_path, pr_number=pr_number
+        ),
+    }
+    if intent:
+        body["intent"] = intent
+    client = _cli_client_or_exit(v)
+    try:
+        response = client.status(body)
+    except PotpieContextApiError as exc:
+        emit_error("Status failed", _format_api_error(exc), verbose=v, exc=exc if v else None)
+        raise typer.Exit(code=1) from exc
+    print_json_blob(response, as_json=j)
+
+
+@app.command("resolve")
+def resolve_cmd(
+    first: str = typer.Argument(
+        ...,
+        help="Either pot UUID + query, or only the query when pot is inferred (pot use / env / git).",
+    ),
+    second: Optional[str] = typer.Argument(
+        None,
+        help="Natural-language query when the first argument is the pot UUID.",
+    ),
+    repo_name: Optional[str] = typer.Option(None, "--repo", "-r"),
+    file_path: Optional[str] = typer.Option(None, "--file", "-f"),
+    function_name: Optional[str] = typer.Option(None, "--function"),
+    pr_number: Optional[int] = typer.Option(None, "--pr"),
+    services: Optional[str] = typer.Option(None, "--services", help="Comma-separated service names."),
+    features: Optional[str] = typer.Option(None, "--features", help="Comma-separated feature names."),
+    environment: Optional[str] = typer.Option(None, "--env"),
+    ticket_ids: Optional[str] = typer.Option(None, "--tickets", help="Comma-separated ticket IDs."),
+    intent: Optional[str] = typer.Option(None, "--intent"),
+    include: Optional[str] = typer.Option(None, "--include", help="Comma-separated recipe include list."),
+    limit: int = typer.Option(12, "--limit", "-n"),
+    cwd: str = typer.Option(".", "--cwd"),
+) -> None:
+    """Answer a query with synthesized summary + bundled evidence (goal=answer)."""
+    j, v = _flags()
+    cwd_resolved = str(Path(cwd).resolve())
+    if second is None:
+        query = first
+        pot_id = _pot_id_or_git(None, cwd=cwd_resolved)
+    else:
+        pot_id = _pot_id_or_git(first, cwd=cwd_resolved)
+        query = second
+    body: dict[str, Any] = {
+        "pot_id": pot_id,
+        "query": query,
+        "goal": "answer",
+        "strategy": "auto",
+        "limit": limit,
+        "scope": _resolve_scope_body(
+            repo_name=repo_name,
+            file_path=file_path,
+            function_name=function_name,
+            pr_number=pr_number,
+            services=_split_csv(services),
+            features=_split_csv(features),
+            environment=environment,
+            ticket_ids=_split_csv(ticket_ids),
+        ),
+        "include": _split_csv(include),
+    }
+    if intent:
+        body["intent"] = intent
+    client = _cli_client_or_exit(v)
+    try:
+        response = client.context_graph_query(body)
+    except PotpieContextApiError as exc:
+        emit_error("Resolve failed", _format_api_error(exc), verbose=v, exc=exc if v else None)
+        raise typer.Exit(code=1) from exc
+    if j:
+        print_json_blob(response, as_json=True)
+        return
+    result = response.get("result") or {}
+    answer = result.get("answer") or {}
+    summary = answer.get("summary") or "(no summary)"
+    print_plain_line(summary, as_json=False)
+
+
+@app.command("overview")
+def overview_cmd(
+    pot: Optional[str] = typer.Argument(
+        None,
+        help="Pot UUID or alias; inferred from `pot use` / env / git when omitted.",
+    ),
+    repo_name: Optional[str] = typer.Option(None, "--repo", "-r"),
+    limit: int = typer.Option(12, "--limit", "-n"),
+    cwd: str = typer.Option(".", "--cwd"),
+) -> None:
+    """Fetch graph-wide readiness / activity snapshot (goal=aggregate, include=[graph_overview])."""
+    j, v = _flags()
+    pot_id = _pot_id_or_git(pot, cwd=str(Path(cwd).resolve()))
+    body: dict[str, Any] = {
+        "pot_id": pot_id,
+        "goal": "aggregate",
+        "strategy": "auto",
+        "include": ["graph_overview"],
+        "limit": limit,
+        "scope": _resolve_scope_body(repo_name=repo_name),
+    }
+    client = _cli_client_or_exit(v)
+    try:
+        response = client.context_graph_query(body)
+    except PotpieContextApiError as exc:
+        emit_error("Overview failed", _format_api_error(exc), verbose=v, exc=exc if v else None)
+        raise typer.Exit(code=1) from exc
+    print_json_blob(response, as_json=j)
+
+
+@app.command("record")
+def record_cmd(
+    record_type: str = typer.Option(..., "--type", "-t", help="Record type (e.g. decision, fix, incident)."),
+    summary: str = typer.Option(..., "--summary", "-s", help="One-line record summary (required)."),
+    pot: Optional[str] = typer.Option(None, "--pot", help="Pot UUID/alias; inferred when omitted."),
+    details: Optional[str] = typer.Option(
+        None,
+        "--details",
+        help="JSON object with structured record details.",
+    ),
+    source_refs: Optional[str] = typer.Option(
+        None, "--source-refs", help="Comma-separated source references."
+    ),
+    confidence: float = typer.Option(0.7, "--confidence", min=0.0, max=1.0),
+    visibility: str = typer.Option("project", "--visibility"),
+    idempotency_key: Optional[str] = typer.Option(None, "--idempotency-key"),
+    occurred_at: Optional[str] = typer.Option(
+        None, "--occurred-at", help="ISO-8601 timestamp; defaults to now."
+    ),
+    repo_name: Optional[str] = typer.Option(None, "--repo", "-r"),
+    file_path: Optional[str] = typer.Option(None, "--file", "-f"),
+    pr_number: Optional[int] = typer.Option(None, "--pr"),
+    sync: bool = typer.Option(False, "--sync", help="Wait for synchronous reconciliation."),
+    cwd: str = typer.Option(".", "--cwd"),
+) -> None:
+    """Record a durable context fact (POST /record)."""
+    j, v = _flags()
+    pot_id = _pot_id_or_git(pot, cwd=str(Path(cwd).resolve()))
+    details_dict: dict[str, Any] = {}
+    if details:
+        try:
+            parsed = json.loads(details)
+        except json.JSONDecodeError as exc:
+            emit_error("Invalid --details", f"Expected JSON object: {exc}", verbose=v)
+            raise typer.Exit(code=1) from exc
+        if not isinstance(parsed, dict):
+            emit_error("Invalid --details", "Expected a JSON object.", verbose=v)
+            raise typer.Exit(code=1)
+        details_dict = parsed
+    occurred_dt: Optional[datetime] = None
+    if occurred_at:
+        try:
+            occurred_dt = _parse_iso_datetime(occurred_at)
+        except ValueError as exc:
+            emit_error("Invalid --occurred-at", str(exc), verbose=v)
+            raise typer.Exit(code=1) from exc
+    body: dict[str, Any] = {
+        "pot_id": pot_id,
+        "record": {
+            "type": record_type,
+            "summary": summary,
+            "details": details_dict,
+            "source_refs": _split_csv(source_refs),
+            "confidence": confidence,
+            "visibility": visibility,
+        },
+        "scope": _resolve_scope_body(
+            repo_name=repo_name, file_path=file_path, pr_number=pr_number
+        ),
+    }
+    if idempotency_key:
+        body["idempotency_key"] = idempotency_key
+    if occurred_dt is not None:
+        body["occurred_at"] = occurred_dt
+    client = _cli_client_or_exit(v)
+    try:
+        response = client.record(body, sync=sync)
+    except PotpieContextApiError as exc:
+        emit_error("Record failed", _format_api_error(exc), verbose=v, exc=exc if v else None)
+        raise typer.Exit(code=1) from exc
+    print_json_blob(response, as_json=j)
 
 
 def _parse_iso_datetime(value: str) -> datetime:

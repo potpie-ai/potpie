@@ -15,6 +15,13 @@ from domain.reconciliation import (
     ReconciliationRequest,
 )
 
+from adapters.outbound.reconciliation.timeline_plan import (
+    VERB_AUTHORED_COMMIT,
+    VERB_MERGED_PR,
+    VERB_REVIEWED_PR,
+    build_timeline_mutations,
+)
+
 
 def build_github_pr_merged_plan(
     *,
@@ -253,6 +260,86 @@ def build_github_pr_merged_plan(
         entities.append(decision_entity)
         edges.extend(decision_edges)
 
+    # --- Timeline subgraph -----------------------------------------------
+    # Emit Activity + Period + PERFORMED/TOUCHED/IN_PERIOD for the merge
+    # itself, plus one commit-level Activity per commit. The plan builder
+    # knows exactly what happened, so timelines are produced deterministically
+    # here rather than requiring a post-ingest hook.
+    touched_merge = [pr_key, repo_key]
+    for e in entities:
+        if "CodeAsset" in e.labels or "Issue" in e.labels:
+            touched_merge.append(e.entity_key)
+    merge_actor_key = _person_key(author)
+    timeline_entities, timeline_edges = build_timeline_mutations(
+        pot_id=event_ref.pot_id,
+        verb=VERB_MERGED_PR,
+        occurred_at=observed_at,
+        summary=f"{author} merged PR #{pr_number}: {title}"[:300],
+        source_ref_key=source_key,
+        actor_key=merge_actor_key,
+        touched_entity_keys=touched_merge,
+        activity_suffix=f"{repo_name}:pr:{pr_number}:merge",
+        branch=str(pr_data.get("base_branch") or "") or None,
+        extra_properties={
+            "repo_name": repo_name,
+            "pr_number": pr_number,
+            "change_type": "pull_request",
+        },
+        confidence=0.95,
+    )
+    entities.extend(timeline_entities)
+    edges.extend(timeline_edges)
+
+    for commit in commits or []:
+        sha = str(commit.get("sha") or "").strip()
+        if not sha:
+            continue
+        commit_key = f"github:commit:{repo_name}:{sha}"
+        commit_author = str(commit.get("author") or "unknown")
+        commit_author_key = _person_key(commit_author)
+        message = str(commit.get("message") or "").strip()
+        first_line = message.splitlines()[0] if message else f"Commit {sha[:12]}"
+        c_entities, c_edges = build_timeline_mutations(
+            pot_id=event_ref.pot_id,
+            verb=VERB_AUTHORED_COMMIT,
+            occurred_at=observed_at,
+            summary=f"{commit_author} authored commit {sha[:12]}: {first_line}"[:300],
+            source_ref_key=source_key,
+            actor_key=commit_author_key,
+            touched_entity_keys=[commit_key, pr_key, repo_key],
+            activity_suffix=f"{repo_name}:commit:{sha}",
+            extra_properties={"repo_name": repo_name, "sha": sha},
+            confidence=0.95,
+        )
+        entities.extend(c_entities)
+        edges.extend(c_edges)
+
+    for thread in review_threads or []:
+        tid = thread.get("thread_id")
+        if tid is None:
+            continue
+        comments = list(thread.get("comments") or [])
+        reviewer = _reviewer_from_thread(comments)
+        reviewer_key = _person_key(reviewer) if reviewer else None
+        decision_key = f"github:decision:{repo_name}:{pr_number}:{tid!s}"
+        review_summary = (
+            f"{reviewer or 'reviewer'} reviewed PR #{pr_number} (thread {tid!s})"
+        )
+        r_entities, r_edges = build_timeline_mutations(
+            pot_id=event_ref.pot_id,
+            verb=VERB_REVIEWED_PR,
+            occurred_at=observed_at,
+            summary=review_summary[:300],
+            source_ref_key=source_key,
+            actor_key=reviewer_key,
+            touched_entity_keys=[pr_key, decision_key],
+            activity_suffix=f"{repo_name}:pr:{pr_number}:review:{tid!s}",
+            extra_properties={"repo_name": repo_name, "pr_number": pr_number},
+            confidence=0.9,
+        )
+        entities.extend(r_entities)
+        edges.extend(r_edges)
+
     return ReconciliationPlan(
         event_ref=event_ref,
         summary=f"merged GitHub PR #{pr_number} ({repo_name})",
@@ -471,6 +558,19 @@ def _comment_lines(comments: list[dict[str, Any]]) -> list[str]:
         if body:
             lines.append(f"{who}: {body}")
     return lines
+
+
+def _reviewer_from_thread(comments: list[dict[str, Any]]) -> str | None:
+    """Best-effort reviewer login from the first commenter on a review thread."""
+    for c in comments:
+        raw_user = c.get("user")
+        if isinstance(raw_user, dict):
+            who = raw_user.get("login") or c.get("author")
+        else:
+            who = c.get("author") or raw_user
+        if who and str(who).strip() and str(who).lower() != "unknown":
+            return str(who).strip()
+    return None
 
 
 def _first_comment_excerpt(comments: list[dict[str, Any]]) -> str:

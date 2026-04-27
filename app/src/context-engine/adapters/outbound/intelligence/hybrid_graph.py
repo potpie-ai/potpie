@@ -6,8 +6,9 @@ import asyncio
 import logging
 from typing import Any
 
-from application.use_cases.query_context import search_pot_context_async
-
+from adapters.outbound.graphiti.port import EpisodicGraphPort
+from adapters.outbound.graphiti.query_helpers import search_pot_context_async
+from adapters.outbound.neo4j.port import StructuralGraphPort
 from domain.intelligence_models import (
     ArtifactContext,
     ArtifactRef,
@@ -21,9 +22,7 @@ from domain.intelligence_models import (
     OwnershipRecord,
     ProjectContextRecord,
 )
-from domain.ports.episodic_graph import EpisodicGraphPort
 from domain.ports.intelligence_provider import IntelligenceProvider
-from domain.ports.structural_graph import StructuralGraphPort
 
 logger = logging.getLogger(__name__)
 
@@ -352,16 +351,33 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
         *,
         limit: int = 10,
         as_of: str | None = None,
+        query: str | None = None,
     ) -> list[ChangeRecord]:
+        from datetime import datetime as _dt
+
+        from adapters.outbound.graphiti.query_helpers import (
+            get_change_history as _get_change_history,
+        )
+
+        as_of_dt: _dt | None = None
+        if as_of:
+            try:
+                as_of_dt = _dt.fromisoformat(str(as_of).replace("Z", "+00:00"))
+            except ValueError:
+                as_of_dt = None
+
         def _load() -> list[dict[str, Any]]:
-            return self._structural.get_change_history(
+            return _get_change_history(
+                self._structural,
                 pot_id,
-                scope.function_name,
-                scope.file_path,
-                max(1, min(limit, 100)),
+                function_name=scope.function_name,
+                file_path=scope.file_path,
+                limit=max(1, min(limit, 100)),
                 repo_name=scope.repo_name,
                 pr_number=scope.pr_number,
-                as_of=as_of,
+                as_of=as_of_dt,
+                episodic=self._episodic,
+                query=query,
             )
 
         try:
@@ -377,15 +393,23 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
         scope: ContextScope,
         *,
         limit: int = 20,
+        query: str | None = None,
     ) -> list[DecisionRecord]:
+        from adapters.outbound.graphiti.query_helpers import (
+            get_decisions as _get_decisions,
+        )
+
         def _load() -> list[dict[str, Any]]:
-            return self._structural.get_decisions(
+            return _get_decisions(
+                self._structural,
                 pot_id,
-                scope.file_path,
-                scope.function_name,
-                max(1, min(limit, 100)),
+                file_path=scope.file_path,
+                function_name=scope.function_name,
+                limit=max(1, min(limit, 100)),
                 repo_name=scope.repo_name,
                 pr_number=scope.pr_number,
+                episodic=self._episodic,
+                query=query,
             )
 
         try:

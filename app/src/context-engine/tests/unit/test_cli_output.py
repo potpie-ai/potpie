@@ -198,8 +198,13 @@ def test_graphiti_maintenance_methods_create_client_inside_sync_run(monkeypatch)
         asyncio.get_running_loop()
         return SimpleNamespace(driver=object())
 
-    async def relabel_nodes_from_edges(driver, pot_id):
-        return {"ok": True, "pot_id": pot_id, "driver": driver is not None}
+    async def run_ontology_classifier_pass(driver, pot_id, *, force=False):
+        return {
+            "ok": True,
+            "pot_id": pot_id,
+            "driver": driver is not None,
+            "force": force,
+        }
 
     async def classify_modified_edges_for_group(driver, pot_id, *, dry_run=True):
         return {
@@ -211,8 +216,8 @@ def test_graphiti_maintenance_methods_create_client_inside_sync_run(monkeypatch)
 
     monkeypatch.setattr(adapter, "_get_graphiti", get_graphiti_inside_running_loop)
     monkeypatch.setattr(
-        "adapters.outbound.graphiti.apply_canonical_labels.relabel_nodes_from_edges",
-        relabel_nodes_from_edges,
+        "adapters.outbound.graphiti.ontology_classifier_pass.run_ontology_classifier_pass",
+        run_ontology_classifier_pass,
     )
     monkeypatch.setattr(
         "adapters.outbound.graphiti.classify_modified_edges.classify_modified_edges_for_group",
@@ -223,6 +228,7 @@ def test_graphiti_maintenance_methods_create_client_inside_sync_run(monkeypatch)
         "ok": True,
         "pot_id": "pot-1",
         "driver": True,
+        "force": True,
     }
     assert adapter.classify_modified_edges_for_pot("pot-1", dry_run=False) == {
         "ok": True,

@@ -6,9 +6,9 @@ import os
 from datetime import datetime
 from typing import Any, Optional
 
+from adapters.outbound.graphiti.port import EpisodicGraphPort
+from adapters.outbound.neo4j.port import StructuralGraphPort
 from application.services.temporal_search import annotate_search_rows_temporally
-from domain.ports.episodic_graph import EpisodicGraphPort
-from domain.ports.structural_graph import StructuralGraphPort
 from domain.reconciliation_flags import causal_expand_enabled
 
 
@@ -22,16 +22,73 @@ def get_change_history(
     repo_name: Optional[str] = None,
     pr_number: Optional[int] = None,
     as_of: Optional[datetime] = None,
+    episodic: Optional[EpisodicGraphPort] = None,
+    query: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     as_of_str = as_of.isoformat() if as_of is not None else None
-    return structural.get_change_history(
+    lim = max(1, min(limit, 100))
+    rows = structural.get_change_history(
         pot_id=pot_id,
         function_name=function_name,
         file_path=file_path,
-        limit=max(1, min(limit, 100)),
+        limit=lim,
         repo_name=repo_name,
         pr_number=pr_number,
         as_of=as_of_str,
+    )
+    if rows:
+        return rows
+
+    # Semantic→structural fallback: when no structural scope was provided and the
+    # caller gave us a query, seed from top semantic hits and retry.
+    if not _scope_is_empty(file_path, function_name, pr_number):
+        return rows
+    seeds = _semantic_seed_uuids_from_episodic(
+        episodic, pot_id, query, node_labels=_FALLBACK_NODE_LABELS_CHANGES
+    )
+    if not seeds:
+        return rows
+    seeded = structural.get_change_history(
+        pot_id=pot_id,
+        function_name=None,
+        file_path=None,
+        limit=lim,
+        repo_name=repo_name,
+        pr_number=None,
+        as_of=as_of_str,
+        node_uuids=seeds,
+    )
+    return _mark_semantic_fallback(seeded, seeds)
+
+
+def get_timeline(
+    structural: StructuralGraphPort,
+    pot_id: str,
+    *,
+    since_iso: str,
+    until_iso: str,
+    limit: int = 20,
+    user: Optional[str] = None,
+    feature: Optional[str] = None,
+    file_path: Optional[str] = None,
+    branch: Optional[str] = None,
+    verbs: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Timeline bundle for agents: activities + daily period rollups.
+
+    Backed by :meth:`StructuralGraphPort.get_timeline` — all scoping knobs
+    (user / feature / file / branch / verbs) compose with the time window.
+    """
+    return structural.get_timeline(
+        pot_id=pot_id,
+        since_iso=since_iso,
+        until_iso=until_iso,
+        limit=max(1, min(limit, 200)),
+        user=user,
+        feature=feature,
+        file_path=file_path,
+        branch=branch,
+        verbs=list(verbs or []) or None,
     )
 
 
@@ -59,15 +116,38 @@ def get_decisions(
     limit: int = 20,
     repo_name: Optional[str] = None,
     pr_number: Optional[int] = None,
+    episodic: Optional[EpisodicGraphPort] = None,
+    query: Optional[str] = None,
 ) -> list[dict[str, Any]]:
-    return structural.get_decisions(
+    lim = max(1, min(limit, 100))
+    rows = structural.get_decisions(
         pot_id=pot_id,
         file_path=file_path,
         function_name=function_name,
-        limit=max(1, min(limit, 100)),
+        limit=lim,
         repo_name=repo_name,
         pr_number=pr_number,
     )
+    if rows:
+        return rows
+
+    if not _scope_is_empty(file_path, function_name, pr_number):
+        return rows
+    seeds = _semantic_seed_uuids_from_episodic(
+        episodic, pot_id, query, node_labels=_FALLBACK_NODE_LABELS_DECISIONS
+    )
+    if not seeds:
+        return rows
+    seeded = structural.get_decisions(
+        pot_id=pot_id,
+        file_path=None,
+        function_name=None,
+        limit=lim,
+        repo_name=repo_name,
+        pr_number=None,
+        node_uuids=seeds,
+    )
+    return _mark_semantic_fallback(seeded, seeds)
 
 
 def get_pr_review_context(
@@ -472,6 +552,74 @@ def _causal_decay() -> float:
         return max(0.01, min(float(raw), 1.0))
     except ValueError:
         return 0.6
+
+
+# Semantic-fallback seeding: these label tuples narrow the episodic search to
+# entities most likely to be reachable from the structural leg we are trying
+# to populate. Empty list means "any label", which is the right default when
+# the ontology classifier may still be catching up on a pot.
+_FALLBACK_NODE_LABELS_DECISIONS: list[str] = ["Decision", "PullRequest"]
+_FALLBACK_NODE_LABELS_CHANGES: list[str] = ["PullRequest", "Feature", "Component"]
+
+# Larger seed count than causal-expand: semantic hits are coarser when the
+# structural query has already returned nothing, so we cast a wider net here.
+_SEMANTIC_FALLBACK_MAX_SEEDS = 5
+_SEMANTIC_FALLBACK_SEARCH_LIMIT = 10
+
+
+def _scope_is_empty(
+    file_path: Optional[str],
+    function_name: Optional[str],
+    pr_number: Optional[int],
+) -> bool:
+    return (
+        (file_path is None or not str(file_path).strip())
+        and (function_name is None or not str(function_name).strip())
+        and pr_number is None
+    )
+
+
+def _semantic_seed_uuids_from_episodic(
+    episodic: Optional[EpisodicGraphPort],
+    pot_id: str,
+    query: Optional[str],
+    *,
+    node_labels: Optional[list[str]] = None,
+) -> list[str]:
+    """Run a bounded semantic search and return top-K endpoint uuids.
+
+    Used by ``get_decisions`` / ``get_change_history`` as the semantic→structural
+    bridge for unscoped ``goal=answer`` requests: the hits give us a handful of
+    canonical entity uuids the structural legs can anchor on.
+    """
+    if episodic is None or not getattr(episodic, "enabled", False):
+        return []
+    if not query or not str(query).strip():
+        return []
+    try:
+        edges = episodic.search(
+            pot_id=pot_id,
+            query=str(query).strip(),
+            limit=_SEMANTIC_FALLBACK_SEARCH_LIMIT,
+            node_labels=node_labels or None,
+        )
+    except Exception:
+        return []
+    rows = [_search_result_row(item) for item in edges]
+    return _collect_seed_node_uuids(rows, max_seeds=_SEMANTIC_FALLBACK_MAX_SEEDS)
+
+
+def _mark_semantic_fallback(
+    rows: list[dict[str, Any]], seed_uuids: list[str]
+) -> list[dict[str, Any]]:
+    """Stamp each row so consumers can see the response came from the fallback path."""
+    if not rows:
+        return rows
+    for row in rows:
+        if isinstance(row, dict):
+            row.setdefault("source_method", "semantic_fallback")
+            row.setdefault("seed_node_uuids", list(seed_uuids))
+    return rows
 
 
 def _collect_seed_node_uuids(rows: list[dict[str, Any]], *, max_seeds: int = 3) -> list[str]:

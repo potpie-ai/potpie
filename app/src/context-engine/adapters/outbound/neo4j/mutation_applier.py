@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from adapters.outbound.neo4j.port import StructuralGraphPort
 from domain.graph_mutations import EdgeDelete, EdgeUpsert, EntityUpsert, InvalidationOp, ProvenanceRef
 from domain.ports.graph_mutation_applier import GraphMutationApplierPort
-from domain.ports.structural_graph import StructuralGraphPort
 
 
 class StructuralGraphMutationApplier(GraphMutationApplierPort):

@@ -20,6 +20,7 @@ from application.use_cases.event_reconciliation import (
 from application.use_cases.ingest_single_pr import run_merged_pr_ingest_core
 from application.use_cases.record_context_event import record_context_event
 from application.use_cases.wait_ingestion_event import wait_for_terminal_ingestion_event
+from domain.actor import SYSTEM_ACTOR
 from domain.context_events import (
     ContextEvent,
     EventScope,
@@ -132,6 +133,7 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
                 source_event_id=request.source_event_id,
                 artifact_refs=request.artifact_refs,
                 occurred_at=request.occurred_at or ref,
+                actor=request.actor,
             ),
             sync=sync,
             wait=wait,
@@ -192,6 +194,7 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
             payload=dict(p),
             ingestion_kind=INGESTION_KIND_GITHUB_MERGED_PR,
             source_channel=request.source_channel,
+            actor=request.actor or SYSTEM_ACTOR,
         )
         persisted_id, inserted = record_context_event(self._reco, scope, event)
         if not inserted:
@@ -316,6 +319,7 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
             ingestion_kind=kind,
             idempotency_key=request.idempotency_key,
             source_channel=request.source_channel,
+            actor=request.actor,
         )
         scope = EventScope(
             pot_id=request.pot_id,
@@ -377,12 +381,17 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
                 terminal_event=ev,
             )
         st = "error" if not r.ok else "done"
+        first_episode_uuid = next(
+            (uid for uid in (r.episode_uuids or []) if uid), None
+        )
         return EventReceipt(
             event_id=out.event_id,
             status=st,
             error=r.error,
             terminal_event=ev,
             reconciliation=r,
+            episode_uuid=first_episode_uuid,
+            job_id=out.job_id,
         )
 
     def _context_graph(self):

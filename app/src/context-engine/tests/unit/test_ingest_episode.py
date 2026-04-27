@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
-from application.use_cases.ingest_episode import ingest_episode
+from adapters.outbound.graphiti.ingest_episode import ingest_episode
 
 
 def test_ingest_episode_disabled():
@@ -34,4 +34,5 @@ def test_ingest_episode_ok():
         episode_body="body",
         source_description="src",
         reference_time=t,
+        provenance=None,
     )

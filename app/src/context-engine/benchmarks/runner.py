@@ -20,18 +20,20 @@ async def run_benchmark(
     mode: str,
     iterations: int,
     concurrency: int,
+    scenario_concurrency: int,
     seed: bool,
     ingest_pr_live: bool,
     baseline: dict[str, Any] | None = None,
 ) -> BenchmarkReport:
     seed_result = await _seed_dataset(runner, dataset, seed=seed, ingest_pr_live=ingest_pr_live)
-    scenario_results: list[ScenarioResult] = []
-    semaphore = asyncio.Semaphore(max(1, concurrency))
+    scenario_semaphore = asyncio.Semaphore(max(1, scenario_concurrency))
 
-    for scenario in dataset.scenarios:
-        scenario_results.append(
-            await _run_scenario(runner, scenario, iterations=iterations, semaphore=semaphore)
-        )
+    async def run_one(scenario: dict[str, Any]) -> ScenarioResult:
+        async with scenario_semaphore:
+            return await _run_scenario(runner, scenario, iterations=iterations, concurrency=concurrency)
+
+    scenario_tasks = [asyncio.create_task(run_one(s)) for s in dataset.scenarios]
+    scenario_results = await asyncio.gather(*scenario_tasks)
 
     total_score = sum(item.score for item in scenario_results)
     max_score = sum(item.max_score for item in scenario_results)
@@ -60,6 +62,7 @@ async def run_benchmark(
             "repo_name": runner.repo_name,
             "iterations": iterations,
             "concurrency": concurrency,
+            "scenario_concurrency": scenario_concurrency,
         },
         summary=summary,
         scenarios=scenario_results,
@@ -114,7 +117,7 @@ async def _run_scenario(
     scenario: dict[str, Any],
     *,
     iterations: int,
-    semaphore: asyncio.Semaphore,
+    concurrency: int,
 ) -> ScenarioResult:
     latencies: list[float] = []
     errors = 0
@@ -122,6 +125,7 @@ async def _run_scenario(
     best_max = 0.0
     best_assertions: list[dict[str, Any]] = []
     last_response: dict[str, Any] = {}
+    semaphore = asyncio.Semaphore(max(1, concurrency))
 
     async def once() -> tuple[float, dict[str, Any] | None, str | None]:
         async with semaphore:

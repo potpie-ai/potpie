@@ -36,6 +36,10 @@ class ProvenanceRef:
     confidence: float | None = None
     created_by_agent: str | None = None
     reconciliation_run_id: str | None = None
+    actor_user_id: str | None = None
+    actor_surface: str | None = None
+    actor_client_name: str | None = None
+    actor_auth_method: str | None = None
 
     def to_properties(self) -> dict[str, Any]:
         """Render provenance as ``prov_*`` Neo4j property keys.
@@ -71,6 +75,14 @@ class ProvenanceRef:
             out["prov_created_by_agent"] = self.created_by_agent
         if self.reconciliation_run_id:
             out["prov_reconciliation_run_id"] = self.reconciliation_run_id
+        if self.actor_user_id:
+            out["actor_user_id"] = self.actor_user_id
+        if self.actor_surface:
+            out["actor_surface"] = self.actor_surface
+        if self.actor_client_name:
+            out["actor_client_name"] = self.actor_client_name
+        if self.actor_auth_method:
+            out["actor_auth_method"] = self.actor_auth_method
         return out
 
 
@@ -91,6 +103,10 @@ class ProvenanceContext:
     event_received_at: datetime | None = None
     created_by_agent: str | None = None
     reconciliation_run_id: str | None = None
+    actor_user_id: str | None = None
+    actor_surface: str | None = None
+    actor_client_name: str | None = None
+    actor_auth_method: str | None = None
 
 
 @dataclass(slots=True)

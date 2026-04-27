@@ -46,6 +46,7 @@ class IntelligenceProvider(Protocol):
         *,
         limit: int = 10,
         as_of: str | None = None,
+        query: str | None = None,
     ) -> list[ChangeRecord]:
         ...
 
@@ -55,6 +56,7 @@ class IntelligenceProvider(Protocol):
         scope: ContextScope,
         *,
         limit: int = 20,
+        query: str | None = None,
     ) -> list[DecisionRecord]:
         ...
 

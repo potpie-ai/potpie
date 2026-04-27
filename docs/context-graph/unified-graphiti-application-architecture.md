@@ -433,6 +433,17 @@ For agent-facing context resolution, the resolver should prefer exact canonical 
 
 This preserves the current good behavior: semantic search enriches the answer, but exact facts like ownership, decisions, and PR links do not depend on vector recall.
 
+For `goal=answer`, `GraphitiContextGraphAdapter._answer_async` invokes the
+`AnswerSynthesizerPort` (`domain/ports/answer_synthesizer.py`) between
+`resolve_context` and `bundle_to_agent_envelope`. The real adapter
+(`PydanticAIAnswerSynthesizer` under `adapters/outbound/synthesis/`) runs a
+single-shot pydantic-ai call over a bounded payload assembled by
+`build_synthesis_payload` and overrides the bundle summary through
+`bundle_to_agent_envelope`'s `answer_summary` argument. Container wiring selects
+it when `CONTEXT_ENGINE_ANSWER_SYNTHESIS_MODEL` is set, otherwise
+`NullAnswerSynthesizer` returns a count-string summary. Any synthesizer failure
+degrades to that fallback and stamps `meta.answer_summary_source="counts"`.
+
 ### Search Over One Graph
 
 `semantic_search` should still use Graphiti search, but post-processing should be unified:
@@ -460,6 +471,13 @@ Examples:
 
 This is mostly a rename and consolidation, not a storage rewrite.
 
+When scope is absent, `decisions` and `change_history` fall back to semantic
+seeds: top-K semantic hits → `source_node_uuid` / `target_node_uuid` →
+structural lookup. The fallback lives in
+`adapters/outbound/intelligence/hybrid_graph.py` and mirrors the existing
+causal-expand bridge; the structural lookups themselves are unchanged
+(`adapters/outbound/neo4j/structural.py`).
+
 ## Write Path
 
 ### Reconciliation Apply
@@ -478,10 +496,18 @@ apply_reconciliation_plan(context_graph, plan, ...)
 
 New behavior:
 
-1. Validate the plan against `domain/ontology.py`.
-2. Build a write command containing episode drafts, canonical mutations, invalidations, and code bridge mutations.
-3. Apply it through a future unified write port.
-4. Return one mutation result with the primary `episode_uuid` and `MutationSummary`.
+1. Canonicalize entities in the plan
+   (`domain/entity_canonicalization.canonicalize_reconciliation_plan`): trim +
+   lowercase + collapse whitespace on keys, merge duplicates, rewrite edge /
+   invalidation endpoints, drop self-loops, dedupe edges, and surface merge
+   counts via `plan.warnings`.
+2. Run deterministic label inference
+   (`enrich_reconciliation_plan_entity_labels`) to map drift labels emitted by
+   Graphiti extraction back onto `CANONICAL_LABELS` before apply.
+3. Validate the plan against `domain/ontology.py`.
+4. Build a write command containing episode drafts, canonical mutations, invalidations, and code bridge mutations.
+5. Apply it through the unified write port.
+6. Return one mutation result with the primary `episode_uuid` and `MutationSummary`.
 
 ### Merged PR Ingest
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Protocol
 
+from domain.actor import Actor
 from domain.graph_mutations import ProvenanceContext
 from domain.graph_query import (
     ContextGraphQuery,
@@ -45,6 +46,8 @@ class ContextGraphPort(Protocol):
         episode_body: str,
         source_description: str,
         reference_time: datetime,
+        *,
+        actor: Actor | None = None,
     ) -> dict[str, Any]:
         ...
 

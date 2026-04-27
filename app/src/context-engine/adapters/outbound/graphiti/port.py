@@ -1,4 +1,11 @@
-"""Graphiti / episodic knowledge graph (port)."""
+"""Graphiti episodic graph port (adapter-internal).
+
+This protocol used to live in ``domain/ports/``. It was moved in the P3
+cleanup because the only callers are the graphiti adapter itself, the
+Neo4j structural counterpart, and intelligence adapters — none of which
+belong to the application layer. Application-level code depends on
+:class:`domain.ports.context_graph.ContextGraphPort` only.
+"""
 
 from datetime import datetime
 from typing import Any, Optional, Protocol
@@ -30,6 +37,7 @@ class EpisodicGraphPort(Protocol):
         provenance: ProvenanceRef | None = None,
     ) -> list[Optional[str]]:
         """Write one or more ``EpisodeDraft`` values; return UUIDs in order."""
+        ...
 
     async def add_episode_async(
         self,
@@ -74,14 +82,17 @@ class EpisodicGraphPort(Protocol):
 
     def reset_pot(self, pot_id: str) -> dict[str, Any]:
         """Delete all Graphiti episodic data for this pot (Neo4j database partition)."""
+        ...
 
     async def reset_pot_async(self, pot_id: str) -> dict[str, Any]:
         ...
 
     def list_open_conflicts(self, pot_id: str) -> list[dict[str, Any]]:
         """Open ``QualityIssue`` rows for predicate-family conflicts in this pot."""
+        ...
 
     def resolve_open_conflict(
         self, pot_id: str, issue_uuid: str, action: str
     ) -> dict[str, Any]:
         """Resolve a conflict issues (e.g. ``action=supersede_older``)."""
+        ...

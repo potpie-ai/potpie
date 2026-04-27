@@ -51,21 +51,35 @@ class PotpieContextApiClient:
         api_key: str,
         *,
         timeout: float = 120.0,
+        client_surface: str | None = None,
+        client_name: str | None = None,
     ) -> None:
         self._base = base_url.rstrip("/")
         self._api_key = api_key.strip()
         self._timeout = timeout
+        self._client_surface = (client_surface or "").strip() or None
+        self._client_name = (client_name or "").strip() or None
 
     def _url(self, path: str) -> str:
         p = path if path.startswith("/") else f"/{path}"
         return f"{self._base}{CONTEXT_API_PREFIX}{p}"
 
+    def _client_headers(self) -> dict[str, str]:
+        h: dict[str, str] = {}
+        if self._client_surface:
+            h["X-Potpie-Client"] = self._client_surface
+        if self._client_name:
+            h["X-Potpie-Client-Name"] = self._client_name
+        return h
+
     def _headers(self) -> dict[str, str]:
-        return {
+        base = {
             "X-API-Key": self._api_key,
             "Accept": "application/json",
             "Content-Type": "application/json",
         }
+        base.update(self._client_headers())
+        return base
 
     def _raise_for_status(self, r: httpx.Response) -> None:
         if r.is_success:

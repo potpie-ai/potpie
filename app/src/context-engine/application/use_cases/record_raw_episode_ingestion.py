@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
+from domain.actor import Actor
 from domain.context_events import ContextEvent, EventScope
 from domain.ingestion_kinds import INGESTION_KIND_RAW_EPISODE, STEP_KIND_RAW_EPISODE
 from domain.ports.context_graph import ContextGraphPort
@@ -41,6 +42,7 @@ def record_raw_episode_ingestion(
     sync: bool,
     jobs: JobEnqueuePort | None,
     source_channel: str | None = None,
+    actor: Actor | None = None,
 ) -> RawEpisodeIngestOutcome:
     """Persist a ``raw_episode`` event, durable step row, then sync apply or async queue.
 
@@ -68,6 +70,7 @@ def record_raw_episode_ingestion(
         occurred_at=reference_time,
         ingestion_kind=INGESTION_KIND_RAW_EPISODE,
         idempotency_key=idempotency_key,
+        actor=actor,
     )
     event_id, inserted = record_context_event(reco_ledger, scope, ev)
     if not inserted:

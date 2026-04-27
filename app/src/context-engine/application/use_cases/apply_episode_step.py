@@ -117,11 +117,16 @@ def apply_episode_step_for_event(
 
         plan = reconciliation_plan_from_dict(step.step_json)
         validate_reconciliation_plan(plan, row.pot_id)
+        row_actor = getattr(row, "actor", None)
         prov_ctx = ProvenanceContext(
             source_kind=row.event_type or row.ingestion_kind,
             source_ref=row.source_id or row.source_event_id,
             event_occurred_at=row.occurred_at,
             event_received_at=row.received_at,
+            actor_user_id=row_actor.user_id if row_actor else None,
+            actor_surface=row_actor.surface if row_actor else None,
+            actor_client_name=row_actor.client_name if row_actor else None,
+            actor_auth_method=row_actor.auth_method if row_actor else None,
         )
         result = context_graph.apply_plan(
             plan,

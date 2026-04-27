@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Optional, Protocol
 
+from domain.actor import Actor
 from domain.context_events import ContextEvent, EventScope
+from domain.context_status import ReconciliationLedgerHealth
 
 
 @dataclass(slots=True)
@@ -29,6 +31,8 @@ class ContextEventRow:
     job_id: str | None = None
     correlation_id: str | None = None
     idempotency_key: str | None = None
+    source_channel: str | None = None
+    actor: Actor | None = None
 
 
 @dataclass(slots=True)
@@ -187,3 +191,13 @@ class ReconciliationLedgerPort(Protocol):
         error: str | None = None,
         increment_attempt: bool = False,
     ) -> None: ...
+
+    def summarize_pot_reconciliation(
+        self,
+        pot_id: str,
+        *,
+        recent_failure_limit: int = 5,
+        stuck_step_limit: int = 5,
+    ) -> ReconciliationLedgerHealth:
+        """Per-pot reconciliation run + apply step health (for ``/status``)."""
+        ...

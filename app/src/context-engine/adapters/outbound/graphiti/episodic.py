@@ -19,8 +19,8 @@ from domain.entity_schema import (
     ENTITY_TYPES,
     GRAPHITI_CUSTOM_EXTRACTION_INSTRUCTIONS,
 )
+from adapters.outbound.graphiti.port import EpisodicGraphPort
 from domain.graph_mutations import ProvenanceRef
-from domain.ports.episodic_graph import EpisodicGraphPort
 from domain.ports.settings import ContextEngineSettingsPort
 from domain.reconciliation import EpisodeDraft
 
@@ -246,13 +246,13 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
         except Exception as exc:
             logger.warning("Predicate-family auto-supersede failed: %s", exc)
         try:
-            from adapters.outbound.graphiti.apply_canonical_labels import (
-                apply_episodic_canonical_labels,
+            from adapters.outbound.graphiti.ontology_classifier_pass import (
+                run_ontology_classifier_pass,
             )
 
-            await apply_episodic_canonical_labels(g.driver, pot_id)
+            await run_ontology_classifier_pass(g.driver, pot_id)
         except Exception as exc:
-            logger.warning("Canonical label inference failed: %s", exc)
+            logger.warning("Ontology classifier pass failed: %s", exc)
         try:
             from adapters.outbound.graphiti.family_conflict_detection import (
                 apply_family_conflict_detection,
@@ -831,7 +831,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
             return {"ok": False, "error": str(exc)}
 
     def relabel_nodes_from_edges_for_pot(self, pot_id: str) -> dict[str, Any]:
-        """Backfill canonical labels from episodic edge patterns (idempotent; ignores infer flag)."""
+        """Run the ontology classifier pass as maintenance (idempotent; ignores infer flag)."""
         if not self._enabled:
             return {"ok": False, "error": "graphiti_disabled"}
 
@@ -842,11 +842,11 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
                     "ok": False,
                     "error": self.failure_reason() or "graphiti_unavailable",
                 }
-            from adapters.outbound.graphiti.apply_canonical_labels import (
-                relabel_nodes_from_edges,
+            from adapters.outbound.graphiti.ontology_classifier_pass import (
+                run_ontology_classifier_pass,
             )
 
-            return await relabel_nodes_from_edges(g.driver, pot_id)
+            return await run_ontology_classifier_pass(g.driver, pot_id, force=True)
 
         return self._sync_run(_run)
 

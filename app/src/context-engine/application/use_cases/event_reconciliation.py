@@ -111,6 +111,8 @@ def context_event_row_to_payload(
         "job_id": row.job_id,
         "correlation_id": row.correlation_id,
         "idempotency_key": row.idempotency_key,
+        "source_channel": row.source_channel,
+        "actor": row.actor.to_payload() if row.actor else None,
     }
     if episode_steps is not None:
         out["episode_steps"] = episode_steps
@@ -152,6 +154,7 @@ def ingestion_event_to_payload(
         "correlation_id": ev.correlation_id,
         "idempotency_key": ev.idempotency_key,
         "metadata": ev.metadata,
+        "actor": ev.actor.to_payload() if ev.actor else None,
     }
     if episode_steps is not None:
         out["episode_steps"] = episode_steps

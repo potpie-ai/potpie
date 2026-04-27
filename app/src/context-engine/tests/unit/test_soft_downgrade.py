@@ -156,7 +156,7 @@ def test_strict_overrides_soft_fail(monkeypatch: pytest.MonkeyPatch) -> None:
         validate_reconciliation_plan(plan, "p1")
 
 
-def test_duplicate_entity_key_hard_error() -> None:
+def test_duplicate_entity_keys_are_merged_by_canonicalization() -> None:
     plan = ReconciliationPlan(
         event_ref=_ref(),
         summary="dup",
@@ -168,14 +168,17 @@ def test_duplicate_entity_key_hard_error() -> None:
                 properties={"name": "a"},
             ),
             EntityUpsert(
-                entity_key="same",
+                entity_key="Same",
                 labels=("Entity", "Person"),
                 properties={"name": "b"},
             ),
         ],
     )
-    with pytest.raises(ReconciliationPlanValidationError, match="duplicate entity_key"):
-        validate_reconciliation_plan(plan, "p1")
+    validate_reconciliation_plan(plan, "p1")
+    assert len(plan.entity_upserts) == 1
+    assert plan.entity_upserts[0].entity_key == "same"
+    assert plan.entity_upserts[0].properties["name"] == "a"
+    assert any("canonicalized" in w for w in plan.warnings)
 
 
 def test_invalid_iso_temporal_hard_error() -> None:

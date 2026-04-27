@@ -22,6 +22,7 @@ class BenchmarkDataset:
     pr_bundles: list[dict[str, Any]]
     scenarios: list[dict[str, Any]]
     thresholds: dict[str, Any]
+    linear_issues: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "BenchmarkDataset":
@@ -35,6 +36,7 @@ class BenchmarkDataset:
             pr_bundles=list(data.get("pr_bundles") or []),
             scenarios=list(data.get("scenarios") or []),
             thresholds=dict(data.get("thresholds") or {}),
+            linear_issues=list(data.get("linear_issues") or []),
         )
 
 

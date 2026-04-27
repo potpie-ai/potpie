@@ -92,6 +92,10 @@ class ContextEventModel(Base):
     source_channel: Mapped[str] = mapped_column(
         String(64), nullable=False, default="unknown"
     )
+    actor_user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    actor_surface: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    actor_client_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    actor_auth_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
     dedup_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
     step_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -138,6 +142,16 @@ class ContextEventModel(Base):
             "ix_context_events_pot_status",
             "pot_id",
             "status",
+        ),
+        Index(
+            "ix_context_events_pot_actor",
+            "pot_id",
+            "actor_user_id",
+        ),
+        Index(
+            "ix_context_events_pot_surface",
+            "pot_id",
+            "actor_surface",
         ),
     )
 

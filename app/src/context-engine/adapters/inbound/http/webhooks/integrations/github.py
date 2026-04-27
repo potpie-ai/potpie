@@ -12,6 +12,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 
 from adapters.inbound.http.deps import get_container_or_503
 from adapters.outbound.postgres.session import make_session_factory
+from domain.actor import Actor
 from domain.ingestion_event_models import IngestionSubmissionRequest
 from domain.ingestion_kinds import INGESTION_KIND_GITHUB_MERGED_PR
 
@@ -76,6 +77,19 @@ async def github_webhook(
     if factory is None:
         raise HTTPException(status_code=503, detail="DATABASE_URL not configured")
 
+    delivery_id = (
+        request.headers.get("X-GitHub-Delivery") or payload.get("delivery") or ""
+    ).strip()
+    sender_login = ((pr.get("user") or {}).get("login") or "").strip() or None
+    actor_user_id = (
+        f"webhook:github:{delivery_id}" if delivery_id else "webhook:github:unknown"
+    )
+    actor = Actor(
+        user_id=actor_user_id,
+        surface="webhook",
+        client_name=f"github:{sender_login}" if sender_login else "github",
+        auth_method="webhook_signature",
+    )
     session = factory()
     try:
         svc = container.ingestion_submission(session)
@@ -87,6 +101,7 @@ async def github_webhook(
             event_type="pull_request",
             action="merged",
             payload={"pr_number": int(pr_number), "is_live_bridge": True},
+            actor=actor,
         )
         receipt = svc.submit(req, sync=True)
     finally:

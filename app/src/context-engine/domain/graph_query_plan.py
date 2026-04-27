@@ -45,6 +45,11 @@ class QueryLeg:
     # a misleading empty result.
     requires_scope: frozenset[str] = frozenset()
     compat: bool = False
+    # Optional pre-resolved, family-specific parameters the planner has
+    # computed (e.g. timeline needs ``since``/``until``/``verbs`` that are
+    # derived from the request's ``window`` and ``as_of``). Keeps executors
+    # from re-doing the same normalization.
+    params: dict[str, Any] = field(default_factory=dict)
 
 
 class MergePolicy(StrEnum):

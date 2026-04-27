@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
-from application.use_cases.apply_reconciliation_plan import apply_reconciliation_plan
-from application.use_cases.query_context import search_pot_context
+from adapters.outbound.graphiti.apply_plan import apply_reconciliation_plan
+from adapters.outbound.graphiti.query_helpers import search_pot_context
 from domain.context_events import EventRef
 from domain.graph_mutations import (
     EdgeUpsert,
@@ -337,3 +337,40 @@ def test_context_graph_result_model_dump_keeps_provenance_nested() -> None:
     assert row["provenance"]["event_occurred_at"] == "2026-04-22T09:30:00+00:00"
     # No flattened prov_* keys leaked into top-level row.
     assert not any(k.startswith("prov_") for k in row.keys())
+
+
+def test_context_graph_http_jsonable_converts_neo4j_temporal_values() -> None:
+    from adapters.inbound.http.api.v1.context.router import _context_graph_jsonable
+
+    class Neo4jLikeDateTime:
+        def isoformat(self) -> str:
+            return "2026-04-22T18:49:20.000000000"
+
+    payload = {
+        "result": {
+            "nodes": [
+                {
+                    "properties": {
+                        "created_at": Neo4jLikeDateTime(),
+                    }
+                }
+            ],
+            "edges": [
+                {
+                    "properties": {
+                        "valid_at": Neo4jLikeDateTime(),
+                    }
+                }
+            ],
+        }
+    }
+
+    out = _context_graph_jsonable(payload)
+    assert (
+        out["result"]["nodes"][0]["properties"]["created_at"]
+        == "2026-04-22T18:49:20.000000000"
+    )
+    assert (
+        out["result"]["edges"][0]["properties"]["valid_at"]
+        == "2026-04-22T18:49:20.000000000"
+    )

@@ -1,4 +1,10 @@
-"""Neo4j structural graph read and generic mutation port."""
+"""Neo4j structural graph port (adapter-internal).
+
+Moved in the P3 cleanup out of ``domain/ports/``: application code now
+depends only on :class:`domain.ports.context_graph.ContextGraphPort`,
+and the structural read/write surface is an implementation detail of
+the graphiti adapter stack.
+"""
 
 from typing import Any, Protocol
 
@@ -21,7 +27,22 @@ class StructuralGraphPort(Protocol):
         repo_name: str | None = None,
         pr_number: int | None = None,
         as_of: str | None = None,
+        node_uuids: list[str] | None = None,
     ) -> list[dict[str, Any]]: ...
+
+    def get_timeline(
+        self,
+        pot_id: str,
+        *,
+        since_iso: str,
+        until_iso: str,
+        limit: int,
+        user: str | None = None,
+        feature: str | None = None,
+        file_path: str | None = None,
+        branch: str | None = None,
+        verbs: list[str] | None = None,
+    ) -> dict[str, Any]: ...
 
     def get_file_owners(
         self,
@@ -39,6 +60,7 @@ class StructuralGraphPort(Protocol):
         limit: int,
         repo_name: str | None = None,
         pr_number: int | None = None,
+        node_uuids: list[str] | None = None,
     ) -> list[dict[str, Any]]: ...
 
     def get_pr_review_context(
@@ -75,18 +97,14 @@ class StructuralGraphPort(Protocol):
         query: str | None = None,
     ) -> dict[str, Any]: ...
 
-    def reset_pot(self, pot_id: str) -> dict[str, Any]:
-        """Remove structural graph nodes (``Entity`` / ``FILE`` / ``NODE``) scoped to this pot."""
-        ...
+    def reset_pot(self, pot_id: str) -> dict[str, Any]: ...
 
     def get_graph_overview(
         self,
         pot_id: str,
         *,
         top_entities_limit: int = 20,
-    ) -> dict[str, Any]:
-        """Return aggregate counts per label, per edge type, lifecycle, drift, and top entities."""
-        ...
+    ) -> dict[str, Any]: ...
 
     def upsert_entities(
         self,

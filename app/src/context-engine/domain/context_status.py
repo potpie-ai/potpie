@@ -43,6 +43,37 @@ class EventLedgerHealth:
 
 
 @dataclass(slots=True)
+class ReconciliationLedgerHealth:
+    """Reconciliation pipeline health: runs + apply steps for a pot."""
+
+    run_counts: dict[str, int] = field(default_factory=dict)
+    step_counts: dict[str, int] = field(default_factory=dict)
+    last_run_success_at: datetime | None = None
+    last_run_failure_at: datetime | None = None
+    recent_failed_runs: list[dict[str, Any]] = field(default_factory=list)
+    stuck_step_samples: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class MaintenanceJob:
+    """Recommended maintenance action derived from status inputs."""
+
+    action: str
+    reason: str
+    severity: str = "info"
+    params: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class SourceCapabilityMatrixEntry:
+    """One (provider, source_kind) row in the per-source capability matrix."""
+
+    provider: str
+    source_kind: str
+    capabilities: list[ResolverCapability] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class ResolverCapability:
     """Whether a ``source_policy`` mode is wired end-to-end on this server."""
 
@@ -176,6 +207,143 @@ def status_source_to_payload(
         source_capabilities_for(source, resolver=resolver)
     )
     return payload
+
+
+def reconciliation_ledger_health_to_payload(
+    health: "ReconciliationLedgerHealth",
+) -> dict[str, Any]:
+    return {
+        "run_counts": dict(health.run_counts),
+        "step_counts": dict(health.step_counts),
+        "last_run_success_at": (
+            health.last_run_success_at.isoformat()
+            if health.last_run_success_at
+            else None
+        ),
+        "last_run_failure_at": (
+            health.last_run_failure_at.isoformat()
+            if health.last_run_failure_at
+            else None
+        ),
+        "recent_failed_runs": list(health.recent_failed_runs),
+        "stuck_step_samples": list(health.stuck_step_samples),
+    }
+
+
+def build_source_capability_matrix(
+    sources: Sequence["StatusSource"],
+    *,
+    resolver: ResolverCapabilityAdvertiser | None = None,
+) -> list["SourceCapabilityMatrixEntry"]:
+    """Per-(provider, source_kind) capability matrix for the pot's attached sources.
+
+    Deduplicates by lower-cased ``(provider, source_kind)``: multiple attached
+    sources of the same kind collapse into one matrix row. Each row carries the
+    full four-policy envelope so agents can see — at a glance — whether a
+    particular provider/source_kind can serve ``summary``, ``verify``,
+    ``snippets``, or only ``references_only``.
+    """
+    seen: dict[tuple[str, str], SourceCapabilityMatrixEntry] = {}
+    for s in sources:
+        key = (s.provider.lower(), s.source_kind.lower())
+        if key in seen:
+            continue
+        seen[key] = SourceCapabilityMatrixEntry(
+            provider=s.provider,
+            source_kind=s.source_kind,
+            capabilities=source_capabilities_for(s, resolver=resolver),
+        )
+    return list(seen.values())
+
+
+def source_capability_matrix_to_payload(
+    entries: Iterable["SourceCapabilityMatrixEntry"],
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for e in entries:
+        out.append(
+            {
+                "provider": e.provider,
+                "source_kind": e.source_kind,
+                "capabilities": resolver_capabilities_to_payload(e.capabilities),
+            }
+        )
+    return out
+
+
+def derive_maintenance_jobs(
+    *,
+    event_ledger: "EventLedgerHealth",
+    reconciliation: "ReconciliationLedgerHealth",
+    open_conflicts: Sequence[dict[str, Any]] | None = None,
+) -> list["MaintenanceJob"]:
+    """Recommend concrete maintenance actions from the pot's health signals.
+
+    Keeps the set small and operator-grade: each job names an action an operator
+    can trigger (``events.replay``, ``maintenance.classify-modified-edges``,
+    ``conflicts.resolve``) with the reason and a severity tag so UIs can sort.
+    """
+    jobs: list[MaintenanceJob] = []
+    err_count = int(event_ledger.counts.get("error", 0))
+    if err_count > 0:
+        jobs.append(
+            MaintenanceJob(
+                action="events.replay",
+                reason=f"{err_count} event(s) in error state; replay after investigating.",
+                severity="warning",
+                params={"event_count": err_count},
+            )
+        )
+    failed_runs = int(reconciliation.run_counts.get("failed", 0))
+    if failed_runs > 0:
+        jobs.append(
+            MaintenanceJob(
+                action="reconciliation.retry_failed_runs",
+                reason=f"{failed_runs} reconciliation run(s) failed; consider replaying associated events.",
+                severity="warning",
+                params={"run_count": failed_runs},
+            )
+        )
+    stuck = len(reconciliation.stuck_step_samples)
+    if stuck > 0:
+        jobs.append(
+            MaintenanceJob(
+                action="reconciliation.retry_stuck_steps",
+                reason=f"{stuck} apply step(s) stuck in applying/failed; retry or hard-reset after triage.",
+                severity="warning",
+                params={"step_count": stuck},
+            )
+        )
+    conflicts = list(open_conflicts or [])
+    hard_conflicts = [
+        c for c in conflicts if isinstance(c, dict) and c.get("auto_resolvable") is False
+    ]
+    if hard_conflicts:
+        jobs.append(
+            MaintenanceJob(
+                action="conflicts.resolve",
+                reason=(
+                    f"{len(hard_conflicts)} open predicate-family conflict(s) require manual resolution."
+                ),
+                severity="warning",
+                params={"conflict_count": len(hard_conflicts)},
+            )
+        )
+    return jobs
+
+
+def maintenance_jobs_to_payload(
+    jobs: Iterable["MaintenanceJob"],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "action": j.action,
+            "reason": j.reason,
+            "severity": j.severity,
+            "params": dict(j.params),
+        }
+        for j in jobs
+    ]
 
 
 def event_ledger_health_to_payload(health: EventLedgerHealth) -> dict[str, Any]:

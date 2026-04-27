@@ -5,13 +5,21 @@ from __future__ import annotations
 import logging
 
 from domain.ports.reconciliation_agent import ReconciliationAgentPort
+from domain.ports.reconciliation_tools import ReconciliationToolsPort
 from domain.reconciliation_flags import agent_planner_enabled
 
 logger = logging.getLogger(__name__)
 
 
-def try_pydantic_deep_reconciliation_agent() -> ReconciliationAgentPort | None:
-    """When the agent planner flag allows it (default: on), return a pydantic-deep agent if installed."""
+def try_pydantic_deep_reconciliation_agent(
+    *,
+    tools: ReconciliationToolsPort | None = None,
+) -> ReconciliationAgentPort | None:
+    """When the agent planner flag allows it (default: on), return a pydantic-deep agent if installed.
+
+    Pass ``tools`` to give the agent a bounded read-only context-tool surface
+    (see ``ContextGraphReconciliationTools``).
+    """
     if not agent_planner_enabled():
         return None
     try:
@@ -19,7 +27,7 @@ def try_pydantic_deep_reconciliation_agent() -> ReconciliationAgentPort | None:
             PydanticDeepReconciliationAgent,
         )
 
-        return PydanticDeepReconciliationAgent()
+        return PydanticDeepReconciliationAgent(tools=tools)
     except ImportError:
         logger.warning(
             "Agent planner is enabled but pydantic-deep is not installed; "

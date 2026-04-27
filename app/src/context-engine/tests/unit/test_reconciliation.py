@@ -9,7 +9,7 @@ from adapters.outbound.reconciliation.github_pr_plan import (
     build_github_pr_merged_plan,
 )
 from application.use_cases.ingest_merged_pr import ingest_merged_pull_request
-from application.use_cases.apply_reconciliation_plan import apply_reconciliation_plan
+from adapters.outbound.graphiti.apply_plan import apply_reconciliation_plan
 from application.use_cases.reconcile_event import reconcile_event
 from application.use_cases.agent_work_capture import bind_agent_work_recorder
 from application.use_cases.reconciliation_validation import validate_reconciliation_plan

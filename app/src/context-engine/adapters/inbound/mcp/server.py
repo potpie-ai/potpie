@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timezone
 
 from mcp.server.fastmcp import FastMCP
@@ -22,10 +23,25 @@ logger = logging.getLogger(__name__)
 mcp = FastMCP("potpie")
 
 
+def _mcp_client_name() -> str:
+    """Identify the enclosing MCP client (e.g. ``claude-code``, ``cursor``)."""
+    for var in (
+        "POTPIE_CLIENT_NAME",
+        "MCP_CLIENT_NAME",
+        "CONTEXT_ENGINE_CLIENT_NAME",
+    ):
+        v = os.getenv(var)
+        if v and v.strip():
+            return v.strip()
+    return "mcp-unknown"
+
+
 def _client() -> PotpieContextApiClient:
     return PotpieContextApiClient(
         resolve_potpie_api_base_url(),
         resolve_potpie_api_key(),
+        client_surface="mcp",
+        client_name=_mcp_client_name(),
     )
 
 

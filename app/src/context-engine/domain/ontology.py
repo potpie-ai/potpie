@@ -15,7 +15,7 @@ from typing import Iterable
 from domain.graph_mutations import EdgeDelete, EdgeUpsert, EntityUpsert
 from domain.source_references import validate_source_reference_properties
 
-ONTOLOGY_VERSION = "2026-04-phase-7"
+ONTOLOGY_VERSION = "2026-04-phase-8-timeline"
 
 
 class LifecycleStatus(StrEnum):
@@ -493,6 +493,26 @@ ENTITY_TYPES: dict[str, EntityTypeSpec] = {
         ("name", "pattern_type"),
         COMMON_LIFECYCLE_STATES,
     ),
+    "Activity": _spec(
+        "Activity",
+        "timeline",
+        "An atomic happening in the project timeline: a verb performed by an actor "
+        "at a point in time, touching zero or more subjects. Emitted by ingestion "
+        "for every source event (PR merged, issue updated, commit authored, "
+        "deployment, agent episode, etc).",
+        "source system plus deterministic activity slug",
+        ("verb", "occurred_at", "summary"),
+        frozenset({"in_progress", "completed", "unknown"}),
+    ),
+    "Period": _spec(
+        "Period",
+        "timeline",
+        "Rollup time-window aggregating Activities for fast pulse reads "
+        "(daily/weekly bucket, or user-declared named window).",
+        "period kind plus pot-scoped label",
+        ("label", "period_kind", "opened_at"),
+        frozenset({"open", "closed", "unknown"}),
+    ),
 }
 
 
@@ -938,6 +958,30 @@ EDGE_TYPES: dict[str, EdgeTypeSpec] = {
         "Decision or policy governs a scope or component.",
         [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
     ),
+    # --- Timeline subgraph --------------------------------------------------
+    "PERFORMED": _edge(
+        "PERFORMED",
+        "Actor (Person, Agent, or Team) performed a timeline Activity.",
+        [
+            ("Person", "Activity"),
+            ("Agent", "Activity"),
+            ("Team", "Activity"),
+        ],
+        ("valid_from",),
+    ),
+    "TOUCHED": _edge(
+        "TOUCHED",
+        "Timeline Activity touched or affected a subject entity. Wildcard target "
+        "so any subject (PR, Commit, Issue, Feature, CodeAsset, Service, ...) "
+        "can be wired into the timeline.",
+        [("Activity", WILDCARD_ENDPOINT)],
+        ("valid_from",),
+    ),
+    "IN_PERIOD": _edge(
+        "IN_PERIOD",
+        "Timeline Activity falls within a Period rollup bucket.",
+        [("Activity", "Period")],
+    ),
 }
 
 
@@ -965,15 +1009,72 @@ def normalize_graphiti_edge_name(name: str) -> str:
     return name.strip().upper().replace(" ", "_").replace("-", "_")
 
 
-# Episodic edge endpoint → canonical node labels (see docs/context-graph-improvements/03).
-# Key: (normalized RELATES_TO.name, "source" | "target") → labels to add on that endpoint.
-# Omit ambiguous rows (multiple equally valid ontology labels → no inference).
+# Edge endpoint → canonical node label inference.
+# Key: (normalized edge name, "source" | "target") → labels to add on that endpoint.
+# Two sources feed this table:
+#   1. Graphiti episodic extraction verbs (RELATES_TO.name) — fire in the post-ingest
+#      ontology classifier pass on Neo4j.
+#   2. Canonical ontology edge types (EDGE_TYPES) — fire in the reconciliation-plan
+#      enrichment path before structural writes.
+# Only include rows where the edge type forces a unique canonical label on that
+# endpoint. Ambiguous predicates (e.g. FIXES target = Issue or Incident) are omitted
+# so the classifier never lies.
 EDGE_ENDPOINT_INFERRED_LABELS: dict[tuple[str, str], tuple[str, ...]] = {
+    # --- Episodic extraction verbs --------------------------------------------------
     ("DECIDES_FOR", "target"): ("Decision",),
     ("CAUSED", "target"): ("Incident",),
     ("DEPLOYED_TO", "target"): ("Deployment",),
     ("DEPRECATED", "target"): ("LegacyArtifact",),
     ("DECOMMISSIONED", "target"): ("LegacyArtifact",),
+    ("AUTHORED_BY", "target"): ("Person",),
+    ("STORED_IN", "target"): ("DataStore",),
+    ("PART_OF_FEATURE", "target"): ("Feature",),
+    ("REPLACES", "target"): ("LegacyArtifact",),
+    # --- Canonical ontology edges ---------------------------------------------------
+    # Change / decision
+    ("ADDRESSES", "target"): ("Issue",),
+    ("HAS_COMMIT", "target"): ("Commit",),
+    ("HAS_REVIEW_DECISION", "target"): ("Decision",),
+    ("MADE_IN", "source"): ("Decision",),
+    ("AFFECTS", "source"): ("Decision",),
+    ("AFFECTS_CODE", "source"): ("Decision",),
+    ("RESULTED_IN", "target"): ("Decision",),
+    ("MODIFIED", "source"): ("PullRequest",),
+    # Product / architecture
+    ("HAS_FUNCTIONALITY", "target"): ("Functionality",),
+    ("IMPLEMENTS", "target"): ("Capability",),
+    ("EXPOSES", "target"): ("Interface",),
+    ("USES_DATA_STORE", "target"): ("DataStore",),
+    ("MEMBER_OF", "target"): ("Team",),
+    # Constraints / preferences / policy
+    ("APPLIES_TO", "source"): ("Constraint",),
+    ("PREFERRED_FOR", "source"): ("Preference",),
+    ("INFORMS", "source"): ("AgentInstruction",),
+    ("CONFIGURES", "source"): ("ConfigVariable",),
+    # Delivery / operations
+    ("TARGETS", "source"): ("Deployment",),
+    ("DEPLOYED_AS", "source"): ("Branch",),
+    ("DEPLOYED_AS", "target"): ("Deployment",),
+    # Debugging / reliability
+    ("INDICATES", "source"): ("Alert",),
+    ("INDICATES", "target"): ("Incident",),
+    ("FIRED_IN", "source"): ("Alert",),
+    ("FIRED_IN", "target"): ("Environment",),
+    ("MATCHES_PATTERN", "target"): ("BugPattern",),
+    ("OBSERVED_IN", "source"): ("DiagnosticSignal",),
+    ("RESOLVED", "source"): ("Fix",),
+    ("CHANGED_BY", "source"): ("Fix",),
+    ("HAS_SIGNAL", "target"): ("DiagnosticSignal",),
+    ("HAS_ROOT_CAUSE", "target"): ("Observation",),
+    ("SEEN_IN", "source"): ("BugPattern",),
+    ("DEBUGGED", "source"): ("Investigation",),
+    # Evidence / provenance / quality
+    ("EVIDENCED_BY", "target"): ("SourceReference",),
+    ("FROM_SOURCE", "source"): ("SourceReference",),
+    ("FROM_SOURCE", "target"): ("SourceSystem",),
+    ("FLAGS", "source"): ("QualityIssue",),
+    ("REPAIRS", "source"): ("MaintenanceJob",),
+    ("MATERIALIZES", "source"): ("MaterializedAccessPath",),
 }
 
 

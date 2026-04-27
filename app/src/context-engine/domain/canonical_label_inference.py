@@ -1,6 +1,11 @@
-"""Merge canonical node labels from episodic edge patterns into reconciliation plans.
+"""Enrich a ``ReconciliationPlan`` with canonical labels inferred by the classifier.
 
-See docs/context-graph-improvements/03-canonical-node-labels.md
+Plan path runs before structural writes; it shares the same
+``ontology_classifier.classify_entity`` engine as the post-Graphiti Neo4j pass
+so the vocabulary pinning is identical regardless of which path produced the
+mutation.
+
+See docs/context-graph-improvements/03-canonical-node-labels.md.
 """
 
 from __future__ import annotations
@@ -8,13 +13,8 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-from domain.graph_mutations import EntityUpsert
-from domain.ontology import (
-    ENTITY_TYPES,
-    canonical_entity_labels,
-    inferred_labels_for_episodic_edge_endpoint,
-    is_canonical_entity_label,
-)
+from domain.ontology import ENTITY_TYPES, canonical_entity_labels
+from domain.ontology_classifier import build_signals, classify_entity
 from domain.reconciliation import ReconciliationPlan
 
 
@@ -50,29 +50,30 @@ def _ensure_required_properties_for_label(
 
 
 def enrich_reconciliation_plan_entity_labels(plan: ReconciliationPlan) -> None:
-    """Augment ``entity_upserts`` with labels implied by ``edge_upserts`` (in-place)."""
-    additions: dict[str, set[str]] = defaultdict(set)
+    """Augment ``entity_upserts`` with labels inferred by the shared classifier (in-place)."""
+    outgoing: dict[str, set[str]] = defaultdict(set)
+    incoming: dict[str, set[str]] = defaultdict(set)
     for edge in plan.edge_upserts:
-        for lbl in inferred_labels_for_episodic_edge_endpoint(edge.edge_type, "source"):
-            additions[edge.from_entity_key].add(lbl)
-        for lbl in inferred_labels_for_episodic_edge_endpoint(edge.edge_type, "target"):
-            additions[edge.to_entity_key].add(lbl)
-    if not additions:
-        return
+        outgoing[edge.from_entity_key].add(edge.edge_type)
+        incoming[edge.to_entity_key].add(edge.edge_type)
 
-    by_key = {eu.entity_key: eu for eu in plan.entity_upserts}
-    for entity_key, new_labels in additions.items():
-        ent = by_key.get(entity_key)
-        if ent is None:
+    for ent in plan.entity_upserts:
+        signals = build_signals(
+            labels=ent.labels,
+            properties=ent.properties,
+            outgoing_edge_names=outgoing.get(ent.entity_key, ()),
+            incoming_edge_names=incoming.get(ent.entity_key, ()),
+        )
+        additions = classify_entity(signals)
+        if not additions:
             continue
+
         prior_canonical = frozenset(canonical_entity_labels(ent.labels))
         merged = set(ent.labels)
-        for lbl in new_labels:
-            if not is_canonical_entity_label(lbl):
-                continue
-            merged.add(lbl)
-            if lbl not in prior_canonical:
-                props = dict(ent.properties)
-                _ensure_required_properties_for_label(props, lbl, entity_key)
-                ent.properties = props
+        props = dict(ent.properties)
+        for label in additions:
+            merged.add(label)
+            if label not in prior_canonical:
+                _ensure_required_properties_for_label(props, label, ent.entity_key)
+        ent.properties = props
         ent.labels = tuple(sorted(merged))

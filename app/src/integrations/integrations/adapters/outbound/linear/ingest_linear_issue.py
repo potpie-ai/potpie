@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from adapters.outbound.graphiti.port import EpisodicGraphPort
 from domain.ingestion import IngestionResult
-from domain.ports.episodic_graph import EpisodicGraphPort
 from domain.ports.ingestion_ledger import IngestionLedgerPort, LedgerScope
 
 from integrations.adapters.outbound.linear.episodes import build_linear_issue_episode
