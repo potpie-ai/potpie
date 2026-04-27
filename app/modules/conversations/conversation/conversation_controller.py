@@ -188,6 +188,22 @@ class ConversationController:
         except ConversationServiceError as e:
             raise HTTPException(status_code=500, detail=str(e))
 
+    async def update_agent(
+        self, conversation_id: str, agent_id: str
+    ) -> ConversationInfoResponse:
+        try:
+            return await self.service.update_conversation_agent(
+                conversation_id, agent_id, self.user_id
+            )
+        except ConversationNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except AccessTypeNotFoundError as e:
+            raise HTTPException(status_code=401, detail=str(e))
+        except AccessTypeReadError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except ConversationServiceError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
     async def get_conversations_for_user(
         self,
         start: int,

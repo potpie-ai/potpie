@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
+from contextlib import asynccontextmanager
+
 import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -76,7 +78,15 @@ class MainApp:
             exit(1)
         self.setup_sentry()
         self.setup_tracing()
-        self.app = FastAPI()
+
+        @asynccontextmanager
+        async def lifespan(_app: FastAPI):
+            _app.state.main_app = self
+            await self.startup_event()
+            yield
+            await self.shutdown_event()
+
+        self.app = FastAPI(lifespan=lifespan)
         self.setup_cors()
         self.setup_logging_middleware()
         self.setup_socket_io()
@@ -275,6 +285,7 @@ class MainApp:
                 close_github_async_redis_cache,
                 GithubService,
             )
+
             await close_github_async_redis_cache()
             GithubService.shutdown_executor()
         except Exception as e:
@@ -282,8 +293,6 @@ class MainApp:
 
     def run(self):
         self.add_health_check()
-        self.app.add_event_handler("startup", self.startup_event)
-        self.app.add_event_handler("shutdown", self.shutdown_event)
         return self.app
 
 

@@ -100,6 +100,10 @@ class ChatContext(BaseModel):
     )
     # Context images from recent conversation history
     context_images: Optional[Dict[str, Dict[str, Union[str, int]]]] = None
+    # Multimodal support - documents attached to the current message
+    document_attachments: Optional[Dict[str, Dict[str, Union[str, int]]]] = (
+        None  # attachment_id -> {base64, mime_type, file_name, file_size, etc}
+    )
     # Optional callback for cooperative cancellation (stop API). Set by Celery task.
     check_cancelled: Optional[Callable[[], bool]] = Field(default=None, exclude=True)
 
@@ -135,6 +139,26 @@ class ChatContext(BaseModel):
     def get_context_images_only(self) -> Dict[str, Dict[str, Union[str, int]]]:
         """Get only historical context images"""
         return self.context_images if self.context_images else {}
+
+    def has_documents(self) -> bool:
+        """Check if this context contains any documents"""
+        return bool(self.document_attachments)
+
+    def get_all_documents(self) -> Dict[str, Dict[str, Union[str, int]]]:
+        """Get all documents (current message only) with metadata"""
+        if not self.document_attachments:
+            return {}
+        all_docs = {}
+        for doc_id, doc_data in self.document_attachments.items():
+            doc_data_with_context = doc_data.copy()
+            doc_data_with_context["context_type"] = "current_message"
+            doc_data_with_context["relevance"] = "high"
+            all_docs[doc_id] = doc_data_with_context
+        return all_docs
+
+    def get_current_documents_only(self) -> Dict[str, Dict[str, Union[str, int]]]:
+        """Get only current message documents without historical context"""
+        return self.document_attachments if self.document_attachments else {}
 
 
 class ChatAgent(ABC):

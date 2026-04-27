@@ -260,24 +260,20 @@ def logfire_trace_metadata(**kwargs: Any):
     try:
         import logfire
 
-        baggage = logfire.set_baggage(**str_attrs)
-        baggage.__enter__()
+        baggage_cm = logfire.set_baggage(**str_attrs)
     except Exception as e:
         logger.debug(
             "Logfire set_baggage failed (non-fatal)",
             error=str(e),
         )
+        # If baggage setup itself fails, continue without baggage.
         yield
         return
 
-    try:
+    # Let exceptions from the wrapped block propagate naturally.
+    # Catching them here and yielding again breaks contextmanager protocol.
+    with baggage_cm:
         yield
-    except BaseException as exc:
-        suppress = baggage.__exit__(type(exc), exc, exc.__traceback__)
-        if not suppress:
-            raise
-    else:
-        baggage.__exit__(None, None, None)
 
 
 @contextmanager

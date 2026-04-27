@@ -29,6 +29,7 @@ dependencies = [
     "gunicorn>=23.0.0",
     "httpx>=0.28.1",
     "instructor>=1.13.0",
+    "mistralai<2.0.0",  # >=2.0.0 breaks instructor import compatibility
     "jiter>=0.11.1",
     "joblib>=1.5.2",
     "kombu>=5.5.4",
@@ -51,6 +52,7 @@ dependencies = [
     "pydantic-ai>=1.56.0",
     "pydantic-ai-todo>=0.1.6",
     "pydantic[email]>=2.12.4",
+    "qdrant-client>=1.12.0",
     "pygithub>=2.8.1",
     "pygments>=2.20.0",
     "pyjwt>=2.12.1",
@@ -83,7 +85,13 @@ dependencies = [
     "tldextract>=5.3.1",
     "hatchet-sdk>=1.29.0",
     "typer>=0.15.0",
+    "parsing",
 ]
+
+[tool.uv.sources]
+parsing = { path = "app/src/parsing" }
+context-engine = { path = "app/src/context-engine", editable = true }
+potpie-integrations = { path = "app/src/integrations", editable = true }
 
 [project.scripts]
 potpie-seed = "seed.cli:main"
@@ -270,7 +278,3 @@ show_missing = true
 # Enforce minimum coverage on PRs: full run (unit+integration) must be >= 49%.
 # Unit-only phase ~30%; run_tests.py passes --cov-fail-under=0 for non-final phases.
 fail_under = 49
-
-[tool.uv.sources]
-context-engine = { path = "app/src/context-engine", editable = true }
-potpie-integrations = { path = "app/src/integrations", editable = true }

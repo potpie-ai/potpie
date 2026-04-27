@@ -216,16 +216,19 @@ class PydanticMultiAgent(ChatAgent):
             branch=getattr(ctx, "branch", None),
         )
 
-        # Check if we have images and if the model supports vision
-        if ctx.has_images() and self.llm_provider.is_vision_model():
+        # Check if we have images or documents and if the model supports vision
+        has_multimodal_content = ctx.has_images() or ctx.has_documents()
+        if has_multimodal_content and self.llm_provider.is_vision_model():
+            image_count = len(ctx.get_all_images()) if ctx.has_images() else 0
+            doc_count = len(ctx.get_all_documents()) if ctx.has_documents() else 0
             logger.info(
-                f"Processing {len(ctx.get_all_images())} images with PydanticAI multimodal multi-agent"
+                f"Processing multimodal content with PydanticAI: {image_count} images, {doc_count} documents"
             )
             return await self._multimodal_flow.run(ctx)
         else:
-            if ctx.has_images() and not self.llm_provider.is_vision_model():
+            if has_multimodal_content and not self.llm_provider.is_vision_model():
                 logger.warning(
-                    "Images provided but current model doesn't support vision, proceeding with text-only"
+                    "Multimodal content provided but current model doesn't support vision, proceeding with text-only"
                 )
             # Use standard PydanticAI multi-agent for text-only
             return await self._standard_flow.run(ctx)
@@ -258,17 +261,20 @@ class PydanticMultiAgent(ChatAgent):
             branch=getattr(ctx, "branch", None),
         )
 
-        # Check if we have images and if the model supports vision
-        if ctx.has_images() and self.llm_provider.is_vision_model():
+        # Check if we have images or documents and if the model supports vision
+        has_multimodal_content = ctx.has_images() or ctx.has_documents()
+        if has_multimodal_content and self.llm_provider.is_vision_model():
+            image_count = len(ctx.get_all_images()) if ctx.has_images() else 0
+            doc_count = len(ctx.get_all_documents()) if ctx.has_documents() else 0
             logger.info(
-                f"Processing {len(ctx.get_all_images())} images with PydanticAI multimodal multi-agent streaming"
+                f"Processing multimodal content with PydanticAI: {image_count} images, {doc_count} documents"
             )
             async for chunk in self._multimodal_streaming_flow.run_stream(ctx):
                 yield chunk
         else:
-            if ctx.has_images() and not self.llm_provider.is_vision_model():
+            if has_multimodal_content and not self.llm_provider.is_vision_model():
                 logger.warning(
-                    "Images provided but current model doesn't support vision, proceeding with text-only streaming"
+                    "Multimodal content provided but current model doesn't support vision, proceeding with text-only streaming"
                 )
             # Use standard PydanticAI multi-agent streaming for text-only
             async for chunk in self._streaming_flow.run_stream(ctx):

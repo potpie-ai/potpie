@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import time
@@ -404,6 +405,31 @@ class ConversationService:
 
             await self._add_system_message(conversation_id, project_name, user_id)
 
+            # Carry forward attachments sent during conversation creation.
+            # This ensures the first user message can reuse them even if the client
+            # sends only text on redirect from newchat -> chat.
+            if conversation.attachment_ids:
+                try:
+                    if self.async_redis_manager:
+                        await self.async_redis_manager.redis_client.set(
+                            f"conversation:pending_attachments:{conversation_id}",
+                            json.dumps(conversation.attachment_ids),
+                            ex=3600,
+                        )
+                    else:
+                        self.redis_manager.redis_client.set(
+                            f"conversation:pending_attachments:{conversation_id}",
+                            json.dumps(conversation.attachment_ids),
+                            ex=3600,
+                        )
+                    logger.info(
+                        f"Stored {len(conversation.attachment_ids)} pending attachments for conversation {conversation_id}"
+                    )
+                except Exception:
+                    logger.exception(
+                        f"Failed to store pending attachments for conversation {conversation_id}"
+                    )
+
             return conversation_id, "Conversation created successfully."
         except IntegrityError as e:
             logger.exception("IntegrityError in create_conversation", user_id=user_id)
@@ -734,6 +760,53 @@ class ConversationService:
             )
             if access_level == ConversationAccessType.READ:
                 raise AccessTypeReadError("Access denied.")
+            if message_type == MessageType.HUMAN and not message.attachment_ids:
+                # Backward-compatible fallback for first message after create_conversation
+                # when attachment IDs were provided only at conversation creation time.
+                conversation = await self._get_conversation_with_message_count(
+                    conversation_id
+                )
+                is_first_human_turn = bool(conversation) and (
+                    conversation.human_message_count == 0
+                )
+                if is_first_human_turn:
+                    try:
+                        pending_key = (
+                            f"conversation:pending_attachments:{conversation_id}"
+                        )
+                        pending_raw = None
+                        if self.async_redis_manager:
+                            pending_raw = (
+                                await self.async_redis_manager.redis_client.get(
+                                    pending_key
+                                )
+                            )
+                        else:
+                            pending_raw = self.redis_manager.redis_client.get(
+                                pending_key
+                            )
+                        if pending_raw:
+                            pending_value = (
+                                pending_raw.decode("utf-8")
+                                if isinstance(pending_raw, bytes)
+                                else pending_raw
+                            )
+                            parsed = json.loads(pending_value)
+                            if isinstance(parsed, list) and parsed:
+                                message.attachment_ids = parsed
+                                logger.info(
+                                    f"Applied {len(parsed)} pending attachments to first message in conversation {conversation_id}"
+                                )
+                                if self.async_redis_manager:
+                                    await self.async_redis_manager.redis_client.delete(
+                                        pending_key
+                                    )
+                                else:
+                                    self.redis_manager.redis_client.delete(pending_key)
+                    except Exception:
+                        logger.exception(
+                            f"Failed to load pending attachments for conversation {conversation_id}"
+                        )
             self._history_add_message_chunk(
                 conversation_id, message.content, message_type, user_id
             )
@@ -975,20 +1048,20 @@ class ConversationService:
                     attachments = await self.media_service.get_message_attachments(
                         last_human_message.id, include_download_urls=False
                     )
-                    # Extract only image attachment IDs for multimodal processing
+                    # Extract both image and document attachment IDs for multimodal processing
                     from app.modules.media.media_model import AttachmentType
 
                     attachment_ids = [
                         att.id
                         for att in attachments
-                        if att.attachment_type == AttachmentType.IMAGE
+                        if att.attachment_type in (AttachmentType.IMAGE, AttachmentType.DOCUMENT)
                     ]
                     if attachment_ids:
                         logger.info(
-                            f"Found {len(attachment_ids)} image attachments for regeneration: {attachment_ids}"
+                            f"Found {len(attachment_ids)} attachments (images + documents) for regeneration: {attachment_ids}"
                         )
                     else:
-                        logger.info("No image attachments found in last human message")
+                        logger.info("No attachments found in last human message")
                 except Exception as e:
                     logger.warning(
                         f"Failed to retrieve attachments for message {last_human_message.id}: {e}"
@@ -1225,14 +1298,31 @@ class ConversationService:
 
             # Prepare multimodal context - use current message attachments if available
             image_attachments = None
+            document_attachments = None
+            logger.info(
+                f"[_generate_and_stream_ai_response] Received attachment_ids: {attachment_ids}"
+            )
             if attachment_ids:
                 image_attachments = await self._prepare_attachments_as_images(
                     attachment_ids
                 )
+                document_attachments = await self._prepare_attachments_as_documents(
+                    attachment_ids
+                )
+                logger.info(f"[_generate_and_stream_ai_response] Prepared image_attachments: {len(image_attachments) if image_attachments else 0}, document_attachments: {len(document_attachments) if document_attachments else 0}")
 
             # Also get context images from recent conversation history
             context_images = await self._prepare_conversation_context_images(
                 conversation_id
+            )
+
+            # Log vision model check for debugging
+            is_vision = self.agent_service.llm_provider.is_vision_model()
+            logger.info(
+                f"[_generate_and_stream_ai_response] Vision model check: {is_vision}, "
+                f"has_images: {bool(image_attachments or context_images)}, "
+                f"has_documents: {bool(document_attachments)}, "
+                f"attachment_ids_count: {len(attachment_ids) if attachment_ids else 0}"
             )
 
             logger.info(
@@ -1272,6 +1362,9 @@ class ConversationService:
                         else project_name
                     ),
                     branch=project_info.get("branch_name") if project_info else None,
+                    image_attachments=image_attachments,
+                    context_images=context_images,
+                    document_attachments=document_attachments,
                 )
                 custom_ctx.check_cancelled = check_cancelled
                 res = (
@@ -1336,6 +1429,7 @@ class ConversationService:
                     project_status=project_status,
                     image_attachments=image_attachments,
                     context_images=context_images,
+                    document_attachments=document_attachments,
                     conversation_id=conversation_id,
                     user_id=user_id,  # Set user_id for tunnel routing
                     tunnel_url=tunnel_url,  # Tunnel URL from request (takes priority)
@@ -1439,13 +1533,27 @@ class ConversationService:
                 try:
                     # Get attachment info
                     attachment = await self.media_service.get_attachment(attachment_id)
+                    if not attachment:
+                        logger.info(
+                            f"DEBUG: Skipping attachment {attachment_id} - not found"
+                        )
+                        continue
+
                     logger.info(
-                        f"DEBUG: Retrieved attachment {attachment_id}: type={attachment.attachment_type.value if attachment else 'None'}, mime_type={attachment.mime_type if attachment else 'None'}"
+                        f"DEBUG: Retrieved attachment {attachment_id}: "
+                        f"type={attachment.attachment_type.value}, mime_type={attachment.mime_type}"
                     )
-                    if (
-                        attachment
-                        and attachment.attachment_type.value.upper() == "IMAGE"
-                    ):  # Check if it's an image
+                    is_image_record = (
+                        attachment.attachment_type.value.upper() == "IMAGE"
+                    )
+                    # Pre-upload via /media/upload can store as DOCUMENT if Content-Type was
+                    # missing or not in the allowlist; still treat image/* as vision input.
+                    is_image_mime = (
+                        attachment.mime_type
+                        and attachment.mime_type.startswith("image/")
+                    )
+
+                    if is_image_record:
                         base64_data = await self.media_service.get_image_as_base64(
                             attachment_id
                         )
@@ -1457,6 +1565,21 @@ class ConversationService:
                         }
                         logger.info(
                             f"Prepared image {attachment_id} ({attachment.file_name}) for multimodal processing"
+                        )
+                    elif is_image_mime:
+                        raw = await self.media_service.get_attachment_data(
+                            attachment_id
+                        )
+                        base64_data = base64.b64encode(raw).decode("utf-8")
+                        images[attachment_id] = {
+                            "base64": base64_data,
+                            "mime_type": attachment.mime_type,
+                            "file_name": attachment.file_name,
+                            "file_size": attachment.file_size,
+                        }
+                        logger.info(
+                            f"Prepared image {attachment_id} ({attachment.file_name}) "
+                            f"as DOCUMENT+image/* for multimodal processing"
                         )
                     else:
                         logger.info(
@@ -1476,6 +1599,73 @@ class ConversationService:
 
         except Exception:
             logger.exception("Error preparing attachments as images")
+            return None
+
+    async def _prepare_attachments_as_documents(
+        self, attachment_ids: List[str]
+    ) -> Optional[Dict[str, Dict[str, Union[str, int]]]]:
+        """Convert attachment IDs to base64 documents for multimodal processing"""
+        try:
+            if not attachment_ids:
+                return None
+
+            documents = {}
+            for attachment_id in attachment_ids:
+                try:
+                    # Get attachment info
+                    attachment = await self.media_service.get_attachment(attachment_id)
+                    logger.info(
+                        f"DEBUG: Retrieved attachment {attachment_id}: type={attachment.attachment_type.value if attachment else 'None'}, mime_type={attachment.mime_type if attachment else 'None'}"
+                    )
+                    if (
+                        attachment
+                        and attachment.attachment_type.value.upper() == "DOCUMENT"
+                        # Avoid duplicating image bytes already handled as vision input
+                        and not (
+                            attachment.mime_type
+                            and attachment.mime_type.startswith("image/")
+                        )
+                    ):  # Check if it's a document
+                        # Get document data as base64
+                        doc_data = await self.media_service.get_attachment_data(attachment_id)
+                        base64_data = base64.b64encode(doc_data).decode("utf-8")
+                        document_url = None
+                        try:
+                            document_url = await self.media_service.generate_signed_url(
+                                attachment_id, expiration_minutes=60
+                            )
+                        except Exception as url_exc:
+                            logger.warning(
+                                f"Failed to generate signed URL for document {attachment_id}: {url_exc}"
+                            )
+                        documents[attachment_id] = {
+                            "base64": base64_data,
+                            "mime_type": attachment.mime_type,
+                            "file_name": attachment.file_name,
+                            "file_size": attachment.file_size,
+                            "url": document_url,
+                        }
+                        logger.info(
+                            f"Prepared document {attachment_id} ({attachment.file_name}) for multimodal processing"
+                        )
+                    else:
+                        logger.info(
+                            f"DEBUG: Skipping attachment {attachment_id} - not a document or attachment not found"
+                        )
+                except Exception:
+                    logger.exception(
+                        f"Failed to prepare attachment {attachment_id} as document",
+                        attachment_id=attachment_id,
+                    )
+                    continue
+
+            logger.info(
+                f"Prepared {len(documents)} documents from {len(attachment_ids)} attachments for multimodal processing"
+            )
+            return documents if documents else None
+
+        except Exception:
+            logger.exception("Error preparing attachments as documents")
             return None
 
     async def _prepare_current_message_images(
@@ -1994,6 +2184,69 @@ class ConversationService:
             )
             raise ConversationServiceError(
                 "Failed to rename conversation due to an unexpected error"
+            ) from e
+
+    async def update_conversation_agent(
+        self, conversation_id: str, agent_id: str, user_id: str
+    ) -> ConversationInfoResponse:
+        try:
+            conversation = await self.conversation_store.get_by_id(conversation_id)
+
+            if not conversation:
+                logger.warning(f"Conversation {conversation_id} not found in database")
+                raise ConversationNotFoundError(
+                    f"Conversation with id {conversation_id} not found"
+                )
+
+            access_type = await self.check_conversation_access(
+                conversation_id, self.user_email, user_id
+            )
+
+            if access_type == ConversationAccessType.NOT_FOUND:
+                logger.bind(conversation_id=conversation_id, user_id=user_id).error(
+                    f"Access denied - access type is NOT_FOUND for user {user_id} on conversation {conversation_id}"
+                )
+                raise AccessTypeNotFoundError("Access type not found")
+
+            if access_type == ConversationAccessType.READ:
+                logger.bind(conversation_id=conversation_id, user_id=user_id).error(
+                    f"Access denied - access type is READ for user {user_id} on conversation {conversation_id}"
+                )
+                raise AccessTypeReadError("Access denied.")
+
+            if not await self.agent_service.validate_agent_id(user_id, agent_id):
+                raise ConversationServiceError(f"Invalid agent_id: {agent_id}")
+
+            await self.conversation_store.update_agent_ids(
+                conversation_id, [agent_id]
+            )
+
+            logger.info(
+                f"Updated conversation {conversation_id} agent to {agent_id} by user {user_id}"
+            )
+
+            return await self.get_conversation_info(conversation_id, user_id)
+
+        except ConversationNotFoundError as e:
+            logger.warning(f"ConversationNotFoundError: {str(e)}")
+            raise
+        except AccessTypeNotFoundError:
+            logger.exception(
+                f"AccessTypeNotFoundError in update_conversation_agent for {conversation_id}",
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
+            raise
+        except ConversationServiceError:
+            raise
+        except Exception as e:
+            logger.exception(
+                f"Error in update_conversation_agent for {conversation_id}",
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
+            raise ConversationServiceError(
+                f"Failed to update conversation agent for {conversation_id}"
             ) from e
 
     async def get_conversations_with_projects_for_user(

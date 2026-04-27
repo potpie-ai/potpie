@@ -1894,6 +1894,7 @@ class ParseHelper:
             )
 
             try:
+                _, _, Repo = _get_git_imports()
                 # Clone as bare repository
                 Repo.clone_from(
                     clone_url,
@@ -1911,7 +1912,6 @@ class ParseHelper:
                 )
 
                 # Configure the bare repo to fetch all refs
-                _, _, Repo = _get_git_imports()
                 bare_repo = Repo(str(bare_repo_path))
                 if bare_repo.remotes:
                     origin = bare_repo.remotes.origin

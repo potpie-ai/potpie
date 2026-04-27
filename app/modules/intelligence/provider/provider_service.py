@@ -1370,6 +1370,7 @@ class ProviderService:
             "gpt-4.1",
             "gpt-4.1-mini",
             "o4-mini",
+            "gpt-5.2",
             # Anthropic models
             "claude-3",
             "claude-3-sonnet",

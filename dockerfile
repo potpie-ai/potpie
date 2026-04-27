@@ -2,10 +2,16 @@
 FROM python:3.11-slim
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y git procps wget curl gnupg2 ca-certificates supervisor && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y git procps wget curl gnupg2 ca-certificates supervisor build-essential && rm -rf /var/lib/apt/lists/*
+
+# Install Rust toolchain for local PyO3/maturin path dependencies
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
 
 # Set the working directory in the container
 WORKDIR /app
+
+# Ensure Rust tooling is available while building Python dependencies
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Install uv.
 COPY --from=ghcr.io/astral-sh/uv:0.9.6 /uv /uvx /bin/
@@ -14,9 +20,10 @@ COPY --from=ghcr.io/astral-sh/uv:0.9.6 /uv /uvx /bin/
 COPY pyproject.toml uv.lock ./
 COPY app/src/context-engine ./app/src/context-engine
 COPY app/src/integrations ./app/src/integrations
+COPY app/src/parsing ./app/src/parsing
 
-# Install project dependencies using uv (creates .venv)
-RUN uv sync --frozen --no-cache
+# Install dependency layers first, including the local Rust extension
+RUN uv sync --frozen --no-install-project
 
 # Ensure the virtual environment binaries are on PATH
 ENV VIRTUAL_ENV=/app/.venv
@@ -34,6 +41,9 @@ RUN curl -fsSL https://gvisor.dev/archive.key | gpg --dearmor -o /usr/share/keyr
 
 # Copy the rest of the application code into the container
 COPY . .
+
+# Install the project after the full source tree is available
+RUN uv sync --frozen
 
 # env path for newrelic.ini
 ENV NEW_RELIC_CONFIG_FILE=/app/newrelic.ini

@@ -20,11 +20,20 @@ class ConfigProvider:
     _neo4j_override: dict | None = None  # Class-level override for library usage
 
     def __init__(self):
+        qdrant_grpc_port = os.getenv("QDRANT_GRPC_PORT")
         # Default URI so Neo4j driver never receives None (raises "URI scheme b'' is not supported")
         self.neo4j_config = {
             "uri": os.getenv("NEO4J_URI") or "bolt://localhost:7687",
             "username": os.getenv("NEO4J_USERNAME") or "",
             "password": os.getenv("NEO4J_PASSWORD") or "",
+        }
+        # Qdrant configuration
+        self.qdrant_config = {
+            "host": os.getenv("QDRANT_HOST") or "localhost",
+            "port": int(os.getenv("QDRANT_PORT") or 6333),
+            "grpc_port": int(qdrant_grpc_port) if qdrant_grpc_port else None,
+            "api_key": os.getenv("QDRANT_API_KEY") or "",
+            "https": os.getenv("QDRANT_HTTPS", "false").lower() == "true",
         }
         self.github_key = os.getenv("GITHUB_PRIVATE_KEY")
         self.is_development_mode = os.getenv("isDevelopmentMode", "disabled")
@@ -72,6 +81,10 @@ class ConfigProvider:
         if ConfigProvider._neo4j_override is not None:
             return ConfigProvider._neo4j_override
         return self.neo4j_config
+
+    def get_qdrant_config(self) -> dict:
+        """Get Qdrant configuration dict."""
+        return self.qdrant_config
 
     def get_github_key(self):
         """Return GitHub App private key, with literal \\n converted to newlines.
