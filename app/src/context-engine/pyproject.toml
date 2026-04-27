@@ -1,0 +1,96 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "context-engine"
+version = "0.1.0"
+description = "Context graph API, webhooks, CLI, and MCP (hexagonal)."
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115.0",
+    "httpx>=0.28.0",
+    "mcp>=1.0.0",
+    "rich>=13.0",
+    "typer>=0.15.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+postgres = [
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.2",
+]
+graph = [
+    "graphiti-core>=0.28.0",
+    "neo4j>=5.28.0",
+]
+github = [
+    "pygithub>=2.8.0",
+]
+reconciliation-agent = [
+    "pydantic-deep>=0.3.0",
+]
+hatchet = [
+    "hatchet-sdk>=1.29.0",
+]
+all = [
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.2",
+    "graphiti-core>=0.28.0",
+    "neo4j>=5.28.0",
+    "pygithub>=2.8.0",
+    "pydantic-deep>=0.3.0",
+    "hatchet-sdk>=1.29.0",
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.8.0",
+]
+
+[project.scripts]
+potpie = "adapters.inbound.cli.main:main"
+potpie-mcp = "adapters.inbound.mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["domain", "application", "adapters", "bootstrap", "benchmarks"]
+include = [
+    "adapters/inbound/cli/templates/**/*.md",
+    "adapters/inbound/cli/templates/**/*.yaml",
+    "scripts/**/*.py",
+    "scripts/**/*.json",
+    "benchmarks/data/**/*.json",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "domain",
+    "application",
+    "adapters",
+    "bootstrap",
+    "benchmarks",
+    "adapters/inbound/cli/templates/**/*.md",
+    "adapters/inbound/cli/templates/**/*.yaml",
+    "scripts/**/*.py",
+    "scripts/**/*.json",
+]
+
+[tool.ruff]
+target-version = "py310"
+src = [".", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short"
+asyncio_mode = "auto"
+markers = [
+    "unit: unit tests",
+]
+
+[dependency-groups]
+dev = [
+    "pytest-cov>=7.1.0",
+]

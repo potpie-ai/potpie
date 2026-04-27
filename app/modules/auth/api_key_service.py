@@ -9,6 +9,7 @@ from google.cloud import secretmanager
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.modules.key_management.storage_config import is_gcp_secret_manager_enabled
 from app.modules.users.user_model import User
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.logger import setup_logger
@@ -30,9 +31,8 @@ class APIKeyService:
             return None, None
 
         # Check if GCP Secret Manager is explicitly disabled
-        gcp_disabled = os.environ.get("GCP_SECRET_MANAGER_DISABLED", "false").lower()
-        if gcp_disabled in ("true", "1", "yes", "enabled"):
-            logger.info("GCP Secret Manager disabled via GCP_SECRET_MANAGER_DISABLED")
+        if not is_gcp_secret_manager_enabled():
+            logger.info("GCP Secret Manager disabled via environment configuration")
             return None, None
 
         project_id = os.environ.get("GCP_PROJECT")

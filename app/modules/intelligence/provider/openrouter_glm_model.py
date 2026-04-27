@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from pydantic_ai.models.openai import OpenAIModel, OpenAIStreamedResponse
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIStreamedResponse
 
 from app.modules.utils.logger import setup_logger
 from app.modules.intelligence.provider.openrouter_usage_context import (
@@ -88,9 +88,9 @@ class OpenRouterGlmStreamedResponse(OpenAIStreamedResponse):
         return super()._map_usage(response)
 
 
-class OpenRouterGlmModel(OpenAIModel):
+class OpenRouterGlmModel(OpenAIChatModel):
     """
-    Custom OpenAIModel variant for OpenRouter-backed GLM models.
+    Custom OpenAIChatModel variant for OpenRouter-backed GLM models.
 
     It uses a custom streamed response class that extracts OpenRouter usage,
     including cost, from stream chunks and pushes it into the Celery task context.

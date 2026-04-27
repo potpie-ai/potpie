@@ -409,6 +409,90 @@ class GitHubProvider(ICodeProvider):
 
         return result
 
+    def get_pull_request_commits(
+        self, repo_name: str, pr_number: int
+    ) -> List[Dict[str, Any]]:
+        """Get commits associated with a pull request."""
+        self._ensure_authenticated()
+
+        repo = self.client.get_repo(repo_name)
+        pr = repo.get_pull(pr_number)
+        commits = []
+        for commit in pr.get_commits():
+            commit_author = None
+            if getattr(commit, "author", None):
+                commit_author = commit.author.login
+            elif getattr(commit, "commit", None) and getattr(commit.commit, "author", None):
+                commit_author = commit.commit.author.name
+
+            committed_at = None
+            if getattr(commit, "commit", None) and getattr(commit.commit, "author", None):
+                authored_dt = getattr(commit.commit.author, "date", None)
+                if authored_dt:
+                    committed_at = authored_dt.isoformat()
+
+            commits.append(
+                {
+                    "sha": commit.sha,
+                    "message": commit.commit.message if commit.commit else None,
+                    "author": commit_author,
+                    "committed_at": committed_at,
+                }
+            )
+        return commits
+
+    def get_pull_request_review_comments(
+        self, repo_name: str, pr_number: int, limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """Get review comments for a pull request."""
+        self._ensure_authenticated()
+
+        repo = self.client.get_repo(repo_name)
+        pr = repo.get_pull(pr_number)
+        comments = []
+        for idx, comment in enumerate(pr.get_review_comments()):
+            if idx >= limit:
+                break
+            comments.append(
+                {
+                    "id": comment.id,
+                    "body": comment.body,
+                    "user": {"login": comment.user.login} if comment.user else None,
+                    "path": comment.path,
+                    "line": comment.line,
+                    "in_reply_to_id": comment.in_reply_to_id,
+                    "diff_hunk": comment.diff_hunk,
+                    "created_at": comment.created_at.isoformat()
+                    if comment.created_at
+                    else None,
+                }
+            )
+        return comments
+
+    def get_pull_request_issue_comments(
+        self, repo_name: str, pr_number: int, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """Get issue-level comments on a pull request discussion."""
+        self._ensure_authenticated()
+
+        repo = self.client.get_repo(repo_name)
+        pr = repo.get_pull(pr_number)
+        comments = []
+        for idx, comment in enumerate(pr.get_issue_comments()):
+            if idx >= limit:
+                break
+            comments.append(
+                {
+                    "id": comment.id,
+                    "body": comment.body,
+                    "user": {"login": comment.user.login} if comment.user else None,
+                    "created_at": comment.created_at.isoformat()
+                    if comment.created_at
+                    else None,
+                }
+            )
+        return comments
+
     def create_pull_request(
         self,
         repo_name: str,

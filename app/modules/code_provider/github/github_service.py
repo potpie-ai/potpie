@@ -285,7 +285,7 @@ class GithubService:
         # Try new UserAuthProvider system first
         try:
             from app.modules.auth.auth_provider_model import UserAuthProvider
-            from app.modules.integrations.token_encryption import decrypt_token
+            from integrations.adapters.outbound.crypto.token_encryption import decrypt_token
 
             github_provider = (
                 self.db.query(UserAuthProvider)
@@ -367,7 +367,7 @@ class GithubService:
         Same logic as get_github_oauth_token but with await session.execute(...).
         """
         from app.modules.auth.auth_provider_model import UserAuthProvider
-        from app.modules.integrations.token_encryption import decrypt_token
+        from integrations.adapters.outbound.crypto.token_encryption import decrypt_token
 
         stmt_user = select(User).where(User.uid == uid).limit(1)
         result_user = await session.execute(stmt_user)

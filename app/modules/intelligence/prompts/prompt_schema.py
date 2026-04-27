@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # Define Enums
@@ -61,8 +61,7 @@ class PromptResponse(BaseModel):
         ..., description="Timestamp of when the prompt was last updated"
     )
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Response Schema for Listing Prompts
@@ -84,8 +83,7 @@ class AgentPromptMappingResponse(BaseModel):
     prompt_id: str = Field(..., description="ID of the prompt")
     prompt_stage: int = Field(..., description="Stage of the prompt")
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class RequestModel(BaseModel):

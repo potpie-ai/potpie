@@ -40,6 +40,27 @@ class TestGCPAvailability:
             assert project_id is None
             assert SecretStorageHandler._gcp_available is False
 
+    def test_gcp_enabled_false_via_env(self):
+        """Test GCP is disabled when GCP_SECRET_MANAGER_ENABLED=false"""
+        with patch.dict(
+            os.environ,
+            {
+                "GCP_SECRET_MANAGER_ENABLED": "false",
+                "GCP_SECRET_MANAGER_DISABLED": "false",
+                "GCP_PROJECT": "test-project",
+            },
+            clear=False,
+        ):
+            with patch(
+                "app.modules.key_management.secret_manager.secretmanager.SecretManagerServiceClient"
+            ) as client_cls:
+                client, project_id = SecretStorageHandler.get_client_and_project()
+
+                assert client is None
+                assert project_id is None
+                assert SecretStorageHandler._gcp_available is False
+                client_cls.assert_not_called()
+
     def test_gcp_no_project_id(self):
         """Test GCP unavailable when GCP_PROJECT not set"""
         with patch.dict(
@@ -280,6 +301,34 @@ class TestGetSecret:
                 service_type="ai_provider",
                 db=mock_db,
                 preferences=preferences,
+            )
+
+            assert result == "sk-original-key"
+
+    def test_get_secret_loads_preferences_from_db(self, valid_fernet_key):
+        """Test get_secret reads UserPreferences when only db is passed"""
+        with patch.dict(
+            os.environ,
+            {
+                "isDevelopmentMode": "disabled",
+                "GCP_SECRET_MANAGER_ENABLED": "false",
+                "SECRET_ENCRYPTION_KEY": valid_fernet_key,
+            },
+            clear=False,
+        ):
+            encrypted = SecretStorageHandler.encrypt_value("sk-original-key")
+            mock_user_pref = MagicMock()
+            mock_user_pref.preferences = {"api_key_openai": encrypted}
+            mock_db = MagicMock()
+            mock_db.query.return_value.filter.return_value.first.return_value = (
+                mock_user_pref
+            )
+
+            result = SecretStorageHandler.get_secret(
+                service="openai",
+                customer_id="user-123",
+                service_type="ai_provider",
+                db=mock_db,
             )
 
             assert result == "sk-original-key"

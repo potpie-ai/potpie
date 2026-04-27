@@ -1378,8 +1378,9 @@ class ConversationService:
                 async for chunk in res:
                     if check_cancelled and check_cancelled():
                         raise GenerationCancelled()
-                    # Accumulate tool_calls from each chunk
+                    chunk_tool_calls = None
                     if chunk.tool_calls:
+                        chunk_tool_calls = []
                         for tool_call in chunk.tool_calls:
                             tool_call_dict = (
                                 tool_call.model_dump()
@@ -1391,6 +1392,7 @@ class ConversationService:
                                 )
                             )
                             accumulated_tool_calls.append(tool_call_dict)
+                            chunk_tool_calls.append(tool_call_dict)
                     # Capture thinking content if present
                     if chunk.thinking:
                         accumulated_thinking = chunk.thinking
@@ -1399,7 +1401,7 @@ class ConversationService:
                         chunk.response,
                         MessageType.AI_GENERATED,
                         citations=chunk.citations,
-                        tool_calls=accumulated_tool_calls if chunk.tool_calls else None,
+                        tool_calls=chunk_tool_calls,
                         thinking=accumulated_thinking,
                     )
                     yield ChatMessageResponse(
@@ -1448,8 +1450,9 @@ class ConversationService:
                 async for chunk in res:
                     if check_cancelled and check_cancelled():
                         raise GenerationCancelled()
-                    # Accumulate tool_calls from each chunk
+                    chunk_tool_calls = None
                     if chunk.tool_calls:
+                        chunk_tool_calls = []
                         for tool_call in chunk.tool_calls:
                             tool_call_dict = (
                                 tool_call.model_dump()
@@ -1461,6 +1464,7 @@ class ConversationService:
                                 )
                             )
                             accumulated_tool_calls.append(tool_call_dict)
+                            chunk_tool_calls.append(tool_call_dict)
                     # Capture thinking content if present
                     if chunk.thinking:
                         accumulated_thinking = chunk.thinking
@@ -1469,7 +1473,7 @@ class ConversationService:
                         chunk.response,
                         MessageType.AI_GENERATED,
                         citations=chunk.citations,
-                        tool_calls=accumulated_tool_calls if chunk.tool_calls else None,
+                        tool_calls=chunk_tool_calls,
                         thinking=accumulated_thinking,
                     )
                     yield ChatMessageResponse(

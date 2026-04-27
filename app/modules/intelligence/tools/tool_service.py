@@ -62,6 +62,7 @@ from app.modules.intelligence.tools.code_query_tools.create_pr_workflow_tool imp
 from app.modules.intelligence.tools.code_query_tools.checkout_worktree_branch_tool import (
     checkout_worktree_branch_tool,
 )
+from app.modules.intelligence.tools.context_tools import create_agent_context_tools
 from app.modules.intelligence.tools.tool_schema import ToolInfo, ToolInfoWithParameters
 from app.modules.intelligence.tools.web_tools.code_provider_tool import (
     code_provider_tool,
@@ -251,6 +252,9 @@ class ToolService:
                 self.db, self.user_id
             ),
         }
+
+        for tool in create_agent_context_tools(self.db, self.user_id):
+            tools[tool.name] = tool
 
         # Add bash command tool if repo manager is enabled
         bash_tool = bash_command_tool(self.db, self.user_id)

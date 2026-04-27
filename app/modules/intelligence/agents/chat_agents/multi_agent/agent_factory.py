@@ -1,5 +1,6 @@
 """Agent factory for creating supervisor and delegate agents"""
 
+import hashlib
 from typing import List, Dict, Callable, Any, cast
 from pydantic_ai import Agent, Tool, ModelSettings
 from pydantic_ai.mcp import MCPServerStreamableHTTP
@@ -21,6 +22,7 @@ from .agent_instructions import (
 )
 from .utils.context_utils import create_supervisor_task_description
 from app.modules.intelligence.agents.chat_agent import ChatContext
+from app.modules.context_graph.bundle_renderer import supervisor_prefetch_section
 from app.modules.intelligence.tracing.logfire_tracer import should_instrument_pydantic_ai
 from ..agent_config import AgentConfig, TaskConfig
 from app.modules.intelligence.provider.provider_service import ProviderService
@@ -886,11 +888,21 @@ Subagents DON'T get your history. Provide comprehensive context:
         """Create the supervisor agent that coordinates other agents"""
         # Cache key includes conversation_id, local_mode, use_tool_search_flow, and chat_model
         # so we don't reuse an agent when the user switches model (thinking settings differ)
+        # Also hash additional_context: supervisor instructions embed CONTEXT from it; reusing
+        # a cached agent would freeze stale prefetch / file-structure context across turns.
         conversation_id = ctx.curr_agent_id
         local_mode = ctx.local_mode if hasattr(ctx, "local_mode") else False
         use_tool_search_flow = getattr(ctx, "use_tool_search_flow", False)
         chat_model = self.llm_provider.chat_config.model
-        cache_key = (conversation_id, local_mode, use_tool_search_flow, chat_model)
+        ac = ctx.additional_context or ""
+        additional_context_sig = hashlib.sha256(ac.encode()).hexdigest()[:16]
+        cache_key = (
+            conversation_id,
+            local_mode,
+            use_tool_search_flow,
+            chat_model,
+            additional_context_sig,
+        )
         if cache_key in self._supervisor_agents:
             logger.debug(
                 "Returning cached supervisor agent for conversation_id=%s, local_mode=%s, use_tool_search_flow=%s, chat_model=%s",
@@ -907,6 +919,13 @@ Subagents DON'T get your history. Provide comprehensive context:
         # Get supervisor task description
         supervisor_task_description = create_supervisor_task_description(ctx)
 
+        bundle = getattr(ctx, "context_intelligence_bundle", None)
+        prefetch_sup = (
+            supervisor_prefetch_section(bundle)
+            if isinstance(bundle, dict)
+            else ""
+        )
+
         # Generate supervisor instructions (task_description is code_gen_task_prompt or code_gen_task_prompt_local when code gen agent)
         task_description = config.tasks[0].description if config.tasks else ""
         if task_description and "local mode" in task_description.lower():
@@ -921,6 +940,7 @@ Subagents DON'T get your history. Provide comprehensive context:
             multimodal_instructions=multimodal_instructions,
             supervisor_task_description=supervisor_task_description,
             local_mode=local_mode,
+            prefetch_supervisor_section=prefetch_sup,
         )
         if use_tool_search_flow:
             instructions = instructions + SEARCH_FLOW_INSTRUCTIONS

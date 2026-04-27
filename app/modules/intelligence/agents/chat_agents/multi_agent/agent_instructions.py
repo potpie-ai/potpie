@@ -238,6 +238,7 @@ def get_supervisor_instructions(
     multimodal_instructions: str,
     supervisor_task_description: str,
     local_mode: bool = False,
+    prefetch_supervisor_section: str = "",
 ) -> str:
     """Generate supervisor agent instructions with dynamic content
 
@@ -248,6 +249,8 @@ def get_supervisor_instructions(
         multimodal_instructions: Multimodal-specific instructions
         supervisor_task_description: Supervisor task description
         local_mode: If True, adds local mode specific instructions
+        prefetch_supervisor_section: When set (e.g. QnA context intelligence prefetch), overrides
+            default PR/GitHub delegation and TODO-first behavior for this turn.
     """
     local_mode_section = ""
     if local_mode:
@@ -260,6 +263,7 @@ def get_supervisor_instructions(
             """
 
     return f"""
+            {prefetch_supervisor_section}
             You are a SUPERVISOR AGENT who orchestrates SUBAGENTS to efficiently solve complex tasks.
 
             {local_mode_section}

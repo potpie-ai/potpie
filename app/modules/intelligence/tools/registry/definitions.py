@@ -150,6 +150,33 @@ TOOL_DEFINITIONS: Dict[str, dict] = {
     "analyze_code_structure": {"tier": "medium", "category": "analysis"},
     "intelligent_code_graph": {"tier": "high", "category": "analysis"},
     "change_detection": {"tier": "medium", "category": "analysis"},
+    # Context graph minimal agent port
+    "context_resolve": {
+        "tier": "medium",
+        "category": "search",
+        "read_only": True,
+        "idempotent": True,
+        "short_description": "Resolve a bounded task context wrap.",
+    },
+    "context_search": {
+        "tier": "medium",
+        "category": "search",
+        "read_only": True,
+        "idempotent": True,
+        "short_description": "Search project memory for a known follow-up.",
+    },
+    "context_status": {
+        "tier": "medium",
+        "category": "search",
+        "read_only": True,
+        "idempotent": True,
+        "short_description": "Check pot readiness and recommended recipe.",
+    },
+    "context_record": {
+        "tier": "medium",
+        "category": "knowledge_graph",
+        "short_description": "Record durable project memory.",
+    },
     # Integrations
     "get_linear_issue": {"tier": "high", "category": "integration_linear"},
     "update_linear_issue": {"tier": "high", "category": "integration_linear"},
@@ -296,6 +323,10 @@ CODE_GEN_BASE_TOOLS: List[str] = [
 ]
 
 CODE_GEN_ADD_WHEN_NON_LOCAL: List[str] = [
+    "context_status",
+    "context_resolve",
+    "context_search",
+    "context_record",
     "get_code_from_multiple_node_ids",
     "get_node_neighbours_from_node_id",
     "get_code_from_probable_node_name",
@@ -320,6 +351,10 @@ GENERAL_PURPOSE_TOOLS: List[str] = [
 # Todo/requirement tools are included here so we have a single source; do not also pass
 # create_todo_management_toolset() as a toolset or we get "read_todos" name conflicts with MCP.
 SUPERVISOR_TOOLS: List[str] = [
+    "context_status",
+    "context_resolve",
+    "context_search",
+    "context_record",
     "fetch_file",
     "get_code_file_structure",
     "web_search_tool",
@@ -341,6 +376,10 @@ SUPERVISOR_TOOLS: List[str] = [
 EXECUTE_TOOLS: List[str] = [
     "webpage_extractor",
     "web_search_tool",
+    "context_status",
+    "context_resolve",
+    "context_search",
+    "context_record",
     "ask_knowledge_graph_queries",
     "execute_terminal_command",
     "terminal_session_output",
