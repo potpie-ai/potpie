@@ -24,10 +24,8 @@ pipeline {
                         env.ENVIRONMENT = 'dir-restruct'
                     } else if (branch == "origin/main") {
                         env.ENVIRONMENT = 'main'
-                    } else if (branch == "origin/devops"){
-                        env.ENVIORNMENT = 'devops'
                     } else {
-                        error("Unknown branch: ${branch}. This pipeline only supports main and staging branches.")
+                        error("Unknown branch: ${branch}. This pipeline only supports origin/main and origin/dir-restruct.")
                     }
 
                     checkout scm
@@ -49,6 +47,17 @@ pipeline {
             }
         }
 
+        stage('Preflight Checks') {
+            steps {
+                script {
+                    sh """
+                    test -d "${env.WORKSPACE}"
+                    test -f "${env.WORKSPACE}/deployment/prod/convo-server/convo.Dockerfile"
+                    """
+                }
+            }
+        }
+
         stage('Build Docker Image') {
             steps {
                 script {
@@ -57,7 +66,7 @@ pipeline {
                     def dockerRegistry = env.DOCKER_REGISTRY
                     echo "Printing the saved docker registry from env:"
                     echo "${dockerRegistry}"
-                    sh "sudo docker build -f deployment/prod/convo-server/convo.Dockerfile -t ${DOCKER_REGISTRY}/convo:${imageTag} /var/lib/jenkins/workspace/conversation_server-pipeline"
+                    sh "sudo docker build -f deployment/prod/convo-server/convo.Dockerfile -t ${DOCKER_REGISTRY}/convo:${imageTag} \"${env.WORKSPACE}\""
                 }
             }
         }
@@ -125,7 +134,7 @@ pipeline {
 
                     if (!imageDeploySucceeded) {
                         echo 'Rolling back to previous revision...'
-                        sh 'kubectl rollout undo deployment/conversation-server-deployment -n ${params.namespace}'
+                        sh "kubectl rollout undo deployment/conversation-server-deployment -n ${params.namespace}"
                     }
                 }
             }
