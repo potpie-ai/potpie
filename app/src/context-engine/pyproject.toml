@@ -6,7 +6,6 @@ build-backend = "hatchling.build"
 name = "context-engine"
 version = "0.1.0"
 description = "Context graph API, webhooks, CLI, and MCP (hexagonal)."
-readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.115.0",
