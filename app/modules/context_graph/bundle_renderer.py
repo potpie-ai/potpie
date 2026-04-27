@@ -24,9 +24,8 @@ def prefetch_runtime_banner(bundle: dict[str, Any] | None) -> str:
     if status == "COMPLETE":
         return (
             "\n<<< RUNTIME PREFETCH — EVIDENCE COMPLETE >>>\n"
-            "Do NOT call duplicate graph tools: get_pot_context, get_pr_diff, "
-            "get_pr_review_context, get_decisions, get_change_history, "
-            "ask_knowledge_graph_queries.\n"
+            "Do NOT call duplicate graph tools: context_resolve, context_search, "
+            "or ask_knowledge_graph_queries to re-fetch evidence already present here.\n"
             "Do NOT fetch .github/CODEOWNERS for ownership — use [Ownership] below; "
             "if empty, say the graph has no ownership for that path.\n"
             "Answer from CONTEXT INTELLIGENCE below first. Use fetch_file / "
@@ -60,8 +59,8 @@ from the context engine.
 
 - **Do NOT** delegate to the GitHub agent for "what happened in PR #..." / rationale / file discussion
   questions — answer from the prefetched block first.
-- **Do NOT** call `get_pr_diff`, `get_pr_review_context`, `get_pot_context`, `get_decisions`,
-  `get_change_history`, or `ask_knowledge_graph_queries` to re-fetch the same data.
+- **Do NOT** call `context_resolve`, `context_search`, or `ask_knowledge_graph_queries`
+  to re-fetch the same data.
 - **Do NOT** start TODO workflows for single-turn factual Q&A that the prefetched block already answers.
 - **Do NOT** fetch `CODEOWNERS` for ownership — use `[Ownership]` in the block; if absent, state that
   no ownership is recorded in the graph.
@@ -212,19 +211,19 @@ def render_intelligence_bundle(bundle: dict[str, Any]) -> str:
     lines.append(">>> MANDATORY TOOL-CALL RULES (you MUST follow these) <<<")
 
     _tool_map = {
-        "semantic_search": "get_pot_context, ask_knowledge_graph_queries",
-        "artifact_context": "get_pr_review_context",
-        "change_history": "get_change_history",
-        "decision_context": "get_decisions",
-        "discussion_context": "get_pr_review_context, get_pr_diff",
+        "semantic_search": "context_search",
+        "artifact_context": "context_resolve with PR scope",
+        "change_history": "context_resolve with recent_changes include",
+        "decision_context": "context_resolve with decisions include",
+        "discussion_context": "context_resolve with discussions include",
         "ownership_context": "(no tool — ownership only comes from this block)",
     }
 
     if status == "COMPLETE":
+        lines.append("Coverage is COMPLETE. All evidence needed to answer is ABOVE.")
         lines.append(
-            "Coverage is COMPLETE. All evidence needed to answer is ABOVE."
+            "DO NOT call any of these tools — they will return duplicate data:"
         )
-        lines.append("DO NOT call any of these tools — they will return duplicate data:")
         for fam in available:
             tool = _tool_map.get(fam, "")
             if tool:

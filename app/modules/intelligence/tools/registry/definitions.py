@@ -150,42 +150,32 @@ TOOL_DEFINITIONS: Dict[str, dict] = {
     "analyze_code_structure": {"tier": "medium", "category": "analysis"},
     "intelligent_code_graph": {"tier": "high", "category": "analysis"},
     "change_detection": {"tier": "medium", "category": "analysis"},
-    # Context graph (Neo4j / GitHub intelligence)
-    "get_pot_context": {
+    # Context graph minimal agent port
+    "context_resolve": {
         "tier": "medium",
         "category": "search",
         "read_only": True,
         "idempotent": True,
+        "short_description": "Resolve a bounded task context wrap.",
     },
-    "get_decisions": {
+    "context_search": {
         "tier": "medium",
         "category": "search",
         "read_only": True,
         "idempotent": True,
+        "short_description": "Search project memory for a known follow-up.",
     },
-    "get_pr_review_context": {
+    "context_status": {
         "tier": "medium",
         "category": "search",
         "read_only": True,
         "idempotent": True,
+        "short_description": "Check pot readiness and recommended recipe.",
     },
-    "get_pr_diff": {
+    "context_record": {
         "tier": "medium",
-        "category": "search",
-        "read_only": True,
-        "idempotent": True,
-    },
-    "get_change_history": {
-        "tier": "medium",
-        "category": "search",
-        "read_only": True,
-        "idempotent": True,
-    },
-    "get_file_owner": {
-        "tier": "medium",
-        "category": "search",
-        "read_only": True,
-        "idempotent": True,
+        "category": "knowledge_graph",
+        "short_description": "Record durable project memory.",
     },
     # Integrations
     "get_linear_issue": {"tier": "high", "category": "integration_linear"},
@@ -333,12 +323,10 @@ CODE_GEN_BASE_TOOLS: List[str] = [
 ]
 
 CODE_GEN_ADD_WHEN_NON_LOCAL: List[str] = [
-    "get_pot_context",
-    "get_decisions",
-    "get_pr_review_context",
-    "get_pr_diff",
-    "get_change_history",
-    "get_file_owner",
+    "context_status",
+    "context_resolve",
+    "context_search",
+    "context_record",
     "get_code_from_multiple_node_ids",
     "get_node_neighbours_from_node_id",
     "get_code_from_probable_node_name",
@@ -363,12 +351,10 @@ GENERAL_PURPOSE_TOOLS: List[str] = [
 # Todo/requirement tools are included here so we have a single source; do not also pass
 # create_todo_management_toolset() as a toolset or we get "read_todos" name conflicts with MCP.
 SUPERVISOR_TOOLS: List[str] = [
-    "get_pot_context",
-    "get_decisions",
-    "get_pr_review_context",
-    "get_pr_diff",
-    "get_change_history",
-    "get_file_owner",
+    "context_status",
+    "context_resolve",
+    "context_search",
+    "context_record",
     "fetch_file",
     "get_code_file_structure",
     "web_search_tool",
@@ -390,12 +376,10 @@ SUPERVISOR_TOOLS: List[str] = [
 EXECUTE_TOOLS: List[str] = [
     "webpage_extractor",
     "web_search_tool",
-    "get_pot_context",
-    "get_decisions",
-    "get_pr_review_context",
-    "get_pr_diff",
-    "get_change_history",
-    "get_file_owner",
+    "context_status",
+    "context_resolve",
+    "context_search",
+    "context_record",
     "ask_knowledge_graph_queries",
     "execute_terminal_command",
     "terminal_session_output",

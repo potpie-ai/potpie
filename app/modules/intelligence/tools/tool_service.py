@@ -62,14 +62,7 @@ from app.modules.intelligence.tools.code_query_tools.create_pr_workflow_tool imp
 from app.modules.intelligence.tools.code_query_tools.checkout_worktree_branch_tool import (
     checkout_worktree_branch_tool,
 )
-from app.modules.intelligence.tools.context_tools import (
-    get_change_history_tool,
-    get_file_owner_tool,
-    get_decisions_tool,
-    get_pr_diff_tool,
-    get_pr_review_context_tool,
-    get_pot_context_tool,
-)
+from app.modules.intelligence.tools.context_tools import create_agent_context_tools
 from app.modules.intelligence.tools.tool_schema import ToolInfo, ToolInfoWithParameters
 from app.modules.intelligence.tools.web_tools.code_provider_tool import (
     code_provider_tool,
@@ -258,13 +251,10 @@ class ToolService:
             "analyze_code_structure": universal_analyze_code_tool(
                 self.db, self.user_id
             ),
-            "get_change_history": get_change_history_tool(self.db, self.user_id),
-            "get_file_owner": get_file_owner_tool(self.db, self.user_id),
-            "get_decisions": get_decisions_tool(self.db, self.user_id),
-            "get_pr_diff": get_pr_diff_tool(self.db, self.user_id),
-            "get_pr_review_context": get_pr_review_context_tool(self.db, self.user_id),
-            "get_pot_context": get_pot_context_tool(self.db, self.user_id),
         }
+
+        for tool in create_agent_context_tools(self.db, self.user_id):
+            tools[tool.name] = tool
 
         # Add bash command tool if repo manager is enabled
         bash_tool = bash_command_tool(self.db, self.user_id)

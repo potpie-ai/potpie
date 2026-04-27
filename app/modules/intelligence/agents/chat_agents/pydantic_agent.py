@@ -24,7 +24,9 @@ from app.modules.intelligence.tools.reasoning_manager import (
 )
 
 from app.modules.context_graph.bundle_renderer import intelligence_coverage_status
-from app.modules.intelligence.tracing.logfire_tracer import should_instrument_pydantic_ai
+from app.modules.intelligence.tracing.logfire_tracer import (
+    should_instrument_pydantic_ai,
+)
 from ..chat_agent import (
     ChatAgent,
     ChatAgentResponse,
@@ -33,7 +35,7 @@ from ..chat_agent import (
     ToolCallResponse,
 )
 
-from pydantic_ai import Agent, Tool
+from pydantic_ai import Agent
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -283,13 +285,17 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             all_images = ctx.get_all_images()
             image_details = []
             for attachment_id, image_data in all_images.items():
-                file_name = _sanitize_prompt_file_name(image_data.get("file_name", "unknown"))
+                file_name = _sanitize_prompt_file_name(
+                    image_data.get("file_name", "unknown")
+                )
                 file_size = _safe_file_size(image_data.get("file_size", 0))
                 image_details.append(f"- {file_name} ({file_size} bytes)")
             document_details = []
             all_documents = ctx.get_all_documents()
             for attachment_id, doc_data in all_documents.items():
-                file_name = _sanitize_prompt_file_name(doc_data.get("file_name", "unknown"))
+                file_name = _sanitize_prompt_file_name(
+                    doc_data.get("file_name", "unknown")
+                )
                 file_size = _safe_file_size(doc_data.get("file_size", 0))
                 document_details.append(f"- {file_name} ({file_size} bytes)")
 
@@ -317,8 +323,8 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             instructions_block = """
                 INSTRUCTIONS (CONTEXT INTELLIGENCE — COMPLETE):
                 1. Answer from Additional Context (CONTEXT INTELLIGENCE block) first. Do NOT call
-                   get_pot_context, get_pr_diff, get_pr_review_context, get_decisions,
-                   get_change_history, or ask_knowledge_graph_queries — they duplicate prefetch.
+                   context_resolve, context_search, or ask_knowledge_graph_queries to re-fetch
+                   evidence already present in the prefetch.
                 2. Cite prefetched sections ([Artifacts], [Change history], [Discussions], etc.) in your answer.
                 3. Use fetch_file / get_code_from_probable_node_name / analyze_code_structure only if the user needs source code not in the block.
                 4. Format in markdown with clear structure.

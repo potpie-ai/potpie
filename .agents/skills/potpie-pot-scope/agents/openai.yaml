@@ -1,4 +1,0 @@
-interface:
-  display_name: "Potpie Pot Scope"
-  short_description: "Resolve pot scope for CLI commands"
-  default_prompt: "Use $potpie-pot-scope to debug or update pot resolution for the Potpie CLI."

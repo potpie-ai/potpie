@@ -1,15 +1,5 @@
-import asyncio
-import os
 from typing import AsyncGenerator, Optional
 
-from dataclasses import asdict
-
-from app.modules.context_graph.wiring import build_container_for_session
-from app.modules.context_graph.bundle_renderer import (
-    prefetch_runtime_banner,
-    render_intelligence_bundle,
-)
-from domain.graph_query import preset_change_history, preset_decisions
 from app.modules.intelligence.agents.chat_agents.agent_config import (
     AgentConfig,
     TaskConfig,
@@ -47,8 +37,7 @@ class QnAAgent(ChatAgent):
         bundle = getattr(ctx, "context_intelligence_bundle", None) if ctx else None
         cov = (bundle or {}).get("coverage") or {} if isinstance(bundle, dict) else {}
         prefetch_complete = (
-            isinstance(cov, dict)
-            and str(cov.get("status") or "").upper() == "COMPLETE"
+            isinstance(cov, dict) and str(cov.get("status") or "").upper() == "COMPLETE"
         )
 
         if bundle and prefetch_complete:
@@ -59,7 +48,7 @@ class QnAAgent(ChatAgent):
             backstory = """
                     You are a codebase Q&A specialist. When Additional Context includes CONTEXT INTELLIGENCE
                     with COMPLETE evidence coverage, you answer directly from that block — you do not
-                    re-fetch the same PR/decision/history data via tools. You use code tools (fetch_file,
+                    re-fetch the same evidence via context tools. You use code tools (fetch_file,
                     etc.) only to show implementation the user asks for. For genuinely multi-file
                     investigations not covered by prefetch, you may explore further with a minimal tool set.
                     You keep a conversational tone and cite evidence clearly.
@@ -102,11 +91,10 @@ class QnAAgent(ChatAgent):
 
         tools = self.tools_provider.get_tools(
             [
-                "get_pot_context",
-                "get_decisions",
-                "get_pr_review_context",
-                "get_pr_diff",
-                "get_change_history",
+                "context_status",
+                "context_resolve",
+                "context_search",
+                "context_record",
                 "get_code_from_multiple_node_ids",
                 "get_node_neighbours_from_node_id",
                 "get_code_from_probable_node_name",
@@ -180,105 +168,33 @@ class QnAAgent(ChatAgent):
             return PydanticRagAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
-        # New: context-engine powered resolve_context prefetch (feature-flagged).
-        # When enabled, prefer a single bundled resolution over multiple context tool calls.
-        if os.getenv("CONTEXT_INTELLIGENCE_ENABLED", "false").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        ):
-            try:
-                # Build a context-engine container using the host DB session
-                # (QnA tools already operate under the same DB session in runtime).
-                # Note: ctx.user_id is available but ChatContext here doesn't pass DB; we rely on tools' DB elsewhere.
-                # For now we resolve using project-level container and existing settings.
-                from app.core.database import SessionLocal
-
-                db = SessionLocal()
-                try:
-                    container = build_container_for_session(db)
-                    if container.resolution_service is not None and container.settings.is_enabled():
-                        from domain.intelligence_models import ContextResolutionRequest
-                        from application.use_cases.resolve_context import resolve_context as ce_resolve_context
-
-                        req = ContextResolutionRequest(
-                            project_id=ctx.project_id,
-                            query=ctx.query,
-                            consumer_hint=ctx.curr_agent_id,
-                            timeout_ms=4000,
-                        )
-                        bundle = await ce_resolve_context(container.resolution_service, req)
-                        bundle_dict = asdict(bundle)
-                        ctx.context_intelligence_bundle = bundle_dict
-                        ctx.additional_context += prefetch_runtime_banner(bundle_dict)
-                        ctx.additional_context += render_intelligence_bundle(bundle_dict)
-                        # If we have prefetched context, skip the older graph prefetch below.
-                        # (Code context + file structure still happen later.)
-                        return await self._append_code_and_structure(ctx)
-                finally:
-                    db.close()
-            except Exception:
-                logger.exception("Failed resolve_context prefetch; falling back to legacy prefetch")
-
-        # Temporary hard requirement: fetch context-graph signal first.
-        # This ensures QnA starts from historical intent/decision context.
+        # Start from the same minimal context port exposed through MCP and CLI.
+        # This replaces the older specialized graph-tool prefetches.
         try:
-            pot_context_tool = self.tools_provider.tools.get("get_pot_context")
-            if pot_context_tool:
+            context_resolve_tool = self.tools_provider.tools.get("context_resolve")
+            if context_resolve_tool:
                 payload = {
                     "pot_id": ctx.project_id,
                     "query": ctx.query,
-                    "limit": 8,
-                    "node_labels": ["PullRequest", "Decision", "Issue", "Feature"],
+                    "consumer_hint": ctx.curr_agent_id,
+                    "intent": "unknown",
+                    "mode": "fast",
+                    "source_policy": "references_only",
+                    "max_items": 12,
+                    "timeout_ms": 4000,
                 }
-                if hasattr(pot_context_tool, "ainvoke"):
-                    context_rows = await pot_context_tool.ainvoke(payload)
+                if hasattr(context_resolve_tool, "ainvoke"):
+                    context_envelope = await context_resolve_tool.ainvoke(payload)
                 else:
-                    context_rows = pot_context_tool.invoke(payload)
+                    context_envelope = context_resolve_tool.invoke(payload)
+                if isinstance(context_envelope, dict):
+                    ctx.context_intelligence_bundle = context_envelope.get("bundle")
                 ctx.additional_context += (
-                    f"\nPot context (via get_pot_context, pre-fetched):\n"
-                    f"{context_rows}\n"
+                    "\nContext graph prefetch (via context_resolve):\n"
+                    f"{context_envelope}\n"
                 )
         except Exception:
-            logger.exception("Failed prefetching pot context for QnA agent")
-
-        # Exact graph prefetch for decisions and change history. This is routed
-        # through ContextGraphPort so the QnA agent does not depend on Neo4j
-        # helper methods directly.
-        try:
-            if ctx.project_id:
-                from app.core.database import SessionLocal
-
-                db = SessionLocal()
-                try:
-                    container = build_container_for_session(db)
-                    if (
-                        container.settings.is_enabled()
-                        and container.context_graph is not None
-                    ):
-                        def _graph_snapshot() -> tuple[list, list]:
-                            dec = container.context_graph.query(
-                                preset_decisions(pot_id=ctx.project_id, limit=12)
-                            )
-                            hist = container.context_graph.query(
-                                preset_change_history(pot_id=ctx.project_id, limit=6)
-                            )
-                            return list(dec.result or []), list(hist.result or [])
-
-                        decisions_preview, change_hist_preview = await asyncio.to_thread(
-                            _graph_snapshot
-                        )
-                        ctx.additional_context += (
-                            "\nContext graph pre-fetch "
-                            "(code-linked + PR review/conversation decisions; recent PR-code rows):\n"
-                            f"- decisions rows (limit 12): {decisions_preview}\n"
-                            f"- change history rows (limit 6): {change_hist_preview}\n"
-                        )
-                finally:
-                    db.close()
-        except Exception:
-            logger.exception("Failed prefetching structural context graph for QnA agent")
+            logger.exception("Failed prefetching context via context_resolve")
 
         if ctx.node_ids and len(ctx.node_ids) > 0:
             return await self._append_code_and_structure(ctx)
@@ -324,6 +240,7 @@ qna_task_prompt = """
 
 Before doing ANYTHING else, check Additional Context for a block titled:
 **`=== CONTEXT INTELLIGENCE (PREFETCHED) ===`**
+or **`Context graph prefetch (via context_resolve)`**.
 
 This block is produced by the intelligence layer and contains pre-resolved evidence:
 semantic hits, artifacts (PR metadata), change history, decisions, discussions, and ownership.
@@ -335,7 +252,7 @@ Those rules are BINDING for this turn. Summary:
 
 | Coverage status | What you MUST do |
 |---|---|
-| **COMPLETE** | Answer **directly from the prefetched evidence**. Do NOT call `get_pot_context`, `get_decisions`, `get_change_history`, `get_pr_review_context`, `get_pr_diff`, or `ask_knowledge_graph_queries`. You may call code-level tools (`fetch_file`, `get_code_from_probable_node_name`, `analyze_code_structure`, `get_code_file_structure`, `get_node_neighbours_from_node_id`) ONLY if you need actual source code to complete the answer. |
+| **COMPLETE** | Answer **directly from the prefetched evidence**. Do NOT call `context_resolve`, `context_search`, or `ask_knowledge_graph_queries` to re-fetch the same context. You may call code-level tools (`fetch_file`, `get_code_from_probable_node_name`, `analyze_code_structure`, `get_code_file_structure`, `get_node_neighbours_from_node_id`) ONLY if you need actual source code to complete the answer. |
 | **PARTIAL** | Use the evidence that IS available. Call tools ONLY for the specific missing families listed. Do NOT re-fetch families already present. |
 | **UNKNOWN / absent** | Fall through to the standard exploration flow below. |
 
@@ -369,7 +286,7 @@ These are the most common query patterns. When coverage is COMPLETE, follow the 
 
 ### 0c. If no PREFETCHED block exists
 
-Fall through to the standard exploration flow (Step 1 onward). Call `get_pot_context` first.
+Fall through to the standard exploration flow (Step 1 onward). Call `context_status` or `context_resolve` first.
 
 ---
 
@@ -401,22 +318,22 @@ For simple questions or questions answerable from prefetched evidence: skip plan
 
 ### 2a. Context tools (ONLY if no prefetched block or coverage is PARTIAL)
 
-- `get_pot_context`: semantic search for project entities (Graphiti)
-- `get_pr_review_context`: PR review threads
-- `get_pr_diff`: file-level diffs for a PR
-- `get_decisions`: decisions linked to code
-- `get_change_history`: PRs that modified code
+- `context_resolve`: primary task context wrap with facts, evidence, source refs, coverage, freshness, quality, fallbacks, and recommended next actions
+- `context_search`: narrow follow-up memory search after `context_resolve`
+- `context_status`: cheap pot readiness and recommended `context_resolve` recipe
+- `context_record`: durable memory write for decisions, fixes, preferences, workflows, feature notes, and incident summaries
 
 **REMINDER**: If the prefetched block has COMPLETE coverage, do NOT call any of the above.
 
 0. **When there is no prefetched CONTEXT INTELLIGENCE block (or coverage is PARTIAL)**:
-   - Call `get_pot_context` first for semantic graph context (`pot_id` = project id, `query`, `limit=8`, node labels including `PullRequest` and `Decision`).
-   - Additional context may include structural (Neo4j) pre-fetch rows; treat those as ground truth alongside Graphiti search.
+   - Call `context_resolve` first for a bounded context wrap (`pot_id` = project id, `query`, `intent` when known, `mode="fast"`, `source_policy="references_only"`).
+   - Inspect `coverage`, `freshness`, `quality`, `fallbacks`, `open_conflicts`, and `source_refs` before relying on graph memory.
+   - Escalate with `mode="balanced"`/`"deep"` or `source_policy="summary"`/`"verify"`/`"snippets"` only when coverage, freshness, or task risk requires it.
 
 0b. **PR discussions and design rationale** (when the question is about *why*, reviewer debate, or decisions on a known PR number):
-   - Call `get_pr_review_context` with `pot_id` and `pr_number` to load full review-thread text linked to that PR.
-   - Call `get_pr_diff` with `pot_id` + `pr_number` (and optional `file_path`) for concrete file-level patch excerpts.
-   - Call `get_decisions` / `get_change_history` with optional `file_path` / `function_name` when needed.
+   - Call `context_resolve` with `intent="review"`, `pr_number`, and `include="artifact,discussions,owners,recent_changes,decisions,source_status"`.
+   - Use `source_policy="snippets"` only if the user needs bounded source-backed snippets beyond graph references.
+   - Use `context_search` only for specific follow-up lookup after the context wrap identifies a PR, decision, or phrase.
 
 ### 2b. Code-level tools (always available when source code is needed)
 

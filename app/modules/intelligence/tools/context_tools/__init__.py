@@ -1,17 +1,7 @@
-"""Context-intelligence graph query tools."""
+"""Agent-facing context graph tools."""
 
-from .get_change_history_tool import get_change_history_tool
-from .get_decisions_tool import get_decisions_tool
-from .get_pr_diff_tool import get_pr_diff_tool
-from .get_file_owner_tool import get_file_owner_tool
-from .get_pr_review_context_tool import get_pr_review_context_tool
-from .get_pot_context_tool import get_pot_context_tool
+from .agent_context_tools import create_agent_context_tools
 
 __all__ = [
-    "get_change_history_tool",
-    "get_file_owner_tool",
-    "get_decisions_tool",
-    "get_pr_diff_tool",
-    "get_pr_review_context_tool",
-    "get_pot_context_tool",
+    "create_agent_context_tools",
 ]
