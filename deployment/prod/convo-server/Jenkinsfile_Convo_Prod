@@ -24,10 +24,8 @@ pipeline {
                         env.ENVIRONMENT = 'dir-restruct'
                     } else if (branch == "origin/main") {
                         env.ENVIRONMENT = 'main'
-                    } else if (branch == "origin/devops"){
-                        env.ENVIRONMENT = 'devops'
                     } else {
-                        error("Unknown branch: ${branch}. This pipeline only supports origin/main, origin/dir-restruct, and origin/devops.")
+                        error("Unknown branch: ${branch}. This pipeline only supports origin/main and origin/dir-restruct.")
                     }
 
                     checkout scm
