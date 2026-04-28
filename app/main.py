@@ -86,8 +86,6 @@ class MainApp:
     def setup_sentry(self):
         if os.getenv("ENV") == "production":
             try:
-                # Explicitly configure integrations to avoid auto-enabling Strawberry
-                # which causes crashes when Strawberry is not installed
                 from sentry_sdk.integrations.fastapi import FastApiIntegration
                 from sentry_sdk.integrations.logging import LoggingIntegration
                 from sentry_sdk.integrations.stdlib import StdlibIntegration
@@ -112,9 +110,7 @@ class MainApp:
         initialize_logfire_tracing()
 
     def setup_cors(self):
-        # Get allowed origins from environment variable, default to localhost:3000 for development
         allowed_origins_env = os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")
-        # Split by comma if multiple origins are provided
         origins = [origin.strip() for origin in allowed_origins_env.split(",")]
 
         self.app.add_middleware(
@@ -127,22 +123,10 @@ class MainApp:
         logger.info(f"CORS configured with allowed origins: {origins}")
 
     def setup_logging_middleware(self):
-        """
-        Add logging context middleware to automatically inject request-level context.
-
-        This ensures all logs within a request automatically include:
-        - request_id: Unique identifier for tracing
-        - path: API endpoint path
-        - user_id: Authenticated user (if available)
-
-        Domain-specific IDs (conversation_id, project_id) should be added
-        manually using log_context() in routes where available.
-        """
         self.app.add_middleware(LoggingContextMiddleware)
         logger.info("Logging context middleware configured")
 
     def setup_socket_io(self):
-        """Mount Socket.IO ASGI app at /ws for workspace tunnel."""
         from app.modules.tunnel.socket_auth_middleware import SocketAuthMiddleware
         from app.modules.tunnel.socket_server import socket_asgi
 
@@ -155,7 +139,6 @@ class MainApp:
     def setup_data(self):
         if os.getenv("isDevelopmentMode") == "enabled":
             logger.info("Development mode enabled. Skipping Firebase setup.")
-            # Setup dummy user for development mode
             db = SessionLocal()
             user_service = UserService(db)
             user_service.setup_dummy_user()
@@ -165,7 +148,6 @@ class MainApp:
             FirebaseSetup.firebase_init()
 
     def initialize_database(self):
-        # Initialize database tables
         Base.metadata.create_all(bind=engine)
 
     def include_routers(self):
@@ -209,15 +191,16 @@ class MainApp:
                 )
                 .strip()
                 .decode("utf-8"),
+                "system_prompt_status": getattr(
+                    self.app.state, "system_prompt_status", "unknown"
+                ),
             }
 
     async def startup_event(self):
-        # Database initialization moved here (runs on app start, not import)
         logger.info("Initializing database...")
         self.initialize_database()
         logger.info("Database initialized successfully")
 
-        # Async Redis stream manager for FastAPI (native async, no event-loop blocking)
         try:
             from app.modules.conversations.utils.redis_streaming import (
                 AsyncRedisStreamManager,
@@ -235,25 +218,25 @@ class MainApp:
                 "Install redis>=4.2 with redis.asyncio support."
             ) from e
 
-        # Setup data (Firebase or dummy user)
         logger.info("Setting up application data...")
         self.setup_data()
         logger.info("Application data setup complete")
 
-        # System prompts initialization
+        self.app.state.system_prompt_status = "unknown"
+
         db = SessionLocal()
         try:
             system_prompt_setup = SystemPromptSetup(db)
             await system_prompt_setup.initialize_system_prompts()
             logger.info("System prompts initialized successfully")
-        except Exception:
-            logger.exception("Failed to initialize system prompts")
-            raise
+            self.app.state.system_prompt_status = "ok"
+        except Exception as e:
+            logger.error(f"System prompt initialization failed: {e}")
+            self.app.state.system_prompt_status = "failed"
         finally:
             db.close()
 
     async def shutdown_event(self):
-        """Close async Redis and other resources on app shutdown."""
         if getattr(self.app.state, "async_redis_stream_manager", None):
             try:
                 await self.app.state.async_redis_stream_manager.aclose()
@@ -276,6 +259,5 @@ class MainApp:
         return self.app
 
 
-# Create an instance of MainApp and run it
 main_app = MainApp()
 app = main_app.run()
