@@ -455,495 +455,310 @@ class GithubService:
                     break
         return links
 
-    async def get_repos_for_user(
-        self, user_id: str, async_session: Optional[AsyncSession] = None
-    ):
-        if self.is_development_mode:
-            return {"repositories": []}
+    def _construct_repo_url(self, repos_url: str) -> Tuple[Optional[str], Optional[Any]]:
+        """
+        Construct repository URL with per_page=100, handling existing query params.
 
-        import time  # Import the time module
+        Returns:
+            Tuple of (constructed_url, parsed_url_for_pagination)
+            (None, None) if URL is too long
+        """
+        if len(repos_url) > 2000:
+            return None, None
 
-        start_time = time.time()  # Start timing the entire method
         try:
-            if async_session is not None:
-                stmt_user = select(User).where(User.uid == user_id).limit(1)
-                result_user = await async_session.execute(stmt_user)
-                user = result_user.scalar_one_or_none()
-            else:
-                user = self.db.query(User).filter(User.uid == user_id).first()
-            if user is None:
-                raise HTTPException(status_code=404, detail="User not found")
-
-            firebase_uid = user.uid
-
-            # Check if user has GitHub provider via unified auth system
-            from app.modules.auth.auth_provider_model import UserAuthProvider
-
-            if async_session is not None:
-                stmt_provider = (
-                    select(UserAuthProvider)
-                    .where(
-                        UserAuthProvider.user_id == user_id,
-                        UserAuthProvider.provider_type == "firebase_github",
-                    )
-                    .limit(1)
+            parsed_url = urlparse(repos_url)
+            query_params = parse_qs(parsed_url.query)
+            query_params.pop("per_page", None)
+            query_params["per_page"] = ["100"]
+            new_query = urlencode(query_params, doseq=True)
+            first_page_url = urlunparse(
+                (
+                    parsed_url.scheme,
+                    parsed_url.netloc,
+                    parsed_url.path,
+                    parsed_url.params,
+                    new_query,
+                    parsed_url.fragment,
                 )
-                result_provider = await async_session.execute(stmt_provider)
-                github_provider = result_provider.scalar_one_or_none()
+            )
+
+            if len(first_page_url) > 2000:
+                return None, None
+            return first_page_url, parsed_url
+        except Exception:
+            # Fallback to string manipulation
+            if "?" in repos_url:
+                if "per_page=" in repos_url:
+                    repos_url_cleaned = re.sub(r"[?&]per_page=\d+", "", repos_url)
+                    repos_url_cleaned = repos_url_cleaned.replace("?&", "?")
+                    separator = "&" if "?" in repos_url_cleaned else "?"
+                    first_page_url = f"{repos_url_cleaned}{separator}per_page=100"
+                else:
+                    first_page_url = f"{repos_url}&per_page=100"
             else:
-                github_provider = (
-                    self.db.query(UserAuthProvider)
-                    .filter(
-                        UserAuthProvider.user_id == user_id,
-                        UserAuthProvider.provider_type == "firebase_github",
-                    )
-                    .first()
+                first_page_url = f"{repos_url}?per_page=100"
+
+            if len(first_page_url) > 2000:
+                return None, None
+            try:
+                parsed_url = urlparse(first_page_url)
+            except Exception:
+                parsed_url = None
+            return first_page_url, parsed_url
+
+    async def _fetch_repo_page(self, session: Any, url: str, auth_headers: dict) -> Tuple[List[Dict], bool, Optional[str]]:
+        """
+        Fetch a single page of repositories.
+
+        Returns:
+            Tuple of (repos_list, has_more, next_url)
+        """
+        async with session.get(url, headers=auth_headers) as response:
+            if response.status == 414:
+                return [], False, None
+            elif response.status != 200:
+                error_text = await response.text()
+                logger.error(f"Failed to fetch repositories page. Status: {response.status}. Response: {error_text[:500]}")
+                return [], False, None
+
+            data = await response.json()
+            repos = data.get("repositories", [])
+
+            has_more = False
+            next_url = None
+            if "Link" in response.headers:
+                links = self._parse_link_header(response.headers["Link"])
+                if "next" in links:
+                    has_more = True
+                    next_url = links["next"]
+
+            return repos, has_more, next_url
+
+    # =========================================================================
+    # Helper functions for get_repos_for_user refactoring
+    # =========================================================================
+
+    def _is_414_error(self, error: Exception) -> bool:
+        """Check if an exception is a 414 URI Too Long error."""
+        error_str = str(error)
+        return (
+            (hasattr(error, "status") and error.status == 414)
+            or "414" in error_str
+            or "URI Too Long" in error_str
+        )
+
+    async def _get_user(
+        self, user_id: str, async_session: Optional[AsyncSession]
+    ) -> User:
+        """Get user from database by user_id."""
+        if async_session is not None:
+            stmt_user = select(User).where(User.uid == user_id).limit(1)
+            result_user = await async_session.execute(stmt_user)
+            user = result_user.scalar_one_or_none()
+        else:
+            user = self.db.query(User).filter(User.uid == user_id).first()
+
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        return user
+
+    async def _get_github_provider(
+        self, user_id: str, async_session: Optional[AsyncSession]
+    ):
+        """Get GitHub provider from UserAuthProvider table."""
+        from app.modules.auth.auth_provider_model import UserAuthProvider
+
+        if async_session is not None:
+            stmt_provider = (
+                select(UserAuthProvider)
+                .where(
+                    UserAuthProvider.user_id == user_id,
+                    UserAuthProvider.provider_type == "firebase_github",
                 )
-
-            # If no GitHub provider linked, check if user needs to link GitHub
-            if not github_provider:
-                # Check legacy provider_username as fallback (for old accounts)
-                if not user.provider_username:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="GitHub account not linked. Please link your GitHub account to access repositories.",
-                    )
-                # If legacy username exists, continue (backward compatibility)
-                github_username = user.provider_username
-            else:
-                # Get GitHub username from provider data (new unified auth system)
-                github_username = None
-                if github_provider.provider_data:
-                    provider_data = github_provider.provider_data
-                    if isinstance(provider_data, dict):
-                        github_username = provider_data.get(
-                            "username"
-                        ) or provider_data.get("login")
-
-                # Fallback to legacy provider_username field
-                if not github_username:
-                    github_username = user.provider_username
-
-            # Try to get user's OAuth token first (async when async_session provided)
-            if async_session is not None:
-                github_oauth_token = await self.async_get_github_oauth_token(
-                    firebase_uid, async_session
+                .limit(1)
+            )
+            result_provider = await async_session.execute(stmt_provider)
+            github_provider = result_provider.scalar_one_or_none()
+        else:
+            github_provider = (
+                self.db.query(UserAuthProvider)
+                .filter(
+                    UserAuthProvider.user_id == user_id,
+                    UserAuthProvider.provider_type == "firebase_github",
                 )
-            else:
-                github_oauth_token = self.get_github_oauth_token(firebase_uid)
+                .first()
+            )
+        return github_provider
 
-            # If we have a token but no username, get it from GitHub API
-            if not github_username and github_oauth_token:
-                try:
-                    user_github = Github(github_oauth_token)
-                    github_user = user_github.get_user()
-                    github_username = github_user.login
-                    logger.info(
-                        f"Retrieved GitHub username {github_username} from API for user {user_id}"
-                    )
-                except GithubException as e:
-                    error_str = str(e)
-                    is_414_error = (
-                        (hasattr(e, "status") and e.status == 414)
-                        or "414" in error_str
-                        or "URI Too Long" in error_str
-                    )
-                    if is_414_error:
-                        logger.warning(
-                            f"414 URI Too Long when fetching user info for user {user_id}. "
-                            f"Error: {error_str[:500]}. Cannot retrieve GitHub username from API."
-                        )
-                    else:
-                        logger.warning(
-                            f"Failed to get GitHub username from API: {str(e)}"
-                        )
-                except Exception as e:
-                    logger.warning(f"Failed to get GitHub username from API: {str(e)}")
+    async def _resolve_github_username(
+        self,
+        user: User,
+        github_provider,
+        github_oauth_token: Optional[str],
+    ) -> str:
+        """Resolve GitHub username from provider data or API."""
+        github_username = None
 
-            # If still no username, we can't proceed
-            if not github_username:
+        if not github_provider:
+            if not user.provider_username:
                 raise HTTPException(
                     status_code=400,
-                    detail="GitHub username not found. Please ensure your GitHub account is properly linked.",
+                    detail="GitHub account not linked. Please link your GitHub account to access repositories.",
                 )
+            github_username = user.provider_username
+        else:
+            if github_provider.provider_data:
+                provider_data = github_provider.provider_data
+                if isinstance(provider_data, dict):
+                    github_username = provider_data.get("username") or provider_data.get("login")
+            if not github_username:
+                github_username = user.provider_username
 
-            # Fall back to system tokens if user OAuth token not available
-            if not github_oauth_token:
-                logger.info(
-                    f"No user OAuth token for {firebase_uid}, falling back to system tokens"
-                )
-                # Try GH_TOKEN_LIST first
-                token_list_str = os.getenv("GH_TOKEN_LIST", "")
-                if token_list_str:
-                    tokens = [t.strip() for t in token_list_str.split(",") if t.strip()]
-                    if tokens:
-                        github_oauth_token = secrets.choice(tokens)
-                        logger.info("Using token from GH_TOKEN_LIST as fallback")
-
-                # Fall back to CODE_PROVIDER_TOKEN if GH_TOKEN_LIST not available
-                if not github_oauth_token:
-                    github_oauth_token = os.getenv("CODE_PROVIDER_TOKEN")
-                    if github_oauth_token:
-                        logger.info("Using CODE_PROVIDER_TOKEN as fallback")
-
-                # If still no token, raise error
-                if not github_oauth_token:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="No GitHub authentication available (user OAuth token, GH_TOKEN_LIST, or CODE_PROVIDER_TOKEN)",
-                    )
-
-            user_github = Github(github_oauth_token)
-
-            # Get user organizations - handle 414 errors gracefully
-            # NOTE: Using direct API call instead of PyGithub to avoid 414 errors
-            # PyGithub's get_orgs() may construct URLs with query parameters that exceed limits
-            # Root cause: PyGithub might add pagination/filter params that make URLs too long,
-            # or production proxy/load balancer might modify URLs before forwarding
-            org_logins = []
+        if not github_username and github_oauth_token:
             try:
-                # Use direct API call instead of PyGithub to avoid URL construction issues
-                # This gives us more control over the URL and prevents 414 errors
-                orgs_url = "https://api.github.com/user/orgs?per_page=100"
-                orgs_headers = {
-                    "Accept": "application/vnd.github+json",
-                    "Authorization": f"Bearer {github_oauth_token}",
-                    "X-GitHub-Api-Version": "2022-11-28",
-                }
-
-                # Log URL length for debugging
-                logger.debug(
-                    f"Fetching organizations from: {orgs_url} (length: {len(orgs_url)})"
-                )
-
-                # Connect 10s, read 30s — orgs list can be slow under load
-                # Run blocking requests.get off the event loop to avoid blocking
-                response = await asyncio.to_thread(
-                    requests.get,
-                    orgs_url,
-                    headers=orgs_headers,
-                    timeout=(10, 30),
-                )
-                if response.status_code == 414:
+                user_github = Github(github_oauth_token)
+                github_user = user_github.get_user()
+                github_username = github_user.login
+                logger.info(f"Retrieved GitHub username {github_username} from API for user {user.uid}")
+            except GithubException as e:
+                if self._is_414_error(e):
                     logger.warning(
-                        f"414 URI Too Long when fetching organizations for user {user_id}. "
-                        f"URL length: {len(orgs_url)}. This may indicate a proxy/load balancer issue. "
-                        f"Continuing without organization filtering."
-                    )
-                    org_logins = []  # Continue without org filtering
-                elif response.status_code == 200:
-                    orgs_data = response.json()
-                    org_logins = [org["login"].lower() for org in orgs_data]
-                    logger.info(
-                        f"Retrieved {len(org_logins)} organizations for user {user_id}"
+                        f"414 URI Too Long when fetching user info for user {user.uid}. "
+                        f"Error: {str(e)[:500]}. Cannot retrieve GitHub username from API."
                     )
                 else:
-                    logger.warning(
-                        f"Failed to get organizations for user {user_id}. "
-                        f"Status: {response.status_code}. Response: {response.text[:200]}"
-                    )
-                    org_logins = []  # Continue without org filtering
-            except requests.exceptions.RequestException as e:
-                logger.warning(
-                    f"Request error when fetching organizations for user {user_id}: {str(e)}. "
-                    f"Continuing without organization filtering."
-                )
-                org_logins = []  # Continue without org filtering
+                    logger.warning(f"Failed to get GitHub username from API: {str(e)}")
             except Exception as e:
-                logger.warning(
-                    f"Failed to get organizations for user {user_id}: {str(e)}. "
-                    f"Continuing without organization filtering."
-                )
-                org_logins = []  # Continue without org filtering
+                logger.warning(f"Failed to get GitHub username from API: {str(e)}")
 
-            raw_key = config_provider.get_github_key()
-            if not raw_key.startswith("-----BEGIN"):
-                raw_key = (
-                    "-----BEGIN RSA PRIVATE KEY-----\n"
-                    + raw_key
-                    + "\n-----END RSA PRIVATE KEY-----\n"
-                )
-            app_id = os.environ["GITHUB_APP_ID"]
+        if not github_username:
+            raise HTTPException(
+                status_code=400,
+                detail="GitHub username not found. Please ensure your GitHub account is properly linked.",
+            )
+        return github_username
 
-            auth = AppAuth(app_id=app_id, private_key=raw_key)
-            jwt = auth.create_jwt()
+    async def _get_oauth_token(
+        self, user_id: str, async_session: Optional[AsyncSession]
+    ) -> Optional[str]:
+        """Get user's GitHub OAuth token."""
+        if async_session is not None:
+            return await self.async_get_github_oauth_token(user_id, async_session)
+        else:
+            return self.get_github_oauth_token(user_id)
 
-            all_installations = []
-            base_url = "https://api.github.com/app/installations"
-            headers = {
+    async def _fetch_user_orgs(self, github_token: str, user_id: str) -> List[str]:
+        """Fetch user organizations from GitHub API."""
+        try:
+            orgs_url = "https://api.github.com/user/orgs?per_page=100"
+            orgs_headers = {
                 "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {jwt}",
+                "Authorization": f"Bearer {github_token}",
                 "X-GitHub-Api-Version": "2022-11-28",
             }
 
-            ssl_context = ssl.create_default_context(cafile=certifi.where())
-            ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
-            connector = aiohttp.TCPConnector(
-                ssl=ssl_context,
-                ttl_dns_cache=300,
-                family=socket.AF_INET,
+            response = await asyncio.to_thread(
+                requests.get,
+                orgs_url,
+                headers=orgs_headers,
+                timeout=(10, 30),
             )
-            # Connect 10s, total 60s per request — pagination can have many large responses
-            timeout = ClientTimeout(sock_connect=10, total=60)
+            if response.status_code == 414:
+                logger.warning(
+                    f"414 URI Too Long when fetching organizations for user {user_id}. "
+                    f"URL length: {len(orgs_url)}. This may indicate a proxy/load balancer issue. "
+                    f"Continuing without organization filtering."
+                )
+                return []
+            elif response.status_code == 200:
+                orgs_data = response.json()
+                org_logins = [org["login"].lower() for org in orgs_data]
+                logger.info(f"Retrieved {len(org_logins)} organizations for user {user_id}")
+                return org_logins
+            else:
+                logger.warning(
+                    f"Failed to get organizations for user {user_id}. "
+                    f"Status: {response.status_code}. Response: {response.text[:200]}"
+                )
+        except requests.exceptions.RequestException as e:
+            logger.warning(
+                f"Request error when fetching organizations for user {user_id}: {str(e)}. "
+                f"Continuing without organization filtering."
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to get organizations for user {user_id}: {str(e)}. "
+                f"Continuing without organization filtering."
+            )
+        return []
 
-            async with aiohttp.ClientSession(
-                connector=connector, timeout=timeout
-            ) as session:
-                # Get first page to determine total pages
-                first_url = f"{base_url}?per_page=100"
-                attempt = 0
-                max_attempts = 3
-                backoff = 1
-                while True:
-                    try:
-                        async with session.get(first_url, headers=headers) as response:
-                            if response.status == 414:
-                                logger.warning(
-                                    f"414 URI Too Long when fetching installations. "
-                                    f"URL length: {len(first_url)}. This may indicate an issue with the GitHub App JWT or API. "
-                                    f"Returning empty repository list."
-                                )
-                                # Return empty list gracefully instead of raising exception
-                                return {"repositories": []}
-                            elif response.status != 200:
-                                error_text = await response.text()
-                                logger.error(
-                                    f"Failed to get installations. Response: {error_text}"
-                                )
-                                raise HTTPException(
-                                    status_code=response.status,
-                                    detail=f"Failed to get installations: {error_text}",
-                                )
+    def _create_app_jwt(self) -> str:
+        """Create GitHub App JWT for API authentication."""
+        raw_key = config_provider.get_github_key()
+        if not raw_key.startswith("-----BEGIN"):
+            raw_key = (
+                "-----BEGIN RSA PRIVATE KEY-----\n"
+                + raw_key
+                + "\n-----END RSA PRIVATE KEY-----\n"
+            )
+        app_id = os.environ["GITHUB_APP_ID"]
+        auth = AppAuth(app_id=app_id, private_key=raw_key)
+        return auth.create_jwt()
 
-                            # Extract last page number from Link header
-                            last_page = 1
-                            if "Link" in response.headers:
-                                links = self._parse_link_header(
-                                    response.headers["Link"]
-                                )
-                                if "last" in links:
-                                    last_url = links["last"]
-                                    match = re.search(r"[?&]page=(\d+)", last_url)
-                                    if match:
-                                        last_page = int(match.group(1))
+    def _get_private_key(self) -> str:
+        """Get and format GitHub private key."""
+        raw_key = config_provider.get_github_key()
+        if not raw_key.startswith("-----BEGIN"):
+            raw_key = (
+                "-----BEGIN RSA PRIVATE KEY-----\n"
+                + raw_key
+                + "\n-----END RSA PRIVATE KEY-----\n"
+            )
+        return raw_key
 
-                            first_page_data = await response.json()
-                            all_installations.extend(first_page_data)
-                            break
-                    except (ClientConnectorError, asyncio.TimeoutError) as net_err:
-                        attempt += 1
-                        if attempt >= max_attempts:
-                            logger.error(
-                                f"Network error contacting GitHub installations API: {net_err}"
-                            )
-                            raise HTTPException(
-                                status_code=503,
-                                detail="Unable to reach GitHub API (installations). Please check network/proxy settings and try again.",
-                            )
-                        await asyncio.sleep(backoff)
-                        backoff *= 2
+    async def _fetch_installations(self, jwt: str) -> List[Dict[str, Any]]:
+        """Fetch all GitHub App installations."""
+        all_installations: List[Dict[str, Any]] = []
+        base_url = "https://api.github.com/app/installations"
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {jwt}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
 
-                # Generate remaining page URLs (skip page 1)
-                page_urls = [
-                    f"{base_url}?page={page}&per_page=100"
-                    for page in range(2, last_page + 1)
-                ]
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+        connector = aiohttp.TCPConnector(
+            ssl=ssl_context,
+            ttl_dns_cache=300,
+            family=socket.AF_INET,
+        )
+        timeout = ClientTimeout(sock_connect=10, total=60)
 
-                # Process URLs in batches of 10
-                async def fetch_page(url):
-                    attempt = 0
-                    max_attempts = 3
-                    backoff = 1
-                    while True:
-                        try:
-                            async with session.get(url, headers=headers) as response:
-                                if response.status == 414:
-                                    logger.warning(
-                                        f"414 URI Too Long for installations page. URL length: {len(url)}. "
-                                        f"URL: {url[:200]}... Skipping this page."
-                                    )
-                                    return []  # Skip this page gracefully
-                                elif response.status == 200:
-                                    return await response.json()
-                                error_text = await response.text()
-                                logger.error(
-                                    f"Failed to fetch page {url}. Response: {error_text}"
-                                )
-                                return []
-                        except (ClientConnectorError, asyncio.TimeoutError) as net_err:
-                            attempt += 1
-                            if attempt >= max_attempts:
-                                logger.error(f"Network error fetching {url}: {net_err}")
-                                return []
-                            await asyncio.sleep(backoff)
-                            backoff *= 2
-
-                # Process URLs in batches of 10
-                for i in range(0, len(page_urls), 10):
-                    batch = page_urls[i : i + 10]
-                    batch_tasks = [fetch_page(url) for url in batch]
-                    batch_results = await asyncio.gather(*batch_tasks)
-                    for installations in batch_results:
-                        all_installations.extend(installations)
-
-                # Filter installations
-                user_installations = []
-                for installation in all_installations:
-                    account = installation["account"]
-                    account_login = account["login"].lower()
-                    account_type = account["type"]
-
-                    if (
-                        account_type == "User"
-                        and account_login == github_username.lower()
-                    ):
-                        user_installations.append(installation)
-                    elif account_type == "Organization" and account_login in org_logins:
-                        user_installations.append(installation)
-
-                # Fetch repositories for each installation
-                repos = []
-                for installation in user_installations:
-                    try:
-                        app_auth = auth.get_installation_auth(installation["id"])
-                        repos_url = installation["repositories_url"]
-                        github = Github(auth=app_auth)  # do not remove this line
-                        auth_headers = {"Authorization": f"Bearer {app_auth.token}"}
-                    except GithubException as e:
-                        if hasattr(e, "status") and e.status == 414:
-                            logger.warning(
-                                f"414 URI Too Long when getting installation auth for installation {installation['id']}. "
-                                f"Skipping this installation."
-                            )
-                            continue
-                        else:
-                            # Re-raise other GithubExceptions
-                            raise
-                    except Exception as e:
-                        logger.warning(
-                            f"Error getting installation auth for installation {installation['id']}: {str(e)}. "
-                            f"Skipping this installation."
-                        )
-                        continue
-
-                    # Log the original repos_url to debug 414 errors
-                    logger.info(
-                        f"[get_repos_for_user] Processing installation {installation['id']}, "
-                        f"repos_url length: {len(repos_url)}, repos_url: {repos_url[:200]}..."
-                    )
-
-                    # Check if original repos_url is already too long (before adding query params)
-                    # This can happen if GitHub's API returns a URL with many query parameters
-                    if len(repos_url) > 2000:
-                        logger.warning(
-                            f"Skipping installation {installation['id']} - original repos_url from GitHub API is too long: "
-                            f"{len(repos_url)} chars (limit: 2000). URL: {repos_url[:200]}..."
-                        )
-                        continue
-
-                    # Construct URL with proper query parameter handling
-                    # repos_url might already have query params, so use URL parsing
-                    # This prevents 414 URI Too Long errors when repos_url has existing query params
-                    parsed_url = None
-                    try:
-                        parsed_url = urlparse(repos_url)
-                        query_params = parse_qs(parsed_url.query)
-                        # Remove any existing per_page to avoid duplicates
-                        query_params.pop("per_page", None)
-                        query_params["per_page"] = ["100"]  # Set per_page to 100
-                        # Reconstruct URL with updated query params
-                        new_query = urlencode(query_params, doseq=True)
-                        first_page_url = urlunparse(
-                            (
-                                parsed_url.scheme,
-                                parsed_url.netloc,
-                                parsed_url.path,
-                                parsed_url.params,
-                                new_query,
-                                parsed_url.fragment,
-                            )
-                        )
-
-                        # Log URL length for debugging 414 errors
-                        logger.info(
-                            f"[get_repos_for_user] Constructed first_page_url for installation {installation['id']}: "
-                            f"length={len(first_page_url)}, url={first_page_url[:200]}..."
-                        )
-                        # GitHub's URI limit is typically 8KB, but some proxies/servers have lower limits
-                        # Skip installations with URLs that are too long to prevent 414 errors
-                        if len(first_page_url) > 2000:
-                            logger.warning(
-                                f"Skipping installation {installation['id']} due to URL too long: "
-                                f"{len(first_page_url)} chars (limit: 2000). URL: {first_page_url[:200]}..."
-                            )
-                            continue
-                    except Exception as url_error:
-                        logger.error(
-                            f"Error parsing repos_url for installation {installation['id']}: {url_error}. "
-                            f"repos_url: {repos_url}"
-                        )
-                        # Fallback to simple concatenation if parsing fails
-                        # Check if per_page already exists to avoid duplicates
-                        if "?" in repos_url:
-                            if "per_page=" in repos_url:
-                                # Remove all existing per_page params (handle multiple occurrences)
-                                repos_url_cleaned = re.sub(
-                                    r"[?&]per_page=\d+", "", repos_url
-                                )
-                                # Fix invalid query string if per_page was the first param
-                                # If query string now starts with & (e.g., ?&other=value), remove the &
-                                repos_url_cleaned = re.sub(
-                                    r"\?&", "?", repos_url_cleaned
-                                )
-                                # Ensure we have proper separator
-                                separator = "&" if "?" in repos_url_cleaned else "?"
-                                first_page_url = (
-                                    f"{repos_url_cleaned}{separator}per_page=100"
-                                )
-                            else:
-                                first_page_url = f"{repos_url}&per_page=100"
-                        else:
-                            first_page_url = f"{repos_url}?per_page=100"
-
-                        logger.warning(
-                            f"[get_repos_for_user] Using fallback URL construction for installation {installation['id']}: "
-                            f"length={len(first_page_url)}, url={first_page_url[:200]}..."
-                        )
-                        # Check if fallback URL is also too long
-                        if len(first_page_url) > 2000:
-                            logger.warning(
-                                f"Skipping installation {installation['id']} due to fallback URL too long: "
-                                f"{len(first_page_url)} chars (limit: 2000). URL: {first_page_url[:200]}..."
-                            )
-                            continue
-
-                        # For fallback, we need to parse the URL for pagination later
-                        try:
-                            parsed_url = urlparse(first_page_url)
-                        except Exception:
-                            parsed_url = None
-
-                    async with session.get(
-                        first_page_url, headers=auth_headers
-                    ) as response:
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+            first_url = f"{base_url}?per_page=100"
+            attempt = 0
+            max_attempts = 3
+            backoff = 1
+            while True:
+                try:
+                    async with session.get(first_url, headers=headers) as response:
                         if response.status == 414:
                             logger.warning(
-                                f"414 URI Too Long for installation {installation['id']}. "
-                                f"URL length: {len(first_page_url)}. Skipping this installation."
+                                f"414 URI Too Long when fetching installations. "
+                                f"URL length: {len(first_url)}. This may indicate an issue with the GitHub App JWT or API. "
+                                f"Returning empty repository list."
                             )
-                            continue
+                            return []
                         elif response.status != 200:
                             error_text = await response.text()
-                            logger.error(
-                                f"Failed to fetch repositories for installation ID {installation['id']}. "
-                                f"Status: {response.status}. Response: {error_text[:500]}"
+                            logger.error(f"Failed to get installations. Response: {error_text}")
+                            raise HTTPException(
+                                status_code=response.status,
+                                detail=f"Failed to get installations: {error_text}",
                             )
-                            continue
 
-                        first_page_data = await response.json()
-                        repos.extend(first_page_data.get("repositories", []))
-
-                        # Get last page from Link header
                         last_page = 1
                         if "Link" in response.headers:
                             links = self._parse_link_header(response.headers["Link"])
@@ -953,169 +768,346 @@ class GithubService:
                                 if match:
                                     last_page = int(match.group(1))
 
-                        if last_page > 1:
-                            # Generate remaining page URLs (skip page 1)
-                            # Use the same URL parsing approach to ensure proper query params
-                            page_urls = []
-                            if parsed_url is None:
-                                # If parsed_url is not available, use Link header URLs from GitHub
+                        first_page_data = await response.json()
+                        all_installations.extend(first_page_data)
+                        break
+                except (ClientConnectorError, asyncio.TimeoutError) as net_err:
+                    attempt += 1
+                    if attempt >= max_attempts:
+                        logger.error(f"Network error contacting GitHub installations API: {net_err}")
+                        raise HTTPException(
+                            status_code=503,
+                            detail="Unable to reach GitHub API (installations). Please check network/proxy settings and try again.",
+                        )
+                    await asyncio.sleep(backoff)
+                    backoff *= 2
+
+            page_urls = [f"{base_url}?page={page}&per_page=100" for page in range(2, last_page + 1)]
+
+            async def fetch_page(url: str) -> List[Dict[str, Any]]:
+                attempt = 0
+                max_attempts = 3
+                backoff = 1
+                while True:
+                    try:
+                        async with session.get(url, headers=headers) as response:
+                            if response.status == 414:
                                 logger.warning(
-                                    f"Cannot generate pagination URLs for installation {installation['id']} - parsed_url not available. "
-                                    f"Using Link header URLs instead."
+                                    f"414 URI Too Long for installations page. URL length: {len(url)}. "
+                                    f"URL: {url[:200]}... Skipping this page."
                                 )
-                                # Extract page URLs from Link header
-                                if "Link" in response.headers:
-                                    links = self._parse_link_header(
-                                        response.headers["Link"]
-                                    )
-                                    for rel, url in links.items():
-                                        # Handle "next" link or page links (e.g., "page2", "page3")
-                                        should_add = False
-                                        if rel == "next":
-                                            should_add = True
-                                        elif rel.startswith("page"):
-                                            try:
-                                                page_num = int(rel.replace("page", ""))
-                                                if page_num > 1:
-                                                    should_add = True
-                                            except (ValueError, AttributeError):
-                                                # Skip if rel format is unexpected (e.g., "pageabc")
-                                                logger.debug(
-                                                    f"Skipping unexpected rel format in Link header: {rel}"
-                                                )
-                                                continue
+                                return []
+                            elif response.status == 200:
+                                return await response.json()
+                            error_text = await response.text()
+                            logger.error(f"Failed to fetch page {url}. Response: {error_text}")
+                            return []
+                    except (ClientConnectorError, asyncio.TimeoutError) as net_err:
+                        attempt += 1
+                        if attempt >= max_attempts:
+                            logger.error(f"Network error fetching {url}: {net_err}")
+                            return []
+                        await asyncio.sleep(backoff)
+                        backoff *= 2
 
-                                        if should_add:
-                                            # Check URL length before adding to prevent 414 errors
-                                            if len(url) > 2000:
-                                                logger.warning(
-                                                    f"Skipping {rel} page URL for installation {installation['id']} - URL too long: {len(url)} chars (limit: 2000). URL: {url[:200]}..."
-                                                )
-                                                continue
-                                            page_urls.append(url)
-                            else:
-                                for page in range(2, last_page + 1):
-                                    page_query_params = parse_qs(parsed_url.query)
-                                    # Remove existing page param to avoid duplicates
-                                    page_query_params.pop("page", None)
-                                    page_query_params["per_page"] = ["100"]
-                                    page_query_params["page"] = [str(page)]
-                                    page_query = urlencode(
-                                        page_query_params, doseq=True
-                                    )
-                                    page_url = urlunparse(
-                                        (
-                                            parsed_url.scheme,
-                                            parsed_url.netloc,
-                                            parsed_url.path,
-                                            parsed_url.params,
-                                            page_query,
-                                            parsed_url.fragment,
-                                        )
-                                    )
-                                    # Check URL length before adding
-                                    if len(page_url) > 2000:
-                                        logger.warning(
-                                            f"Skipping page {page} for installation {installation['id']} - URL too long: {len(page_url)} chars"
-                                        )
-                                        continue
-                                    page_urls.append(page_url)
+            for i in range(0, len(page_urls), 10):
+                batch = page_urls[i : i + 10]
+                batch_tasks = [fetch_page(url) for url in batch]
+                batch_results = await asyncio.gather(*batch_tasks)
+                for installations in batch_results:
+                    all_installations.extend(installations)
 
-                            # Process URLs in batches of 10
-                            for i in range(0, len(page_urls), 10):
-                                batch = page_urls[i : i + 10]
-                                tasks = [
-                                    session.get(url, headers=auth_headers)
-                                    for url in batch
-                                ]
-                                responses = await asyncio.gather(*tasks)
+        return all_installations
 
-                                for response in responses:
-                                    async with response:
-                                        if response.status == 414:
+    def _filter_installations(
+        self,
+        installations: List[Dict[str, Any]],
+        github_username: str,
+        org_logins: List[str],
+    ) -> List[Dict[str, Any]]:
+        """Filter installations to only those accessible by the user."""
+        user_installations = []
+        for installation in installations:
+            account = installation["account"]
+            account_login = account["login"].lower()
+            account_type = account["type"]
+
+            if account_type == "User" and account_login == github_username.lower():
+                user_installations.append(installation)
+            elif account_type == "Organization" and account_login in org_logins:
+                user_installations.append(installation)
+        return user_installations
+
+    async def _fetch_all_repos(
+        self,
+        user_installations: List[Dict[str, Any]],
+        auth: AppAuth,
+        github_username: str,
+        user_id: str,
+    ) -> List[Dict[str, Any]]:
+        """Fetch all repositories for the user's installations."""
+        repos: List[Dict[str, Any]] = []
+
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+        connector = aiohttp.TCPConnector(ssl=ssl_context, ttl_dns_cache=300, family=socket.AF_INET)
+        timeout = ClientTimeout(sock_connect=10, total=60)
+
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+            for installation in user_installations:
+                try:
+                    app_auth = auth.get_installation_auth(installation["id"])
+                    repos_url = installation["repositories_url"]
+                    Github(auth=app_auth)  # Ensure auth works
+                    auth_headers = {"Authorization": f"Bearer {app_auth.token}"}
+                except GithubException as e:
+                    if self._is_414_error(e):
+                        logger.warning(
+                            f"414 URI Too Long when getting installation auth for installation {installation['id']}. "
+                            f"Skipping this installation."
+                        )
+                        continue
+                    raise
+                except Exception as e:
+                    logger.warning(
+                        f"Error getting installation auth for installation {installation['id']}: {str(e)}. "
+                        f"Skipping this installation."
+                    )
+                    continue
+
+                logger.info(
+                    f"[get_repos_for_user] Processing installation {installation['id']}, "
+                    f"repos_url length: {len(repos_url)}, repos_url: {repos_url[:200]}..."
+                )
+
+                if len(repos_url) > 2000:
+                    logger.warning(
+                        f"Skipping installation {installation['id']} - original repos_url from GitHub API is too long: "
+                        f"{len(repos_url)} chars (limit: 2000). URL: {repos_url[:200]}..."
+                    )
+                    continue
+
+                parsed_url = None
+                try:
+                    parsed_url = urlparse(repos_url)
+                    query_params = parse_qs(parsed_url.query)
+                    query_params.pop("per_page", None)
+                    query_params["per_page"] = ["100"]
+                    new_query = urlencode(query_params, doseq=True)
+                    first_page_url = urlunparse(
+                        (
+                            parsed_url.scheme,
+                            parsed_url.netloc,
+                            parsed_url.path,
+                            parsed_url.params,
+                            new_query,
+                            parsed_url.fragment,
+                        )
+                    )
+
+                    logger.info(
+                        f"[get_repos_for_user] Constructed first_page_url for installation {installation['id']}: "
+                        f"length={len(first_page_url)}, url={first_page_url[:200]}..."
+                    )
+                    if len(first_page_url) > 2000:
+                        logger.warning(
+                            f"Skipping installation {installation['id']} due to URL too long: "
+                            f"{len(first_page_url)} chars (limit: 2000). URL: {first_page_url[:200]}..."
+                        )
+                        continue
+                except Exception as url_error:
+                    logger.error(
+                        f"Error parsing repos_url for installation {installation['id']}: {url_error}. "
+                        f"repos_url: {repos_url}"
+                    )
+                    if "?" in repos_url:
+                        if "per_page=" in repos_url:
+                            repos_url_cleaned = re.sub(r"[?&]per_page=\d+", "", repos_url)
+                            repos_url_cleaned = repos_url_cleaned.replace("?&", "?")
+                            separator = "&" if "?" in repos_url_cleaned else "?"
+                            first_page_url = f"{repos_url_cleaned}{separator}per_page=100"
+                        else:
+                            first_page_url = f"{repos_url}&per_page=100"
+                    else:
+                        first_page_url = f"{repos_url}?per_page=100"
+
+                    logger.warning(
+                        f"[get_repos_for_user] Using fallback URL construction for installation {installation['id']}: "
+                        f"length={len(first_page_url)}, url={first_page_url[:200]}..."
+                    )
+                    if len(first_page_url) > 2000:
+                        logger.warning(
+                            f"Skipping installation {installation['id']} due to fallback URL too long: "
+                            f"{len(first_page_url)} chars (limit: 2000). URL: {first_page_url[:200]}..."
+                        )
+                        continue
+
+                    try:
+                        parsed_url = urlparse(first_page_url)
+                    except Exception:
+                        parsed_url = None
+
+                async with session.get(first_page_url, headers=auth_headers) as response:
+                    if response.status == 414:
+                        logger.warning(
+                            f"414 URI Too Long for installation {installation['id']}. "
+                            f"URL length: {len(first_page_url)}. Skipping this installation."
+                        )
+                        continue
+                    elif response.status != 200:
+                        error_text = await response.text()
+                        logger.error(
+                            f"Failed to fetch repositories for installation ID {installation['id']}. "
+                            f"Status: {response.status}. Response: {error_text[:500]}"
+                        )
+                        continue
+
+                    first_page_data = await response.json()
+                    repos.extend(first_page_data.get("repositories", []))
+
+                    last_page = 1
+                    if "Link" in response.headers:
+                        links = self._parse_link_header(response.headers["Link"])
+                        if "last" in links:
+                            last_url = links["last"]
+                            match = re.search(r"[?&]page=(\d+)", last_url)
+                            if match:
+                                last_page = int(match.group(1))
+
+                    if last_page > 1:
+                        page_urls = []
+                        if parsed_url is None:
+                            logger.warning(
+                                f"Cannot generate pagination URLs for installation {installation['id']} - parsed_url not available. "
+                                f"Using Link header URLs instead."
+                            )
+                            if "Link" in response.headers:
+                                links = self._parse_link_header(response.headers["Link"])
+                                for rel, url in links.items():
+                                    should_add = False
+                                    if rel == "next":
+                                        should_add = True
+                                    elif rel.startswith("page"):
+                                        try:
+                                            page_num = int(rel.replace("page", ""))
+                                            if page_num > 1:
+                                                should_add = True
+                                        except (ValueError, AttributeError):
+                                            continue
+
+                                    if should_add:
+                                        if len(url) > 2000:
                                             logger.warning(
-                                                "414 URI Too Long for pagination request. Skipping this page."
+                                                f"Skipping {rel} page URL for installation {installation['id']} - URL too long: {len(url)} chars (limit: 2000). URL: {url[:200]}..."
                                             )
                                             continue
-                                        elif response.status == 200:
-                                            page_data = await response.json()
-                                            repos.extend(
-                                                page_data.get("repositories", [])
-                                            )
-                                        else:
-                                            error_text = await response.text()
-                                            logger.error(
-                                                f"Failed to fetch repositories page. Status: {response.status}. Response: {error_text[:500]}"
-                                            )
+                                        page_urls.append(url)
+                        else:
+                            for page in range(2, last_page + 1):
+                                page_query_params = parse_qs(parsed_url.query)
+                                page_query_params.pop("page", None)
+                                page_query_params["per_page"] = ["100"]
+                                page_query_params["page"] = [str(page)]
+                                page_query = urlencode(page_query_params, doseq=True)
+                                page_url = urlunparse(
+                                    (
+                                        parsed_url.scheme,
+                                        parsed_url.netloc,
+                                        parsed_url.path,
+                                        parsed_url.params,
+                                        page_query,
+                                        parsed_url.fragment,
+                                    )
+                                )
+                                if len(page_url) > 2000:
+                                    logger.warning(
+                                        f"Skipping page {page} for installation {installation['id']} - URL too long: {len(page_url)} chars"
+                                    )
+                                    continue
+                                page_urls.append(page_url)
 
-                # Remove duplicate repositories
-                unique_repos = {repo["id"]: repo for repo in repos}.values()
-                repo_list = [
-                    {
-                        "id": repo["id"],
-                        "name": repo["name"],
-                        "full_name": repo["full_name"],
-                        "private": repo["private"],
-                        "url": repo["html_url"],
-                        "owner": repo["owner"]["login"],
-                    }
-                    for repo in unique_repos
-                ]
+                        for i in range(0, len(page_urls), 10):
+                            batch = page_urls[i : i + 10]
+                            tasks = [session.get(url, headers=auth_headers) for url in batch]
+                            responses = await asyncio.gather(*tasks)
 
-                return {"repositories": repo_list}
+                            for response in responses:
+                                async with response:
+                                    if response.status == 414:
+                                        logger.warning(
+                                            "414 URI Too Long for pagination request. Skipping this page."
+                                        )
+                                        continue
+                                    elif response.status == 200:
+                                        page_data = await response.json()
+                                        repos.extend(page_data.get("repositories", []))
+                                    else:
+                                        error_text = await response.text()
+                                        logger.error(
+                                            f"Failed to fetch repositories page. Status: {response.status}. Response: {error_text[:500]}"
+                                        )
 
+        return repos
+
+    def _format_repos(self, repos: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Format repository list for response."""
+        unique_repos = {repo["id"]: repo for repo in repos}.values()
+        return [
+            {
+                "id": repo["id"],
+                "name": repo["name"],
+                "full_name": repo["full_name"],
+                "private": repo["private"],
+                "url": repo["html_url"],
+                "owner": repo["owner"]["login"],
+            }
+            for repo in unique_repos
+        ]
+
+    # =========================================================================
+    # Main function
+    # =========================================================================
+
+    async def get_repos_for_user(
+        self, user_id: str, async_session: Optional[AsyncSession] = None
+    ):
+        if self.is_development_mode:
+            return {"repositories": []}
+
+        import time
+
+        start_time = time.time()
+        try:
+            # User and auth resolution
+            user = await self._get_user(user_id, async_session)
+            github_provider = await self._get_github_provider(user_id, async_session)
+            github_token = await self._get_oauth_token(user.uid, async_session)
+            github_username = await self._resolve_github_username(user, github_provider, github_token)
+
+            # Org and installation setup
+            org_logins = await self._fetch_user_orgs(github_token, user_id)
+            jwt = self._create_app_jwt()
+            all_installations = await self._fetch_installations(jwt)
+            user_installations = self._filter_installations(all_installations, github_username, org_logins)
+
+            # Repository fetching
+            auth = AppAuth(app_id=os.environ["GITHUB_APP_ID"], private_key=self._get_private_key())
+            repos = await self._fetch_all_repos(user_installations, auth, github_username, user_id)
+
+            return {"repositories": self._format_repos(repos)}
+
+        except HTTPException:
+            raise
         except GithubException as e:
-            # Handle 414 errors from PyGithub specifically
-            # Check both status attribute and error message string (PyGithub may put status in message)
-            error_str = str(e)
-            is_414_error = (
-                (hasattr(e, "status") and e.status == 414)
-                or "414" in error_str
-                or "URI Too Long" in error_str
-            )
-
-            if is_414_error:
-                logger.warning(
-                    f"414 URI Too Long error from PyGithub for user {user_id}. "
-                    f"Error: {error_str[:500]}. "
-                    f"This may indicate an issue with GitHub API URL construction. "
-                    f"Returning empty repository list."
-                )
+            if self._is_414_error(e):
+                logger.warning(f"414 error: {str(e)[:500]}")
                 return {"repositories": []}
-            else:
-                # Re-raise other GithubExceptions
-                logger.exception(
-                    "GithubException in get_repos_for_user", user_id=user_id
-                )
-                raise HTTPException(
-                    status_code=e.status if hasattr(e, "status") else 500,
-                    detail=f"GitHub API error: {error_str}",
-                ) from e
+            raise
         except Exception as e:
-            # Check if this is a 414 error that might have been wrapped
-            error_str = str(e)
-            is_414_error = (
-                "414" in error_str
-                or "URI Too Long" in error_str
-                or (hasattr(e, "status") and e.status == 414)
-            )
-
-            if is_414_error:
-                logger.warning(
-                    f"414 URI Too Long error (caught as generic Exception) for user {user_id}. "
-                    f"Error: {error_str[:500]}. Returning empty repository list."
-                )
-                return {"repositories": []}
-
-            logger.exception("Failed to fetch repositories", user_id=user_id)
-            raise HTTPException(
-                status_code=500, detail="Failed to fetch repositories"
-            ) from e
+            logger.exception("get_repos_for_user failed")
+            raise
         finally:
-            total_duration = time.time() - start_time  # Calculate total duration
-            logger.info(
-                f"get_repos_for_user executed in {total_duration:.2f} seconds"
-            )  # Log total duration
+            logger.info(f"get_repos_for_user executed in {time.time() - start_time:.2f}s")
 
     async def get_combined_user_repos(
         self, user_id: str, async_session: Optional[AsyncSession] = None
@@ -1376,7 +1368,7 @@ class GithubService:
             )
 
         try:
-            github, repo = await asyncio.to_thread(self.get_repo, repo_name)
+            _, repo = await asyncio.to_thread(self.get_repo, repo_name)
 
             # If path is provided, verify it exists
             if path:
