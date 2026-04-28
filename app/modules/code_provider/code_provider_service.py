@@ -6,6 +6,7 @@ from github.GithubException import BadCredentialsException
 
 from app.modules.code_provider.github.github_provider import GitHubProvider
 from app.modules.code_provider.provider_factory import CodeProviderFactory
+from app.modules.intelligence.tools.code_changes_manager import _get_local_mode
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -197,7 +198,8 @@ class ProviderWrapper:
         logger.info(
             f"ProviderWrapper: About to create provider with fallback for {repo_name}"
         )
-        provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
+        local_mode = _get_local_mode()
+        provider = CodeProviderFactory.create_provider_with_fallback(repo_name, local_mode=local_mode)
         logger.info(
             f"ProviderWrapper: Provider created successfully, type: {type(provider).__name__}"
         )
@@ -277,10 +279,11 @@ class ProviderWrapper:
         If a configured token is invalid (401), falls back to unauthenticated access
         for GitHub public repos as a last resort.
         """
-        # Check if tunnel provider is available first
+        # Check if tunnel provider is available first (only in local mode)
         from app.modules.code_provider.provider_factory import CodeProviderFactory
 
-        tunnel_provider = CodeProviderFactory.create_tunnel_provider()
+        local_mode = _get_local_mode()
+        tunnel_provider = CodeProviderFactory.create_tunnel_provider(local_mode=local_mode)
         if tunnel_provider:
             try:
                 if tunnel_provider.check_repository_access(repo_name):
@@ -299,7 +302,7 @@ class ProviderWrapper:
                     f"Tunnel provider failed: {e}, falling back to other providers"
                 )
 
-        provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
+        provider = CodeProviderFactory.create_provider_with_fallback(repo_name, local_mode=local_mode)
         # Wrap provider to use local copies if available
         provider = self._wrap_provider_if_needed(provider)
 
@@ -386,11 +389,12 @@ class ProviderWrapper:
                 else project.get("branch_name")
             )
 
-            # Check if tunnel provider is available (highest priority for local access)
-            # This should be checked before local filesystem access
+            # Check if tunnel provider is available (highest priority for local access, VSCode only)
+            # Tunnel is only checked in local_mode to prevent web mode from attempting tunnel connections
             from app.modules.code_provider.provider_factory import CodeProviderFactory
 
-            tunnel_provider = CodeProviderFactory.create_tunnel_provider()
+            local_mode = _get_local_mode()
+            tunnel_provider = CodeProviderFactory.create_tunnel_provider(local_mode=local_mode)
             if tunnel_provider:
                 try:
                     if tunnel_provider.check_repository_access(repo_name):
@@ -437,7 +441,7 @@ class ProviderWrapper:
                     # Use provider wrapped with repo_manager to get structure from local copy
                     # The wrapper will handle finding the correct worktree based on ref
                     provider = CodeProviderFactory.create_provider_with_fallback(
-                        repo_name
+                        repo_name, local_mode=local_mode
                     )
                     provider = self._wrap_provider_if_needed(provider)
                     structure = provider.get_repository_structure(
@@ -447,7 +451,7 @@ class ProviderWrapper:
 
             # For local repos detected by path, always use LocalProvider
             if is_local_path or provider_type == "local":
-                provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
+                provider = CodeProviderFactory.create_provider_with_fallback(repo_name, local_mode=local_mode)
                 # Wrap provider to use local copies if available
                 provider = self._wrap_provider_if_needed(provider)
                 # Use the provider to get repository structure
@@ -463,7 +467,7 @@ class ProviderWrapper:
                 # If repo_manager is available, prefer using wrapped provider for local copies
                 if self.repo_manager:
                     provider = CodeProviderFactory.create_provider_with_fallback(
-                        repo_name
+                        repo_name, local_mode=local_mode
                     )
                     provider = self._wrap_provider_if_needed(provider)
                     structure = provider.get_repository_structure(
@@ -483,7 +487,7 @@ class ProviderWrapper:
                 )
 
             # For other providers (local, GitBucket, etc.), use the provider-based approach
-            provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
+            provider = CodeProviderFactory.create_provider_with_fallback(repo_name, local_mode=local_mode)
             # Wrap provider to use local copies if available
             provider = self._wrap_provider_if_needed(provider)
 
