@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile, HTTPException
+from fastapi import APIRouter, Depends, File, Header, Query, UploadFile, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
@@ -76,6 +76,28 @@ class MediaAPI:
         return await controller.get_attachment_access_url(
             attachment_id, expiration_minutes
         )
+
+    @staticmethod
+    @router.get("/media/internal/attachments/{attachment_id}/raw")
+    async def internal_workflows_download_raw(
+        attachment_id: str,
+        x_workflows_media_token: Optional[str] = Header(
+            None, alias="X-Workflows-Media-Token"
+        ),
+        db: Session = Depends(get_db),
+    ):
+        """Download raw bytes for workflow multimodal (QnA) — requires shared secret, no user session."""
+        expected = config_provider.get_workflows_media_internal_secret()
+        if not expected:
+            raise HTTPException(
+                status_code=503,
+                detail="Internal media access is not configured (WORKFLOWS_MEDIA_INTERNAL_SECRET)",
+            )
+        if not x_workflows_media_token or x_workflows_media_token != expected:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        controller = MediaController(db, user_id="workflow-internal", user_email="")
+        return await controller.internal_download_raw(attachment_id)
 
     @staticmethod
     @router.get("/media/{attachment_id}/download")

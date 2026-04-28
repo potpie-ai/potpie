@@ -208,6 +208,34 @@ class MediaController:
             logger.error(f"Error generating attachment access URL: {str(e)}")
             raise HTTPException(status_code=500, detail="Failed to generate access URL")
 
+    async def internal_download_raw(
+        self, attachment_id: str
+    ) -> StreamingResponse:
+        """Stream raw bytes for an attachment (no user/conversation check).
+
+        Used by the workflows service with a shared secret so orphan uploads
+        (e.g. QnA additional context) can be read for multimodal spec research.
+        """
+        try:
+            attachment = await self.media_service.get_attachment(attachment_id)
+            if not attachment:
+                raise HTTPException(status_code=404, detail="Attachment not found")
+            file_data = await self.media_service.get_attachment_data(attachment_id)
+            safe_filename = _safe_content_disposition_filename(attachment.file_name)
+            headers = {
+                "Content-Disposition": f'inline; filename="{safe_filename}"',
+                "Content-Type": attachment.mime_type,
+                "Content-Length": str(len(file_data)),
+            }
+            return StreamingResponse(
+                io.BytesIO(file_data), media_type=attachment.mime_type, headers=headers
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error internal download for {attachment_id}: {str(e)}")
+            raise HTTPException(status_code=500, detail="Failed to read attachment") from e
+
     async def download_attachment(self, attachment_id: str) -> StreamingResponse:
         """Download attachment file directly"""
         try:

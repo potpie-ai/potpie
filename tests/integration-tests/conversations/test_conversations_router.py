@@ -15,14 +15,16 @@ from app.modules.projects.projects_model import Project
 
 
 async def test_post_message_successful_flow(
-    client, db_session, mock_redis_stream_manager
+    client, db_session, mock_redis_stream_manager, monkeypatch
 ):
     """
     Tests the complete, successful flow of a user posting a new message
     with an image.
     """
-    # Replace MediaController in the router module so the real constructor never runs
-    # (no MediaService / multimodal gate). Do not force get_is_multimodal_enabled:
+    # Stub MediaController so the real __init__ / multimodal check never runs.
+    # Patch both modules: `from media_controller import MediaController` binds a
+    # second name; patching only one module can leave the other pointing at the
+    # real class in some environments. Do not force get_is_multimodal_enabled:
     # on upload failure the router builds MediaService(db) for cleanup, which can
     # hit S3 when multimodal is on.
     mock_upload = AsyncMock(
@@ -37,13 +39,18 @@ async def test_post_message_successful_flow(
     mock_media = MagicMock()
     mock_media.upload_file_any = mock_upload
     media_factory = MagicMock(return_value=mock_media)
+    monkeypatch.setattr(
+        "app.modules.conversations.conversations_router.MediaController",
+        media_factory,
+    )
+    monkeypatch.setattr(
+        "app.modules.media.media_controller.MediaController",
+        media_factory,
+    )
 
     with patch(
         "app.celery.tasks.agent_tasks.execute_agent_background.delay"
     ) as mock_celery_task, patch(
-        "app.modules.conversations.conversations_router.MediaController",
-        new=media_factory,
-    ), patch(
         "app.modules.conversations.conversations_router.ConversationController"
     ) as mock_conversation_controller_class, patch(
         "app.modules.conversations.conversations_router.start_celery_task_and_stream",

@@ -397,11 +397,18 @@ class CodeGraphService:
         search_service.delete_project_index(project_id)
 
         if hasattr(self, "qdrant_client"):
-            delete_hybrid_collection(
-                self.qdrant_client,
-                self.get_qdrant_collection_name(project_id),
-                alias_name=self.get_qdrant_collection_alias(project_id),
-            )
+            try:
+                delete_hybrid_collection(
+                    self.qdrant_client,
+                    self.get_qdrant_collection_name(project_id),
+                    alias_name=self.get_qdrant_collection_alias(project_id),
+                )
+            except Exception:
+                # Qdrant may be unavailable in local/dev runs; do not block parsing.
+                logger.exception(
+                    "Qdrant cleanup failed (non-fatal); continuing parse",
+                    project_id=project_id,
+                )
 
     async def get_node_by_id(self, node_id: str, project_id: str) -> Optional[Dict]:
         with self.driver.session() as session:

@@ -161,6 +161,10 @@ class ConfigProvider:
     def get_is_development_mode(self):
         return self.is_development_mode == "enabled"
 
+    def get_workflows_media_internal_secret(self) -> str:
+        """Secret header value for workflows to fetch QnA attachment bytes (``X-Workflows-Media-Token``)."""
+        return (os.getenv("WORKFLOWS_MEDIA_INTERNAL_SECRET") or "").strip()
+
     def get_is_multimodal_enabled(self) -> bool:
         """
         Determine if multimodal functionality is enabled.
