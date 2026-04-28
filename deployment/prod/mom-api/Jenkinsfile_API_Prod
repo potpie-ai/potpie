@@ -1,8 +1,13 @@
+import groovy.json.JsonOutput
+
 pipeline {
     agent any
 
     parameters {
         string(name: 'namespace', defaultValue: "micro-services", description: 'namespace to deploy')
+        string(name: 'IMAGE_DIGEST', defaultValue: '', description: 'Optional immutable image digest ref (repo/image@sha256:...) to promote')
+        string(name: 'ROLLBACK_DIGEST', defaultValue: '', description: 'Optional immutable image digest ref for deterministic rollback')
+        string(name: 'CHANGE_TICKET', defaultValue: '', description: 'Required release change ticket/reference')
     }
     environment {
         // Access environment variables using Jenkins credentials
@@ -31,6 +36,30 @@ pipeline {
                     checkout scm
                     // Capture the short Git commit hash to use as the image tag
                     env.GIT_COMMIT_HASH = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
+                    env.RELEASE_REF = env.GIT_COMMIT_HASH
+                    env.IMAGE_DIGEST_REF = params.IMAGE_DIGEST?.trim() ?: ''
+                }
+            }
+        }
+
+
+        stage('Quality Gates') {
+            when {
+                expression { !params.IMAGE_DIGEST?.trim() }
+            }
+            steps {
+                script {
+                    sh '''#!/usr/bin/env bash
+set -euo pipefail
+if ! command -v uv >/dev/null 2>&1; then
+  echo "uv is required to run quality gates" >&2
+  exit 1
+fi
+uv sync --frozen --dev
+uv run ruff check app tests
+SKIP_REAL_PARSE=1 uv run python scripts/run_tests.py --unit-only
+SKIP_REAL_PARSE=1 uv run python scripts/run_tests.py --integration-only
+'''
                 }
             }
         }
@@ -59,26 +88,35 @@ pipeline {
         }
 
         stage('Build Docker Image') {
+            when {
+                expression { !params.IMAGE_DIGEST?.trim() }
+            }
             steps {
                 script {
-                    // Use the Git commit hash as the image tag
                     def imageTag = env.GIT_COMMIT_HASH
-                    def dockerRegistry = env.DOCKER_REGISTRY
-                    echo "Printing the saved docker registry from env:"
-                    echo "${dockerRegistry}"
-                    sh "sudo docker build -f deployment/prod/mom-api/api.Dockerfile -t ${DOCKER_REGISTRY}/mom-api:${imageTag} \"${env.WORKSPACE}\""
+                    env.IMAGE_TAG = "${DOCKER_REGISTRY}/mom-api:${imageTag}"
+                    echo "Building image: ${env.IMAGE_TAG}"
+                    sh "sudo docker build -f deployment/prod/mom-api/api.Dockerfile -t ${env.IMAGE_TAG} \"${env.WORKSPACE}\""
                 }
             }
         }
 
         stage('Push Docker Image') {
+            when {
+                expression { !params.IMAGE_DIGEST?.trim() }
+            }
             steps {
                 script {
-                    // Use the Git commit hash as the image tag
-                    def imageTag = env.GIT_COMMIT_HASH
-                    echo "printing the user here"
-                    sh "whoami && pwd"
-                    sh "sudo docker push ${DOCKER_REGISTRY}/mom-api:${imageTag}"
+                    sh "sudo docker push ${env.IMAGE_TAG}"
+                    env.IMAGE_DIGEST_REF = sh(
+                        returnStdout: true,
+                        script: "sudo docker inspect --format='{{index .RepoDigests 0}}' ${env.IMAGE_TAG}"
+                    ).trim()
+                    if (!env.IMAGE_DIGEST_REF) {
+                        error('Failed to resolve pushed image digest.')
+                    }
+                    env.RELEASE_REF = env.IMAGE_DIGEST_REF
+                    echo "Resolved image digest: ${env.IMAGE_DIGEST_REF}"
                 }
             }
         }
@@ -98,17 +136,35 @@ pipeline {
          stage('Ask User for Deployment Confirmation') {
             steps {
                 script {
-                    def deployConfirmation = input(
-                        id: 'userInput',
-                        message: 'Do you want to deploy the new Docker image?',
+                    def requestedDigest = params.IMAGE_DIGEST?.trim()
+                    def effectiveDigest = requestedDigest ? requestedDigest : env.IMAGE_DIGEST_REF
+                    if (!effectiveDigest) {
+                        error('No immutable digest available. Provide IMAGE_DIGEST or allow build/push to resolve one.')
+                    }
+                    if (!effectiveDigest.contains('@sha256:')) {
+                        error("Digest must include @sha256:. Received: ${effectiveDigest}")
+                    }
+                    if (!params.CHANGE_TICKET?.trim()) {
+                        error('CHANGE_TICKET is required for release governance.')
+                    }
+                    env.RELEASE_REF = effectiveDigest
+
+                    def approval = input(
+                        id: 'releaseApproval',
+                        message: "Approve production deployment of ${effectiveDigest}?",
                         parameters: [
-                            choice(name: 'Deploy', choices: ['Yes', 'No'], description: 'Select Yes to proceed to deploy the image or No to abort.')
+                            choice(name: 'Deploy', choices: ['Yes', 'No'], description: 'Select Yes to proceed to deploy the image or No to abort.'),
+                            string(name: 'ApproverNote', defaultValue: '', description: 'Required short release approval note.')
                         ]
                     )
 
-                    if (deployConfirmation == 'No') {
-                        error('User chose not to deploy the images, stopping the pipeline.')
+                    if (approval['Deploy'] != 'Yes') {
+                        error('Deployment rejected by approver.')
                     }
+                    if (!approval['ApproverNote']?.trim()) {
+                        error('Approver note is required.')
+                    }
+                    env.RELEASE_APPROVER_NOTE = approval['ApproverNote'].trim()
                 }
             }
         }
@@ -117,14 +173,12 @@ pipeline {
             steps {
                 script {
                     def imageDeploySucceeded = false
-                    def imageTag = env.GIT_COMMIT_HASH
-
-                    echo "this is the fetched docker image tag: ${imageTag}"
+                    def deployRef = env.RELEASE_REF
 
 
                     try {
                         sh """
-                        kubectl set image deployment/mom-api-deployment mom-api=${DOCKER_REGISTRY}/mom-api:${imageTag} -n ${params.namespace}
+                        kubectl set image deployment/mom-api-deployment mom-api=${deployRef} -n ${params.namespace}
                         kubectl rollout status deployment/mom-api-deployment -n ${params.namespace}
                         """
                         imageDeploySucceeded = true
@@ -135,7 +189,47 @@ pipeline {
                     if (!imageDeploySucceeded) {
                         echo 'Rolling back to previous revision...'
                         sh "kubectl rollout undo deployment/mom-api-deployment -n ${params.namespace}"
+                        error('Deployment failed and rollback to previous revision executed.')
                     }
+                }
+            }
+        }
+
+        stage('Optional Rollback to Requested Digest') {
+            when {
+                expression { params.ROLLBACK_DIGEST?.trim() }
+            }
+            steps {
+                script {
+                    if (!params.ROLLBACK_DIGEST.contains('@sha256:')) {
+                        error("ROLLBACK_DIGEST must include @sha256:. Received: ${params.ROLLBACK_DIGEST}")
+                    }
+                    sh """
+                    kubectl set image deployment/mom-api-deployment mom-api=${params.ROLLBACK_DIGEST} -n ${params.namespace}
+                    kubectl rollout status deployment/mom-api-deployment -n ${params.namespace}
+                    """
+                    env.RELEASE_REF = params.ROLLBACK_DIGEST
+                }
+            }
+        }
+
+        stage('Persist Release Record') {
+            steps {
+                script {
+                    def releaseRecord = JsonOutput.prettyPrint(JsonOutput.toJson([
+                        service: 'mom-api',
+                        namespace: params.namespace,
+                        release_ref: env.RELEASE_REF,
+                        change_ticket: params.CHANGE_TICKET,
+                        approver_note: env.RELEASE_APPROVER_NOTE ?: '',
+                        build_url: env.BUILD_URL,
+                        build_number: env.BUILD_NUMBER,
+                        git_branch: env.GIT_BRANCH,
+                        git_commit: env.GIT_COMMIT ?: '',
+                        timestamp_utc: new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone('UTC'))
+                    ]))
+                    writeFile file: 'release-record.json', text: releaseRecord + '\n'
+                    archiveArtifacts artifacts: 'release-record.json', onlyIfSuccessful: false
                 }
             }
         }
@@ -164,11 +258,10 @@ pipeline {
             // Optional cleanup action
             script {
 
-                // Clean up local Docker images
-                def imageTag = env.GIT_COMMIT_HASH
-                sh """
-                docker rmi ${DOCKER_REGISTRY}/mom-api:${imageTag} || true
-                """
+                // Clean up local Docker images when built in this run
+                if (env.IMAGE_TAG) {
+                    sh "docker rmi ${env.IMAGE_TAG} || true"
+                }
             }
         }
     }
