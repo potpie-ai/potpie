@@ -1,6 +1,7 @@
 """Unit tests for UserService (sync methods)."""
+
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -36,7 +37,9 @@ class TestUserServiceGetUserByUid:
         assert result is None
 
     def test_get_user_by_uid_exception_returns_none(self, user_service, mock_db):
-        mock_db.query.return_value.filter.return_value.first.side_effect = Exception("db error")
+        mock_db.query.return_value.filter.return_value.first.side_effect = Exception(
+            "db error"
+        )
         result = user_service.get_user_by_uid("u1")
         assert result is None
 
@@ -90,6 +93,71 @@ class TestUserServiceGetUserIdByEmail:
         mock_db.query.return_value.filter.return_value.first.return_value = None
         result = user_service.get_user_id_by_email("nonexistent@test.com")
         assert result is None
+
+
+class TestUserServiceSetupDummyUser:
+    def test_setup_dummy_user_creates_user_once(self, user_service, monkeypatch):
+        monkeypatch.setenv("defaultUsername", "dummy-user")
+        create_result = ("dummy-user", "created", False)
+
+        with patch.object(UserService, "get_user_by_uid", return_value=None):
+            with patch.object(
+                UserService,
+                "create_user",
+                return_value=create_result,
+            ) as mock_create_user:
+                user_service.setup_dummy_user()
+
+        mock_create_user.assert_called_once()
+        created_user = mock_create_user.call_args.args[0]
+        assert isinstance(created_user, CreateUser)
+        assert created_user.uid == "dummy-user"
+        assert created_user.email == "defaultuser@potpie.ai"
+        assert created_user.display_name == "Dummy User"
+        assert created_user.email_verified is True
+        assert created_user.provider_info == {"access_token": "dummy_token"}
+        assert created_user.provider_username == "self"
+        assert created_user.created_at is not None
+        assert created_user.last_login_at is not None
+        assert created_user.created_at == created_user.last_login_at
+
+    def test_setup_dummy_user_does_not_create_when_user_exists(
+        self, user_service, monkeypatch
+    ):
+        monkeypatch.setenv("defaultUsername", "dummy-user")
+        existing_user = User(
+            uid="dummy-user",
+            email="defaultuser@potpie.ai",
+            display_name="Dummy User",
+        )
+
+        with patch.object(UserService, "get_user_by_uid", return_value=existing_user):
+            with patch.object(UserService, "create_user") as mock_create_user:
+                user_service.setup_dummy_user()
+
+        mock_create_user.assert_not_called()
+
+
+class TestUserServiceGetUserIdsByEmails:
+    def test_get_user_ids_by_emails_found(self, user_service, mock_db):
+        mock_users = [
+            User(uid="u1", email="u1@test.com", display_name="User One"),
+            User(uid="u2", email="u2@test.com", display_name="User Two"),
+        ]
+        mock_db.query.return_value.filter.return_value.all.return_value = mock_users
+
+        result = user_service.get_user_ids_by_emails(["u1@test.com", "u2@test.com"])
+
+        assert result == ["u1", "u2"]
+
+    def test_get_user_ids_by_emails_not_found_returns_empty_list(
+        self, user_service, mock_db
+    ):
+        mock_db.query.return_value.filter.return_value.all.return_value = []
+
+        result = user_service.get_user_ids_by_emails(["missing@test.com"])
+
+        assert result == []
 
 
 class TestUserServiceUpdateLastLogin:

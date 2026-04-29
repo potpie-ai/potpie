@@ -52,6 +52,7 @@ class TestSignupValidation:
             },
         )
         assert response.status_code == 400
+        assert response.headers["content-type"].startswith("application/json")
         data = response.json()
         assert "uid" in data.get("error", "").lower() or "missing" in data.get("error", "").lower()
 
@@ -66,6 +67,7 @@ class TestSignupValidation:
             },
         )
         assert response.status_code == 400
+        assert response.headers["content-type"].startswith("application/json")
         data = response.json()
         assert "email" in data.get("error", "").lower() or "missing" in data.get("error", "").lower()
 
@@ -138,6 +140,7 @@ class TestCustomTokenEndpoint:
             )
 
             assert response.status_code == 200
+            assert response.headers["content-type"].startswith("application/json")
             data = response.json()
             assert data["customToken"] == "custom-token-xyz"
 
@@ -153,6 +156,7 @@ class TestCustomTokenEndpoint:
             )
 
             assert response.status_code == 500
+            assert response.headers["content-type"].startswith("application/json")
             assert "Failed" in response.json()["error"]
 
 
@@ -316,4 +320,3 @@ class TestProviderLinkingEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["message"] == "Linking cancelled"
-

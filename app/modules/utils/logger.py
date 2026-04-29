@@ -4,7 +4,7 @@ import os
 import re
 import sys
 from contextlib import contextmanager
-from typing import Optional
+from typing import Any, Optional
 
 from loguru import logger as _loguru_logger
 
@@ -19,33 +19,38 @@ SHOW_STACK_TRACES = os.getenv("LOG_STACK_TRACES", "true").lower() in (
     "yes",
 )
 
+REDACTED_VALUE = "***REDACTED***"
+REDACTED_KEY_VALUE_REPLACEMENT = rf"\1={REDACTED_VALUE}"
+REDACTED_DOUBLE_QUOTED_VALUE_REPLACEMENT = rf'\1"{REDACTED_VALUE}"'
+REDACTED_SINGLE_QUOTED_VALUE_REPLACEMENT = rf"\1'{REDACTED_VALUE}'"
+
 # Sensitive data patterns to redact in logs
 SENSITIVE_PATTERNS = [
     # Credentials in key=value format
     (
         re.compile(r'(password|passwd|pwd)=["\']?([^"\'\s&]+)', re.IGNORECASE),
-        r"\1=***REDACTED***",
+        REDACTED_KEY_VALUE_REPLACEMENT,
     ),
     (
         re.compile(
             r'(token|access_token|refresh_token|id_token)=["\']?([^"\'\s&]+)',
             re.IGNORECASE,
         ),
-        r"\1=***REDACTED***",
+        REDACTED_KEY_VALUE_REPLACEMENT,
     ),
     (
         re.compile(
             r'(secret|client_secret|api_secret)=["\']?([^"\'\s&]+)', re.IGNORECASE
         ),
-        r"\1=***REDACTED***",
+        REDACTED_KEY_VALUE_REPLACEMENT,
     ),
     (
-        re.compile(r'(api[_-]?key|apikey)=["\']?([^"\'\s&]+)', re.IGNORECASE),
-        r"\1=***REDACTED***",
+        re.compile(r'(api[_-]?key)=["\']?([^"\'\s&]+)', re.IGNORECASE),
+        REDACTED_KEY_VALUE_REPLACEMENT,
     ),
     (
         re.compile(r'(auth|authorization)=["\']?([^"\'\s&]+)', re.IGNORECASE),
-        r"\1=***REDACTED***",
+        REDACTED_KEY_VALUE_REPLACEMENT,
     ),
     # Bearer tokens
     (
@@ -71,13 +76,13 @@ SENSITIVE_PATTERNS = [
         re.compile(
             r'("(?:password|token|secret|api_key)"\s*:\s*)"([^"]+)"', re.IGNORECASE
         ),
-        r'\1"***REDACTED***"',
+        REDACTED_DOUBLE_QUOTED_VALUE_REPLACEMENT,
     ),
     (
         re.compile(
             r"('(?:password|token|secret|api_key)'\s*:\s*)'([^']+)'", re.IGNORECASE
         ),
-        r"\1'***REDACTED***'",
+        REDACTED_SINGLE_QUOTED_VALUE_REPLACEMENT,
     ),
 ]
 
@@ -100,6 +105,19 @@ def filter_sensitive_data(text: str) -> str:
         filtered = pattern.sub(replacement, filtered)
 
     return filtered
+
+
+def truncate_traceback(text: Any, max_lines: int = 10) -> Any:
+    """Keep only the most relevant tail of a traceback for production logs."""
+    if not isinstance(text, str):
+        return text
+    if max_lines < 1:
+        max_lines = 1
+
+    lines = text.splitlines()
+    if len(lines) <= max_lines:
+        return text
+    return "\n".join(lines[-max_lines:])
 
 
 def production_log_sink(message):
@@ -131,7 +149,9 @@ def production_log_sink(message):
                 else str(exc.get("type", "Exception"))
             ),
             "value": filter_sensitive_data(str(exc.get("value", ""))),
-            "traceback": filter_sensitive_data(str(exc.get("traceback", ""))),
+            "traceback": filter_sensitive_data(
+                truncate_traceback(str(exc.get("traceback", "")))
+            ),
         }
 
     # Build flat JSON structure - easier for log parsers
@@ -184,6 +204,116 @@ class InterceptHandler(logging.Handler):
         )
 
 
+def _resolve_log_level(level: Optional[str]) -> str:
+    return (level or os.getenv("LOG_LEVEL", "INFO")).upper()
+
+
+def _resolve_environment() -> str:
+    return (os.getenv("ENV") or "development").lower().strip()
+
+
+def _ensure_record_extra(record: dict[str, Any]) -> dict[str, Any]:
+    extras = record.setdefault("extra", {})
+    extras.setdefault("name", record.get("name", record.get("module", "unknown")))
+    return extras
+
+
+def _patch_log_record(record: dict[str, Any]) -> None:
+    _ensure_record_extra(record)
+    if "message" in record:
+        record["message"] = filter_sensitive_data(str(record["message"]))
+
+
+def _development_log_filter(record: dict[str, Any]) -> bool:
+    extras = _ensure_record_extra(record)
+    record["message"] = filter_sensitive_data(str(record["message"]))
+
+    extra_parts = []
+    for key, value in extras.items():
+        if isinstance(value, (str, bytes)):
+            extras[key] = filter_sensitive_data(str(value))
+        if key != "name":
+            extra_parts.append(f"{key}: {extras[key]}")
+
+    if extra_parts:
+        record["message"] = f"{record['message']} | " + ", ".join(extra_parts)
+
+    return True
+
+
+def _configure_production_sink(level: str) -> None:
+    _logger.add(
+        production_log_sink,
+        format="{message}",
+        level=level,
+        serialize=True,
+        backtrace=SHOW_STACK_TRACES,
+        diagnose=SHOW_STACK_TRACES,
+    )
+
+
+def _configure_development_sink(level: str) -> None:
+    _logger.add(
+        sys.stdout,
+        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{extra[name]}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | <level>{message}</level>",
+        level=level,
+        colorize=True,
+        filter=_development_log_filter,
+        backtrace=SHOW_STACK_TRACES,
+        diagnose=SHOW_STACK_TRACES,
+    )
+
+
+def _library_log_levels(level: str) -> dict[str, str]:
+    return {
+        "app": level,
+        "api": level,
+        "services": level,
+        "models": level,
+        "uvicorn": "INFO",
+        "uvicorn.access": "WARNING",
+        "uvicorn.error": "INFO",
+        "fastapi": "INFO",
+        "sqlalchemy.engine": "WARNING",
+        "sqlalchemy.pool": "WARNING",
+        "sqlalchemy.orm": "WARNING",
+        "alembic": "INFO",
+        "celery": "INFO",
+        "kombu": "WARNING",
+        "httpx": "WARNING",
+        "urllib3": "WARNING",
+        "boto3": "WARNING",
+        "botocore": "WARNING",
+    }
+
+
+def _root_logger_level() -> int:
+    return (
+        logging.DEBUG
+        if os.getenv("LOG_LEVEL", "INFO").upper() == "DEBUG"
+        else logging.INFO
+    )
+
+
+def _configure_standard_loggers(
+    intercept_handler: InterceptHandler, library_levels: dict[str, str]
+) -> None:
+    logging.basicConfig(
+        handlers=[intercept_handler],
+        level=_root_logger_level(),
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        force=True,
+    )
+
+    for logger_name, log_level in library_levels.items():
+        lib_logger = logging.getLogger(logger_name)
+        lib_logger.handlers = [intercept_handler]
+        lib_logger.setLevel(log_level)
+        lib_logger.propagate = False
+
+    logging.getLogger().setLevel(logging.WARNING)
+
+
 def configure_logging(level: Optional[str] = None):
     """
     Configure unified logging with loguru.
@@ -198,131 +328,19 @@ def configure_logging(level: Optional[str] = None):
     if _LOGGING_CONFIGURED:
         return
 
-    if level is None:
-        level = os.getenv("LOG_LEVEL", "INFO").upper()
-
-    env = (os.getenv("ENV") or "development").lower().strip()
+    level = _resolve_log_level(level)
+    env = _resolve_environment()
 
     _logger.remove()
-
-    def patcher(record):
-        # Ensure "extra" dict exists
-        if "extra" not in record:
-            record["extra"] = {}
-
-        # Ensure "name" is always in extra for format string compatibility
-        if "name" not in record["extra"]:
-            record["extra"]["name"] = record.get(
-                "name", record.get("module", "unknown")
-            )
-
-        # Filter sensitive data from the message
-        if "message" in record:
-            record["message"] = filter_sensitive_data(str(record["message"]))
-
-    _logger = _logger.patch(patcher)
+    _logger = _logger.patch(_patch_log_record)
 
     if env != "development":
-        _logger.add(
-            production_log_sink,
-            format="{message}",
-            level=level,
-            serialize=True,  # Get structured record, then format in sink
-            backtrace=SHOW_STACK_TRACES,
-            diagnose=SHOW_STACK_TRACES,
-        )
+        _configure_production_sink(level)
     else:
-
-        def _filter(record):
-            """Filter sensitive data in development logs"""
-            # Ensure "extra" dict exists
-            if "extra" not in record:
-                record["extra"] = {}
-
-            # Ensure "name" is always in extra for format string compatibility
-            if "name" not in record["extra"]:
-                record["extra"]["name"] = record.get(
-                    "name", record.get("module", "unknown")
-                )
-
-            record["message"] = filter_sensitive_data(str(record["message"]))
-            # Filter extra fields
-            extra_value = ""
-            for key, value in record.get("extra", {}).items():
-                if isinstance(value, (str, bytes)):
-                    record["extra"][key] = filter_sensitive_data(str(value))
-                if key != "name":
-                    extra_value += f" {key}: {record['extra'][key]},"
-            if extra_value:
-                record["message"] = record["message"] + " |" + extra_value[:-1]
-            return True
-
-        _logger.add(
-            sys.stdout,
-            format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{extra[name]}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | <level>{message}</level>",
-            level=level,
-            colorize=True,
-            filter=_filter,
-            backtrace=SHOW_STACK_TRACES,
-            diagnose=SHOW_STACK_TRACES,
-        )
+        _configure_development_sink(level)
 
     intercept_handler = InterceptHandler()
-
-    # Define logging levels for different libraries
-    library_levels = {
-        # Your application - let through at configured level
-        "app": level,
-        "api": level,
-        "services": level,
-        "models": level,
-        # Infrastructure - reduce verbosity
-        "uvicorn": "INFO",
-        "uvicorn.access": "WARNING",
-        "uvicorn.error": "INFO",
-        "fastapi": "INFO",
-        # Database - CRITICAL: Set appropriate levels
-        "sqlalchemy.engine": "WARNING",
-        "sqlalchemy.pool": "WARNING",
-        "sqlalchemy.orm": "WARNING",
-        "alembic": "INFO",
-        # Task queue
-        "celery": "INFO",
-        "kombu": "WARNING",
-        # HTTP clients
-        "httpx": "WARNING",
-        "urllib3": "WARNING",
-        # AWS/Cloud
-        "boto3": "WARNING",
-        "botocore": "WARNING",
-        # Add your other libraries here
-    }
-
-    # Configure root logger with environment-based level
-    # Respect LOG_LEVEL environment variable for root logger
-    log_level_env = os.getenv("LOG_LEVEL", "INFO").upper()
-    if log_level_env == "DEBUG":
-        root_level = logging.DEBUG
-    else:
-        root_level = logging.INFO
-
-    logging.basicConfig(
-        handlers=[intercept_handler],
-        level=root_level,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        force=True,
-    )
-
-    # Apply levels to specific loggers
-    for logger_name, log_level in library_levels.items():
-        lib_logger = logging.getLogger(logger_name)
-        lib_logger.handlers = [intercept_handler]
-        lib_logger.setLevel(log_level)
-        lib_logger.propagate = False
-
-    # Catch-all for any other loggers: set to WARNING by default
-    # This prevents unknown libraries from spamming logs
-    logging.getLogger().setLevel(logging.WARNING)
+    _configure_standard_loggers(intercept_handler, _library_log_levels(level))
 
     _LOGGING_CONFIGURED = True
 

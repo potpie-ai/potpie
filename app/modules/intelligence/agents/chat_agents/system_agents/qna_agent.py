@@ -20,6 +20,9 @@ from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+FILE_STRUCTURE_CONTEXT_MARKER = "[[repo_structure_context_v1]]"
+FILE_STRUCTURE_HEADER = "File Structure of the project:\n"
+
 
 class QnAAgent(ChatAgent):
     def __init__(
@@ -136,6 +139,8 @@ class QnAAgent(ChatAgent):
             return PydanticRagAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
+        ctx.additional_context = ctx.additional_context or ""
+
         if ctx.node_ids and len(ctx.node_ids) > 0:
             code_results = await self.tools_provider.get_code_from_multiple_node_ids_tool.run_multiple(
                 ctx.project_id, ctx.node_ids
@@ -144,12 +149,16 @@ class QnAAgent(ChatAgent):
                 f"Code context of the node_ids in query:\n {code_results}"
             )
 
-        file_structure = (
-            await self.tools_provider.file_structure_tool.fetch_repo_structure(
-                ctx.project_id
+        if FILE_STRUCTURE_CONTEXT_MARKER not in ctx.additional_context:
+            file_structure = (
+                await self.tools_provider.file_structure_tool.fetch_repo_structure(
+                    ctx.project_id
+                )
             )
-        )
-        ctx.additional_context += f"File Structure of the project:\n {file_structure}"
+            ctx.additional_context += (
+                f"\n{FILE_STRUCTURE_CONTEXT_MARKER}\n"
+                f"{FILE_STRUCTURE_HEADER} {file_structure}"
+            )
 
         return ctx
 
