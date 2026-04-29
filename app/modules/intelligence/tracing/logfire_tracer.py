@@ -43,7 +43,7 @@ What gets traced:
 
 import os
 from contextlib import contextmanager
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import logfire
 
@@ -93,46 +93,124 @@ def _patch_otel_detach_for_async_context() -> None:
 _langfuse_enabled = False
 
 
-def _setup_langfuse_otel() -> None:
-    """Validate Langfuse credentials via REST API.
+def _get_langfuse_host() -> str:
+    """Return the Langfuse host from supported env var names."""
+    return (
+        (
+            os.getenv("LANGFUSE_HOST")
+            or os.getenv("LANGFUSE_API_BASE_URL")
+            or os.getenv("LANGFUSE_BASE_URL")
+            or ""
+        )
+        .strip()
+        .rstrip("/")
+    )
 
-    Does NOT set LANGFUSE_HOST — this prevents the Langfuse SDK from
-    auto-instrumenting all OTEL spans (which captures noise like title
-    generation, every LLM call, etc.). Instead we selectively create
-    traces for agent runs via the ingestion API in langfuse_trace_context.
+
+def _setup_langfuse_otel() -> None:
+    """Validate Langfuse credentials and normalize SDK configuration.
 
     Requires env vars:
-    - LANGFUSE_BASE_URL (or LANGFUSE_API_BASE_URL): e.g. http://localhost:3002
+    - LANGFUSE_HOST (or legacy LANGFUSE_BASE_URL/LANGFUSE_API_BASE_URL)
     - LANGFUSE_PUBLIC_KEY: pk-lf-...
     - LANGFUSE_SECRET_KEY: sk-lf-...
     """
     global _langfuse_enabled
 
-    base_url = os.getenv("LANGFUSE_API_BASE_URL") or os.getenv("LANGFUSE_BASE_URL")
-    if not base_url:
+    host = _get_langfuse_host()
+    if not host:
         return
+
+    # The Langfuse Python SDK reads LANGFUSE_HOST. Keep backward compatibility
+    # with the repo's older LANGFUSE_BASE_URL/LANGFUSE_API_BASE_URL variables.
+    os.environ.setdefault("LANGFUSE_HOST", host)
 
     try:
         import httpx
 
         public_key = os.getenv("LANGFUSE_PUBLIC_KEY", "")
         secret_key = os.getenv("LANGFUSE_SECRET_KEY", "")
+        if not public_key or not secret_key:
+            logger.warning("Langfuse host configured but API keys are missing")
+            return
+
         auth = httpx.BasicAuth(username=public_key, password=secret_key)
 
         # Validate credentials with a lightweight API call
         with httpx.Client(timeout=5.0) as client:
             resp = client.get(
-                f"{base_url.rstrip('/')}/api/public/traces",
+                f"{host}/api/public/traces",
                 params={"limit": 1},
                 auth=auth,
             )
             if resp.status_code == 200:
                 _langfuse_enabled = True
-                logger.info("Langfuse REST API validated (host={})", base_url)
+                logger.info("Langfuse REST API validated (host={})", host)
             else:
-                logger.warning("Langfuse auth check failed (status={})", resp.status_code)
+                logger.warning(
+                    "Langfuse auth check failed (status={})", resp.status_code
+                )
     except Exception as e:
         logger.warning("Langfuse setup failed (non-fatal): {}", e)
+
+
+def _add_langfuse_otel_exporter() -> None:
+    """Register Langfuse as a secondary OTEL span exporter.
+
+    After logfire.configure() owns the TracerProvider, we inject a
+    BatchSpanProcessor that ships spans to Langfuse's OTLP endpoint.
+    This makes all Pydantic AI / LiteLLM spans visible in Langfuse.
+    """
+    langfuse_host = _get_langfuse_host()
+    if not langfuse_host:
+        return
+
+    os.environ.setdefault("LANGFUSE_HOST", langfuse_host)
+
+    try:
+        from opentelemetry.sdk.trace import TracerProvider as SdkTracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+            OTLPSpanExporter,
+        )
+        from opentelemetry import trace as otel_trace
+
+        public_key = os.getenv("LANGFUSE_PUBLIC_KEY", "")
+        secret_key = os.getenv("LANGFUSE_SECRET_KEY", "")
+        if not public_key or not secret_key:
+            logger.warning("Langfuse host configured but API keys are missing")
+            return
+
+        endpoint = f"{langfuse_host.rstrip('/')}/api/public/otel/v1/traces"
+        import base64
+
+        auth_token = base64.b64encode(f"{public_key}:{secret_key}".encode()).decode()
+
+        exporter = OTLPSpanExporter(
+            endpoint=endpoint,
+            headers={"Authorization": f"Basic {auth_token}"},
+        )
+
+        provider = otel_trace.get_tracer_provider()
+        # Logfire wraps the real SDK provider; try .provider, then ._provider
+        real_provider = getattr(provider, "provider", None) or getattr(
+            provider, "_provider", provider
+        )
+        if isinstance(real_provider, SdkTracerProvider):
+            real_provider.add_span_processor(BatchSpanProcessor(exporter))
+            logger.info("Added Langfuse OTLP span exporter (endpoint={})", endpoint)
+        elif hasattr(provider, "add_span_processor"):
+            provider.add_span_processor(BatchSpanProcessor(exporter))
+            logger.info(
+                "Added Langfuse OTLP span exporter via proxy (endpoint={})", endpoint
+            )
+        else:
+            logger.warning(
+                "TracerProvider is not SDK type ({}), cannot add Langfuse exporter",
+                type(real_provider),
+            )
+    except Exception as e:
+        logger.warning("Failed to add Langfuse OTEL exporter (non-fatal): {}", e)
 
 
 def is_langfuse_enabled() -> bool:
@@ -147,131 +225,120 @@ def langfuse_trace_context(
     session_id: Optional[str] = None,
     input: Optional[Any] = None,
     metadata: Optional[Dict[str, Any]] = None,
-    tags: Optional[list] = None,
+    tags: Optional[List[str]] = None,
 ):
-    """Wrap an agent run and patch the Langfuse trace with metadata after completion.
+    """Wrap an agent run in a Langfuse root observation.
 
-    Logfire's instrument_pydantic_ai() creates OTEL spans that flow to Langfuse
-    via the secondary exporter. Those traces lack user_id, session_id, tags, and
-    have generic names like "agent run".
-
-    This context manager:
-    1. Yields a simple dict for the caller to accumulate response data
-    2. After the agent run, uses the Langfuse REST API to patch the most recent
-       trace with proper name, user_id, session_id, tags, and input/output.
+    The previous implementation queried Langfuse for the latest trace after the
+    run and patched it via ingestion, which is race-prone when multiple agent
+    runs finish close together. This creates the trace deterministically up front
+    and lets Pydantic AI/LiteLLM spans attach to the active OpenTelemetry context.
     """
     if not _langfuse_enabled:
         yield None
         return
 
+    metadata = metadata or {}
+    tags = tags or []
     trace_data: Dict[str, Any] = {
         "name": name,
         "user_id": user_id,
         "session_id": session_id,
         "input": input,
-        "metadata": metadata or {},
-        "tags": tags or [],
+        "metadata": metadata,
+        "tags": tags,
         "output": None,
     }
 
-    yield trace_data
-
-    # This code runs after the `with` block exits
-    logger.info("langfuse_trace_context: post-yield cleanup started (name={}, output={})",
-                name, "set" if trace_data.get("output") else "None")
-
-    # After agent run: force flush OTEL spans then update the trace via Langfuse API
     try:
-        import httpx
-        import uuid as _uuid
-        import time
-        from datetime import datetime, timezone
+        from langfuse import get_client, propagate_attributes
 
-        base_url = (os.getenv("LANGFUSE_API_BASE_URL") or os.getenv("LANGFUSE_BASE_URL", "")).rstrip("/")
-        public_key = os.getenv("LANGFUSE_PUBLIC_KEY", "")
-        secret_key = os.getenv("LANGFUSE_SECRET_KEY", "")
+        langfuse = get_client()
+        trace_seed_parts = [
+            str(metadata.get("run_id") or ""),
+            str(session_id or ""),
+            str(user_id or ""),
+            name,
+        ]
+        trace_seed = ":".join(part for part in trace_seed_parts if part)
+        trace_id = langfuse.create_trace_id(seed=trace_seed or None)
+        trace_data["trace_id"] = trace_id
+    except Exception as e:
+        logger.warning(
+            "Langfuse trace setup failed; continuing without Langfuse: {}", e
+        )
+        yield trace_data
+        return
 
-        if not base_url or not public_key:
+    # Langfuse propagate_attributes currently types metadata as str values.
+    propagated_metadata = {
+        key: str(value)[:_LOGFIRE_ATTR_MAX_LEN]
+        for key, value in metadata.items()
+        if value is not None
+    }
+
+    yielded = False
+    body_failed = False
+    try:
+        with langfuse.start_as_current_observation(
+            trace_context={"trace_id": trace_id},
+            name=name,
+            as_type="agent",
+            input=input,
+            metadata=metadata,
+        ) as root_observation:
+            with propagate_attributes(
+                user_id=user_id,
+                session_id=session_id,
+                metadata=propagated_metadata or None,
+                tags=tags or None,
+                trace_name=name,
+            ):
+                try:
+                    yielded = True
+                    yield trace_data
+                except BaseException:
+                    body_failed = True
+                    raise
+                finally:
+                    output = trace_data.get("output")
+                    try:
+                        if output is not None:
+                            root_observation.update(output=output)
+                        langfuse.set_current_trace_io(input=input, output=output)
+                    except Exception as e:
+                        logger.debug(
+                            "Langfuse trace output update failed (non-fatal): {}", e
+                        )
+
+        logger.info(
+            "Recorded Langfuse trace {} (name={}, user={}, session={})",
+            trace_id,
+            name,
+            user_id,
+            session_id,
+        )
+    except Exception as e:
+        if body_failed:
+            raise
+        if yielded:
+            logger.warning("Langfuse trace finalization failed (non-fatal): {}", e)
             return
-
-        auth = httpx.BasicAuth(username=public_key, password=secret_key)
-
-        # Force flush Logfire/OTEL spans so the trace exists in Langfuse
+        logger.warning(
+            "Langfuse root observation failed; continuing without Langfuse: {}", e
+        )
+        yield trace_data
+    finally:
+        # Flush Logfire/OTEL after the Langfuse root observation has ended so
+        # child Pydantic AI/LiteLLM spans are exported promptly.
         try:
             logfire.force_flush()
         except Exception:
             pass
-
-        # Brief wait for Langfuse to ingest the OTEL spans
-        time.sleep(2)
-
-        # Fetch the most recent "agent run" trace from Langfuse
-        trace_id = None
-        with httpx.Client(timeout=10.0) as client:
-            resp = client.get(
-                f"{base_url}/api/public/traces",
-                params={"limit": 1, "orderBy": "timestamp.desc"},
-                auth=auth,
-            )
-            if resp.status_code == 200:
-                traces = resp.json().get("data", [])
-                if traces:
-                    trace_id = traces[0]["id"]
-                    logger.info("Found Langfuse trace to update: {}", trace_id)
-                else:
-                    logger.warning("No traces found in Langfuse to update")
-            else:
-                logger.warning("Langfuse traces list returned status {}", resp.status_code)
-
-        if not trace_id:
-            return
-
-        # Build the trace body for ingestion upsert
-        trace_body: Dict[str, Any] = {
-            "id": trace_id,
-            "name": name,
-        }
-        if user_id:
-            trace_body["userId"] = user_id
-        if session_id:
-            trace_body["sessionId"] = session_id
-        if tags:
-            trace_body["tags"] = tags
-        if trace_data.get("output"):
-            trace_body["output"] = trace_data["output"]
-        if input:
-            trace_body["input"] = input
-        if metadata:
-            trace_body["metadata"] = metadata
-
-        ingestion_payload = {
-            "batch": [{
-                "id": str(_uuid.uuid4()),
-                "type": "trace-create",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "body": trace_body,
-            }]
-        }
-
-        with httpx.Client(timeout=10.0) as client:
-            resp = client.post(
-                f"{base_url}/api/public/ingestion",
-                json=ingestion_payload,
-                auth=auth,
-            )
-            if resp.status_code in (200, 207):
-                logger.info(
-                    "Updated Langfuse trace {} (name={}, user={}, session={})",
-                    trace_id, name, user_id, session_id,
-                )
-            else:
-                logger.warning(
-                    "Langfuse ingestion returned status {} for trace {}",
-                    resp.status_code, trace_id,
-                )
-
-    except Exception as e:
-        logger.warning("Langfuse trace update failed: {}", e)
+        try:
+            langfuse.flush()
+        except Exception as e:
+            logger.debug("Langfuse flush failed (non-fatal): {}", e)
 
 
 # Global flag to track if Logfire is initialized
@@ -331,9 +398,7 @@ def initialize_logfire_tracing(
 
         # Environment (queryable in Logfire; use ENV or LOGFIRE_ENVIRONMENT)
         env = (
-            environment
-            or os.getenv("LOGFIRE_ENVIRONMENT")
-            or os.getenv("ENV", "local")
+            environment or os.getenv("LOGFIRE_ENVIRONMENT") or os.getenv("ENV", "local")
         )
         config_kwargs["environment"] = env
 
@@ -367,6 +432,9 @@ def initialize_logfire_tracing(
 
         # Configure Langfuse OTEL tracing alongside Logfire (if env vars set)
         _setup_langfuse_otel()
+
+        # Add Langfuse as a secondary OTEL span exporter
+        _add_langfuse_otel_exporter()
 
         _LOGFIRE_INITIALIZED = True
 
@@ -450,6 +518,7 @@ def logfire_trace_metadata(**kwargs: Any):
 
     try:
         import logfire
+
         baggage_ctx = logfire.set_baggage(**str_attrs)
     except Exception as e:
         logger.debug(
@@ -482,9 +551,11 @@ def logfire_llm_call_metadata(
     """
     attrs: Dict[str, str] = {}
     if user_id is not None:
-        attrs["user_id"] = str(user_id).strip()[: _LOGFIRE_ATTR_MAX_LEN]
-    env = (environment or os.getenv("LOGFIRE_ENVIRONMENT") or os.getenv("ENV") or "local").strip()
-    attrs["environment"] = env[: _LOGFIRE_ATTR_MAX_LEN]
+        attrs["user_id"] = str(user_id).strip()[:_LOGFIRE_ATTR_MAX_LEN]
+    env = (
+        environment or os.getenv("LOGFIRE_ENVIRONMENT") or os.getenv("ENV") or "local"
+    ).strip()
+    attrs["environment"] = env[:_LOGFIRE_ATTR_MAX_LEN]
     for k, v in extra_attrs.items():
         if v is None:
             continue
@@ -499,6 +570,7 @@ def logfire_llm_call_metadata(
 
     try:
         import logfire
+
         baggage_ctx = logfire.set_baggage(**attrs)
         span_attrs = {"environment": attrs["environment"]}
         if attrs.get("user_id"):
