@@ -47,6 +47,9 @@ class AgentFactory:
         create_delegation_function: Callable[[AgentType], Callable],
         tools_provider: "ToolService | None" = None,
         tool_resolver: "ToolResolver | None" = None,
+        supervisor_allow_list: str | None = None,
+        execute_allow_list: str | None = None,
+        read_only: bool = False,
     ):
         """Initialize the agent factory
 
@@ -72,6 +75,9 @@ class AgentFactory:
         self.create_delegation_function = create_delegation_function
         self.tools_provider = tools_provider
         self.tool_resolver = tool_resolver
+        self.supervisor_allow_list = supervisor_allow_list or "supervisor"
+        self.execute_allow_list = execute_allow_list or "execute"
+        self.read_only = read_only
 
         # Sanitize tool names for OpenAI-compatible API: ^[a-zA-Z0-9_-]+$
         for i, tool in enumerate(tools):
@@ -338,25 +344,28 @@ class AgentFactory:
             create_code_changes_management_tools,
         )
 
-        code_changes_tools = create_code_changes_management_tools()
-        if local_mode:
-            code_changes_tools = [
-                t
-                for t in code_changes_tools
-                if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL
-            ]
+        if not self.read_only:
+            code_changes_tools = create_code_changes_management_tools()
+            if local_mode:
+                code_changes_tools = [
+                    t
+                    for t in code_changes_tools
+                    if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL
+                ]
+            else:
+                code_changes_tools = [
+                    t
+                    for t in code_changes_tools
+                    if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL
+                ]
         else:
-            code_changes_tools = [
-                t
-                for t in code_changes_tools
-                if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL
-            ]
+            code_changes_tools = []
 
         if self.tool_resolver:
             if use_tool_search_flow:
                 # Phase 3: delegate gets discovery meta-tools instead of full list
                 execute_tools = self.tool_resolver.get_discovery_tools_for_agent(
-                    "execute",
+                    self.execute_allow_list,
                     local_mode=local_mode,
                     exclude_embedding_tools=False,
                     log_tool_annotations=log_tool_annotations,
@@ -372,7 +381,7 @@ class AgentFactory:
             else:
                 # Phase 2: delegate gets full execution set from registry
                 execute_tools = self.tool_resolver.get_tools_for_agent(
-                    "execute",
+                    self.execute_allow_list,
                     local_mode=local_mode,
                     exclude_embedding_tools=False,
                     log_tool_annotations=log_tool_annotations,
@@ -713,27 +722,31 @@ Subagents DON'T get your history. Provide comprehensive context:
         )
 
         # Create code changes tools; filter by local_mode so web doesn't get terminal tools and extension doesn't get show_diff/export/show_updated_file
-        code_changes_tools = create_code_changes_management_tools()
-        if local_mode:
-            code_changes_tools = [
-                t
-                for t in code_changes_tools
-                if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL
-            ]
+        if not self.read_only:
+            code_changes_tools = create_code_changes_management_tools()
+            if local_mode:
+                code_changes_tools = [
+                    t
+                    for t in code_changes_tools
+                    if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL
+                ]
+            else:
+                code_changes_tools = [
+                    t
+                    for t in code_changes_tools
+                    if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL
+                ]
+            requirement_tools = create_requirement_verification_tools()
         else:
-            code_changes_tools = [
-                t
-                for t in code_changes_tools
-                if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL
-            ]
-        requirement_tools = create_requirement_verification_tools()
+            code_changes_tools = []
+            requirement_tools = []
         delegation_tools = self.build_delegation_tools()
 
         if self.tool_resolver:
             if use_tool_search_flow:
                 # Phase 3: supervisor gets discovery meta-tools instead of full list
                 supervisor_tools = self.tool_resolver.get_discovery_tools_for_agent(
-                    "supervisor",
+                    self.supervisor_allow_list,
                     local_mode=local_mode,
                     exclude_embedding_tools=False,
                     log_tool_annotations=log_tool_annotations,
@@ -752,7 +765,7 @@ Subagents DON'T get your history. Provide comprehensive context:
             else:
                 # Phase 2: supervisor gets curated set from registry (no terminal, no full execution suite)
                 supervisor_tools = self.tool_resolver.get_tools_for_agent(
-                    "supervisor",
+                    self.supervisor_allow_list,
                     local_mode=local_mode,
                     exclude_embedding_tools=False,
                     log_tool_annotations=log_tool_annotations,

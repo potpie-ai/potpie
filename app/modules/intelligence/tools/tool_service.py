@@ -116,6 +116,24 @@ from langchain_core.tools import StructuredTool
 from .todo_management_tool import create_todo_management_tools
 from .code_changes_manager import create_code_changes_management_tools
 from .requirement_verification_tool import create_requirement_verification_tools
+from app.modules.intelligence.tools.prompt_tuner.langfuse_tools import (
+    fetch_langfuse_trace_tool,
+    list_langfuse_traces_tool,
+)
+from app.modules.intelligence.tools.prompt_tuner.db_tools import (
+    fetch_message_trace_tool,
+    fetch_agent_prompt_tool,
+)
+from app.modules.intelligence.tools.prompt_tuner.diff_tools import (
+    propose_prompt_diff_tool,
+    apply_prompt_change_tool,
+)
+from app.modules.intelligence.tools.prompt_tuner.upload_tools import (
+    parse_uploaded_trace_tool,
+)
+from app.modules.intelligence.tools.prompt_tuner.skill_tools import (
+    load_skill_tool,
+)
 
 
 logger = setup_logger(__name__)
@@ -267,6 +285,16 @@ class ToolService:
         colgrep_health = colgrep_health_tool(self.db, self.user_id)
         if colgrep_health:
             tools["check_colgrep_health"] = colgrep_health
+
+        # Prompt Tuner Agent tools
+        tools["fetch_langfuse_trace"] = fetch_langfuse_trace_tool(self.db, self.user_id)
+        tools["list_langfuse_traces"] = list_langfuse_traces_tool(self.db, self.user_id)
+        tools["fetch_message_trace"] = fetch_message_trace_tool(self.db, self.user_id)
+        tools["fetch_agent_prompt"] = fetch_agent_prompt_tool(self.db, self.user_id)
+        tools["propose_prompt_diff"] = propose_prompt_diff_tool(self.db, self.user_id)
+        tools["apply_prompt_change"] = apply_prompt_change_tool(self.db, self.user_id)
+        tools["parse_uploaded_trace"] = parse_uploaded_trace_tool(self.db, self.user_id)
+        tools["load_skill"] = load_skill_tool(self.db, self.user_id)
 
         # Add git workflow tools if repo manager is enabled
         apply_tool = apply_changes_tool(self.db, self.user_id)

@@ -15,7 +15,10 @@ from app.modules.conversations.utils.redis_streaming import RedisStreamManager
 from app.modules.users.user_model import User
 from app.modules.users.user_service import UserService
 from app.modules.utils.logger import setup_logger, log_context
-from app.modules.intelligence.tracing.logfire_tracer import logfire_trace_metadata
+from app.modules.intelligence.tracing.logfire_tracer import (
+    logfire_trace_metadata,
+    langfuse_trace_context,
+)
 from app.modules.intelligence.provider.openrouter_usage_context import (
     init_usage_context,
     get_and_clear_usages,
@@ -159,6 +162,19 @@ def execute_agent_background(
         agent_id=agent_id or "default",
         project_id=project_id,
     ):
+      # Langfuse: create a native trace with name, input, user, session
+      with langfuse_trace_context(
+          name=agent_id or "default",
+          user_id=user_id,
+          session_id=conversation_id,
+          input=query,
+          metadata={
+              "run_id": run_id,
+              "project_id": project_id,
+              "local_mode": local_mode,
+          },
+          tags=[agent_id or "default"],
+      ) as lf_trace:
         # Set up logging context with domain IDs
         with log_context(conversation_id=conversation_id, user_id=user_id, run_id=run_id):
             logger.info(
@@ -227,6 +243,10 @@ def execute_agent_background(
                         check_cancelled = lambda: redis_manager.check_cancellation(
                             conversation_id, run_id
                         )
+
+                        # Accumulate response for Langfuse trace
+                        _lf_response_parts = []
+
                         try:
                             async for chunk in service.store_message(
                                 conversation_id,
@@ -270,6 +290,12 @@ def execute_agent_background(
                                     )
                                     return False  # Indicate cancellation
 
+                                # Accumulate response text for Langfuse
+                                if chunk.message:
+                                    _lf_response_parts.append(chunk.message)
+
+                                # Tool call spans are already captured by Logfire OTEL exporter
+
                                 # Publish chunk event
                                 serialized_tool_calls = []
                                 if chunk.tool_calls:
@@ -295,6 +321,11 @@ def execute_agent_background(
                                         "tool_calls_json": serialized_tool_calls,
                                     },
                                 )
+
+                            # Set output on Langfuse trace dict (will be patched via API on context exit)
+                            if lf_trace is not None:
+                                full_response = "".join(_lf_response_parts)
+                                lf_trace["output"] = full_response[:5000] if full_response else "No response"
 
                             return True  # Indicate successful completion (loop finished)
                         except GenerationCancelled:
@@ -403,6 +434,8 @@ def execute_agent_background(
                     )
 
                     logger.info("Background agent execution completed")
+
+                    # LLM generation spans are already captured by Logfire OTEL exporter
                 else:
                     redis_manager.set_task_status(
                         conversation_id, run_id, "cancelled"

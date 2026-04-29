@@ -457,6 +457,32 @@ INTEGRATION_LINEAR_TOOLS: List[str] = [
     "update_linear_issue",
 ]
 
+# --- QnA agent: read-only, code-exploration-only tool sets ---
+
+QNA_SUPERVISOR_TOOLS: List[str] = [
+    "search_colgrep",
+    "check_colgrep_health",
+    "fetch_file",
+    "get_code_file_structure",
+]
+QNA_SUPERVISOR_ADD_WHEN_NON_LOCAL: List[str] = [
+    "bash_command",
+    "fetch_files_batch",
+    "analyze_code_structure",
+]
+
+QNA_EXECUTE_TOOLS: List[str] = [
+    "search_colgrep",
+    "check_colgrep_health",
+]
+QNA_EXECUTE_ADD_WHEN_NON_LOCAL: List[str] = [
+    "fetch_file",
+    "fetch_files_batch",
+    "get_code_file_structure",
+    "analyze_code_structure",
+    "bash_command",
+]
+
 ALLOW_LIST_DEFINITIONS: List[AllowListDefinition] = [
     AllowListDefinition(
         name="code_gen",
@@ -503,6 +529,19 @@ ALLOW_LIST_DEFINITIONS: List[AllowListDefinition] = [
     AllowListDefinition(
         name="integration_linear",
         tool_names=INTEGRATION_LINEAR_TOOLS,
+        tier_filter=None,
+    ),
+    # QnA agent: read-only code exploration
+    AllowListDefinition(
+        name="qna_supervisor",
+        tool_names=QNA_SUPERVISOR_TOOLS,
+        add_when_non_local=QNA_SUPERVISOR_ADD_WHEN_NON_LOCAL,
+        tier_filter=None,
+    ),
+    AllowListDefinition(
+        name="qna_execute",
+        tool_names=QNA_EXECUTE_TOOLS,
+        add_when_non_local=QNA_EXECUTE_ADD_WHEN_NON_LOCAL,
         tier_filter=None,
     ),
 ]

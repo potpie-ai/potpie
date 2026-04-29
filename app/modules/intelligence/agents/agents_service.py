@@ -33,6 +33,7 @@ from .chat_agents.system_agents import (
     debug_agent,
     integration_test_agent,
     low_level_design_agent,
+    prompt_tuner_agent,
     qna_agent,
     specgen,
     unit_test_agent,
@@ -90,8 +91,8 @@ class AgentsService:
             "codebase_qna_agent": AgentWithInfo(
                 id="codebase_qna_agent",
                 name="Codebase Q&A Agent",
-                description="An agent specialized in answering questions about the codebase using the knowledge graph and code analysis tools.",
-                agent=qna_agent.QnAAgent(llm_provider, tools_provider, prompt_provider),
+                description="An agent specialized in answering questions about the codebase using ColGREP semantic search and code analysis tools.",
+                agent=qna_agent.QnAAgent(llm_provider, tools_provider, prompt_provider, tool_resolver=self._tool_resolver),
             ),
             "debugging_agent": AgentWithInfo(
                 id="debugging_agent",
@@ -168,6 +169,14 @@ class AgentsService:
                 name="Specification Generation Agent",
                 description="An agent specialized in generating comprehensive technical specifications from user requests through a systematic 7-step process.",
                 agent=specgen.SpecGenAgent(
+                    llm_provider, tools_provider, prompt_provider
+                ),
+            ),
+            "prompt_tuner_agent": AgentWithInfo(
+                id="prompt_tuner_agent",
+                name="Prompt Tuner Agent",
+                description="An agent specialized in diagnosing prompt failures from conversation traces and proposing targeted prompt edits.",
+                agent=prompt_tuner_agent.PromptTunerAgent(
                     llm_provider, tools_provider, prompt_provider
                 ),
             ),

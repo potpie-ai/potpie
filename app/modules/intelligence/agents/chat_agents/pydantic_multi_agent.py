@@ -58,6 +58,9 @@ class PydanticMultiAgent(ChatAgent):
         delegate_agents: Optional[Dict[AgentType, AgentConfig]] = None,
         tools_provider: Optional[ToolService] = None,
         tool_resolver: Optional["ToolResolver"] = None,
+        supervisor_allow_list: str | None = None,
+        execute_allow_list: str | None = None,
+        read_only: bool = False,
     ):
         """Initialize the multi-agent system with configuration and tools.
 
@@ -115,6 +118,9 @@ class PydanticMultiAgent(ChatAgent):
             create_delegation_function=delegation_manager.create_delegation_function,
             tools_provider=tools_provider,
             tool_resolver=tool_resolver,
+            supervisor_allow_list=supervisor_allow_list,
+            execute_allow_list=execute_allow_list,
+            read_only=read_only,
         )
 
         # Now update delegation_manager with real create_delegate_agent

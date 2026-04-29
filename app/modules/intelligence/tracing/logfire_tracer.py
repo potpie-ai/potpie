@@ -86,6 +86,194 @@ def _patch_otel_detach_for_async_context() -> None:
     logger.debug("Patched OTel context detach for async context switching")
 
 
+# ---------------------------------------------------------------------------
+# Langfuse native SDK integration (v4+)
+# ---------------------------------------------------------------------------
+
+_langfuse_enabled = False
+
+
+def _setup_langfuse_otel() -> None:
+    """Validate Langfuse credentials via REST API.
+
+    Does NOT set LANGFUSE_HOST — this prevents the Langfuse SDK from
+    auto-instrumenting all OTEL spans (which captures noise like title
+    generation, every LLM call, etc.). Instead we selectively create
+    traces for agent runs via the ingestion API in langfuse_trace_context.
+
+    Requires env vars:
+    - LANGFUSE_BASE_URL (or LANGFUSE_API_BASE_URL): e.g. http://localhost:3002
+    - LANGFUSE_PUBLIC_KEY: pk-lf-...
+    - LANGFUSE_SECRET_KEY: sk-lf-...
+    """
+    global _langfuse_enabled
+
+    base_url = os.getenv("LANGFUSE_API_BASE_URL") or os.getenv("LANGFUSE_BASE_URL")
+    if not base_url:
+        return
+
+    try:
+        import httpx
+
+        public_key = os.getenv("LANGFUSE_PUBLIC_KEY", "")
+        secret_key = os.getenv("LANGFUSE_SECRET_KEY", "")
+        auth = httpx.BasicAuth(username=public_key, password=secret_key)
+
+        # Validate credentials with a lightweight API call
+        with httpx.Client(timeout=5.0) as client:
+            resp = client.get(
+                f"{base_url.rstrip('/')}/api/public/traces",
+                params={"limit": 1},
+                auth=auth,
+            )
+            if resp.status_code == 200:
+                _langfuse_enabled = True
+                logger.info("Langfuse REST API validated (host={})", base_url)
+            else:
+                logger.warning("Langfuse auth check failed (status={})", resp.status_code)
+    except Exception as e:
+        logger.warning("Langfuse setup failed (non-fatal): {}", e)
+
+
+def is_langfuse_enabled() -> bool:
+    """Check if Langfuse tracing is enabled and authenticated."""
+    return _langfuse_enabled
+
+
+@contextmanager
+def langfuse_trace_context(
+    name: str,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    input: Optional[Any] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    tags: Optional[list] = None,
+):
+    """Wrap an agent run and patch the Langfuse trace with metadata after completion.
+
+    Logfire's instrument_pydantic_ai() creates OTEL spans that flow to Langfuse
+    via the secondary exporter. Those traces lack user_id, session_id, tags, and
+    have generic names like "agent run".
+
+    This context manager:
+    1. Yields a simple dict for the caller to accumulate response data
+    2. After the agent run, uses the Langfuse REST API to patch the most recent
+       trace with proper name, user_id, session_id, tags, and input/output.
+    """
+    if not _langfuse_enabled:
+        yield None
+        return
+
+    trace_data: Dict[str, Any] = {
+        "name": name,
+        "user_id": user_id,
+        "session_id": session_id,
+        "input": input,
+        "metadata": metadata or {},
+        "tags": tags or [],
+        "output": None,
+    }
+
+    yield trace_data
+
+    # This code runs after the `with` block exits
+    logger.info("langfuse_trace_context: post-yield cleanup started (name={}, output={})",
+                name, "set" if trace_data.get("output") else "None")
+
+    # After agent run: force flush OTEL spans then update the trace via Langfuse API
+    try:
+        import httpx
+        import uuid as _uuid
+        import time
+        from datetime import datetime, timezone
+
+        base_url = (os.getenv("LANGFUSE_API_BASE_URL") or os.getenv("LANGFUSE_BASE_URL", "")).rstrip("/")
+        public_key = os.getenv("LANGFUSE_PUBLIC_KEY", "")
+        secret_key = os.getenv("LANGFUSE_SECRET_KEY", "")
+
+        if not base_url or not public_key:
+            return
+
+        auth = httpx.BasicAuth(username=public_key, password=secret_key)
+
+        # Force flush Logfire/OTEL spans so the trace exists in Langfuse
+        try:
+            logfire.force_flush()
+        except Exception:
+            pass
+
+        # Brief wait for Langfuse to ingest the OTEL spans
+        time.sleep(2)
+
+        # Fetch the most recent "agent run" trace from Langfuse
+        trace_id = None
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(
+                f"{base_url}/api/public/traces",
+                params={"limit": 1, "orderBy": "timestamp.desc"},
+                auth=auth,
+            )
+            if resp.status_code == 200:
+                traces = resp.json().get("data", [])
+                if traces:
+                    trace_id = traces[0]["id"]
+                    logger.info("Found Langfuse trace to update: {}", trace_id)
+                else:
+                    logger.warning("No traces found in Langfuse to update")
+            else:
+                logger.warning("Langfuse traces list returned status {}", resp.status_code)
+
+        if not trace_id:
+            return
+
+        # Build the trace body for ingestion upsert
+        trace_body: Dict[str, Any] = {
+            "id": trace_id,
+            "name": name,
+        }
+        if user_id:
+            trace_body["userId"] = user_id
+        if session_id:
+            trace_body["sessionId"] = session_id
+        if tags:
+            trace_body["tags"] = tags
+        if trace_data.get("output"):
+            trace_body["output"] = trace_data["output"]
+        if input:
+            trace_body["input"] = input
+        if metadata:
+            trace_body["metadata"] = metadata
+
+        ingestion_payload = {
+            "batch": [{
+                "id": str(_uuid.uuid4()),
+                "type": "trace-create",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "body": trace_body,
+            }]
+        }
+
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.post(
+                f"{base_url}/api/public/ingestion",
+                json=ingestion_payload,
+                auth=auth,
+            )
+            if resp.status_code in (200, 207):
+                logger.info(
+                    "Updated Langfuse trace {} (name={}, user={}, session={})",
+                    trace_id, name, user_id, session_id,
+                )
+            else:
+                logger.warning(
+                    "Langfuse ingestion returned status {} for trace {}",
+                    resp.status_code, trace_id,
+                )
+
+    except Exception as e:
+        logger.warning("Langfuse trace update failed: {}", e)
+
+
 # Global flag to track if Logfire is initialized
 _LOGFIRE_INITIALIZED = False
 
@@ -176,6 +364,9 @@ def initialize_logfire_tracing(
 
         logfire.instrument_litellm()
         logger.info("Instrumented LiteLLM for Logfire tracing")
+
+        # Configure Langfuse OTEL tracing alongside Logfire (if env vars set)
+        _setup_langfuse_otel()
 
         _LOGFIRE_INITIALIZED = True
 
