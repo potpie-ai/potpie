@@ -319,6 +319,34 @@ class TestAuthServiceCheckAuth:
                 assert result["email"] == "user@example.com"
 
     @pytest.mark.asyncio
+    async def test_check_auth_does_not_log_token_contents(self):
+        """Auth checks should not emit bearer token contents to logs."""
+        mock_request = MagicMock()
+        mock_request.headers.get.return_value = "Bearer sensitive-token"
+        mock_request.state = MagicMock()
+        mock_response = MagicMock()
+        decoded_token = {"uid": "firebase-user-123", "email": "user@example.com"}
+
+        with patch.dict(os.environ, {"isDevelopmentMode": "disabled"}, clear=False):
+            with patch(
+                "app.modules.auth.auth_service.auth.verify_id_token",
+                return_value=decoded_token,
+            ):
+                with patch("app.modules.auth.auth_service.logging.info") as mock_info:
+                    credential = HTTPAuthorizationCredentials(
+                        scheme="Bearer", credentials="sensitive-token"
+                    )
+                    await AuthService.check_auth(
+                        mock_request, mock_response, credential
+                    )
+
+        assert not any(
+            "sensitive-token" in str(arg)
+            for call in mock_info.call_args_list
+            for arg in call.args
+        )
+
+    @pytest.mark.asyncio
     async def test_check_auth_invalid_token(self):
         """Test check_auth raises 401 on invalid token"""
         mock_request = MagicMock()
