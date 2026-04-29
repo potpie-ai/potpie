@@ -1,6 +1,7 @@
+import hmac
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile, HTTPException
+from fastapi import APIRouter, Depends, File, Query, UploadFile, HTTPException, Header
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
@@ -18,6 +19,38 @@ router = APIRouter()
 
 
 class MediaAPI:
+    @staticmethod
+    @router.get("/internal/media/{attachment_id}/raw")
+    async def download_attachment_internal_raw(
+        attachment_id: str,
+        workflows_media_token: Optional[str] = Header(
+            None, alias="X-Workflows-Media-Token"
+        ),
+        db: Session = Depends(get_db),
+    ):
+        """
+        Internal endpoint for workflows service to fetch raw attachment bytes.
+        Authenticated only via shared media token; does not require message linkage.
+        """
+        expected_secret = config_provider.get_workflows_media_internal_secret()
+        if not expected_secret:
+            raise HTTPException(
+                status_code=503,
+                detail="Internal media secret is not configured",
+            )
+
+        if not workflows_media_token or not hmac.compare_digest(
+            workflows_media_token, expected_secret
+        ):
+            raise HTTPException(status_code=401, detail="Invalid media token")
+
+        controller = MediaController(
+            db=db,
+            user_id="workflows-internal",
+            user_email="workflows-internal@potpie.local",
+        )
+        return await controller.download_attachment_internal(attachment_id)
+
     @staticmethod
     @router.post("/media/upload", response_model=AttachmentUploadResponse)
     async def upload_file(
