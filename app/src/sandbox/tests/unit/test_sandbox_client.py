@@ -8,10 +8,13 @@ exec-based fallback by patching the handle to drop `local_path`.
 from __future__ import annotations
 
 import dataclasses
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+
+pytestmark = pytest.mark.unit
 
 from sandbox import (
     SandboxClient,
@@ -324,10 +327,7 @@ async def test_diff_after_change(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_search_finds_match_when_rg_available(tmp_path: Path) -> None:
-    rg_present = subprocess.run(
-        ["which", "rg"], capture_output=True, text=True, check=False
-    ).returncode == 0
-    if not rg_present:
+    if shutil.which("rg") is None:
         pytest.skip("ripgrep not on PATH; skipping search test")
     source = _make_repo(tmp_path)
     client = _build_client(tmp_path)

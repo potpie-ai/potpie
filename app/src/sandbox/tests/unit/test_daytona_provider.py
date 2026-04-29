@@ -5,6 +5,8 @@ import time
 
 import pytest
 
+pytestmark = pytest.mark.unit
+
 from sandbox.adapters.outbound.daytona.provider import (
     DaytonaRuntimeProvider,
     DaytonaWorkspaceProvider,

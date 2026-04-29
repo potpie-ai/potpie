@@ -1,7 +1,7 @@
 """Assembler Agent for combining all outputs into final Specification."""
+
 from pydantic_ai import Agent
 from app.modules.intelligence.provider.provider_service import ProviderService
-from .spec_models import Specification
 
 ASSEMBLER_AGENT_PROMPT = """You are **THE ASSEMBLER AGENT**, the final step in specification generation.
 
@@ -106,7 +106,10 @@ def create_assembler_agent(
     llm_provider: ProviderService,
 ) -> Agent:
     """Create the Assembler Agent for final specification assembly."""
-    prompt = ASSEMBLER_AGENT_PROMPT + "\n\nIMPORTANT: Return your response as valid JSON matching the Specification schema."
+    prompt = (
+        ASSEMBLER_AGENT_PROMPT
+        + "\n\nIMPORTANT: Return your response as valid JSON matching the Specification schema."
+    )
     return Agent(
         model=llm_provider.get_pydantic_model(),
         system_prompt=prompt,

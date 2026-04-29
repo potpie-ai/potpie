@@ -5,7 +5,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import typer
 
@@ -84,7 +84,7 @@ def _flags() -> tuple[bool, bool]:
     return bool(_cli_state.get("json")), bool(_cli_state.get("verbose"))
 
 
-def _resolved_source_label(explicit: Optional[str]) -> Optional[str]:
+def _resolved_source_label(explicit: str | None) -> str | None:
     """Subcommand --source wins over global `potpie --source …`."""
     if explicit and explicit.strip():
         return explicit.strip()
@@ -191,7 +191,7 @@ def _cli(
         "-v",
         help="Verbose tracebacks on errors (API failures, etc.).",
     ),
-    source: Optional[str] = typer.Option(
+    source: str | None = typer.Option(
         None,
         "--source",
         "-s",
@@ -205,18 +205,13 @@ def _cli(
         _cli_state["source"] = source.strip() if source and source.strip() else None
         configure_error_output(as_json=json_output)
         load_cli_env()
-        ve = os.getenv("CONTEXT_ENGINE_VERBOSE_NEO4J", "").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-        )
-        configure_cli_logging(verbose or ve)
+        configure_cli_logging(verbose)
 
 
 @app.command("login")
 def login_cmd(
     token: str = typer.Argument(..., help="Potpie API key (from the app)"),
-    url: Optional[str] = typer.Option(
+    url: str | None = typer.Option(
         None,
         "--url",
         "-u",
@@ -276,10 +271,10 @@ def doctor_cmd() -> None:
         os.getenv("CONTEXT_ENGINE_REPO_TO_POT") or os.getenv("CONTEXT_ENGINE_POTS")
     )
 
-    health_ok: Optional[bool] = None
-    health_msg: Optional[str] = None
-    auth_ok: Optional[bool] = None
-    auth_msg: Optional[str] = None
+    health_ok: bool | None = None
+    health_msg: str | None = None
+    auth_ok: bool | None = None
+    auth_msg: str | None = None
     try:
         c = PotpieContextApiClient(
             resolve_potpie_api_base_url(),
@@ -349,7 +344,7 @@ def doctor_cmd() -> None:
 
 @app.command("init-agent")
 def init_agent_cmd(
-    agent: Optional[str] = typer.Argument(
+    agent: str | None = typer.Argument(
         None,
         help=(
             "Agent type: 'claude' installs CLAUDE.md section + .claude/commands; "
@@ -660,12 +655,12 @@ def pot_create_cmd(
 
 @pot_repo_app.command("list")
 def pot_repo_list_cmd(
-    pot_opt: Optional[str] = typer.Option(
+    pot_opt: str | None = typer.Option(
         None,
         "--pot",
         help="Pot UUID or alias (default: active pot / git cwd, same as ingest).",
     ),
-    cwd: Optional[str] = typer.Option(
+    cwd: str | None = typer.Option(
         None,
         "--cwd",
         help="Git repo directory for pot inference when --pot is omitted.",
@@ -703,12 +698,12 @@ def pot_repo_add_cmd(
         ...,
         help="GitHub repository as owner/repo (e.g. acme/api).",
     ),
-    pot_opt: Optional[str] = typer.Option(
+    pot_opt: str | None = typer.Option(
         None,
         "--pot",
         help="Pot UUID or alias (default: active pot / git cwd).",
     ),
-    cwd: Optional[str] = typer.Option(
+    cwd: str | None = typer.Option(
         None,
         "--cwd",
         help="Git repo directory for pot inference when --pot is omitted.",
@@ -747,7 +742,7 @@ pot_app.add_typer(pot_repo_app, name="repo")
 
 @pot_app.command("hard-reset")
 def pot_hard_reset(
-    pot_id: Optional[str] = typer.Argument(
+    pot_id: str | None = typer.Argument(
         None,
         help=(
             "Pot id to reset. Strongly recommended to pass explicitly; omit only "
@@ -912,17 +907,17 @@ def event_show_cmd(
 
 @event_app.command("list")
 def event_list_cmd(
-    pot_id: Optional[str] = typer.Argument(
+    pot_id: str | None = typer.Argument(
         None,
         help="Pot id / slug / alias. Omit to infer from `potpie pot use` or git.",
     ),
     limit: int = typer.Option(20, "--limit", "-n", help="Max events to show (1-200)."),
-    status: Optional[str] = typer.Option(
+    status: str | None = typer.Option(
         None,
         "--status",
         help="Filter lifecycle: queued, processing, done, or error.",
     ),
-    ingestion_kind: Optional[str] = typer.Option(
+    ingestion_kind: str | None = typer.Option(
         None,
         "--kind",
         help="Filter ingestion kind, e.g. raw_episode or agent_reconciliation.",
@@ -1127,23 +1122,23 @@ def search(
         ...,
         help="Either pot UUID + query, or only the query when pot is inferred (pot use / env / git)",
     ),
-    second: Optional[str] = typer.Argument(
+    second: str | None = typer.Argument(
         None,
         help="Natural-language query when the first argument is the pot UUID",
     ),
     limit: int = typer.Option(8, "--limit", "-n", help="Max results (1–50)"),
-    node_labels: Optional[str] = typer.Option(
+    node_labels: str | None = typer.Option(
         None,
         "--node-labels",
         help="Optional comma-separated Graphiti labels, e.g. PullRequest,Decision",
     ),
-    repo_name: Optional[str] = typer.Option(
+    repo_name: str | None = typer.Option(
         None,
         "--repo",
         "-r",
         help="Optional owner/repo to narrow results inside a multi-repo pot",
     ),
-    source_description: Optional[str] = typer.Option(
+    source_description: str | None = typer.Option(
         None,
         "--source",
         "-s",
@@ -1159,12 +1154,12 @@ def search(
         "--with-temporal",
         help="Plain output: also show created_at (valid/invalid are compact by default; JSON includes temporal_flag when present).",
     ),
-    as_of: Optional[str] = typer.Option(
+    as_of: str | None = typer.Option(
         None,
         "--as-of",
         help="ISO 8601 instant; restrict results to edges valid at that time (valid_at/invalid_at window).",
     ),
-    episode_uuid: Optional[str] = typer.Option(
+    episode_uuid: str | None = typer.Option(
         None,
         "--episode",
         "-e",
@@ -1193,7 +1188,7 @@ def search(
     labels: list[str] = []
     if node_labels:
         labels = [x.strip() for x in node_labels.split(",") if x.strip()]
-    as_of_dt: Optional[datetime] = None
+    as_of_dt: datetime | None = None
     if as_of:
         try:
             as_of_dt = _parse_iso_datetime(as_of)
@@ -1244,14 +1239,14 @@ def search(
 
 def _resolve_scope_body(
     *,
-    repo_name: Optional[str] = None,
-    file_path: Optional[str] = None,
-    function_name: Optional[str] = None,
-    pr_number: Optional[int] = None,
-    services: Optional[list[str]] = None,
-    features: Optional[list[str]] = None,
-    environment: Optional[str] = None,
-    ticket_ids: Optional[list[str]] = None,
+    repo_name: str | None = None,
+    file_path: str | None = None,
+    function_name: str | None = None,
+    pr_number: int | None = None,
+    services: list[str] | None = None,
+    features: list[str] | None = None,
+    environment: str | None = None,
+    ticket_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     out: dict[str, Any] = {}
     if repo_name:
@@ -1273,7 +1268,7 @@ def _resolve_scope_body(
     return out
 
 
-def _split_csv(value: Optional[str]) -> list[str]:
+def _split_csv(value: str | None) -> list[str]:
     if not value:
         return []
     return [part.strip() for part in value.split(",") if part.strip()]
@@ -1281,18 +1276,18 @@ def _split_csv(value: Optional[str]) -> list[str]:
 
 @app.command("status")
 def status_cmd(
-    pot: Optional[str] = typer.Argument(
+    pot: str | None = typer.Argument(
         None,
         help="Pot UUID or alias; inferred from `pot use` / env / git when omitted.",
     ),
-    intent: Optional[str] = typer.Option(
+    intent: str | None = typer.Option(
         None,
         "--intent",
         help="Optional task intent; surfaces the recommended context_resolve recipe.",
     ),
-    repo_name: Optional[str] = typer.Option(None, "--repo", "-r"),
-    file_path: Optional[str] = typer.Option(None, "--file", "-f"),
-    pr_number: Optional[int] = typer.Option(None, "--pr"),
+    repo_name: str | None = typer.Option(None, "--repo", "-r"),
+    file_path: str | None = typer.Option(None, "--file", "-f"),
+    pr_number: int | None = typer.Option(None, "--pr"),
     cwd: str = typer.Option(".", "--cwd"),
 ) -> None:
     """Fetch readiness / capability envelope (POST /status)."""
@@ -1310,7 +1305,9 @@ def status_cmd(
     try:
         response = client.status(body)
     except PotpieContextApiError as exc:
-        emit_error("Status failed", _format_api_error(exc), verbose=v, exc=exc if v else None)
+        emit_error(
+            "Status failed", _format_api_error(exc), verbose=v, exc=exc if v else None
+        )
         raise typer.Exit(code=1) from exc
     print_json_blob(response, as_json=j)
 
@@ -1321,20 +1318,28 @@ def resolve_cmd(
         ...,
         help="Either pot UUID + query, or only the query when pot is inferred (pot use / env / git).",
     ),
-    second: Optional[str] = typer.Argument(
+    second: str | None = typer.Argument(
         None,
         help="Natural-language query when the first argument is the pot UUID.",
     ),
-    repo_name: Optional[str] = typer.Option(None, "--repo", "-r"),
-    file_path: Optional[str] = typer.Option(None, "--file", "-f"),
-    function_name: Optional[str] = typer.Option(None, "--function"),
-    pr_number: Optional[int] = typer.Option(None, "--pr"),
-    services: Optional[str] = typer.Option(None, "--services", help="Comma-separated service names."),
-    features: Optional[str] = typer.Option(None, "--features", help="Comma-separated feature names."),
-    environment: Optional[str] = typer.Option(None, "--env"),
-    ticket_ids: Optional[str] = typer.Option(None, "--tickets", help="Comma-separated ticket IDs."),
-    intent: Optional[str] = typer.Option(None, "--intent"),
-    include: Optional[str] = typer.Option(None, "--include", help="Comma-separated recipe include list."),
+    repo_name: str | None = typer.Option(None, "--repo", "-r"),
+    file_path: str | None = typer.Option(None, "--file", "-f"),
+    function_name: str | None = typer.Option(None, "--function"),
+    pr_number: int | None = typer.Option(None, "--pr"),
+    services: str | None = typer.Option(
+        None, "--services", help="Comma-separated service names."
+    ),
+    features: str | None = typer.Option(
+        None, "--features", help="Comma-separated feature names."
+    ),
+    environment: str | None = typer.Option(None, "--env"),
+    ticket_ids: str | None = typer.Option(
+        None, "--tickets", help="Comma-separated ticket IDs."
+    ),
+    intent: str | None = typer.Option(None, "--intent"),
+    include: str | None = typer.Option(
+        None, "--include", help="Comma-separated recipe include list."
+    ),
     limit: int = typer.Option(12, "--limit", "-n"),
     cwd: str = typer.Option(".", "--cwd"),
 ) -> None:
@@ -1371,7 +1376,9 @@ def resolve_cmd(
     try:
         response = client.context_graph_query(body)
     except PotpieContextApiError as exc:
-        emit_error("Resolve failed", _format_api_error(exc), verbose=v, exc=exc if v else None)
+        emit_error(
+            "Resolve failed", _format_api_error(exc), verbose=v, exc=exc if v else None
+        )
         raise typer.Exit(code=1) from exc
     if j:
         print_json_blob(response, as_json=True)
@@ -1384,11 +1391,11 @@ def resolve_cmd(
 
 @app.command("overview")
 def overview_cmd(
-    pot: Optional[str] = typer.Argument(
+    pot: str | None = typer.Argument(
         None,
         help="Pot UUID or alias; inferred from `pot use` / env / git when omitted.",
     ),
-    repo_name: Optional[str] = typer.Option(None, "--repo", "-r"),
+    repo_name: str | None = typer.Option(None, "--repo", "-r"),
     limit: int = typer.Option(12, "--limit", "-n"),
     cwd: str = typer.Option(".", "--cwd"),
 ) -> None:
@@ -1407,34 +1414,44 @@ def overview_cmd(
     try:
         response = client.context_graph_query(body)
     except PotpieContextApiError as exc:
-        emit_error("Overview failed", _format_api_error(exc), verbose=v, exc=exc if v else None)
+        emit_error(
+            "Overview failed", _format_api_error(exc), verbose=v, exc=exc if v else None
+        )
         raise typer.Exit(code=1) from exc
     print_json_blob(response, as_json=j)
 
 
 @app.command("record")
 def record_cmd(
-    record_type: str = typer.Option(..., "--type", "-t", help="Record type (e.g. decision, fix, incident)."),
-    summary: str = typer.Option(..., "--summary", "-s", help="One-line record summary (required)."),
-    pot: Optional[str] = typer.Option(None, "--pot", help="Pot UUID/alias; inferred when omitted."),
-    details: Optional[str] = typer.Option(
+    record_type: str = typer.Option(
+        ..., "--type", "-t", help="Record type (e.g. decision, fix, incident)."
+    ),
+    summary: str = typer.Option(
+        ..., "--summary", "-s", help="One-line record summary (required)."
+    ),
+    pot: str | None = typer.Option(
+        None, "--pot", help="Pot UUID/alias; inferred when omitted."
+    ),
+    details: str | None = typer.Option(
         None,
         "--details",
         help="JSON object with structured record details.",
     ),
-    source_refs: Optional[str] = typer.Option(
+    source_refs: str | None = typer.Option(
         None, "--source-refs", help="Comma-separated source references."
     ),
     confidence: float = typer.Option(0.7, "--confidence", min=0.0, max=1.0),
     visibility: str = typer.Option("project", "--visibility"),
-    idempotency_key: Optional[str] = typer.Option(None, "--idempotency-key"),
-    occurred_at: Optional[str] = typer.Option(
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key"),
+    occurred_at: str | None = typer.Option(
         None, "--occurred-at", help="ISO-8601 timestamp; defaults to now."
     ),
-    repo_name: Optional[str] = typer.Option(None, "--repo", "-r"),
-    file_path: Optional[str] = typer.Option(None, "--file", "-f"),
-    pr_number: Optional[int] = typer.Option(None, "--pr"),
-    sync: bool = typer.Option(False, "--sync", help="Wait for synchronous reconciliation."),
+    repo_name: str | None = typer.Option(None, "--repo", "-r"),
+    file_path: str | None = typer.Option(None, "--file", "-f"),
+    pr_number: int | None = typer.Option(None, "--pr"),
+    sync: bool = typer.Option(
+        False, "--sync", help="Wait for synchronous reconciliation."
+    ),
     cwd: str = typer.Option(".", "--cwd"),
 ) -> None:
     """Record a durable context fact (POST /record)."""
@@ -1451,7 +1468,7 @@ def record_cmd(
             emit_error("Invalid --details", "Expected a JSON object.", verbose=v)
             raise typer.Exit(code=1)
         details_dict = parsed
-    occurred_dt: Optional[datetime] = None
+    occurred_dt: datetime | None = None
     if occurred_at:
         try:
             occurred_dt = _parse_iso_datetime(occurred_at)
@@ -1480,7 +1497,9 @@ def record_cmd(
     try:
         response = client.record(body, sync=sync)
     except PotpieContextApiError as exc:
-        emit_error("Record failed", _format_api_error(exc), verbose=v, exc=exc if v else None)
+        emit_error(
+            "Record failed", _format_api_error(exc), verbose=v, exc=exc if v else None
+        )
         raise typer.Exit(code=1) from exc
     print_json_blob(response, as_json=j)
 
@@ -1537,27 +1556,27 @@ def _ingest_file_conflict_error(code: str) -> tuple[str, str]:
 
 @app.command("ingest")
 def ingest_cmd(
-    first: Optional[str] = typer.Argument(
+    first: str | None = typer.Argument(
         None,
         help="Episode text, or pot UUID when a second argument is the text",
     ),
-    second: Optional[str] = typer.Argument(
+    second: str | None = typer.Argument(
         None,
         help="Episode text when the first argument is a pot UUID",
     ),
-    name: Optional[str] = typer.Option(
+    name: str | None = typer.Option(
         None,
         "--name",
         "-n",
         help="Episode title (default: first line of body, truncated)",
     ),
-    episode_body: Optional[str] = typer.Option(
+    episode_body: str | None = typer.Option(
         None,
         "--episode-body",
         "-b",
         help="Episode text (optional if you pass text as a positional argument)",
     ),
-    episode_file: Optional[Path] = typer.Option(
+    episode_file: Path | None = typer.Option(
         None,
         "--file",
         "-f",
@@ -1567,13 +1586,13 @@ def ingest_cmd(
         dir_okay=False,
         readable=True,
     ),
-    source_description: Optional[str] = typer.Option(
+    source_description: str | None = typer.Option(
         None,
         "--source",
         "-s",
         help="Short source label (default: cli)",
     ),
-    reference_time: Optional[str] = typer.Option(
+    reference_time: str | None = typer.Option(
         None,
         "--reference-time",
         "-t",
@@ -1584,7 +1603,7 @@ def ingest_cmd(
         "--sync",
         help="Pass sync=true to Potpie (inline apply after persist when the server supports it).",
     ),
-    idempotency_key: Optional[str] = typer.Option(
+    idempotency_key: str | None = typer.Option(
         None,
         "--idempotency-key",
         help="Optional dedupe key when Postgres is configured (matches HTTP idempotency_key).",
@@ -1604,7 +1623,7 @@ def ingest_cmd(
     Use --file / -f to load the episode body from a UTF-8 file (optionally with an explicit pot UUID only).
     """
     j, v = _flags()
-    file_body: Optional[str] = None
+    file_body: str | None = None
     if episode_file is not None:
         try:
             file_body = episode_file.expanduser().resolve().read_text(encoding="utf-8")

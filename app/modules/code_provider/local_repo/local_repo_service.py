@@ -28,12 +28,13 @@ logger = setup_logger(__name__)
 
 # Lazy import for GitPython - top-level import causes SIGSEGV in forked workers
 if TYPE_CHECKING:
-    import git as git_module
+    pass
 
 
 def _get_git_module():
     """Lazy import git module to avoid fork-safety issues."""
     import git
+
     return git
 
 

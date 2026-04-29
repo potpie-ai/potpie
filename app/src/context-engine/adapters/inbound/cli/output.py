@@ -8,7 +8,7 @@ import os
 import sys
 import traceback
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from rich.console import Console
 from rich.markup import escape
@@ -29,8 +29,10 @@ def configure_error_output(*, as_json: bool) -> None:
 
 
 def configure_cli_logging(verbose: bool) -> None:
-    """Reduce Neo4j driver noise unless verbose or CONTEXT_ENGINE_VERBOSE_NEO4J=1."""
-    env_verbose = os.getenv("CONTEXT_ENGINE_VERBOSE_NEO4J", "").strip().lower() in (
+    """Reduce graph driver noise unless verbose or graph-driver debug is enabled."""
+    env_verbose = os.getenv(
+        "CONTEXT_ENGINE_GRAPH_DRIVER_DEBUG", ""
+    ).strip().lower() in (
         "1",
         "true",
         "yes",
@@ -49,17 +51,17 @@ class DoctorSnapshot:
     neo4j_effective_set: bool
     neo4j_source: str  # "context_engine" | "legacy" | "missing"
     pot_maps_set: bool
-    active_pot_id: Optional[str]
+    active_pot_id: str | None
     potpie_api_key_env: bool
     potpie_stored_token: bool
-    potpie_base_url: Optional[str]
-    potpie_port_hint: Optional[str]
+    potpie_base_url: str | None
+    potpie_port_hint: str | None
     database_url_set: bool
     github_token_set: bool
-    potpie_health_ok: Optional[bool] = None
-    potpie_health_message: Optional[str] = None
-    potpie_auth_ok: Optional[bool] = None
-    potpie_auth_message: Optional[str] = None
+    potpie_health_ok: bool | None = None
+    potpie_health_message: str | None = None
+    potpie_auth_ok: bool | None = None
+    potpie_auth_message: str | None = None
     summary_lines: list[str] = field(default_factory=list)
 
 
@@ -67,9 +69,9 @@ def emit_error(
     title: str,
     message: str,
     *,
-    hint: Optional[str] = None,
+    hint: str | None = None,
     verbose: bool = False,
-    exc: Optional[BaseException] = None,
+    exc: BaseException | None = None,
 ) -> None:
     if _json_errors:
         payload: dict[str, Any] = {
@@ -230,10 +232,7 @@ def _compact_valid_expired_line(row: dict[str, Any]) -> str | None:
     inv = row.get("invalid_at")
     if va is None and inv is None:
         return None
-    return (
-        f"valid {_short_temporal_cell(va)} • "
-        f"expired {_short_temporal_cell(inv)}"
-    )
+    return f"valid {_short_temporal_cell(va)} • expired {_short_temporal_cell(inv)}"
 
 
 def print_search_results(
@@ -279,9 +278,7 @@ def print_search_results(
         via = row.get("causal_via")
         if isinstance(via, dict):
             rel = via.get("relation") or "related"
-            lines.append(
-                f"[dim]↳ because:[/dim] {escape(str(rel))} (causal expansion)"
-            )
+            lines.append(f"[dim]↳ because:[/dim] {escape(str(rel))} (causal expansion)")
         if with_temporal:
             lines.append(
                 "[dim]created_at:[/dim] "
@@ -354,7 +351,7 @@ def print_json_blob(data: dict[str, Any], *, as_json: bool) -> None:
 
 
 def print_plain_line(
-    message: str, *, as_json: bool, json_payload: Optional[dict[str, Any]] = None
+    message: str, *, as_json: bool, json_payload: dict[str, Any] | None = None
 ) -> None:
     if as_json and json_payload is not None:
         print(json.dumps(json_payload))

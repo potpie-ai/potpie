@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.unit
+
 from sandbox.adapters.outbound.file.json_store import JsonSandboxStore
 from sandbox.adapters.outbound.local.git_workspace import LocalGitWorkspaceProvider
 from sandbox.adapters.outbound.local.subprocess_runtime import LocalSubprocessRuntimeProvider

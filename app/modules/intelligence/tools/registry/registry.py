@@ -5,7 +5,6 @@ from typing import Dict, List, Optional
 from app.modules.intelligence.tools.registry.exceptions import RegistryError
 from app.modules.intelligence.tools.registry.schema import (
     AllowListDefinition,
-    ToolCategory,
     ToolMetadata,
     ToolTier,
 )

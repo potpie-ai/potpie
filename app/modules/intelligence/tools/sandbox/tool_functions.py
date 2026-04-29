@@ -194,10 +194,9 @@ async def _is_dir(client: Any, handle: Any, path: str) -> bool:
 
         return (_P(handle.local_path) / (path if path != "." else ".")).is_dir()
     # exec backend: use stat
-    full = path if path == "." else path
     probe = await client.exec(
         handle,
-        ["sh", "-c", f"if [ -d {shlex.quote(full)} ]; then echo dir; fi"],
+        ["sh", "-c", f"if [ -d {shlex.quote(path)} ]; then echo dir; fi"],
         command_kind=CommandKind.READ,
     )
     return probe.exit_code == 0 and probe.stdout.strip() == b"dir"

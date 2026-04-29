@@ -21,9 +21,7 @@ from domain.source_resolution import (
     ResolverAuthContext,
     ResolverBudget,
     ResolverCapabilityEntry,
-    ResolvedSnippet,
     ResolvedSummary,
-    ResolvedVerification,
     SourceResolutionResult,
 )
 
@@ -54,6 +52,7 @@ def _ref(
 # -----------------------------------------------------------------------
 # NullSourceResolver
 # -----------------------------------------------------------------------
+
 
 async def test_null_resolver_references_only_returns_empty() -> None:
     r = NullSourceResolver()
@@ -87,6 +86,7 @@ def test_null_resolver_advertises_no_capabilities() -> None:
 # -----------------------------------------------------------------------
 # CompositeSourceResolver — dispatch + budget
 # -----------------------------------------------------------------------
+
 
 class _StubResolver:
     def __init__(
@@ -225,6 +225,7 @@ def test_composite_merges_capabilities() -> None:
 # GitHubPullRequestResolver
 # -----------------------------------------------------------------------
 
+
 class _FakeSourceControl:
     def __init__(self, pr: dict[str, Any]) -> None:
         self._pr = pr
@@ -236,13 +237,19 @@ class _FakeSourceControl:
         self.calls.append((repo_name, pr_number, include_diff))
         return dict(self._pr)
 
-    def get_pull_request_commits(self, repo_name: str, pr_number: int):  # pragma: no cover
+    def get_pull_request_commits(
+        self, repo_name: str, pr_number: int
+    ):  # pragma: no cover
         return []
 
-    def get_pull_request_review_comments(self, repo_name, pr_number, limit=100):  # pragma: no cover
+    def get_pull_request_review_comments(
+        self, repo_name, pr_number, limit=100
+    ):  # pragma: no cover
         return []
 
-    def get_pull_request_issue_comments(self, repo_name, pr_number, limit=50):  # pragma: no cover
+    def get_pull_request_issue_comments(
+        self, repo_name, pr_number, limit=50
+    ):  # pragma: no cover
         return []
 
     def get_issue(self, repo_name, issue_number):  # pragma: no cover
@@ -362,6 +369,7 @@ async def test_github_resolver_missing_repo_emits_unsupported() -> None:
 # -----------------------------------------------------------------------
 # DocumentationUriResolver
 # -----------------------------------------------------------------------
+
 
 async def test_doc_resolver_summary_reuses_stored_fields_without_fetcher() -> None:
     resolver = DocumentationUriResolver()

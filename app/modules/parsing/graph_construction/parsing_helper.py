@@ -19,15 +19,15 @@ from sqlalchemy.orm import Session
 # GitPython/libgit2 has internal state that doesn't survive fork().
 # These will be imported on first use inside functions that need them.
 if TYPE_CHECKING:
-    from git import Repo as RepoType
-    from git import GitCommandError as GitCommandErrorType
-    from git import InvalidGitRepositoryError as InvalidGitRepositoryErrorType
+    pass
 
 
 def _get_git_imports():
     """Lazy import git module to avoid fork-safety issues."""
     from git import GitCommandError, InvalidGitRepositoryError, Repo
+
     return GitCommandError, InvalidGitRepositoryError, Repo
+
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
@@ -40,7 +40,9 @@ from app.modules.utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 
-def _fetch_github_branch_head_sha_http(repo_name: str, branch_name: str) -> Optional[str]:
+def _fetch_github_branch_head_sha_http(
+    repo_name: str, branch_name: str
+) -> Optional[str]:
     """
     Fetch the HEAD commit SHA for a GitHub branch using only HTTP (no GitPython/PyGithub).
     Safe to call from forked processes (gunicorn workers) where GitPython causes SIGSEGV.
@@ -50,7 +52,9 @@ def _fetch_github_branch_head_sha_http(repo_name: str, branch_name: str) -> Opti
         token_list = os.getenv("GH_TOKEN_LIST", "").strip()
         token = os.getenv("CODE_PROVIDER_TOKEN")
         if token_list:
-            parts = [p.strip() for p in token_list.replace("\n", ",").split(",") if p.strip()]
+            parts = [
+                p.strip() for p in token_list.replace("\n", ",").split(",") if p.strip()
+            ]
             if parts:
                 token = token or parts[0]
         if not token:
@@ -811,12 +815,16 @@ class ParseHelper:
             logger.exception(f"Error accessing directory {repo_dir}: {e}")
             return "other"
 
+        top_extensions = dict(
+            sorted(files_by_ext.items(), key=lambda x: x[1], reverse=True)[:10]
+        )
+
         # Log detection results
         logger.info(
             f"detect_repo_language: Checked {total_files_checked} files, "
             f"found {sum(lang_count.values())} supported language files. "
             f"Language counts: {dict((k, v) for k, v in lang_count.items() if v > 0)}. "
-            f"Top extensions: {dict(sorted(files_by_ext.items(), key=lambda x: x[1], reverse=True)[:10])}"
+            f"Top extensions: {top_extensions}"
         )
 
         # Determine the predominant language based on counts
@@ -829,7 +837,7 @@ class ParseHelper:
             logger.warning(
                 f"detect_repo_language: No supported language files found in {repo_dir}. "
                 f"Total files checked: {total_files_checked}, "
-                f"Top 10 extensions: {dict(sorted(files_by_ext.items(), key=lambda x: x[1], reverse=True)[:10])}"
+                f"Top 10 extensions: {top_extensions}"
             )
 
         return result
@@ -964,7 +972,6 @@ class ParseHelper:
         Raises:
             HTTPException: Only if all recovery strategies fail
         """
-        
 
         # Support both bare repo (.bare) and regular repo (.git) structures
         repo_base_path = self.repo_manager.repos_base_path / repo_name
@@ -979,19 +986,30 @@ class ParseHelper:
         elif regular_git_path.exists():
             git_dir = repo_base_path  # Regular repo uses root as git working dir
             is_bare = False
-            logger.info(f"Using regular repo at {repo_base_path} for worktree operations (legacy)")
+            logger.info(
+                f"Using regular repo at {repo_base_path} for worktree operations (legacy)"
+            )
         else:
             git_dir = None
             is_bare = False
-            logger.warning(f"No git repo found at {repo_base_path} (neither .bare nor .git)")
+            logger.warning(
+                f"No git repo found at {repo_base_path} (neither .bare nor .git)"
+            )
 
         worktree_path_result = self.repo_manager.get_worktree_path(repo_name, ref)
         if worktree_path_result:
             worktree_path = worktree_path_result
         else:
-            worktree_path = self.repo_manager.repos_base_path / repo_name / "worktrees" / ref.replace("/", "_").replace("\\", "_")
+            worktree_path = (
+                self.repo_manager.repos_base_path
+                / repo_name
+                / "worktrees"
+                / ref.replace("/", "_").replace("\\", "_")
+            )
 
-        logger.info(f"_ensure_clean_worktree: Ensuring clean worktree for {repo_name}@{ref} (is_bare={is_bare})")
+        logger.info(
+            f"_ensure_clean_worktree: Ensuring clean worktree for {repo_name}@{ref} (is_bare={is_bare})"
+        )
 
         # Strategy 1: Prune stale git worktree registrations
         if git_dir and os.path.exists(git_dir):
@@ -1013,14 +1031,20 @@ class ParseHelper:
                 # Try force remove first
                 subprocess.run(
                     [
-                        "git", "-C", str(git_dir),
-                        "worktree", "remove", "--force",
-                        str(worktree_path)
+                        "git",
+                        "-C",
+                        str(git_dir),
+                        "worktree",
+                        "remove",
+                        "--force",
+                        str(worktree_path),
                     ],
                     capture_output=True,
                     timeout=30,
                 )
-                logger.info(f"Force-removed worktree registration for {repo_name}@{ref}")
+                logger.info(
+                    f"Force-removed worktree registration for {repo_name}@{ref}"
+                )
             except Exception:
                 pass  # Ignore errors, prune already cleaned stale entries
 
@@ -1031,7 +1055,9 @@ class ParseHelper:
 
         # Strategy 4: Create fresh worktree with exists_ok=True
         try:
-            logger.info(f"Creating fresh worktree for {repo_name}@{ref} (is_bare={is_bare})")
+            logger.info(
+                f"Creating fresh worktree for {repo_name}@{ref} (is_bare={is_bare})"
+            )
 
             if is_bare:
                 # Use RepoManager for bare repos
@@ -1043,11 +1069,15 @@ class ParseHelper:
                     user_id=user_id,
                     exists_ok=True,
                 )
-                logger.info(f"Successfully created worktree via RepoManager at {new_path}")
+                logger.info(
+                    f"Successfully created worktree via RepoManager at {new_path}"
+                )
                 return str(new_path)
             else:
                 # For regular repos (legacy), create worktree directly
-                logger.info(f"Using legacy worktree creation for regular repo at {git_dir}")
+                logger.info(
+                    f"Using legacy worktree creation for regular repo at {git_dir}"
+                )
                 _, _, Repo = _get_git_imports()
                 regular_repo = Repo(str(git_dir))
                 worktree_path_str = await self._create_git_worktree(
@@ -1221,8 +1251,10 @@ class ParseHelper:
                     )
                     # Validate the new worktree has files
                     new_file_count = sum(
-                        1 for _, _, files in os.walk(repo_manager_path)
-                        for f in files if not f.startswith(".")
+                        1
+                        for _, _, files in os.walk(repo_manager_path)
+                        for f in files
+                        if not f.startswith(".")
                     )
                     if new_file_count == 0:
                         raise HTTPException(
@@ -1242,9 +1274,7 @@ class ParseHelper:
                     )
 
             # At this point we have a valid worktree (either originally valid or recreated)
-            logger.info(
-                f"RepoManager path validated: using {repo_manager_path}"
-            )
+            logger.info(f"RepoManager path validated: using {repo_manager_path}")
             extracted_dir = repo_manager_path
 
             # Get commit SHA from RepoManager metadata or from git
@@ -1313,12 +1343,14 @@ class ParseHelper:
             repo_name_for_recreate = None
             if hasattr(repo_details, "repo_name"):
                 repo_name_for_recreate = repo_details.repo_name
-            elif 'full_name' in locals():
+            elif "full_name" in locals():
                 repo_name_for_recreate = full_name
 
             if repo_name_for_recreate:
                 # Check if bare repo exists - if so, we can recreate just the worktree
-                bare_repo_path = self.repo_manager._get_bare_repo_path(repo_name_for_recreate)
+                bare_repo_path = self.repo_manager._get_bare_repo_path(
+                    repo_name_for_recreate
+                )
                 if os.path.exists(bare_repo_path):
                     logger.info(
                         f"RepoManager worktree missing at {repo_manager_path} but bare repo exists. "
@@ -1361,18 +1393,26 @@ class ParseHelper:
                                     except Exception:
                                         if hasattr(repo, "get_branch"):
                                             branch_details = repo.get_branch(branch)
-                                            latest_commit_sha = branch_details.commit.sha
+                                            latest_commit_sha = (
+                                                branch_details.commit.sha
+                                            )
                             except Exception as e:
                                 logger.warning(f"Could not determine commit SHA: {e}")
-                            latest_commit_sha = latest_commit_sha or commit_id or "unknown"
+                            latest_commit_sha = (
+                                latest_commit_sha or commit_id or "unknown"
+                            )
                         try:
                             _, _, RepoCls = _get_git_imports()
                             if repo is None:
                                 repo_metadata = {}
                             elif isinstance(repo, RepoCls):
-                                repo_metadata = ParseHelper.extract_local_repo_metadata(repo)
+                                repo_metadata = ParseHelper.extract_local_repo_metadata(
+                                    repo
+                                )
                             else:
-                                repo_metadata = ParseHelper.extract_remote_repo_metadata(repo)
+                                repo_metadata = (
+                                    ParseHelper.extract_remote_repo_metadata(repo)
+                                )
                         except Exception as e:
                             logger.warning(f"Could not extract repo metadata: {e}")
                             repo_metadata = {}
@@ -1859,7 +1899,7 @@ class ParseHelper:
 
                 if token_type == "github_app":
                     logger.info(
-                        f"[Repomanager] Attempting Priority 1: GitHub App token",
+                        "[Repomanager] Attempting Priority 1: GitHub App token",
                         user_id=user_id,
                         repo_name=repo_name,
                         ref=ref,
@@ -1884,7 +1924,7 @@ class ParseHelper:
 
                             if worktree_path_str:
                                 logger.info(
-                                    f"[Repomanager] SUCCESS: Cloned with GitHub App token",
+                                    "[Repomanager] SUCCESS: Cloned with GitHub App token",
                                     user_id=user_id,
                                     repo_name=repo_name,
                                     ref=ref,
@@ -1895,7 +1935,7 @@ class ParseHelper:
                     except Exception as e:
                         last_error = e
                         logger.warning(
-                            f"[Repomanager] FAILED: GitHub App token failed, will try next method",
+                            "[Repomanager] FAILED: GitHub App token failed, will try next method",
                             user_id=user_id,
                             repo_name=repo_name,
                             ref=ref,
@@ -1905,7 +1945,7 @@ class ParseHelper:
                         )
                 else:
                     logger.info(
-                        f"[Repomanager] Auth token is not GitHub App type, skipping Priority 1",
+                        "[Repomanager] Auth token is not GitHub App type, skipping Priority 1",
                         user_id=user_id,
                         repo_name=repo_name,
                         token_type=token_type,
@@ -1918,7 +1958,7 @@ class ParseHelper:
                 token_type = self._detect_token_type(auth_token)
 
                 logger.info(
-                    f"[Repomanager] Attempting Priority 2: User OAuth token",
+                    "[Repomanager] Attempting Priority 2: User OAuth token",
                     user_id=user_id,
                     repo_name=repo_name,
                     ref=ref,
@@ -1937,7 +1977,7 @@ class ParseHelper:
 
                     if worktree_path_str:
                         logger.info(
-                            f"[Repomanager] SUCCESS: Cloned with User OAuth token",
+                            "[Repomanager] SUCCESS: Cloned with User OAuth token",
                             user_id=user_id,
                             repo_name=repo_name,
                             ref=ref,
@@ -1960,7 +2000,7 @@ class ParseHelper:
                         reason = f"Cloning failed with user token: {error_str[:100]}"
 
                     logger.warning(
-                        f"[Repomanager] FAILED: User OAuth token failed, will try next method",
+                        "[Repomanager] FAILED: User OAuth token failed, will try next method",
                         user_id=user_id,
                         repo_name=repo_name,
                         ref=ref,
@@ -1973,7 +2013,7 @@ class ParseHelper:
             # PRIORITY 3: Environment Tokens (GH_TOKEN_LIST, CODE_PROVIDER_TOKEN)
             # ---------------------------------------------------------------------------
             logger.info(
-                f"[Repomanager] Attempting Priority 3: Environment tokens",
+                "[Repomanager] Attempting Priority 3: Environment tokens",
                 user_id=user_id,
                 repo_name=repo_name,
                 ref=ref,
@@ -2061,6 +2101,7 @@ class ParseHelper:
                 try:
                     email_helper = EmailHelper()
                     import traceback
+
                     await email_helper.send_parsing_failure_alert(
                         repo_name=repo_name,
                         branch_name=ref,
@@ -2405,9 +2446,7 @@ class ParseHelper:
 
             # Remove existing worktree if it exists
             if worktree_path.exists():
-                logger.info(
-                    f"Removing existing worktree directory: {worktree_path}"
-                )
+                logger.info(f"Removing existing worktree directory: {worktree_path}")
                 shutil.rmtree(worktree_path, ignore_errors=True)
                 # Also remove from git's worktree registry
                 try:
@@ -2420,15 +2459,11 @@ class ParseHelper:
 
             if is_commit:
                 # For specific commit, use detached HEAD
-                logger.info(
-                    f"Creating worktree for commit {ref} at {worktree_path}"
-                )
+                logger.info(f"Creating worktree for commit {ref} at {worktree_path}")
                 bare_repo.git.worktree("add", "--detach", str(worktree_path), ref)
             else:
                 # For branch, try to track it
-                logger.info(
-                    f"Creating worktree for branch {ref} at {worktree_path}"
-                )
+                logger.info(f"Creating worktree for branch {ref} at {worktree_path}")
                 try:
                     bare_repo.git.worktree("add", str(worktree_path), ref)
                 except GitCommandError:

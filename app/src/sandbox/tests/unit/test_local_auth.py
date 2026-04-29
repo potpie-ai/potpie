@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = pytest.mark.unit
+
 from sandbox.adapters.outbound.local.auth import (
     env_token_resolver,
     resolve_token,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -173,10 +173,10 @@ def _workspace_from_json(raw: dict[str, Any]) -> Workspace:
         state=WorkspaceState(raw.get("state", WorkspaceState.READY.value)),
         dirty=bool(raw.get("dirty", False)),
         pinned_until=_dt(raw.get("pinned_until")),
-        last_used_at=_dt(raw.get("last_used_at")) or datetime.utcnow(),
+        last_used_at=_dt(raw.get("last_used_at")) or datetime.now(timezone.utc),
         size_bytes=raw.get("size_bytes"),
-        created_at=_dt(raw.get("created_at")) or datetime.utcnow(),
-        updated_at=_dt(raw.get("updated_at")) or datetime.utcnow(),
+        created_at=_dt(raw.get("created_at")) or datetime.now(timezone.utc),
+        updated_at=_dt(raw.get("updated_at")) or datetime.now(timezone.utc),
         metadata=dict(raw.get("metadata") or {}),
     )
 
@@ -207,9 +207,9 @@ def _runtime_from_json(raw: dict[str, Any]) -> Runtime:
         spec=spec,
         state=RuntimeState(raw.get("state", RuntimeState.RUNNING.value)),
         last_started_at=_dt(raw.get("last_started_at")),
-        last_used_at=_dt(raw.get("last_used_at")) or datetime.utcnow(),
+        last_used_at=_dt(raw.get("last_used_at")) or datetime.now(timezone.utc),
         expires_at=_dt(raw.get("expires_at")),
-        created_at=_dt(raw.get("created_at")) or datetime.utcnow(),
-        updated_at=_dt(raw.get("updated_at")) or datetime.utcnow(),
+        created_at=_dt(raw.get("created_at")) or datetime.now(timezone.utc),
+        updated_at=_dt(raw.get("updated_at")) or datetime.now(timezone.utc),
     )
 

@@ -9,7 +9,6 @@ Like :mod:`subscription_service`, this is **opt-in** — disabled when
 
 import os
 import logging
-from typing import Optional
 
 import httpx
 
@@ -64,7 +63,9 @@ class UsageReportingService:
                     logger.info(f"Usage reported successfully: {result}")
                     return result
                 else:
-                    logger.error(f"Failed to report usage: {response.status_code} - {response.text}")
+                    logger.error(
+                        f"Failed to report usage: {response.status_code} - {response.text}"
+                    )
                     return {
                         "status": "error",
                         "error": f"HTTP {response.status_code}",

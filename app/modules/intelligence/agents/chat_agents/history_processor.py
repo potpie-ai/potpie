@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     )
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.messages import ModelMessage
 
 from app.modules.intelligence.agents.chat_agents.token_utils import (
     count_tokens as shared_count_tokens,
@@ -39,7 +39,6 @@ from app.modules.intelligence.agents.chat_agents.message_compressor import (
     truncate_tool_result_message,
     validate_and_fix_tool_pairing,
 )
-from pydantic_ai.messages import ModelMessage, ModelResponse
 
 logger = logging.getLogger(__name__)
 
@@ -231,7 +230,9 @@ def create_history_processor(
     )
     summarization_head_messages = max(0, SUMMARIZATION_HEAD_MESSAGES)
     summarization_tail_messages = max(0, SUMMARIZATION_TAIL_MESSAGES)
-    target_summary_tokens_resolved = target_summary_tokens or SUMMARIZATION_TARGET_TOKENS
+    target_summary_tokens_resolved = (
+        target_summary_tokens or SUMMARIZATION_TARGET_TOKENS
+    )
 
     async def history_processor(
         ctx: RunContext, messages: List[ModelMessage]
@@ -289,9 +290,7 @@ def create_history_processor(
                 target_tokens=target_summary_tokens_resolved,
             )
             final_messages = head + summarized_middle + tail
-            final_tokens = _count_total_context_tokens(
-                ctx, final_messages, model_name
-            )
+            final_tokens = _count_total_context_tokens(ctx, final_messages, model_name)
             logger.info(
                 "Summarization complete: head=%s, middle=%s, tail=%s, summary_messages=%s, tokens_after=%s",
                 len(head),
@@ -301,9 +300,7 @@ def create_history_processor(
                 final_tokens,
             )
         except Exception as e:
-            logger.warning(
-                "Summarization failed, using truncated history: %s", e
-            )
+            logger.warning("Summarization failed, using truncated history: %s", e)
             final_messages = rebuilt
 
         return sanitize_message_history_for_pydantic_ai(final_messages)

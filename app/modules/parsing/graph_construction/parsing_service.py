@@ -4,7 +4,7 @@ import time
 import traceback
 from asyncio import create_task
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -15,13 +15,16 @@ from app.modules.code_provider.github.github_service import GithubService
 
 # Lazy import for GitPython - import at module level causes SIGSEGV in forked workers
 if TYPE_CHECKING:
-    from git import Repo as RepoType
+    pass
 
 
 def _get_repo_class():
     """Lazy import git.Repo to avoid fork-safety issues."""
     from git import Repo
+
     return Repo
+
+
 from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.parsing.graph_construction.parsing_helper import (
     ParseHelper,
@@ -168,9 +171,11 @@ class ParsingService:
                             project_id, ProjectStatusEnum.READY
                         )
                         # Ensure worktree exists in repo manager when enabled
-                        if self.repo_manager and os.getenv(
-                            "REPO_MANAGER_ENABLED", "false"
-                        ).lower() == "true":
+                        if (
+                            self.repo_manager
+                            and os.getenv("REPO_MANAGER_ENABLED", "false").lower()
+                            == "true"
+                        ):
                             repo_name = existing_project.get("project_name")
                             branch = existing_project.get("branch_name")
                             commit_id_val = existing_project.get("commit_id")
@@ -180,16 +185,22 @@ class ParsingService:
                                 if ref:
                                     try:
                                         github_service = GithubService(self.db)
-                                        user_token = github_service.get_github_oauth_token(user_id)
+                                        user_token = (
+                                            github_service.get_github_oauth_token(
+                                                user_id
+                                            )
+                                        )
                                         loop = asyncio.get_running_loop()
                                         await loop.run_in_executor(
                                             None,
-                                            lambda: self.repo_manager.prepare_for_parsing(
-                                                repo_name,
-                                                ref,
-                                                auth_token=user_token,
-                                                is_commit=bool(commit_id_val),
-                                                user_id=user_id,
+                                            lambda: (
+                                                self.repo_manager.prepare_for_parsing(
+                                                    repo_name,
+                                                    ref,
+                                                    auth_token=user_token,
+                                                    is_commit=bool(commit_id_val),
+                                                    user_id=user_id,
+                                                )
                                             ),
                                         )
                                         logger.info(
@@ -261,7 +272,9 @@ class ParsingService:
                             "Using user's GitHub OAuth token for cloning",
                             user_id=user_id,
                             repo_name=repo_details.repo_name,
-                            token_prefix=user_token[:8] if len(user_token) > 8 else "short",
+                            token_prefix=user_token[:8]
+                            if len(user_token) > 8
+                            else "short",
                         )
                     else:
                         logger.warning(
@@ -283,7 +296,10 @@ class ParsingService:
                     auth,
                     repo_manager_path,
                 ) = await self.parse_helper.clone_or_copy_repository(
-                    repo_details_converted, user_id, auth_token=user_token, project_id=str(project_id)
+                    repo_details_converted,
+                    user_id,
+                    auth_token=user_token,
+                    project_id=str(project_id),
                 )
                 logger.info(
                     "ParsingService: clone_or_copy_repository completed",
@@ -329,9 +345,7 @@ class ParsingService:
                 # Ensure extracted_dir is a string
                 if extracted_dir is None:
                     if self._raise_library_exceptions:
-                        raise ParsingServiceError(
-                            "Failed to set up project directory"
-                        )
+                        raise ParsingServiceError("Failed to set up project directory")
                     raise HTTPException(
                         status_code=500, detail="Failed to set up project directory"
                     )

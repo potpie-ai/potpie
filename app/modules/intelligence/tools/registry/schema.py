@@ -1,6 +1,6 @@
 """Tool registry schema: metadata, enums, and allow-list definitions."""
 
-from typing import List, Literal, Optional, Union
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 

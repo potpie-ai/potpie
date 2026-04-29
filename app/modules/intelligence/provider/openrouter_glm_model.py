@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIStreamedResponse
@@ -48,9 +47,7 @@ class OpenRouterGlmStreamedResponse(OpenAIStreamedResponse):
                 cost = extra.get("total_cost") or extra.get("cost")
 
             prompt_tokens = (
-                getattr(u, "prompt_tokens", 0)
-                or getattr(u, "input_tokens", 0)
-                or 0
+                getattr(u, "prompt_tokens", 0) or getattr(u, "input_tokens", 0) or 0
             )
             completion_tokens = (
                 getattr(u, "completion_tokens", 0)
@@ -100,4 +97,3 @@ class OpenRouterGlmModel(OpenAIChatModel):
     def _streamed_response_cls(self) -> type[OpenAIStreamedResponse]:
         """Use OpenRouterGlmStreamedResponse so we capture cost from stream chunks."""
         return OpenRouterGlmStreamedResponse
-

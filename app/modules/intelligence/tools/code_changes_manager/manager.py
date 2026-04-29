@@ -5,7 +5,6 @@ Delegates to: storage, content_resolver, diff, git_ops, context.
 """
 
 import json
-import os
 import re
 import uuid
 from dataclasses import asdict
@@ -21,7 +20,6 @@ from app.core.config_provider import ConfigProvider
 from .constants import (
     CODE_CHANGES_KEY_PREFIX,
     CODE_CHANGES_TTL_SECONDS,
-    MAX_FILE_SIZE_BYTES,
 )
 from .models import ChangeType, FileChange
 from .storage import load_changes_from_redis, save_changes_to_redis
@@ -234,7 +232,9 @@ class CodeChangesManager:
                 f"CodeChangesManager.update_file: Failed to update file '{file_path}' - file may be marked for deletion"
             )
             return False
-        logger.info(f"CodeChangesManager.update_file: Successfully updated file '{file_path}'")
+        logger.info(
+            f"CodeChangesManager.update_file: Successfully updated file '{file_path}'"
+        )
         return result
 
     def update_file_lines(
@@ -274,7 +274,10 @@ class CodeChangesManager:
                 end_line = start_line
 
             if end_line < start_line:
-                return {"success": False, "error": f"end_line ({end_line}) must be >= start_line ({start_line})"}
+                return {
+                    "success": False,
+                    "error": f"end_line ({end_line}) must be >= start_line ({start_line})",
+                }
 
             if end_line > len(lines):
                 return {
@@ -343,7 +346,9 @@ class CodeChangesManager:
                 "context_end_line": context_end_line,
             }
             if project_id and not _get_local_mode():
-                out["worktree_write"] = "ok" if worktree_ok else f"failed: {worktree_err or 'unknown'}"
+                out["worktree_write"] = (
+                    "ok" if worktree_ok else f"failed: {worktree_err or 'unknown'}"
+                )
             return out
         except Exception as e:
             logger.exception("CodeChangesManager.update_file_lines: Error")
@@ -393,8 +398,12 @@ class CodeChangesManager:
             match_pos = current_content.index(old_str)
             match_line = current_content[:match_pos].count("\n") + 1
 
-            change_desc = description or f"str_replace in '{file_path}' at line ~{match_line}"
-            original_content = current_content if file_path not in self.changes else None
+            change_desc = (
+                description or f"str_replace in '{file_path}' at line ~{match_line}"
+            )
+            original_content = (
+                current_content if file_path not in self.changes else None
+            )
             worktree_ok, worktree_err = False, None
             if project_id and not _get_local_mode():
                 worktree_ok, worktree_err = write_change_to_worktree(
@@ -416,7 +425,9 @@ class CodeChangesManager:
                 "replacements_made": 1,
             }
             if project_id and not _get_local_mode():
-                out["worktree_write"] = "ok" if worktree_ok else f"failed: {worktree_err or 'unknown'}"
+                out["worktree_write"] = (
+                    "ok" if worktree_ok else f"failed: {worktree_err or 'unknown'}"
+                )
             return out
         except Exception as e:
             logger.exception("CodeChangesManager.replace_in_file: Error")
@@ -523,7 +534,9 @@ class CodeChangesManager:
                 "context_end_line": context_end_line,
             }
             if project_id and not _get_local_mode():
-                out["worktree_write"] = "ok" if worktree_ok else f"failed: {worktree_err or 'unknown'}"
+                out["worktree_write"] = (
+                    "ok" if worktree_ok else f"failed: {worktree_err or 'unknown'}"
+                )
             return out
         except Exception as e:
             logger.exception("CodeChangesManager.insert_lines: Error")
@@ -553,16 +566,25 @@ class CodeChangesManager:
                 )
 
             if start_line < 1 or start_line > len(lines):
-                return {"success": False, "error": f"Invalid start_line {start_line}. File has {len(lines)} lines."}
+                return {
+                    "success": False,
+                    "error": f"Invalid start_line {start_line}. File has {len(lines)} lines.",
+                }
 
             if end_line is None:
                 end_line = start_line
 
             if end_line < start_line:
-                return {"success": False, "error": f"end_line ({end_line}) must be >= start_line ({start_line})"}
+                return {
+                    "success": False,
+                    "error": f"end_line ({end_line}) must be >= start_line ({start_line})",
+                }
 
             if end_line > len(lines):
-                return {"success": False, "error": f"Invalid end_line {end_line}. File has {len(lines)} lines."}
+                return {
+                    "success": False,
+                    "error": f"Invalid end_line {end_line}. File has {len(lines)} lines.",
+                }
 
             start_idx = start_line - 1
             end_idx = end_line
@@ -603,7 +625,9 @@ class CodeChangesManager:
                 "deleted_content": deleted_content,
             }
             if project_id and not _get_local_mode():
-                out["worktree_write"] = "ok" if worktree_ok else f"failed: {worktree_err or 'unknown'}"
+                out["worktree_write"] = (
+                    "ok" if worktree_ok else f"failed: {worktree_err or 'unknown'}"
+                )
             return out
         except Exception as e:
             logger.exception("CodeChangesManager.delete_lines: Error")
@@ -648,7 +672,9 @@ class CodeChangesManager:
             if project_id and not _get_local_mode():
                 write_change_to_worktree(project_id, file_path, "delete", None, db)
             self._persist_change()
-        logger.info(f"CodeChangesManager.delete_file: Successfully marked file '{file_path}' for deletion")
+        logger.info(
+            f"CodeChangesManager.delete_file: Successfully marked file '{file_path}' for deletion"
+        )
         return True
 
     def get_file(self, file_path: str) -> Optional[Dict[str, Any]]:
@@ -675,7 +701,9 @@ class CodeChangesManager:
                 pattern = re.compile(path_pattern, re.IGNORECASE)
                 files = [f for f in files if pattern.search(f.file_path)]
             except re.error:
-                files = [f for f in files if path_pattern.lower() in f.file_path.lower()]
+                files = [
+                    f for f in files if path_pattern.lower() in f.file_path.lower()
+                ]
 
         files.sort(key=lambda x: x.file_path)
 
@@ -697,7 +725,9 @@ class CodeChangesManager:
 
         try:
             content_regex = re.compile(pattern, flags)
-            file_regex = re.compile(file_pattern, re.IGNORECASE) if file_pattern else None
+            file_regex = (
+                re.compile(file_pattern, re.IGNORECASE) if file_pattern else None
+            )
         except re.error as e:
             return [{"error": f"Invalid regex pattern: {str(e)}"}]
 
@@ -792,8 +822,12 @@ class CodeChangesManager:
                     change_type=ChangeType(change_data["change_type"]),
                     content=change_data.get("content"),
                     previous_content=change_data.get("previous_content"),
-                    created_at=change_data.get("created_at", datetime.now().isoformat()),
-                    updated_at=change_data.get("updated_at", datetime.now().isoformat()),
+                    created_at=change_data.get(
+                        "created_at", datetime.now().isoformat()
+                    ),
+                    updated_at=change_data.get(
+                        "updated_at", datetime.now().isoformat()
+                    ),
                     description=change_data.get("description"),
                 )
                 self._changes_cache[change.file_path] = change
@@ -841,16 +875,25 @@ class CodeChangesManager:
 
             if change.previous_content is not None:
                 old_content = change.previous_content
-                diff = create_unified_diff(old_content, new_content, fp, fp, context_lines)
+                diff = create_unified_diff(
+                    old_content, new_content, fp, fp, context_lines
+                )
             else:
                 old_content = None
                 if project_id and db:
                     try:
-                        from app.modules.code_provider.code_provider_service import CodeProviderService
-                        from app.modules.code_provider.git_safe import safe_git_operation, GitOperationError
+                        from app.modules.code_provider.code_provider_service import (
+                            CodeProviderService,
+                        )
+                        from app.modules.code_provider.git_safe import (
+                            safe_git_operation,
+                            GitOperationError,
+                        )
                         from app.modules.projects.projects_model import Project
 
-                        project = db.query(Project).filter(Project.id == project_id).first()
+                        project = (
+                            db.query(Project).filter(Project.id == project_id).first()
+                        )
                         if project:
                             cp_service = CodeProviderService(db)
 
@@ -886,9 +929,13 @@ class CodeChangesManager:
 
                 if old_content is None or old_content == "":
                     old_content = ""
-                    diff = create_unified_diff(old_content, new_content, "/dev/null", fp, context_lines)
+                    diff = create_unified_diff(
+                        old_content, new_content, "/dev/null", fp, context_lines
+                    )
                 else:
-                    diff = create_unified_diff(old_content, new_content, fp, fp, context_lines)
+                    diff = create_unified_diff(
+                        old_content, new_content, fp, fp, context_lines
+                    )
 
             diffs[fp] = diff
 
@@ -945,7 +992,9 @@ class CodeChangesManager:
 
             return "\n".join(patches)
         else:
-            raise ValueError(f"Unknown format: {format}. Supported: 'dict', 'list', 'json', 'diff'")
+            raise ValueError(
+                f"Unknown format: {format}. Supported: 'dict', 'list', 'json', 'diff'"
+            )
 
     def commit_file_and_extract_patch(
         self,
