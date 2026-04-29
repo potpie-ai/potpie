@@ -102,6 +102,17 @@ def filter_sensitive_data(text: str) -> str:
     return filtered
 
 
+def truncate_traceback(text: str, max_lines: int = 10) -> str:
+    """Keep only the most relevant tail of a traceback for production logs."""
+    if not isinstance(text, str):
+        return text
+
+    lines = text.splitlines()
+    if len(lines) <= max_lines:
+        return text
+    return "\n".join(lines[-max_lines:])
+
+
 def production_log_sink(message):
     """Custom sink for production that outputs flat JSON format for better machine readability.
 
@@ -131,7 +142,9 @@ def production_log_sink(message):
                 else str(exc.get("type", "Exception"))
             ),
             "value": filter_sensitive_data(str(exc.get("value", ""))),
-            "traceback": filter_sensitive_data(str(exc.get("traceback", ""))),
+            "traceback": filter_sensitive_data(
+                truncate_traceback(str(exc.get("traceback", "")))
+            ),
         }
 
     # Build flat JSON structure - easier for log parsers
