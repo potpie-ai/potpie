@@ -185,7 +185,7 @@ class SandboxClient:
         """
         rel = _validate_relpath(path)
         if handle.local_path is not None:
-            full = Path(handle.local_path) / rel
+            full = _safe_local_path(handle.local_path, rel)
             return await asyncio.to_thread(_read_bytes, full, max_bytes)
         result = await self.exec(
             handle,
@@ -214,7 +214,7 @@ class SandboxClient:
             content = content.encode("utf-8")
         rel = _validate_relpath(path)
         if handle.local_path is not None:
-            full = Path(handle.local_path) / rel
+            full = _safe_local_path(handle.local_path, rel)
             await asyncio.to_thread(_write_bytes, full, content)
             return
         target = _posix_join(handle.remote_path, rel)
@@ -248,7 +248,7 @@ class SandboxClient:
         """
         rel = _validate_relpath(path, allow_dot=True)
         if handle.local_path is not None:
-            full = Path(handle.local_path) / rel
+            full = _safe_local_path(handle.local_path, rel)
             return await asyncio.to_thread(_scandir, full)
         target = _posix_join(handle.remote_path, rel)
         result = await self.exec(
@@ -510,6 +510,32 @@ def _posix_join(base: str | None, rel: str) -> str:
     if rel == ".":
         return base
     return f"{base.rstrip('/')}/{rel}"
+
+
+def _safe_local_path(root: str, rel: str) -> Path:
+    """Resolve `rel` under `root`, rejecting symlink escapes.
+
+    `_validate_relpath` already rejects `..` and absolute paths at the
+    string level. This is the second line of defence for local-fs
+    backends: a symlink inside the worktree could still resolve outside it
+    (e.g. `link -> /etc`), and a direct `Path(root) / rel` read would
+    happily follow it. Resolving both root and target and checking that
+    the target stays underneath blocks that escape vector.
+
+    `Path.resolve()` tolerates non-existent leaf components, so this works
+    for writes that create new files — only the existing portion of the
+    path is followed for symlinks.
+    """
+    root_path = Path(root).resolve()
+    target = (root_path / rel).resolve()
+    if target != root_path:
+        try:
+            target.relative_to(root_path)
+        except ValueError:
+            raise InvalidWorkspacePath(
+                f"path {rel!r} resolves outside workspace root"
+            )
+    return target
 
 
 def _read_bytes(path: Path, max_bytes: int | None) -> bytes:

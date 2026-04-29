@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -244,9 +245,17 @@ class LocalGitWorkspaceProvider:
         netloc = f"x-access-token:{quote(auth_token, safe='')}@{host}"
         return parsed._replace(netloc=netloc).geturl()
 
+    _TOKEN_URL_PATTERN = re.compile(r"x-access-token:[^@\s]+@")
+
     @staticmethod
     def _sanitize_git_error(message: str) -> str:
-        return message.replace("x-access-token:", "x-access-token:***")
+        # Plain `replace("x-access-token:", "x-access-token:***")` only inserts
+        # `***` next to the token; the secret itself remains in the message.
+        # Match the full credential segment (everything up to `@`) and replace
+        # it wholesale.
+        return LocalGitWorkspaceProvider._TOKEN_URL_PATTERN.sub(
+            "x-access-token:***@", message
+        )
 
     @staticmethod
     def _validate_repo_name(repo_name: str) -> None:
