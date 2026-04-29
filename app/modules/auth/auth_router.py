@@ -6,13 +6,11 @@ from typing import Any
 import httpx
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, Request
-from fastapi.responses import JSONResponse
 from fastapi.exceptions import HTTPException
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-
-logger = logging.getLogger(__name__)
 
 from app.core.database import get_async_db, get_db
 from app.modules.auth.auth_schema import (
@@ -55,6 +53,8 @@ GITHUB_SIGNUP_DISABLED_DETAILS = (
     "New GitHub signups are disabled. Existing GitHub users can still sign in."
 )
 GENERIC_SIGNUP_FAILURE_ERROR = "Signup failed"
+GENERIC_REQUEST_FAILURE_ERROR = "Unable to process request"
+INVALID_REQUEST_ERROR = "Invalid request"
 
 
 @dataclass(frozen=True)
@@ -119,6 +119,15 @@ async def send_slack_message(message: str):
             logger.warning("Failed to send Slack signup notification: %s", e)
 
 
+def _mask_email(email: str | None) -> str | None:
+    if not email or "@" not in email:
+        return email
+    local_part, domain = email.split("@", 1)
+    if not local_part:
+        return f"***@{domain}"
+    return f"{local_part[0]}***@{domain}"
+
+
 def _json_error_response(
     error: str, status_code: int, details: str | None = None
 ) -> JSONResponse:
@@ -181,7 +190,7 @@ def _log_signup_request(signup_data: SignupRequestData) -> None:
     logger.info(
         "Signup: uid=%s, email=%s, linkToUserId=%s, githubFirebaseUid=%s, hasToken=%s",
         signup_data.uid,
-        signup_data.email,
+        _mask_email(signup_data.email),
         signup_data.link_to_user_id,
         signup_data.github_firebase_uid,
         bool(signup_data.oauth_token),
@@ -478,11 +487,10 @@ class AuthAPI:
                 content={"error": "Invalid email or password"}, status_code=401
             )
         except HTTPException as he:
-            return JSONResponse(
-                content={"error": f"HTTP Error: {str(he)}"}, status_code=he.status_code
-            )
+            return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, he.status_code)
         except Exception as e:
-            return JSONResponse(content={"error": f"ERROR: {str(e)}"}, status_code=400)
+            logger.error("Login error: %s", e, exc_info=True)
+            return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 400)
 
     @staticmethod
     @auth_router.post("/signup")
@@ -681,16 +689,10 @@ class AuthAPI:
 
         except ValueError as ve:
             logger.error(f"SSO login validation error: {str(ve)}", exc_info=True)
-            return JSONResponse(
-                content={"error": f"Invalid request: {str(ve)}"},
-                status_code=400,
-            )
+            return _json_error_response(INVALID_REQUEST_ERROR, 400)
         except Exception as e:
             logger.error(f"SSO login error: {str(e)}", exc_info=True)
-            return JSONResponse(
-                content={"error": f"SSO login failed: {str(e)}"},
-                status_code=500,
-            )
+            return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 500)
 
     @auth_router.post("/providers/confirm-linking")
     async def confirm_provider_linking(
@@ -728,16 +730,10 @@ class AuthAPI:
 
         except ValueError as ve:
             logger.error(f"Provider linking validation error: {str(ve)}", exc_info=True)
-            return JSONResponse(
-                content={"error": f"Invalid request: {str(ve)}"},
-                status_code=400,
-            )
+            return _json_error_response(INVALID_REQUEST_ERROR, 400)
         except Exception as e:
             logger.error(f"Provider linking error: {str(e)}", exc_info=True)
-            return JSONResponse(
-                content={"error": f"Failed to link provider: {str(e)}"},
-                status_code=500,
-            )
+            return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 500)
 
     @auth_router.delete("/providers/cancel-linking/{linking_token}")
     async def cancel_provider_linking(
@@ -761,10 +757,8 @@ class AuthAPI:
                 )
 
         except Exception as e:
-            return JSONResponse(
-                content={"error": f"Failed to cancel linking: {str(e)}"},
-                status_code=400,
-            )
+            logger.error("Cancel provider linking error: %s", e, exc_info=True)
+            return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 400)
 
     @auth_router.get("/providers/me")
     async def get_my_providers(
@@ -807,10 +801,8 @@ class AuthAPI:
             )
 
         except Exception as e:
-            return JSONResponse(
-                content={"error": f"Failed to get providers: {str(e)}"},
-                status_code=400,
-            )
+            logger.error("Get providers error: %s", e, exc_info=True)
+            return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 400)
 
     @auth_router.post("/providers/set-primary")
     async def set_primary_provider(
@@ -846,10 +838,8 @@ class AuthAPI:
                 )
 
         except Exception as e:
-            return JSONResponse(
-                content={"error": f"Failed to set primary provider: {str(e)}"},
-                status_code=400,
-            )
+            logger.error("Set primary provider error: %s", e, exc_info=True)
+            return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 400)
 
     @auth_router.delete("/providers/unlink")
     async def unlink_provider(
@@ -886,18 +876,13 @@ class AuthAPI:
                         status_code=404,
                     )
 
-            except ValueError as ve:
+            except ValueError:
                 # Cannot unlink last provider
-                return JSONResponse(
-                    content={"error": str(ve)},
-                    status_code=400,
-                )
+                return _json_error_response(INVALID_REQUEST_ERROR, 400)
 
         except Exception as e:
-            return JSONResponse(
-                content={"error": f"Failed to unlink provider: {str(e)}"},
-                status_code=400,
-            )
+            logger.error("Unlink provider error: %s", e, exc_info=True)
+            return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 400)
 
     @auth_router.get("/account/me")
     async def get_my_account(
@@ -949,7 +934,5 @@ class AuthAPI:
             )
 
         except Exception as e:
-            return JSONResponse(
-                content={"error": f"Failed to get account: {str(e)}"},
-                status_code=400,
-            )
+            logger.error("Get account error: %s", e, exc_info=True)
+            return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 400)

@@ -12,6 +12,7 @@ load_dotenv(override=True)
 
 # Timeout for Firebase Identity Toolkit (default 30s read, 10s connect)
 LOGIN_TIMEOUT = httpx.Timeout(30.0, connect=10.0, read=30.0)
+INVALID_FIREBASE_AUTH_ERROR = "Invalid authentication from Firebase."
 
 
 class AuthService:
@@ -35,7 +36,9 @@ class AuthService:
                 return user_auth_response.json()
             except httpx.HTTPStatusError as e:
                 logging.warning(
-                    "%s upstream auth failed: status=%s", log_prefix, e.response.status_code
+                    "%s upstream auth failed: status=%s",
+                    log_prefix,
+                    e.response.status_code,
                 )
                 try:
                     detail = e.response.json()
@@ -158,7 +161,7 @@ class AuthService:
                 logging.warning("Firebase token verification failed: %s", str(err))
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail=f"Invalid authentication from Firebase. {err}",
+                    detail=INVALID_FIREBASE_AUTH_ERROR,
                     headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
                 )
             if res is not None:

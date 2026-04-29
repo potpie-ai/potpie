@@ -104,13 +104,14 @@ class UserService:
             print("Dummy user already exists")
             return
         else:
+            now = utc_now()
             user = CreateUser(
                 uid=defaultUserId,
                 email="defaultuser@potpie.ai",
                 display_name="Dummy User",
                 email_verified=True,
-                created_at=utc_now(),
-                last_login_at=utc_now(),
+                created_at=now,
+                last_login_at=now,
                 provider_info={"access_token": "dummy_token"},
                 provider_username="self",
             )
@@ -158,11 +159,7 @@ class UserService:
     def get_user_ids_by_emails(self, emails: List[str]) -> Optional[List[str]]:
         try:
             users = self.db.query(User).filter(User.email.in_(emails)).all()
-            if users:
-                user_ids = [user.uid for user in users]
-                return user_ids
-            else:
-                return None
+            return [user.uid for user in users]
         except Exception as e:
             logger.error(f"Error fetching user IDs by emails: {e}")
             return None
@@ -221,9 +218,7 @@ class AsyncUserService:
             stmt = select(User).where(User.email.in_(emails))
             result = await self.session.execute(stmt)
             users = result.scalars().all()
-            if users:
-                return [u.uid for u in users]
-            return None
+            return [u.uid for u in users]
         except Exception as e:
             logger.error("Error fetching user IDs by emails %s: %s", emails, e)
             return None
