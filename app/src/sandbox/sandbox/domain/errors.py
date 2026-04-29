@@ -64,3 +64,15 @@ class RuntimeResourceLimit(RuntimeErrorBase):
 class RuntimeCommandRejected(RuntimeErrorBase):
     """Command was rejected before execution by policy or adapter limitations."""
 
+
+class GitPlatformError(SandboxCoreError):
+    """Base for git-platform (PR/review/comment) failures."""
+
+
+class PullRequestFailed(GitPlatformError):
+    """The git platform refused or could not create the requested PR."""
+
+
+class GitPlatformNotConfigured(GitPlatformError):
+    """No `GitPlatformProvider` is wired into the service."""
+

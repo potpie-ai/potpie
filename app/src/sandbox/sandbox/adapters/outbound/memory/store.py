@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from sandbox.domain.models import Runtime, Workspace
+from sandbox.domain.models import RepoCache, Runtime, Workspace
 
 
 class InMemorySandboxStore:
@@ -12,6 +12,8 @@ class InMemorySandboxStore:
         self._workspaces: dict[str, Workspace] = {}
         self._workspace_keys: dict[str, str] = {}
         self._runtimes: dict[str, Runtime] = {}
+        self._repo_caches: dict[str, RepoCache] = {}
+        self._repo_cache_keys: dict[str, str] = {}
         self._lock = asyncio.Lock()
 
     async def get_workspace(self, workspace_id: str) -> Workspace | None:
@@ -67,4 +69,33 @@ class InMemorySandboxStore:
     async def list_runtimes(self) -> list[Runtime]:
         async with self._lock:
             return list(self._runtimes.values())
+
+    # ------------------------------------------------------------------
+    # RepoCacheStore
+    # ------------------------------------------------------------------
+    async def get_repo_cache(self, cache_id: str) -> RepoCache | None:
+        async with self._lock:
+            return self._repo_caches.get(cache_id)
+
+    async def find_repo_cache_by_key(self, key: str) -> RepoCache | None:
+        async with self._lock:
+            cache_id = self._repo_cache_keys.get(key)
+            if cache_id is None:
+                return None
+            return self._repo_caches.get(cache_id)
+
+    async def save_repo_cache(self, cache: RepoCache) -> None:
+        async with self._lock:
+            self._repo_caches[cache.id] = cache
+            self._repo_cache_keys[cache.key] = cache.id
+
+    async def delete_repo_cache(self, cache_id: str) -> None:
+        async with self._lock:
+            cache = self._repo_caches.pop(cache_id, None)
+            if cache is not None:
+                self._repo_cache_keys.pop(cache.key, None)
+
+    async def list_repo_caches(self) -> list[RepoCache]:
+        async with self._lock:
+            return list(self._repo_caches.values())
 

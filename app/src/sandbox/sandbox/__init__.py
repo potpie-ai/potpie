@@ -14,6 +14,7 @@ exported for advanced cases (custom adapters, tests) but the client surface
 should suffice for product code.
 """
 
+from sandbox.adapters.outbound.memory.eviction import NoOpEvictionPolicy
 from sandbox.api import (
     FileEntry,
     GitStatus,
@@ -26,24 +27,42 @@ from sandbox.application.services.sandbox_service import SandboxService
 from sandbox.bootstrap.container import SandboxContainer, build_sandbox_container
 from sandbox.bootstrap.settings import SandboxSettings, settings_from_env
 from sandbox.domain.models import (
+    Capabilities,
     CommandKind,
     ExecRequest,
     ExecResult,
     NetworkMode,
+    PullRequest,
+    PullRequestRequest,
+    RepoCache,
+    RepoCacheRequest,
     RepoIdentity,
     RuntimeRequest,
     WorkspaceMode,
     WorkspaceRequest,
 )
+from sandbox.domain.ports.eviction import EvictionPolicy, EvictionResult
+from sandbox.domain.ports.git_platform import GitPlatformProvider
+from sandbox.domain.ports.repos import RepoCacheProvider
 
 __all__ = [
+    "Capabilities",
     "CommandKind",
+    "EvictionPolicy",
+    "EvictionResult",
     "ExecRequest",
     "ExecResult",
     "FileEntry",
+    "GitPlatformProvider",
     "GitStatus",
     "Hit",
     "NetworkMode",
+    "NoOpEvictionPolicy",
+    "PullRequest",
+    "PullRequestRequest",
+    "RepoCache",
+    "RepoCacheProvider",
+    "RepoCacheRequest",
     "RepoIdentity",
     "RuntimeRequest",
     "SandboxClient",

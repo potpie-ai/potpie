@@ -30,6 +30,10 @@ from sandbox.domain.models import (
     CommandKind,
     ExecRequest,
     ExecResult,
+    PullRequest,
+    PullRequestRequest,
+    RepoCache,
+    RepoCacheRequest,
     RepoIdentity,
     RuntimeState,
     Workspace,
@@ -75,6 +79,35 @@ class SandboxClient:
     # ------------------------------------------------------------------
     # Repo / workspace lifecycle
     # ------------------------------------------------------------------
+    async def ensure_repo_cache(
+        self,
+        *,
+        user_id: str | None = None,
+        repo: str,
+        base_ref: str,
+        repo_url: str | None = None,
+        auth_token: str | None = None,
+    ) -> RepoCache:
+        """Materialize the bare repo for ``repo`` and persist a `RepoCache`.
+
+        Idempotent on `(provider_host, repo)` — repeat calls fetch the
+        requested ref into the existing bare. Use this from parsing's
+        READY hook (Phase 5 in the roadmap) so the cache row is in the
+        store before the first agent call; subsequent
+        :meth:`get_workspace` calls reuse the same on-disk bare without
+        re-cloning.
+
+        Raises ``RuntimeError`` if the underlying service was built
+        without a `RepoCacheProvider` (e.g. Daytona-only mode today).
+        """
+        request = RepoCacheRequest(
+            repo=RepoIdentity(repo_name=repo, repo_url=repo_url),
+            base_ref=base_ref,
+            user_id=user_id,
+            auth_token=auth_token,
+        )
+        return await self._service.ensure_repo_cache(request)
+
     async def get_workspace(
         self,
         *,
@@ -112,6 +145,57 @@ class SandboxClient:
         )
         workspace = await self._service.get_or_create_workspace(request)
         return _handle_from_workspace(workspace)
+
+    async def acquire_session(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        repo: str,
+        branch: str,
+        base_ref: str | None = None,
+        create_branch: bool = False,
+        auth_token: str | None = None,
+        mode: WorkspaceMode = WorkspaceMode.EDIT,
+        conversation_id: str | None = None,
+        task_id: str | None = None,
+        repo_url: str | None = None,
+    ) -> WorkspaceHandle:
+        """High-level session entry point: cache + workspace in one call.
+
+        Wraps :meth:`SandboxService.acquire_session` — ensures the
+        parent `RepoCache` exists, then forks the workspace. Idempotent
+        on the same `(user, project, repo, branch, mode, scope)` tuple,
+        same as :meth:`get_workspace`.
+        """
+        request = WorkspaceRequest(
+            user_id=user_id,
+            project_id=project_id,
+            repo=RepoIdentity(repo_name=repo, repo_url=repo_url),
+            base_ref=base_ref or branch,
+            mode=mode,
+            conversation_id=conversation_id,
+            task_id=task_id,
+            branch_name=branch,
+            create_branch=create_branch,
+            auth_token=auth_token,
+        )
+        workspace = await self._service.acquire_session(request)
+        return _handle_from_workspace(workspace)
+
+    async def release_session(
+        self, handle: WorkspaceHandle, *, destroy_runtime: bool = False
+    ) -> None:
+        """Hibernate the runtime; keep the worktree.
+
+        Same semantics as :meth:`release_workspace` but symmetric with
+        :meth:`acquire_session`. Pass ``destroy_runtime=True`` to free
+        the runtime fully — the workspace still survives until
+        :meth:`destroy_workspace`.
+        """
+        await self._service.release_session(
+            handle.workspace_id, destroy_runtime=destroy_runtime
+        )
 
     async def release_workspace(self, handle: WorkspaceHandle) -> None:
         """Hibernate the runtime; keep the worktree.
@@ -209,14 +293,24 @@ class SandboxClient:
         """Write a file relative to the workspace root.
 
         Creates parent directories. Uses direct fs access on local-fs backends.
+
+        Mutations re-resolve the workspace through the service so a stale
+        handle whose workspace was destroyed raises ``WorkspaceNotFound``
+        instead of silently recreating the directory. Reads keep the
+        zero-roundtrip fast path because a stale read just fails on the
+        underlying ``_read_bytes`` (file gone) — only writes can do
+        damage by recreating a destroyed worktree on disk.
         """
         if isinstance(content, str):
             content = content.encode("utf-8")
         rel = _validate_relpath(path)
         if handle.local_path is not None:
-            full = _safe_local_path(handle.local_path, rel)
-            await asyncio.to_thread(_write_bytes, full, content)
-            return
+            workspace = await self._service.get_workspace(handle.workspace_id)
+            local_root = workspace.location.local_path
+            if local_root is not None:
+                full = _safe_local_path(local_root, rel)
+                await asyncio.to_thread(_write_bytes, full, content)
+                return
         target = _posix_join(handle.remote_path, rel)
         # Ensure parent dir then stream content via stdin to `tee`.
         parent = str(PurePosixPath(target).parent)
@@ -302,7 +396,8 @@ class SandboxClient:
         cmd.append("--")
         cmd.append(pattern)
         if path:
-            cmd.append(_validate_relpath(path, allow_dot=True))
+            rel = _validate_relpath(path, allow_dot=True)
+            cmd.append(_posix_join(handle.remote_path, rel))
         result = await self.exec(handle, cmd, command_kind=CommandKind.READ)
         # rg exit codes: 0 = matches, 1 = no matches, 2 = error.
         if result.exit_code not in (0, 1):
@@ -460,6 +555,48 @@ class SandboxClient:
                 f"git push failed: {_decode(result.stderr)}", result=result
             )
 
+    # ------------------------------------------------------------------
+    # Git platform (PRs / reviews / comments)
+    # ------------------------------------------------------------------
+    async def create_pull_request(
+        self,
+        handle: WorkspaceHandle,
+        *,
+        repo: str,
+        title: str,
+        body: str,
+        base_branch: str,
+        head_branch: str | None = None,
+        repo_url: str | None = None,
+        reviewers: list[str] | None = None,
+        labels: list[str] | None = None,
+        auth_token: str | None = None,
+    ) -> PullRequest:
+        """Open a PR from ``head_branch`` (defaults to ``handle.branch``)
+        into ``base_branch`` via the configured `GitPlatformProvider`.
+
+        Refuses to run if the workspace is not writable — opening a PR
+        on an analysis workspace makes no sense and would surface a
+        confusing platform error. Push the branch (`SandboxClient.push`)
+        before calling this.
+        """
+        if not handle.capabilities.writable:
+            raise SandboxOpError(
+                "create_pull_request requires a writable workspace; "
+                "this handle was acquired with read-only capabilities."
+            )
+        request = PullRequestRequest(
+            repo=RepoIdentity(repo_name=repo, repo_url=repo_url),
+            title=title,
+            body=body,
+            head_branch=head_branch or handle.branch,
+            base_branch=base_branch,
+            reviewers=tuple(reviewers or ()),
+            labels=tuple(labels or ()),
+            auth_token=auth_token,
+        )
+        return await self._service.create_pull_request(request)
+
 
 # ----------------------------------------------------------------------
 # Internals
@@ -472,6 +609,7 @@ def _handle_from_workspace(ws: Workspace) -> WorkspaceHandle:
         backend_kind=ws.backend_kind,
         local_path=ws.location.local_path,
         remote_path=ws.location.remote_path,
+        capabilities=ws.capabilities,
     )
 
 

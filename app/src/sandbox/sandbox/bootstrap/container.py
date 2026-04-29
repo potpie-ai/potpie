@@ -7,12 +7,17 @@ from dataclasses import dataclass
 from sandbox.adapters.outbound.docker.runtime import DockerRuntimeProvider
 from sandbox.adapters.outbound.file.json_store import JsonSandboxStore
 from sandbox.adapters.outbound.local.git_workspace import LocalGitWorkspaceProvider
+from sandbox.adapters.outbound.local.repo_cache import LocalRepoCacheProvider
 from sandbox.adapters.outbound.local.subprocess_runtime import LocalSubprocessRuntimeProvider
+from sandbox.adapters.outbound.memory.eviction import NoOpEvictionPolicy
 from sandbox.adapters.outbound.memory.locks import InMemoryLockManager
 from sandbox.adapters.outbound.memory.store import InMemorySandboxStore
 from sandbox.application.services.sandbox_service import SandboxService
 from sandbox.bootstrap.settings import SandboxSettings, settings_from_env
+from sandbox.domain.ports.eviction import EvictionPolicy
+from sandbox.domain.ports.git_platform import GitPlatformProvider
 from sandbox.domain.ports.locks import LockManager
+from sandbox.domain.ports.repos import RepoCacheProvider
 from sandbox.domain.ports.runtimes import RuntimeProvider
 from sandbox.domain.ports.stores import SandboxStore
 from sandbox.domain.ports.workspaces import WorkspaceProvider
@@ -25,6 +30,9 @@ class SandboxContainer:
     store: SandboxStore
     locks: LockManager
     service: SandboxService
+    eviction: EvictionPolicy
+    repo_cache_provider: RepoCacheProvider | None = None
+    git_platform_provider: GitPlatformProvider | None = None
 
 
 def build_sandbox_container(
@@ -34,10 +42,15 @@ def build_sandbox_container(
     locks: LockManager | None = None,
     workspace_provider: WorkspaceProvider | None = None,
     runtime_provider: RuntimeProvider | None = None,
+    eviction: EvictionPolicy | None = None,
+    repo_cache_provider: RepoCacheProvider | None = None,
+    git_platform_provider: GitPlatformProvider | None = None,
 ) -> SandboxContainer:
     s = settings or settings_from_env()
+    eviction_policy: EvictionPolicy = eviction or NoOpEvictionPolicy()
+    cache_provider = repo_cache_provider or _repo_cache_provider(s)
     if workspace_provider is None:
-        workspace_provider = _workspace_provider(s)
+        workspace_provider = _workspace_provider(s, eviction_policy, cache_provider)
     if runtime_provider is None:
         runtime_provider = _runtime_provider(s, workspace_provider)
     metadata_store: SandboxStore
@@ -53,6 +66,8 @@ def build_sandbox_container(
         runtime_provider=runtime_provider,
         store=metadata_store,
         locks=lock_manager,
+        repo_cache_provider=cache_provider,
+        git_platform_provider=git_platform_provider,
     )
     return SandboxContainer(
         workspace_provider=workspace_provider,
@@ -60,6 +75,9 @@ def build_sandbox_container(
         store=metadata_store,
         locks=lock_manager,
         service=service,
+        eviction=eviction_policy,
+        repo_cache_provider=cache_provider,
+        git_platform_provider=git_platform_provider,
     )
 
 
@@ -84,13 +102,34 @@ def _require_daytona_sdk() -> None:
         raise RuntimeError(_DAYTONA_MISSING_HINT) from exc
 
 
-def _workspace_provider(settings: SandboxSettings) -> WorkspaceProvider:
+def _repo_cache_provider(settings: SandboxSettings) -> RepoCacheProvider | None:
+    """Local mode is the only backend that exposes the repo cache as a
+    distinct port today; Daytona and Docker manage their caches inside
+    the runtime backend (P4 promotes Daytona's cache to this port).
+    """
     if settings.provider == "local":
-        return LocalGitWorkspaceProvider(settings.repos_base_path)
+        return LocalRepoCacheProvider(settings.repos_base_path)
+    return None
+
+
+def _workspace_provider(
+    settings: SandboxSettings,
+    eviction: EvictionPolicy,
+    repo_cache_provider: RepoCacheProvider | None,
+) -> WorkspaceProvider:
+    if settings.provider == "local":
+        return LocalGitWorkspaceProvider(
+            settings.repos_base_path,
+            eviction=eviction,
+            repo_cache_provider=repo_cache_provider,
+        )
     if settings.provider == "daytona":
         _require_daytona_sdk()
         from sandbox.adapters.outbound.daytona.provider import DaytonaWorkspaceProvider
 
+        # Daytona handles its own resource lifecycle inside the cluster;
+        # the eviction policy is plumbed through but unused here. P4
+        # tightens this boundary further.
         return DaytonaWorkspaceProvider(
             snapshot=settings.daytona_snapshot,
             workspace_root=settings.daytona_workspace_root,

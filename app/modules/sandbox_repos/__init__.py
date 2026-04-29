@@ -8,6 +8,10 @@ and agent tooling share the same on-disk cache (one eviction policy, no
 duplicate clones).
 """
 
+from app.modules.sandbox_repos.git_platform import GitHubGitPlatformProvider
 from app.modules.sandbox_repos.provider import RepoManagerWorkspaceProvider
 
-__all__ = ["RepoManagerWorkspaceProvider"]
+__all__ = [
+    "GitHubGitPlatformProvider",
+    "RepoManagerWorkspaceProvider",
+]

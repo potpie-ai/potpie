@@ -24,9 +24,11 @@ from sandbox import (
 )
 from sandbox.adapters.outbound.file.json_store import JsonSandboxStore
 from sandbox.adapters.outbound.local.git_workspace import LocalGitWorkspaceProvider
+from sandbox.adapters.outbound.local.repo_cache import LocalRepoCacheProvider
 from sandbox.adapters.outbound.local.subprocess_runtime import (
     LocalSubprocessRuntimeProvider,
 )
+from sandbox.adapters.outbound.memory.eviction import NoOpEvictionPolicy
 from sandbox.adapters.outbound.memory.locks import InMemoryLockManager
 from sandbox.api.client import SandboxOpError
 from sandbox.api.types import WorkspaceHandle
@@ -53,7 +55,10 @@ def _make_repo(tmp_path: Path) -> Path:
 
 
 def _build_client(tmp_path: Path) -> SandboxClient:
-    workspace_provider = LocalGitWorkspaceProvider(tmp_path / ".repos")
+    cache_provider = LocalRepoCacheProvider(tmp_path / ".repos")
+    workspace_provider = LocalGitWorkspaceProvider(
+        tmp_path / ".repos", repo_cache_provider=cache_provider
+    )
     runtime_provider = LocalSubprocessRuntimeProvider(allow_write=True)
     store = JsonSandboxStore(tmp_path / "metadata.json")
     locks = InMemoryLockManager()
@@ -62,6 +67,7 @@ def _build_client(tmp_path: Path) -> SandboxClient:
         runtime_provider=runtime_provider,
         store=store,
         locks=locks,
+        repo_cache_provider=cache_provider,
     )
     container = SandboxContainer(
         workspace_provider=workspace_provider,
@@ -69,6 +75,8 @@ def _build_client(tmp_path: Path) -> SandboxClient:
         store=store,
         locks=locks,
         service=service,
+        eviction=NoOpEvictionPolicy(),
+        repo_cache_provider=cache_provider,
     )
     return SandboxClient.from_container(container)
 
@@ -444,3 +452,127 @@ async def test_read_file_missing_raises(tmp_path: Path) -> None:
     )
     with pytest.raises(SandboxOpError):
         await client.read_file(handle, "does-not-exist.txt")
+
+
+@pytest.mark.asyncio
+async def test_ensure_repo_cache_persists_and_dedupes(tmp_path: Path) -> None:
+    """First call clones + saves a row; second call hits the store and
+    returns the same id without rebuilding the workspace state."""
+    source = _make_repo(tmp_path)
+    client = _build_client(tmp_path)
+
+    cache = await client.ensure_repo_cache(
+        user_id="u1",
+        repo="owner/repo",
+        base_ref="main",
+        repo_url=str(source),
+    )
+    assert cache.id.startswith("rc_")
+    assert cache.key == "github.com|owner/repo"
+    assert cache.location.local_path is not None
+    assert (Path(cache.location.local_path) / "HEAD").exists()
+
+    again = await client.ensure_repo_cache(
+        user_id="u1",
+        repo="owner/repo",
+        base_ref="main",
+        repo_url=str(source),
+    )
+    assert again.id == cache.id, "service must dedupe by key"
+
+
+@pytest.mark.asyncio
+async def test_search_anchors_path_to_remote_root(tmp_path: Path) -> None:
+    """``search(..., path=...)`` must prepend ``handle.remote_path``.
+
+    All other helpers (``read_file``, ``write_file``, ``list_dir``) anchor
+    relative paths to ``handle.remote_path`` via ``_posix_join``. ``search``
+    historically did not — pinned here so it stays consistent and
+    doesn't silently search the runtime's CWD if that ever diverges.
+
+    We don't need ripgrep installed: we patch the client's ``exec`` to
+    capture the actual command and assert the path arg.
+    """
+    from sandbox import Capabilities
+    from sandbox.api.client import _posix_join
+    from sandbox.domain.models import ExecResult
+
+    source = _make_repo(tmp_path)
+    client = _build_client(tmp_path)
+    handle_local = await client.get_workspace(
+        user_id="u1",
+        project_id="p1",
+        repo="owner/repo",
+        repo_url=str(source),
+        branch="main",
+        base_ref="main",
+        mode=WorkspaceMode.ANALYSIS,
+    )
+    # Force the exec backend by stripping local_path AND injecting a
+    # remote_path so the helper has something to anchor against.
+    handle = WorkspaceHandle(
+        workspace_id=handle_local.workspace_id,
+        branch=handle_local.branch,
+        backend_kind=handle_local.backend_kind,
+        local_path=None,
+        remote_path="/remote/work",
+        capabilities=Capabilities.from_mode(WorkspaceMode.ANALYSIS),
+    )
+
+    captured: dict[str, list[str]] = {}
+
+    async def fake_exec(h: WorkspaceHandle, cmd: list[str], **kwargs):
+        captured["cmd"] = list(cmd)
+        return ExecResult(exit_code=1, stdout=b"", stderr=b"")  # 1 = no matches
+
+    # Patch the bound method on this client instance only.
+    client.exec = fake_exec  # type: ignore[assignment]
+
+    await client.search(handle, "needle", path="src")
+
+    assert "cmd" in captured, "search did not invoke exec"
+    last_arg = captured["cmd"][-1]
+    expected = _posix_join("/remote/work", "src")
+    assert last_arg == expected, (
+        f"search path arg should be anchored at remote_root: "
+        f"expected {expected!r}, got {last_arg!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_write_file_after_destroy_raises(tmp_path: Path) -> None:
+    """A handle held across ``destroy_workspace`` must NOT silently
+    recreate the worktree on the next ``write_file`` call.
+
+    The fix: the write fast path re-resolves the workspace through the
+    service, so a destroyed workspace surfaces as ``WorkspaceNotFound``
+    instead of letting ``_write_bytes`` mkdir+write into a stale path.
+    """
+    from sandbox.domain.errors import WorkspaceNotFound
+
+    source = _make_repo(tmp_path)
+    client = _build_client(tmp_path)
+    handle = await client.get_workspace(
+        user_id="u1",
+        project_id="p1",
+        repo="owner/repo",
+        repo_url=str(source),
+        branch="feat/x",
+        base_ref="main",
+        create_branch=True,
+        mode=WorkspaceMode.EDIT,
+        conversation_id="c1",
+    )
+    assert handle.local_path is not None
+    worktree = Path(handle.local_path)
+    assert worktree.exists()
+
+    await client.destroy_workspace(handle)
+    assert not worktree.exists()
+
+    with pytest.raises(WorkspaceNotFound):
+        await client.write_file(handle, "leaked.txt", b"should not land")
+
+    assert not worktree.exists(), (
+        "destroyed worktree must not be recreated by a stale handle write"
+    )

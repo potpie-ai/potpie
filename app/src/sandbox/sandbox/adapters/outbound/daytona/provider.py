@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 from sandbox.domain.errors import RepoAuthFailed, RepoCacheUnavailable, RuntimeNotFound, RuntimeUnavailable
 from sandbox.domain.models import (
+    Capabilities,
     ExecChunk,
     ExecRequest,
     ExecResult,
@@ -187,12 +188,20 @@ class DaytonaWorkspaceProvider:
     def _create_workspace_sync(
         self, request: WorkspaceRequest, project_key: tuple[str, str]
     ) -> Workspace:
+        # Reject git-ref injection at the boundary. Keeps `git fetch
+        # origin -- <ref>` and `worktree add -b <branch>` from being
+        # smuggled into shell commands. Mirrors the local adapter's
+        # validation (P4 brings the two paths to parity).
+        _validate_ref(request.base_ref)
+        if request.branch_name:
+            _validate_ref(request.branch_name)
+
         sandbox = self._ensure_sandbox(project_key)
         sandbox_id = str(getattr(sandbox, "id"))
         bare_path = self._bare_path(request.repo.repo_name)
         self._ensure_bare_repo(sandbox, bare_path, request)
         branch = request.branch_name or _default_branch_name(request)
-        worktree_path = self._worktree_path(request.repo.repo_name, branch)
+        worktree_path = self._worktree_path(request, branch)
         self._ensure_worktree(
             sandbox,
             bare_path=bare_path,
@@ -215,6 +224,7 @@ class DaytonaWorkspaceProvider:
             backend_kind=self.kind,
             state=WorkspaceState.READY,
             metadata={"branch": branch},
+            capabilities=Capabilities.from_mode(request.mode),
         )
 
     def _ensure_sandbox(self, project_key: tuple[str, str]) -> Any:
@@ -686,10 +696,24 @@ class DaytonaWorkspaceProvider:
     def _bare_path(self, repo_name: str) -> str:
         return f"{self.workspace_root}/{_safe_segment(repo_name)}/.bare"
 
-    def _worktree_path(self, repo_name: str, branch: str) -> str:
+    def _worktree_path(self, request: WorkspaceRequest, branch: str) -> str:
+        """Encode user + scope + branch in the worktree path.
+
+        Two conversations on the same branch must NOT share a worktree.
+        Without user/scope encoding, the bare path layout used to be
+        ``.../worktrees/<branch>`` — fine for analysis, dangerous for
+        EDIT/TASK because two ``conversation_id`` values that produced
+        the same agent branch name (or hashed to similar UUIDs in tests)
+        would collide on a single Daytona worktree. Mirrors the local
+        adapter's path scheme.
+        """
+        safe_user = _safe_segment(request.user_id)
+        scope = request.conversation_id or request.task_id or request.base_ref
+        safe_scope = _safe_segment(scope)
+        safe_branch = _safe_segment(branch)
         return (
-            f"{self.workspace_root}/{_safe_segment(repo_name)}/worktrees/"
-            f"{_safe_segment(branch)}"
+            f"{self.workspace_root}/{_safe_segment(request.repo.repo_name)}"
+            f"/worktrees/{safe_user}_{safe_scope}_{safe_branch}"
         )
 
     def _lookup_sandbox_by_id(self, sandbox_id: str) -> Any | None:
@@ -886,6 +910,21 @@ def _payload(response: Any) -> str:
 
 def _safe_segment(value: str) -> str:
     return "".join(c if c.isalnum() or c in ("-", "_", ".") else "_" for c in value)
+
+
+def _validate_ref(ref: str) -> None:
+    """Reject git-ref values that would unsafely interpolate into shell.
+
+    The Daytona adapter uses ``sandbox.process.exec`` with shell-style
+    command strings; an attacker-controlled branch with newlines or
+    ``..`` could break out of the intended ref. Mirrors the local
+    adapter's ``validate_ref`` so both backends share the same threat
+    model.
+    """
+    if not ref:
+        raise ValueError("git ref cannot be empty")
+    if ".." in ref or "\n" in ref or "\r" in ref:
+        raise ValueError(f"git ref contains unsafe characters: {ref!r}")
 
 
 def _default_github_url(repo_name: str) -> str:

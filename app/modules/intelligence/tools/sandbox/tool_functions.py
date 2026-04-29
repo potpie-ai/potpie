@@ -99,6 +99,44 @@ def _wrap_exec_result(handle: Any, result: ExecResult) -> Dict[str, Any]:
 # ----------------------------------------------------------------------
 # sandbox_text_editor
 # ----------------------------------------------------------------------
+async def _exec_text_editor(
+    client: Any,
+    handle: Any,
+    *,
+    command: str,
+    path: str,
+    view_range: Optional[List[int]] = None,
+    file_text: Optional[str] = None,
+    old_str: Optional[str] = None,
+    new_str: Optional[str] = None,
+    insert_line: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Handle-bound text-editor implementation.
+
+    Used by both the legacy ``project_id`` tool wrapper and the explicit
+    ``create_sandbox_tools(client, handle)`` factory. Errors are wrapped
+    by the public-facing tool function — this helper raises through.
+    """
+    if command == "view":
+        return await _view(client, handle, path, view_range)
+    if command == "create":
+        if file_text is None:
+            return _err("create requires file_text")
+        return await _create(client, handle, path, file_text)
+    if command == "str_replace":
+        if old_str is None or new_str is None:
+            return _err("str_replace requires old_str and new_str")
+        return await _str_replace(client, handle, path, old_str, new_str)
+    if command == "insert":
+        if insert_line is None or new_str is None:
+            return _err("insert requires insert_line and new_str")
+        return await _insert(client, handle, path, insert_line, new_str)
+    return _err(
+        f"unknown command: {command!r}. "
+        "Expected: view, create, str_replace, insert."
+    )
+
+
 async def sandbox_text_editor_tool(
     project_id: str,
     command: str,
@@ -109,27 +147,20 @@ async def sandbox_text_editor_tool(
     new_str: Optional[str] = None,
     insert_line: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Dispatch view / create / str_replace / insert."""
+    """Dispatch view / create / str_replace / insert (legacy form)."""
     try:
         handle = await _resolve(project_id)
         client = get_sandbox_client()
-        if command == "view":
-            return await _view(client, handle, path, view_range)
-        if command == "create":
-            if file_text is None:
-                return _err("create requires file_text")
-            return await _create(client, handle, path, file_text)
-        if command == "str_replace":
-            if old_str is None or new_str is None:
-                return _err("str_replace requires old_str and new_str")
-            return await _str_replace(client, handle, path, old_str, new_str)
-        if command == "insert":
-            if insert_line is None or new_str is None:
-                return _err("insert requires insert_line and new_str")
-            return await _insert(client, handle, path, insert_line, new_str)
-        return _err(
-            f"unknown command: {command!r}. "
-            "Expected: view, create, str_replace, insert."
+        return await _exec_text_editor(
+            client,
+            handle,
+            command=command,
+            path=path,
+            view_range=view_range,
+            file_text=file_text,
+            old_str=old_str,
+            new_str=new_str,
+            insert_line=insert_line,
         )
     except Exception as exc:  # noqa: BLE001
         return _err(f"sandbox_text_editor failed: {exc}")
@@ -296,25 +327,43 @@ async def _insert(
 # ----------------------------------------------------------------------
 # sandbox_shell
 # ----------------------------------------------------------------------
+async def _exec_shell(
+    client: Any,
+    handle: Any,
+    *,
+    command: str,
+    timeout_s: Optional[int] = 120,
+    max_output_bytes: Optional[int] = 80_000,
+) -> Dict[str, Any]:
+    """Handle-bound shell-exec implementation."""
+    result = await client.exec(
+        handle,
+        ["sh", "-c", command],
+        command_kind=CommandKind.WRITE,
+        timeout_s=timeout_s,
+        max_output_bytes=max_output_bytes,
+        shell=False,  # already wrapped in sh -c above
+    )
+    return _wrap_exec_result(handle, result)
+
+
 async def sandbox_shell_tool(
     project_id: str,
     command: str,
     timeout_s: Optional[int] = 120,
     max_output_bytes: Optional[int] = 80_000,
 ) -> Dict[str, Any]:
-    """Run a single shell command inside the sandbox at the worktree root."""
+    """Run a single shell command inside the sandbox (legacy form)."""
     try:
         handle = await _resolve(project_id)
         client = get_sandbox_client()
-        result = await client.exec(
+        return await _exec_shell(
+            client,
             handle,
-            ["sh", "-c", command],
-            command_kind=CommandKind.WRITE,
+            command=command,
             timeout_s=timeout_s,
             max_output_bytes=max_output_bytes,
-            shell=False,  # we already wrap with sh -c
         )
-        return _wrap_exec_result(handle, result)
     except Exception as exc:  # noqa: BLE001
         return _err(f"sandbox_shell failed: {exc}")
 
@@ -322,6 +371,36 @@ async def sandbox_shell_tool(
 # ----------------------------------------------------------------------
 # sandbox_search
 # ----------------------------------------------------------------------
+async def _exec_search(
+    client: Any,
+    handle: Any,
+    *,
+    pattern: str,
+    glob: Optional[str] = None,
+    case: bool = False,
+    path: Optional[str] = None,
+    max_hits: Optional[int] = 200,
+) -> Dict[str, Any]:
+    """Handle-bound ripgrep implementation."""
+    hits = await client.search(
+        handle,
+        pattern,
+        glob=glob,
+        case=case,
+        path=path,
+        max_hits=max_hits,
+    )
+    return {
+        "success": True,
+        "branch": handle.branch,
+        "pattern": pattern,
+        "hits": [
+            {"path": h.path, "line": h.line, "snippet": h.snippet} for h in hits
+        ],
+        "truncated": max_hits is not None and len(hits) >= max_hits,
+    }
+
+
 async def sandbox_search_tool(
     project_id: str,
     pattern: str,
@@ -330,27 +409,19 @@ async def sandbox_search_tool(
     path: Optional[str] = None,
     max_hits: Optional[int] = 200,
 ) -> Dict[str, Any]:
-    """Ripgrep across the worktree."""
+    """Ripgrep across the worktree (legacy form)."""
     try:
         handle = await _resolve(project_id, mode=WorkspaceMode.ANALYSIS)
         client = get_sandbox_client()
-        hits = await client.search(
+        return await _exec_search(
+            client,
             handle,
-            pattern,
+            pattern=pattern,
             glob=glob,
             case=case,
             path=path,
             max_hits=max_hits,
         )
-        return {
-            "success": True,
-            "branch": handle.branch,
-            "pattern": pattern,
-            "hits": [
-                {"path": h.path, "line": h.line, "snippet": h.snippet} for h in hits
-            ],
-            "truncated": max_hits is not None and len(hits) >= max_hits,
-        }
     except Exception as exc:  # noqa: BLE001
         return _err(f"sandbox_search failed: {exc}")
 
@@ -358,6 +429,64 @@ async def sandbox_search_tool(
 # ----------------------------------------------------------------------
 # sandbox_git
 # ----------------------------------------------------------------------
+async def _exec_git(
+    client: Any,
+    handle: Any,
+    *,
+    command: str,
+    base_ref: Optional[str] = None,
+    paths: Optional[List[str]] = None,
+    limit: Optional[int] = 20,
+    message: Optional[str] = None,
+    set_upstream: bool = True,
+    force: bool = False,
+) -> Dict[str, Any]:
+    """Handle-bound git implementation."""
+    if command == "status":
+        status = await client.status(handle)
+        return {
+            "success": True,
+            "command": "status",
+            "branch": status.branch,
+            "is_clean": status.is_clean,
+            "staged": list(status.staged),
+            "unstaged": list(status.unstaged),
+            "untracked": list(status.untracked),
+        }
+    if command == "diff":
+        diff = await client.diff(handle, base_ref=base_ref, paths=paths)
+        return {
+            "success": True,
+            "command": "diff",
+            "branch": handle.branch,
+            "base_ref": base_ref,
+            "diff": diff,
+        }
+    if command == "log":
+        return await _git_log(client, handle, limit or 20)
+    if command == "commit":
+        if not message:
+            return _err("commit requires a message")
+        sha = await client.commit(handle, message, paths=paths)
+        return {
+            "success": True,
+            "command": "commit",
+            "branch": handle.branch,
+            "commit": sha,
+        }
+    if command == "push":
+        await client.push(handle, set_upstream=set_upstream, force=force)
+        return {
+            "success": True,
+            "command": "push",
+            "branch": handle.branch,
+        }
+    return _err(
+        f"unknown command: {command!r}. "
+        "Expected: status, diff, log, commit, push."
+    )
+
+
 async def sandbox_git_tool(
     project_id: str,
     command: str,
@@ -368,55 +497,78 @@ async def sandbox_git_tool(
     set_upstream: bool = True,
     force: bool = False,
 ) -> Dict[str, Any]:
-    """Dispatch status / diff / log / commit / push."""
+    """Dispatch status / diff / log / commit / push (legacy form)."""
     try:
         handle = await _resolve(project_id)
         client = get_sandbox_client()
-        if command == "status":
-            status = await client.status(handle)
-            return {
-                "success": True,
-                "command": "status",
-                "branch": status.branch,
-                "is_clean": status.is_clean,
-                "staged": list(status.staged),
-                "unstaged": list(status.unstaged),
-                "untracked": list(status.untracked),
-            }
-        if command == "diff":
-            diff = await client.diff(handle, base_ref=base_ref, paths=paths)
-            return {
-                "success": True,
-                "command": "diff",
-                "branch": handle.branch,
-                "base_ref": base_ref,
-                "diff": diff,
-            }
-        if command == "log":
-            return await _git_log(client, handle, limit or 20)
-        if command == "commit":
-            if not message:
-                return _err("commit requires a message")
-            sha = await client.commit(handle, message, paths=paths)
-            return {
-                "success": True,
-                "command": "commit",
-                "branch": handle.branch,
-                "commit": sha,
-            }
-        if command == "push":
-            await client.push(handle, set_upstream=set_upstream, force=force)
-            return {
-                "success": True,
-                "command": "push",
-                "branch": handle.branch,
-            }
-        return _err(
-            f"unknown command: {command!r}. "
-            "Expected: status, diff, log, commit, push."
+        return await _exec_git(
+            client,
+            handle,
+            command=command,
+            base_ref=base_ref,
+            paths=paths,
+            limit=limit,
+            message=message,
+            set_upstream=set_upstream,
+            force=force,
         )
     except Exception as exc:  # noqa: BLE001
         return _err(f"sandbox_git failed: {exc}")
+
+
+# ----------------------------------------------------------------------
+# sandbox_pr (handle-bound only — there's no legacy contextvar form)
+# ----------------------------------------------------------------------
+async def _exec_pull_request(
+    client: Any,
+    handle: Any,
+    *,
+    title: str,
+    body: str,
+    base_branch: str,
+    head_branch: Optional[str] = None,
+    reviewers: Optional[List[str]] = None,
+    labels: Optional[List[str]] = None,
+    repo_name: Optional[str] = None,
+    repo_url: Optional[str] = None,
+    auth_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Handle-bound PR-creation tool.
+
+    The repo identity normally lives on the bound workspace's request,
+    but ``WorkspaceHandle`` doesn't carry the full request — callers can
+    pass ``repo_name``/``repo_url`` explicitly when constructing the
+    factory if the harness has them. This helper delegates to
+    ``SandboxClient.create_pull_request`` which enforces capability.
+    """
+    if not repo_name:
+        return _err(
+            "sandbox_pr: repo_name not bound on the toolset; pass it via "
+            "create_sandbox_tools(... pr_repo_name=...)."
+        )
+    try:
+        pr = await client.create_pull_request(
+            handle,
+            repo=repo_name,
+            title=title,
+            body=body,
+            base_branch=base_branch,
+            head_branch=head_branch,
+            repo_url=repo_url,
+            reviewers=reviewers,
+            labels=labels,
+            auth_token=auth_token,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _err(f"sandbox_pr failed: {exc}")
+    return {
+        "success": True,
+        "pr_id": pr.id,
+        "url": pr.url,
+        "title": pr.title,
+        "head_branch": pr.head_branch,
+        "base_branch": pr.base_branch,
+    }
 
 
 async def _git_log(client: Any, handle: Any, limit: int) -> Dict[str, Any]:

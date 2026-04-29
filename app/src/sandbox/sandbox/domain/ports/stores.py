@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from sandbox.domain.models import Runtime, Workspace
+from sandbox.domain.models import RepoCache, Runtime, Workspace
 
 
 class WorkspaceStore(Protocol):
@@ -43,6 +43,23 @@ class RuntimeStore(Protocol):
         ...
 
 
-class SandboxStore(WorkspaceStore, RuntimeStore, Protocol):
+class RepoCacheStore(Protocol):
+    async def get_repo_cache(self, cache_id: str) -> RepoCache | None:
+        ...
+
+    async def find_repo_cache_by_key(self, key: str) -> RepoCache | None:
+        ...
+
+    async def save_repo_cache(self, cache: RepoCache) -> None:
+        ...
+
+    async def delete_repo_cache(self, cache_id: str) -> None:
+        ...
+
+    async def list_repo_caches(self) -> list[RepoCache]:
+        ...
+
+
+class SandboxStore(WorkspaceStore, RuntimeStore, RepoCacheStore, Protocol):
     """Combined store used by SandboxService."""
 

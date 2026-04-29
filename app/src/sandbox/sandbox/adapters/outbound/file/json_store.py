@@ -12,8 +12,10 @@ from typing import Any
 
 from sandbox.adapters.outbound.memory.store import InMemorySandboxStore
 from sandbox.domain.models import (
+    Capabilities,
     Mount,
     NetworkMode,
+    RepoCache,
     RepoIdentity,
     ResourceHints,
     Runtime,
@@ -88,6 +90,28 @@ class JsonSandboxStore(InMemorySandboxStore):
         await self._ensure_loaded()
         return await super().list_runtimes()
 
+    async def get_repo_cache(self, cache_id: str) -> RepoCache | None:
+        await self._ensure_loaded()
+        return await super().get_repo_cache(cache_id)
+
+    async def find_repo_cache_by_key(self, key: str) -> RepoCache | None:
+        await self._ensure_loaded()
+        return await super().find_repo_cache_by_key(key)
+
+    async def save_repo_cache(self, cache: RepoCache) -> None:
+        await self._ensure_loaded()
+        await super().save_repo_cache(cache)
+        await self._flush()
+
+    async def delete_repo_cache(self, cache_id: str) -> None:
+        await self._ensure_loaded()
+        await super().delete_repo_cache(cache_id)
+        await self._flush()
+
+    async def list_repo_caches(self) -> list[RepoCache]:
+        await self._ensure_loaded()
+        return await super().list_repo_caches()
+
     async def _ensure_loaded(self) -> None:
         if self._loaded:
             return
@@ -102,6 +126,8 @@ class JsonSandboxStore(InMemorySandboxStore):
                 await super().save_workspace(_workspace_from_json(item))
             for item in raw.get("runtimes", []):
                 await super().save_runtime(_runtime_from_json(item))
+            for item in raw.get("repo_caches", []):
+                await super().save_repo_cache(_repo_cache_from_json(item))
             self._loaded = True
 
     async def _flush(self) -> None:
@@ -109,7 +135,12 @@ class JsonSandboxStore(InMemorySandboxStore):
             self._path.parent.mkdir(parents=True, exist_ok=True)
             workspaces = [_json_ready(w) for w in await super().list_workspaces()]
             runtimes = [_json_ready(r) for r in await super().list_runtimes()]
-            payload = {"workspaces": workspaces, "runtimes": runtimes}
+            repo_caches = [_json_ready(c) for c in await super().list_repo_caches()]
+            payload = {
+                "workspaces": workspaces,
+                "runtimes": runtimes,
+                "repo_caches": repo_caches,
+            }
             tmp = self._path.with_suffix(f"{self._path.suffix}.tmp")
             tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
             tmp.replace(self._path)
@@ -162,6 +193,16 @@ def _request(raw: dict[str, Any]) -> WorkspaceRequest:
     )
 
 
+def _capabilities(raw: dict[str, Any] | None) -> Capabilities:
+    if not raw:
+        return Capabilities()
+    return Capabilities(
+        writable=bool(raw.get("writable", False)),
+        isolated=bool(raw.get("isolated", False)),
+        persistent=bool(raw.get("persistent", True)),
+    )
+
+
 def _workspace_from_json(raw: dict[str, Any]) -> Workspace:
     return Workspace(
         id=raw["id"],
@@ -173,6 +214,24 @@ def _workspace_from_json(raw: dict[str, Any]) -> Workspace:
         state=WorkspaceState(raw.get("state", WorkspaceState.READY.value)),
         dirty=bool(raw.get("dirty", False)),
         pinned_until=_dt(raw.get("pinned_until")),
+        last_used_at=_dt(raw.get("last_used_at")) or datetime.now(timezone.utc),
+        size_bytes=raw.get("size_bytes"),
+        created_at=_dt(raw.get("created_at")) or datetime.now(timezone.utc),
+        updated_at=_dt(raw.get("updated_at")) or datetime.now(timezone.utc),
+        metadata=dict(raw.get("metadata") or {}),
+        capabilities=_capabilities(raw.get("capabilities")),
+    )
+
+
+def _repo_cache_from_json(raw: dict[str, Any]) -> RepoCache:
+    return RepoCache(
+        id=raw["id"],
+        key=raw["key"],
+        repo=RepoIdentity(**raw["repo"]),
+        location=_location(raw["location"]),
+        backend_kind=raw["backend_kind"],
+        state=WorkspaceState(raw.get("state", WorkspaceState.READY.value)),
+        last_fetched_at=_dt(raw.get("last_fetched_at")),
         last_used_at=_dt(raw.get("last_used_at")) or datetime.now(timezone.utc),
         size_bytes=raw.get("size_bytes"),
         created_at=_dt(raw.get("created_at")) or datetime.now(timezone.utc),

@@ -124,6 +124,45 @@ class ParsingService:
         finally:
             os.chdir(old_dir)
 
+    async def _provision_repo_cache_safe(
+        self,
+        *,
+        user_id: str,
+        repo_name: str | None,
+        base_ref: str | None,
+        auth_token: str | None,
+        repo_url: str | None,
+    ) -> None:
+        """Persist a `RepoCache` row for this (host, repo) so subsequent
+        agent runs hit a warm cache.
+
+        Best-effort: cache provisioning is an optimization, not a
+        prerequisite for parsing success. Any failure is logged and
+        swallowed so the user-facing parse status stays green.
+        """
+        if not repo_name or not base_ref:
+            return
+        try:
+            from app.modules.intelligence.tools.sandbox.client import (
+                provision_repo_cache,
+            )
+
+            await provision_repo_cache(
+                user_id=user_id,
+                repo_name=repo_name,
+                base_ref=base_ref,
+                auth_token=auth_token,
+                repo_url=repo_url,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to provision repo cache after parse",
+                repo_name=repo_name,
+                base_ref=base_ref,
+                user_id=user_id,
+                exc_info=True,
+            )
+
     async def parse_directory(
         self,
         repo_details: ParsingRequest,
@@ -215,6 +254,19 @@ class ParsingService:
                                             project_id,
                                             exc_info=True,
                                         )
+                        # Persist a RepoCache row so the next agent run
+                        # gets an instant cache hit instead of paying
+                        # for a re-clone on first workspace request.
+                        await self._provision_repo_cache_safe(
+                            user_id=user_id,
+                            repo_name=existing_project.get("project_name"),
+                            base_ref=(
+                                existing_project.get("commit_id")
+                                or existing_project.get("branch_name")
+                            ),
+                            auth_token=None,
+                            repo_url=existing_project.get("repo_path"),
+                        )
                         return {
                             "message": "Project already parsed for requested commit",
                             "id": project_id,
@@ -394,6 +446,18 @@ class ParsingService:
                 )
                 await self.analyze_directory(
                     extracted_dir, project_id, user_id, self.db, language, user_email
+                )
+                # Persist a RepoCache row keyed by (host, repo) so
+                # subsequent agent runs hit a warm cache. Best-effort —
+                # any failure is logged and parsing still succeeds.
+                await self._provision_repo_cache_safe(
+                    user_id=user_id,
+                    repo_name=repo_details.repo_name,
+                    base_ref=(
+                        repo_details.commit_id or repo_details.branch_name
+                    ),
+                    auth_token=user_token,
+                    repo_url=repo_details.repo_path,
                 )
                 message = "The project has been parsed successfully"
                 return {"message": message, "id": project_id}

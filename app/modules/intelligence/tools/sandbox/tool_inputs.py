@@ -196,3 +196,88 @@ class SandboxGitInput(_ProjectScope):
         default=False,
         description="For 'push': use --force-with-lease. Reserve for amend/rebase.",
     )
+
+
+# ----------------------------------------------------------------------
+# Handle-bound variants (P6: explicit toolset)
+# ----------------------------------------------------------------------
+# Same schemas as above but without ``project_id``. Used by the
+# ``create_sandbox_tools(client=..., handle=...)`` form where the
+# workspace is already pinned by the harness, so the LLM doesn't need
+# to (and shouldn't be able to) target a different project.
+
+
+class SandboxTextEditorInputBound(BaseModel):
+    """File-level operations on a pre-bound workspace handle."""
+
+    command: TextEditorCommand = Field(
+        ...,
+        description="Operation: 'view', 'create', 'str_replace', or 'insert'.",
+    )
+    path: str = Field(..., description="Repo-relative path.")
+    view_range: Optional[List[int]] = Field(default=None)
+    file_text: Optional[str] = Field(default=None)
+    old_str: Optional[str] = Field(default=None)
+    new_str: Optional[str] = Field(default=None)
+    insert_line: Optional[int] = Field(default=None)
+
+
+class SandboxShellInputBound(BaseModel):
+    """Run a single shell command on a pre-bound workspace handle."""
+
+    command: str = Field(..., description="The shell command.")
+    timeout_s: Optional[int] = Field(default=120)
+    max_output_bytes: Optional[int] = Field(default=80_000)
+
+
+class SandboxSearchInputBound(BaseModel):
+    """Ripgrep across a pre-bound workspace handle."""
+
+    pattern: str = Field(..., description="Regex / fixed string.")
+    glob: Optional[str] = Field(default=None)
+    case: bool = Field(default=False)
+    path: Optional[str] = Field(default=None)
+    max_hits: Optional[int] = Field(default=200)
+
+
+class SandboxGitInputBound(BaseModel):
+    """Git operations on a pre-bound workspace handle."""
+
+    command: GitCommand = Field(
+        ...,
+        description="Git operation: 'status', 'diff', 'log', 'commit', or 'push'.",
+    )
+    base_ref: Optional[str] = Field(default=None)
+    paths: Optional[List[str]] = Field(default=None)
+    limit: Optional[int] = Field(default=20)
+    message: Optional[str] = Field(default=None)
+    set_upstream: bool = Field(default=True)
+    force: bool = Field(default=False)
+
+
+class SandboxPullRequestInput(BaseModel):
+    """Open a PR via the configured `GitPlatformProvider`.
+
+    The agent should call ``sandbox_git`` with ``command='push'`` first
+    so ``head_branch`` exists on the remote — this tool is the
+    platform-side step only. Returns ``{success, pr_number, url}`` so
+    the caller can surface the link.
+    """
+
+    title: str = Field(..., description="PR title (single line).")
+    body: str = Field(..., description="PR body (markdown).")
+    base_branch: str = Field(
+        ...,
+        description="Branch to merge into, e.g. 'main' or 'develop'.",
+    )
+    head_branch: Optional[str] = Field(
+        default=None,
+        description="Source branch. Defaults to the workspace's bound branch.",
+    )
+    reviewers: Optional[List[str]] = Field(
+        default=None,
+        description="GitHub usernames to request review from.",
+    )
+    labels: Optional[List[str]] = Field(
+        default=None, description="Labels to add to the PR."
+    )

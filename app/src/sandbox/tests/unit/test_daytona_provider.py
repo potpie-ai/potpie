@@ -226,7 +226,11 @@ async def test_daytona_workspace_bare_clones_and_creates_worktree() -> None:
     )
 
     bare_dir = "/home/daytona/workspace/owner_private/.bare"
-    worktree_dir = "/home/daytona/workspace/owner_private/worktrees/agent_edits-c1"
+    # P4 hardening: worktree path is `<user>_<scope>_<branch>` so two
+    # conversations on the same branch never share a worktree.
+    worktree_dir = (
+        "/home/daytona/workspace/owner_private/worktrees/u1_c1_agent_edits-c1"
+    )
 
     workspace = await service.get_or_create_workspace(
         WorkspaceRequest(
@@ -816,3 +820,103 @@ async def test_recovery_handles_paginated_list_response() -> None:
 
     assert sandbox.id == "sbx_paginated"
     assert client.create_calls == 0
+
+
+# ----------------------------------------------------------------------
+# P4 hardening
+# ----------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_distinct_conversations_on_same_branch_get_distinct_worktrees() -> None:
+    """Two conversations forking the same agent branch must NOT share a
+    worktree path (gap 7 in the audit). Without user/scope encoding the
+    second run would land on the first run's edits."""
+    client = FakeDaytonaClient()
+    provider = DaytonaWorkspaceProvider(
+        client_factory=lambda: client,
+        workspace_root="/home/daytona/workspace",
+    )
+
+    branch = "feat/x"
+    ws_a = await provider.get_or_create_workspace(
+        WorkspaceRequest(
+            user_id="u1",
+            project_id="p1",
+            repo=RepoIdentity(
+                repo_name="owner/repo",
+                repo_url="https://github.com/owner/repo.git",
+            ),
+            base_ref="main",
+            mode=WorkspaceMode.EDIT,
+            conversation_id="conv-A",
+            branch_name=branch,
+            create_branch=True,
+        )
+    )
+    ws_b = await provider.get_or_create_workspace(
+        WorkspaceRequest(
+            user_id="u1",
+            project_id="p1",
+            repo=RepoIdentity(
+                repo_name="owner/repo",
+                repo_url="https://github.com/owner/repo.git",
+            ),
+            base_ref="main",
+            mode=WorkspaceMode.EDIT,
+            conversation_id="conv-B",
+            branch_name=branch,
+            create_branch=True,
+        )
+    )
+    assert ws_a.location.remote_path != ws_b.location.remote_path
+    assert "conv-A" in ws_a.location.remote_path
+    assert "conv-B" in ws_b.location.remote_path
+
+
+@pytest.mark.asyncio
+async def test_invalid_base_ref_rejected() -> None:
+    """Newlines / `..` in the ref must be rejected before the SDK call."""
+    client = FakeDaytonaClient()
+    provider = DaytonaWorkspaceProvider(
+        client_factory=lambda: client,
+        workspace_root="/home/daytona/workspace",
+    )
+    with pytest.raises(ValueError, match="unsafe"):
+        await provider.get_or_create_workspace(
+            WorkspaceRequest(
+                user_id="u1",
+                project_id="p1",
+                repo=RepoIdentity(
+                    repo_name="owner/repo",
+                    repo_url="https://github.com/owner/repo.git",
+                ),
+                base_ref="main\nrm -rf /",
+                mode=WorkspaceMode.EDIT,
+                conversation_id="c1",
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_invalid_branch_name_rejected() -> None:
+    """Same threat model for branch_name."""
+    client = FakeDaytonaClient()
+    provider = DaytonaWorkspaceProvider(
+        client_factory=lambda: client,
+        workspace_root="/home/daytona/workspace",
+    )
+    with pytest.raises(ValueError, match="unsafe"):
+        await provider.get_or_create_workspace(
+            WorkspaceRequest(
+                user_id="u1",
+                project_id="p1",
+                repo=RepoIdentity(
+                    repo_name="owner/repo",
+                    repo_url="https://github.com/owner/repo.git",
+                ),
+                base_ref="main",
+                branch_name="main\n--evil",
+                mode=WorkspaceMode.EDIT,
+                conversation_id="c1",
+                create_branch=True,
+            )
+        )

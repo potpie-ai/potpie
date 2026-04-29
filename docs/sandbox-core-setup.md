@@ -15,17 +15,14 @@ The important distinction is that "sandbox" is not one thing:
   workspace. It may be stopped, recreated, or moved without deleting the
   workspace.
 
-The current codebase already has part of this model:
-
-- `app/modules/repo_manager/repo_manager.py` manages bare repositories and
-  worktrees under `.repos/`.
-- `app/modules/repo_manager/sync_helper.py` has the GitHub App -> OAuth -> env
-  token auth chain for cloning/fetching.
-- `checkout_worktree_branch`, `apply_changes`, `git_commit`, and `bash_command`
-  already expect a repo-manager-backed worktree.
-- `app/modules/utils/gvisor_runner.py` is useful for read-only analysis, but it
-  is not the right foundation for write-capable agent execution because it is
-  read-only by design and may fall back to regular subprocess execution.
+The hexagonal sandbox module now lives at `app/src/sandbox/sandbox/` (domain
+ports, application service, API client, outbound adapters). The legacy
+`app/modules/repo_manager/repo_manager.py` still owns the `.repos/`
+filesystem layout, bare-repo cloning, and tiered eviction; the bridge at
+`app/modules/sandbox_repos/provider.py` adapts it to the sandbox
+`WorkspaceProvider` port for the production wiring. See **Current State** below
+for what is in place and **Known Gaps** for what still needs to be moved out
+of the legacy module.
 
 This design keeps the repo/worktree lifecycle separate from the execution
 backend. The application layer asks for a workspace, then attaches a runtime to
@@ -125,6 +122,143 @@ Responsibilities:
 
 Key rule: destroying a runtime must not delete a workspace unless the caller
 explicitly asks for workspace cleanup.
+
+---
+
+## Current State (Implemented)
+
+The hexagonal layout described above is in place. References point at code
+that is shipped today.
+
+**Domain** (`app/src/sandbox/sandbox/domain/`)
+- `models.py` — `Workspace`, `WorkspaceRequest`, `RepoIdentity`, `RepoCache`
+  (declared but not yet wired through), `Runtime`, `RuntimeSpec`,
+  `ExecRequest`, `ExecResult`, `Mount`, `WorkspaceMode` (`ANALYSIS`/`EDIT`/
+  `TASK`).
+- `errors.py` — `WorkspaceError` family (`WorkspaceNotFound`,
+  `RepoCacheUnavailable`, `RepoAuthFailed`, `InvalidWorkspacePath`, …) and
+  `RuntimeErrorBase` family (`RuntimeUnavailable`, `RuntimeTimeout`, …).
+- `ports/workspaces.py`, `ports/runtimes.py`, `ports/stores.py`,
+  `ports/locks.py` — the four ports.
+
+**Application** (`app/src/sandbox/sandbox/application/services/sandbox_service.py`)
+- `SandboxService` owns `get_or_create_workspace`,
+  `get_or_create_runtime`, `exec`, `hibernate_runtime`,
+  `destroy_runtime`, `destroy_workspace`. Persists workspaces and runtimes
+  via the store, takes per-workspace locks for mutating commands.
+
+**API** (`app/src/sandbox/sandbox/api/client.py`)
+- `SandboxClient` is the public façade. Helpers: `read_file`,
+  `write_file`, `list_dir`, `search`, `status`, `diff`, `commit`, `push`.
+  Local-fs fast paths when `handle.local_path is not None`; exec-based
+  fallbacks otherwise.
+
+**Bootstrap** (`app/src/sandbox/sandbox/bootstrap/`)
+- `settings.py` reads `SANDBOX_WORKSPACE_PROVIDER` /
+  `SANDBOX_RUNTIME_PROVIDER` / `SANDBOX_REPOS_BASE_PATH` /
+  `SANDBOX_METADATA_PATH`.
+- `container.py` — `build_sandbox_container` selects providers and store.
+
+**Adapters**
+- `adapters/outbound/local/git_workspace.py` — `LocalGitWorkspaceProvider`.
+  Bare-repo + worktree creation under `.repos/`, with
+  `<user>_<scope>_<branch>` worktree paths to isolate per-conversation
+  edits. Currently **not used in production** — the bridge below overrides
+  the wiring.
+- `adapters/outbound/local/subprocess_runtime.py` —
+  `LocalSubprocessRuntimeProvider` for local exec.
+- `adapters/outbound/daytona/provider.py` — `DaytonaWorkspaceProvider` and
+  `DaytonaRuntimeProvider`. One Daytona sandbox per `(user, project)`,
+  branch-named worktrees inside it.
+- `adapters/outbound/docker/runtime.py` — `DockerRuntimeProvider`.
+- `adapters/outbound/file/json_store.py` — `JsonSandboxStore` (durable
+  metadata; default for local mode).
+- `adapters/outbound/memory/store.py`, `memory/locks.py` — in-memory
+  fallbacks.
+
+**Bridge to legacy `RepoManager`**
+- `app/modules/sandbox_repos/provider.py` — `RepoManagerWorkspaceProvider`.
+  In production wiring (`app/modules/intelligence/tools/sandbox/client.py`)
+  this is swapped in for `LocalGitWorkspaceProvider` so that parsing,
+  agent tooling, and eviction all flow through the legacy
+  `app.modules.repo_manager.RepoManager`. Keeps an in-memory cache only —
+  no rows in `JsonSandboxStore`.
+
+**Agent tool surface** (`app/modules/intelligence/tools/sandbox/`)
+- `client.py` — process-wide `SandboxClient` accessor (`get_sandbox_client`)
+  and `resolve_workspace(...)` helper.
+- `context.py` — contextvars (`user_id`, `conversation_id`, `branch`,
+  `auth_token`) the agent harness sets at run start.
+- `tools.py` exports `create_sandbox_tools()` returning four tools:
+  `sandbox_text_editor`, `sandbox_shell`, `sandbox_search`, `sandbox_git`.
+- `tool_functions.py` — each tool calls `_resolve(project_id, mode=...)`
+  to get a `WorkspaceHandle` per call.
+
+---
+
+## Known Gaps (post-revamp)
+
+Findings from the architectural audit; tracked by the **Implementation
+Roadmap** below.
+
+1. **Two parallel local providers, one is dead code.**
+   `LocalGitWorkspaceProvider` is the canonical hexagonal local adapter,
+   but the production wiring substitutes `RepoManagerWorkspaceProvider`
+   so `LocalGitWorkspaceProvider` is never called outside tests. The two
+   have drifted (different worktree path layouts, different metadata
+   schemas).
+
+2. **Dual unsynchronized persistence.**
+   `RepoManager` writes
+   `.repos/.meta/<owner>/<repo>/branch__commit.json`; `JsonSandboxStore`
+   writes `Workspace` records. They never reconcile. Eviction in one
+   leaves stale rows in the other.
+
+3. **Eviction lives outside the sandbox application layer.**
+   Volume tracking and tiered eviction (worktrees first at 80%, full
+   repos at 90%) are inside `RepoManager`. The sandbox module has no
+   `EvictionPolicy` port and no eviction logic of its own.
+
+4. **Parsing bypasses the sandbox abstraction.**
+   `parsing_service.py:298` calls `parse_helper.clone_or_copy_repository`
+   which goes directly to `RepoManager`. There is a feature-flagged
+   `SandboxClient` path (`SANDBOX_PARSING_ENABLED`), but it is not the
+   default and does not persist a `Workspace` past the call. After
+   `update_project_status(..., READY)` at `parsing_service.py:575` no
+   workspace record exists in the sandbox store.
+
+5. **No first-class `RepoCache` entity.** `RepoCache` is declared in
+   `models.py:115` but `Workspace.repo_cache_id` is always `None`. There
+   is no `RepoCacheProvider` port; the bare-repo concept is implicit
+   inside each adapter.
+
+6. **`WorkspaceMode` overloads four concerns:** read-only vs writable,
+   branch creation, sharing, and keying. Branch-creation logic is
+   duplicated across `LocalGitWorkspaceProvider._create_workspace_sync`
+   and `daytona/provider.py:_ensure_worktree`. Capabilities should be
+   explicit on the workspace, derived from mode at construction.
+
+7. **Daytona adapter leaks SDK types.** `Any`-typed sandbox handles
+   (`_client_factory`, `_sandboxes`) flow through the application layer.
+   `DaytonaRuntimeProvider.exec` reaches into `sandbox.process.exec`
+   directly. Worktree paths use only `branch_name` (vs. local's
+   `<user>_<scope>_<branch>`), which weakens isolation guarantees.
+
+8. **No git-platform port.** PR creation is not represented in the
+   sandbox layer. `commit` and `push` exist on `SandboxClient`, but
+   creating a PR has to bypass the sandbox abstraction.
+
+9. **Tool surface uses contextvars instead of explicit dependencies.**
+   `tool_functions._resolve` reads `user_id` from a contextvar and looks
+   up `repo_name` via DB. The agent harness sets the contextvar at
+   `pydantic_agent.py:613-621`. A toolset factory should take
+   `(client, run_context)` explicitly.
+
+10. **No eviction port / no per-conversation cleanup hook.**
+    `SandboxStore` lacks `list_workspaces_by_repo`,
+    `find_workspaces_for_eviction`, etc. EDIT-mode worktrees are only
+    reaped by `RepoManager`'s age-based eviction; no
+    `release_session(conversation_id)` exists.
 
 ---
 
@@ -688,49 +822,171 @@ class RepoAuthFailed(WorkspaceError): ...
 
 ---
 
-## First Implementation Plan
+## Implementation Roadmap
 
-### Phase 1: Model the service without changing behavior
+The original Phase 1-5 plan is **complete** — the sandbox module, the
+runtime port, the Daytona adapter, the agent tool surface, and the
+Postgres-ready store are all shipped. The post-revamp phases (P1-P8)
+each address a numbered gap from the audit. Status as of this
+session:
 
-- Add `app/src/sandbox/` with service, models, and runtime port.
-- Add a local `WorkspaceManager` that wraps the existing `RepoManager`.
-- Store workspace/runtime metadata in Postgres, but allow local path lookup from
-  existing repo manager metadata during migration.
-- Keep `bash_command` on the current read-only path.
+### P1 — Unify the local provider — DONE (cutover is opt-in)
 
-### Phase 2: Route edit workspaces through SandboxService
+Closes gaps 1, 2, 3.
 
-- Make `checkout_worktree_branch` call `SandboxService.get_or_create_workspace`.
-- Keep the branch naming convention: `agent/edits-{conversation_id}`.
-- Ensure `apply_changes`, `git_commit`, and PR creation resolve the same
-  workspace record.
-- Add per-workspace locks around branch creation and mutating file/git
-  operations.
+* `EvictionPolicy` port at `domain/ports/eviction.py` with
+  `EvictionResult` value type; `NoOpEvictionPolicy` default in
+  `adapters/outbound/memory/eviction.py`.
+* `LocalGitWorkspaceProvider` accepts `eviction=` kwarg, calls
+  `evict_if_needed` on cache miss.
+* Production cutover is **gated** by env var:
+  ``SANDBOX_USE_CANONICAL_LOCAL=true`` switches
+  `intelligence/tools/sandbox/client.py` from the bridge to
+  `LocalGitWorkspaceProvider`. Default false to preserve operator
+  control over the migration window. `RepoManagerWorkspaceProvider` is
+  marked deprecated; it stays in tree until all environments have
+  flipped the flag.
+* **Operator note:** existing on-disk worktrees from the bridge
+  (layout: `<branch>` for shared, `<user>_<unique>_<branch>` for
+  conversation-scoped) are NOT migrated. The canonical adapter creates
+  fresh worktrees in the `<user>_<scope>_<branch>` layout. Bridge
+  worktrees with uncommitted state should be committed/pushed before
+  flipping the flag, or accept that they become inaccessible to
+  canonical-mode tools.
+* Volume-aware policy (`VolumeBasedEvictionPolicy`) replacing the
+  `NoOp` default is a P1 follow-up; today eviction in the legacy path
+  flows through `RepoManager`'s thresholds and the canonical path runs
+  unbounded until the policy is wired.
 
-### Phase 3: Add DockerProvider for write-capable exec
+### P2 — Promote `RepoCache` to first-class — DONE
 
-- Mount the workspace writable at `/work`.
-- Disable silent host fallback.
-- Add resource hints and timeout handling.
-- Stream command output for long-running commands.
-- Validate persistence across runtime stop/destroy/recreate.
-- Keep a local Docker Compose smoke test that mounts the repo at the same
-  absolute host path and forwards `/var/run/docker.sock`, so nested Docker bind
-  mounts point at host-visible worktree paths.
+Closes gap 5.
 
-### Phase 4: Move command tools onto SandboxService
+* `RepoCacheRequest` and `RepoCache` (with stable `key`) in
+  `domain/models.py`.
+* `RepoCacheProvider` port at `domain/ports/repos.py`.
+* `RepoCacheStore` mixin on `SandboxStore`; both `InMemorySandboxStore`
+  and `JsonSandboxStore` implement it (rows survive restart).
+* `LocalRepoCacheProvider` at
+  `adapters/outbound/local/repo_cache.py` owns bare-repo creation;
+  `LocalGitWorkspaceProvider` depends on the cache port and sets
+  `Workspace.repo_cache_id` on every workspace it builds.
+* `SandboxService.ensure_repo_cache(request)` keys by repo identity,
+  takes a per-key lock, persists the row.
 
-- Split tools by intent:
-  - read-only command tool can keep stricter whitelist.
-  - write-capable command tool is available only in edit/task workspaces.
-- Run tests and package commands through DockerProvider, not gVisor.
-- Keep output limits and streaming to avoid API process OOMs.
+### P3 — Capabilities split and `acquire_session` API — DONE
 
-### Phase 5: Add managed backend
+Closes gaps 6 and 10.
 
-- Add Daytona after Docker proves the port.
-- Map Daytona native workspace/snapshot/preview features through capabilities.
-- Only add E2B if cold start or isolation requirements justify it.
+* `Capabilities(writable, isolated, persistent)` value object;
+  `Capabilities.from_mode` is the single source of truth.
+* `Workspace.capabilities` populated by every adapter (local, bridge,
+  Daytona). Round-trips through `JsonSandboxStore`.
+* `SandboxService.acquire_session(request)` orchestrates ensure-cache
+  + workspace creation atomically.
+* `SandboxService.release_session(workspace_id, *, destroy_runtime)`
+  hibernates the runtime by default; workspace survives.
+* `SandboxClient.acquire_session` / `release_session` symmetric public
+  API.
+
+### P4 — Daytona hardening — partial
+
+Addresses gap 7 (correctness portion).
+
+**Done:**
+* `_validate_ref` in `daytona/provider.py` rejects newlines / `..` in
+  base_ref and branch_name before they hit shell-style exec calls
+  (parity with the local adapter).
+* Worktree path now `<user>_<scope>_<branch>` so two conversations on
+  the same branch get distinct worktrees (no silent collision).
+
+**Deferred (code-quality follow-up):** The Daytona SDK still types as
+`Any` on `_client_factory`/`_sandboxes`; the full `DaytonaApi` Protocol
+abstraction is a 500+ line refactor that doesn't fix any correctness
+issue. Track as a P4.5 cleanup.
+
+### P5 — Provision-on-parse — DONE
+
+Closes gap 4.
+
+* `SandboxClient.ensure_repo_cache(...)` thin wrapper over the service.
+* `provision_repo_cache` helper at
+  `app/modules/intelligence/tools/sandbox/client.py`.
+* `parsing_service.py` calls `_provision_repo_cache_safe` from BOTH
+  READY transitions (eager-return short-circuit and the normal
+  post-`analyze_directory` exit). Failures are logged and swallowed —
+  cache provisioning is an optimization, not a parsing prerequisite.
+
+### P6 — Tool surface refactor — DONE
+
+Closes gap 9.
+
+* `create_sandbox_tools(client=..., handle=...)` — explicit-handle
+  factory mode. Tools dispatch through pre-bound `(client, handle)`
+  closures with input schemas that omit `project_id`. Capability
+  gating drops write tools when the handle is read-only
+  (`enforce_capabilities=True` default).
+* The legacy zero-arg `create_sandbox_tools()` form keeps working —
+  required for back-compat with the existing harness wiring at
+  `multi_agent/agent_factory.py` and `pydantic_agent.py`.
+* Helper functions extracted in `tool_functions.py`:
+  `_exec_text_editor`, `_exec_shell`, `_exec_search`, `_exec_git`,
+  `_exec_pull_request`. Both factory modes funnel through the same
+  helpers.
+* `WorkspaceHandle.capabilities` carries the gating signal.
+* Contextvar machinery in `tools/sandbox/context.py` is **kept** for
+  the legacy form — full removal happens once harness callers migrate
+  to the explicit form (P6.5 cleanup).
+
+### P7 — `GitPlatformProvider` and PR tool — DONE
+
+Closes gap 8.
+
+* `GitPlatformProvider` port at `domain/ports/git_platform.py`;
+  `PullRequestRequest` / `PullRequest` value objects in
+  `domain/models.py`; `PullRequestFailed` /
+  `GitPlatformNotConfigured` errors.
+* `GitHubGitPlatformProvider` bridge adapter at
+  `app/modules/sandbox_repos/git_platform.py` wraps the existing
+  `code_provider.github.GitHubProvider` so auth chain stays put.
+* `SandboxService.create_pull_request(request)` enforces "platform
+  configured" precondition; `SandboxClient.create_pull_request(handle,
+  ...)` enforces "writable workspace" precondition.
+* `sandbox_pr` agent tool — included in the explicit toolset only when
+  the harness passes ``pr_repo_name=...``; capability-gated on
+  writable handles. Push the branch via `sandbox_git push` first; the
+  PR tool is the platform-side step only.
+* **Production wiring of the platform provider is a follow-up.** The
+  per-call user resolution (auth tokens scoped to the calling user)
+  doesn't fit the process-wide `SandboxClient` cleanly; needs a small
+  request-scoped factory before it can run in prod.
+
+### P8 — Postgres store and multi-worker locks — DEFERRED
+
+Closes the implicit single-node assumption in `JsonSandboxStore` and
+`InMemoryLockManager`. The schema sketch is already documented above
+(`sandbox_repo_caches`, `sandbox_workspaces`, `sandbox_runtimes`).
+Implementation requires a Postgres connection and migration tooling
+that aren't in this session's scope. Adapter signatures will mirror
+the existing in-memory and JSON ones, so the swap is a bootstrap-only
+change.
+
+**Track as a follow-up.** The current `JsonSandboxStore` is suitable
+for single-node deployments; multi-worker / multi-host setups should
+not flip to canonical-local until the Postgres adapter ships, since
+the JSON store's flush model assumes a single writer.
+
+### Outstanding follow-ups (small)
+
+* P1 follow-up — `VolumeBasedEvictionPolicy` reading from
+  `SandboxStore` so canonical-local has bounded disk use.
+* P4 follow-up — `DaytonaApi` Protocol port to remove `Any` typing.
+* P6 follow-up — migrate harness callers
+  (`multi_agent/agent_factory.py`, `pydantic_agent.py`) to the
+  explicit-handle form, then delete the contextvar plumbing.
+* P7 follow-up — request-scoped `GitPlatformProvider` factory so the
+  per-user auth chain works in production.
+* P8 — Postgres adapters once the DB story lands.
 
 ---
 

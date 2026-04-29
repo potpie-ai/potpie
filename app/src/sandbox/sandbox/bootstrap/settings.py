@@ -31,6 +31,12 @@ class SandboxSettings:
     daytona_snapshot_dockerfile: str | None = None
     daytona_snapshot_build_timeout_s: float = 20 * 60
     daytona_snapshot_heartbeat_s: float = 15
+    # P1: feature-flag for the production cutover from
+    # RepoManagerWorkspaceProvider (the legacy bridge) to the canonical
+    # LocalGitWorkspaceProvider. Default False so the cutover is opt-in;
+    # see docs/sandbox-core-setup.md "P1 — Production cutover" for the
+    # migration story.
+    use_canonical_local: bool = False
 
 
 def settings_from_env() -> SandboxSettings:
@@ -59,6 +65,7 @@ def settings_from_env() -> SandboxSettings:
         daytona_snapshot_heartbeat_s=_float_env(
             "DAYTONA_SNAPSHOT_HEARTBEAT_S", 15
         ),
+        use_canonical_local=_bool_env("SANDBOX_USE_CANONICAL_LOCAL", False),
     )
 
 

@@ -9,6 +9,13 @@ is enough. We delegate clone + worktree operations to RepoManager so:
   policy — agent worktrees age out via the same 30-day stale sweep)
 * cleanup happens through RepoManager's ``cleanup_unique_worktree`` so
   metadata stays consistent
+
+DEPRECATION (P1): This bridge is the legacy local wiring. New deployments
+should set ``SANDBOX_USE_CANONICAL_LOCAL=true`` so the canonical
+``LocalGitWorkspaceProvider`` is used instead. The bridge will be
+removed once all environments have migrated; the canonical adapter
+already exposes feature parity (eviction policy, ANALYSIS/EDIT
+worktrees, repo-cache promotion).
 """
 
 from __future__ import annotations
@@ -24,6 +31,7 @@ from sandbox.domain.errors import (
     RepoCacheUnavailable,
 )
 from sandbox.domain.models import (
+    Capabilities,
     Mount,
     Workspace,
     WorkspaceLocation,
@@ -142,6 +150,7 @@ class RepoManagerWorkspaceProvider:
             backend_kind=self.kind,
             state=WorkspaceState.READY,
             metadata={"branch": branch},
+            capabilities=Capabilities.from_mode(request.mode),
         )
 
     def _analysis_worktree(

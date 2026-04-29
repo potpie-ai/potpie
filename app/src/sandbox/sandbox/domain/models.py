@@ -23,6 +23,38 @@ class WorkspaceMode(str, Enum):
     TASK = "task"
 
 
+@dataclass(frozen=True, slots=True)
+class Capabilities:
+    """Explicit per-workspace capability flags.
+
+    Replaces the implicit branching on ``WorkspaceMode`` that used to be
+    duplicated across adapters. Construct via ``Capabilities.from_mode``
+    so the mapping stays in one place; adapters and the application
+    service read these flags instead of re-deriving from the enum.
+
+    * ``writable`` — workspace permits mutating operations (file writes,
+      ``git commit`` etc.). Read-only callers (parsing, analysis tools)
+      should hold a workspace with ``writable=False`` so the runtime
+      provider can refuse write commands at the boundary.
+    * ``isolated`` — workspace lives on its own branch and can't stomp
+      another caller working on the same base branch.
+    * ``persistent`` — workspace state survives runtime destruction;
+      false would mean ephemeral (e.g. a future "scratch" mode).
+    """
+
+    writable: bool = False
+    isolated: bool = False
+    persistent: bool = True
+
+    @classmethod
+    def from_mode(cls, mode: "WorkspaceMode") -> "Capabilities":
+        if mode is WorkspaceMode.ANALYSIS:
+            return cls(writable=False, isolated=False, persistent=True)
+        # EDIT and TASK both fork their own branch; the runtime is
+        # write-capable. Any future mode should be added here explicitly.
+        return cls(writable=True, isolated=True, persistent=True)
+
+
 class WorkspaceState(str, Enum):
     CREATING = "creating"
     READY = "ready"
@@ -112,9 +144,37 @@ class WorkspaceLocation:
     backend_workspace_id: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class RepoCacheRequest:
+    """Request to ensure a durable bare repo for ``repo`` is up to date.
+
+    A `RepoCache` is shared across users for the same `(provider_host,
+    repo_name)`; auth and per-user access control happen at the
+    `WorkspaceRequest` level. `base_ref` tells the provider which ref to
+    fetch into the existing bare repo so worktrees can be created off it
+    later.
+    """
+
+    repo: RepoIdentity
+    base_ref: str
+    user_id: str | None = None
+    auth_token: str | None = field(default=None, repr=False, compare=False)
+
+    def key(self) -> str:
+        return "|".join([self.repo.provider_host, self.repo.repo_name])
+
+
 @dataclass(slots=True)
 class RepoCache:
+    """Durable bare git mirror shared across workspaces.
+
+    `key` is the canonical identifier the store uses for lookup
+    (`<host>|<repo_name>`); see `RepoCacheRequest.key()`. Multiple
+    workspaces can fork worktrees off the same cache without re-cloning.
+    """
+
     id: str
+    key: str
     repo: RepoIdentity
     location: WorkspaceLocation
     backend_kind: str
@@ -124,6 +184,7 @@ class RepoCache:
     size_bytes: int | None = None
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
+    metadata: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -142,6 +203,7 @@ class Workspace:
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
     metadata: dict[str, str] = field(default_factory=dict)
+    capabilities: Capabilities = field(default_factory=Capabilities)
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,4 +290,34 @@ class RuntimeCapabilities:
     snapshot: bool = False
     preview_url: bool = False
     interactive_session: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class PullRequestRequest:
+    """Request to open a pull request from the agent's worktree branch."""
+
+    repo: RepoIdentity
+    title: str
+    body: str
+    head_branch: str
+    base_branch: str
+    reviewers: tuple[str, ...] = ()
+    labels: tuple[str, ...] = ()
+    auth_token: str | None = field(default=None, repr=False, compare=False)
+
+
+@dataclass(frozen=True, slots=True)
+class PullRequest:
+    """Result of a successful PR creation.
+
+    `id` is the platform-side PR id (numeric on GitHub/GitLab); `url`
+    is the human-readable URL the agent can surface to the user.
+    """
+
+    id: int | str
+    url: str
+    title: str
+    head_branch: str
+    base_branch: str
+    backend_kind: str
 

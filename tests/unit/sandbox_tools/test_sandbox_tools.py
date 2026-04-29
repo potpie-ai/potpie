@@ -511,12 +511,20 @@ async def test_resolve_workspace_pulls_branch_from_project(
 
     Guards against a regression where the LLM could pass a different
     project_id / conversation_id and bypass the server-side lookup.
+
+    For EDIT mode (the default tool path) the workspace branch is derived
+    from the conversation id; the project's base branch flows through as
+    ``base_ref``. The canonical local provider needs this distinction
+    because git refuses two worktrees on the same shared base branch.
     """
     await fn.sandbox_text_editor_tool(
         project_id="p1", command="view", path="README.md"
     )
     get_ws = [c for c in fake_client.calls if c.method == "get_workspace"][0]
-    assert get_ws.kwargs["branch"] == "main"
+    # EDIT mode: workspace lives on a conversation-scoped branch.
+    assert get_ws.kwargs["branch"] == "agent/edits-conv1"
+    # Project's stored branch is preserved as the parent ref.
+    assert get_ws.kwargs["base_ref"] == "main"
     assert get_ws.kwargs["conversation_id"] == "conv1"
     assert get_ws.kwargs["user_id"] == "u1"
     assert get_ws.kwargs["project_id"] == "p1"
@@ -534,3 +542,56 @@ async def test_missing_user_id_raises(fake_client: FakeSandboxClient) -> None:
     )
     assert out["success"] is False
     assert "user_id" in out["error"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_workspace_analysis_mode_uses_base_branch(
+    fake_client: FakeSandboxClient,
+) -> None:
+    """ANALYSIS mode reads from the project's base branch directly.
+
+    The conversation-scoped branch derivation only fires for EDIT/TASK
+    modes — analysis runs against the parsed snapshot's branch.
+    """
+    from app.modules.intelligence.tools.sandbox.client import resolve_workspace
+    from sandbox import WorkspaceMode
+
+    await resolve_workspace(
+        user_id="u1",
+        project_id="p1",
+        repo_name="owner/repo",
+        branch="main",
+        mode=WorkspaceMode.ANALYSIS,
+    )
+    get_ws = [c for c in fake_client.calls if c.method == "get_workspace"][-1]
+    assert get_ws.kwargs["branch"] == "main"
+    assert get_ws.kwargs["base_ref"] == "main"
+    assert get_ws.kwargs["mode"] is WorkspaceMode.ANALYSIS
+
+
+@pytest.mark.asyncio
+async def test_resolve_workspace_falls_back_to_branch_without_conversation(
+    fake_client: FakeSandboxClient,
+) -> None:
+    """If no conversation_id is in the contextvar, EDIT mode passes ``branch``
+    through verbatim.
+
+    The agent harness should always seed the contextvar; this fallback
+    exists for ad-hoc invocations (scripts, tests). It documents the
+    behavior so callers don't get a silent surprise.
+    """
+    from app.modules.intelligence.tools.sandbox.client import resolve_workspace
+    from app.modules.intelligence.tools.sandbox.context import _conversation_id_ctx
+    from sandbox import WorkspaceMode
+
+    _conversation_id_ctx.set(None)
+    await resolve_workspace(
+        user_id="u1",
+        project_id="p1",
+        repo_name="owner/repo",
+        branch="feature/x",
+        mode=WorkspaceMode.EDIT,
+    )
+    get_ws = [c for c in fake_client.calls if c.method == "get_workspace"][-1]
+    assert get_ws.kwargs["branch"] == "feature/x"
+    assert get_ws.kwargs["conversation_id"] is None

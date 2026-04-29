@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from sandbox.domain.models import Capabilities
+
 
 @dataclass(frozen=True, slots=True)
 class WorkspaceHandle:
@@ -22,6 +24,10 @@ class WorkspaceHandle:
     host filesystem (the local-fs adapter). Daytona / docker backends leave it
     as `None` — callers that need to walk the tree directly should branch on
     this field rather than assume a host path exists.
+
+    ``capabilities`` exposes the workspace's intent (writable, isolated,
+    persistent) so callers — and especially toolset factories — can refuse
+    write operations on a read-only handle without consulting the service.
     """
 
     workspace_id: str
@@ -29,6 +35,7 @@ class WorkspaceHandle:
     backend_kind: str
     local_path: str | None = None
     remote_path: str | None = None
+    capabilities: Capabilities = field(default_factory=Capabilities)
 
 
 @dataclass(frozen=True, slots=True)

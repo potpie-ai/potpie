@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from sandbox import SandboxClient, WorkspaceHandle, WorkspaceMode
+from sandbox import RepoCache, SandboxClient, WorkspaceHandle, WorkspaceMode
 from sandbox.bootstrap.container import build_sandbox_container
 from sandbox.bootstrap.settings import settings_from_env
 
@@ -29,15 +29,31 @@ _client: SandboxClient | None = None
 def get_sandbox_client() -> SandboxClient:
     """Return the lazily-initialised process-wide client.
 
-    For local mode we swap in :class:`RepoManagerWorkspaceProvider` so clones
-    and worktrees flow through ``app.modules.repo_manager.RepoManager`` —
-    parsing and agent tooling share one cache and one eviction policy. Daytona
-    keeps the stock provider since the bare repo lives inside the Daytona VM.
+    Local mode has two wirings:
+
+    * **Legacy (default)** — swap in :class:`RepoManagerWorkspaceProvider`
+      so clones and worktrees flow through ``app.modules.repo_manager``.
+      Parsing's ``clone_or_copy_repository`` already uses the same
+      RepoManager, so both paths share one on-disk cache and one
+      eviction policy. Worktree layout is RepoManager's
+      (``<branch>`` for shared, ``<user>_<unique>_<branch>`` for
+      conversation-scoped).
+
+    * **Canonical** (``SANDBOX_USE_CANONICAL_LOCAL=true``, P1) —
+      ``LocalGitWorkspaceProvider`` becomes the workspace provider and
+      ``LocalRepoCacheProvider`` is the cache port. Worktree layout is
+      ``<user>_<scope>_<branch>``. Existing legacy worktrees on disk
+      are NOT migrated — they remain accessible via RepoManager but
+      become orphaned from the canonical adapter's view. New
+      conversations get fresh worktrees in the canonical layout.
+
+    Daytona uses the stock provider in both cases — the bare repo
+    lives inside the managed sandbox.
     """
     global _client
     if _client is None:
         settings = settings_from_env()
-        if settings.provider == "local":
+        if settings.provider == "local" and not settings.use_canonical_local:
             from app.modules.repo_manager import RepoManager
             from app.modules.sandbox_repos import RepoManagerWorkspaceProvider
 
@@ -47,6 +63,7 @@ def get_sandbox_client() -> SandboxClient:
                 settings, workspace_provider=workspace_provider
             )
         else:
+            # Canonical local OR Daytona — let bootstrap pick everything.
             container = build_sandbox_container(settings)
         _client = SandboxClient.from_container(container)
     return _client
@@ -77,6 +94,37 @@ def _resolve_auth_token(project_user_id: str | None) -> str | None:
     return os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
 
 
+async def provision_repo_cache(
+    *,
+    user_id: str,
+    repo_name: str,
+    base_ref: str,
+    auth_token: str | None = None,
+    repo_url: str | None = None,
+) -> RepoCache:
+    """Materialise the bare repo for this project and persist a `RepoCache`.
+
+    Called from parsing's READY hook so subsequent agent runs hit a warm
+    cache instead of paying for a re-clone on first workspace request.
+    Best-effort token resolution: uses the explicit token if provided,
+    otherwise falls back to the local adapter's resolver chain (env
+    vars; production wires in the GitHub-App / OAuth resolver).
+
+    Idempotent on `(provider_host, repo_name)` — repeat calls just
+    fetch the requested ref into the existing bare. Safe to call from
+    multiple workers concurrently; the service's per-key lock serialises.
+    """
+    client = get_sandbox_client()
+    token = auth_token or _resolve_auth_token(user_id)
+    return await client.ensure_repo_cache(
+        user_id=user_id,
+        repo=repo_name,
+        base_ref=base_ref,
+        repo_url=repo_url,
+        auth_token=token,
+    )
+
+
 async def resolve_workspace(
     *,
     user_id: str,
@@ -94,20 +142,41 @@ async def resolve_workspace(
     inside the underlying client; repeated tool calls in the same run hit the
     same workspace. The conversation id comes from the contextvar so the LLM
     can't fabricate one.
+
+    For EDIT/TASK modes we derive a per-conversation branch name from the
+    contextvar (``agent/edits-<convid>`` / ``agent/task-<taskid>``). The
+    ``branch`` argument is interpreted as the BASE branch the workspace
+    should fork off — this matches what tool callers actually pass (the
+    project's stored base branch). Without this derivation, the canonical
+    local adapter would refuse to create a second worktree on the shared
+    base branch (git rejects multiple worktrees on the same ref).
     """
     client = get_sandbox_client()
     auth_token = _resolve_auth_token(user_id)
+    conversation_id = get_conversation_id()
+    base = base_ref or branch
+    workspace_branch: str
+    if mode is WorkspaceMode.ANALYSIS:
+        # Analysis mode reads from the base branch directly.
+        workspace_branch = base
+    elif conversation_id:
+        workspace_branch = f"agent/edits-{conversation_id}"
+    else:
+        # No conversation context — fall back to the user-provided branch.
+        # The agent harness should always set the contextvar; this path
+        # exists only to keep the API forgiving for ad-hoc invocations.
+        workspace_branch = branch
     return await client.get_workspace(
         user_id=user_id,
         project_id=project_id,
         repo=repo_name,
         repo_url=repo_url,
-        branch=branch,
-        base_ref=base_ref or branch,
+        branch=workspace_branch,
+        base_ref=base,
         create_branch=create_branch,
         auth_token=auth_token,
         mode=mode,
-        conversation_id=get_conversation_id(),
+        conversation_id=conversation_id,
     )
 
 
