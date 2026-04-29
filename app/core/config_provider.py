@@ -248,5 +248,9 @@ class ConfigProvider:
         """Get code provider password (for Basic Auth)."""
         return os.getenv("CODE_PROVIDER_PASSWORD")
 
+    def get_workflows_media_internal_secret(self) -> str:
+        """Shared secret for workflows->potpie internal media fetch."""
+        return os.getenv("WORKFLOWS_MEDIA_INTERNAL_SECRET", "").strip()
+
 
 config_provider = ConfigProvider()

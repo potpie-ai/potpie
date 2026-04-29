@@ -254,6 +254,32 @@ class MediaController:
             logger.error(f"Error downloading attachment: {str(e)}")
             raise HTTPException(status_code=500, detail="Failed to download attachment")
 
+    async def download_attachment_internal(self, attachment_id: str) -> StreamingResponse:
+        """Download attachment for internal services without conversation access checks."""
+        try:
+            attachment = await self.media_service.get_attachment(attachment_id)
+            if not attachment:
+                raise HTTPException(status_code=404, detail="Attachment not found")
+
+            file_data = await self.media_service.get_attachment_data(attachment_id)
+            safe_filename = _safe_content_disposition_filename(attachment.file_name)
+            headers = {
+                "Content-Disposition": f'inline; filename="{safe_filename}"',
+                "Content-Type": attachment.mime_type,
+                "Content-Length": str(len(file_data)),
+            }
+
+            return StreamingResponse(
+                io.BytesIO(file_data), media_type=attachment.mime_type, headers=headers
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error downloading internal attachment: {str(e)}")
+            raise HTTPException(
+                status_code=500, detail="Failed to download internal attachment"
+            )
+
     async def get_attachment_info(self, attachment_id: str) -> AttachmentInfo:
         """Get attachment information"""
         try:
