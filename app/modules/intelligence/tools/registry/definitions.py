@@ -4,18 +4,12 @@ from typing import Dict, FrozenSet, List
 
 from app.modules.intelligence.tools.registry.schema import AllowListDefinition
 
-# Tools that ToolService may omit when optional deps/config are missing (e.g. API keys).
-# Registry keeps them for allow-lists; do not warn "registry has names not in ToolService".
-# Also includes tools gated on REPO_MANAGER_ENABLED (bash_command, apply_changes,
-# git_commit, git_push) which are absent from ToolService when the flag is off.
+# Tools that ToolService may omit when optional deps/config are missing
+# (e.g. API keys). The registry keeps them for allow-lists; do not warn
+# "registry has names not in ToolService" for these.
 OPTIONAL_TOOL_NAMES: FrozenSet[str] = frozenset(
     {
         "webpage_extractor",
-        "bash_command",
-        "apply_changes",
-        "git_commit",
-        "git_push",
-        "checkout_worktree_branch",
     }
 )
 
@@ -59,59 +53,9 @@ TOOL_DEFINITIONS: Dict[str, dict] = {
         "category": "terminal",
         "local_mode_only": True,
     },
-    "bash_command": {"tier": "low", "category": "terminal"},
-    # Code changes
-    "add_file_to_changes": {
-        "tier": "medium",
-        "category": "code_changes",
-        "short_description": "Add a file to the tracked code changes.",
-    },
-    "update_file_in_changes": {
-        "tier": "medium",
-        "category": "code_changes",
-        "destructive": True,
-    },
-    "update_file_lines": {"tier": "medium", "category": "code_changes"},
-    "replace_in_file": {
-        "tier": "medium",
-        "category": "code_changes",
-        "destructive": True,
-    },
-    "insert_lines": {"tier": "medium", "category": "code_changes", "destructive": True},
-    "delete_lines": {
-        "tier": "medium",
-        "category": "code_changes",
-        "destructive": True,
-    },
-    "delete_file_in_changes": {
-        "tier": "medium",
-        "category": "code_changes",
-        "destructive": True,
-    },
-    "get_file_from_changes": {"tier": "medium", "category": "code_changes"},
-    "list_files_in_changes": {"tier": "medium", "category": "code_changes"},
-    "clear_file_from_changes": {
-        "tier": "medium",
-        "category": "code_changes",
-        "destructive": True,
-    },
-    "clear_all_changes": {
-        "tier": "medium",
-        "category": "code_changes",
-        "destructive": True,
-    },
-    "get_changes_summary": {"tier": "medium", "category": "code_changes"},
-    "get_changes_for_pr": {"tier": "medium", "category": "code_changes"},
-    "export_changes": {"tier": "medium", "category": "code_changes"},
-    "show_updated_file": {"tier": "medium", "category": "code_changes"},
-    "get_file_diff": {"tier": "medium", "category": "code_changes"},
-    "show_diff": {"tier": "medium", "category": "code_changes"},
-    "revert_file": {
-        "tier": "medium",
-        "category": "code_changes",
-        "destructive": True,
-    },
-    "get_session_metadata": {"tier": "medium", "category": "code_changes"},
+    # --- Legacy CodeChangesManager staging family + repo_manager-gated git
+    # tools removed during the sandbox migration. Agents now edit the
+    # worktree via sandbox_text_editor and commit via sandbox_git. ---
     # Todo (pydantic-ai-todo)
     "read_todos": {"tier": "high", "category": "todo"},
     "write_todos": {"tier": "high", "category": "todo"},
@@ -233,44 +177,36 @@ TOOL_DEFINITIONS: Dict[str, dict] = {
         "category": "integration_github",
         "aliases": ["github_update_branch"],
     },
-    # Git workflow tools (apply changes from Redis to worktree)
-    "checkout_worktree_branch": {
+    # Sandbox group — Anthropic-style consolidated tools over app/src/sandbox.
+    "sandbox_text_editor": {
         "tier": "medium",
-        "category": "code_changes",
-        "short_description": "Checkout or create an edits worktree branch for the conversation.",
+        "category": "sandbox",
+        "short_description": "View / create / str_replace / insert on worktree files.",
+    },
+    "sandbox_shell": {
+        "tier": "low",
+        "category": "sandbox",
+        "short_description": "Run a single shell command inside the sandbox.",
         "destructive": True,
     },
-    "apply_changes": {
+    "sandbox_search": {
         "tier": "medium",
-        "category": "code_changes",
-        "short_description": "Apply changes from CodeChangesManager to the worktree filesystem.",
-        "destructive": True,
+        "category": "sandbox",
+        "short_description": "Ripgrep across the worktree.",
+        "read_only": True,
+        "idempotent": True,
     },
-    "git_commit": {
+    "sandbox_git": {
         "tier": "medium",
-        "category": "code_changes",
-        "short_description": "Stage and commit changes in the repository worktree.",
-        "destructive": True,
-    },
-    "git_push": {
-        "tier": "medium",
-        "category": "code_changes",
-        "short_description": "Push the current branch to the remote repository.",
-        "destructive": True,
-    },
-    # Composite PR workflow tool (combines apply_changes + git_commit + git_push + create_pr)
-    "create_pr_workflow": {
-        "tier": "medium",
-        "category": "code_changes",
-        "short_description": "Composite tool: apply changes, commit, push, and create PR in one operation.",
-        "destructive": True,
-        "requires_confirmation": True,
+        "category": "sandbox",
+        "short_description": "Git status / diff / log / commit / push on the worktree.",
     },
 }
 
 # --- Allow-lists ---
 
 CODE_GEN_BASE_TOOLS: List[str] = [
+    # Knowledge / discovery
     "webpage_extractor",
     "web_search_tool",
     "search_text",
@@ -283,9 +219,11 @@ CODE_GEN_BASE_TOOLS: List[str] = [
     "search_bash",
     "semantic_search",
     "ask_knowledge_graph_queries",
+    # Local-mode terminal (filtered out in non-local via exclude_in_local)
     "execute_terminal_command",
     "terminal_session_output",
     "terminal_session_signal",
+    # Run state
     "read_todos",
     "write_todos",
     "add_todo",
@@ -297,32 +235,17 @@ CODE_GEN_BASE_TOOLS: List[str] = [
     "add_requirements",
     "get_requirements",
     "delete_requirements",
-    "add_file_to_changes",
-    "update_file_in_changes",
-    "update_file_lines",
-    "replace_in_file",
-    "insert_lines",
-    "delete_lines",
-    "delete_file_in_changes",
-    "get_file_from_changes",
-    "list_files_in_changes",
-    "clear_file_from_changes",
-    "clear_all_changes",
-    "get_changes_summary",
-    "export_changes",
-    "show_updated_file",
-    "get_file_diff",
-    "revert_file",
-    "get_session_metadata",
-    # Git workflow tools for PR creation
-    "apply_changes",
-    "git_commit",
-    "git_push",
-    # Composite PR workflow tool (single tool for apply + commit + push + create_pr)
-    "create_pr_workflow",
+    # Sandbox tools (Anthropic-style consolidated surface).
+    "sandbox_text_editor",
+    "sandbox_shell",
+    "sandbox_search",
+    "sandbox_git",
 ]
 
 CODE_GEN_ADD_WHEN_NON_LOCAL: List[str] = [
+    # Context-graph and KG-backed readers — secondary to sandbox_text_editor
+    # for files the agent might edit, but useful for graph-shaped queries
+    # (impacts, neighbours, semantic / cross-cut search).
     "context_status",
     "context_resolve",
     "context_search",
@@ -331,14 +254,12 @@ CODE_GEN_ADD_WHEN_NON_LOCAL: List[str] = [
     "get_node_neighbours_from_node_id",
     "get_code_from_probable_node_name",
     "get_nodes_from_tags",
-    "get_code_file_structure",
-    "fetch_file",
-    "fetch_files_batch",
     "analyze_code_structure",
-    "show_diff",
-    "bash_command",
+    # PR creation lives outside the sandbox (auth chain in code_provider).
+    "code_provider_create_branch",
+    "code_provider_create_pr",
 ]
-CODE_GEN_EXCLUDE_IN_LOCAL: List[str] = ["show_diff"]
+CODE_GEN_EXCLUDE_IN_LOCAL: List[str] = []
 
 GENERAL_PURPOSE_TOOLS: List[str] = [
     "webpage_extractor",
@@ -372,7 +293,8 @@ SUPERVISOR_TOOLS: List[str] = [
     "delete_requirements",
 ]
 
-# Execute: CODE_GEN_BASE_TOOLS minus todo/requirement (same as current delegate)
+# Execute: same shape as code_gen, minus the agent-specific narrative pieces.
+# Sandbox tools replace the code_changes_manager staging family.
 EXECUTE_TOOLS: List[str] = [
     "webpage_extractor",
     "web_search_tool",
@@ -384,58 +306,35 @@ EXECUTE_TOOLS: List[str] = [
     "execute_terminal_command",
     "terminal_session_output",
     "terminal_session_signal",
-    "add_file_to_changes",
-    "update_file_in_changes",
-    "update_file_lines",
-    "replace_in_file",
-    "insert_lines",
-    "delete_lines",
-    "delete_file_in_changes",
-    "get_file_from_changes",
-    "list_files_in_changes",
-    "clear_file_from_changes",
-    "clear_all_changes",
-    "get_changes_summary",
-    "get_changes_for_pr",
-    "export_changes",
-    "show_updated_file",
-    "get_file_diff",
-    "revert_file",
-    "get_session_metadata",
-    # Git workflow tools for PR creation
-    "apply_changes",
-    "git_commit",
-    "git_push",
+    # Sandbox: read / edit / shell / git on the agent worktree.
+    "sandbox_text_editor",
+    "sandbox_shell",
+    "sandbox_search",
+    "sandbox_git",
+    # PR creation — outside the sandbox, uses code_provider's auth chain.
     "code_provider_create_branch",
     "code_provider_create_pr",
-    # Composite PR workflow (apply + commit + push + create_pr in one call)
-    "create_pr_workflow",
 ]
 EXECUTE_ADD_WHEN_NON_LOCAL: List[str] = [
     "get_code_from_multiple_node_ids",
     "get_node_neighbours_from_node_id",
     "get_code_from_probable_node_name",
     "get_nodes_from_tags",
-    "get_code_file_structure",
-    "fetch_file",
-    "fetch_files_batch",
     "analyze_code_structure",
-    "show_diff",
-    "bash_command",
 ]
-EXECUTE_EXCLUDE_IN_LOCAL: List[str] = ["show_diff"]
+EXECUTE_EXCLUDE_IN_LOCAL: List[str] = []
 
-# Supervisor non-local additions: repo-manager-backed tools not needed in local/VSCode mode
+# Supervisor delegates writes to subagents — give it sandbox_search + sandbox_git
+# (status / diff / log) for inspection only. No editor / shell at the supervisor level.
 SUPERVISOR_ADD_WHEN_NON_LOCAL: List[str] = [
-    "bash_command",
-    "apply_changes",
-    "checkout_worktree_branch",
+    "sandbox_search",
+    "sandbox_git",
 ]
 
-# Explore: minimal read-only set (for future use)
+# Explore: minimal read-only set — sandbox_text_editor (view) + sandbox_search.
 EXPLORE_TOOLS: List[str] = [
-    "get_code_file_structure",
-    "fetch_file",
+    "sandbox_text_editor",
+    "sandbox_search",
 ]
 
 # Integration: primary names only (registry resolves aliases)
@@ -457,14 +356,9 @@ INTEGRATION_GITHUB_TOOLS: List[str] = [
     "code_provider_create_pr",
     "code_provider_add_pr_comments",
     "code_provider_update_file",
-    # Get changes summary for PR (verify before create_pr_workflow)
-    "get_changes_for_pr",
-    # Git workflow tools for PR creation from worktree
-    "apply_changes",
-    "git_commit",
-    "git_push",
-    # Composite PR workflow (apply + commit + push + create_pr in one call)
-    "create_pr_workflow",
+    # Sandbox git surface (replaces apply_changes + git_commit + git_push +
+    # create_pr_workflow — push from sandbox_git, then code_provider_create_pr).
+    "sandbox_git",
 ]
 INTEGRATION_CONFLUENCE_TOOLS: List[str] = [
     "get_confluence_spaces",
@@ -478,6 +372,15 @@ INTEGRATION_CONFLUENCE_TOOLS: List[str] = [
 INTEGRATION_LINEAR_TOOLS: List[str] = [
     "get_linear_issue",
     "update_linear_issue",
+]
+
+# The four consolidated sandbox tools. Agents that want full sandbox access
+# include the "sandbox" allow-list group, or reference SANDBOX_TOOLS directly.
+SANDBOX_TOOLS: List[str] = [
+    "sandbox_text_editor",
+    "sandbox_shell",
+    "sandbox_search",
+    "sandbox_git",
 ]
 
 ALLOW_LIST_DEFINITIONS: List[AllowListDefinition] = [
@@ -526,6 +429,11 @@ ALLOW_LIST_DEFINITIONS: List[AllowListDefinition] = [
     AllowListDefinition(
         name="integration_linear",
         tool_names=INTEGRATION_LINEAR_TOOLS,
+        tier_filter=None,
+    ),
+    AllowListDefinition(
+        name="sandbox",
+        tool_names=SANDBOX_TOOLS,
         tier_filter=None,
     ),
 ]

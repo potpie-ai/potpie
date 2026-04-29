@@ -203,13 +203,12 @@ class AgentFactory:
         registry allow-lists (integration_jira, integration_github, etc.). Otherwise
         uses hardcoded integration_tools_map for backward compatibility.
 
-        GitHub agent also receives code changes tools for committing tracked changes.
+        GitHub agent also receives the sandbox tool group so it can stage,
+        commit, and push without going through the legacy CCM staging area.
         """
-        # Import code changes tools here to avoid circular imports
-        from app.modules.intelligence.tools.code_changes_manager import (
-            CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL,
-            CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL,
-            create_code_changes_management_tools,
+        # Sandbox tools replace the CCM staging family (plan phase 8).
+        from app.modules.intelligence.tools.sandbox.tools import (
+            create_sandbox_tools,
         )
 
         if self.tool_resolver:
@@ -298,20 +297,8 @@ class AgentFactory:
         wrapped_tools = wrap_structured_tools(integration_tools)
 
         if agent_type == AgentType.GITHUB:
-            code_changes_tools = create_code_changes_management_tools()
-            if local_mode:
-                code_changes_tools = [
-                    t
-                    for t in code_changes_tools
-                    if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL
-                ]
-            else:
-                code_changes_tools = [
-                    t
-                    for t in code_changes_tools
-                    if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL
-                ]
-            wrapped_tools = wrapped_tools + wrap_structured_tools(code_changes_tools)
+            sandbox_tools = create_sandbox_tools()
+            wrapped_tools = wrapped_tools + wrap_structured_tools(sandbox_tools)
             wrapped_tools = deduplicate_tools_by_name(wrapped_tools)
 
         return wrapped_tools
@@ -328,31 +315,17 @@ class AgentFactory:
         registry allow-list "execute". When use_tool_search_flow=True (Phase 3),
         delegate gets the three discovery meta-tools instead of the full list.
 
-        Subagents get code execution tools and code changes tools, but NOT:
+        Subagents get code execution tools and sandbox edit tools, but NOT:
         - Delegation tools (they don't delegate)
         - Todo management tools (supervisor-only for coordination)
         - Requirement verification tools (supervisor-only for verification)
         """
-        # Import tools here to avoid circular imports
-        from app.modules.intelligence.tools.code_changes_manager import (
-            CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL,
-            CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL,
-            create_code_changes_management_tools,
+        from app.modules.intelligence.tools.sandbox.tools import (
+            create_sandbox_tools,
         )
 
-        code_changes_tools = create_code_changes_management_tools()
-        if local_mode:
-            code_changes_tools = [
-                t
-                for t in code_changes_tools
-                if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL
-            ]
-        else:
-            code_changes_tools = [
-                t
-                for t in code_changes_tools
-                if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL
-            ]
+        # Sandbox tools work in both modes (no local-mode exclusion).
+        code_changes_tools = create_sandbox_tools()
 
         if self.tool_resolver:
             if use_tool_search_flow:
@@ -700,34 +673,19 @@ Subagents DON'T get your history. Provide comprehensive context:
         Note: Todo/requirement tools are provided via the registry (SUPERVISOR_TOOLS), not via a
         separate toolset, to avoid name conflicts with MCP servers that may also expose read_todos.
 
-        Note: In local mode, code changes tools are filtered by CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL
-        (clear_file_from_changes, clear_all_changes, show_diff, export_changes, show_updated_file)
-        so the extension handles diff/export/display and clear behavior.
+        Note: Sandbox tools work in both modes — agent edits run against the
+        worktree, the extension still owns its own diff display via local
+        terminal tools.
         """
-        # Import tools here to avoid circular imports
-        from app.modules.intelligence.tools.code_changes_manager import (
-            CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL,
-            CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL,
-            create_code_changes_management_tools,
-        )
         from app.modules.intelligence.tools.requirement_verification_tool import (
             create_requirement_verification_tools,
         )
+        from app.modules.intelligence.tools.sandbox.tools import (
+            create_sandbox_tools,
+        )
 
-        # Create code changes tools; filter by local_mode so web doesn't get terminal tools and extension doesn't get show_diff/export/show_updated_file
-        code_changes_tools = create_code_changes_management_tools()
-        if local_mode:
-            code_changes_tools = [
-                t
-                for t in code_changes_tools
-                if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL
-            ]
-        else:
-            code_changes_tools = [
-                t
-                for t in code_changes_tools
-                if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL
-            ]
+        # Sandbox edit tools replace the legacy CCM staging family.
+        code_changes_tools = create_sandbox_tools()
         requirement_tools = create_requirement_verification_tools()
         delegation_tools = self.build_delegation_tools()
 

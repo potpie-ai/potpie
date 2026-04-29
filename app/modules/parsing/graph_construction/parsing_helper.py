@@ -90,6 +90,15 @@ class ParseHelper:
         except Exception as e:
             logger.warning(f"Failed to initialize RepoManager: {e}")
 
+        # Sandbox path is opt-in during the migration. When SANDBOX_PARSING_ENABLED
+        # is truthy, clone_or_copy_repository materialises the worktree via
+        # SandboxClient.get_workspace(mode=ANALYSIS) using the local-fs adapter.
+        # Default off so a botched flag rollout can't break parsing in prod.
+        self._sandbox_parsing_enabled = (
+            os.getenv("SANDBOX_PARSING_ENABLED", "").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+
     @staticmethod
     def get_directory_size(path):
         total_size = 0
@@ -152,6 +161,17 @@ class ParseHelper:
             repo = Repo(repo_details.repo_path)
             logger.info(
                 f"ParsingHelper: clone_or_copy_repository created local Repo object for path: {repo_details.repo_path}"
+            )
+        elif self._sandbox_parsing_enabled and repo_details.repo_name:
+            logger.info(
+                "ParsingHelper: SANDBOX_PARSING_ENABLED — using sandbox client "
+                f"to materialise {repo_details.repo_name}"
+            )
+            return await self._clone_via_sandbox(
+                repo_details,
+                user_id=user_id,
+                auth_token=auth_token,
+                project_id=project_id,
             )
         else:
             # When RepoManager is enabled, it becomes the primary source of truth
@@ -1550,6 +1570,99 @@ class ParseHelper:
         except Exception:
             logger.exception("Error creating worktree for repo manager")
             raise
+
+    async def _clone_via_sandbox(
+        self,
+        repo_details: RepoDetails,
+        *,
+        user_id: str,
+        auth_token: Optional[str],
+        project_id: Optional[str],
+    ) -> Tuple[Any, Optional[str], Any, Optional[str]]:
+        """Materialise the worktree via :class:`SandboxClient` (mode=ANALYSIS).
+
+        The sandbox local-fs adapter exposes the worktree path on the host
+        (``handle.local_path``) so parsing keeps walking the tree with
+        ``os.walk`` exactly like the RepoManager path. We still pull
+        owner/auth out of the GitHub API for setup_project_directory's
+        tarball-fallback contract.
+
+        Returns ``(repo, owner, auth, local_path)`` to match
+        :meth:`clone_or_copy_repository`.
+        """
+        from sandbox import SandboxClient, WorkspaceMode
+
+        repo_name = repo_details.repo_name or ""
+        base_ref = (
+            repo_details.commit_id
+            or repo_details.branch_name
+            or "main"
+        )
+        if not repo_name:
+            raise ValueError("repo_name is required for sandbox-backed parsing")
+
+        # Best-effort GitHub metadata so setup_project_directory still has
+        # owner / auth for tarball fallback. Failures here are non-fatal —
+        # parsing only really needs the local path.
+        owner: Optional[str] = None
+        auth: Any = None
+        github_repo = None
+        try:
+            github, github_repo = self.github_service.get_repo(repo_name)
+            owner = getattr(github_repo.owner, "login", None)
+            requester = getattr(github, "_Github__requester", None)
+            if requester is not None and hasattr(requester, "auth"):
+                auth = requester.auth
+            elif hasattr(github, "get_app_auth"):
+                try:
+                    auth = github.get_app_auth()
+                except Exception:
+                    auth = None
+        except Exception as exc:
+            logger.warning(
+                f"ParsingHelper: GitHub metadata lookup failed for {repo_name}: {exc}. "
+                "Continuing with sandbox materialisation; setup_project_directory "
+                "may need the local path only."
+            )
+
+        client = SandboxClient.from_env()
+        handle = await client.get_workspace(
+            user_id=user_id,
+            project_id=project_id or "parsing",
+            repo=repo_name,
+            branch=base_ref,
+            base_ref=base_ref,
+            create_branch=False,
+            mode=WorkspaceMode.ANALYSIS,
+            auth_token=auth_token,
+        )
+        if not handle.local_path:
+            # Daytona / docker backends don't expose a host path; parsing
+            # needs one. The plan recommends keeping parsing on the local-fs
+            # backend (option A). Fail loudly so the operator notices.
+            raise RuntimeError(
+                "SandboxClient returned a handle without local_path "
+                f"(backend={handle.backend_kind}). Parsing requires the "
+                "local-fs backend (set SANDBOX_WORKSPACE_PROVIDER=local)."
+            )
+
+        # Build a GitPython Repo over the worktree so the rest of
+        # ParseHelper / setup_project_directory can read commit metadata.
+        try:
+            _, InvalidGitRepositoryError, Repo = _get_git_imports()
+            repo: Any = Repo(handle.local_path)
+        except Exception as exc:
+            logger.warning(
+                f"ParsingHelper: could not open GitPython Repo at "
+                f"{handle.local_path}: {exc}. Falling back to GitHub API object."
+            )
+            repo = github_repo
+
+        logger.info(
+            f"ParsingHelper: sandbox-materialised {repo_name}@{base_ref} at "
+            f"{handle.local_path} (workspace_id={handle.workspace_id})"
+        )
+        return repo, owner, auth, handle.local_path
 
     async def _clone_to_repo_manager(
         self,

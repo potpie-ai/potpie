@@ -51,25 +51,19 @@ def init_managers(
     from app.modules.intelligence.tools.todo_management_tool import (
         _reset_todo_manager,
     )
-    from app.modules.intelligence.tools.code_changes_manager import (
-        _init_code_changes_manager,
-    )
     from app.modules.intelligence.tools.requirement_verification_tool import (
         _reset_requirement_manager,
     )
+    from app.modules.intelligence.tools.sandbox.context import (
+        set_run_context as _set_sandbox_run_context,
+    )
 
     _reset_todo_manager()
-    logger.info(
-        f"🔄 [init_managers] Calling _init_code_changes_manager with tunnel_url={tunnel_url}, local_mode={local_mode}, repository={repository}, branch={branch}"
-    )
-    _init_code_changes_manager(
-        conversation_id=conversation_id,
-        agent_id=agent_id,
+    _set_sandbox_run_context(
         user_id=user_id,
-        tunnel_url=tunnel_url,
-        local_mode=local_mode,
-        repository=repository,
+        conversation_id=conversation_id,
         branch=branch,
+        local_mode=local_mode,
     )
     _reset_requirement_manager()
     logger.info(

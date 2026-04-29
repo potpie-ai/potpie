@@ -116,7 +116,7 @@ def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
             return "Semantically searching codebase"
         case "analyze_code_structure":
             return "Analyzing code structure"
-        case "bash_command":
+        case "bash_command" | "sandbox_shell":
             if args:
                 command = args.get("command", "")
                 if command:
@@ -356,7 +356,7 @@ def try_extract_streaming_preview(tool_name: str, args_buffer: str) -> str | Non
             return get_tool_run_message(tool_name, {"file_path": file_path})
         return None
 
-    if tool_name in {"search_bash", "bash_command", "execute_terminal_command"}:
+    if tool_name in {"search_bash", "bash_command", "sandbox_shell", "execute_terminal_command"}:
         command = args.get("command") or _extract_string_field(args_buffer, "command")
         if command:
             payload: Dict[str, Any] = {"command": command}
@@ -655,7 +655,7 @@ def get_tool_response_message(
                 if lines:
                     base += f" — {len(lines)} result(s)"
             return base
-        case "bash_command":
+        case "bash_command" | "sandbox_shell":
             command = args.get("command", "") if args else ""
             if isinstance(result, dict):
                 exit_code = result.get("exit_code")
@@ -1073,7 +1073,7 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             node_ids = args.get("node_ids")
             context_info = f" (within {len(node_ids)} nodes)" if node_ids else ""
             return f"-> semantically searching codebase for '{query}' (top {top_k} results){context_info}\n"
-        case "bash_command":
+        case "bash_command" | "sandbox_shell":
             command = args.get("command")
             working_dir = args.get("working_directory")
             if command:
@@ -1520,7 +1520,7 @@ description:
                     formatted += f"\n... ({len(content) - 10} more results)"
                 return formatted
             return ""
-        case "bash_command":
+        case "bash_command" | "sandbox_shell":
             if isinstance(content, Dict):
                 success = content.get("success", False)
                 output = content.get("output", "")

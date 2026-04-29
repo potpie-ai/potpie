@@ -609,26 +609,15 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             f"Running pydantic-ai agent {'with multimodal support' if (ctx.has_images() or ctx.has_documents()) else ''}"
         )
 
-        # Initialize code changes manager with conversation_id for persistence across messages
-        from app.modules.intelligence.tools.code_changes_manager import (
-            _init_code_changes_manager,
+        from app.modules.intelligence.tools.sandbox.context import (
+            set_run_context as _set_sandbox_run_context,
         )
 
-        logger.info(
-            f"🔄 [PydanticRagAgent] ctx.tunnel_url={ctx.tunnel_url}, ctx.user_id={ctx.user_id}, "
-            f"ctx.conversation_id={ctx.conversation_id}"
-        )
-        _init_code_changes_manager(
-            conversation_id=ctx.conversation_id,
-            agent_id=ctx.curr_agent_id,
+        _set_sandbox_run_context(
             user_id=ctx.user_id,
-            tunnel_url=ctx.tunnel_url,
-            local_mode=ctx.local_mode if hasattr(ctx, "local_mode") else False,
-            repository=getattr(ctx, "repository", None),
+            conversation_id=ctx.conversation_id,
             branch=getattr(ctx, "branch", None),
-        )
-        logger.info(
-            f"🔄 Initialized code changes manager for conversation_id={ctx.conversation_id}, agent_id={ctx.curr_agent_id}, user_id={ctx.user_id}, tunnel_url={ctx.tunnel_url}"
+            local_mode=ctx.local_mode if hasattr(ctx, "local_mode") else False,
         )
 
         # Check if we have media and if the model supports vision/multimodal input

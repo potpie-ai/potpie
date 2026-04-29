@@ -2,6 +2,9 @@
 Usage Reporting Service for Dodo Payments
 
 This service reports message usage to stripe-potpie, which then forwards to Dodo.
+
+Like :mod:`subscription_service`, this is **opt-in** — disabled when
+``BILLING_ENABLED`` is unset/falsy. Local dev runs without the sidecar.
 """
 
 import os
@@ -9,6 +12,8 @@ import logging
 from typing import Optional
 
 import httpx
+
+from app.modules.billing.subscription_service import _billing_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +43,8 @@ class UsageReportingService:
         Returns:
             dict: Status of the usage reporting
         """
+        if not _billing_enabled():
+            return {"status": "skipped", "reason": "billing_disabled"}
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
@@ -81,6 +88,8 @@ class UsageReportingService:
         Use this when you can't use async/await (e.g. sync context, Celery tasks).
         Must NOT be called from within a running event loop — use report_message_usage instead.
         """
+        if not _billing_enabled():
+            return {"status": "skipped", "reason": "billing_disabled"}
         import asyncio
 
         try:

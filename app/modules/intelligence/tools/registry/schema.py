@@ -24,6 +24,7 @@ ToolCategory = Literal[
     "knowledge_graph",
     "file_fetch",
     "analysis",
+    "sandbox",
     "other",
 ]
 

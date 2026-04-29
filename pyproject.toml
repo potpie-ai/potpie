@@ -29,7 +29,7 @@ dependencies = [
     "gunicorn>=23.0.0",
     "httpx>=0.28.1",
     "instructor>=1.13.0",
-    "mistralai<2.0.0",  # >=2.0.0 breaks instructor import compatibility
+    "mistralai<2.0.0", # >=2.0.0 breaks instructor import compatibility
     "jiter>=0.11.1",
     "joblib>=1.5.2",
     "kombu>=5.5.4",
@@ -86,12 +86,15 @@ dependencies = [
     "hatchet-sdk>=1.29.0",
     "typer>=0.15.0",
     "parsing",
+    "potpie-sandbox",
+    "daytona>=0.134.0",
 ]
 
 [tool.uv.sources]
 parsing = { path = "app/src/parsing" }
 context-engine = { path = "app/src/context-engine", editable = true }
 potpie-integrations = { path = "app/src/integrations", editable = true }
+potpie-sandbox = { path = "app/src/sandbox", editable = true }
 
 [project.scripts]
 potpie-seed = "seed.cli:main"
