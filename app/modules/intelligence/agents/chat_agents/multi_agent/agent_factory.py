@@ -13,7 +13,6 @@ from .utils.tool_utils import (
     sanitize_tool_name_for_api,
 )
 from .agent_instructions import (
-    DELEGATE_AGENT_INSTRUCTIONS,
     SEARCH_FLOW_INSTRUCTIONS,
     get_delegate_agent_instructions,
     get_integration_agent_instructions,
@@ -23,7 +22,9 @@ from .agent_instructions import (
 from .utils.context_utils import create_supervisor_task_description
 from app.modules.intelligence.agents.chat_agent import ChatContext
 from app.modules.context_graph.bundle_renderer import supervisor_prefetch_section
-from app.modules.intelligence.tracing.logfire_tracer import should_instrument_pydantic_ai
+from app.modules.intelligence.tracing.logfire_tracer import (
+    should_instrument_pydantic_ai,
+)
 from ..agent_config import AgentConfig, TaskConfig
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.utils.logger import setup_logger
@@ -921,9 +922,7 @@ Subagents DON'T get your history. Provide comprehensive context:
 
         bundle = getattr(ctx, "context_intelligence_bundle", None)
         prefetch_sup = (
-            supervisor_prefetch_section(bundle)
-            if isinstance(bundle, dict)
-            else ""
+            supervisor_prefetch_section(bundle) if isinstance(bundle, dict) else ""
         )
 
         # Generate supervisor instructions (task_description is code_gen_task_prompt or code_gen_task_prompt_local when code gen agent)

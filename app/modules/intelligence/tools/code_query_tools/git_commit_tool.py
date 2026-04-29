@@ -6,7 +6,7 @@ Stages and commits changes in the repository worktree.
 
 import json
 import os
-from typing import Dict, Any, Optional, List, Union
+from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from langchain_core.tools import StructuredTool
@@ -17,7 +17,10 @@ from app.modules.repo_manager.sync_helper import (
     get_or_create_worktree_path,
     get_or_create_edits_worktree_path,
 )
-from app.modules.code_provider.git_safe import safe_git_repo_operation, GitOperationError
+from app.modules.code_provider.git_safe import (
+    safe_git_repo_operation,
+    GitOperationError,
+)
 from app.modules.utils.logger import setup_logger
 
 from app.modules.intelligence.tools.code_query_tools.apply_changes_tool import (
@@ -204,7 +207,9 @@ class GitCommitTool:
             elif conversation_id:
                 apply_result = _get_apply_result(conversation_id, project_id)
                 if apply_result:
-                    files_to_stage = apply_result.get("files_applied", []) + apply_result.get("files_deleted", [])
+                    files_to_stage = apply_result.get(
+                        "files_applied", []
+                    ) + apply_result.get("files_deleted", [])
                 else:
                     return {
                         "success": False,
@@ -234,7 +239,9 @@ class GitCommitTool:
                         "error": "No changes to commit. Stage files first using apply_changes.",
                     }
 
-                staged_files = [f.strip() for f in diff.strip().split("\n") if f.strip()]
+                staged_files = [
+                    f.strip() for f in diff.strip().split("\n") if f.strip()
+                ]
 
                 # Create commit
                 commit = repo.index.commit(commit_message)

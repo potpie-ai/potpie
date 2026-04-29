@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional
 from enum import Enum
+from typing import Any
 
 
 class AuthMethod(str, Enum):
@@ -21,7 +21,7 @@ class ICodeProvider(ABC):
     # ============ Authentication ============
 
     @abstractmethod
-    def authenticate(self, credentials: Dict[str, Any], method: AuthMethod) -> Any:
+    def authenticate(self, credentials: dict[str, Any], method: AuthMethod) -> Any:
         """
         Authenticate with the code provider.
 
@@ -39,14 +39,14 @@ class ICodeProvider(ABC):
         pass
 
     @abstractmethod
-    def get_supported_auth_methods(self) -> List[AuthMethod]:
+    def get_supported_auth_methods(self) -> list[AuthMethod]:
         """Return list of supported authentication methods for this provider."""
         pass
 
     # ============ Repository Operations ============
 
     @abstractmethod
-    def get_repository(self, repo_name: str) -> Dict[str, Any]:
+    def get_repository(self, repo_name: str) -> dict[str, Any]:
         """
         Get repository details.
 
@@ -67,9 +67,9 @@ class ICodeProvider(ABC):
         self,
         repo_name: str,
         file_path: str,
-        ref: Optional[str] = None,
-        start_line: Optional[int] = None,
-        end_line: Optional[int] = None,
+        ref: str | None = None,
+        start_line: int | None = None,
+        end_line: int | None = None,
     ) -> str:
         """Get file content from repository (decoded as string)."""
         pass
@@ -79,35 +79,35 @@ class ICodeProvider(ABC):
         self,
         repo_name: str,
         path: str = "",
-        ref: Optional[str] = None,
+        ref: str | None = None,
         max_depth: int = 4,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get repository directory structure recursively."""
         pass
 
     # ============ Branch Operations ============
 
     @abstractmethod
-    def list_branches(self, repo_name: str) -> List[str]:
+    def list_branches(self, repo_name: str) -> list[str]:
         """List all branches (default branch first)."""
         pass
 
     @abstractmethod
-    def get_branch(self, repo_name: str, branch_name: str) -> Dict[str, Any]:
+    def get_branch(self, repo_name: str, branch_name: str) -> dict[str, Any]:
         """Get branch details (name, commit_sha, protected)."""
         pass
 
     @abstractmethod
     def create_branch(
         self, repo_name: str, branch_name: str, base_branch: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create a new branch from base branch."""
         pass
 
     @abstractmethod
     def compare_branches(
         self, repo_name: str, base_branch: str, head_branch: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Compare two branches and return file changes with patches.
 
@@ -135,49 +135,37 @@ class ICodeProvider(ABC):
     @abstractmethod
     def list_pull_requests(
         self, repo_name: str, state: str = "open", limit: int = 10
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """List pull requests."""
         pass
 
     @abstractmethod
     def get_pull_request(
         self, repo_name: str, pr_number: int, include_diff: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get pull request details with optional diff."""
         pass
 
+    @abstractmethod
     def get_pull_request_commits(
         self, repo_name: str, pr_number: int
-    ) -> List[Dict[str, Any]]:
-        """
-        Get pull request commits.
+    ) -> list[dict[str, Any]]:
+        """Get pull request commits."""
+        pass
 
-        Default implementation returns an empty list so providers that do not
-        support this endpoint remain backward compatible.
-        """
-        return []
-
+    @abstractmethod
     def get_pull_request_review_comments(
         self, repo_name: str, pr_number: int, limit: int = 100
-    ) -> List[Dict[str, Any]]:
-        """
-        Get pull request review comments.
+    ) -> list[dict[str, Any]]:
+        """Get pull request review comments."""
+        pass
 
-        Default implementation returns an empty list so providers that do not
-        support this endpoint remain backward compatible.
-        """
-        return []
-
+    @abstractmethod
     def get_pull_request_issue_comments(
         self, repo_name: str, pr_number: int, limit: int = 50
-    ) -> List[Dict[str, Any]]:
-        """
-        Get pull request issue comments.
-
-        Default implementation returns an empty list so providers that do not
-        support this endpoint remain backward compatible.
-        """
-        return []
+    ) -> list[dict[str, Any]]:
+        """Get pull request issue comments."""
+        pass
 
     @abstractmethod
     def create_pull_request(
@@ -187,9 +175,9 @@ class ICodeProvider(ABC):
         body: str,
         head_branch: str,
         base_branch: str,
-        reviewers: Optional[List[str]] = None,
-        labels: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
+        reviewers: list[str] | None = None,
+        labels: list[str] | None = None,
+    ) -> dict[str, Any]:
         """Create a pull request."""
         pass
 
@@ -199,10 +187,10 @@ class ICodeProvider(ABC):
         repo_name: str,
         pr_number: int,
         body: str,
-        commit_id: Optional[str] = None,
-        path: Optional[str] = None,
-        line: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        commit_id: str | None = None,
+        path: str | None = None,
+        line: int | None = None,
+    ) -> dict[str, Any]:
         """Add comment to pull request (general or inline)."""
         pass
 
@@ -213,8 +201,8 @@ class ICodeProvider(ABC):
         pr_number: int,
         body: str,
         event: str,  # "COMMENT", "APPROVE", "REQUEST_CHANGES"
-        comments: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        comments: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Create a pull request review with optional inline comments."""
         pass
 
@@ -223,19 +211,19 @@ class ICodeProvider(ABC):
     @abstractmethod
     def list_issues(
         self, repo_name: str, state: str = "open", limit: int = 10
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """List issues in repository."""
         pass
 
     @abstractmethod
-    def get_issue(self, repo_name: str, issue_number: int) -> Dict[str, Any]:
+    def get_issue(self, repo_name: str, issue_number: int) -> dict[str, Any]:
         """Get issue details."""
         pass
 
     @abstractmethod
     def create_issue(
-        self, repo_name: str, title: str, body: str, labels: Optional[List[str]] = None
-    ) -> Dict[str, Any]:
+        self, repo_name: str, title: str, body: str, labels: list[str] | None = None
+    ) -> dict[str, Any]:
         """Create an issue."""
         pass
 
@@ -249,9 +237,9 @@ class ICodeProvider(ABC):
         content: str,
         commit_message: str,
         branch: str,
-        author_name: Optional[str] = None,
-        author_email: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        author_name: str | None = None,
+        author_email: str | None = None,
+    ) -> dict[str, Any]:
         """Create or update a file in repository."""
         pass
 
@@ -259,13 +247,13 @@ class ICodeProvider(ABC):
 
     @abstractmethod
     def list_user_repositories(
-        self, user_id: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        self, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """List repositories accessible to authenticated user."""
         pass
 
     @abstractmethod
-    def get_user_organizations(self) -> List[Dict[str, Any]]:
+    def get_user_organizations(self) -> list[dict[str, Any]]:
         """Get organizations for authenticated user."""
         pass
 
@@ -282,7 +270,7 @@ class ICodeProvider(ABC):
         pass
 
     @abstractmethod
-    def get_rate_limit_info(self) -> Dict[str, Any]:
+    def get_rate_limit_info(self) -> dict[str, Any]:
         """
         Get current rate limit information.
 
@@ -291,7 +279,7 @@ class ICodeProvider(ABC):
         """
         pass
 
-    def get_client(self) -> Optional[Any]:
+    def get_client(self) -> Any | None:
         """
         Get the underlying provider client (e.g., PyGithub client).
 

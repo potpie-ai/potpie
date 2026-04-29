@@ -19,7 +19,6 @@ from langchain_core.tools import StructuredTool
 from app.modules.projects.projects_service import ProjectService
 from app.modules.repo_manager import RepoManager
 from app.modules.repo_manager.sync_helper import (
-    get_or_create_worktree_path,
     get_or_create_edits_worktree_path,
 )
 from app.modules.intelligence.tools.code_changes_manager import CodeChangesManager

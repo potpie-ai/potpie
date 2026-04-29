@@ -62,9 +62,7 @@ def get_or_create_worktree_path(
             if path and os.path.exists(path):
                 return path
         if branch:
-            path = repo_manager.get_repo_path(
-                repo_name, branch=branch, user_id=user_id
-            )
+            path = repo_manager.get_repo_path(repo_name, branch=branch, user_id=user_id)
             if path and os.path.exists(path):
                 return path
         return None
@@ -93,7 +91,11 @@ def get_or_create_worktree_path(
         from app.modules.code_provider.provider_factory import CodeProviderFactory
 
         provider = CodeProviderFactory.create_github_app_provider(repo_name)
-        if provider and hasattr(provider, "client") and hasattr(provider.client, "_Github__requester"):
+        if (
+            provider
+            and hasattr(provider, "client")
+            and hasattr(provider.client, "_Github__requester")
+        ):
             requester = provider.client._Github__requester
             if hasattr(requester, "auth") and requester.auth:
                 github_app_token = requester.auth.token
@@ -140,7 +142,7 @@ def get_or_create_worktree_path(
     if github_app_token:
         try:
             logger.info(
-                f"[Repomanager] SyncHelper: Attempting Priority 1 - GitHub App token",
+                "[Repomanager] SyncHelper: Attempting Priority 1 - GitHub App token",
                 repo_name=repo_name,
                 user_id=user_id,
                 ref=ref,
@@ -154,7 +156,7 @@ def get_or_create_worktree_path(
             )
             if worktree_path_str and os.path.exists(worktree_path_str):
                 logger.info(
-                    f"[Repomanager] SyncHelper: SUCCESS with GitHub App token",
+                    "[Repomanager] SyncHelper: SUCCESS with GitHub App token",
                     repo_name=repo_name,
                     user_id=user_id,
                     ref=ref,
@@ -165,7 +167,7 @@ def get_or_create_worktree_path(
         except Exception as e:
             last_error = e
             logger.warning(
-                f"[Repomanager] SyncHelper: GitHub App token failed, trying next",
+                "[Repomanager] SyncHelper: GitHub App token failed, trying next",
                 repo_name=repo_name,
                 user_id=user_id,
                 ref=ref,
@@ -176,7 +178,7 @@ def get_or_create_worktree_path(
     if user_oauth_token:
         try:
             logger.info(
-                f"[Repomanager] SyncHelper: Attempting Priority 2 - User OAuth token",
+                "[Repomanager] SyncHelper: Attempting Priority 2 - User OAuth token",
                 repo_name=repo_name,
                 user_id=user_id,
                 ref=ref,
@@ -190,7 +192,7 @@ def get_or_create_worktree_path(
             )
             if worktree_path_str and os.path.exists(worktree_path_str):
                 logger.info(
-                    f"[Repomanager] SyncHelper: SUCCESS with User OAuth token",
+                    "[Repomanager] SyncHelper: SUCCESS with User OAuth token",
                     repo_name=repo_name,
                     user_id=user_id,
                     ref=ref,
@@ -201,7 +203,7 @@ def get_or_create_worktree_path(
         except Exception as e:
             last_error = e
             logger.warning(
-                f"[Repomanager] SyncHelper: User OAuth token failed, trying next",
+                "[Repomanager] SyncHelper: User OAuth token failed, trying next",
                 repo_name=repo_name,
                 user_id=user_id,
                 ref=ref,
@@ -211,7 +213,7 @@ def get_or_create_worktree_path(
     # PRIORITY 3: Try environment token (will be fetched internally by prepare_for_parsing)
     try:
         logger.info(
-            f"[Repomanager] SyncHelper: Attempting Priority 3 - Environment token",
+            "[Repomanager] SyncHelper: Attempting Priority 3 - Environment token",
             repo_name=repo_name,
             user_id=user_id,
             ref=ref,
@@ -225,7 +227,7 @@ def get_or_create_worktree_path(
         )
         if worktree_path_str and os.path.exists(worktree_path_str):
             logger.info(
-                f"[Repomanager] SyncHelper: SUCCESS with Environment token",
+                "[Repomanager] SyncHelper: SUCCESS with Environment token",
                 repo_name=repo_name,
                 user_id=user_id,
                 ref=ref,
@@ -360,7 +362,11 @@ def get_or_create_edits_worktree_path(
         from app.modules.code_provider.provider_factory import CodeProviderFactory
 
         provider = CodeProviderFactory.create_github_app_provider(repo_name)
-        if provider and hasattr(provider, "client") and hasattr(provider.client, "_Github__requester"):
+        if (
+            provider
+            and hasattr(provider, "client")
+            and hasattr(provider.client, "_Github__requester")
+        ):
             requester = provider.client._Github__requester
             if hasattr(requester, "auth") and requester.auth:
                 github_app_token = requester.auth.token
@@ -376,7 +382,9 @@ def get_or_create_edits_worktree_path(
         try:
             from app.modules.code_provider.github.github_service import GithubService
 
-            user_oauth_token = GithubService(sql_db).get_github_oauth_token(effective_user_id)
+            user_oauth_token = GithubService(sql_db).get_github_oauth_token(
+                effective_user_id
+            )
         except Exception as e:
             logger.info(
                 f"[Repomanager] Could not get OAuth token for edits worktree: {e}",

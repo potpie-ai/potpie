@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -45,7 +45,7 @@ class PotpieContextGraphMutationHandlers:
 
     def handle_sync(
         self,
-        payload: Optional[SyncRequest],
+        payload: SyncRequest | None,
         container: ContextEngineContainer,
         db: Session,
         *,

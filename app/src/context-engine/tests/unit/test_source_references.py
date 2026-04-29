@@ -5,8 +5,6 @@ from __future__ import annotations
 import pytest
 
 from domain.source_references import (
-    FreshnessReport,
-    SourceFallback,
     SourceReferenceRecord,
     assess_freshness,
     dedupe_source_references,
@@ -58,7 +56,13 @@ def test_normalize_resolve_mode_case_insensitive() -> None:
 
 
 def test_normalize_source_policy_known_values() -> None:
-    for policy in ("references_only", "summary", "verify", "snippets", "full_if_needed"):
+    for policy in (
+        "references_only",
+        "summary",
+        "verify",
+        "snippets",
+        "full_if_needed",
+    ):
         assert normalize_source_policy(policy) == policy
 
 
@@ -104,7 +108,13 @@ def test_validate_source_reference_properties_invalid_last_verified() -> None:
 
 
 def test_validate_source_reference_properties_valid_access() -> None:
-    for access in ("allowed", "unknown", "permission_denied", "source_unreachable", "missing"):
+    for access in (
+        "allowed",
+        "unknown",
+        "permission_denied",
+        "source_unreachable",
+        "missing",
+    ):
         errors = validate_source_reference_properties({"access": access})
         assert errors == [], f"Expected no error for access={access}"
 
@@ -196,7 +206,9 @@ def test_source_ref_key_strips_whitespace() -> None:
 
 
 def test_source_reference_from_mapping_minimal() -> None:
-    ref = source_reference_from_mapping({"source_type": "github", "external_id": "pr:1"})
+    ref = source_reference_from_mapping(
+        {"source_type": "github", "external_id": "pr:1"}
+    )
     assert ref is not None
     assert ref.source_type == "github"
     assert ref.external_id == "pr:1"
@@ -269,7 +281,9 @@ def test_source_reference_from_mapping_fetchable_when_uri_present() -> None:
 
 
 def test_source_reference_from_mapping_not_fetchable_without_uri() -> None:
-    ref = source_reference_from_mapping({"source_type": "github", "external_id": "pr:1"})
+    ref = source_reference_from_mapping(
+        {"source_type": "github", "external_id": "pr:1"}
+    )
     assert ref is not None
     assert ref.fetchable is False
 
@@ -358,9 +372,7 @@ def test_assess_freshness_all_fresh() -> None:
 
 
 def test_assess_freshness_stale_ref() -> None:
-    refs = [
-        SourceReferenceRecord(ref="a", source_type="github", freshness="stale")
-    ]
+    refs = [SourceReferenceRecord(ref="a", source_type="github", freshness="stale")]
     report = assess_freshness(refs)
     assert report.status == "stale"
     assert "a" in report.stale_refs
@@ -389,9 +401,7 @@ def test_assess_freshness_unreachable_via_sync_status() -> None:
 
 def test_assess_freshness_unreachable_via_access() -> None:
     refs = [
-        SourceReferenceRecord(
-            ref="r", source_type="docs", access="source_unreachable"
-        )
+        SourceReferenceRecord(ref="r", source_type="docs", access="source_unreachable")
     ]
     report = assess_freshness(refs)
     assert report.status == "source_unreachable"
@@ -429,7 +439,9 @@ def test_assess_freshness_latest_graph_update_is_most_recent() -> None:
     ]
     report = assess_freshness(refs)
     assert report.last_graph_update is not None
-    assert "2024-06" in report.last_graph_update or "2024-03" in report.last_graph_update
+    assert (
+        "2024-06" in report.last_graph_update or "2024-03" in report.last_graph_update
+    )
 
 
 def test_assess_freshness_mixed_fresh_and_needs_verification() -> None:

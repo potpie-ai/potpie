@@ -21,7 +21,10 @@ from langchain_core.tools import StructuredTool
 from app.modules.projects.projects_service import ProjectService
 from app.modules.repo_manager import RepoManager
 from app.modules.repo_manager.sync_helper import get_or_create_edits_worktree_path
-from app.modules.code_provider.git_safe import safe_git_repo_operation, GitOperationError
+from app.modules.code_provider.git_safe import (
+    safe_git_repo_operation,
+    GitOperationError,
+)
 from app.modules.code_provider.provider_factory import CodeProviderFactory
 from app.modules.intelligence.tools.code_changes_manager import CodeChangesManager
 from app.modules.utils.logger import setup_logger
@@ -36,7 +39,8 @@ class CreatePRWorkflowInput(BaseModel):
         ..., description="Project ID that references the repository"
     )
     conversation_id: str = Field(
-        ..., description="Conversation ID where changes are stored in CodeChangesManager"
+        ...,
+        description="Conversation ID where changes are stored in CodeChangesManager",
     )
     branch_name: str = Field(
         ..., description="Name of the new branch to create (e.g., 'feature/my-feature')"
@@ -118,7 +122,9 @@ Returns:
                 self.repo_manager = RepoManager()
                 logger.info("CreatePRWorkflowTool: RepoManager initialized")
         except Exception as e:
-            logger.warning(f"CreatePRWorkflowTool: Failed to initialize RepoManager: {e}")
+            logger.warning(
+                f"CreatePRWorkflowTool: Failed to initialize RepoManager: {e}"
+            )
 
     def _get_project_details(self, project_id: str) -> Dict[str, str]:
         """Get project details and validate user access."""
@@ -182,9 +188,7 @@ Returns:
                     GithubService,
                 )
 
-                token = GithubService(self.sql_db).get_github_oauth_token(
-                    self.user_id
-                )
+                token = GithubService(self.sql_db).get_github_oauth_token(self.user_id)
                 if token:
                     logger.info(
                         f"CreatePRWorkflowTool: Using user OAuth token for {repo_name}"
@@ -202,7 +206,7 @@ Returns:
                 )
                 return token
 
-        logger.warning(f"CreatePRWorkflowTool: No authentication token found")
+        logger.warning("CreatePRWorkflowTool: No authentication token found")
         return None
 
     def _apply_changes(
@@ -282,9 +286,7 @@ Returns:
                     files_applied.append(fpath)
                     logger.info(f"CreatePRWorkflowTool: Applied changes to {fpath}")
                 except Exception as e:
-                    logger.error(
-                        f"CreatePRWorkflowTool: Failed to write {fpath}: {e}"
-                    )
+                    logger.error(f"CreatePRWorkflowTool: Failed to write {fpath}: {e}")
                     files_skipped.append(f"{fpath} (write error: {str(e)})")
 
             # Check for critical failures
@@ -360,18 +362,15 @@ Returns:
                     # Get files changed in the last commit
                     try:
                         committed_files = set(
-                            repo.git.diff(
-                                "HEAD~1", "HEAD", "--name-only"
-                            ).strip().split("\n")
+                            repo.git.diff("HEAD~1", "HEAD", "--name-only")
+                            .strip()
+                            .split("\n")
                         )
                     except Exception:
                         # HEAD~1 may not exist (first commit) — treat all as committed
                         committed_files = set(files_to_stage)
 
-                    missing = [
-                        f for f in files_to_stage
-                        if f not in committed_files
-                    ]
+                    missing = [f for f in files_to_stage if f not in committed_files]
                     if missing:
                         # Some files are missing from the last commit.
                         # Stage and amend the commit to include them.
@@ -395,7 +394,9 @@ Returns:
                         "step": "commit",
                     }
             else:
-                staged_files = [f.strip() for f in diff.strip().split("\n") if f.strip()]
+                staged_files = [
+                    f.strip() for f in diff.strip().split("\n") if f.strip()
+                ]
 
                 # Create commit
                 commit = repo.index.commit(commit_message)
@@ -422,7 +423,7 @@ Returns:
                     if auth_url:
                         repo.git.remote("set-url", "origin", auth_url)
                     logger.info(
-                        f"CreatePRWorkflowTool: Configured authenticated remote URL"
+                        "CreatePRWorkflowTool: Configured authenticated remote URL"
                     )
                 except Exception as e:
                     logger.warning(
@@ -432,24 +433,29 @@ Returns:
             try:
                 # Check if remote branch already exists to decide push strategy.
                 # If it does, use --force-with-lease in case we amended the commit.
-                remote_refs = [
-                    ref.name
-                    for ref in repo.remotes.origin.refs
-                ] if repo.remotes else []
+                remote_refs = (
+                    [ref.name for ref in repo.remotes.origin.refs]
+                    if repo.remotes
+                    else []
+                )
                 remote_branch_ref = f"origin/{branch_name}"
                 if remote_branch_ref in remote_refs:
-                    repo.git.push("--force-with-lease", "--set-upstream", "origin", branch_name)
-                    logger.info(f"CreatePRWorkflowTool: Force-with-lease push successful (remote branch existed)")
+                    repo.git.push(
+                        "--force-with-lease", "--set-upstream", "origin", branch_name
+                    )
+                    logger.info(
+                        "CreatePRWorkflowTool: Force-with-lease push successful (remote branch existed)"
+                    )
                 else:
                     repo.git.push("--set-upstream", "origin", branch_name)
-                    logger.info(f"CreatePRWorkflowTool: Push successful")
+                    logger.info("CreatePRWorkflowTool: Push successful")
             finally:
                 # Reset remote URL back to original (remove credentials)
                 if auth_token and self.repo_manager and remote_url:
                     try:
                         repo.git.remote("set-url", "origin", remote_url)
                         logger.debug(
-                            f"CreatePRWorkflowTool: Reset remote URL to original"
+                            "CreatePRWorkflowTool: Reset remote URL to original"
                         )
                     except Exception as e:
                         logger.debug(
@@ -571,9 +577,7 @@ Returns:
             )
             return False
 
-    def _get_stored_patches(
-        self, conversation_id: str
-    ) -> Dict[str, str]:
+    def _get_stored_patches(self, conversation_id: str) -> Dict[str, str]:
         """
         Retrieve all stored patches for a conversation.
 
@@ -608,9 +612,7 @@ Returns:
             return patches
 
         except Exception as e:
-            logger.warning(
-                f"CreatePRWorkflowTool: Failed to retrieve patches: {e}"
-            )
+            logger.warning(f"CreatePRWorkflowTool: Failed to retrieve patches: {e}")
             return {}
 
     def _clear_stored_patches(self, conversation_id: str) -> bool:
@@ -640,9 +642,7 @@ Returns:
             return True
 
         except Exception as e:
-            logger.warning(
-                f"CreatePRWorkflowTool: Failed to clear patches: {e}"
-            )
+            logger.warning(f"CreatePRWorkflowTool: Failed to clear patches: {e}")
             return False
 
     def _apply_patches_from_redis(
@@ -828,7 +828,9 @@ Returns:
             }
 
         except Exception as e:
-            logger.exception("CreatePRWorkflowTool: Error in commit_file_and_extract_patch")
+            logger.exception(
+                "CreatePRWorkflowTool: Error in commit_file_and_extract_patch"
+            )
             return {"success": False, "error": str(e)}
 
     def _create_pr(
@@ -892,7 +894,11 @@ Returns:
                     headers, prs = repo._requester.requestJsonAndCheck(
                         "GET",
                         f"{repo.url}/pulls",
-                        parameters={"state": "open", "head": head_branch, "base": base_branch},
+                        parameters={
+                            "state": "open",
+                            "head": head_branch,
+                            "base": base_branch,
+                        },
                     )
                     if isinstance(prs, str):
                         prs = json.loads(prs)
@@ -905,7 +911,11 @@ Returns:
                         }
                 except Exception:
                     pass
-                return {"success": False, "error": "PR already exists but could not retrieve it", "step": "create_pr"}
+                return {
+                    "success": False,
+                    "error": "PR already exists but could not retrieve it",
+                    "step": "create_pr",
+                }
 
             else:
                 # Standard GitHub
@@ -1026,10 +1036,9 @@ Returns:
                     )
                     if apply_result["success"]:
                         # Add files from fallback that weren't already applied
-                        fallback_files = (
-                            apply_result.get("files_applied", [])
-                            + apply_result.get("files_deleted", [])
-                        )
+                        fallback_files = apply_result.get(
+                            "files_applied", []
+                        ) + apply_result.get("files_deleted", [])
                         files_to_stage = list(set(files_to_stage + fallback_files))
 
                 # Clear stored patches after applying
@@ -1050,10 +1059,9 @@ Returns:
                         "step": "apply_changes",
                     }
 
-                files_to_stage = (
-                    apply_result.get("files_applied", [])
-                    + apply_result.get("files_deleted", [])
-                )
+                files_to_stage = apply_result.get(
+                    "files_applied", []
+                ) + apply_result.get("files_deleted", [])
 
             if not files_to_stage:
                 return {
@@ -1140,21 +1148,15 @@ Returns:
         )
 
 
-def create_pr_workflow_tool(
-    sql_db: Session, user_id: str
-) -> Optional[StructuredTool]:
+def create_pr_workflow_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
     """
     Create the composite PR workflow tool if repo manager is enabled.
 
     Returns None if repo manager is not enabled.
     """
-    repo_manager_enabled = (
-        os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
-    )
+    repo_manager_enabled = os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
     if not repo_manager_enabled:
-        logger.debug(
-            "CreatePRWorkflowTool not created: REPO_MANAGER_ENABLED is false"
-        )
+        logger.debug("CreatePRWorkflowTool not created: REPO_MANAGER_ENABLED is false")
         return None
 
     tool_instance = CreatePRWorkflowTool(sql_db, user_id)

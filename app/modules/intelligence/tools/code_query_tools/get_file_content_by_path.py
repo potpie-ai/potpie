@@ -200,7 +200,7 @@ class FetchFileTool:
 
             # Socket path: use Socket.IO RPC
             if tunnel_url.startswith(SOCKET_TUNNEL_PREFIX):
-                logger.info(f"[fetch_file] 🚀 Routing to LocalServer via Socket.IO")
+                logger.info("[fetch_file] 🚀 Routing to LocalServer via Socket.IO")
                 out = _execute_via_socket(
                     user_id=user_id,
                     conversation_id=conversation_id,
@@ -224,7 +224,7 @@ class FetchFileTool:
                     content = self.with_line_numbers(content, True, starting_line)
                 content = truncate_response(content)
                 logger.info(
-                    f"[fetch_file] ✅ LocalServer returned file content via Socket.IO"
+                    "[fetch_file] ✅ LocalServer returned file content via Socket.IO"
                 )
                 return {"success": True, "content": content, "source": "local"}
 
@@ -259,9 +259,7 @@ class FetchFileTool:
                         # Truncate if needed
                         content = truncate_response(content)
 
-                        logger.info(
-                            f"[fetch_file] ✅ LocalServer returned file content"
-                        )
+                        logger.info("[fetch_file] ✅ LocalServer returned file content")
                         return {
                             "success": True,
                             "content": content,
@@ -431,7 +429,7 @@ class FetchFileTool:
                 "success": True,
                 "content": content,
             }
-        except FileNotFoundError as e:
+        except FileNotFoundError:
             # File not found - try local as last resort
             logger.warning(
                 f"File not found in remote: {file_path} - trying local fallback"

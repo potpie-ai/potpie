@@ -137,7 +137,9 @@ def execute_agent_background(
     # Look up project_id from conversation so every span in this task gets it
     project_id = None
     try:
-        from app.modules.conversations.conversation.conversation_model import Conversation
+        from app.modules.conversations.conversation.conversation_model import (
+            Conversation,
+        )
 
         conv = (
             self.db.query(Conversation)
@@ -160,7 +162,9 @@ def execute_agent_background(
         project_id=project_id,
     ):
         # Set up logging context with domain IDs
-        with log_context(conversation_id=conversation_id, user_id=user_id, run_id=run_id):
+        with log_context(
+            conversation_id=conversation_id, user_id=user_id, run_id=run_id
+        ):
             logger.info(
                 f"Starting background agent execution with tunnel_url={tunnel_url}, "
                 f"local_mode={local_mode}, conversation_id={conversation_id}"
@@ -180,14 +184,18 @@ def execute_agent_background(
                         ConversationService,
                     )
                     from app.modules.conversations.exceptions import GenerationCancelled
-                    from app.modules.conversations.message.message_model import MessageType
+                    from app.modules.conversations.message.message_model import (
+                        MessageType,
+                    )
                     from app.modules.conversations.message.message_schema import (
                         MessageRequest,
                     )
                     from app.modules.conversations.conversation.conversation_store import (
                         ConversationStore,
                     )
-                    from app.modules.conversations.message.message_store import MessageStore
+                    from app.modules.conversations.message.message_store import (
+                        MessageStore,
+                    )
 
                     # Use BaseTask's context manager to get a fresh, non-pooled async session
                     # This avoids asyncpg Future binding issues across tasks sharing the same event loop
@@ -244,10 +252,8 @@ def execute_agent_background(
                                 ):
                                     logger.info("Agent execution cancelled")
                                     try:
-                                        message_id = (
-                                            service.history_manager.flush_message_buffer(
-                                                conversation_id, MessageType.AI_GENERATED
-                                            )
+                                        message_id = service.history_manager.flush_message_buffer(
+                                            conversation_id, MessageType.AI_GENERATED
                                         )
                                         if message_id:
                                             logger.debug(
@@ -296,7 +302,9 @@ def execute_agent_background(
                                     },
                                 )
 
-                            return True  # Indicate successful completion (loop finished)
+                            return (
+                                True  # Indicate successful completion (loop finished)
+                            )
                         except GenerationCancelled:
                             logger.info(
                                 "Agent execution cancelled (GenerationCancelled)"
@@ -367,9 +375,7 @@ def execute_agent_background(
                                 cost_str = f", cost={c} credits"
                             else:
                                 est = (
-                                    estimate_cost_for_log(pt, ct)
-                                    if (pt or ct)
-                                    else 0.0
+                                    estimate_cost_for_log(pt, ct) if (pt or ct) else 0.0
                                 )
                                 cost_str = (
                                     f", cost≈{est} credits (estimated, not in run total)"
@@ -398,15 +404,11 @@ def execute_agent_background(
                     )
 
                     # Set task status to completed
-                    redis_manager.set_task_status(
-                        conversation_id, run_id, "completed"
-                    )
+                    redis_manager.set_task_status(conversation_id, run_id, "completed")
 
                     logger.info("Background agent execution completed")
                 else:
-                    redis_manager.set_task_status(
-                        conversation_id, run_id, "cancelled"
-                    )
+                    redis_manager.set_task_status(conversation_id, run_id, "cancelled")
                     logger.info("Background agent execution cancelled")
 
                 # Return the completion status so on_success can check if it was cancelled
@@ -423,9 +425,7 @@ def execute_agent_background(
                 # Collect OpenRouter usage and record partial cost in Logfire (even on error)
                 try:
                     usages = get_and_clear_usages()
-                    total_cost = _record_openrouter_cost_in_logfire(
-                        usages, "error"
-                    )
+                    total_cost = _record_openrouter_cost_in_logfire(usages, "error")
 
                     # Log partial cost to Celery logs so failed runs also show cost
                     if usages:
@@ -437,9 +437,7 @@ def execute_agent_background(
                                 cost_str = f", cost={c} credits"
                             else:
                                 est = (
-                                    estimate_cost_for_log(pt, ct)
-                                    if (pt or ct)
-                                    else 0.0
+                                    estimate_cost_for_log(pt, ct) if (pt or ct) else 0.0
                                 )
                                 cost_str = (
                                     f", cost≈{est} credits (estimated)"
@@ -518,7 +516,9 @@ def execute_regenerate_background(
     # Look up project_id from conversation so every span in this task gets it
     project_id = None
     try:
-        from app.modules.conversations.conversation.conversation_model import Conversation
+        from app.modules.conversations.conversation.conversation_model import (
+            Conversation,
+        )
 
         conv = (
             self.db.query(Conversation)
@@ -541,7 +541,9 @@ def execute_regenerate_background(
         project_id=project_id,
     ):
         # Set up logging context with domain IDs
-        with log_context(conversation_id=conversation_id, user_id=user_id, run_id=run_id):
+        with log_context(
+            conversation_id=conversation_id, user_id=user_id, run_id=run_id
+        ):
             logger.info("Starting background regenerate execution")
             try:
                 # Set task status to indicate task has started
@@ -561,8 +563,12 @@ def execute_regenerate_background(
                     from app.modules.conversations.conversation.conversation_store import (
                         ConversationStore,
                     )
-                    from app.modules.conversations.message.message_store import MessageStore
-                    from app.modules.conversations.message.message_model import MessageType
+                    from app.modules.conversations.message.message_store import (
+                        MessageStore,
+                    )
+                    from app.modules.conversations.message.message_model import (
+                        MessageType,
+                    )
 
                     # Use BaseTask's context manager to get a fresh, non-pooled async session
                     # This avoids asyncpg Future binding issues across tasks sharing the same event loop
@@ -595,7 +601,9 @@ def execute_regenerate_background(
                             conversation_id, run_id
                         )
                         try:
-                            async for chunk in service.regenerate_last_message_background(
+                            async for (
+                                chunk
+                            ) in service.regenerate_last_message_background(
                                 conversation_id,
                                 node_ids,
                                 attachment_ids,
@@ -613,11 +621,9 @@ def execute_regenerate_background(
 
                                     # Flush any buffered AI response chunks before cancelling
                                     try:
-                                        message_id = (
-                                            service.history_manager.flush_message_buffer(
-                                                conversation_id,
-                                                MessageType.AI_GENERATED,
-                                            )
+                                        message_id = service.history_manager.flush_message_buffer(
+                                            conversation_id,
+                                            MessageType.AI_GENERATED,
                                         )
                                         if message_id:
                                             logger.debug(
@@ -679,8 +685,10 @@ def execute_regenerate_background(
                                 "Regenerate execution cancelled (GenerationCancelled)"
                             )
                             try:
-                                message_id = service.history_manager.flush_message_buffer(
-                                    conversation_id, MessageType.AI_GENERATED
+                                message_id = (
+                                    service.history_manager.flush_message_buffer(
+                                        conversation_id, MessageType.AI_GENERATED
+                                    )
                                 )
                                 if message_id:
                                     logger.debug(
@@ -732,11 +740,7 @@ def execute_regenerate_background(
                         if c is not None:
                             cost_str = f", cost={c} credits"
                         else:
-                            est = (
-                                estimate_cost_for_log(pt, ct)
-                                if (pt or ct)
-                                else 0.0
-                            )
+                            est = estimate_cost_for_log(pt, ct) if (pt or ct) else 0.0
                             cost_str = (
                                 f", cost≈{est} credits (estimated)"
                                 if (pt or ct)
@@ -749,9 +753,7 @@ def execute_regenerate_background(
                         )
                         logger.info(msg)
                         print(msg, flush=True)
-                    logger.info(
-                        f"[LLM cost this run] total={total_cost} credits"
-                    )
+                    logger.info(f"[LLM cost this run] total={total_cost} credits")
                     print(
                         f"[LLM cost this run] total={total_cost} credits",
                         flush=True,
@@ -772,15 +774,13 @@ def execute_regenerate_background(
 
                     logger.info("Background regenerate execution completed")
                 else:
-                    redis_manager.set_task_status(
-                        conversation_id, run_id, "cancelled"
-                    )
+                    redis_manager.set_task_status(conversation_id, run_id, "cancelled")
                     logger.info("Background regenerate execution cancelled")
 
                 # Return the completion status so on_success can check if it was cancelled
                 return completed
 
-            except Exception as e:
+            except Exception:
                 logger.exception(
                     "Background regenerate execution failed",
                     conversation_id=conversation_id,
@@ -791,9 +791,7 @@ def execute_regenerate_background(
                 # Collect OpenRouter usage and record partial cost in Logfire (even on error)
                 try:
                     usages = get_and_clear_usages()
-                    total_cost = _record_openrouter_cost_in_logfire(
-                        usages, "error"
-                    )
+                    total_cost = _record_openrouter_cost_in_logfire(usages, "error")
 
                     # Log partial cost to Celery logs so failed runs also show cost
                     if usages:
@@ -805,9 +803,7 @@ def execute_regenerate_background(
                                 cost_str = f", cost={c} credits"
                             else:
                                 est = (
-                                    estimate_cost_for_log(pt, ct)
-                                    if (pt or ct)
-                                    else 0.0
+                                    estimate_cost_for_log(pt, ct) if (pt or ct) else 0.0
                                 )
                                 cost_str = (
                                     f", cost≈{est} credits (estimated)"

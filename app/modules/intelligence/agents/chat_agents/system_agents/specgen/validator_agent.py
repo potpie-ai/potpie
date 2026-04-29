@@ -1,7 +1,7 @@
 """Validator Agent for validating specification quality."""
+
 from pydantic_ai import Agent
 from app.modules.intelligence.provider.provider_service import ProviderService
-from .spec_models import ValidationReport
 
 VALIDATOR_AGENT_PROMPT = """You are **THE VALIDATOR AGENT**, a specification quality assurance validator.
 
@@ -112,7 +112,10 @@ def create_validator_agent(
     llm_provider: ProviderService,
 ) -> Agent:
     """Create validator agent for validating specification outputs."""
-    prompt = VALIDATOR_AGENT_PROMPT + "\n\nIMPORTANT: Return your response as valid JSON matching the ValidationReport schema."
+    prompt = (
+        VALIDATOR_AGENT_PROMPT
+        + "\n\nIMPORTANT: Return your response as valid JSON matching the ValidationReport schema."
+    )
     return Agent(
         model=llm_provider.get_pydantic_model(),
         system_prompt=prompt,

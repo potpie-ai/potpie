@@ -11,7 +11,6 @@ from app.modules.intelligence.tools.registry.registry import ToolRegistry
 from app.modules.intelligence.tools.registry.schema import (
     ToolCategory,
     ToolMetadata,
-    ToolTier,
 )
 from app.modules.utils.logger import setup_logger
 

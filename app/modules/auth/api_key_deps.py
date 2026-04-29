@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from typing import Optional
 
 from fastapi import Depends, Header, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,8 +18,8 @@ def is_development_mode() -> bool:
 
 
 async def get_api_key_user(
-    x_api_key: Optional[str] = Header(None),
-    x_user_id: Optional[str] = Header(None),
+    x_api_key: str | None = Header(None),
+    x_user_id: str | None = Header(None),
     db: Session = Depends(get_db),
     async_db: AsyncSession = Depends(get_async_db),
 ) -> dict:
@@ -44,7 +43,7 @@ async def get_api_key_user(
     if admin_secret and (x_api_key or "").strip() == admin_secret:
         uid = (x_user_id or "").strip()
         if not uid:
-            uid = (os.getenv("defaultUsername") or "").strip()
+            uid = os.getenv("defaultUsername", "").strip()
         user_svc = AsyncUserService(async_db)
         user = await user_svc.get_user_by_uid(uid)
         if not user and is_development_mode():

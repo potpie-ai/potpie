@@ -29,7 +29,6 @@ from adapters.outbound.reconciliation.llm_plan_schema import (
 )
 from domain.reconciliation import (
     MutationSummary,
-    ReconciliationPlan,
     ReconciliationRequest,
     ReconciliationResult,
 )

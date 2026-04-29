@@ -4,6 +4,7 @@ The canonical combined context graph architecture is:
 
 - [Context Graph Architecture](graph.md)
 - [Context Graph Features And Functionalities](features-and-functionalities.md)
+- [Context Graph Feature / Test Matrix](feature-test-matrix.md)
 - [Unified Graphiti Application Architecture](unified-graphiti-application-architecture.md)
 - [Context Graph Implementation Next Steps](implementation-next-steps.md)
 - [Context Graph Planning Next Steps](planning-next-steps.md)
