@@ -1,6 +1,6 @@
 """Unit tests for UserService (sync methods)."""
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -90,6 +90,22 @@ class TestUserServiceGetUserIdByEmail:
         mock_db.query.return_value.filter.return_value.first.return_value = None
         result = user_service.get_user_id_by_email("nonexistent@test.com")
         assert result is None
+
+
+class TestUserServiceSetupDummyUser:
+    def test_setup_dummy_user_creates_user_once(self, user_service, monkeypatch):
+        monkeypatch.setenv("defaultUsername", "dummy-user")
+        create_result = ("dummy-user", "created", False)
+
+        with patch.object(UserService, "get_user_by_uid", return_value=None):
+            with patch.object(
+                UserService,
+                "create_user",
+                return_value=create_result,
+            ) as mock_create_user:
+                user_service.setup_dummy_user()
+
+        mock_create_user.assert_called_once()
 
 
 class TestUserServiceUpdateLastLogin:
