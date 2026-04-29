@@ -203,7 +203,7 @@ class StreamProcessor:
                 )
                 if current_tool_call_id:
                     tool_args_buffers[current_tool_call_id] = args_str or ""
-                command_tools = {"search_bash", "bash_command", "execute_terminal_command"}
+                command_tools = {"search_bash", "bash_command", "sandbox_shell", "execute_terminal_command"}
                 command = str(args_dict.get("command", "") or "").strip()
                 tool_response = (
                     command

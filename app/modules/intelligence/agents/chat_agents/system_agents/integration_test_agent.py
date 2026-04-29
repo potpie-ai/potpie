@@ -52,7 +52,10 @@ class IntegrationTestAgent(ChatAgent):
                 "fetch_file",
                 "fetch_files_batch",
                 "analyze_code_structure",
-                "bash_command",
+                "sandbox_text_editor",
+                "sandbox_shell",
+                "sandbox_search",
+                "sandbox_git",
             ]
         )
 

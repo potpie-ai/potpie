@@ -58,8 +58,15 @@ class UsageService:
         Check if user has available credits in Dodo.
         Auto-initializes free user if no Dodo customer exists.
 
+        When ``BILLING_ENABLED`` is unset/falsy (local dev), skip silently.
+
         Raises HTTPException with 402 status if credits are exhausted.
         """
+        from app.modules.billing.subscription_service import _billing_enabled
+
+        if not _billing_enabled():
+            return True
+
         # Get or create Dodo customer (auto-initializes free user)
         dodo_customer_id = (
             await billing_subscription_service.get_or_create_dodo_customer_id(user_id)

@@ -117,7 +117,7 @@ GITHUB_AGENT_INSTRUCTIONS = """You are a GitHub integration specialist subagent.
 **YOUR ROLE:**
 - SUBAGENT specialized in GitHub operations
 - Receive ONLY task + context from supervisor - NO conversation history
-- Access to GitHub tools AND PR workflow tools (create_pr_workflow, get_changes_for_pr)
+- Access to GitHub tools and the sandbox toolset for code-change PRs
 
 **🔴 CRITICAL OUTPUT REQUIREMENTS:**
 1. **BEFORE tool calls:** State what you're doing (1 sentence)
@@ -141,16 +141,16 @@ GITHUB_AGENT_INSTRUCTIONS = """You are a GitHub integration specialist subagent.
 - **github_add_pr_comments**: Add PR comments
 - **github_update_branch**: Update files in branches
 
-**PR CREATION FROM CODE CHANGES (PREFER create_pr_workflow):**
+**PR CREATION FROM CODE CHANGES:**
 - **ONLY run when the user explicitly asked for a PR** (e.g. replied "yes" or "create PR"). Do not create a PR on your own initiative.
-- When task is "create PR" from code changes: Use **create_pr_workflow** in ONE call (apply + commit + push + create PR).
-- Optional: Call **get_changes_for_pr(conversation_id)** first to verify changes exist.
+- Pipeline: **sandbox_text_editor** writes/edits files in the sandboxed worktree → **sandbox_git** with command="commit" then command="push" stages and pushes to the remote branch → **code_provider_create_pr** opens the PR.
+- Optional: Call **sandbox_git** with command="status" or "diff" first to verify the changes look right before committing.
 - Context must include: project_id, conversation_id, branch_name, commit_message, pr_title, pr_body, base_branch.
-- **DO NOT** use apply_changes + git_commit + git_push + code_provider_create_pr separately — use create_pr_workflow.
+- The sandbox tools share a single per-conversation worktree, so file edits, commits, and pushes compose naturally — there is no separate apply/staging step.
 
 **EXECUTION:**
 1. For issues/PRs: Use `github_tool` immediately
-2. For PR creation from code changes: Use `create_pr_workflow` (one call)
+2. For PR creation from code changes: `sandbox_text_editor` to write changes → `sandbox_git` (commit, push) → `code_provider_create_pr`
 3. For PR operations (fetch/comment): Fetch PR details first
 4. For branch ops: Create branch before changes
 5. For file updates: Use github_update_branch
@@ -340,7 +340,8 @@ def get_supervisor_instructions(
             You have these tools available to call directly in your own context:
             - **fetch_file**: Read a file by path
             - **get_code_file_structure**: Explore directory/file structure
-            - **bash_command**: Run read-only bash commands on the codebase (grep, find, rg, awk, cat, ls, etc.) — use this for any grep/search task
+            - **sandbox_shell**: Run a shell command inside the project's sandboxed worktree (grep, find, awk, cat, ls, etc.) — use this for any shell-driven query
+            - **sandbox_search**: Ripgrep across the worktree, returns structured hits with path, line, and snippet — prefer this over `sandbox_shell` for code search
             - **web_search_tool**: Search the web
             - **Todo tools** (read_todos, write_todos, add_todo, update_todo_status, etc.)
             - **Requirement tools** (add_requirements, get_requirements, etc.)
@@ -349,7 +350,7 @@ def get_supervisor_instructions(
             **🎯 SUBAGENT DELEGATION - YOUR MOST POWERFUL TOOL (INCLUDING REASONING):**
 
             **CRITICAL UNDERSTANDING: Subagents are ISOLATED execution contexts**
-            - Subagents have ALL your tools (code search, file read, bash_command, code changes, etc.) EXCEPT delegation
+            - Subagents have ALL your tools (code search, file read, sandbox_shell, sandbox_text_editor, etc.) EXCEPT delegation
             - Subagents DO NOT receive your conversation history or previous tool results
             - Subagents receive ONLY: task_description + context you explicitly provide
             - Subagents stream their work to the user in real-time
@@ -381,7 +382,7 @@ def get_supervisor_instructions(
               - Repository operations
               - ANY mention of "GitHub", "PR", "pull request", "branch", "commit", "repository"
               - When user asks about GitHub, PRs, branches, or repository operations
-              - **PR creation from code changes:** Only when the user has explicitly affirmed in their message (e.g. "yes", "create PR", "proceed") that they want a PR. Never delegate PR creation on your own. When they have affirmed, delegate with context: project_id, conversation_id, branch_name, commit_message, pr_title, pr_body, base_branch (usually "main"). The GitHub agent has `create_pr_workflow` — it does apply + commit + push + create PR in ONE call. Prefer this over separate apply_changes/git_commit/git_push calls.
+              - **PR creation from code changes:** Only when the user has explicitly affirmed in their message (e.g. "yes", "create PR", "proceed") that they want a PR. Never delegate PR creation on your own. When they have affirmed, delegate with context: project_id, conversation_id, branch_name, commit_message, pr_title, pr_body, base_branch (usually "main"). The GitHub agent runs `sandbox_text_editor` to write changes, then `sandbox_git` (commit, push), then `code_provider_create_pr` to open the PR.
 
             - 🎫 **Jira Agent** (delegate_to_jira_agent): Use for ANY Jira-related task:
               - Issue management (create, update, search, transition)

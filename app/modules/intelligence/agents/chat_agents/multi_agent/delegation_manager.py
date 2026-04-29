@@ -259,17 +259,17 @@ class DelegationManager:
             # supervisor may have set them AFTER the task was created, or a previous
             # subagent task may have overwritten them. Explicitly re-seeding ensures
             # user_id / tunnel_url / conversation_id are always correct here.
-            from app.modules.intelligence.tools.code_changes_manager import (
-                _init_code_changes_manager,
+            from app.modules.intelligence.tools.sandbox.context import (
+                set_run_context as _set_sandbox_run_context,
             )
-            _init_code_changes_manager(
-                conversation_id=current_context.conversation_id,
-                agent_id=getattr(current_context, "curr_agent_id", None),
+            # Re-seed sandbox contextvars: a sibling task may have overwritten
+            # them (asyncio.create_task copies vars at creation time, not at
+            # invocation time).
+            _set_sandbox_run_context(
                 user_id=getattr(current_context, "user_id", None),
-                tunnel_url=getattr(current_context, "tunnel_url", None),
-                local_mode=getattr(current_context, "local_mode", False),
-                repository=getattr(current_context, "repository", None),
+                conversation_id=current_context.conversation_id,
                 branch=getattr(current_context, "branch", None),
+                local_mode=getattr(current_context, "local_mode", False),
             )
 
             # Convert agent type string to AgentType enum

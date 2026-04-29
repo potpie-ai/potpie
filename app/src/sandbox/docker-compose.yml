@@ -1,0 +1,18 @@
+name: potpie-sandbox
+
+services:
+  tests:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.test
+    working_dir: /Users/nandan/Desktop/Dev/potpie/app/src/sandbox
+    environment:
+      PYTHONPATH: /Users/nandan/Desktop/Dev/potpie/app/src/sandbox
+      SANDBOX_TEST_TMPDIR: /Users/nandan/Desktop/Dev/potpie/.tmp/sandbox-compose
+      SANDBOX_DOCKER_IMAGE: busybox:latest
+    volumes:
+      - /Users/nandan/Desktop/Dev/potpie:/Users/nandan/Desktop/Dev/potpie
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: >
+      sh -lc "pytest -q tests/unit tests/integration/test_docker_runtime.py"
+
