@@ -104,6 +104,47 @@ class AuthService:
             return None, {"error": f"An unexpected error occurred: {str(e)}"}
 
     @staticmethod
+    def _resolve_bearer_credential(
+        request: Request,
+        credential: HTTPAuthorizationCredentials | None,
+    ) -> HTTPAuthorizationCredentials | None:
+        if isinstance(credential, HTTPAuthorizationCredentials):
+            return credential
+
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            return HTTPAuthorizationCredentials(
+                scheme="Bearer",
+                credentials=auth_header[7:].strip(),
+            )
+        return None
+
+    @staticmethod
+    def _development_mode_user() -> dict[str, str | None]:
+        return {
+            "user_id": os.getenv("defaultUsername"),
+            "email": "defaultuser@potpie.ai",
+        }
+
+    @staticmethod
+    def _verify_bearer_token(token: str) -> dict:
+        try:
+            decoded_token = auth.verify_id_token(token)
+        except Exception as err:
+            logging.warning("Firebase token verification failed: %s", str(err))
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=INVALID_FIREBASE_AUTH_ERROR,
+                headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
+            ) from err
+
+        # Normalize token to always include "user_id" for consistency across environments.
+        # Firebase tokens use "uid", but our codebase expects "user_id".
+        if "uid" in decoded_token and "user_id" not in decoded_token:
+            decoded_token["user_id"] = decoded_token["uid"]
+        return decoded_token
+
+    @staticmethod
     def create_custom_token(uid: str) -> str | None:
         """
         Create a Firebase custom token for the given uid (e.g. for VS Code extension).
@@ -127,46 +168,26 @@ class AuthService:
         # When invoked manually (e.g. auth_handler.check_auth(request, None)), the
         # third argument defaults to the Depends() object. Resolve Bearer token from
         # the request so both dependency-injected and manual calls work.
-        if not isinstance(credential, HTTPAuthorizationCredentials):
-            auth_header = request.headers.get("Authorization")
-            if auth_header and auth_header.startswith("Bearer "):
-                credential = HTTPAuthorizationCredentials(
-                    scheme="Bearer", credentials=auth_header[7:].strip()
-                )
-            else:
-                credential = None
+        credential = AuthService._resolve_bearer_credential(request, credential)
 
         # Check if the application is in debug mode
         if os.getenv("isDevelopmentMode") == "enabled" and credential is None:
-            request.state.user = {"user_id": os.getenv("defaultUsername")}
-            return {
-                "user_id": os.getenv("defaultUsername"),
-                "email": "defaultuser@potpie.ai",
-            }
-        else:
-            if credential is None:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Bearer authentication is needed",
-                    headers={"WWW-Authenticate": 'Bearer realm="auth_required"'},
-                )
-            try:
-                decoded_token = auth.verify_id_token(credential.credentials)
-                # Normalize token to always include "user_id" for consistency across environments
-                # Firebase tokens use "uid", but our codebase expects "user_id"
-                if "uid" in decoded_token and "user_id" not in decoded_token:
-                    decoded_token["user_id"] = decoded_token["uid"]
-                request.state.user = decoded_token
-            except Exception as err:
-                logging.warning("Firebase token verification failed: %s", str(err))
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail=INVALID_FIREBASE_AUTH_ERROR,
-                    headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
-                )
-            if res is not None:
-                res.headers["WWW-Authenticate"] = 'Bearer realm="auth_required"'
-            return decoded_token
+            dev_user = AuthService._development_mode_user()
+            request.state.user = dev_user
+            return dev_user
+
+        if credential is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Bearer authentication is needed",
+                headers={"WWW-Authenticate": 'Bearer realm="auth_required"'},
+            )
+
+        decoded_token = AuthService._verify_bearer_token(credential.credentials)
+        request.state.user = decoded_token
+        if res is not None:
+            res.headers["WWW-Authenticate"] = 'Bearer realm="auth_required"'
+        return decoded_token
 
 
 auth_handler = AuthService()

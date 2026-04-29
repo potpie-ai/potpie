@@ -55,6 +55,7 @@ GITHUB_SIGNUP_DISABLED_DETAILS = (
 GENERIC_SIGNUP_FAILURE_ERROR = "Signup failed"
 GENERIC_REQUEST_FAILURE_ERROR = "Unable to process request"
 INVALID_REQUEST_ERROR = "Invalid request"
+AUTHENTICATION_REQUIRED_ERROR = "Authentication required"
 
 
 @dataclass(frozen=True)
@@ -474,6 +475,7 @@ async def _handle_email_password_signup(
 
 
 class AuthAPI:
+    @staticmethod
     @auth_router.post("/login")
     async def login(login_request: LoginRequest):
         email, password = login_request.email, login_request.password
@@ -545,6 +547,7 @@ class AuthAPI:
             db,
         )
 
+    @staticmethod
     @auth_router.post("/auth/custom-token")
     async def custom_token(user=Depends(AuthService.check_auth)):
         """
@@ -568,6 +571,7 @@ class AuthAPI:
 
     # ===== Multi-Provider SSO Endpoints =====
 
+    @staticmethod
     @auth_router.post("/sso/login")
     async def sso_login(
         request: Request,
@@ -694,6 +698,7 @@ class AuthAPI:
             logger.error(f"SSO login error: {str(e)}", exc_info=True)
             return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 500)
 
+    @staticmethod
     @auth_router.post("/providers/confirm-linking")
     async def confirm_provider_linking(
         confirm_request: ConfirmLinkingRequest,
@@ -735,6 +740,7 @@ class AuthAPI:
             logger.error(f"Provider linking error: {str(e)}", exc_info=True)
             return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 500)
 
+    @staticmethod
     @auth_router.delete("/providers/cancel-linking/{linking_token}")
     async def cancel_provider_linking(
         linking_token: str,
@@ -760,6 +766,7 @@ class AuthAPI:
             logger.error("Cancel provider linking error: %s", e, exc_info=True)
             return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 400)
 
+    @staticmethod
     @auth_router.get("/providers/me")
     async def get_my_providers(
         user=Depends(AuthService.check_auth),
@@ -777,7 +784,7 @@ class AuthAPI:
 
             if not user_id:
                 return JSONResponse(
-                    content={"error": "Authentication required"},
+                    content={"error": AUTHENTICATION_REQUIRED_ERROR},
                     status_code=401,
                 )
 
@@ -804,6 +811,7 @@ class AuthAPI:
             logger.error("Get providers error: %s", e, exc_info=True)
             return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 400)
 
+    @staticmethod
     @auth_router.post("/providers/set-primary")
     async def set_primary_provider(
         primary_request: SetPrimaryProviderRequest,
@@ -816,7 +824,7 @@ class AuthAPI:
 
             if not user_id:
                 return JSONResponse(
-                    content={"error": "Authentication required"},
+                    content={"error": AUTHENTICATION_REQUIRED_ERROR},
                     status_code=401,
                 )
 
@@ -841,6 +849,7 @@ class AuthAPI:
             logger.error("Set primary provider error: %s", e, exc_info=True)
             return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 400)
 
+    @staticmethod
     @auth_router.delete("/providers/unlink")
     async def unlink_provider(
         unlink_request: UnlinkProviderRequest,
@@ -853,7 +862,7 @@ class AuthAPI:
 
             if not user_id:
                 return JSONResponse(
-                    content={"error": "Authentication required"},
+                    content={"error": AUTHENTICATION_REQUIRED_ERROR},
                     status_code=401,
                 )
 
@@ -884,6 +893,7 @@ class AuthAPI:
             logger.error("Unlink provider error: %s", e, exc_info=True)
             return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 400)
 
+    @staticmethod
     @auth_router.get("/account/me")
     async def get_my_account(
         user=Depends(AuthService.check_auth),
@@ -896,7 +906,7 @@ class AuthAPI:
 
             if not user_id:
                 return JSONResponse(
-                    content={"error": "Authentication required"},
+                    content={"error": AUTHENTICATION_REQUIRED_ERROR},
                     status_code=401,
                 )
 
