@@ -136,6 +136,8 @@ class QnAAgent(ChatAgent):
             return PydanticRagAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
+        ctx.additional_context = ctx.additional_context or ""
+
         if ctx.node_ids and len(ctx.node_ids) > 0:
             code_results = await self.tools_provider.get_code_from_multiple_node_ids_tool.run_multiple(
                 ctx.project_id, ctx.node_ids
@@ -144,12 +146,14 @@ class QnAAgent(ChatAgent):
                 f"Code context of the node_ids in query:\n {code_results}"
             )
 
-        file_structure = (
-            await self.tools_provider.file_structure_tool.fetch_repo_structure(
-                ctx.project_id
+        file_structure_header = "File Structure of the project:\n"
+        if file_structure_header not in ctx.additional_context:
+            file_structure = (
+                await self.tools_provider.file_structure_tool.fetch_repo_structure(
+                    ctx.project_id
+                )
             )
-        )
-        ctx.additional_context += f"File Structure of the project:\n {file_structure}"
+            ctx.additional_context += f"{file_structure_header} {file_structure}"
 
         return ctx
 
