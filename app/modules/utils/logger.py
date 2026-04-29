@@ -4,7 +4,7 @@ import os
 import re
 import sys
 from contextlib import contextmanager
-from typing import Optional
+from typing import Any, Optional
 
 from loguru import logger as _loguru_logger
 
@@ -19,33 +19,38 @@ SHOW_STACK_TRACES = os.getenv("LOG_STACK_TRACES", "true").lower() in (
     "yes",
 )
 
+REDACTED_VALUE = "***REDACTED***"
+REDACTED_KEY_VALUE_REPLACEMENT = rf"\1={REDACTED_VALUE}"
+REDACTED_DOUBLE_QUOTED_VALUE_REPLACEMENT = rf'\1"{REDACTED_VALUE}"'
+REDACTED_SINGLE_QUOTED_VALUE_REPLACEMENT = rf"\1'{REDACTED_VALUE}'"
+
 # Sensitive data patterns to redact in logs
 SENSITIVE_PATTERNS = [
     # Credentials in key=value format
     (
         re.compile(r'(password|passwd|pwd)=["\']?([^"\'\s&]+)', re.IGNORECASE),
-        r"\1=***REDACTED***",
+        REDACTED_KEY_VALUE_REPLACEMENT,
     ),
     (
         re.compile(
             r'(token|access_token|refresh_token|id_token)=["\']?([^"\'\s&]+)',
             re.IGNORECASE,
         ),
-        r"\1=***REDACTED***",
+        REDACTED_KEY_VALUE_REPLACEMENT,
     ),
     (
         re.compile(
             r'(secret|client_secret|api_secret)=["\']?([^"\'\s&]+)', re.IGNORECASE
         ),
-        r"\1=***REDACTED***",
+        REDACTED_KEY_VALUE_REPLACEMENT,
     ),
     (
-        re.compile(r'(api[_-]?key|apikey)=["\']?([^"\'\s&]+)', re.IGNORECASE),
-        r"\1=***REDACTED***",
+        re.compile(r'(api[_-]?key)=["\']?([^"\'\s&]+)', re.IGNORECASE),
+        REDACTED_KEY_VALUE_REPLACEMENT,
     ),
     (
         re.compile(r'(auth|authorization)=["\']?([^"\'\s&]+)', re.IGNORECASE),
-        r"\1=***REDACTED***",
+        REDACTED_KEY_VALUE_REPLACEMENT,
     ),
     # Bearer tokens
     (
@@ -71,13 +76,13 @@ SENSITIVE_PATTERNS = [
         re.compile(
             r'("(?:password|token|secret|api_key)"\s*:\s*)"([^"]+)"', re.IGNORECASE
         ),
-        r'\1"***REDACTED***"',
+        REDACTED_DOUBLE_QUOTED_VALUE_REPLACEMENT,
     ),
     (
         re.compile(
             r"('(?:password|token|secret|api_key)'\s*:\s*)'([^']+)'", re.IGNORECASE
         ),
-        r"\1'***REDACTED***'",
+        REDACTED_SINGLE_QUOTED_VALUE_REPLACEMENT,
     ),
 ]
 
@@ -102,10 +107,12 @@ def filter_sensitive_data(text: str) -> str:
     return filtered
 
 
-def truncate_traceback(text: str, max_lines: int = 10) -> str:
+def truncate_traceback(text: Any, max_lines: int = 10) -> Any:
     """Keep only the most relevant tail of a traceback for production logs."""
     if not isinstance(text, str):
         return text
+    if max_lines < 1:
+        max_lines = 1
 
     lines = text.splitlines()
     if len(lines) <= max_lines:

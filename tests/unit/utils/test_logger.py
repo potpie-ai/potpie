@@ -60,6 +60,12 @@ class TestProductionLogSink:
             f"line {i}" for i in range(2, 12)
         )
 
+    def test_truncate_traceback_clamps_non_positive_max_lines(self):
+        traceback_text = "\n".join(f"line {i}" for i in range(3))
+
+        assert truncate_traceback(traceback_text, max_lines=0) == "line 2"
+        assert truncate_traceback(traceback_text, max_lines=-5) == "line 2"
+
     def test_production_log_sink_truncates_exception_traceback(self, capsys):
         traceback_text = "\n".join(f"trace {i}" for i in range(15))
         payload = {

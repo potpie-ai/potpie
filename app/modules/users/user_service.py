@@ -120,7 +120,7 @@ class UserService:
             logger.error(f"Error fetching user: {e}")
             return None
 
-    def get_user_id_by_email(self, email: str) -> str:
+    def get_user_id_by_email(self, email: str) -> Optional[str]:
         try:
             user = self.db.query(User).filter(User.email == email).first()
             if user:
@@ -150,7 +150,7 @@ class UserService:
 
         return await asyncio.get_running_loop().run_in_executor(None, _query)
 
-    def get_user_ids_by_emails(self, emails: List[str]) -> List[str]:
+    def get_user_ids_by_emails(self, emails: List[str]) -> Optional[List[str]]:
         try:
             users = self.db.query(User).filter(User.email.in_(emails)).all()
             if users:

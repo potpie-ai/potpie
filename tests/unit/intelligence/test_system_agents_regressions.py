@@ -1,4 +1,3 @@
-import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -7,17 +6,21 @@ import pytest
 from app.modules.intelligence.agents.chat_agent import ChatContext
 
 
-os.environ.setdefault(
-    "POSTGRES_SERVER", "postgresql://test_user:test_pass@localhost:5432/test_db"
-)
-
-
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def postgres_server_env(monkeypatch):
+    monkeypatch.setenv(
+        "POSTGRES_SERVER", "postgresql://test_user:test_pass@localhost:5432/test_db"
+    )
 
 
 @pytest.mark.asyncio
 async def test_qna_agent_reuses_existing_file_structure_context():
     from app.modules.intelligence.agents.chat_agents.system_agents.qna_agent import (
+        FILE_STRUCTURE_CONTEXT_MARKER,
+        FILE_STRUCTURE_HEADER,
         QnAAgent,
     )
 
@@ -42,7 +45,8 @@ async def test_qna_agent_reuses_existing_file_structure_context():
     second = await agent._enriched_context(first)
 
     assert tools_provider.file_structure_tool.fetch_repo_structure.await_count == 1
-    assert second.additional_context.count("File Structure of the project:") == 1
+    assert second.additional_context.count(FILE_STRUCTURE_CONTEXT_MARKER) == 1
+    assert second.additional_context.count(FILE_STRUCTURE_HEADER.strip()) == 1
 
 
 def test_specgen_agent_uses_registered_todo_tool_names():
@@ -67,6 +71,10 @@ def test_specgen_agent_uses_registered_todo_tool_names():
     assert "add_todo" in requested_tools
     assert "read_todos" in requested_tools
     assert "write_todos" in requested_tools
+    assert "remove_todo" in requested_tools
+    assert "add_subtask" in requested_tools
+    assert "set_dependency" in requested_tools
+    assert "update_todo_status" in requested_tools
     assert "get_available_tasks" in requested_tools
     assert "create_todo" not in requested_tools
     assert "get_todo" not in requested_tools

@@ -332,7 +332,7 @@ class TestAuthServiceCheckAuth:
                 "app.modules.auth.auth_service.auth.verify_id_token",
                 return_value=decoded_token,
             ):
-                with patch("app.modules.auth.auth_service.logging.info") as mock_info:
+                with patch("app.modules.auth.auth_service.logging") as mock_logging:
                     credential = HTTPAuthorizationCredentials(
                         scheme="Bearer", credentials="sensitive-token"
                     )
@@ -341,9 +341,9 @@ class TestAuthServiceCheckAuth:
                     )
 
         assert not any(
-            "sensitive-token" in str(arg)
-            for call in mock_info.call_args_list
-            for arg in call.args
+            "sensitive-token" in str(value)
+            for call in mock_logging.mock_calls
+            for value in [*call.args, *call.kwargs.values()]
         )
 
     @pytest.mark.asyncio

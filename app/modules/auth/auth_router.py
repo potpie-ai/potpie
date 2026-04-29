@@ -236,10 +236,7 @@ class AuthAPI:
                     f"cannot link to user {user.uid}"
                 )
                 return JSONResponse(
-                    content={
-                        "error": error_message,
-                        "details": f"GitHub account {provider_uid} is already linked to user {existing_provider_with_uid.user_id}, cannot link to user {user.uid}",
-                    },
+                    content={"error": error_message},
                     status_code=409,  # Conflict
                 )
 
@@ -273,10 +270,7 @@ class AuthAPI:
                         f"GitHub account {provider_uid} is already linked to another user: {e}"
                     )
                     return JSONResponse(
-                        content={
-                            "error": error_message,
-                            "details": f"GitHub account {provider_uid} is already linked to another user. Database constraint violation: {str(e)}",
-                        },
+                        content={"error": error_message},
                         status_code=409,  # Conflict
                     )
                 # Re-raise other IntegrityErrors (e.g., unique_user_provider)
@@ -405,7 +399,7 @@ class AuthAPI:
                 db.rollback()
                 logger.error(f"Failed to create user: {e}", exc_info=True)
                 return JSONResponse(
-                    content={"error": f"Signup failed: {str(e)}"},
+                    content={"error": "Signup failed"},
                     status_code=500,
                 )
 
@@ -463,7 +457,7 @@ class AuthAPI:
             except Exception as e:
                 db.rollback()
                 logger.error(f"Email/password signup failed: {e}", exc_info=True)
-                return JSONResponse(content={"error": str(e)}, status_code=500)
+                return JSONResponse(content={"error": "Signup failed"}, status_code=500)
 
     @auth_router.post("/auth/custom-token")
     async def custom_token(user=Depends(AuthService.check_auth)):

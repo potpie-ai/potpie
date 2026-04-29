@@ -106,6 +106,16 @@ class TestUserServiceSetupDummyUser:
                 user_service.setup_dummy_user()
 
         mock_create_user.assert_called_once()
+        created_user = mock_create_user.call_args.args[0]
+        assert isinstance(created_user, CreateUser)
+        assert created_user.uid == "dummy-user"
+        assert created_user.email == "defaultuser@potpie.ai"
+        assert created_user.display_name == "Dummy User"
+        assert created_user.email_verified is True
+        assert created_user.provider_info == {"access_token": "dummy_token"}
+        assert created_user.provider_username == "self"
+        assert created_user.created_at is not None
+        assert created_user.last_login_at is not None
 
 
 class TestUserServiceUpdateLastLogin:
