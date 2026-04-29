@@ -35,6 +35,24 @@ pipeline {
             }
         }
 
+        stage('Quality Gates') {
+            steps {
+                script {
+                    sh '''#!/usr/bin/env bash
+set -euo pipefail
+if ! command -v uv >/dev/null 2>&1; then
+  echo "uv is required to run quality gates" >&2
+  exit 1
+fi
+uv sync --frozen --dev
+uv run ruff check app tests --exit-zero
+SKIP_REAL_PARSE=1 uv run python scripts/run_tests.py --unit-only
+SKIP_REAL_PARSE=1 uv run python scripts/run_tests.py --integration-only
+'''
+                }
+            }
+        }
+
         stage('Configure Docker Authentication') {
             steps {
                 script {
