@@ -1,6 +1,6 @@
 import asyncio
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
 from firebase_admin import auth
@@ -14,6 +14,11 @@ from app.modules.users.user_schema import CreateUser, UserProfileResponse
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+
+def utc_now() -> datetime:
+    """Return the current UTC time as a timezone-aware datetime."""
+    return datetime.now(timezone.utc)
 
 
 class UserServiceError(Exception):
@@ -31,7 +36,7 @@ class UserService:
         try:
             user = self.db.query(User).filter(User.uid == uid).first()
             if user:
-                user.last_login_at = datetime.utcnow()
+                user.last_login_at = utc_now()
 
                 # Safely update provider_info with OAuth token
                 if user.provider_info is None:
@@ -104,8 +109,8 @@ class UserService:
                 email="defaultuser@potpie.ai",
                 display_name="Dummy User",
                 email_verified=True,
-                created_at=datetime.utcnow(),
-                last_login_at=datetime.utcnow(),
+                created_at=utc_now(),
+                last_login_at=utc_now(),
                 provider_info={"access_token": "dummy_token"},
                 provider_username="self",
             )
@@ -223,9 +228,7 @@ class AsyncUserService:
             logger.error("Error fetching user IDs by emails %s: %s", emails, e)
             return None
 
-    async def create_user(
-        self, user_details: CreateUser
-    ) -> Tuple[str, str, bool]:
+    async def create_user(self, user_details: CreateUser) -> Tuple[str, str, bool]:
         new_user = User(
             uid=user_details.uid,
             email=user_details.email,
@@ -246,16 +249,14 @@ class AsyncUserService:
             await self.session.rollback()
             return "", "error creating user", True
 
-    async def update_last_login(
-        self, uid: str, oauth_token: str
-    ) -> Tuple[str, bool]:
+    async def update_last_login(self, uid: str, oauth_token: str) -> Tuple[str, bool]:
         try:
             stmt = select(User).where(User.uid == uid).limit(1)
             result = await self.session.execute(stmt)
             user = result.scalar_one_or_none()
             if not user:
                 return "User not found", True
-            user.last_login_at = datetime.utcnow()
+            user.last_login_at = utc_now()
             if user.provider_info is None:
                 user.provider_info = {}
             provider_info = (
