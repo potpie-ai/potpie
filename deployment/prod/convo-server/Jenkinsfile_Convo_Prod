@@ -129,11 +129,12 @@ SKIP_REAL_PARSE=1 uv run python scripts/run_tests.py --integration-only
                 script {
                     def requestedDigest = params.IMAGE_DIGEST?.trim()
                     def effectiveDigest = requestedDigest ? requestedDigest : env.IMAGE_DIGEST_REF
+                    def imageDigestPattern = /^[a-z0-9.-]+(\/[a-z0-9._-]+)+@sha256:[a-f0-9]{64}$/
                     if (!effectiveDigest) {
                         error('No immutable digest available. Provide IMAGE_DIGEST or allow build/push to resolve one.')
                     }
-                    if (!effectiveDigest.contains('@sha256:')) {
-                        error("Digest must include @sha256:. Received: ${effectiveDigest}")
+                    if (!(effectiveDigest ==~ imageDigestPattern)) {
+                        error("Digest must be a canonical image reference ending in @sha256:<64 hex chars>. Received: ${effectiveDigest}")
                     }
                     if (!params.CHANGE_TICKET?.trim()) {
                         error('CHANGE_TICKET is required for release governance.')
@@ -165,7 +166,11 @@ SKIP_REAL_PARSE=1 uv run python scripts/run_tests.py --integration-only
                 script {
                     def imageDeploySucceeded = false
                     def deployRef = env.RELEASE_REF
+                    def imageDigestPattern = /^[a-z0-9.-]+(\/[a-z0-9._-]+)+@sha256:[a-f0-9]{64}$/
 
+                    if (!(deployRef ==~ imageDigestPattern)) {
+                        error("Release ref must be a canonical image reference ending in @sha256:<64 hex chars>. Received: ${deployRef}")
+                    }
 
                     try {
                         sh """
@@ -192,40 +197,22 @@ SKIP_REAL_PARSE=1 uv run python scripts/run_tests.py --integration-only
             }
             steps {
                 script {
-                    if (!params.ROLLBACK_DIGEST.contains('@sha256:')) {
-                        error("ROLLBACK_DIGEST must include @sha256:. Received: ${params.ROLLBACK_DIGEST}")
+                    def rollbackDigest = params.ROLLBACK_DIGEST?.trim()
+                    def imageDigestPattern = /^[a-z0-9.-]+(\/[a-z0-9._-]+)+@sha256:[a-f0-9]{64}$/
+                    if (!(rollbackDigest ==~ imageDigestPattern)) {
+                        error("ROLLBACK_DIGEST must be a canonical image reference ending in @sha256:<64 hex chars>. Received: ${rollbackDigest}")
+                    }
+                    if (env.RELEASE_REF?.trim()) {
+                        error("ROLLBACK_DIGEST is mutually exclusive with deployment. Release ref is already set to ${env.RELEASE_REF}.")
                     }
                     sh """
-                    kubectl set image deployment/conversation-server-deployment conversation-server=${params.ROLLBACK_DIGEST} -n ${params.namespace}
+                    kubectl set image deployment/conversation-server-deployment conversation-server=${rollbackDigest} -n ${params.namespace}
                     kubectl rollout status deployment/conversation-server-deployment -n ${params.namespace}
                     """
-                    env.RELEASE_REF = params.ROLLBACK_DIGEST
+                    env.RELEASE_REF = rollbackDigest
                 }
             }
         }
-
-        stage('Persist Release Record') {
-            steps {
-                script {
-                    def releaseRecord = JsonOutput.prettyPrint(JsonOutput.toJson([
-                        service: 'convo',
-                        namespace: params.namespace,
-                        release_ref: env.RELEASE_REF,
-                        change_ticket: params.CHANGE_TICKET,
-                        approver_note: env.RELEASE_APPROVER_NOTE ?: '',
-                        build_url: env.BUILD_URL,
-                        build_number: env.BUILD_NUMBER,
-                        git_branch: env.GIT_BRANCH,
-                        git_commit: env.GIT_COMMIT ?: '',
-                        timestamp_utc: new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone('UTC'))
-                    ]))
-                    writeFile file: 'release-record.json', text: releaseRecord + '\n'
-                    archiveArtifacts artifacts: 'release-record.json', onlyIfSuccessful: false
-                }
-            }
-        }
-
-
 
         stage('Pipeline finished') {
             steps {
@@ -248,10 +235,25 @@ SKIP_REAL_PARSE=1 uv run python scripts/run_tests.py --integration-only
             echo "Pipeline finished"
             // Optional cleanup action
             script {
+                def releaseRecord = JsonOutput.prettyPrint(JsonOutput.toJson([
+                    service: 'convo',
+                    namespace: params.namespace,
+                    release_ref: env.RELEASE_REF ?: '',
+                    change_ticket: params.CHANGE_TICKET,
+                    approver_note: env.RELEASE_APPROVER_NOTE ?: '',
+                    build_url: env.BUILD_URL,
+                    build_number: env.BUILD_NUMBER,
+                    git_branch: env.GIT_BRANCH,
+                    git_commit: env.GIT_COMMIT ?: '',
+                    result: currentBuild.currentResult,
+                    timestamp_utc: new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone('UTC'))
+                ]))
+                writeFile file: 'release-record.json', text: releaseRecord + '\n'
+                archiveArtifacts artifacts: 'release-record.json', onlyIfSuccessful: false
 
                 // Clean up local Docker images when built in this run
                 if (env.IMAGE_TAG) {
-                    sh "docker rmi ${env.IMAGE_TAG} || true"
+                    sh "sudo docker rmi ${env.IMAGE_TAG} || true"
                 }
             }
         }

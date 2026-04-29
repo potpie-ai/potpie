@@ -190,6 +190,9 @@ SKIP_REAL_PARSE=1 uv run python scripts/run_tests.py --integration-only
             }
             steps {
                 script {
+                    if (params.IMAGE_DIGEST?.trim()) {
+                        error("IMAGE_DIGEST and ROLLBACK_DIGEST cannot be used together. Provide only one of them.")
+                    }
                     if (!params.ROLLBACK_DIGEST.contains('@sha256:')) {
                         error("ROLLBACK_DIGEST must include @sha256:. Received: ${params.ROLLBACK_DIGEST}")
                     }
@@ -249,7 +252,7 @@ SKIP_REAL_PARSE=1 uv run python scripts/run_tests.py --integration-only
 
                 // Clean up local Docker images when built in this run
                 if (env.IMAGE_TAG) {
-                    sh "docker rmi ${env.IMAGE_TAG} || true"
+                    sh "sudo docker rmi ${env.IMAGE_TAG} || true"
                 }
             }
         }
