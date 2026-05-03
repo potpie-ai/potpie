@@ -194,6 +194,44 @@ class GitPushTool:
         logger.warning("GitPushTool: No authentication token found")
         return None
 
+    def _restore_plain_remote_url(self, repo, remote: str, plain_url: str) -> None:
+        """Restore the plain remote URL after an auth-token push.
+
+        SECURITY: a previous version of this code silently swallowed every
+        exception in the restore path (``except Exception: pass``), which
+        meant a transient git failure (locked config, ENOSPC, etc.) could
+        leave the token-bearing ``auth_url`` permanently embedded in
+        ``.git/config``. Anyone with read access to the working tree could
+        then exfiltrate a live OAuth credential.
+
+        This helper instead surfaces the failure loudly via ``logger.critical``
+        and makes a best-effort fallback attempt to overwrite the remote URL
+        directly through ``git config``, so even if ``git remote set-url``
+        fails the token does not persist locally.
+        """
+        try:
+            repo.git.remote("set-url", remote, plain_url)
+            return
+        except Exception as restore_err:
+            logger.critical(
+                "GitPushTool: SECURITY — failed to restore plain remote URL "
+                "after auth-token push; the authenticated URL may remain in "
+                f".git/config. remote={remote} error={restore_err}"
+            )
+
+        try:
+            repo.git.config(f"remote.{remote}.url", plain_url)
+            logger.info(
+                "GitPushTool: SECURITY — plain remote URL restored via "
+                f"fallback `git config` for remote={remote}"
+            )
+        except Exception as cfg_err:
+            logger.critical(
+                "GitPushTool: SECURITY — fallback `git config` to overwrite "
+                f"remote.{remote}.url also failed: {cfg_err}. Operator must "
+                "manually remove the auth-bearing URL from .git/config."
+            )
+
     def _run(
         self,
         project_id: str,
@@ -300,10 +338,7 @@ class GitPushTool:
                     }
                 finally:
                     if auth_url and plain_url and self.repo_manager:
-                        try:
-                            repo.git.remote("set-url", remote, plain_url)
-                        except Exception:
-                            pass
+                        self._restore_plain_remote_url(repo, remote, plain_url)
 
             # Execute push with safe git operation wrapper
             result = safe_git_repo_operation(

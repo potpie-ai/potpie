@@ -354,6 +354,81 @@ class TestAuthServiceCheckAuth:
                 assert result["user_id"] == "manual-user"
 
 
+class TestCheckAuthDoesNotLogToken:
+    """Regression tests for issue #727A.
+
+    Prior to the fix, check_auth logged the first 20 characters of every
+    Firebase JWT at INFO level via `logging.info("DEBUG: Verifying Firebase
+    token: %s...", credential.credentials[:20])`. That partial JWT ended up in
+    log files, log aggregators, and SIEMs — a credential exposure. Tests
+    below pin that no fragment of the bearer credential reaches the logging
+    framework on either the success or failure path.
+    """
+
+    @staticmethod
+    def _format_record(record):
+        try:
+            return record.getMessage()
+        except Exception:
+            return str(record.msg)
+
+    @pytest.mark.asyncio
+    async def test_valid_token_path_never_logs_credential_bytes(self, caplog):
+        secret = "eyJhbGciOiJSUzI1NiIsImtpZCI6IkRO"  # 32-char JWT-shaped sentinel
+        mock_request = MagicMock()
+        mock_request.headers.get.return_value = f"Bearer {secret}"
+        mock_request.state = MagicMock()
+        mock_response = MagicMock()
+
+        with patch.dict(os.environ, {"isDevelopmentMode": "disabled"}, clear=False):
+            with patch(
+                "app.modules.auth.auth_service.auth.verify_id_token",
+                return_value={"uid": "u", "email": "u@example.com"},
+            ):
+                credential = HTTPAuthorizationCredentials(
+                    scheme="Bearer", credentials=secret
+                )
+                import logging as _logging
+
+                with caplog.at_level(_logging.DEBUG):
+                    await AuthService.check_auth(mock_request, mock_response, credential)
+
+                for record in caplog.records:
+                    msg = self._format_record(record)
+                    # Pre-fix: msg contained secret[:20]. Post-fix: never.
+                    assert secret[:8] not in msg, (
+                        f"credential prefix leaked into log record: {msg!r}"
+                    )
+                    assert secret[:20] not in msg
+
+    @pytest.mark.asyncio
+    async def test_invalid_token_path_never_logs_credential_bytes(self, caplog):
+        secret = "eyJhbGciOiJSUzI1NiIsImtpZCI6IkRO"
+        mock_request = MagicMock()
+        mock_request.headers.get.return_value = f"Bearer {secret}"
+
+        with patch.dict(os.environ, {"isDevelopmentMode": "disabled"}, clear=False):
+            with patch(
+                "app.modules.auth.auth_service.auth.verify_id_token",
+                side_effect=Exception("Token expired"),
+            ):
+                credential = HTTPAuthorizationCredentials(
+                    scheme="Bearer", credentials=secret
+                )
+                import logging as _logging
+
+                with caplog.at_level(_logging.DEBUG):
+                    with pytest.raises(HTTPException):
+                        await AuthService.check_auth(mock_request, None, credential)
+
+                for record in caplog.records:
+                    msg = self._format_record(record)
+                    assert secret[:8] not in msg, (
+                        f"credential prefix leaked into log record: {msg!r}"
+                    )
+                    assert secret[:20] not in msg
+
+
 class TestAuthHandler:
     """Test the module-level auth_handler instance"""
 
