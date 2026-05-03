@@ -156,10 +156,6 @@ class AuthService:
                     headers={"WWW-Authenticate": 'Bearer realm="auth_required"'},
                 )
             try:
-                logging.info(
-                    "DEBUG: Verifying Firebase token: %s...",
-                    credential.credentials[:20],
-                )
                 decoded_token = auth.verify_id_token(credential.credentials)
                 # Normalize token to always include "user_id" for consistency across environments
                 # Firebase tokens use "uid", but our codebase expects "user_id"

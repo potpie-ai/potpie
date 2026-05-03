@@ -1,6 +1,6 @@
 """Unit tests for UserService (sync methods)."""
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -90,6 +90,41 @@ class TestUserServiceGetUserIdByEmail:
         mock_db.query.return_value.filter.return_value.first.return_value = None
         result = user_service.get_user_id_by_email("nonexistent@test.com")
         assert result is None
+
+
+class TestSetupDummyUser:
+    """Regression tests for setup_dummy_user (issue #726).
+
+    Prior to the fix, setup_dummy_user invoked create_user(user) twice on the
+    new-user branch — the second call either raised IntegrityError or returned
+    an empty uid that overwrote the value from the first call. Tests below
+    pin: (a) when the dummy user already exists, create_user is not called;
+    (b) when a new dummy user is provisioned, create_user is called exactly
+    once and its uid is what gets logged.
+    """
+
+    def test_setup_dummy_user_skips_when_user_exists(self, user_service, mock_db):
+        existing = User(uid="dummy-uid", email="defaultuser@potpie.ai", display_name="Dummy User")
+        mock_db.query.return_value.filter.return_value.first.return_value = existing
+
+        with patch.dict("os.environ", {"defaultUsername": "dummy-uid"}, clear=False):
+            with patch.object(UserService, "create_user") as mock_create:
+                user_service.setup_dummy_user()
+                mock_create.assert_not_called()
+
+    def test_setup_dummy_user_creates_new_exactly_once(self, user_service, mock_db):
+        # No existing user found — should create exactly once.
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        with patch.dict("os.environ", {"defaultUsername": "dummy-uid"}, clear=False):
+            with patch.object(
+                UserService,
+                "create_user",
+                return_value=("dummy-uid", "User created", False),
+            ) as mock_create:
+                user_service.setup_dummy_user()
+                # Pre-fix this was 2, IntegrityError on the second call.
+                assert mock_create.call_count == 1
 
 
 class TestUserServiceUpdateLastLogin:
