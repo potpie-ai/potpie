@@ -241,6 +241,14 @@ class CodeProviderController:
         from app.modules.utils.logger import setup_logger
 
         logger = setup_logger(__name__)
+
+        provider_type = os.getenv("CODE_PROVIDER", "github").lower()
+        if provider_type == "github" and not os.path.isdir(repo_name):
+            try:
+                GithubService._validate_repo_name_format(repo_name)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+
         search_query = self._normalize_search_query(search)
 
         # Fast path: check cache (async Redis when available)
@@ -341,6 +349,12 @@ class CodeProviderController:
         Check if a repository is public using the configured provider.
         GitHub API call runs in a thread pool to avoid blocking the event loop.
         """
+        provider_type = os.getenv("CODE_PROVIDER", "github").lower()
+        if provider_type == "github":
+            try:
+                GithubService._validate_repo_name_format(repo_name)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
         try:
             return await asyncio.to_thread(self._check_public_repo_sync, repo_name)
         except Exception:

@@ -49,6 +49,10 @@ except ImportError:
 
 logger = setup_logger(__name__)
 
+REPO_NAME_PATTERN = re.compile(
+    r"^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?/[a-zA-Z0-9._-]{1,100}$"
+)
+
 # Lazy async Redis client for project structure cache (shared across instances)
 _async_redis_cache: Optional[Any] = None
 _async_redis_cache_lock = asyncio.Lock()
@@ -88,6 +92,28 @@ async def close_github_async_redis_cache() -> None:
 class GithubService:
     gh_token_list: List[str] = []
     _shared_executor: ClassVar[Optional[ThreadPoolExecutor]] = None
+
+    @staticmethod
+    def _validate_repo_name_format(repo_name: str) -> None:
+        if not REPO_NAME_PATTERN.match(repo_name):
+            raise ValueError(
+                f"Invalid repository name format: '{repo_name}'. "
+                "Expected format: 'owner/repo' where owner is alphanumeric "
+                "with optional hyphens (max 39 characters) and repo is "
+                "alphanumeric with optional hyphens, underscores, or periods "
+                "(max 100 characters)."
+            )
+        owner, repo = repo_name.split("/", 1)
+        if "--" in owner:
+            raise ValueError(
+                f"Invalid repository name format: '{repo_name}'. "
+                "Owner segment must not contain consecutive hyphens."
+            )
+        if repo in (".", "..") or repo.endswith(".git"):
+            raise ValueError(
+                f"Invalid repository name format: '{repo_name}'. "
+                "Repository name must not be '.', '..', or end with '.git'."
+            )
 
     @classmethod
     def _get_executor(cls) -> ThreadPoolExecutor:
@@ -1235,7 +1261,7 @@ class GithubService:
                         detail=f"Error fetching branches for local repo: {str(e)}",
                     )
             else:
-                # Handle GitHub repository (existing functionality)
+                self._validate_repo_name_format(repo_name)
                 github, repo = self.get_repo(repo_name)
                 default_branch = repo.default_branch
                 branches = repo.get_branches()
@@ -1558,6 +1584,7 @@ class GithubService:
         return "\n".join(_format_node(structure))
 
     async def check_public_repo(self, repo_name: str) -> bool:
+        self._validate_repo_name_format(repo_name)
         try:
             github = self.get_public_github_instance()
             github.get_repo(repo_name)
