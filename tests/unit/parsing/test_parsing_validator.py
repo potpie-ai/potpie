@@ -88,3 +88,43 @@ class TestValidateParsingInput:
         repo_details = ParsingRequest(repo_name="owner/repo")
         result = await _wrapped_handler(repo_details=repo_details)
         assert result == {"ok": True}
+
+
+class TestValidateParsingInputWithIdentifier:
+    """Test validate_parsing_input decorator using repository_identifier."""
+
+    @pytest.mark.asyncio
+    async def test_allows_remote_via_identifier(self, monkeypatch):
+        """Validator allows request with repository_identifier for remote repo."""
+        monkeypatch.setenv("defaultUsername", "default-user")
+        monkeypatch.setenv("isDevelopmentMode", "enabled")
+        repo_details = ParsingRequest(repository_identifier="owner/repo")
+        result = await _wrapped_handler(
+            repo_details=repo_details,
+            user_id="other-user",
+        )
+        assert result == {"ok": True}
+
+    @pytest.mark.asyncio
+    async def test_allows_local_via_identifier_in_dev_mode(self, monkeypatch):
+        """Validator allows request with local path identifier in dev mode."""
+        monkeypatch.setenv("isDevelopmentMode", "enabled")
+        repo_details = ParsingRequest(repository_identifier="/tmp/local/repo")
+        result = await _wrapped_handler(
+            repo_details=repo_details,
+            user_id="any-user",
+        )
+        assert result == {"ok": True}
+
+    @pytest.mark.asyncio
+    async def test_403_local_via_identifier_non_dev(self, monkeypatch):
+        """Validator returns 403 when local path identifier is used outside dev mode."""
+        monkeypatch.setenv("isDevelopmentMode", "disabled")
+        repo_details = ParsingRequest(repository_identifier="/tmp/local/repo")
+        with pytest.raises(HTTPException) as exc_info:
+            await _wrapped_handler(
+                repo_details=repo_details,
+                user_id="any-user",
+            )
+        assert exc_info.value.status_code == 403
+        assert "Development mode" in exc_info.value.detail
