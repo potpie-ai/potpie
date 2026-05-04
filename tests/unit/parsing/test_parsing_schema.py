@@ -16,8 +16,61 @@ from app.modules.parsing.graph_construction.parsing_schema import (
 pytestmark = pytest.mark.unit
 
 
-class TestParsingRequest:
-    """Test ParsingRequest validation."""
+class TestParsingRequestRepositoryIdentifier:
+    """Test ParsingRequest with the new repository_identifier field."""
+
+    def test_remote_repo_via_identifier(self):
+        """repository_identifier with remote repo resolves correctly."""
+        req = ParsingRequest(repository_identifier="owner/repo")
+        assert req.repository_identifier == "owner/repo"
+        assert req.repo_name == "owner/repo"
+        assert req.repo_path is None
+
+    def test_local_path_via_identifier(self):
+        """repository_identifier with absolute path resolves correctly."""
+        req = ParsingRequest(repository_identifier="/some/local/path")
+        assert req.repository_identifier == "/some/local/path"
+        assert req.repo_path == "/some/local/path"
+        assert req.repo_name == "path"
+
+    def test_home_relative_path_via_identifier(self):
+        """repository_identifier with ~ path resolves correctly."""
+        import os
+        req = ParsingRequest(repository_identifier="~/repos/myproject")
+        assert req.repo_path == os.path.expanduser("~/repos/myproject")
+        assert req.repo_name == "myproject"
+
+    def test_dot_relative_path_via_identifier(self):
+        """repository_identifier with ./ path resolves correctly."""
+        req = ParsingRequest(repository_identifier="./myproject")
+        assert req.repo_name == "myproject"
+        assert req.repo_path is not None
+
+    def test_identifier_with_branch_and_commit(self):
+        """repository_identifier works alongside branch_name and commit_id."""
+        req = ParsingRequest(
+            repository_identifier="owner/repo",
+            branch_name="main",
+            commit_id="abc123",
+        )
+        assert req.repo_name == "owner/repo"
+        assert req.branch_name == "main"
+        assert req.commit_id == "abc123"
+
+    def test_identifier_takes_precedence_over_legacy(self):
+        """repository_identifier takes precedence over repo_name/repo_path."""
+        req = ParsingRequest(
+            repository_identifier="owner/repo",
+            repo_name="other/repo",
+            repo_path="/some/path",
+        )
+        # repository_identifier should win
+        assert req.repo_name == "owner/repo"
+        assert req.repo_path is None
+
+
+class TestParsingRequestBackwardCompat:
+    """Test backward compatibility with deprecated repo_name/repo_path fields."""
 
     def test_valid_with_repo_name_only(self):
         """ParsingRequest with repo_name only is valid."""
@@ -37,14 +90,20 @@ class TestParsingRequest:
         assert req.repo_name == "owner/repo"
         assert req.repo_path == "/tmp/repo"
 
-    def test_invalid_when_both_missing(self):
-        """ParsingRequest raises ValueError when neither repo_name nor repo_path provided."""
-        with pytest.raises(ValueError, match="Either repo_name or repo_path must be provided"):
+    def test_invalid_when_all_missing(self):
+        """ParsingRequest raises ValueError when no identifier provided."""
+        with pytest.raises(
+            ValueError,
+            match="Either repository_identifier, repo_name, or repo_path must be provided",
+        ):
             ParsingRequest()
 
     def test_invalid_with_empty_strings_both_none(self):
         """repo_name='', repo_path=None triggers validation (both falsy)."""
-        with pytest.raises(ValueError, match="Either repo_name or repo_path must be provided"):
+        with pytest.raises(
+            ValueError,
+            match="Either repository_identifier, repo_name, or repo_path must be provided",
+        ):
             ParsingRequest(repo_name="", repo_path=None)
 
     def test_optional_branch_and_commit(self):
@@ -52,6 +111,12 @@ class TestParsingRequest:
         req = ParsingRequest(repo_name="a/b", branch_name="main", commit_id="abc123")
         assert req.branch_name == "main"
         assert req.commit_id == "abc123"
+
+    def test_repo_name_auto_detected_as_path(self):
+        """repo_name that looks like a path is auto-resolved to repo_path."""
+        req = ParsingRequest(repo_name="/absolute/path/to/myrepo")
+        assert req.repo_path == "/absolute/path/to/myrepo"
+        assert req.repo_name == "myrepo"
 
 
 class TestRepoDetails:
@@ -64,6 +129,7 @@ class TestRepoDetails:
         assert details.branch_name == "main"
         assert details.repo_path is None
         assert details.commit_id is None
+        assert details.is_local is False
 
     def test_construction_with_optional(self):
         """RepoDetails with optional repo_path and commit_id."""
@@ -75,6 +141,21 @@ class TestRepoDetails:
         )
         assert details.repo_path == "/local/repo"
         assert details.commit_id == "abc123"
+
+    def test_is_local_flag(self):
+        """RepoDetails is_local flag."""
+        details = RepoDetails(
+            repo_name="myrepo",
+            branch_name="main",
+            repo_path="/local/repo",
+            is_local=True,
+        )
+        assert details.is_local is True
+
+    def test_is_local_default_false(self):
+        """RepoDetails is_local defaults to False."""
+        details = RepoDetails(repo_name="owner/repo", branch_name="main")
+        assert details.is_local is False
 
 
 class TestParsingStatusRequest:
@@ -167,3 +248,20 @@ class TestInputEdgeCases:
         """repo_name with unicode characters."""
         req = ParsingRequest(repo_name="owner/репо")
         assert req.repo_name == "owner/репо"
+
+    def test_model_dump_includes_repository_identifier(self):
+        """model_dump() includes repository_identifier for Celery serialization."""
+        req = ParsingRequest(repository_identifier="owner/repo", branch_name="main")
+        dumped = req.model_dump()
+        assert "repository_identifier" in dumped
+        assert dumped["repository_identifier"] == "owner/repo"
+        assert dumped["repo_name"] == "owner/repo"
+
+    def test_model_dump_roundtrip(self):
+        """ParsingRequest can be reconstructed from model_dump()."""
+        req = ParsingRequest(repository_identifier="owner/repo", branch_name="main")
+        dumped = req.model_dump()
+        reconstructed = ParsingRequest(**dumped)
+        assert reconstructed.repo_name == req.repo_name
+        assert reconstructed.repo_path == req.repo_path
+        assert reconstructed.branch_name == req.branch_name
