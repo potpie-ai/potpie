@@ -244,6 +244,7 @@ class ParsingService:
                     branch_name=repo_details.branch_name or "",
                     repo_path=repo_details.repo_path,
                     commit_id=repo_details.commit_id,
+                    is_local=bool(repo_details.repo_path),
                 )
                 logger.info(
                     "ParsingService: About to call clone_or_copy_repository",
