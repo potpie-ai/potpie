@@ -1,3 +1,5 @@
+import os
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -140,3 +142,75 @@ class TestCheckPublicRepoValidation:
         ):
             result = await service.check_public_repo("owner/repo")
             assert result is False
+
+
+class TestCodeProviderControllerValidation:
+
+    @pytest.fixture
+    def controller(self):
+        from app.modules.code_provider.code_provider_controller import CodeProviderController
+        with patch.object(CodeProviderController, "__init__", lambda self, db: None):
+            ctrl = CodeProviderController.__new__(CodeProviderController)
+            ctrl.branch_cache = MagicMock()
+            ctrl.branch_cache.get_branches_async = AsyncMock(return_value=None)
+            return ctrl
+
+    @pytest.mark.asyncio
+    @patch.dict(os.environ, {"CODE_PROVIDER": "github"})
+    async def test_get_branch_list_rejects_invalid_name(self, controller):
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            await controller.get_branch_list("invalid-no-slash")
+        assert exc_info.value.status_code == 400
+        assert "Invalid repository name format" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    @patch.dict(os.environ, {"CODE_PROVIDER": "github"})
+    async def test_get_branch_list_rejects_consecutive_hyphens(self, controller):
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            await controller.get_branch_list("my--org/repo")
+        assert exc_info.value.status_code == 400
+        assert "consecutive hyphens" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    @patch.dict(os.environ, {"CODE_PROVIDER": "github"})
+    async def test_get_branch_list_rejects_dot_git(self, controller):
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            await controller.get_branch_list("owner/repo.git")
+        assert exc_info.value.status_code == 400
+        assert ".git" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    @patch.dict(os.environ, {"CODE_PROVIDER": "github"})
+    async def test_check_public_repo_rejects_invalid_name(self, controller):
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            await controller.check_public_repo("nope")
+        assert exc_info.value.status_code == 400
+        assert "Invalid repository name format" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    @patch.dict(os.environ, {"CODE_PROVIDER": "github"})
+    async def test_check_public_repo_rejects_reserved_name(self, controller):
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            await controller.check_public_repo("owner/.")
+        assert exc_info.value.status_code == 400
+        assert "must not be" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    @patch.dict(os.environ, {"CODE_PROVIDER": "gitbucket"})
+    async def test_get_branch_list_skips_validation_for_non_github(self, controller):
+        controller.branch_cache.get_branches_async = AsyncMock(return_value=["main"])
+        controller._filter_branches = MagicMock(return_value=["main"])
+        controller._paginate_branches = MagicMock(return_value={"branches": ["main"]})
+
+        result = await controller.get_branch_list("anything-goes-here")
+        assert result == {"branches": ["main"]}
