@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from langchain_core.tools import StructuredTool
 from neo4j import GraphDatabase
@@ -15,6 +15,39 @@ from app.modules.intelligence.tools.tool_utils import truncate_dict_response
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+
+def _try_sandbox_read_sync(
+    project_id: str,
+    file_path: str,
+    start_line: Optional[int],
+    end_line: Optional[int],
+) -> Optional[str]:
+    """Synchronous shim around the async sandbox helper.
+
+    Used from sync ``_process_result`` paths where awaiting isn't an
+    option. Spins up an isolated event loop only when no loop is
+    already running; if we're inside an event loop (which we shouldn't
+    be — ``run`` calls this from a worker thread), returns ``None`` so
+    the caller falls through to ``CodeProviderService``.
+    """
+    from app.modules.intelligence.tools.sandbox.read_helpers import (
+        read_file_via_sandbox,
+    )
+
+    try:
+        asyncio.get_running_loop()
+        return None  # Inside a loop — let the caller use the GitHub fallback.
+    except RuntimeError:
+        pass
+    try:
+        return asyncio.run(
+            read_file_via_sandbox(
+                project_id, file_path, start_line=start_line, end_line=end_line
+            )
+        )
+    except Exception:  # noqa: BLE001
+        return None
 
 
 class GetCodeFromProbableNodeNameInput(BaseModel):
@@ -167,7 +200,12 @@ class GetCodeFromProbableNodeNameTool:
         return self.sql_db.query(Project).filter(Project.id == project_id).first()
 
     def _process_result(
-        self, node_data: Dict[str, Any], project: Project, node_id: str
+        self,
+        node_data: Dict[str, Any],
+        project: Project,
+        node_id: str,
+        *,
+        code_content_override: Optional[str] = None,
     ) -> Dict[str, Any]:
         file_path = node_data["file_path"]
         start_line = node_data["start_line"]
@@ -178,15 +216,25 @@ class GetCodeFromProbableNodeNameTool:
         # Handle None values for start_line and clamp to minimum of 0
         adjusted_start_line = max(0, start_line - 3) if start_line is not None else 0
 
-        code_content = CodeProviderService(self.sql_db).get_file_content(
-            project.repo_name,
-            relative_file_path,
-            adjusted_start_line,
-            end_line,
-            project.branch_name,
-            project.id,
-            project.commit_id,
-        )
+        if code_content_override is not None:
+            code_content = code_content_override
+        else:
+            # Try the sandbox before paying for a GitHub round-trip — best
+            # effort, sync-friendly via asyncio.run since this is called from
+            # the threaded `run` path.
+            code_content = _try_sandbox_read_sync(
+                project.id, relative_file_path, adjusted_start_line, end_line
+            )
+            if code_content is None:
+                code_content = CodeProviderService(self.sql_db).get_file_content(
+                    project.repo_name,
+                    relative_file_path,
+                    adjusted_start_line,
+                    end_line,
+                    project.branch_name,
+                    project.id,
+                    project.commit_id,
+                )
 
         docstring = None
         if node_data.get("docstring", None):

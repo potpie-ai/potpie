@@ -85,7 +85,7 @@ set -a; source "$ENV_FILE"; set +a
 # fall back to bare-shell improvisation. Build it once if missing — re-runs
 # are cheap because Daytona returns the existing snapshot if the name+content
 # match. Skip with SANDBOX_SKIP_AGENT_SNAPSHOT=1 (e.g. for non-agent dev).
-AGENT_SNAPSHOT_NAME="${DAYTONA_SNAPSHOT:-potpie/agent-sandbox:0.1.0}"
+AGENT_SNAPSHOT_NAME="${DAYTONA_SNAPSHOT:-potpie/agent-sandbox:0.2.1}"
 if [[ "${SANDBOX_SKIP_AGENT_SNAPSHOT:-0}" != "1" ]]; then
   echo "==> ensuring snapshot $AGENT_SNAPSHOT_NAME (build mode)"
   if ! "${PY[@]}" "$here/build_agent_snapshot.py" \

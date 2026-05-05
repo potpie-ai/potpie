@@ -1,4 +1,20 @@
-"""Repository resource for PotpieRuntime library."""
+"""Repository resource for PotpieRuntime library.
+
+Sandbox-backed implementation of the public repository API.
+
+The previous implementation was a thin wrapper around :class:`RepoManager`.
+With the sandbox cutover, ``RepoManager`` is no longer the source of truth —
+``SandboxClient`` is — so this module routes every public method through the
+sandbox client.
+
+Some legacy administrative methods (eviction, volume reports) don't have a
+clean sandbox equivalent yet because the sandbox's
+:class:`EvictionPolicy` port is currently a no-op (``NoOpEvictionPolicy``).
+Those methods raise :class:`NotImplementedError` with a clear migration note
+rather than silently no-op'ing — out-of-tree callers should pin to the
+runtime version that still backed them with RepoManager, or wait for the
+follow-up that promotes :class:`VolumeBasedEvictionPolicy` to default.
+"""
 
 from __future__ import annotations
 
@@ -21,28 +37,29 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class RepositoryResource(BaseResource):
-    """Access and manage Git repositories via RepoManager.
+_ADMIN_DEPRECATION_NOTE = (
+    "RepoManager-backed administrative APIs (eviction, volume info, "
+    "register, list_repos, get_info, get_path, evict_stale_*) are no "
+    "longer supported on the sandbox-backed runtime. Wait for the "
+    "follow-up that promotes VolumeBasedEvictionPolicy + a public "
+    "store enumeration API on SandboxClient."
+)
 
-    Wraps RepoManager with a clean library interface.
-    Translates standard Python exceptions to library-specific exceptions.
-    User context is passed per-operation, not stored in the resource.
-    """
+
+class RepositoryResource(BaseResource):
+    """Public repository resource, sandbox-backed."""
 
     def __init__(
         self,
-        config: RuntimeConfig,
-        db_manager: DatabaseManager,
-        neo4j_manager: Neo4jManager,
+        config: "RuntimeConfig",
+        db_manager: "DatabaseManager",
+        neo4j_manager: "Neo4jManager",
     ):
         super().__init__(config, db_manager, neo4j_manager)
 
-    def _get_repo_manager(self):
-        """Get a RepoManager instance configured from RuntimeConfig."""
-        from app.modules.repo_manager.repo_manager import RepoManager
-
-        return RepoManager(repos_base_path=self._config.repos_base_path)
-
+    # ------------------------------------------------------------------
+    # Lookups — answered against the sandbox metadata store.
+    # ------------------------------------------------------------------
     async def is_available(
         self,
         repo_name: str,
@@ -51,79 +68,35 @@ class RepositoryResource(BaseResource):
         branch: Optional[str] = None,
         commit_id: Optional[str] = None,
     ) -> bool:
-        """Check if a repository is available locally.
+        """Return ``True`` if a sandbox ``RepoCache`` row exists for
+        ``(repo_name, ref)``.
 
-        Args:
-            repo_name: Full repository name (e.g., "owner/repo")
-            user_id: User ID who owns the repository
-            branch: Branch name (optional)
-            commit_id: Commit SHA (optional)
-
-        Returns:
-            True if repository is available locally, False otherwise
-
-        Raises:
-            RepositoryError: If check fails
+        Mirrors the legacy ``RepoManager.is_repo_available`` shape, but
+        the truth source is now the sandbox metadata store.
         """
-        repo_manager = self._get_repo_manager()
+        ref = commit_id or branch
+        if not ref:
+            raise RepositoryError("Either branch or commit_id is required")
         try:
-            return repo_manager.is_repo_available(
-                repo_name=repo_name,
-                branch=branch,
-                commit_id=commit_id,
+            from app.modules.intelligence.tools.sandbox.client import (
+                get_sandbox_client,
+            )
+            from sandbox.domain.models import RepoCacheRequest, RepoIdentity
+
+            client = get_sandbox_client()
+            req = RepoCacheRequest(
+                repo=RepoIdentity(repo_name=repo_name),
+                base_ref=ref,
                 user_id=user_id,
             )
-        except Exception as e:
+            existing = await client.container.store.find_repo_cache_by_key(
+                req.key()
+            )
+            return existing is not None
+        except Exception as exc:
             raise RepositoryError(
-                f"Failed to check repository availability: {e}"
-            ) from e
-
-    async def register(
-        self,
-        repo_name: str,
-        local_path: str,
-        user_id: str,
-        *,
-        branch: Optional[str] = None,
-        commit_id: Optional[str] = None,
-        metadata: Optional[dict] = None,
-    ) -> str:
-        """Register a repository that has been downloaded/parsed.
-
-        Args:
-            repo_name: Full repository name (e.g., "owner/repo")
-            local_path: Local filesystem path where repo is stored
-            user_id: User ID who owns this repository
-            branch: Branch name (optional)
-            commit_id: Commit SHA (optional)
-            metadata: Additional metadata about repository (optional)
-
-        Returns:
-            Repository identifier/tracking ID
-
-        Raises:
-            RepositoryError: If registration fails
-
-        Example:
-            repo_id = await runtime.repositories.register(
-                repo_name="langchain-ai/langchain",
-                local_path="/path/to/repo",
-                user_id="user-123",
-                branch="main"
-            )
-        """
-        repo_manager = self._get_repo_manager()
-        try:
-            return repo_manager.register_repo(
-                repo_name=repo_name,
-                local_path=local_path,
-                branch=branch,
-                commit_id=commit_id,
-                user_id=user_id,
-                metadata=metadata or {},
-            )
-        except Exception as e:
-            raise RepositoryError(f"Failed to register repository: {e}") from e
+                f"Failed to check repository availability: {exc}"
+            ) from exc
 
     async def get_path(
         self,
@@ -133,174 +106,36 @@ class RepositoryResource(BaseResource):
         branch: Optional[str] = None,
         commit_id: Optional[str] = None,
     ) -> Optional[str]:
-        """Get the local filesystem path for a repository.
-
-        Args:
-            repo_name: Full repository name (e.g., "owner/repo")
-            user_id: User ID who owns the repository
-            branch: Branch name (optional)
-            commit_id: Commit SHA (optional)
-
-        Returns:
-            Local filesystem path if available, None otherwise
-
-        Raises:
-            RepositoryError: If lookup fails
+        """Return the on-disk path of the sandbox bare cache for
+        ``(repo_name, ref)``, or ``None`` if no cache exists yet.
         """
-        repo_manager = self._get_repo_manager()
+        ref = commit_id or branch
+        if not ref:
+            raise RepositoryError("Either branch or commit_id is required")
         try:
-            return repo_manager.get_repo_path(
-                repo_name=repo_name,
-                branch=branch,
-                commit_id=commit_id,
+            from app.modules.intelligence.tools.sandbox.client import (
+                get_sandbox_client,
+            )
+            from sandbox.domain.models import RepoCacheRequest, RepoIdentity
+
+            client = get_sandbox_client()
+            req = RepoCacheRequest(
+                repo=RepoIdentity(repo_name=repo_name),
+                base_ref=ref,
                 user_id=user_id,
             )
-        except Exception as e:
-            raise RepositoryError(f"Failed to get repository path: {e}") from e
-
-    async def get_info(
-        self,
-        repo_name: str,
-        user_id: str,
-        *,
-        branch: Optional[str] = None,
-        commit_id: Optional[str] = None,
-    ) -> Optional[RepositoryInfo]:
-        """Get information about a registered repository.
-
-        Args:
-            repo_name: Full repository name (e.g., "owner/repo")
-            user_id: User ID who owns the repository
-            branch: Branch name (optional)
-            commit_id: Commit SHA (optional)
-
-        Returns:
-            RepositoryInfo with detailed information, None if not found
-
-        Raises:
-            RepositoryError: If lookup fails
-        """
-        repo_manager = self._get_repo_manager()
-        try:
-            info_dict = repo_manager.get_repo_info(
-                repo_name=repo_name,
-                branch=branch,
-                commit_id=commit_id,
-                user_id=user_id,
+            existing = await client.container.store.find_repo_cache_by_key(
+                req.key()
             )
-
-            if info_dict is None:
+            if existing is None:
                 return None
+            return existing.location.local_path
+        except Exception as exc:
+            raise RepositoryError(f"Failed to get repository path: {exc}") from exc
 
-            return RepositoryInfo.from_dict(info_dict)
-        except Exception as e:
-            raise RepositoryError(f"Failed to get repository info: {e}") from e
-
-    async def list_repos(
-        self, user_id: str, *, limit: Optional[int] = None
-    ) -> List[RepositoryInfo]:
-        """List all available repositories for a user.
-
-        Args:
-            user_id: User ID whose repositories to list
-            limit: Maximum number of repos to return (optional)
-
-        Returns:
-            List of RepositoryInfo objects
-
-        Raises:
-            RepositoryError: If listing fails
-        """
-        repo_manager = self._get_repo_manager()
-        try:
-            repos_dicts = repo_manager.list_repos(user_id=user_id, limit=limit)
-            return [RepositoryInfo.from_dict(r) for r in repos_dicts]
-        except Exception as e:
-            raise RepositoryError(f"Failed to list repositories: {e}") from e
-
-    async def evict(
-        self,
-        repo_name: str,
-        user_id: str,
-        *,
-        branch: Optional[str] = None,
-        commit_id: Optional[str] = None,
-    ) -> bool:
-        """Evict a repository from local storage.
-
-        Args:
-            repo_name: Full repository name (e.g., "owner/repo")
-            user_id: User ID who owns the repository
-            branch: Branch name (optional)
-            commit_id: Commit SHA (optional)
-
-        Returns:
-            True if repository was evicted, False if not found
-
-        Raises:
-            RepositoryError: If eviction fails
-        """
-        repo_manager = self._get_repo_manager()
-        try:
-            return repo_manager.evict_repo(
-                repo_name=repo_name,
-                branch=branch,
-                commit_id=commit_id,
-                user_id=user_id,
-            )
-        except Exception as e:
-            raise RepositoryError(f"Failed to evict repository: {e}") from e
-
-    async def evict_stale(self, max_age_days: int, user_id: str) -> List[str]:
-        """Evict repositories that haven't been accessed in a while.
-
-        Args:
-            max_age_days: Maximum age in days since last access
-            user_id: User ID whose repositories to evict
-
-        Returns:
-            List of repository identifiers that were evicted
-
-        Raises:
-            RepositoryError: If eviction fails
-        """
-        repo_manager = self._get_repo_manager()
-        try:
-            return repo_manager.evict_stale_repos(
-                max_age_days=max_age_days, user_id=user_id
-            )
-        except Exception as e:
-            raise RepositoryError(f"Failed to evict stale repositories: {e}") from e
-
-    async def get_volume_info(self, user_id: str) -> VolumeInfo:
-        """Get information about disk volume usage.
-
-        Args:
-            user_id: User ID for filtering (optional, uses all repos if None)
-
-        Returns:
-            VolumeInfo with total usage, limits, and counts
-
-        Raises:
-            RepositoryError: If volume check fails
-        """
-        repo_manager = self._get_repo_manager()
-        try:
-            total_bytes = repo_manager.get_total_volume_bytes(user_id=user_id)
-            percentage = repo_manager.get_volume_percentage(user_id=user_id)
-            repo_count = len(repo_manager.list_available_repos(user_id=user_id))
-
-            volume_limit_bytes = self._config.repos_volume_limit_bytes or 0
-
-            return VolumeInfo(
-                total_volume_bytes=total_bytes,
-                volume_limit_bytes=volume_limit_bytes,
-                volume_percentage=percentage,
-                repo_count=repo_count,
-            )
-        except Exception as e:
-            raise RepositoryError(f"Failed to get volume info: {e}") from e
-
+    # ------------------------------------------------------------------
+    # Bare cache + worktree creation.
+    # ------------------------------------------------------------------
     async def prepare_for_parsing(
         self,
         repo_name: str,
@@ -311,70 +146,51 @@ class RepositoryResource(BaseResource):
         auth_token: Optional[str] = None,
         is_commit: bool = False,
     ) -> str:
-        """Prepare a repository for parsing.
+        """Provision the sandbox bare cache + an ANALYSIS workspace on
+        ``ref`` and return the workspace's local path.
 
-        Orchestrates: eviction → ensure bare repo → create worktree.
-
-        Args:
-            repo_name: Full repository name (e.g., "owner/repo")
-            ref: Branch name or commit SHA
-            user_id: User ID performing parsing
-            repo_url: Optional Git repository URL (derived if not provided)
-            auth_token: Optional authentication token
-            is_commit: Whether ref is a commit SHA
-
-        Returns:
-            Path to worktree directory ready for parsing
-
-        Raises:
-            RepositoryError: If preparation fails
-
-        Example:
-            worktree_path = await runtime.repositories.prepare_for_parsing(
-                repo_name="langchain-ai/langchain",
-                ref="main",
-                user_id="user-123"
-            )
+        Replaces the legacy RepoManager entry point parsing and the
+        worktree-allocation step in one call. ``is_commit`` is a no-op
+        in this implementation — the sandbox treats branch and commit
+        refs uniformly.
         """
-        repo_manager = self._get_repo_manager()
+        del is_commit
         try:
-            return repo_manager.prepare_for_parsing(
-                repo_name=repo_name,
-                ref=ref,
-                repo_url=repo_url,
-                auth_token=auth_token,
-                is_commit=is_commit,
+            from app.modules.intelligence.tools.sandbox.client import (
+                get_sandbox_client,
+                provision_repo_cache,
+            )
+            from sandbox import WorkspaceMode
+
+            await provision_repo_cache(
                 user_id=user_id,
+                repo_name=repo_name,
+                base_ref=ref,
+                auth_token=auth_token,
+                repo_url=repo_url,
             )
-        except Exception as e:
+            client = get_sandbox_client()
+            handle = await client.acquire_session(
+                user_id=user_id,
+                project_id=f"parsing:{repo_name}",
+                repo=repo_name,
+                branch=ref,
+                base_ref=ref,
+                create_branch=False,
+                auth_token=auth_token,
+                mode=WorkspaceMode.ANALYSIS,
+                repo_url=repo_url,
+            )
+            if handle.local_path is None:
+                raise RepositoryError(
+                    f"Sandbox returned a workspace with no local path for "
+                    f"{repo_name}@{ref}; parsing requires a host-fs backend."
+                )
+            return handle.local_path
+        except Exception as exc:
             raise RepositoryError(
-                f"Failed to prepare repository for parsing: {e}"
-            ) from e
-
-    async def evict_stale_worktrees(
-        self, max_age_days: int = 30, user_id: Optional[str] = None
-    ) -> List[str]:
-        """Evict old worktrees to free disk space.
-
-        Worktrees are evicted before bare repos when volume thresholds are reached.
-
-        Args:
-            max_age_days: Maximum age in days before eviction
-            user_id: Optional user ID for multi-tenant tracking
-
-        Returns:
-            List of worktrees that were evicted
-
-        Raises:
-            RepositoryError: If eviction fails
-        """
-        repo_manager = self._get_repo_manager()
-        try:
-            return repo_manager.evict_stale_worktrees(
-                max_age_days=max_age_days, user_id=user_id
-            )
-        except Exception as e:
-            raise RepositoryError(f"Failed to evict stale worktrees: {e}") from e
+                f"Failed to prepare repository for parsing: {exc}"
+            ) from exc
 
     async def create_worktree(
         self,
@@ -387,46 +203,42 @@ class RepositoryResource(BaseResource):
         is_commit: bool = False,
         exists_ok: bool = False,
     ) -> Path:
-        """Create a worktree for a repository.
+        """Allocate (or look up) a per-``unique_id`` EDIT workspace.
 
-        Args:
-            repo_name: Full repository name (e.g., "owner/repo")
-            ref: Branch name or commit SHA
-            user_id: User ID creating the worktree
-            unique_id: Optional unique identifier for worktree
-            auth_token: Optional authentication token
-            is_commit: Whether ref is a commit SHA
-
-        Returns:
-            Path to worktree directory
-
-        Raises:
-            RepositoryError: If creation fails
-
-        Example:
-            worktree_path = await runtime.repositories.create_worktree(
-                repo_name="langchain-ai/langchain",
-                ref="main",
-                user_id="user-123",
-                unique_id="parse-001"
-            )
+        Idempotent on ``(user_id, unique_id, repo_name, ref)``. Returns
+        the worktree's local path.
         """
-        repo_manager = self._get_repo_manager()
+        del is_commit, exists_ok
+        if not user_id:
+            raise RepositoryError("user_id is required")
+        if not unique_id:
+            raise RepositoryError("unique_id is required")
         try:
-            repo_manager.ensure_bare_repo(
-                repo_name=repo_name, auth_token=auth_token, ref=ref, user_id=user_id
+            from app.modules.intelligence.tools.sandbox.client import (
+                get_sandbox_client,
             )
-            return repo_manager.create_worktree(
-                repo_name=repo_name,
-                ref=ref,
+            from sandbox import WorkspaceMode
+
+            client = get_sandbox_client()
+            handle = await client.acquire_session(
                 user_id=user_id,
-                unique_id=unique_id,
+                project_id=f"runtime:{unique_id}",
+                repo=repo_name,
+                branch=ref,
+                base_ref=ref,
+                create_branch=False,
                 auth_token=auth_token,
-                is_commit=is_commit,
-                exists_ok=exists_ok,
+                mode=WorkspaceMode.EDIT,
+                conversation_id=unique_id,
             )
-        except Exception as e:
-            raise RepositoryError(f"Failed to create worktree: {e}") from e
+            if handle.local_path is None:
+                raise RepositoryError(
+                    f"Sandbox returned a workspace with no local path for "
+                    f"{repo_name}@{ref}"
+                )
+            return Path(handle.local_path)
+        except Exception as exc:
+            raise RepositoryError(f"Failed to create worktree: {exc}") from exc
 
     async def delete_worktree(
         self,
@@ -435,43 +247,91 @@ class RepositoryResource(BaseResource):
         user_id: str,
         unique_id: str,
     ) -> bool:
-        """Delete a specific worktree for a repository.
+        """Tear down the workspace allocated for ``unique_id``.
 
-        Args:
-            repo_name: Full repository name (e.g., "owner/repo")
-            ref: Branch name or commit SHA
-            user_id: User ID who owns the worktree
-            unique_id: Unique identifier for worktree
-
-        Returns:
-            True if worktree was deleted, False if not found
-
-        Raises:
-            RepositoryError: If deletion fails
-
-        Example:
-            deleted = await runtime.repositories.delete_worktree(
-                repo_name="langchain-ai/langchain",
-                ref="main",
-                user_id="user-123",
-                unique_id="parse-001"
-            )
+        Returns ``True`` if a workspace was destroyed, ``False`` if none
+        existed. Looks the workspace up by re-acquiring the same key, then
+        calling :meth:`SandboxClient.destroy_workspace`.
         """
-        repo_manager = self._get_repo_manager()
         try:
-            worktree_path = repo_manager._get_unique_worktree_path(
-                repo_name=repo_name, ref=ref, user_id=user_id, unique_id=unique_id
+            from app.modules.intelligence.tools.sandbox.client import (
+                get_sandbox_client,
             )
+            from sandbox import WorkspaceMode
 
-            if worktree_path and worktree_path.exists():
-                import shutil
+            client = get_sandbox_client()
+            try:
+                handle = await client.get_workspace(
+                    user_id=user_id,
+                    project_id=f"runtime:{unique_id}",
+                    repo=repo_name,
+                    branch=ref,
+                    base_ref=ref,
+                    create_branch=False,
+                    mode=WorkspaceMode.EDIT,
+                    conversation_id=unique_id,
+                )
+            except Exception:
+                return False
+            await client.destroy_workspace(handle)
+            return True
+        except Exception as exc:
+            raise RepositoryError(f"Failed to delete worktree: {exc}") from exc
 
-                shutil.rmtree(worktree_path)
-                logger.info(f"Deleted worktree: {worktree_path}")
-                return True
+    # ------------------------------------------------------------------
+    # Admin operations — not yet supported on the sandbox-backed runtime.
+    # ------------------------------------------------------------------
+    async def register(
+        self,
+        repo_name: str,
+        local_path: str,
+        user_id: str,
+        *,
+        branch: Optional[str] = None,
+        commit_id: Optional[str] = None,
+        metadata: Optional[dict] = None,
+    ) -> str:
+        del repo_name, local_path, user_id, branch, commit_id, metadata
+        raise NotImplementedError(_ADMIN_DEPRECATION_NOTE)
 
-            logger.warning(f"Worktree not found: {worktree_path}")
-            return False
+    async def get_info(
+        self,
+        repo_name: str,
+        user_id: str,
+        *,
+        branch: Optional[str] = None,
+        commit_id: Optional[str] = None,
+    ) -> Optional[RepositoryInfo]:
+        del repo_name, user_id, branch, commit_id
+        raise NotImplementedError(_ADMIN_DEPRECATION_NOTE)
 
-        except Exception as e:
-            raise RepositoryError(f"Failed to delete worktree: {e}") from e
+    async def list_repos(
+        self, user_id: str, *, limit: Optional[int] = None
+    ) -> List[RepositoryInfo]:
+        del user_id, limit
+        raise NotImplementedError(_ADMIN_DEPRECATION_NOTE)
+
+    async def evict(
+        self,
+        repo_name: str,
+        user_id: str,
+        *,
+        branch: Optional[str] = None,
+        commit_id: Optional[str] = None,
+    ) -> bool:
+        del repo_name, user_id, branch, commit_id
+        raise NotImplementedError(_ADMIN_DEPRECATION_NOTE)
+
+    async def evict_stale(self, max_age_days: int, user_id: str) -> List[str]:
+        del max_age_days, user_id
+        raise NotImplementedError(_ADMIN_DEPRECATION_NOTE)
+
+    async def evict_stale_worktrees(
+        self, max_age_days: int = 30, user_id: Optional[str] = None
+    ) -> List[str]:
+        del max_age_days, user_id
+        raise NotImplementedError(_ADMIN_DEPRECATION_NOTE)
+
+    async def get_volume_info(self, user_id: str) -> VolumeInfo:
+        del user_id
+        raise NotImplementedError(_ADMIN_DEPRECATION_NOTE)

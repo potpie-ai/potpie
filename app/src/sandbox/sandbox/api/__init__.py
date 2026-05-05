@@ -6,6 +6,7 @@ detail of the providers and the service.
 """
 
 from sandbox.api.client import SandboxClient
+from sandbox.api.parser_wire import ParseArtifacts, WireFormatError
 from sandbox.api.types import (
     FileEntry,
     GitStatus,
@@ -17,6 +18,8 @@ __all__ = [
     "FileEntry",
     "GitStatus",
     "Hit",
+    "ParseArtifacts",
     "SandboxClient",
+    "WireFormatError",
     "WorkspaceHandle",
 ]

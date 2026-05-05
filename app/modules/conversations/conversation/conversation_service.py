@@ -135,21 +135,23 @@ class ConversationService:
         self.async_session_service = async_session_service
         self.celery_app = celery_app
 
-        # Initialize repo manager if enabled
+        # The conversation lifecycle no longer talks to RepoManager directly:
+        # the sandbox client owns the bare-repo cache and the per-conversation
+        # worktrees. ``self.repo_manager`` is kept as ``None`` for backwards
+        # compatibility with any external caller that introspected it.
         self.repo_manager = None
-        try:
-            repo_manager_enabled = (
-                os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
-            )
-            if repo_manager_enabled:
-                from app.modules.repo_manager import RepoManager
 
-                self.repo_manager = RepoManager()
-                logger.info("ConversationService: RepoManager initialized")
-        except Exception as e:
-            logger.warning(
-                f"ConversationService: Failed to initialize RepoManager: {e}"
-            )
+        # ProjectSandbox is the lifecycle facade: ensure() is idempotent
+        # and self-healing (it probes the workspace and recovers via
+        # the provider's label-based recovery if the backing storage is
+        # gone). Lazy import here so the conversation service stays
+        # importable without the sandbox module installed at the
+        # bottom of the import graph.
+        from app.modules.intelligence.tools.sandbox.project_sandbox import (
+            get_project_sandbox,
+        )
+
+        self._project_sandbox = get_project_sandbox()
 
     @classmethod
     def create(
@@ -391,16 +393,19 @@ class ConversationService:
 
             fetch_task.add_done_callback(_on_fetch_done)
 
-            # Ensure repo is registered and cloned in repo manager (skip in local/VSCode mode)
-            if not local_mode and self.repo_manager and conversation.project_ids:
+            # Provision the project sandbox so the user's first
+            # message lands on a warm workspace. Fire-and-forget:
+            # ProjectSandbox.ensure() can take seconds for a fresh
+            # Daytona sandbox, and we don't want that latency on the
+            # POST /conversations response. The first store_message
+            # below will block on its own ensure() call if this hasn't
+            # finished yet, so the timing here is purely an
+            # optimization. Skipped in local/VSCode mode — the IDE
+            # tunnel covers reads there.
+            if not local_mode and conversation.project_ids:
                 project_id_str = str(conversation.project_ids[0])
-                # Fast path: register any existing local copy (5s timeout)
                 asyncio.create_task(
-                    self._ensure_repo_in_repo_manager(project_id_str, user_id)
-                )
-                # Slow path: clone the repo if it's missing entirely (no timeout — runs until done)
-                asyncio.create_task(
-                    self._clone_repo_if_missing(project_id_str, user_id)
+                    self._ensure_project_sandbox_safe(project_id_str, user_id)
                 )
 
             await self._add_system_message(conversation_id, project_name, user_id)
@@ -468,252 +473,224 @@ class ConversationService:
         return conversation_id
 
     async def _ensure_repo_in_repo_manager(self, project_id: str, user_id: str) -> None:
+        """Compatibility shim that now delegates to ProjectSandbox.
+
+        ``_ensure_repo_in_repo_manager`` and ``_clone_repo_if_missing``
+        used to be a fast/slow split when the worktree creation was a
+        separate, slow filesystem step. With the sandbox client the
+        two collapse into a single idempotent call — we keep both
+        names so existing call sites compile, but the implementation
+        is the same ``_ensure_project_sandbox_safe`` underneath.
         """
-        Ensure that the repository for a project is registered in the repo manager.
-        If the repo doesn't exist, attempts to register it if the project has been parsed.
+        await self._ensure_project_sandbox_safe(
+            project_id, user_id, timeout_s=5.0
+        )
 
-        This runs in a thread pool to avoid blocking the async event loop with filesystem operations.
+    async def _ensure_project_sandbox_safe(
+        self, project_id: str, user_id: str, *, timeout_s: Optional[float] = None
+    ) -> bool:
+        """Ensure the project sandbox is alive and reachable for ``project_id``.
 
-        Args:
-            project_id: The project ID
-            user_id: The user ID
+        Single entry point used by both the conversation-create
+        provisioning and the per-message liveness probe.
+        :meth:`ProjectSandbox.ensure` is idempotent and self-healing:
+        it acquires the workspace (cache hit on the happy path),
+        probes ``is_alive``, and re-creates if the backing storage was
+        archived/deleted out-of-band. So this method's job is just
+        wiring — fetch the project, build a :class:`ProjectRef`, hand
+        it off, swallow failures so a transient sandbox blip never
+        blocks the user.
+
+        Returns ``True`` when the sandbox is ensured, ``False`` when
+        skipped (local-mode upload, missing metadata) or when the
+        ensure call failed and got logged. Callers shouldn't depend on
+        the return value for correctness — agent tools tolerate a
+        cold sandbox by re-acquiring inside the run.
         """
-        if not self.repo_manager:
-            return  # Repo manager not enabled
-
-        # Run filesystem operations in a thread pool to avoid blocking
-        # Add timeout to prevent hanging
         try:
-            await asyncio.wait_for(
-                asyncio.get_running_loop().run_in_executor(
-                    None, self._ensure_repo_in_repo_manager_sync, project_id, user_id
-                ),
-                timeout=5.0,  # 5 second timeout to prevent hanging
+            project = await asyncio.get_running_loop().run_in_executor(
+                None, self._fetch_project_for_provision, project_id
             )
-        except asyncio.TimeoutError:
+        except Exception as exc:
             logger.warning(
-                f"Timeout ensuring repo in repo manager for project {project_id} (took >5s)"
-            )
-        except Exception as e:
-            logger.warning(
-                f"Error ensuring repo in repo manager for project {project_id}: {e}",
+                f"[ensure_sandbox] project lookup failed for {project_id}: {exc}",
                 exc_info=True,
             )
-            # Don't fail the message if repo registration fails
+            return False
+        if not project:
+            return False
+
+        repo_name = project.get("project_name")
+        repo_path = project.get("repo_path")
+        if not repo_name or repo_path:
+            # Local/uploaded projects (with a host-side ``repo_path``)
+            # have no remote URL to clone. The agent tools serve them
+            # off the IDE tunnel; the sandbox path doesn't apply.
+            return False
+        base_ref = project.get("commit_id") or project.get("branch_name")
+        if not base_ref:
+            logger.warning(
+                f"[ensure_sandbox] project {project_id} has no ref; skipping"
+            )
+            return False
+
+        # Lazy import: keeps ProjectRef out of the conversation_service
+        # import graph since most call sites don't reach this branch.
+        from app.modules.intelligence.tools.sandbox.project_sandbox import (
+            ProjectRef,
+        )
+
+        async def _do_ensure() -> bool:
+            try:
+                await self._project_sandbox.ensure(
+                    user_id=user_id,
+                    project_id=project_id,
+                    repo=ProjectRef(
+                        repo_name=repo_name,
+                        base_ref=base_ref,
+                        repo_url=repo_path or None,
+                    ),
+                )
+                return True
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    f"[ensure_sandbox] ProjectSandbox.ensure failed for "
+                    f"{repo_name}@{base_ref}: {exc}",
+                    exc_info=True,
+                )
+                return False
+
+        if timeout_s is not None:
+            try:
+                return await asyncio.wait_for(_do_ensure(), timeout=timeout_s)
+            except asyncio.TimeoutError:
+                logger.info(
+                    f"[ensure_sandbox] still running after {timeout_s}s for "
+                    f"{repo_name}@{base_ref}; not blocking caller"
+                )
+                return False
+        return await _do_ensure()
+
+    def _fetch_project_for_provision(self, project_id: str) -> Optional[Dict[str, Any]]:
+        """Synchronous DB lookup, ID-flexible (str or int)."""
+        try:
+            return self.project_service.get_project_from_db_by_id_sync(project_id)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            try:
+                return self.project_service.get_project_from_db_by_id_sync(int(project_id))  # type: ignore[arg-type]
+            except (ValueError, TypeError):
+                return None
 
     def _ensure_repo_in_repo_manager_sync(self, project_id: str, user_id: str) -> None:
+        """Legacy sync entrypoint — now delegates to the async ProjectSandbox
+        ensure via ``asyncio.run`` from a worker thread. Kept for the
+        sync call site that schedules this as ``run_in_executor`` work.
         """
-        Synchronous version of _ensure_repo_in_repo_manager.
-        Runs in a thread pool to avoid blocking the async event loop.
-        Delegates to shared ensure_repo_registered helper.
-        """
-        if not self.repo_manager:
-            return
-
         try:
-            try:
-                project = self.project_service.get_project_from_db_by_id_sync(
-                    project_id
-                )  # type: ignore[arg-type]
-            except (TypeError, ValueError):
-                try:
-                    project = self.project_service.get_project_from_db_by_id_sync(
-                        int(project_id)
-                    )  # type: ignore[arg-type]
-                except (ValueError, TypeError):
-                    logger.warning(
-                        f"Cannot ensure repo in repo manager: invalid project_id {project_id}"
-                    )
-                    return
-
-            if not project:
-                logger.warning(
-                    f"Cannot ensure repo in repo manager: project {project_id} not found"
-                )
-                return
-
-            # Map project keys to expected format (project uses project_name, etc.)
-            project_data = {
-                "project_name": project.get("project_name"),
-                "branch_name": project.get("branch_name"),
-                "commit_id": project.get("commit_id"),
-                "repo_path": project.get("repo_path"),
-                "status": project.get("status"),
-            }
-            ensure_repo_registered(
-                project_data,
-                user_id,
-                self.repo_manager,
-                registered_from="conversation_message",
+            asyncio.run(
+                self._ensure_project_sandbox_safe(project_id, user_id)
             )
-        except Exception as e:
+        except Exception as exc:  # noqa: BLE001
             logger.warning(
-                f"Error in _ensure_repo_in_repo_manager_sync for project {project_id}: {e}",
+                f"[ensure_sandbox] sync wrapper failed for {project_id}: {exc}",
                 exc_info=True,
             )
+
+    def _legacy_ensure_repo_in_repo_manager_sync(self, project_id: str, user_id: str) -> None:
+        """Deprecated. Use :meth:`_ensure_project_sandbox_safe` instead.
+
+        Body removed during the sandbox cutover; kept as a name so any
+        out-of-tree caller fails loudly rather than silently picking up
+        the new flow with the wrong call shape.
+        """
+        raise NotImplementedError(
+            "RepoManager-based repo provisioning has been removed; use "
+            "_ensure_project_sandbox_safe instead."
+        )
 
     def _needs_full_clone_sync(self, project_id: str) -> bool:
+        """Decide whether to surface a "loading workspace" banner.
+
+        With ProjectSandbox the workspace is provisioned at parse time
+        and re-verified at conversation start. The ensure() call is
+        idempotent and cheap on a cache hit — so by the time the user
+        starts chatting we usually have nothing to wait for.
+
+        We probe the sandbox metadata store for an existing
+        ``RepoCache`` row to decide if we still need a full clone.
+        Anything that errors (DB miss, stale row, sandbox not
+        configured) we treat as "no banner needed" so we never block
+        the UI on this check.
         """
-        Returns True only when a full git clone is needed (bare repo not on disk yet).
-        When the bare repo already exists, prepare_for_parsing just creates a worktree
-        quickly — no loading message is needed in that case.
-        On any error or local repo, returns False so we never show a spurious message.
-        """
-        if not self.repo_manager:
-            return False
         try:
-            try:
-                project = self.project_service.get_project_from_db_by_id_sync(project_id)  # type: ignore[arg-type]
-            except (TypeError, ValueError):
-                try:
-                    project = self.project_service.get_project_from_db_by_id_sync(int(project_id))  # type: ignore[arg-type]
-                except (ValueError, TypeError):
-                    return False
-            if not project:
-                return False
-            repo_name = project.get("project_name")
-            repo_path = project.get("repo_path")
-            if not repo_name or repo_path:
-                return False  # local repo, always considered available
-            # Check if the bare repo directory exists on disk.
-            # If it does, worktree creation is fast — no loading message needed.
-            bare_repo_path = self.repo_manager._get_bare_repo_path(
-                repo_name
-            )  # noqa: SLF001
-            return not bare_repo_path.exists()
+            project = self._fetch_project_for_provision(project_id)
         except Exception:
-            logger.warning(
-                f"Error checking bare repo for project {project_id}, assuming available",
-                exc_info=True,
+            return False
+        if not project:
+            return False
+        repo_name = project.get("project_name")
+        repo_path = project.get("repo_path")
+        if not repo_name or repo_path:
+            # No remote repo to clone (local-only project, or invalid).
+            return False
+
+        try:
+            from app.modules.intelligence.tools.sandbox.client import (
+                get_sandbox_client,
             )
+
+            client = get_sandbox_client()
+            store = client.container.store
+
+            async def _check() -> bool:
+                base_ref = project.get("commit_id") or project.get("branch_name")
+                if not base_ref:
+                    return False
+                # The cache key is host+repo+ref; we only need a positive
+                # hit on (host, repo) — any base_ref pinned to the same
+                # bare counts as warm because the bare clones a fresh
+                # ref into the existing mirror in milliseconds.
+                from sandbox.domain.models import RepoCacheRequest, RepoIdentity
+
+                req = RepoCacheRequest(
+                    repo=RepoIdentity(repo_name=repo_name, repo_url=repo_path or None),
+                    base_ref=base_ref,
+                )
+                existing = await store.find_repo_cache_by_key(req.key())
+                return existing is None
+
+            return asyncio.run(_check())
+        except Exception:
             return False
 
     def _clone_repo_if_missing_sync(self, project_id: str, user_id: str) -> None:
+        """Sync wrapper around the sandbox ensure; runs in a thread pool.
+
+        Kept as a name because external schedulers reference it
+        (``loop.run_in_executor(None, self._clone_repo_if_missing_sync, …)``).
+        Internally now identical to :meth:`_ensure_repo_in_repo_manager_sync`
+        — there's no longer a meaningful "fast vs slow" split; a single
+        idempotent ensure covers both.
         """
-        Ensure the repo worktree exists in the repo manager.
-        Calls prepare_for_parsing if the repo is not yet registered or the worktree
-        is missing. Fast when the bare repo already exists (just adds the worktree);
-        slow only on the very first clone. Safe to call on every message.
-        """
-        if not self.repo_manager:
-            logger.info(f"[clone_sync] Skipping project {project_id}: no repo_manager")
-            return
         try:
-            try:
-                project = self.project_service.get_project_from_db_by_id_sync(project_id)  # type: ignore[arg-type]
-            except (TypeError, ValueError):
-                try:
-                    project = self.project_service.get_project_from_db_by_id_sync(int(project_id))  # type: ignore[arg-type]
-                except (ValueError, TypeError):
-                    logger.warning(f"[clone_sync] Cannot parse project_id={project_id}")
-                    return
-
-            if not project:
-                logger.warning(f"[clone_sync] Project {project_id} not found in DB")
-                return
-
-            repo_name = project.get("project_name")
-            branch = project.get("branch_name")
-            commit_id = project.get("commit_id")
-            repo_path = project.get("repo_path")
-
-            logger.info(
-                f"[clone_sync] project={project_id} repo_name={repo_name!r} "
-                f"branch={branch!r} commit_id={commit_id!r} repo_path={repo_path!r}"
+            asyncio.run(
+                self._ensure_project_sandbox_safe(project_id, user_id)
             )
-
-            if not repo_name:
-                logger.warning(
-                    f"[clone_sync] Skipping project {project_id}: no repo_name"
-                )
-                return
-            if repo_path:
-                logger.info(
-                    f"[clone_sync] Skipping project {project_id}: has local repo_path={repo_path!r}"
-                )
-                return
-
-            # Match the same ref priority used by get_file_content: commit_id first,
-            # then branch. This ensures the worktree key registered here is the same key
-            # that all code-provider tools use for their lookups.
-            ref = commit_id if commit_id else branch
-            is_commit_ref = bool(commit_id)
-
-            available = self.repo_manager.is_repo_available(
-                repo_name, branch=branch, commit_id=commit_id, user_id=user_id
-            )
-            logger.info(
-                f"[clone_sync] is_repo_available({repo_name!r}@{ref!r}) = {available}"
-            )
-            if available:
-                return  # already there
-
-            if not ref:
-                logger.warning(
-                    f"[clone_sync] Skipping {repo_name}: no ref (branch or commit_id)"
-                )
-                return
-
-            logger.info(
-                f"[clone_sync] Calling prepare_for_parsing for {repo_name}@{ref} "
-                f"(is_commit={is_commit_ref})"
-            )
-            from app.modules.code_provider.github.github_service import GithubService
-
-            user_token = GithubService(self.db).get_github_oauth_token(user_id)
-
-            # Try with user token first; fall back to env-var token (GH_TOKEN / GITHUB_TOKEN)
-            # if the user token is missing or returns a permission error — matching the
-            # same retry strategy used in parsing_helper.
-            for attempt, token in enumerate([user_token, None]):
-                if attempt == 1 and token == user_token:
-                    break  # no point retrying with the same (None) token
-                try:
-                    self.repo_manager.prepare_for_parsing(
-                        repo_name,
-                        ref,
-                        auth_token=token,
-                        is_commit=is_commit_ref,
-                        user_id=user_id,
-                    )
-                    logger.info(
-                        f"[clone_sync] Worktree ready: {repo_name}@{ref} "
-                        f"(attempt {attempt + 1}, token={'user' if token else 'env'})"
-                    )
-                    break
-                except Exception as e:
-                    if attempt == 0 and token is not None:
-                        logger.warning(
-                            f"[clone_sync] User-token clone failed for {repo_name}@{ref}: {e}. "
-                            "Retrying with env token.",
-                        )
-                    else:
-                        logger.warning(
-                            f"[clone_sync] prepare_for_parsing failed for {repo_name}@{ref}: {e}",
-                            exc_info=True,
-                        )
-        except Exception as e:
+        except Exception as exc:  # noqa: BLE001
             logger.warning(
-                f"[clone_sync] Unexpected error for project {project_id}: {e}",
+                f"[ensure_sandbox] sync wrapper failed for {project_id}: {exc}",
                 exc_info=True,
             )
 
     async def _clone_repo_if_missing(self, project_id: str, user_id: str) -> None:
+        """Async sandbox ensure.
+
+        ``ProjectSandbox.ensure`` is idempotent: cache-hit on the happy
+        path, recovery if the backing storage is gone. We just await
+        it directly — no thread pool needed because the sandbox client
+        handles its own blocking I/O.
         """
-        Fire-and-forget background clone. Runs in a thread so it never blocks the
-        event loop, with no timeout — the clone runs until it completes or fails.
-        """
-        if not self.repo_manager:
-            return
-        try:
-            await asyncio.get_running_loop().run_in_executor(
-                None, self._clone_repo_if_missing_sync, project_id, user_id
-            )
-        except Exception as e:
-            logger.warning(
-                f"_clone_repo_if_missing error for project {project_id}: {e}",
-                exc_info=True,
-            )
+        await self._ensure_project_sandbox_safe(project_id, user_id)
 
     async def _add_system_message(
         self, conversation_id: str, project_name: str, user_id: str
@@ -894,20 +871,21 @@ class ConversationService:
                         "No project associated with this conversation"
                     )
 
-                # Ensure repo is registered in repo manager (skip in local/VSCode mode)
-                # Convert project_id to string if needed (it might be a Column object)
+                # Verify the project sandbox is alive before the
+                # agent runs its first tool call. ``ensure()`` is the
+                # health check — it acquires (cheap on cache hit),
+                # probes ``is_alive``, and recovers if the backing
+                # storage was archived/deleted out-of-band. So the
+                # happy path is one ``acquire_session`` cache hit plus
+                # one cheap probe; the heavy recovery work only fires
+                # when the sandbox is actually gone.
+                #
+                # Skipped in local/VSCode mode — the IDE tunnel reads
+                # straight from the user's filesystem.
                 project_id_str = str(project_id) if project_id else None
-                if project_id_str and not local_mode and self.repo_manager:
-                    logger.info(
-                        f"[store_message] Checking/creating worktree for project {project_id_str}"
-                    )
-                    # Only show loading message when a full clone is needed (bare repo missing).
-                    # When the bare repo already exists, worktree creation is fast — no message.
+                if project_id_str and not local_mode:
                     needs_clone = await asyncio.get_running_loop().run_in_executor(
                         None, self._needs_full_clone_sync, project_id_str
-                    )
-                    logger.info(
-                        f"[store_message] needs_full_clone={needs_clone} for project {project_id_str}"
                     )
                     if needs_clone and stream:
                         yield ChatMessageResponse(
@@ -915,19 +893,16 @@ class ConversationService:
                             citations=[],
                             tool_calls=[],
                         )
-                    # Always run synchronously: creates bare repo + worktree if missing,
-                    # or returns quickly if everything already exists.
-                    await asyncio.get_running_loop().run_in_executor(
-                        None,
-                        self._clone_repo_if_missing_sync,
-                        project_id_str,
-                        user_id,
+                    # Bounded so a slow recovery (Daytona sandbox
+                    # creation can take ~10s) doesn't stall the user
+                    # past a reasonable budget; if it overruns, the
+                    # subsequent agent tool will pay the cost on its
+                    # own ensure() call. 30s gives a fresh Daytona
+                    # sandbox enough time to reach RUNNING without
+                    # holding the request open indefinitely.
+                    await self._ensure_project_sandbox_safe(
+                        project_id_str, user_id, timeout_s=30.0
                     )
-                elif project_id_str and not local_mode:
-                    logger.info(
-                        f"[store_message] No repo_manager, skipping worktree setup for project {project_id_str}"
-                    )
-                    await self._ensure_repo_in_repo_manager(project_id_str, user_id)
 
                 logger.info(
                     f"[store_message] message.tunnel_url={message.tunnel_url}, "

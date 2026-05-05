@@ -15,13 +15,17 @@ sub-process when we already have direct fs access.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import shlex
 from pathlib import Path, PurePosixPath
-from typing import Mapping, Self
+from typing import TYPE_CHECKING, Mapping, Self
 
 from sandbox.api.types import FileEntry, GitStatus, Hit, WorkspaceHandle
+
+if TYPE_CHECKING:
+    from sandbox.api.parser_wire import ParseArtifacts
 from sandbox.application.services.sandbox_service import SandboxService
 from sandbox.bootstrap.container import SandboxContainer, build_sandbox_container
 from sandbox.bootstrap.settings import SandboxSettings
@@ -31,6 +35,8 @@ from sandbox.domain.models import (
     ExecRequest,
     ExecResult,
     PullRequest,
+    PullRequestComment,
+    PullRequestCommentResult,
     PullRequestRequest,
     RepoCache,
     RepoCacheRequest,
@@ -48,6 +54,20 @@ class SandboxOpError(SandboxCoreError):
     def __init__(self, message: str, *, result: ExecResult | None = None) -> None:
         super().__init__(message)
         self.result = result
+
+
+def _err_payload(result: ExecResult) -> str:
+    """Pick the most useful error text from an :class:`ExecResult`.
+
+    Daytona's ``process.exec`` collapses stdout and stderr into one
+    ``result`` field (per SDK; the ExecutionArtifacts ``stdout`` mirrors
+    ``result``), so ``ExecResult.stderr`` comes back empty even when the
+    command actually failed. Falling back to ``stdout`` on those backends
+    gives the LLM a real error message instead of the empty string the
+    formatters used to emit. Local / Docker backends still split the
+    streams correctly, so the stderr branch wins when it's populated.
+    """
+    return _decode(result.stderr) or _decode(result.stdout)
 
 
 class SandboxClient:
@@ -218,6 +238,22 @@ class SandboxClient:
         """Remove the worktree (and its runtime). The repo cache survives."""
         await self._service.destroy_workspace(handle.workspace_id)
 
+    async def is_alive(self, handle: WorkspaceHandle) -> bool:
+        """Cheap liveness probe — does the backing workspace still exist?
+
+        ``False`` ⇒ the underlying storage is gone (Daytona sandbox
+        archived/deleted, local worktree removed by hand, store record
+        purged). The intended caller (``ProjectSandbox.health_check``)
+        runs this on every conversation message and re-creates via
+        ``ensure()`` when it returns ``False``.
+
+        Suppresses transient backend errors and reports them as ``False``
+        so the caller's recovery path takes over instead of having to
+        handle exceptions inline. See provider docstrings for details
+        on what "alive" means per backend.
+        """
+        return await self._service.is_workspace_alive(handle.workspace_id)
+
     # ------------------------------------------------------------------
     # Command execution
     # ------------------------------------------------------------------
@@ -265,21 +301,33 @@ class SandboxClient:
     ) -> bytes:
         """Read a file relative to the workspace root.
 
-        Uses direct fs access on local-fs backends; `cat` over exec elsewhere.
+        Three paths, in order of preference:
+        1. Local-fs fast path when the backend exposes the worktree on
+           the host (no exec round-trip).
+        2. Runtime's native fs (Daytona's ``sandbox.fs.download_file``)
+           when the runtime provider exposes ``read_bytes``.
+        3. ``cat`` over exec for backends without native fs (Docker,
+           future remote runtimes).
         """
         rel = _validate_relpath(path)
         if handle.local_path is not None:
             full = _safe_local_path(handle.local_path, rel)
             return await asyncio.to_thread(_read_bytes, full, max_bytes)
+        target = _posix_join(handle.remote_path, rel)
+        native = await self._service.fs_read_file(handle.workspace_id, target)
+        if native is not None:
+            if max_bytes is not None and len(native) > max_bytes:
+                return native[:max_bytes]
+            return native
         result = await self.exec(
             handle,
-            ["cat", "--", _posix_join(handle.remote_path, rel)],
+            ["cat", "--", target],
             command_kind=CommandKind.READ,
             max_output_bytes=max_bytes,
         )
         if result.exit_code != 0:
             raise SandboxOpError(
-                f"read_file({path!r}) failed: {_decode(result.stderr)}",
+                f"read_file({path!r}) failed: {_err_payload(result)}",
                 result=result,
             )
         return result.stdout
@@ -312,22 +360,33 @@ class SandboxClient:
                 await asyncio.to_thread(_write_bytes, full, content)
                 return
         target = _posix_join(handle.remote_path, rel)
-        # Ensure parent dir then stream content via stdin to `tee`.
+        if await self._service.fs_write_file(handle.workspace_id, target, content):
+            return
+        # Generic fallback for backends without native fs. Daytona's
+        # ``process.exec`` has no stdin parameter, so the previous
+        # ``cat > path`` + stdin path silently wrote empty files. Base64
+        # piped through ``base64 -d`` works on every shell image we
+        # ship (busybox, coreutils, alpine) and survives binary content
+        # because it never enters the shell as raw bytes.
         parent = str(PurePosixPath(target).parent)
         await self.exec(
             handle,
             ["mkdir", "-p", "--", parent],
             command_kind=CommandKind.WRITE,
         )
+        encoded = base64.b64encode(content).decode("ascii")
         result = await self.exec(
             handle,
-            ["sh", "-c", f"cat > {shlex.quote(target)}"],
-            stdin=content,
+            [
+                "sh",
+                "-c",
+                f"echo {shlex.quote(encoded)} | base64 -d > {shlex.quote(target)}",
+            ],
             command_kind=CommandKind.WRITE,
         )
         if result.exit_code != 0:
             raise SandboxOpError(
-                f"write_file({path!r}) failed: {_decode(result.stderr)}",
+                f"write_file({path!r}) failed: {_err_payload(result)}",
                 result=result,
             )
 
@@ -345,6 +404,12 @@ class SandboxClient:
             full = _safe_local_path(handle.local_path, rel)
             return await asyncio.to_thread(_scandir, full)
         target = _posix_join(handle.remote_path, rel)
+        native = await self._service.fs_list_dir(handle.workspace_id, target)
+        if native is not None:
+            return [
+                FileEntry(name=name, is_dir=is_dir, size=size)
+                for (name, is_dir, size) in native
+            ]
         result = await self.exec(
             handle,
             ["ls", "-1Ap", "--", target],
@@ -352,7 +417,7 @@ class SandboxClient:
         )
         if result.exit_code != 0:
             raise SandboxOpError(
-                f"list_dir({path!r}) failed: {_decode(result.stderr)}",
+                f"list_dir({path!r}) failed: {_err_payload(result)}",
                 result=result,
             )
         entries: list[FileEntry] = []
@@ -402,7 +467,7 @@ class SandboxClient:
         # rg exit codes: 0 = matches, 1 = no matches, 2 = error.
         if result.exit_code not in (0, 1):
             raise SandboxOpError(
-                f"search({pattern!r}) failed: {_decode(result.stderr)}",
+                f"search({pattern!r}) failed: {_err_payload(result)}",
                 result=result,
             )
         hits: list[Hit] = []
@@ -427,6 +492,85 @@ class SandboxClient:
         return hits
 
     # ------------------------------------------------------------------
+    # In-sandbox parser
+    # ------------------------------------------------------------------
+    async def parse_repo(
+        self,
+        handle: WorkspaceHandle,
+        *,
+        repo_subdir: str | None = None,
+        timeout_s: int = 600,
+        max_output_bytes: int | None = None,
+    ) -> "ParseArtifacts":
+        """Run the in-sandbox parser and return the reconstructed graph payload.
+
+        Invokes ``potpie-parse`` (installed by the agent-sandbox image)
+        inside the workspace; the runner streams NDJSON to stdout which
+        we decode via :mod:`app.modules.intelligence.tools.sandbox.parser_wire`.
+
+        ``repo_subdir`` lets a caller parse a subtree (rare — most parses
+        operate on the whole worktree); ``None`` means parse the
+        workspace root.
+
+        ``max_output_bytes`` caps the parser's output size; the default
+        of ``None`` means "no truncation," which is what parsing wants
+        — a truncated stream would yield a corrupt graph. Adapters that
+        cannot stream unbounded output should bump it explicitly.
+
+        Raises :class:`SandboxOpError` if the parser exits non-zero or
+        the runner's wire format is malformed.
+        """
+        # Imported lazily so the parser_wire module (stdlib-only by design)
+        # doesn't need to be loaded for every SandboxClient — only callers
+        # that actually parse pay the cost.
+        from sandbox.api.parser_wire import (
+            ParseArtifacts,
+            WireFormatError,
+            parse_stream,
+        )
+
+        target = "."
+        if repo_subdir is not None:
+            target = _validate_relpath(repo_subdir, allow_dot=True)
+
+        result = await self.exec(
+            handle,
+            ["potpie-parse", target],
+            command_kind=CommandKind.READ,
+            timeout_s=timeout_s,
+            max_output_bytes=max_output_bytes,
+        )
+        if result.timed_out:
+            raise SandboxOpError(
+                f"potpie-parse timed out after {timeout_s}s "
+                f"(workspace={handle.workspace_id}, target={target!r})",
+                result=result,
+            )
+        if result.truncated:
+            raise SandboxOpError(
+                "potpie-parse output was truncated; bump max_output_bytes "
+                "(parsing requires the full stream — partial NDJSON yields "
+                "a corrupt graph)",
+                result=result,
+            )
+        if result.exit_code != 0:
+            raise SandboxOpError(
+                f"potpie-parse exited {result.exit_code}: {_err_payload(result)}",
+                result=result,
+            )
+
+        try:
+            artifacts: ParseArtifacts = parse_stream(
+                _decode(result.stdout).splitlines()
+            )
+        except WireFormatError as exc:
+            raise SandboxOpError(
+                f"potpie-parse emitted malformed NDJSON: {exc}",
+                result=result,
+            ) from exc
+        return artifacts
+
+    # ------------------------------------------------------------------
     # Git helpers
     # ------------------------------------------------------------------
     async def status(self, handle: WorkspaceHandle) -> GitStatus:
@@ -437,7 +581,7 @@ class SandboxClient:
         )
         if result.exit_code != 0:
             raise SandboxOpError(
-                f"git status failed: {_decode(result.stderr)}", result=result
+                f"git status failed: {_err_payload(result)}", result=result
             )
         return _parse_status(_decode(result.stdout), default_branch=handle.branch)
 
@@ -457,7 +601,7 @@ class SandboxClient:
         result = await self.exec(handle, cmd, command_kind=CommandKind.READ)
         if result.exit_code != 0:
             raise SandboxOpError(
-                f"git diff failed: {_decode(result.stderr)}", result=result
+                f"git diff failed: {_err_payload(result)}", result=result
             )
         return _decode(result.stdout)
 
@@ -472,7 +616,17 @@ class SandboxClient:
         """Stage and commit. Returns the new commit's full SHA.
 
         Without `paths`, stages everything (`git add -A`). With `paths`, only
-        the listed files. `author` is `(name, email)` if you want to override.
+        the listed files.
+
+        ``author`` is ``(name, email)`` if you want to override; when
+        omitted, the configured :class:`BotIdentityProvider` (if any)
+        supplies the default so every agent commit lands under the bot
+        identity. Without a provider AND without an explicit ``author``,
+        the commit falls through to git's own ``user.name``/``user.email``
+        config (the runtime spec already injected the bot env vars at
+        ``get_or_create_runtime`` time, so this only matters for tests
+        and embedded usage that bypass the service).
+
         Raises :class:`SandboxOpError` if there's nothing to commit.
         """
         if paths:
@@ -485,7 +639,7 @@ class SandboxClient:
                 )
                 if add.exit_code != 0:
                     raise SandboxOpError(
-                        f"git add {rel!r} failed: {_decode(add.stderr)}",
+                        f"git add {rel!r} failed: {_err_payload(add)}",
                         result=add,
                     )
         else:
@@ -496,12 +650,13 @@ class SandboxClient:
             )
             if add.exit_code != 0:
                 raise SandboxOpError(
-                    f"git add -A failed: {_decode(add.stderr)}", result=add
+                    f"git add -A failed: {_err_payload(add)}", result=add
                 )
 
         env: dict[str, str] = {}
-        if author is not None:
-            name, email = author
+        resolved = await self._resolve_author(handle, author)
+        if resolved is not None:
+            name, email = resolved
             env.update(
                 {
                     "GIT_AUTHOR_NAME": name,
@@ -529,7 +684,7 @@ class SandboxClient:
         )
         if sha.exit_code != 0:
             raise SandboxOpError(
-                f"git rev-parse failed: {_decode(sha.stderr)}", result=sha
+                f"git rev-parse failed: {_err_payload(sha)}", result=sha
             )
         return _decode(sha.stdout).strip()
 
@@ -541,7 +696,22 @@ class SandboxClient:
         set_upstream: bool = True,
         force: bool = False,
     ) -> None:
-        cmd = ["git", "push"]
+        """Push the worktree branch to ``remote``.
+
+        Auth is injected per-call from the configured
+        :class:`RemoteAuthProvider`: a freshly resolved token (App
+        installation token in production) is passed via
+        ``-c http.<host>.extraheader='AUTHORIZATION: bearer …'`` so it
+        never lands in ``.git/config`` and never persists past this
+        invocation. The bare clone's ``origin`` URL was scrubbed at
+        clone time on purpose (caches are shared across users), so
+        without this re-injection, push to a private remote would fail.
+        """
+        # `-c http.<host>.extraheader=...` has to come BEFORE the `push`
+        # subcommand for git to honour it. Keep the option list separate
+        # so we can safely add more pre-flags later.
+        pre_args = await self._auth_pre_args(handle)
+        cmd = ["git", *pre_args, "push"]
         if force:
             cmd.append("--force-with-lease")
         if set_upstream:
@@ -552,8 +722,64 @@ class SandboxClient:
         )
         if result.exit_code != 0:
             raise SandboxOpError(
-                f"git push failed: {_decode(result.stderr)}", result=result
+                f"git push failed: {_err_payload(result)}", result=result
             )
+
+    # ------------------------------------------------------------------
+    # Identity / auth helpers
+    # ------------------------------------------------------------------
+    async def _resolve_author(
+        self,
+        handle: WorkspaceHandle,
+        explicit: tuple[str, str] | None,
+    ) -> tuple[str, str] | None:
+        """Pick the commit identity for `commit()`.
+
+        Priority: explicit caller arg > BotIdentityProvider > None.
+        Returning None lets git fall back to its configured user.name /
+        user.email (which the service already populated into the runtime
+        env from the same provider). The double-pass is intentional —
+        callers that hold a SandboxClient but bypass the runtime spec
+        (rare, but tests do it) still get the bot identity stamped.
+        """
+        if explicit is not None:
+            return explicit
+        identity = await self._service_bot_identity(handle)
+        if identity is None:
+            return None
+        return (identity.name, identity.email)
+
+    async def _service_bot_identity(self, handle: WorkspaceHandle):
+        workspace = await self._service.get_workspace(handle.workspace_id)
+        return await self._service.bot_identity_for(
+            workspace.request.repo, user_id=workspace.request.user_id
+        )
+
+    async def _auth_pre_args(self, handle: WorkspaceHandle) -> list[str]:
+        """Build the ``-c http.<host>.extraheader=…`` flags for `git push/fetch`.
+
+        Returns an empty list when no :class:`RemoteAuthProvider` is
+        wired or the provider declines (returns ``None``); the caller's
+        git command then runs unauthenticated, which is the right
+        behaviour for public repos and dev fixtures.
+
+        The token is freshly resolved on every call — installation
+        tokens expire in 1h, so caching at acquire-session time would
+        silently break long-running conversations.
+        """
+        workspace = await self._service.get_workspace(handle.workspace_id)
+        auth = await self._service.remote_auth_for(
+            workspace.request.repo, user_id=workspace.request.user_id
+        )
+        if auth is None:
+            return []
+        host = workspace.request.repo.provider_host or "github.com"
+        header = f"AUTHORIZATION: bearer {auth.token}"
+        # `-c` overrides config for this invocation only; the token
+        # never lands on disk. The host scope is important — a global
+        # extraheader would match every HTTPS git operation in the
+        # process, including unrelated remotes.
+        return ["-c", f"http.https://{host}/.extraheader={header}"]
 
     # ------------------------------------------------------------------
     # Git platform (PRs / reviews / comments)
@@ -596,6 +822,50 @@ class SandboxClient:
             auth_token=auth_token,
         )
         return await self._service.create_pull_request(request)
+
+    async def comment_on_pull_request(
+        self,
+        *,
+        repo: str,
+        pr_number: int,
+        body: str,
+        path: str | None = None,
+        line: int | None = None,
+        commit_id: str | None = None,
+        repo_url: str | None = None,
+        auth_token: str | None = None,
+    ) -> PullRequestCommentResult:
+        """Post a comment on an existing PR via the configured `GitPlatformProvider`.
+
+        Two shapes:
+
+        * **Top-level** — only ``body`` and ``pr_number``. Posts a
+          conversation comment on the PR.
+        * **Inline** — set ``path`` and ``line`` (and optionally
+          ``commit_id`` to pin the anchor). Posts a review comment at
+          that file/line.
+
+        Unlike :meth:`create_pull_request`, this does NOT require a
+        writable workspace handle — review comments are commonly issued
+        from analysis flows (the ``review-pr`` agent that has no
+        worktree at all). The platform provider's auth chain is what
+        determines attribution.
+        """
+        if (path is None) != (line is None):
+            raise SandboxOpError(
+                "comment_on_pull_request: pass both `path` and `line` "
+                "(inline comment) or neither (top-level comment)"
+            )
+        request = PullRequestComment(
+            repo=RepoIdentity(repo_name=repo, repo_url=repo_url),
+            pr_number=pr_number,
+            body=body,
+            path=path,
+            line=line,
+            commit_id=commit_id,
+            auth_token=auth_token,
+        )
+        return await self._service.comment_on_pull_request(request)
 
 
 # ----------------------------------------------------------------------

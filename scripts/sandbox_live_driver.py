@@ -75,7 +75,6 @@ async def _drive(tmp_root: Path) -> None:
         repos_base_path=str(tmp_root / ".repos"),
         metadata_path=str(tmp_root / "metadata.json"),
         local_allow_write=True,
-        use_canonical_local=True,
     )
     container = build_sandbox_container(settings)
     client = SandboxClient.from_container(container)

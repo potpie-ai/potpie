@@ -29,42 +29,40 @@ _client: SandboxClient | None = None
 def get_sandbox_client() -> SandboxClient:
     """Return the lazily-initialised process-wide client.
 
-    Local mode has two wirings:
+    Local mode wires :class:`LocalGitWorkspaceProvider` with
+    :class:`LocalRepoCacheProvider`; worktrees live under
+    ``<user>_<scope>_<branch>``. Daytona uses the managed-sandbox
+    provider where the bare repo lives inside the sandbox.
 
-    * **Legacy (default)** — swap in :class:`RepoManagerWorkspaceProvider`
-      so clones and worktrees flow through ``app.modules.repo_manager``.
-      Parsing's ``clone_or_copy_repository`` already uses the same
-      RepoManager, so both paths share one on-disk cache and one
-      eviction policy. Worktree layout is RepoManager's
-      (``<branch>`` for shared, ``<user>_<unique>_<branch>`` for
-      conversation-scoped).
-
-    * **Canonical** (``SANDBOX_USE_CANONICAL_LOCAL=true``, P1) —
-      ``LocalGitWorkspaceProvider`` becomes the workspace provider and
-      ``LocalRepoCacheProvider`` is the cache port. Worktree layout is
-      ``<user>_<scope>_<branch>``. Existing legacy worktrees on disk
-      are NOT migrated — they remain accessible via RepoManager but
-      become orphaned from the canonical adapter's view. New
-      conversations get fresh worktrees in the canonical layout.
-
-    Daytona uses the stock provider in both cases — the bare repo
-    lives inside the managed sandbox.
+    Bot identity and remote-auth adapters are wired here so every
+    sandbox commit / push runs under the configured Potpie-bot
+    identity, sharing the same GitHub App / OAuth chain that the
+    clone path uses.
     """
     global _client
     if _client is None:
-        settings = settings_from_env()
-        if settings.provider == "local" and not settings.use_canonical_local:
-            from app.modules.repo_manager import RepoManager
-            from app.modules.sandbox_repos import RepoManagerWorkspaceProvider
+        from app.modules.code_provider.provider_factory import CodeProviderFactory
+        from app.modules.sandbox_repos import (
+            GitHubGitPlatformProvider,
+            PotpieBotIdentityProvider,
+            PotpieRemoteAuthProvider,
+        )
 
-            repo_manager = RepoManager(repos_base_path=settings.repos_base_path)
-            workspace_provider = RepoManagerWorkspaceProvider(repo_manager)
-            container = build_sandbox_container(
-                settings, workspace_provider=workspace_provider
-            )
-        else:
-            # Canonical local OR Daytona — let bootstrap pick everything.
-            container = build_sandbox_container(settings)
+        settings = settings_from_env()
+        # Per-repo factory: the bridge calls this on every PR with the
+        # target repo_name, so each PR gets a freshly authenticated
+        # GitHubProvider (App installation tokens expire in 1h, and
+        # the installation id is per-repo). A singleton would
+        # silently break PR creation after the first hour.
+        platform_provider = GitHubGitPlatformProvider(
+            provider_factory=CodeProviderFactory.create_provider_with_fallback,
+        )
+        container = build_sandbox_container(
+            settings,
+            bot_identity_provider=PotpieBotIdentityProvider(),
+            remote_auth_provider=PotpieRemoteAuthProvider(),
+            git_platform_provider=platform_provider,
+        )
         _client = SandboxClient.from_container(container)
     return _client
 
@@ -75,23 +73,104 @@ def set_sandbox_client(client: SandboxClient | None) -> None:
     _client = client
 
 
-def _resolve_auth_token(project_user_id: str | None) -> str | None:
-    """Best-effort token lookup.
+from dataclasses import dataclass
+from typing import Literal
 
-    Order:
-      1. The auth_token contextvar (set by the execution flow when a per-run
-         token is available — e.g. user OAuth).
-      2. ``GH_TOKEN`` / ``GITHUB_TOKEN`` env vars (CI / dev path).
 
-    The proper GitHub-App → OAuth → env-token chain currently lives in
-    ``app/modules/repo_manager/sync_helper.py``. Plan phase 9 moves it into
-    the sandbox local adapter; until then we accept a degraded auth path so
-    sandbox tools work for public repos and CI tokens out of the box.
+AuthKind = Literal["context", "app", "user_oauth", "env", "none"]
+
+
+@dataclass(frozen=True)
+class ResolvedAuth:
+    """Token plus the chain branch that produced it.
+
+    The ``kind`` field is for observability: ops want to know whether a
+    given clone/push ran under the GitHub App (``"app"`` — bot identity)
+    or fell back to a user OAuth token (``"user_oauth"`` — user
+    identity) without dumping the token itself. Treat the token as
+    write-only — never log ``token``, only ``kind``.
+
+    ``"none"`` means no token was found; callers can either clone
+    anonymously (works for public repos) or fail.
+    """
+
+    token: str | None
+    kind: AuthKind
+
+
+def _resolve_auth(
+    user_id: str | None, repo_name: str | None = None
+) -> ResolvedAuth:
+    """Walk the token chain, return both the token AND which branch produced it.
+
+    Priority chain (mirrors ``app/modules/repo_manager/sync_helper.py`` so
+    sandbox clones reach private repos via the same path parsing already
+    uses):
+
+      1. ``auth_token`` contextvar — set by the harness when a per-run
+         token is pinned. Kind: ``"context"``.
+      2. GitHub App installation token for ``repo_name``. Kind: ``"app"``.
+      3. User OAuth token from ``GithubService`` (requires ``user_id``).
+         Kind: ``"user_oauth"``.
+      4. ``GH_TOKEN`` / ``GITHUB_TOKEN`` env vars (CI / dev fallback).
+         Kind: ``"env"``.
+      5. Nothing found — ``ResolvedAuth(token=None, kind="none")``.
+
+    Each step is best-effort; failures fall through silently to the next.
+    Callers always pass ``repo_name`` so the App-token branch can run —
+    without it private repos clone unauthenticated and fail on Daytona.
     """
     token = get_auth_token()
     if token:
-        return token
-    return os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
+        return ResolvedAuth(token=token, kind="context")
+
+    if repo_name:
+        try:
+            from app.modules.code_provider.provider_factory import (
+                CodeProviderFactory,
+            )
+
+            provider = CodeProviderFactory.create_github_app_provider(repo_name)
+            requester = getattr(
+                getattr(provider, "client", None), "_Github__requester", None
+            )
+            auth = getattr(requester, "auth", None) if requester else None
+            app_token = getattr(auth, "token", None) if auth else None
+            if app_token:
+                return ResolvedAuth(token=app_token, kind="app")
+        except Exception:
+            pass
+
+    if user_id:
+        try:
+            from app.core.database import SessionLocal
+            from app.modules.code_provider.github.github_service import (
+                GithubService,
+            )
+
+            with SessionLocal() as db:
+                oauth_token = GithubService(db).get_github_oauth_token(user_id)
+                if oauth_token:
+                    return ResolvedAuth(token=oauth_token, kind="user_oauth")
+        except Exception:
+            pass
+
+    env_token = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN")
+    if env_token:
+        return ResolvedAuth(token=env_token, kind="env")
+    return ResolvedAuth(token=None, kind="none")
+
+
+def _resolve_auth_token(
+    user_id: str | None, repo_name: str | None = None
+) -> str | None:
+    """Back-compat wrapper that returns the bare token only.
+
+    New callers should use :func:`_resolve_auth` so the resolution
+    branch is observable. Existing callers keep working until they
+    migrate.
+    """
+    return _resolve_auth(user_id, repo_name).token
 
 
 async def provision_repo_cache(
@@ -115,7 +194,7 @@ async def provision_repo_cache(
     multiple workers concurrently; the service's per-key lock serialises.
     """
     client = get_sandbox_client()
-    token = auth_token or _resolve_auth_token(user_id)
+    token = auth_token or _resolve_auth_token(user_id, repo_name)
     return await client.ensure_repo_cache(
         user_id=user_id,
         repo=repo_name,
@@ -152,7 +231,7 @@ async def resolve_workspace(
     base branch (git rejects multiple worktrees on the same ref).
     """
     client = get_sandbox_client()
-    auth_token = _resolve_auth_token(user_id)
+    auth_token = _resolve_auth_token(user_id, repo_name)
     conversation_id = get_conversation_id()
     base = base_ref or branch
     workspace_branch: str

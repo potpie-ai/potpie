@@ -321,3 +321,69 @@ class PullRequest:
     base_branch: str
     backend_kind: str
 
+
+@dataclass(frozen=True, slots=True)
+class PullRequestComment:
+    """Request to post a comment on an existing pull request.
+
+    Two shapes:
+
+    * **General comment** — ``path``/``line`` are ``None``. Posts a
+      top-level conversation comment on the PR.
+    * **Inline comment** — ``path`` is the file relative to the repo
+      root and ``line`` is the line number; ``commit_id`` pins it to a
+      specific commit so the comment doesn't dangle if the PR rebases.
+      Both must be set together.
+
+    The ``auth_token`` field is for callers that have already resolved
+    a credential they want to pin (the harness passes it from the
+    contextvar). When omitted, adapters fall back to their own auth
+    chain.
+    """
+
+    repo: RepoIdentity
+    pr_number: int
+    body: str
+    path: str | None = None
+    line: int | None = None
+    commit_id: str | None = None
+    auth_token: str | None = field(default=None, repr=False, compare=False)
+
+
+@dataclass(frozen=True, slots=True)
+class PullRequestCommentResult:
+    """Result of a successful comment post."""
+
+    id: int | str
+    url: str
+    backend_kind: str
+
+
+@dataclass(frozen=True, slots=True)
+class Author:
+    """Identity stamped on commits the sandbox makes on behalf of an agent.
+
+    Used by `BotIdentityProvider` so a single Potpie-bot identity can be
+    threaded through every commit/push without each adapter inventing
+    its own. ``name`` and ``email`` are surfaced to git as
+    ``GIT_AUTHOR_*`` and ``GIT_COMMITTER_*`` env vars.
+    """
+
+    name: str
+    email: str
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteAuth:
+    """Token to authenticate git network operations against a remote.
+
+    `kind` lets the application layer log which credential source is in
+    use without leaking the token itself: an ``"app"`` token attributes
+    pushes to the configured GitHub App (the bot identity), ``"user_oauth"``
+    attributes them to the calling user, ``"pat"``/``"env"`` are dev/CI
+    fallbacks.
+    """
+
+    token: str = field(repr=False)
+    kind: str = "env"
+

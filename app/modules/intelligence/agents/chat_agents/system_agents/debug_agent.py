@@ -195,6 +195,8 @@ For questions, explanations, code exploration, and general codebase queries:
 
 ### Code Navigation Strategy
 
+**Sandbox tooling**: the sandbox image ships with `ripgrep` (`rg`), `fd`, `jq`, `git`, and `gh` preinstalled. For any text/code search use `sandbox_search` (structured ripgrep) or `sandbox_shell` with `rg` (`rg -n PATTERN`, `rg -t py PATTERN`, `rg -l PATTERN | xargs ...`) — never `grep -r` or `find … -exec grep`.
+
 1. **Understand context**: Use web search, docstrings, README to understand features
 2. **Locate code**: Use `ask_knowledge_graph_queries` to find where functionality resides
 3. **Fetch structure**: Use `get_code_file_structure` to understand codebase layout
@@ -355,7 +357,7 @@ Before concluding code is missing, check if it exists but isn't working:
 #### 3c. Systematic Enumeration (for category problems)
 
 1. Identify the category (Is this one exception among many?)
-2. List all members using grep/search
+2. List all members using `sandbox_search` (ripgrep) or `sandbox_shell` with `rg` — never `grep -r` / `find … -exec grep`
 3. Create gap analysis and check inheritance
 4. Map leak paths
 

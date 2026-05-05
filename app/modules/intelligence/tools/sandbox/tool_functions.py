@@ -85,12 +85,22 @@ def _err(msg: str, **extra: Any) -> Dict[str, Any]:
 
 
 def _wrap_exec_result(handle: Any, result: ExecResult) -> Dict[str, Any]:
+    # Daytona's process.exec collapses stdout+stderr into one stream and
+    # leaves ExecResult.stderr empty. Surface a non-empty stderr by
+    # falling back to stdout on failed runs so the LLM sees the actual
+    # diagnostic instead of an empty string. Successful runs keep stderr
+    # empty so consumers can still distinguish "command warned to
+    # stderr" on backends that split the streams (local, Docker).
+    stdout_text = result.stdout.decode("utf-8", errors="replace")
+    stderr_text = result.stderr.decode("utf-8", errors="replace")
+    if not stderr_text and result.exit_code != 0:
+        stderr_text = stdout_text
     return {
         "success": result.exit_code == 0,
         "branch": handle.branch,
         "exit_code": result.exit_code,
-        "stdout": result.stdout.decode("utf-8", errors="replace"),
-        "stderr": result.stderr.decode("utf-8", errors="replace"),
+        "stdout": stdout_text,
+        "stderr": stderr_text,
         "timed_out": result.timed_out,
         "truncated": result.truncated,
     }
@@ -569,6 +579,84 @@ async def _exec_pull_request(
         "head_branch": pr.head_branch,
         "base_branch": pr.base_branch,
     }
+
+
+async def sandbox_pr_comment_tool(
+    project_id: str,
+    pr_number: int,
+    body: str,
+    path: Optional[str] = None,
+    line: Optional[int] = None,
+    commit_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Post a comment on an existing PR through the sandbox path.
+
+    Supports both top-level (no ``path``/``line``) and inline
+    (``path`` + ``line``) comments. Unlike ``sandbox_pr``, this does
+    NOT require a writable workspace — review-flow agents can comment
+    without a worktree. Attribution flows through the same
+    ``GitPlatformProvider`` factory chain ``sandbox_pr`` uses, so the
+    PR comment lands under the same identity (the Potpie bot when the
+    GitHub App is installed).
+    """
+    try:
+        details = _project_details(project_id)
+        client = get_sandbox_client()
+        result = await client.comment_on_pull_request(
+            repo=details["project_name"],
+            pr_number=pr_number,
+            body=body,
+            path=path,
+            line=line,
+            commit_id=commit_id,
+            repo_url=details.get("repo_path") or None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _err(f"sandbox_pr_comment failed: {exc}")
+    return {
+        "success": True,
+        "comment_id": result.id,
+        "url": result.url,
+    }
+
+
+async def sandbox_pr_tool(
+    project_id: str,
+    title: str,
+    body: str,
+    base_branch: Optional[str] = None,
+    head_branch: Optional[str] = None,
+    reviewers: Optional[List[str]] = None,
+    labels: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Open a PR from the agent's worktree branch into ``base_branch``.
+
+    Legacy contextvar form: derives ``repo_name`` from
+    ``project_id`` via the cached project summary, defaults
+    ``base_branch`` to the project's stored base branch when omitted,
+    and dispatches through :class:`SandboxClient.create_pull_request`.
+    The platform-side step needs ``head_branch`` already pushed —
+    callers should run ``sandbox_git push`` first.
+    """
+    try:
+        details = _project_details(project_id)
+        summary = lookup_project_summary(project_id)
+        handle = await _resolve(project_id)
+        client = get_sandbox_client()
+        return await _exec_pull_request(
+            client,
+            handle,
+            title=title,
+            body=body,
+            base_branch=base_branch or summary["base_branch"],
+            head_branch=head_branch,
+            reviewers=reviewers,
+            labels=labels,
+            repo_name=details["project_name"],
+            repo_url=details.get("repo_path") or None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _err(f"sandbox_pr failed: {exc}")
 
 
 async def _git_log(client: Any, handle: Any, limit: int) -> Dict[str, Any]:

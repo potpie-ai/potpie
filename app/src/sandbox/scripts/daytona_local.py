@@ -273,7 +273,11 @@ def main() -> int:
             f"DAYTONA_API_KEY={api_key}\n"
             f"DAYTONA_DASHBOARD_URL={args.dashboard}\n"
             f"DAYTONA_ORGANIZATION_ID={org_id}\n"
-            "DAYTONA_SNAPSHOT=potpie/agent-sandbox:0.1.0\n"
+            # Match DEFAULT_AGENT_SNAPSHOT in sandbox/bootstrap/settings.py.
+            # Bumped from 0.1.0 in Phase 5 — the 0.1.0 image lacks
+            # `potpie-parse` so any parse against it fails with
+            # "command not found".
+            "DAYTONA_SNAPSHOT=potpie/agent-sandbox:0.2.1\n"
             "SANDBOX_WORKSPACE_PROVIDER=daytona\n"
             "SANDBOX_RUNTIME_PROVIDER=daytona\n",
             encoding="utf-8",

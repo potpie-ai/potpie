@@ -576,3 +576,307 @@ async def test_write_file_after_destroy_raises(tmp_path: Path) -> None:
     assert not worktree.exists(), (
         "destroyed worktree must not be recreated by a stale handle write"
     )
+
+
+# ---------------------------------------------------------------------------
+# parse_repo() — covered separately because we mock `exec` to simulate
+# the in-sandbox `potpie-parse` runner without needing the agent image
+# baked. Integration coverage for the real binary lives in
+# tests/integration (built when the sandbox image is available).
+# ---------------------------------------------------------------------------
+
+
+def _runner_ndjson(
+    *,
+    nodes: list[dict] | None = None,
+    edges: list[dict] | None = None,
+    repo_dir: str = "/repo",
+    error: str | None = None,
+) -> bytes:
+    """Build a runner-shaped NDJSON stream for stubbing exec results.
+
+    Mirrors the format the in-sandbox runner emits so tests don't have
+    to reach into ``parser_runner`` directly. Keeping this local also
+    means the SandboxClient's contract is tested against the wire
+    format, not against the producer side.
+    """
+    import json as _json
+
+    from sandbox.api.parser_wire import WIRE_VERSION
+
+    out: list[str] = [
+        _json.dumps({"kind": "header", "version": WIRE_VERSION, "repo_dir": repo_dir})
+    ]
+    for node in nodes or []:
+        out.append(_json.dumps({"kind": "node", **node}))
+    for edge in edges or []:
+        out.append(_json.dumps({"kind": "edge", **edge}))
+    footer: dict = {
+        "kind": "footer",
+        "node_count": len(nodes or []),
+        "edge_count": len(edges or []),
+        "elapsed_s": 0.5,
+    }
+    if error is not None:
+        footer["error"] = error
+    out.append(_json.dumps(footer))
+    return ("\n".join(out) + "\n").encode("utf-8")
+
+
+def _stub_exec(monkeypatch, *, stdout: bytes, exit_code: int = 0,
+               stderr: bytes = b"", timed_out: bool = False, truncated: bool = False):
+    """Replace ``SandboxClient.exec`` with a coroutine returning a fixed ExecResult.
+
+    Captures the most recent invocation in ``calls`` so tests can
+    assert the cmd/cwd/timeout passed through correctly.
+    """
+    from sandbox.api.client import SandboxClient
+    from sandbox.domain.models import ExecResult
+
+    calls: list[dict] = []
+
+    async def fake_exec(self, handle, cmd, **kwargs):  # type: ignore[no-redef]
+        calls.append({"cmd": list(cmd), "kwargs": dict(kwargs), "handle": handle})
+        return ExecResult(
+            exit_code=exit_code,
+            stdout=stdout,
+            stderr=stderr,
+            timed_out=timed_out,
+            truncated=truncated,
+        )
+
+    monkeypatch.setattr(SandboxClient, "exec", fake_exec)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_parse_repo_happy_path(tmp_path: Path, monkeypatch) -> None:
+    source = _make_repo(tmp_path)
+    client = _build_client(tmp_path)
+    handle = await client.get_workspace(
+        user_id="u1",
+        project_id="p1",
+        repo="owner/repo",
+        repo_url=str(source),
+        branch="main",
+        base_ref="main",
+        mode=WorkspaceMode.ANALYSIS,
+    )
+
+    stdout = _runner_ndjson(
+        nodes=[
+            {"id": "a.py", "node_type": "FILE", "file": "a.py",
+             "line": 0, "end_line": 0, "name": "a.py", "text": "hi"},
+            {"id": "Foo", "node_type": "CLASS", "file": "a.py",
+             "line": 1, "end_line": 5, "name": "Foo", "class_name": None,
+             "text": "class Foo: pass"},
+        ],
+        edges=[
+            {"source_id": "a.py", "target_id": "Foo",
+             "relationship_type": "CONTAINS"},
+        ],
+    )
+    calls = _stub_exec(monkeypatch, stdout=stdout)
+
+    artifacts = await client.parse_repo(handle)
+    assert len(artifacts.nodes) == 2
+    assert len(artifacts.relationships) == 1
+    assert artifacts.repo_dir == "/repo"
+    assert artifacts.elapsed_s == 0.5
+
+    # The exec call must invoke `potpie-parse .` (the workspace root)
+    # and ride the READ command kind so the workspace lock is shared
+    # rather than exclusive.
+    from sandbox.domain.models import CommandKind
+
+    assert calls[0]["cmd"] == ["potpie-parse", "."]
+    assert calls[0]["kwargs"]["command_kind"] is CommandKind.READ
+    assert calls[0]["kwargs"]["timeout_s"] == 600
+
+
+@pytest.mark.asyncio
+async def test_parse_repo_passes_subdir(tmp_path: Path, monkeypatch) -> None:
+    """A caller may parse only a subtree (rare, but exposed). The
+    relpath is validated by the same check the rest of the client uses."""
+    source = _make_repo(tmp_path)
+    client = _build_client(tmp_path)
+    handle = await client.get_workspace(
+        user_id="u1",
+        project_id="p1",
+        repo="owner/repo",
+        repo_url=str(source),
+        branch="main",
+        base_ref="main",
+        mode=WorkspaceMode.ANALYSIS,
+    )
+
+    calls = _stub_exec(monkeypatch, stdout=_runner_ndjson())
+    await client.parse_repo(handle, repo_subdir="src")
+    assert calls[0]["cmd"] == ["potpie-parse", "src"]
+
+
+@pytest.mark.asyncio
+async def test_parse_repo_rejects_traversal(tmp_path: Path, monkeypatch) -> None:
+    """`..` in repo_subdir should raise before we ever exec."""
+    source = _make_repo(tmp_path)
+    client = _build_client(tmp_path)
+    handle = await client.get_workspace(
+        user_id="u1",
+        project_id="p1",
+        repo="owner/repo",
+        repo_url=str(source),
+        branch="main",
+        base_ref="main",
+        mode=WorkspaceMode.ANALYSIS,
+    )
+    calls = _stub_exec(monkeypatch, stdout=_runner_ndjson())
+    with pytest.raises(InvalidWorkspacePath):
+        await client.parse_repo(handle, repo_subdir="../etc")
+    # Confirm we didn't get as far as exec — argument validation must
+    # be the first thing parse_repo does.
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_parse_repo_raises_on_non_zero_exit(tmp_path: Path, monkeypatch) -> None:
+    source = _make_repo(tmp_path)
+    client = _build_client(tmp_path)
+    handle = await client.get_workspace(
+        user_id="u1",
+        project_id="p1",
+        repo="owner/repo",
+        repo_url=str(source),
+        branch="main",
+        base_ref="main",
+        mode=WorkspaceMode.ANALYSIS,
+    )
+    _stub_exec(monkeypatch, stdout=b"", exit_code=2,
+               stderr=b"potpie-parse: command not found")
+    with pytest.raises(SandboxOpError, match="exited 2"):
+        await client.parse_repo(handle)
+
+
+@pytest.mark.asyncio
+async def test_parse_repo_raises_on_truncation(tmp_path: Path, monkeypatch) -> None:
+    """Truncated NDJSON would yield a corrupt graph — the client must
+    refuse it loudly rather than silently feed garbage to neo4j."""
+    source = _make_repo(tmp_path)
+    client = _build_client(tmp_path)
+    handle = await client.get_workspace(
+        user_id="u1",
+        project_id="p1",
+        repo="owner/repo",
+        repo_url=str(source),
+        branch="main",
+        base_ref="main",
+        mode=WorkspaceMode.ANALYSIS,
+    )
+    _stub_exec(monkeypatch, stdout=_runner_ndjson(), truncated=True)
+    with pytest.raises(SandboxOpError, match="truncated"):
+        await client.parse_repo(handle)
+
+
+@pytest.mark.asyncio
+async def test_parse_repo_raises_on_timeout(tmp_path: Path, monkeypatch) -> None:
+    source = _make_repo(tmp_path)
+    client = _build_client(tmp_path)
+    handle = await client.get_workspace(
+        user_id="u1",
+        project_id="p1",
+        repo="owner/repo",
+        repo_url=str(source),
+        branch="main",
+        base_ref="main",
+        mode=WorkspaceMode.ANALYSIS,
+    )
+    _stub_exec(monkeypatch, stdout=b"", timed_out=True)
+    with pytest.raises(SandboxOpError, match="timed out"):
+        await client.parse_repo(handle, timeout_s=10)
+
+
+@pytest.mark.asyncio
+async def test_parse_repo_surfaces_runner_error_in_footer(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """When the runner exits 0 but the footer carries `error` (parser
+    crashed mid-parse), the client should still raise — exit code is
+    not the only failure signal."""
+    source = _make_repo(tmp_path)
+    client = _build_client(tmp_path)
+    handle = await client.get_workspace(
+        user_id="u1",
+        project_id="p1",
+        repo="owner/repo",
+        repo_url=str(source),
+        branch="main",
+        base_ref="main",
+        mode=WorkspaceMode.ANALYSIS,
+    )
+    # Note: the runner returns rc=1 when extract raises, but a hostile
+    # adapter could conceivably return rc=0 with an error footer; the
+    # decoder catches that case via WireFormatError and parse_repo
+    # turns it into SandboxOpError.
+    bad = _runner_ndjson(error="syntax error in repo")
+    _stub_exec(monkeypatch, stdout=bad)
+    with pytest.raises(SandboxOpError, match="malformed NDJSON"):
+        await client.parse_repo(handle)
+
+
+# ---------------------------------------------------------------------------
+# is_alive() — backend-aware liveness probe.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_is_alive_true_for_intact_local_workspace(tmp_path: Path) -> None:
+    source = _make_repo(tmp_path)
+    client = _build_client(tmp_path)
+    handle = await client.get_workspace(
+        user_id="u1",
+        project_id="p1",
+        repo="owner/repo",
+        repo_url=str(source),
+        branch="main",
+        base_ref="main",
+        mode=WorkspaceMode.ANALYSIS,
+    )
+    assert await client.is_alive(handle) is True
+
+
+@pytest.mark.asyncio
+async def test_is_alive_false_after_destroy(tmp_path: Path) -> None:
+    source = _make_repo(tmp_path)
+    client = _build_client(tmp_path)
+    handle = await client.get_workspace(
+        user_id="u1",
+        project_id="p1",
+        repo="owner/repo",
+        repo_url=str(source),
+        branch="main",
+        base_ref="main",
+        mode=WorkspaceMode.ANALYSIS,
+    )
+    await client.destroy_workspace(handle)
+    assert await client.is_alive(handle) is False
+
+
+@pytest.mark.asyncio
+async def test_is_alive_false_when_local_path_removed_externally(
+    tmp_path: Path,
+) -> None:
+    """An operator (or eviction policy) yanks the worktree from
+    underneath us — the probe should detect that without raising."""
+    source = _make_repo(tmp_path)
+    client = _build_client(tmp_path)
+    handle = await client.get_workspace(
+        user_id="u1",
+        project_id="p1",
+        repo="owner/repo",
+        repo_url=str(source),
+        branch="main",
+        base_ref="main",
+        mode=WorkspaceMode.ANALYSIS,
+    )
+    assert handle.local_path is not None
+    shutil.rmtree(handle.local_path)
+    assert await client.is_alive(handle) is False

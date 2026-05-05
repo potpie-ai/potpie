@@ -184,10 +184,11 @@ class AgentFactory:
                     break  # Don't check other patterns for this tool
         return filtered
 
-    # Phase 2: AgentType → registry allow-list id for integration agents
+    # Phase 2: AgentType → registry allow-list id for integration agents.
+    # GitHub used to live here; it was retired and its tools are now exposed
+    # directly on the supervisor (see SUPERVISOR_ADD_WHEN_NON_LOCAL).
     _INTEGRATION_ALLOW_LIST_MAP = {
         AgentType.JIRA: "integration_jira",
-        AgentType.GITHUB: "integration_github",
         AgentType.CONFLUENCE: "integration_confluence",
         AgentType.LINEAR: "integration_linear",
     }
@@ -201,17 +202,12 @@ class AgentFactory:
         """Build tool list for integration-specific agents.
 
         When tool_resolver is set (Phase 2), integration tool names are resolved from
-        registry allow-lists (integration_jira, integration_github, etc.). Otherwise
-        uses hardcoded integration_tools_map for backward compatibility.
+        registry allow-lists (integration_jira, integration_confluence, integration_linear).
+        Otherwise uses hardcoded integration_tools_map for backward compatibility.
 
-        GitHub agent also receives the sandbox tool group so it can stage,
-        commit, and push without going through the legacy CCM staging area.
+        Note: GitHub used to be an integration agent here; the subagent was
+        retired and its tools were promoted to the supervisor's tool set.
         """
-        # Sandbox tools replace the CCM staging family (plan phase 8).
-        from app.modules.intelligence.tools.sandbox.tools import (
-            create_sandbox_tools,
-        )
-
         if self.tool_resolver:
             allow_list_id = self._INTEGRATION_ALLOW_LIST_MAP.get(agent_type)
             if not allow_list_id:
@@ -249,18 +245,6 @@ class AgentFactory:
                     "get_jira_project_users",
                     "link_jira_issues",
                 ],
-                AgentType.GITHUB: [
-                    "github_tool",
-                    "code_provider_tool",
-                    "github_create_branch",
-                    "code_provider_create_branch",
-                    "github_create_pull_request",
-                    "code_provider_create_pr",
-                    "github_add_pr_comments",
-                    "code_provider_add_pr_comments",
-                    "github_update_branch",
-                    "code_provider_update_file",
-                ],
                 AgentType.CONFLUENCE: [
                     "get_confluence_spaces",
                     "get_confluence_page",
@@ -296,12 +280,6 @@ class AgentFactory:
                 )
 
         wrapped_tools = wrap_structured_tools(integration_tools)
-
-        if agent_type == AgentType.GITHUB:
-            sandbox_tools = create_sandbox_tools()
-            wrapped_tools = wrapped_tools + wrap_structured_tools(sandbox_tools)
-            wrapped_tools = deduplicate_tools_by_name(wrapped_tools)
-
         return wrapped_tools
 
     def build_delegate_agent_tools(
@@ -477,61 +455,6 @@ Provide comprehensive context:
 **NOTE**: The Jira agent will inform you if it cannot complete a task. If it says it cannot do something, adjust your approach or use a different subagent.
 
 **PARALLELIZATION:** Call multiple times in parallel for independent Jira operations."""
-        elif agent_type == AgentType.GITHUB:
-            description = """🐙 DELEGATE TO GITHUB AGENT - Specialized subagent for ALL GitHub repository operations.
-
-**CRITICAL - USE FOR ANY GITHUB-RELATED TASK:**
-This agent handles ALL GitHub operations. Use it whenever the task involves:
-- **GitHub, pull requests, PRs, branches, commits, repository operations**
-- **Fetching GitHub issues** (open issues, closed issues, specific issues)
-- **Creating or managing GitHub content** (PRs, branches, comments)
-- **Committing code changes** tracked in the conversation to GitHub
-- **ANY mention of GitHub, repository, issues, PRs, branches, or commits in the user's request**
-
-**WHAT IS THE GITHUB AGENT:**
-- An isolated execution context with **GitHub-specific tools** (github_tool, github_create_branch, github_create_pull_request, etc.)
-- **HAS ACCESS to code changes tools** - can read and use tracked code changes from the conversation
-- Receives ONLY what you provide: task_description + context
-- Does NOT inherit conversation history - starts fresh
-- Streams work to user, returns summary to you
-- Will tell you if it CANNOT complete the task - listen to its feedback
-
-**WHEN TO USE (use liberally for GitHub tasks):**
-- ✅ **Fetching GitHub issues** (all open issues, specific issues, issue details) - **PRIMARY USE CASE**
-- ✅ **Fetching pull requests** (PRs, PR details, PR diffs)
-- ✅ Creating pull requests and branches
-- ✅ Updating files in branches
-- ✅ **Committing tracked code changes** to a branch or PR
-- ✅ Adding PR review comments with code references
-- ✅ Managing repository operations
-- ✅ **ANY task involving GitHub, repository, issues, PRs, branches, or commits**
-- ✅ When user asks to "list issues", "fetch issues", "get issues", "show PRs", "create PR", "commit changes", etc.
-
-**CRITICAL - GITHUB ISSUE FETCHING:**
-- The GitHub agent uses `github_tool` to fetch issues and PRs
-- To fetch all open issues: Provide `repo_name="owner/repo"` in context
-- Example task: "Fetch and list all open issues in the nndn/coin_game repository"
-- The agent will use `github_tool(repo_name="nndn/coin_game", is_pull_request=False, issue_number=None)`
-
-**AVAILABLE OPERATIONS:**
-- **Fetch issues/PRs** using github_tool (PRIMARY tool for GitHub data)
-- Create branches and pull requests
-- Update files in branches (commit changes)
-- Add PR comments with code snippet references
-- **Access tracked code changes** (list_files_in_changes, get_file_from_changes, export_changes, show_diff, etc.)
-
-**CRITICAL - CONTEXT PARAMETER:**
-Provide comprehensive context:
-- **Repository name** (e.g., "owner/repo" or "nndn/coin_game") - **REQUIRED for issue/PR fetching**
-- Branch names (source and target)
-- PR numbers or issue numbers if known
-- File paths and content for updates
-- Commit messages and descriptions
-- **For committing changes**: Include project_id and branch name
-
-**NOTE**: The GitHub agent will inform you if it cannot complete a task. If it says it cannot do something, adjust your approach or use a different subagent.
-
-**PARALLELIZATION:** Call multiple times in parallel for independent GitHub operations."""
         elif agent_type == AgentType.CONFLUENCE:
             description = """📄 DELEGATE TO CONFLUENCE AGENT - Specialized subagent for ALL Confluence documentation operations.
 
@@ -793,10 +716,11 @@ Subagents DON'T get your history. Provide comprehensive context:
         if cache_key in self._agent_instances:
             return self._agent_instances[cache_key]
 
-        # Determine if this is an integration agent
+        # Determine if this is an integration agent.
+        # GitHub used to be one; it was retired and its tools live on the
+        # supervisor directly (see SUPERVISOR_ADD_WHEN_NON_LOCAL).
         integration_agents = {
             AgentType.JIRA,
-            AgentType.GITHUB,
             AgentType.CONFLUENCE,
             AgentType.LINEAR,
         }
@@ -974,18 +898,8 @@ def create_integration_agents() -> Dict[AgentType, AgentConfig]:
             ],
             max_iter=15,
         ),
-        AgentType.GITHUB: AgentConfig(
-            role="GitHub Integration Specialist",
-            goal="Handle all GitHub repository operations including PRs, branches, and commits",
-            backstory="""You are a specialized agent for GitHub operations. You handle pull requests, branches, file updates, and PR comments efficiently in an isolated context.""",
-            tasks=[
-                TaskConfig(
-                    description="""Execute GitHub operations as requested by the supervisor. Use GitHub tools to create branches, PRs, update files, and add comments. Return results in "## Task Result" format with PR numbers, branch names, and GitHub URLs.""",
-                    expected_output="Completed GitHub operations with PR numbers, branch names, commit SHAs, and GitHub URLs",
-                )
-            ],
-            max_iter=15,
-        ),
+        # GitHub integration agent removed: the supervisor calls
+        # ``code_provider_*`` and ``sandbox_git`` tools directly now.
         AgentType.CONFLUENCE: AgentConfig(
             role="Confluence Integration Specialist",
             goal="Handle all Confluence documentation operations including pages, spaces, and search",

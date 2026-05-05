@@ -178,7 +178,13 @@ def stub_project_lookup() -> Iterator[None]:
 # ----------------------------------------------------------------------
 # Catalog wiring
 # ----------------------------------------------------------------------
-def test_create_sandbox_tools_registers_four_consolidated_tools() -> None:
+def test_create_sandbox_tools_registers_full_legacy_toolset() -> None:
+    """Legacy form must surface every consolidated sandbox tool —
+    including ``sandbox_pr`` and ``sandbox_pr_comment`` once Fixes 3a
+    and 3b wired the platform provider into the container. Adding /
+    removing a tool here is a deliberate change to the agent's surface
+    and should require updating this set.
+    """
     tools = create_sandbox_tools()
     names = {t.name for t in tools}
     assert names == {
@@ -186,6 +192,8 @@ def test_create_sandbox_tools_registers_four_consolidated_tools() -> None:
         "sandbox_shell",
         "sandbox_search",
         "sandbox_git",
+        "sandbox_pr",
+        "sandbox_pr_comment",
     }
 
 

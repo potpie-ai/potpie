@@ -96,12 +96,26 @@ class SandboxShellInput(_ProjectScope):
     Runs via ``/bin/sh -c`` so pipes, redirects, and command chains work.
     Output is capped (default ~80 KB) — bump ``max_output_bytes`` for noisy
     builds, lower for cheap probes.
+
+    The sandbox image ships with ``ripgrep`` (``rg``), ``fd``, ``jq``,
+    ``tree``, ``git``, ``gh``, ``python3``, and ``node`` preinstalled.
+    For any code/text search prefer ``rg`` over ``grep -r`` / ``find +
+    grep`` — it's an order of magnitude faster, respects ``.gitignore``,
+    and gives column-accurate hits. Use ``sandbox_search`` for
+    structured ripgrep results; reach for ``sandbox_shell`` + ``rg``
+    only when you need pipes / extra flags (``-l``, ``-c``, ``--type``,
+    ``-A``/``-B``, ``--files-with-matches | xargs ...``, etc.).
     """
 
     command: str = Field(
         ...,
         description="The shell command. e.g. 'pytest tests/ -v', "
-        "'ruff check', 'ls -la', 'cat /etc/os-release | head'.",
+        "'ruff check', 'ls -la', 'cat /etc/os-release | head'. "
+        "For searching text/code, prefer ripgrep ('rg PATTERN', "
+        "'rg -t py PATTERN', 'rg -l PATTERN | xargs ...') over grep / "
+        "find — ripgrep is preinstalled and respects .gitignore. "
+        "Use sandbox_search for plain searches; only drop down to "
+        "'rg' here when you need shell pipes or flags it doesn't expose.",
     )
     timeout_s: Optional[int] = Field(
         default=120,
@@ -223,9 +237,19 @@ class SandboxTextEditorInputBound(BaseModel):
 
 
 class SandboxShellInputBound(BaseModel):
-    """Run a single shell command on a pre-bound workspace handle."""
+    """Run a single shell command on a pre-bound workspace handle.
 
-    command: str = Field(..., description="The shell command.")
+    Same surface as :class:`SandboxShellInput` — ``ripgrep``, ``fd``,
+    ``jq``, ``git``, ``gh``, ``python3``, and ``node`` are preinstalled
+    in the sandbox image. Prefer ``rg`` for any text/code search.
+    """
+
+    command: str = Field(
+        ...,
+        description="The shell command. For searching prefer ripgrep "
+        "('rg PATTERN', 'rg -t py PATTERN', 'rg -l PATTERN | xargs ...') "
+        "over grep / find — ripgrep is preinstalled and honors .gitignore.",
+    )
     timeout_s: Optional[int] = Field(default=120)
     max_output_bytes: Optional[int] = Field(default=80_000)
 
@@ -280,4 +304,74 @@ class SandboxPullRequestInput(BaseModel):
     )
     labels: Optional[List[str]] = Field(
         default=None, description="Labels to add to the PR."
+    )
+
+
+class SandboxPullRequestInputLegacy(BaseModel):
+    """Legacy PR input (contextvar form): takes ``project_id`` so the
+    tool can derive ``repo_name`` from the DB, and treats ``base_branch``
+    as optional (the project's stored base branch is the default).
+    """
+
+    project_id: str = Field(..., description="Potpie project id.")
+    title: str = Field(..., description="PR title (single line).")
+    body: str = Field(..., description="PR body (markdown).")
+    base_branch: Optional[str] = Field(
+        default=None,
+        description=(
+            "Branch to merge into. Defaults to the project's stored "
+            "base branch (typically 'main')."
+        ),
+    )
+    head_branch: Optional[str] = Field(
+        default=None,
+        description="Source branch. Defaults to the workspace's bound branch.",
+    )
+    reviewers: Optional[List[str]] = Field(
+        default=None,
+        description="GitHub usernames to request review from.",
+    )
+    labels: Optional[List[str]] = Field(
+        default=None, description="Labels to add to the PR."
+    )
+
+
+class SandboxPRCommentInputLegacy(BaseModel):
+    """Post a comment on an existing PR (legacy contextvar form).
+
+    Two shapes:
+
+    * **Top-level** — only ``body`` and ``pr_number``. Posts a
+      conversation comment on the PR.
+    * **Inline** — set ``path`` AND ``line``. Posts a code-review
+      comment at that file/line.
+
+    Mixing the two in one call is rejected — the sandbox tool wraps a
+    single platform call. The agent can issue this multiple times for
+    multiple comments. ``project_id`` is used to derive ``repo_name``;
+    no workspace handle is required (review flows often run without a
+    worktree at all).
+    """
+
+    project_id: str = Field(..., description="Potpie project id.")
+    pr_number: int = Field(..., description="PR number to comment on.")
+    body: str = Field(..., description="Comment body (markdown).")
+    path: Optional[str] = Field(
+        default=None,
+        description=(
+            "File path for inline comments (relative to repo root). "
+            "Required together with `line` for inline comments; omit "
+            "both for a top-level conversation comment."
+        ),
+    )
+    line: Optional[int] = Field(
+        default=None,
+        description="Line number for inline comments (required with `path`).",
+    )
+    commit_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Commit SHA the inline comment is anchored to. Optional — "
+            "the platform falls back to the PR's HEAD if omitted."
+        ),
     )

@@ -94,7 +94,6 @@ async def client(
         repos_base_path=str(sandbox_root),
         metadata_path=str(metadata_path),
         local_allow_write=True,
-        use_canonical_local=True,
     )
     container = build_sandbox_container(settings)
     yield SandboxClient.from_container(container)

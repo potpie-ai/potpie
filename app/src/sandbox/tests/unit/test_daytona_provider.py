@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+import types
 
 import pytest
 
@@ -88,6 +89,42 @@ class FakeProcess:
         self.fake_paths.add(f"{path}/HEAD")
 
 
+class FakeFs:
+    """Records sandbox.fs.* calls for tests asserting native fs use.
+
+    Mirrors the SDK's surface narrowly — ``upload_file`` /
+    ``download_file`` / ``list_files`` / ``create_folder`` are the only
+    methods the provider touches today.
+    """
+
+    def __init__(self) -> None:
+        self.uploads: list[tuple[bytes, str]] = []
+        self.downloads: list[str] = []
+        self.lists: list[str] = []
+        self.folders: list[tuple[str, str]] = []
+        self.files: dict[str, bytes] = {}
+        self.dirs: dict[str, list[tuple[str, bool, int | None]]] = {}
+
+    def upload_file(self, content: bytes, remote_path: str, timeout: int = 0) -> None:
+        self.uploads.append((content, remote_path))
+        self.files[remote_path] = content
+
+    def download_file(self, remote_path: str, timeout: int = 0) -> bytes:
+        self.downloads.append(remote_path)
+        return self.files.get(remote_path, b"")
+
+    def create_folder(self, path: str, mode: str) -> None:
+        self.folders.append((path, mode))
+
+    def list_files(self, path: str) -> list[object]:
+        self.lists.append(path)
+        entries = self.dirs.get(path, [])
+        return [
+            types.SimpleNamespace(name=n, is_dir=d, size=s)
+            for (n, d, s) in entries
+        ]
+
+
 class FakeSandbox:
     def __init__(
         self,
@@ -100,6 +137,7 @@ class FakeSandbox:
         self.id = sandbox_id
         self.git = FakeGit()
         self.process = FakeProcess()
+        self.fs = FakeFs()
         self.labels = labels or {}
         self.state = state
         self.created_at = created_at
@@ -171,6 +209,38 @@ class FakeSnapshotService:
         return _FakeSnapshot("active")
 
 
+class FakeVolumeService:
+    """Records volume.get / volume.create calls.
+
+    Mirrors the SDK's idempotent ``get(name, create=True)`` shape — a
+    miss with ``create=True`` mints a new ``Volume`` and caches it; a
+    subsequent ``get`` returns the same volume.
+    """
+
+    def __init__(self) -> None:
+        self._volumes: dict[str, types.SimpleNamespace] = {}
+        self.get_calls: list[tuple[str, bool]] = []
+        self.create_calls: list[str] = []
+        self._next_id = 0
+
+    def get(self, name: str, create: bool = False) -> types.SimpleNamespace:
+        self.get_calls.append((name, create))
+        if name in self._volumes:
+            return self._volumes[name]
+        if not create:
+            raise RuntimeError(f"volume {name!r} not found")
+        return self.create(name)
+
+    def create(self, name: str) -> types.SimpleNamespace:
+        self.create_calls.append(name)
+        self._next_id += 1
+        volume = types.SimpleNamespace(
+            id=f"vol_{self._next_id}", name=name, state="active"
+        )
+        self._volumes[name] = volume
+        return volume
+
+
 class FakeDaytonaClient:
     """Mints sequential sandbox ids and records every `create()` call.
 
@@ -184,6 +254,7 @@ class FakeDaytonaClient:
         self.create_calls = 0
         self.list_calls: list[dict[str, str] | None] = []
         self.snapshot = FakeSnapshotService(existing=snapshot_exists)
+        self.volume = FakeVolumeService()
 
     def create(self, params: object | None = None) -> FakeSandbox:
         self.create_calls += 1
@@ -451,10 +522,13 @@ async def test_missing_snapshot_is_built_on_first_sandbox_creation(
     )
     fake_errors_mod = types.ModuleType("daytona.common.errors")
     fake_errors_mod.DaytonaNotFoundError = type("DaytonaNotFoundError", (Exception,), {})  # type: ignore[attr-defined]
+    fake_sandbox_mod = types.ModuleType("daytona.common.sandbox")
+    fake_sandbox_mod.Resources = lambda **kw: kw  # type: ignore[attr-defined]
     monkeyed = {
         "daytona": fake_daytona,
         "daytona.common.image": fake_image_mod,
         "daytona.common.errors": fake_errors_mod,
+        "daytona.common.sandbox": fake_sandbox_mod,
     }
     saved = {k: sys.modules.get(k) for k in monkeyed}
     sys.modules.update(monkeyed)
@@ -544,10 +618,13 @@ async def test_snapshot_build_timeout_surfaces_runtime_unavailable(
     fake_errors_mod = types.ModuleType("daytona.common.errors")
     fake_errors_mod.DaytonaNotFoundError = type("DaytonaNotFoundError", (Exception,), {})  # type: ignore[attr-defined]
     fake_errors_mod.DaytonaTimeoutError = type("DaytonaTimeoutError", (Exception,), {})  # type: ignore[attr-defined]
+    fake_sandbox_mod = types.ModuleType("daytona.common.sandbox")
+    fake_sandbox_mod.Resources = lambda **kw: kw  # type: ignore[attr-defined]
     monkeyed = {
         "daytona": fake_daytona,
         "daytona.common.image": fake_image_mod,
         "daytona.common.errors": fake_errors_mod,
+        "daytona.common.sandbox": fake_sandbox_mod,
     }
     saved = {k: sys.modules.get(k) for k in monkeyed}
     sys.modules.update(monkeyed)
@@ -920,3 +997,819 @@ async def test_invalid_branch_name_rejected() -> None:
                 create_branch=True,
             )
         )
+
+
+# ----------------------------------------------------------------------
+# Recovery: dead-sandbox detection at exec time.
+#
+# Scenario: a workspace + runtime were persisted in a previous worker
+# session. The Daytona-side sandbox got destroyed (TTL eviction, manual
+# cleanup, infra outage). On the next exec we'd otherwise bubble a
+# "Sandbox with ID … not found" all the way to the agent's tool result.
+# The recovery path should adopt the project's surviving sandbox (or
+# create a fresh one) and retry transparently.
+# ----------------------------------------------------------------------
+
+
+class _DeadThenLiveProcess(FakeProcess):
+    """Process that fails the first exec call with a 404, then succeeds.
+
+    Models the Daytona quirk where ``client.get(id)`` returns a stale
+    handle (so ``_lookup_sandbox_by_id`` succeeds) but the actual
+    ``sandbox.process.exec`` discovers the sandbox is gone server-side.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.dead = True
+
+    def exec(self, command: str, **kwargs: object):
+        if self.dead:
+            self.dead = False
+            raise RuntimeError(
+                "bad request: failed to get runner info: "
+                "Sandbox with ID dead-id not found"
+            )
+        return super().exec(command, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_exec_recovers_when_persisted_sandbox_id_is_dead() -> None:
+    """Stale persisted sandbox id → exec recovers via labels and retries."""
+    client = FakeDaytonaClient()
+    workspace_provider = DaytonaWorkspaceProvider(
+        client_factory=lambda: client,
+        workspace_root="/home/daytona/workspace",
+    )
+    runtime_provider = DaytonaRuntimeProvider(workspace_provider)
+    service = SandboxService(
+        workspace_provider=workspace_provider,
+        runtime_provider=runtime_provider,
+        store=InMemorySandboxStore(),
+        locks=InMemoryLockManager(),
+    )
+
+    # 1) Acquire workspace + runtime so the store + caches are populated.
+    workspace = await service.get_or_create_workspace(
+        WorkspaceRequest(
+            user_id="u-recovery",
+            project_id="p-recovery",
+            repo=RepoIdentity(
+                repo_name="owner/repo",
+                repo_url="https://github.com/owner/repo.git",
+            ),
+            base_ref="main",
+            mode=WorkspaceMode.EDIT,
+            conversation_id="conv1",
+            create_branch=True,
+        )
+    )
+    await service.get_or_create_runtime(RuntimeRequest(workspace.id))
+
+    # 2) Simulate the live Daytona sandbox being destroyed: drop it from
+    #    the SDK fake. The persisted runtime still references its id.
+    live = client._sandboxes.pop("sbx_1")
+    # Re-register a survivor with the recovery labels the production
+    # ``_recover_project_sandbox`` filters on. The default test fake
+    # creates sandboxes with empty labels (because no ``snapshot`` is
+    # configured on the provider, so ``_create_sandbox`` falls through
+    # to the no-args ``client.create()`` path) — we hand-set them here
+    # so the label-based lookup works exactly like production.
+    survivor_labels = {
+        "managed-by": "potpie",
+        "component": "sandbox-core",
+        "potpie-user": "u-recovery",
+        "potpie-project": "p-recovery",
+    }
+    survivor = FakeSandbox(
+        "sbx_survivor",
+        labels=survivor_labels,
+        state="started",
+    )
+    survivor.process.fake_paths = set(live.process.fake_paths)
+    client.register(survivor)
+
+    # 3) Make the existing (dead) sandbox's process raise the 404 on its
+    #    next exec. The provider's in-memory cache still holds the dead
+    #    handle from creation time, so this simulates the actual
+    #    production failure mode.
+    workspace_provider._sandboxes["sbx_1"] = live  # ensure cache hit
+    live.process = _DeadThenLiveProcess()
+    live.process.fake_paths = set()  # legitimately "dead" sandbox
+
+    # 4) Drop the in-memory project_sandbox_ids → forces label recovery.
+    workspace_provider._project_sandbox_ids.clear()
+
+    # Force a fresh runtime fetch from the store so its
+    # ``backend_runtime_id`` is the dead "sbx_1" — exactly what would
+    # happen on a worker restart.
+    runtime_provider._runtimes.clear()
+
+    initial_list_calls = len(client.list_calls)
+    # 5) The exec should NOT raise; it must recover via labels.
+    result = await service.exec(workspace.id, ExecRequest(cmd=("echo", "ok")))
+    assert result.exit_code == 0
+
+    # The label-based recovery path was exercised — at least one
+    # subsequent ``list(labels=…)`` call was made to find the survivor.
+    assert len(client.list_calls) > initial_list_calls
+
+    # Runtime now points at the live sandbox, not the dead one.
+    runtime = await service._store.find_runtime_by_workspace(workspace.id)
+    assert runtime is not None
+    assert runtime.backend_runtime_id == "sbx_survivor"
+
+
+@pytest.mark.asyncio
+async def test_exec_recovery_creates_fresh_sandbox_when_no_survivor() -> None:
+    """No labelled survivor → recovery creates a brand-new sandbox."""
+    client = FakeDaytonaClient()
+    workspace_provider = DaytonaWorkspaceProvider(
+        client_factory=lambda: client,
+        workspace_root="/home/daytona/workspace",
+    )
+    runtime_provider = DaytonaRuntimeProvider(workspace_provider)
+    service = SandboxService(
+        workspace_provider=workspace_provider,
+        runtime_provider=runtime_provider,
+        store=InMemorySandboxStore(),
+        locks=InMemoryLockManager(),
+    )
+
+    workspace = await service.get_or_create_workspace(
+        WorkspaceRequest(
+            user_id="u-fresh",
+            project_id="p-fresh",
+            repo=RepoIdentity(
+                repo_name="owner/repo",
+                repo_url="https://github.com/owner/repo.git",
+            ),
+            base_ref="main",
+            mode=WorkspaceMode.EDIT,
+            conversation_id="conv1",
+            create_branch=True,
+        )
+    )
+    await service.get_or_create_runtime(RuntimeRequest(workspace.id))
+
+    # Wipe out the only sandbox so no labelled survivor exists. Recovery
+    # must fall through to ``_create_sandbox``.
+    dead = client._sandboxes.pop("sbx_1")
+    dead.process = _DeadThenLiveProcess()
+    workspace_provider._sandboxes["sbx_1"] = dead
+    workspace_provider._project_sandbox_ids.clear()
+    runtime_provider._runtimes.clear()
+
+    initial_creates = client.create_calls
+    result = await service.exec(workspace.id, ExecRequest(cmd=("echo", "fresh")))
+    assert result.exit_code == 0
+    # Recovery did create a brand-new sandbox.
+    assert client.create_calls == initial_creates + 1
+
+
+@pytest.mark.asyncio
+async def test_exec_recovery_no_labels_propagates_error() -> None:
+    """Without (user_id, project_id) labels, recovery can't safely route."""
+    client = FakeDaytonaClient()
+    workspace_provider = DaytonaWorkspaceProvider(
+        client_factory=lambda: client,
+        workspace_root="/home/daytona/workspace",
+    )
+    runtime_provider = DaytonaRuntimeProvider(workspace_provider)
+    service = SandboxService(
+        workspace_provider=workspace_provider,
+        runtime_provider=runtime_provider,
+        store=InMemorySandboxStore(),
+        locks=InMemoryLockManager(),
+    )
+
+    workspace = await service.get_or_create_workspace(
+        WorkspaceRequest(
+            user_id="u-no-label",
+            project_id="p-no-label",
+            repo=RepoIdentity(
+                repo_name="owner/repo",
+                repo_url="https://github.com/owner/repo.git",
+            ),
+            base_ref="main",
+            mode=WorkspaceMode.EDIT,
+            conversation_id="conv1",
+            create_branch=True,
+        )
+    )
+    runtime = await service.get_or_create_runtime(RuntimeRequest(workspace.id))
+
+    # Strip the recovery labels off the runtime spec so the adapter
+    # has nothing to route on (simulates an old persisted runtime row
+    # from before the label stamping landed). Use dataclasses.replace
+    # since RuntimeSpec is frozen.
+    from dataclasses import replace as _dc_replace
+    runtime.spec = _dc_replace(runtime.spec, labels={})
+    await service._store.save_runtime(runtime)
+
+    # Simulate the dead sandbox.
+    dead = client._sandboxes.pop("sbx_1")
+    dead.process = _DeadThenLiveProcess()
+    workspace_provider._sandboxes["sbx_1"] = dead
+    workspace_provider._project_sandbox_ids.clear()
+    runtime_provider._runtimes.clear()
+
+    with pytest.raises(RuntimeError, match="Sandbox with ID dead-id not found"):
+        await service.exec(workspace.id, ExecRequest(cmd=("echo", "x")))
+
+
+# ----------------------------------------------------------------------------
+# Native fs path: writes / reads / list_dir on Daytona must go through
+# ``sandbox.fs.*`` rather than the broken ``sandbox.process.exec`` stdin pipe.
+# ----------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_daytona_runtime_write_bytes_uses_fs_upload() -> None:
+    """``DaytonaRuntimeProvider.write_bytes`` must hit ``sandbox.fs.upload_file``.
+
+    Pre-fix the same call routed through ``process.exec`` with a ``cat > path``
+    command. Daytona's SDK doesn't pipe ``stdin`` into ``process.exec``, so
+    that path silently produced empty files. This test pins the new
+    behaviour: every byte goes through ``upload_file``, the parent dir is
+    created via ``create_folder``, and ``process.exec`` is NOT consulted.
+    """
+    client = FakeDaytonaClient()
+    workspace_provider = DaytonaWorkspaceProvider(
+        client_factory=lambda: client,
+        workspace_root="/home/daytona/workspace",
+    )
+    runtime_provider = DaytonaRuntimeProvider(workspace_provider)
+    service = SandboxService(
+        workspace_provider=workspace_provider,
+        runtime_provider=runtime_provider,
+        store=InMemorySandboxStore(),
+        locks=InMemoryLockManager(),
+    )
+    workspace = await service.get_or_create_workspace(
+        WorkspaceRequest(
+            user_id="u1",
+            project_id="p1",
+            repo=RepoIdentity(
+                repo_name="owner/repo",
+                repo_url="https://github.com/owner/repo.git",
+            ),
+            base_ref="main",
+            mode=WorkspaceMode.EDIT,
+            conversation_id="c1",
+            create_branch=True,
+        )
+    )
+    runtime = await service.get_or_create_runtime(RuntimeRequest(workspace.id))
+    sandbox = client.get(runtime.backend_runtime_id)
+    process_calls_before = len(sandbox.process.commands)
+
+    ok = await service.fs_write_file(
+        workspace.id, "/home/daytona/workspace/owner_private/x.txt", b"hello"
+    )
+    assert ok is True
+    assert sandbox.fs.uploads == [(b"hello", "/home/daytona/workspace/owner_private/x.txt")]
+    # Parent dir created via fs.create_folder, not via shell mkdir.
+    assert sandbox.fs.folders == [("/home/daytona/workspace/owner_private", "755")]
+    # ``process.exec`` must not have run during the write — that was the
+    # broken path.
+    assert len(sandbox.process.commands) == process_calls_before
+
+
+@pytest.mark.asyncio
+async def test_daytona_runtime_read_and_list_use_fs() -> None:
+    """``read_bytes`` / ``list_dir_native`` round-trip through ``sandbox.fs``."""
+    client = FakeDaytonaClient()
+    workspace_provider = DaytonaWorkspaceProvider(
+        client_factory=lambda: client,
+        workspace_root="/home/daytona/workspace",
+    )
+    runtime_provider = DaytonaRuntimeProvider(workspace_provider)
+    service = SandboxService(
+        workspace_provider=workspace_provider,
+        runtime_provider=runtime_provider,
+        store=InMemorySandboxStore(),
+        locks=InMemoryLockManager(),
+    )
+    workspace = await service.get_or_create_workspace(
+        WorkspaceRequest(
+            user_id="u1",
+            project_id="p1",
+            repo=RepoIdentity(
+                repo_name="owner/repo",
+                repo_url="https://github.com/owner/repo.git",
+            ),
+            base_ref="main",
+            mode=WorkspaceMode.EDIT,
+            conversation_id="c1",
+            create_branch=True,
+        )
+    )
+    runtime = await service.get_or_create_runtime(RuntimeRequest(workspace.id))
+    sandbox = client.get(runtime.backend_runtime_id)
+    sandbox.fs.files["/home/daytona/workspace/owner_private/x.txt"] = b"hi"
+    sandbox.fs.dirs["/home/daytona/workspace/owner_private"] = [
+        ("x.txt", False, 2), ("subdir", True, None),
+    ]
+
+    body = await service.fs_read_file(
+        workspace.id, "/home/daytona/workspace/owner_private/x.txt"
+    )
+    assert body == b"hi"
+
+    listing = await service.fs_list_dir(
+        workspace.id, "/home/daytona/workspace/owner_private"
+    )
+    assert listing == [("x.txt", False, 2), ("subdir", True, None)]
+
+
+# ----------------------------------------------------------------------------
+# Sandbox creation knobs: name, auto_delete, network policy.
+# ----------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_create_sandbox_passes_name_and_network_params() -> None:
+    """Custom name + network knobs reach ``CreateSandboxFromSnapshotParams``.
+
+    Captures the kwargs the SDK sees so a future regression (e.g. dropping a
+    field on a refactor) shows up here instead of as a missing-name complaint
+    from ops or an open-egress incident from security.
+    """
+    captured: list[dict[str, object]] = []
+
+    class _CapturingParams:
+        def __init__(self, **kwargs: object) -> None:
+            captured.append(kwargs)
+            self.labels = kwargs.get("labels", {})
+
+    import sys
+
+    fake_daytona = types.ModuleType("daytona")
+    fake_daytona.CreateSandboxFromSnapshotParams = _CapturingParams  # type: ignore[attr-defined]
+    fake_daytona.CreateSnapshotParams = lambda **kw: kw  # type: ignore[attr-defined]
+    fake_image_mod = types.ModuleType("daytona.common.image")
+    fake_image_mod.Image = types.SimpleNamespace(  # type: ignore[attr-defined]
+        from_dockerfile=lambda path: {"dockerfile": str(path)}
+    )
+    fake_errors_mod = types.ModuleType("daytona.common.errors")
+    fake_errors_mod.DaytonaNotFoundError = type(  # type: ignore[attr-defined]
+        "DaytonaNotFoundError", (Exception,), {}
+    )
+    fake_sandbox_mod = types.ModuleType("daytona.common.sandbox")
+    fake_sandbox_mod.Resources = lambda **kw: kw  # type: ignore[attr-defined]
+    monkeyed = {
+        "daytona": fake_daytona,
+        "daytona.common.image": fake_image_mod,
+        "daytona.common.errors": fake_errors_mod,
+        "daytona.common.sandbox": fake_sandbox_mod,
+    }
+    saved = {k: sys.modules.get(k) for k in monkeyed}
+    sys.modules.update(monkeyed)
+    try:
+        client = FakeDaytonaClient()
+        provider = DaytonaWorkspaceProvider(
+            client_factory=lambda: client,
+            snapshot="potpie/agent-sandbox:0.1.0",
+            workspace_root="/home/daytona/workspace",
+            sandbox_name_prefix="potpie",
+            auto_delete_minutes=60,
+            network_allow_list="192.0.2.0/24,198.51.100.0/24",
+        )
+        await provider.get_or_create_workspace(
+            WorkspaceRequest(
+                user_id="user-12345678abcd",
+                project_id="proj-87654321zyxw",
+                repo=RepoIdentity(
+                    repo_name="owner/repo",
+                    repo_url="https://github.com/owner/repo.git",
+                ),
+                base_ref="main",
+                mode=WorkspaceMode.EDIT,
+                conversation_id="c1",
+                create_branch=True,
+            )
+        )
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+
+    assert len(captured) == 1
+    kwargs = captured[0]
+    # Name encodes the (user, project) pair so the dashboard groups
+    # related sandboxes; truncated to 8 chars per segment for readability.
+    assert kwargs["name"] == "potpie-user-123-proj-876"
+    assert kwargs["auto_delete_interval"] == 60
+    assert kwargs["network_allow_list"] == "192.0.2.0/24,198.51.100.0/24"
+    # network_block_all is mutually exclusive with allow_list — neither
+    # set together.
+    assert "network_block_all" not in kwargs
+
+
+@pytest.mark.asyncio
+async def test_create_sandbox_block_all_takes_precedence() -> None:
+    """``network_block_all=True`` clears the allow-list (Daytona requires this).
+
+    The Daytona SDK rejects passing both — block_all wins per docs.
+    """
+    captured: list[dict[str, object]] = []
+
+    class _CapturingParams:
+        def __init__(self, **kwargs: object) -> None:
+            captured.append(kwargs)
+            self.labels = kwargs.get("labels", {})
+
+    import sys
+
+    fake_daytona = types.ModuleType("daytona")
+    fake_daytona.CreateSandboxFromSnapshotParams = _CapturingParams  # type: ignore[attr-defined]
+    fake_daytona.CreateSnapshotParams = lambda **kw: kw  # type: ignore[attr-defined]
+    fake_image_mod = types.ModuleType("daytona.common.image")
+    fake_image_mod.Image = types.SimpleNamespace(  # type: ignore[attr-defined]
+        from_dockerfile=lambda path: {"dockerfile": str(path)}
+    )
+    fake_errors_mod = types.ModuleType("daytona.common.errors")
+    fake_errors_mod.DaytonaNotFoundError = type(  # type: ignore[attr-defined]
+        "DaytonaNotFoundError", (Exception,), {}
+    )
+    fake_sandbox_mod = types.ModuleType("daytona.common.sandbox")
+    fake_sandbox_mod.Resources = lambda **kw: kw  # type: ignore[attr-defined]
+    monkeyed = {
+        "daytona": fake_daytona,
+        "daytona.common.image": fake_image_mod,
+        "daytona.common.errors": fake_errors_mod,
+        "daytona.common.sandbox": fake_sandbox_mod,
+    }
+    saved = {k: sys.modules.get(k) for k in monkeyed}
+    sys.modules.update(monkeyed)
+    try:
+        client = FakeDaytonaClient()
+        provider = DaytonaWorkspaceProvider(
+            client_factory=lambda: client,
+            snapshot="potpie/agent-sandbox:0.1.0",
+            workspace_root="/home/daytona/workspace",
+            network_block_all=True,
+            network_allow_list="ignored.if.block_all/0",
+        )
+        await provider.get_or_create_workspace(
+            WorkspaceRequest(
+                user_id="u1",
+                project_id="p1",
+                repo=RepoIdentity(
+                    repo_name="owner/repo",
+                    repo_url="https://github.com/owner/repo.git",
+                ),
+                base_ref="main",
+                mode=WorkspaceMode.EDIT,
+                conversation_id="c1",
+                create_branch=True,
+            )
+        )
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+
+    kwargs = captured[0]
+    assert kwargs["network_block_all"] is True
+    assert "network_allow_list" not in kwargs
+
+
+@pytest.mark.asyncio
+async def test_snapshot_build_passes_resources(tmp_path) -> None:
+    """``CreateSnapshotParams`` carries the configured Resources.
+
+    Snapshot resources are immutable post-build, so this is the only
+    place we get to size the sandbox. Defaults for the agent runtime
+    must beat the SDK's 1/1/3 floor.
+    """
+    captured: list[dict[str, object]] = []
+
+    def _capturing_create_snapshot(**kwargs: object) -> dict[str, object]:
+        captured.append(kwargs)
+        return kwargs
+
+    import sys
+
+    fake_daytona = types.ModuleType("daytona")
+    fake_daytona.CreateSnapshotParams = _capturing_create_snapshot  # type: ignore[attr-defined]
+    fake_daytona.CreateSandboxFromSnapshotParams = lambda **kw: kw  # type: ignore[attr-defined]
+    fake_image_mod = types.ModuleType("daytona.common.image")
+    fake_image_mod.Image = types.SimpleNamespace(  # type: ignore[attr-defined]
+        from_dockerfile=lambda path: {"dockerfile": str(path)}
+    )
+    fake_errors_mod = types.ModuleType("daytona.common.errors")
+    fake_errors_mod.DaytonaNotFoundError = type(  # type: ignore[attr-defined]
+        "DaytonaNotFoundError", (Exception,), {}
+    )
+    fake_sandbox_mod = types.ModuleType("daytona.common.sandbox")
+    fake_sandbox_mod.Resources = lambda **kw: ("Resources", kw)  # type: ignore[attr-defined]
+    monkeyed = {
+        "daytona": fake_daytona,
+        "daytona.common.image": fake_image_mod,
+        "daytona.common.errors": fake_errors_mod,
+        "daytona.common.sandbox": fake_sandbox_mod,
+    }
+    saved = {k: sys.modules.get(k) for k in monkeyed}
+    sys.modules.update(monkeyed)
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text("FROM busybox\n")
+    try:
+        client = FakeDaytonaClient(snapshot_exists=False)
+        provider = DaytonaWorkspaceProvider(
+            client_factory=lambda: client,
+            snapshot="potpie/agent-sandbox:0.1.0",
+            workspace_root="/home/daytona/workspace",
+            snapshot_dockerfile=str(dockerfile),
+            snapshot_cpu=4,
+            snapshot_memory_gb=8,
+            snapshot_disk_gb=20,
+        )
+        await provider.get_or_create_workspace(
+            WorkspaceRequest(
+                user_id="u1",
+                project_id="p1",
+                repo=RepoIdentity(
+                    repo_name="owner/repo",
+                    repo_url="https://github.com/owner/repo.git",
+                ),
+                base_ref="main",
+                mode=WorkspaceMode.EDIT,
+                conversation_id="c1",
+                create_branch=True,
+            )
+        )
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+
+    assert len(captured) == 1
+    snap_kwargs = captured[0]
+    assert snap_kwargs["resources"] == ("Resources", {"cpu": 4, "memory": 8, "disk": 20})
+
+
+# ----------------------------------------------------------------------------
+# Stderr fallback: Daytona's process.exec collapses stdout+stderr into one
+# stream, so callers that only render ``result.stderr`` get empty error
+# messages. The tool-level wrapper now falls back to stdout on failures.
+# ----------------------------------------------------------------------------
+def test_err_payload_prefers_stderr_falls_back_to_stdout() -> None:
+    """``_err_payload`` masks the Daytona "no stderr" wart.
+
+    Daytona's process.exec collapses stdout+stderr into ``result``; the
+    ``ExecResult.stderr`` we surface to callers is always empty on that
+    backend. The error formatters call ``_err_payload`` so the LLM sees
+    the actual diagnostic instead of an empty string. Backends that
+    split the streams (local, Docker) keep stderr precedence.
+    """
+    from sandbox.api.client import _err_payload
+    from sandbox.domain.models import ExecResult
+
+    daytona_shape = ExecResult(exit_code=1, stdout=b"fatal: bad ref", stderr=b"")
+    assert _err_payload(daytona_shape) == "fatal: bad ref"
+
+    split_shape = ExecResult(
+        exit_code=2, stdout=b"some progress", stderr=b"real error"
+    )
+    assert _err_payload(split_shape) == "real error"
+
+    empty = ExecResult(exit_code=0, stdout=b"", stderr=b"")
+    assert _err_payload(empty) == ""
+
+
+# ----------------------------------------------------------------------------
+# Bare-cache volume: opt-in mount that survives sandbox destruction.
+# ----------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_volume_off_uses_local_fs_bare_path() -> None:
+    """Default (flag off) keeps the existing local-fs bare layout.
+
+    The volume code is opt-in; deploys that haven't flipped the flag
+    must see ``volume.get`` never called and bare paths under
+    ``<workspace_root>/<repo>/.bare`` exactly as before.
+    """
+    client = FakeDaytonaClient()
+    workspace_provider = DaytonaWorkspaceProvider(
+        client_factory=lambda: client,
+        workspace_root="/home/agent/work",
+        # use_volume_for_bare defaults to False
+    )
+    service = SandboxService(
+        workspace_provider=workspace_provider,
+        runtime_provider=DaytonaRuntimeProvider(workspace_provider),
+        store=InMemorySandboxStore(),
+        locks=InMemoryLockManager(),
+    )
+    workspace = await service.get_or_create_workspace(
+        WorkspaceRequest(
+            user_id="u1",
+            project_id="p1",
+            repo=RepoIdentity(
+                repo_name="owner/repo",
+                repo_url="https://github.com/owner/repo.git",
+            ),
+            base_ref="main",
+            mode=WorkspaceMode.EDIT,
+            conversation_id="c1",
+            create_branch=True,
+        )
+    )
+
+    assert workspace_provider._bare_path("owner/repo") == "/home/agent/work/owner_repo/.bare"
+    assert client.volume.get_calls == []
+    assert client.volume.create_calls == []
+
+
+@pytest.mark.asyncio
+async def test_volume_on_get_or_creates_per_user_volume() -> None:
+    """Flag on: per-user volume is get-or-created exactly once.
+
+    Two projects for the same user share one volume — that's what
+    keeps us under Daytona's 100-volume-per-org cap. Per-project
+    isolation comes from the ``subpath`` mount option, asserted in
+    the next test.
+    """
+    captured: list[dict[str, object]] = []
+
+    class _CapturingParams:
+        def __init__(self, **kwargs: object) -> None:
+            captured.append(kwargs)
+            self.labels = kwargs.get("labels", {})
+
+    import sys
+
+    fake_daytona = types.ModuleType("daytona")
+    fake_daytona.CreateSandboxFromSnapshotParams = _CapturingParams  # type: ignore[attr-defined]
+    fake_daytona.CreateSnapshotParams = lambda **kw: kw  # type: ignore[attr-defined]
+    fake_image_mod = types.ModuleType("daytona.common.image")
+    fake_image_mod.Image = types.SimpleNamespace(  # type: ignore[attr-defined]
+        from_dockerfile=lambda path: {"dockerfile": str(path)}
+    )
+    fake_errors_mod = types.ModuleType("daytona.common.errors")
+    fake_errors_mod.DaytonaNotFoundError = type(  # type: ignore[attr-defined]
+        "DaytonaNotFoundError", (Exception,), {}
+    )
+    fake_sandbox_mod = types.ModuleType("daytona.common.sandbox")
+    fake_sandbox_mod.Resources = lambda **kw: kw  # type: ignore[attr-defined]
+    fake_volume_mod = types.ModuleType("daytona.common.volume")
+    fake_volume_mod.VolumeMount = lambda **kw: ("VolumeMount", kw)  # type: ignore[attr-defined]
+    monkeyed = {
+        "daytona": fake_daytona,
+        "daytona.common.image": fake_image_mod,
+        "daytona.common.errors": fake_errors_mod,
+        "daytona.common.sandbox": fake_sandbox_mod,
+        "daytona.common.volume": fake_volume_mod,
+    }
+    saved = {k: sys.modules.get(k) for k in monkeyed}
+    sys.modules.update(monkeyed)
+    try:
+        client = FakeDaytonaClient()
+        provider = DaytonaWorkspaceProvider(
+            client_factory=lambda: client,
+            snapshot="potpie/agent-sandbox:0.1.0",
+            workspace_root="/home/agent/work",
+            use_volume_for_bare=True,
+            volume_name_prefix="potpie-bare",
+            volume_mount_path="/home/agent/work/.bare-cache",
+        )
+        # First project for user u1 — creates the volume.
+        await provider.get_or_create_workspace(
+            WorkspaceRequest(
+                user_id="u1",
+                project_id="p1",
+                repo=RepoIdentity(
+                    repo_name="owner/repo",
+                    repo_url="https://github.com/owner/repo.git",
+                ),
+                base_ref="main",
+                mode=WorkspaceMode.EDIT,
+                conversation_id="c1",
+                create_branch=True,
+            )
+        )
+        # Second project for the same user — reuses the volume.
+        await provider.get_or_create_workspace(
+            WorkspaceRequest(
+                user_id="u1",
+                project_id="p2",
+                repo=RepoIdentity(
+                    repo_name="owner/other",
+                    repo_url="https://github.com/owner/other.git",
+                ),
+                base_ref="main",
+                mode=WorkspaceMode.EDIT,
+                conversation_id="c2",
+                create_branch=True,
+            )
+        )
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+
+    # Two sandboxes (one per project), one volume.
+    assert len(captured) == 2
+    assert client.volume.create_calls == ["potpie-bare-u1"]
+    # Both sandboxes mount the same volume; subpath differs.
+    mount_a = captured[0]["volumes"][0]
+    mount_b = captured[1]["volumes"][0]
+    assert mount_a == ("VolumeMount", {
+        "volume_id": "vol_1",
+        "mount_path": "/home/agent/work/.bare-cache",
+        "subpath": "p1",
+    })
+    assert mount_b == ("VolumeMount", {
+        "volume_id": "vol_1",
+        "mount_path": "/home/agent/work/.bare-cache",
+        "subpath": "p2",
+    })
+    # Bare path lives inside the mount, not under <repo>/.bare.
+    assert provider._bare_path("owner/repo") == "/home/agent/work/.bare-cache/.bare"
+
+
+@pytest.mark.asyncio
+async def test_volume_failure_falls_back_to_local_fs() -> None:
+    """A volume-service hiccup must not break sandbox creation.
+
+    The bare clone falls back to local fs (the original behaviour) —
+    losing the cross-restart cache, but keeping the sandbox flow
+    working. Critical for resilience: a volume API outage shouldn't
+    take agent execution down.
+    """
+    captured: list[dict[str, object]] = []
+
+    class _CapturingParams:
+        def __init__(self, **kwargs: object) -> None:
+            captured.append(kwargs)
+            self.labels = kwargs.get("labels", {})
+
+    import sys
+
+    fake_daytona = types.ModuleType("daytona")
+    fake_daytona.CreateSandboxFromSnapshotParams = _CapturingParams  # type: ignore[attr-defined]
+    fake_daytona.CreateSnapshotParams = lambda **kw: kw  # type: ignore[attr-defined]
+    fake_image_mod = types.ModuleType("daytona.common.image")
+    fake_image_mod.Image = types.SimpleNamespace(  # type: ignore[attr-defined]
+        from_dockerfile=lambda path: {"dockerfile": str(path)}
+    )
+    fake_errors_mod = types.ModuleType("daytona.common.errors")
+    fake_errors_mod.DaytonaNotFoundError = type(  # type: ignore[attr-defined]
+        "DaytonaNotFoundError", (Exception,), {}
+    )
+    fake_sandbox_mod = types.ModuleType("daytona.common.sandbox")
+    fake_sandbox_mod.Resources = lambda **kw: kw  # type: ignore[attr-defined]
+    fake_volume_mod = types.ModuleType("daytona.common.volume")
+    fake_volume_mod.VolumeMount = lambda **kw: ("VolumeMount", kw)  # type: ignore[attr-defined]
+    monkeyed = {
+        "daytona": fake_daytona,
+        "daytona.common.image": fake_image_mod,
+        "daytona.common.errors": fake_errors_mod,
+        "daytona.common.sandbox": fake_sandbox_mod,
+        "daytona.common.volume": fake_volume_mod,
+    }
+    saved = {k: sys.modules.get(k) for k in monkeyed}
+    sys.modules.update(monkeyed)
+    try:
+        client = FakeDaytonaClient()
+
+        def _broken_get(name: str, create: bool = False):
+            raise RuntimeError("volume API down")
+
+        client.volume.get = _broken_get  # type: ignore[assignment]
+
+        provider = DaytonaWorkspaceProvider(
+            client_factory=lambda: client,
+            snapshot="potpie/agent-sandbox:0.1.0",
+            workspace_root="/home/agent/work",
+            use_volume_for_bare=True,
+        )
+        await provider.get_or_create_workspace(
+            WorkspaceRequest(
+                user_id="u1",
+                project_id="p1",
+                repo=RepoIdentity(
+                    repo_name="owner/repo",
+                    repo_url="https://github.com/owner/repo.git",
+                ),
+                base_ref="main",
+                mode=WorkspaceMode.EDIT,
+                conversation_id="c1",
+                create_branch=True,
+            )
+        )
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+
+    # Sandbox got created without a mount because the volume call failed.
+    assert len(captured) == 1
+    assert "volumes" not in captured[0]

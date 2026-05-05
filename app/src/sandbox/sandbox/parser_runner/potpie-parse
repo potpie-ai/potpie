@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+"""Stable PATH entry point for the in-sandbox parser.
+
+The Dockerfile installs this as ``/usr/local/bin/potpie-parse`` and
+makes it executable. Keeping it as a thin shell-out (rather than
+``python -m parser_runner``) means the host can call ``potpie-parse``
+without caring how the runner is packaged inside the image.
+"""
+
+import sys
+
+from parser_runner.__main__ import main
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

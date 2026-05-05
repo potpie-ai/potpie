@@ -27,13 +27,17 @@ from sandbox.application.services.sandbox_service import SandboxService
 from sandbox.bootstrap.container import SandboxContainer, build_sandbox_container
 from sandbox.bootstrap.settings import SandboxSettings, settings_from_env
 from sandbox.domain.models import (
+    Author,
     Capabilities,
     CommandKind,
     ExecRequest,
     ExecResult,
     NetworkMode,
     PullRequest,
+    PullRequestComment,
+    PullRequestCommentResult,
     PullRequestRequest,
+    RemoteAuth,
     RepoCache,
     RepoCacheRequest,
     RepoIdentity,
@@ -43,9 +47,12 @@ from sandbox.domain.models import (
 )
 from sandbox.domain.ports.eviction import EvictionPolicy, EvictionResult
 from sandbox.domain.ports.git_platform import GitPlatformProvider
+from sandbox.domain.ports.identity import BotIdentityProvider, RemoteAuthProvider
 from sandbox.domain.ports.repos import RepoCacheProvider
 
 __all__ = [
+    "Author",
+    "BotIdentityProvider",
     "Capabilities",
     "CommandKind",
     "EvictionPolicy",
@@ -59,7 +66,11 @@ __all__ = [
     "NetworkMode",
     "NoOpEvictionPolicy",
     "PullRequest",
+    "PullRequestComment",
+    "PullRequestCommentResult",
     "PullRequestRequest",
+    "RemoteAuth",
+    "RemoteAuthProvider",
     "RepoCache",
     "RepoCacheProvider",
     "RepoCacheRequest",

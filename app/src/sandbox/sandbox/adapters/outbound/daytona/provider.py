@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import shlex
 import threading
 import time
@@ -69,6 +70,15 @@ class DaytonaWorkspaceProvider:
 
     kind = "daytona"
 
+    # Defaults sized for the project-sandbox lifecycle (Phase 2 of the
+    # Daytona migration): one Daytona sandbox per (user, project)
+    # kept alive across conversations, recreated lazily on health-check
+    # failure. The previous 30-minute auto-stop was tuned for one-shot
+    # agent runs and is too aggressive once we lean on the sandbox as
+    # the durable home of a project's working tree.
+    DEFAULT_AUTO_STOP_MINUTES = 24 * 60          # 24 hours
+    DEFAULT_AUTO_ARCHIVE_MINUTES = 30 * 24 * 60  # 30 days
+
     def __init__(
         self,
         *,
@@ -78,6 +88,18 @@ class DaytonaWorkspaceProvider:
         snapshot_dockerfile: str | Path | None = None,
         snapshot_build_timeout_s: float = 20 * 60,
         snapshot_heartbeat_s: float = 15,
+        auto_stop_minutes: int | None = None,
+        auto_archive_minutes: int | None = None,
+        sandbox_name_prefix: str = "potpie",
+        auto_delete_minutes: int | None = None,
+        network_allow_list: str = "",
+        network_block_all: bool = False,
+        snapshot_cpu: int | None = None,
+        snapshot_memory_gb: int | None = None,
+        snapshot_disk_gb: int | None = None,
+        use_volume_for_bare: bool = False,
+        volume_name_prefix: str = "potpie-bare",
+        volume_mount_path: str = "/home/agent/work/.bare-cache",
     ) -> None:
         self._client_factory = client_factory or _default_daytona_client
         self.snapshot = snapshot
@@ -87,6 +109,40 @@ class DaytonaWorkspaceProvider:
         )
         self.snapshot_build_timeout_s = snapshot_build_timeout_s
         self.snapshot_heartbeat_s = snapshot_heartbeat_s
+        # TTL knobs are constructor-overridable AND env-overridable so
+        # tests can pin a tight value while operators tune via env. Env
+        # takes precedence only when the constructor passes ``None`` —
+        # a caller that explicitly sets the param wins (per least-surprise).
+        self.auto_stop_minutes = (
+            auto_stop_minutes
+            if auto_stop_minutes is not None
+            else _env_int("DAYTONA_AUTO_STOP_MINUTES", self.DEFAULT_AUTO_STOP_MINUTES)
+        )
+        self.auto_archive_minutes = (
+            auto_archive_minutes
+            if auto_archive_minutes is not None
+            else _env_int(
+                "DAYTONA_AUTO_ARCHIVE_MINUTES", self.DEFAULT_AUTO_ARCHIVE_MINUTES
+            )
+        )
+        self.sandbox_name_prefix = sandbox_name_prefix
+        self.auto_delete_minutes = auto_delete_minutes
+        # Empty string disables the allow-list. Daytona accepts a
+        # comma-separated CIDR list directly; we don't parse it here.
+        self.network_allow_list = network_allow_list.strip()
+        self.network_block_all = network_block_all
+        self.snapshot_cpu = snapshot_cpu
+        self.snapshot_memory_gb = snapshot_memory_gb
+        self.snapshot_disk_gb = snapshot_disk_gb
+        # Bare-cache volume knobs. ``use_volume_for_bare`` is the master
+        # switch — off by default so existing deploys are unaffected.
+        # When on, ``_ensure_volume`` runs per-user (volume is shared
+        # across the user's projects via ``subpath``) and ``_bare_path``
+        # returns a path inside the mount so the next sandbox for the
+        # same project re-attaches the cached clone.
+        self.use_volume_for_bare = use_volume_for_bare
+        self.volume_name_prefix = volume_name_prefix
+        self.volume_mount_path = volume_mount_path.rstrip("/")
         self._client: Any | None = None
         self._sandboxes: dict[str, Any] = {}                          # sandbox_id -> SDK object
         self._project_sandbox_ids: dict[tuple[str, str], str] = {}    # (user, project) -> sandbox_id
@@ -96,6 +152,11 @@ class DaytonaWorkspaceProvider:
         self._by_key: dict[str, str] = {}
         self._snapshot_ensured = False
         self._snapshot_lock = threading.Lock()
+        # Cache resolved volume ids per user so we don't pay a round-trip
+        # to Daytona on every sandbox creation. Volumes are stable and
+        # outlive sandboxes; a process-wide cache is safe.
+        self._user_volume_ids: dict[str, str] = {}
+        self._volume_lock = threading.Lock()
 
     @property
     def client(self) -> Any:
@@ -163,6 +224,37 @@ class DaytonaWorkspaceProvider:
             target=workspace.location.remote_path,
             writable=writable,
         )
+
+    async def is_alive(self, workspace: Workspace) -> bool:
+        """Probe the Daytona SDK to see whether the backing sandbox still exists.
+
+        Goes off-box (one SDK call), but stays read-only and avoids
+        starting any process inside the sandbox — the probe must stay
+        cheap because ``ProjectSandbox.health_check`` runs it on every
+        conversation message.
+
+        Treats "not found" as ``False`` (sandbox was archived / deleted
+        out-of-band — the recovery path will mint a new one). Treats
+        transient SDK errors as ``False`` too: callers will then call
+        ``ensure()`` which goes through the same recovery code, so
+        a one-off network blip doesn't kill the conversation, it just
+        adds one extra SDK round-trip.
+        """
+        sandbox_id = workspace.location.backend_workspace_id
+        if not sandbox_id:
+            return False
+        try:
+            sandbox = await asyncio.to_thread(self._lookup_sandbox_by_id, sandbox_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "daytona: is_alive probe failed for sandbox %s — treating as dead "
+                "so the caller will recover. %s: %s",
+                sandbox_id,
+                type(exc).__name__,
+                exc,
+            )
+            return False
+        return sandbox is not None
 
     def sandbox_for_workspace(self, workspace_id: str) -> Any | None:
         workspace = self._by_id.get(workspace_id)
@@ -350,19 +442,141 @@ class DaytonaWorkspaceProvider:
             try:
                 from daytona import CreateSandboxFromSnapshotParams
 
-                params = CreateSandboxFromSnapshotParams(
+                # The dashboard-visible name. Daytona enforces uniqueness
+                # within an org, so the user/project segments encode the
+                # natural recovery key (label-based recovery still does
+                # the actual matching, this is purely for ops UX).
+                name = self._sandbox_name(user_id, project_id)
+                kwargs: dict[str, Any] = dict(
                     snapshot=self.snapshot,
                     language="python",
                     labels=labels,
-                    auto_stop_interval=30,
-                    auto_archive_interval=43200,
+                    name=name,
+                    auto_stop_interval=self.auto_stop_minutes,
+                    auto_archive_interval=self.auto_archive_minutes,
                 )
+                if self.auto_delete_minutes is not None:
+                    kwargs["auto_delete_interval"] = self.auto_delete_minutes
+                if self.network_block_all:
+                    kwargs["network_block_all"] = True
+                elif self.network_allow_list:
+                    kwargs["network_allow_list"] = self.network_allow_list
+                if self.use_volume_for_bare:
+                    # Volume mount is sticky to the sandbox at creation
+                    # time — Daytona does not let us add it later. So a
+                    # sandbox created without the mount stays without
+                    # the mount; a flag flip needs a sandbox recreate.
+                    mount = self._build_bare_volume_mount(user_id, project_id)
+                    if mount is not None:
+                        kwargs["volumes"] = [mount]
+                params = CreateSandboxFromSnapshotParams(**kwargs)
                 return self.client.create(params)
             except TypeError:
                 # Fall back to default creation if the installed SDK uses a
-                # different parameter shape.
+                # different parameter shape (older SDKs missed `name` /
+                # `network_*`; the bare ``create()`` is the universal floor).
                 return self.client.create()
         return self.client.create()
+
+    def _sandbox_name(self, user_id: str, project_id: str) -> str:
+        """Build a dashboard-visible sandbox name.
+
+        Daytona enforces a per-org uniqueness constraint on names and
+        truncates length, so we hash long ids down to 8 chars. Two
+        sandboxes for the same (user, project) will collide on the
+        name — that's intended: when one is destroyed, the next call
+        either recovers it via labels or creates a new one and the
+        name slot becomes free.
+        """
+        prefix = self.sandbox_name_prefix
+        return f"{prefix}-{_safe_segment(user_id)[:8]}-{_safe_segment(project_id)[:8]}"
+
+    def _volume_name_for(self, user_id: str) -> str:
+        """Per-user volume name. Stable across the user's project list.
+
+        Sharing one volume across a user's projects keeps us under
+        Daytona's 100-volume-per-org cap as the project count grows;
+        per-project isolation comes from the ``subpath`` mount option.
+        """
+        return f"{self.volume_name_prefix}-{_safe_segment(user_id)}"
+
+    def _build_bare_volume_mount(
+        self, user_id: str, project_id: str
+    ) -> Any | None:
+        """Resolve the user's volume and build the per-project mount spec.
+
+        Returns ``None`` when the SDK can't expose ``VolumeMount``
+        (older / partial installs) — the caller then creates the
+        sandbox without a mount, which falls back to local-fs bare
+        clones. Doesn't raise: a volume hiccup must not block sandbox
+        creation; the bare clone path will just re-clone into local fs
+        on this run.
+        """
+        try:
+            from daytona.common.volume import VolumeMount
+        except ImportError:
+            logger.warning(
+                "daytona: VolumeMount class not available — falling back "
+                "to local-fs bare clone for this sandbox"
+            )
+            return None
+        volume_id = self._ensure_volume(user_id)
+        if volume_id is None:
+            return None
+        # Subpath isolates the per-project tree inside the shared user
+        # volume so the sandbox sees only its own ``.bare/`` dir.
+        return VolumeMount(
+            volume_id=volume_id,
+            mount_path=self.volume_mount_path,
+            subpath=_safe_segment(project_id),
+        )
+
+    def _ensure_volume(self, user_id: str) -> str | None:
+        """Get-or-create the user's bare-cache volume; return its id.
+
+        Returns ``None`` on transient failures so the caller falls back
+        to local-fs cloning rather than failing the whole sandbox
+        creation. Caches the resolved id process-wide because volumes
+        are durable and the SDK round-trip is non-trivial.
+        """
+        cached = self._user_volume_ids.get(user_id)
+        if cached is not None:
+            return cached
+        with self._volume_lock:
+            cached = self._user_volume_ids.get(user_id)
+            if cached is not None:
+                return cached
+            name = self._volume_name_for(user_id)
+            volume_service = getattr(self.client, "volume", None)
+            if volume_service is None:
+                logger.warning(
+                    "daytona: client has no volume service — falling back "
+                    "to local-fs bare clone for user %s",
+                    user_id,
+                )
+                return None
+            try:
+                volume = volume_service.get(name, create=True)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "daytona: get-or-create volume %s failed (%s: %s) — "
+                    "falling back to local-fs bare clone",
+                    name,
+                    type(exc).__name__,
+                    exc,
+                )
+                return None
+            volume_id = str(getattr(volume, "id", "") or "")
+            if not volume_id:
+                return None
+            self._user_volume_ids[user_id] = volume_id
+            logger.info(
+                "daytona: bare-cache volume %s ready (id=%s) for user %s",
+                name,
+                volume_id,
+                user_id,
+            )
+            return volume_id
 
     def _ensure_snapshot(self) -> None:
         """Make sure the agent-sandbox snapshot is ACTIVE in Daytona.
@@ -440,10 +654,28 @@ class DaytonaWorkspaceProvider:
             try:
                 from daytona import CreateSnapshotParams
                 from daytona.common.image import Image
+                from daytona.common.sandbox import Resources
 
                 image = Image.from_dockerfile(self.snapshot_dockerfile)
+                # Resources are baked into the snapshot — Daytona forbids
+                # overriding them at sandbox creation time when spawning
+                # from a snapshot. Set them here so the snapshot ships
+                # right-sized for medium repos.
+                snapshot_kwargs: dict[str, Any] = dict(
+                    name=self.snapshot, image=image
+                )
+                if (
+                    self.snapshot_cpu is not None
+                    or self.snapshot_memory_gb is not None
+                    or self.snapshot_disk_gb is not None
+                ):
+                    snapshot_kwargs["resources"] = Resources(
+                        cpu=self.snapshot_cpu,
+                        memory=self.snapshot_memory_gb,
+                        disk=self.snapshot_disk_gb,
+                    )
                 self.client.snapshot.create(
-                    CreateSnapshotParams(name=self.snapshot, image=image),
+                    CreateSnapshotParams(**snapshot_kwargs),
                     on_logs=lambda chunk: logger.info("daytona snapshot: %s", chunk),
                     timeout=self.snapshot_build_timeout_s,
                 )
@@ -694,6 +926,16 @@ class DaytonaWorkspaceProvider:
             )
 
     def _bare_path(self, repo_name: str) -> str:
+        # With volumes on, the bare clone lives inside the per-user
+        # volume mounted at ``volume_mount_path``. The mount uses a
+        # per-project ``subpath`` so two projects in the same volume
+        # don't collide; the sandbox sees only this project's tree.
+        # Repo name is unused here on purpose: one sandbox is one
+        # project is one repo, and decoupling the path from the repo
+        # name lets a repo rename in Potpie not invalidate the cached
+        # clone (the volume content is what matters).
+        if self.use_volume_for_bare:
+            return f"{self.volume_mount_path}/.bare"
         return f"{self.workspace_root}/{_safe_segment(repo_name)}/.bare"
 
     def _worktree_path(self, request: WorkspaceRequest, branch: str) -> str:
@@ -717,14 +959,93 @@ class DaytonaWorkspaceProvider:
         )
 
     def _lookup_sandbox_by_id(self, sandbox_id: str) -> Any | None:
+        """Resolve a Daytona sandbox by id via the SDK.
+
+        Returns ``None`` when the SDK confirms the sandbox does not exist.
+        Other errors (auth, network) are re-raised so callers can tell
+        "intentionally gone" apart from "transient outage" — the recovery
+        path should only trigger on the former.
+        """
         for attr in ("get", "get_sandbox"):
             candidate = getattr(self.client, attr, None)
             if callable(candidate):
                 try:
                     return candidate(sandbox_id)
-                except Exception:
-                    return None
+                except Exception as exc:
+                    if _is_not_found(exc):
+                        return None
+                    raise
         return None
+
+    def recover_dead_sandbox(
+        self,
+        dead_sandbox_id: str,
+        *,
+        user_id: str | None,
+        project_id: str | None,
+    ) -> Any | None:
+        """Replace a dead sandbox id with a live one for ``(user, project)``.
+
+        Called from the runtime provider when a previously persisted sandbox
+        id stops resolving (the user destroyed it, the TTL expired, etc.).
+        Drops the dead caches and either adopts an existing potpie-managed
+        sandbox via labels or creates a fresh one. Returns the live SDK
+        sandbox object, or ``None`` if neither user_id nor project_id is
+        available (so we can't ensure a project-scoped sandbox safely).
+        """
+        # Drop the dead id from the in-memory caches so subsequent lookups
+        # don't keep returning the stale handle.
+        self._sandboxes.pop(dead_sandbox_id, None)
+        # Reverse-lookup the project key in case the caller didn't pass
+        # one (e.g. older runtimes whose spec.labels predate the user_id /
+        # project_id stamping).
+        cached_pk: tuple[str, str] | None = None
+        for pk, sid in list(self._project_sandbox_ids.items()):
+            if sid == dead_sandbox_id:
+                self._project_sandbox_ids.pop(pk, None)
+                cached_pk = pk
+        if user_id and project_id:
+            project_key: tuple[str, str] = (user_id, project_id)
+        elif cached_pk is not None:
+            project_key = cached_pk
+        else:
+            logger.warning(
+                "daytona: cannot recover sandbox %s — runtime spec did "
+                "not carry (user_id, project_id) labels",
+                dead_sandbox_id,
+            )
+            return None
+        try:
+            sandbox = self._ensure_sandbox(project_key)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "daytona: recover_dead_sandbox failed for %s/%s: %s",
+                project_key[0],
+                project_key[1],
+                exc,
+            )
+            return None
+        # Update any cached workspace whose location pointed at the dead id
+        # so a follow-up `delete_workspace` / `sandbox_for_workspace` lookup
+        # uses the new id without going back through `_get_sandbox`.
+        # ``WorkspaceLocation`` is frozen (it lives in the domain layer and
+        # mutating it via `dataclasses.replace` keeps the immutability
+        # invariant intact).
+        from dataclasses import replace as _dc_replace
+
+        new_id = str(getattr(sandbox, "id"))
+        for ws in self._by_id.values():
+            if ws.location.backend_workspace_id == dead_sandbox_id:
+                ws.location = _dc_replace(ws.location, backend_workspace_id=new_id)
+                ws.updated_at = utc_now()
+        logger.info(
+            "daytona: recovered dead sandbox %s -> %s for %s/%s",
+            dead_sandbox_id,
+            new_id,
+            project_key[0],
+            project_key[1],
+        )
+        return sandbox
 
     @staticmethod
     def _exec_or_raise(
@@ -806,15 +1127,33 @@ class DaytonaRuntimeProvider:
         runtime.state = RuntimeState.DELETED
 
     async def exec(self, runtime: Runtime, request: ExecRequest) -> ExecResult:
-        sandbox = self._sandbox(runtime)
+        sandbox = self._sandbox_with_recovery(runtime)
         command = _command_string(request)
         cwd = request.cwd or runtime.spec.workdir
-        response = sandbox.process.exec(
-            command,
-            cwd=cwd,
-            env=dict(request.env) or None,
-            timeout=request.timeout_s,
-        )
+        try:
+            response = sandbox.process.exec(
+                command,
+                cwd=cwd,
+                env=dict(request.env) or None,
+                timeout=request.timeout_s,
+            )
+        except Exception as exc:
+            # The SDK can return a stale handle from `client.get(id)` even
+            # after Daytona destroyed the sandbox — we only learn about it
+            # when we actually try to exec. Recover via labels and retry
+            # exactly once so the agent's tool call doesn't bubble a
+            # confusing "Sandbox with ID … not found" error.
+            if not _is_not_found(exc):
+                raise
+            recovered = self._recover_runtime(runtime, dead_sandbox_id=str(getattr(sandbox, "id", runtime.backend_runtime_id)))
+            if recovered is None:
+                raise
+            response = recovered.process.exec(
+                command,
+                cwd=cwd,
+                env=dict(request.env) or None,
+                timeout=request.timeout_s,
+            )
         stdout = _response_stdout(response)
         exit_code = int(getattr(response, "exit_code", 0))
         if request.max_output_bytes and len(stdout) > request.max_output_bytes:
@@ -834,6 +1173,60 @@ class DaytonaRuntimeProvider:
         if result.stderr:
             yield ExecChunk(stream="stderr", data=result.stderr)
 
+    # ------------------------------------------------------------------
+    # Native filesystem ops (duck-typed; SandboxService prefers these
+    # over `exec` when the runtime exposes them).
+    #
+    # The Daytona SDK's ``process.exec`` has no stdin parameter, so the
+    # generic ``cat > path`` exec path silently drops content on Daytona.
+    # ``sandbox.fs.upload_file`` is the documented write API and goes
+    # through the same toolbox channel as exec — round-trip cost is
+    # comparable. Read / list go through ``download_file`` / ``list_files``
+    # for symmetry: typed responses, no shell-injection surface.
+    # ------------------------------------------------------------------
+    async def read_bytes(self, runtime: Runtime, path: str) -> bytes:
+        sandbox = self._sandbox_with_recovery(runtime)
+        return await asyncio.to_thread(sandbox.fs.download_file, path)
+
+    async def write_bytes(
+        self, runtime: Runtime, path: str, content: bytes
+    ) -> None:
+        sandbox = self._sandbox_with_recovery(runtime)
+        # `upload_file` overwrites by default; parent must exist. Mkdir is
+        # cheap on Daytona (toolbox-side `mkdir -p`) and keeps the call
+        # site free of race-y "create then write" branches.
+        parent = str(PurePosixPath(path).parent)
+        if parent and parent not in (".", "/"):
+            await asyncio.to_thread(sandbox.fs.create_folder, parent, "755")
+        await asyncio.to_thread(sandbox.fs.upload_file, content, path)
+
+    async def list_dir_native(
+        self, runtime: Runtime, path: str
+    ) -> list[tuple[str, bool, int | None]]:
+        """Return ``(name, is_dir, size)`` triples. Empty list on missing dir.
+
+        Returning a primitive triple keeps the runtime port free of
+        domain types — SandboxClient adapts to ``FileEntry``. The Daytona
+        toolbox raises a ``FileNotFoundError``-equivalent on missing
+        directories; we surface that as an empty list to mirror the
+        ``ls -1Ap`` exec path's "no listing on missing dir" semantics.
+        """
+        sandbox = self._sandbox_with_recovery(runtime)
+        try:
+            entries = await asyncio.to_thread(sandbox.fs.list_files, path)
+        except Exception as exc:
+            if _is_not_found(exc):
+                return []
+            raise
+        out: list[tuple[str, bool, int | None]] = []
+        for entry in entries:
+            name = getattr(entry, "name", None) or ""
+            is_dir = bool(getattr(entry, "is_dir", False))
+            size_attr = getattr(entry, "size", None)
+            size = int(size_attr) if size_attr is not None else None
+            out.append((name, is_dir, size))
+        return out
+
     def _require(self, runtime_id: str) -> Runtime:
         runtime = self._runtimes.get(runtime_id)
         if runtime is None:
@@ -848,6 +1241,53 @@ class DaytonaRuntimeProvider:
             )
         return sandbox
 
+    def _sandbox_with_recovery(self, runtime: Runtime) -> Any:
+        """Resolve the runtime's sandbox, recovering once if it's gone.
+
+        Mirrors :meth:`_sandbox` but, when the persisted backend id no
+        longer resolves (the SDK confirms 404), tries one round of
+        label-based recovery before giving up. Mutates
+        ``runtime.backend_runtime_id`` to the new sandbox so the
+        subsequent :func:`SandboxService._exec_unlocked` ``save_runtime``
+        call persists the live id and follow-up calls don't re-pay the
+        recovery cost.
+        """
+        try:
+            return self._sandbox(runtime)
+        except RuntimeUnavailable:
+            dead = runtime.backend_runtime_id
+            if not dead:
+                raise
+            recovered = self._recover_runtime(runtime, dead_sandbox_id=dead)
+            if recovered is None:
+                raise
+            return recovered
+
+    def _recover_runtime(
+        self, runtime: Runtime, *, dead_sandbox_id: str
+    ) -> Any | None:
+        """Replace a dead Daytona sandbox with a fresh / adopted one.
+
+        Pulls ``user_id`` / ``project_id`` from
+        ``runtime.spec.labels`` (stamped by
+        :meth:`SandboxService._build_runtime_spec`) and asks the workspace
+        provider to recover. Updates ``runtime.backend_runtime_id`` in
+        place so the service's downstream ``save_runtime`` persists the
+        new id; without that we'd recover on every single exec call.
+        """
+        labels = runtime.spec.labels or {}
+        sandbox = self._workspace_provider.recover_dead_sandbox(
+            dead_sandbox_id,
+            user_id=labels.get("user_id"),
+            project_id=labels.get("project_id"),
+        )
+        if sandbox is None:
+            return None
+        new_id = str(getattr(sandbox, "id"))
+        runtime.backend_runtime_id = new_id
+        runtime.updated_at = utc_now()
+        return sandbox
+
 
 def _default_daytona_client() -> Any:
     try:
@@ -857,6 +1297,28 @@ def _default_daytona_client() -> Any:
             "Daytona SDK is not installed. Install potpie-sandbox[daytona]."
         ) from exc
     return Daytona()
+
+
+def _env_int(name: str, default: int) -> int:
+    """Parse an integer env var, falling back to ``default`` on missing/invalid.
+
+    Used for TTL knobs where a misconfigured env value (e.g. "30m"
+    instead of an int minute count) shouldn't crash the provider —
+    we log and use the default so the deploy stays up.
+    """
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError:
+        logger.warning(
+            "daytona: env var %s=%r is not an int; falling back to %d",
+            name,
+            raw,
+            default,
+        )
+        return default
 
 
 def _command_string(request: ExecRequest) -> str:

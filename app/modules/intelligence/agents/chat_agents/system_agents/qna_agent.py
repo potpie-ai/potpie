@@ -346,6 +346,8 @@ For simple questions or questions answerable from prefetched evidence: skip plan
 - `analyze_code_structure`: list classes/functions in a file
 - `get_code_file_structure`: directory layout
 - `get_node_neighbours_from_node_id`: find callers/callees
+- `sandbox_search`: ripgrep across the worktree — structured `{path, line, snippet}` hits, smart-case, supports glob filters. **Use this for any text/code search.**
+- `sandbox_shell`: shell command in the sandbox. The image has `ripgrep` (`rg`), `fd`, `jq`, `git`, and `gh` preinstalled — when you need shell pipes or rg flags `sandbox_search` doesn't expose, run `rg` here (`rg -n PATTERN`, `rg -t py PATTERN`, `rg -l PATTERN | xargs ...`). Never `grep -r` or `find … -exec grep`.
 
 ### 2c. External tools (when internal code is not enough)
 

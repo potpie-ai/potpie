@@ -16,6 +16,7 @@ from sandbox.application.services.sandbox_service import SandboxService
 from sandbox.bootstrap.settings import SandboxSettings, settings_from_env
 from sandbox.domain.ports.eviction import EvictionPolicy
 from sandbox.domain.ports.git_platform import GitPlatformProvider
+from sandbox.domain.ports.identity import BotIdentityProvider, RemoteAuthProvider
 from sandbox.domain.ports.locks import LockManager
 from sandbox.domain.ports.repos import RepoCacheProvider
 from sandbox.domain.ports.runtimes import RuntimeProvider
@@ -33,6 +34,8 @@ class SandboxContainer:
     eviction: EvictionPolicy
     repo_cache_provider: RepoCacheProvider | None = None
     git_platform_provider: GitPlatformProvider | None = None
+    bot_identity_provider: BotIdentityProvider | None = None
+    remote_auth_provider: RemoteAuthProvider | None = None
 
 
 def build_sandbox_container(
@@ -45,6 +48,8 @@ def build_sandbox_container(
     eviction: EvictionPolicy | None = None,
     repo_cache_provider: RepoCacheProvider | None = None,
     git_platform_provider: GitPlatformProvider | None = None,
+    bot_identity_provider: BotIdentityProvider | None = None,
+    remote_auth_provider: RemoteAuthProvider | None = None,
 ) -> SandboxContainer:
     s = settings or settings_from_env()
     eviction_policy: EvictionPolicy = eviction or NoOpEvictionPolicy()
@@ -68,6 +73,8 @@ def build_sandbox_container(
         locks=lock_manager,
         repo_cache_provider=cache_provider,
         git_platform_provider=git_platform_provider,
+        bot_identity_provider=bot_identity_provider,
+        remote_auth_provider=remote_auth_provider,
     )
     return SandboxContainer(
         workspace_provider=workspace_provider,
@@ -78,6 +85,8 @@ def build_sandbox_container(
         eviction=eviction_policy,
         repo_cache_provider=cache_provider,
         git_platform_provider=git_platform_provider,
+        bot_identity_provider=bot_identity_provider,
+        remote_auth_provider=remote_auth_provider,
     )
 
 
@@ -136,6 +145,16 @@ def _workspace_provider(
             snapshot_dockerfile=settings.daytona_snapshot_dockerfile,
             snapshot_build_timeout_s=settings.daytona_snapshot_build_timeout_s,
             snapshot_heartbeat_s=settings.daytona_snapshot_heartbeat_s,
+            sandbox_name_prefix=settings.daytona_sandbox_name_prefix,
+            auto_delete_minutes=settings.daytona_auto_delete_minutes,
+            network_allow_list=settings.daytona_network_allow_list,
+            network_block_all=settings.daytona_network_block_all,
+            snapshot_cpu=settings.daytona_snapshot_cpu,
+            snapshot_memory_gb=settings.daytona_snapshot_memory_gb,
+            snapshot_disk_gb=settings.daytona_snapshot_disk_gb,
+            use_volume_for_bare=settings.daytona_use_volume_for_bare,
+            volume_name_prefix=settings.daytona_volume_name_prefix,
+            volume_mount_path=settings.daytona_volume_mount_path,
         )
     raise ValueError(f"Unsupported SANDBOX_WORKSPACE_PROVIDER={settings.provider!r}")
 

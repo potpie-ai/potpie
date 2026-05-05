@@ -253,7 +253,7 @@ Before concluding code is missing, check if it exists but isn't working:
 ### 3d. Systematic Enumeration (for category problems)
 
 1. **Identify the category** (Is this one exception among many?)
-2. **List all members** using grep/search
+2. **List all members** using `sandbox_search` (ripgrep) or `sandbox_shell` with `rg` — never `grep -r` / `find … -exec grep`
 3. **Create gap analysis** and check inheritance
 4. **Map leak paths**
 

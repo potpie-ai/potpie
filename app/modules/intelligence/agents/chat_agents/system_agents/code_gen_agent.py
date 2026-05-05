@@ -231,8 +231,13 @@ class CodeGenAgent(ChatAgent):
                         "fetch_file",
                         "fetch_files_batch",
                         "analyze_code_structure",
-                        # PR creation lives outside the sandbox (uses the
-                        # GitHub provider's auth chain).
+                        # PR creation. ``sandbox_pr`` is the preferred
+                        # entry — it runs the same App-token factory
+                        # chain ``sandbox_git push`` uses, so attribution
+                        # stays consistent across the whole flow. The
+                        # legacy ``code_provider_*`` versions are kept
+                        # registered for prompts that still name them.
+                        "sandbox_pr",
                         "code_provider_create_branch",
                         "code_provider_create_pr",
                     ]
@@ -661,14 +666,17 @@ default; raise `max_output_bytes` for noisy builds.
 
 ### 5e. PR creation
 
-PR creation lives outside the sandbox group. Push with
-`sandbox_git command="push"`, then `code_provider_create_pr` (which uses
-the GitHub provider's auth chain).
+Push with `sandbox_git command="push"`, then open the PR with
+`sandbox_pr` — it goes through the same GitHub-App factory chain as
+the push, so commit author, push attribution, and PR opener all land
+under the same identity (the Potpie bot when the App is installed).
+The legacy `code_provider_create_pr` is still registered for back-compat
+but `sandbox_pr` is the consolidated path.
 
 **Wait for user confirmation before creating the PR.** After committing
 and pushing, summarise the change and ask the user explicitly. Only call
-`code_provider_create_pr` when the user replies "yes" / "create PR" /
-"proceed".
+`sandbox_pr` (or `code_provider_create_pr`) when the user replies "yes"
+/ "create PR" / "proceed".
 
 ---
 

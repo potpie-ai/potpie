@@ -128,6 +128,20 @@ class LocalGitWorkspaceProvider:
             writable=writable,
         )
 
+    async def is_alive(self, workspace: Workspace) -> bool:
+        """For the local adapter, alive ⇔ the worktree still exists on disk.
+
+        Cheap: a single ``Path.exists()``. The in-memory tracking
+        dicts (``_by_id`` / ``_by_key``) are not authoritative here —
+        a checkbox-only check would return True for a worktree the
+        operator removed by hand, which is the exact case
+        ``ProjectSandbox.health_check`` is meant to catch.
+        """
+        path = workspace.location.local_path
+        if not path:
+            return False
+        return Path(path).exists()
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------

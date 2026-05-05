@@ -8,23 +8,30 @@ from sandbox.domain.errors import (
     WorkspaceNotFound,
 )
 from sandbox.domain.models import (
+    Author,
     ExecRequest,
     ExecResult,
     Mount,
     NetworkMode,
     PullRequest,
+    PullRequestComment,
+    PullRequestCommentResult,
     PullRequestRequest,
+    RemoteAuth,
     RepoCache,
     RepoCacheRequest,
+    RepoIdentity,
     Runtime,
     RuntimeRequest,
     RuntimeSpec,
     RuntimeState,
     Workspace,
     WorkspaceRequest,
+    WorkspaceState,
     utc_now,
 )
 from sandbox.domain.ports.git_platform import GitPlatformProvider
+from sandbox.domain.ports.identity import BotIdentityProvider, RemoteAuthProvider
 from sandbox.domain.ports.locks import LockManager
 from sandbox.domain.ports.repos import RepoCacheProvider
 from sandbox.domain.ports.runtimes import RuntimeProvider
@@ -50,6 +57,8 @@ class SandboxService:
         locks: LockManager,
         repo_cache_provider: RepoCacheProvider | None = None,
         git_platform_provider: GitPlatformProvider | None = None,
+        bot_identity_provider: BotIdentityProvider | None = None,
+        remote_auth_provider: RemoteAuthProvider | None = None,
         runtime_workdir: str = "/work",
     ) -> None:
         self._workspace_provider = workspace_provider
@@ -58,7 +67,34 @@ class SandboxService:
         self._locks = locks
         self._repo_cache_provider = repo_cache_provider
         self._git_platform_provider = git_platform_provider
+        self._bot_identity_provider = bot_identity_provider
+        self._remote_auth_provider = remote_auth_provider
         self._runtime_workdir = runtime_workdir
+
+    async def bot_identity_for(
+        self, repo: RepoIdentity, *, user_id: str | None = None
+    ) -> Author | None:
+        """Public accessor used by `SandboxClient.commit` to default the
+        author when the caller doesn't pass one. Returns ``None`` when
+        no provider is wired so the client can fall back to git defaults.
+        """
+        if self._bot_identity_provider is None:
+            return None
+        return await self._bot_identity_provider.identity_for_repo(
+            repo=repo, user_id=user_id
+        )
+
+    async def remote_auth_for(
+        self, repo: RepoIdentity, *, user_id: str | None = None
+    ) -> RemoteAuth | None:
+        """Public accessor used by `SandboxClient.push` to inject auth
+        per-call. Returns ``None`` to push anonymously (works for public
+        repos, fails for private)."""
+        if self._remote_auth_provider is None:
+            return None
+        return await self._remote_auth_provider.auth_for_remote(
+            repo=repo, user_id=user_id
+        )
 
     async def ensure_repo_cache(self, request: RepoCacheRequest) -> RepoCache:
         """Materialize the bare repo for `request.repo` and persist it.
@@ -127,6 +163,23 @@ class SandboxService:
             raise WorkspaceNotFound(f"Workspace not found: {workspace_id}")
         return workspace
 
+    async def is_workspace_alive(self, workspace_id: str) -> bool:
+        """Cheap liveness probe — used by the project-sandbox health check.
+
+        Returns ``False`` when the workspace is unknown to the store
+        (already destroyed) or when the provider's own ``is_alive``
+        check fails. Doesn't raise: callers route the false result
+        into a re-create rather than handling exceptions inline.
+        """
+        workspace = await self._store.get_workspace(workspace_id)
+        if workspace is None:
+            workspace = await self._workspace_provider.get_workspace(workspace_id)
+        if workspace is None:
+            return False
+        if workspace.state is WorkspaceState.DELETED:
+            return False
+        return await self._workspace_provider.is_alive(workspace)
+
     async def acquire_session(self, request: WorkspaceRequest) -> Workspace:
         """Run the doc's Edit-Flow steps 2 and 3 in one call.
 
@@ -169,6 +222,25 @@ class SandboxService:
             )
         return await self._git_platform_provider.create_pull_request(request)
 
+    async def comment_on_pull_request(
+        self, request: PullRequestComment
+    ) -> PullRequestCommentResult:
+        """Post a comment on an existing PR via the configured platform.
+
+        Same precondition as :meth:`create_pull_request`: the
+        ``GitPlatformProvider`` has to be wired or this raises
+        :class:`GitPlatformNotConfigured`. Inline (``path`` + ``line``)
+        and top-level shapes are both supported; the validation lives
+        in the adapter so each platform can refuse the shapes it
+        doesn't natively support.
+        """
+        if self._git_platform_provider is None:
+            raise GitPlatformNotConfigured(
+                "SandboxService.comment_on_pull_request requires a "
+                "git_platform_provider; pass one to __init__"
+            )
+        return await self._git_platform_provider.comment_on_pull_request(request)
+
     async def release_session(
         self, workspace_id: str, *, destroy_runtime: bool = False
     ) -> None:
@@ -205,7 +277,10 @@ class SandboxService:
         mount = await self._workspace_provider.mount_for_runtime(
             workspace, writable=request.writable
         )
-        spec = self._build_runtime_spec(request, workspace, mount)
+        identity = await self.bot_identity_for(
+            workspace.request.repo, user_id=workspace.request.user_id
+        )
+        spec = self._build_runtime_spec(request, workspace, mount, identity)
         runtime = await self._runtime_provider.create(workspace.id, spec)
         await self._store.save_runtime(runtime)
         return runtime
@@ -216,6 +291,77 @@ class SandboxService:
             async with self._locks.lock(lock_key):
                 return await self._exec_unlocked(workspace_id, request)
         return await self._exec_unlocked(workspace_id, request)
+
+    # ------------------------------------------------------------------
+    # File ops dispatched to the runtime's native fs when available.
+    #
+    # Backends that ship typed fs APIs (Daytona's ``sandbox.fs``) expose
+    # ``read_bytes`` / ``write_bytes`` / ``list_dir_native`` on the runtime
+    # provider; we prefer those because the generic exec path can't pipe
+    # stdin to ``sandbox.process.exec`` (the SDK has no stdin parameter,
+    # so ``cat > file`` writes silently fail). For backends that don't
+    # expose them, callers should fall back to the exec path themselves —
+    # we don't synthesise one here because the right encoding (base64
+    # vs printf vs heredoc) depends on the backend's quoting rules.
+    # ------------------------------------------------------------------
+    async def fs_read_file(self, workspace_id: str, path: str) -> bytes | None:
+        runtime, native = await self._native_fs("read_bytes", workspace_id)
+        if native is None:
+            return None
+        return await native(runtime, path)
+
+    async def fs_write_file(
+        self, workspace_id: str, path: str, content: bytes
+    ) -> bool:
+        """Write via runtime native fs if exposed; return False otherwise.
+
+        Returning a flag (rather than raising) lets the caller branch on
+        ``False`` and use its own write path — needed because
+        ``SandboxClient.write_file`` already has a local-fs fast path and
+        a generic exec fallback for backends that lack native fs.
+        """
+        async with self._locks.lock(f"workspace-command:{workspace_id}"):
+            runtime, native = await self._native_fs("write_bytes", workspace_id)
+            if native is None:
+                return False
+            await native(runtime, path, content)
+            workspace = await self.get_workspace(workspace_id)
+            workspace.dirty = True
+            workspace.last_used_at = utc_now()
+            workspace.updated_at = utc_now()
+            await self._store.save_workspace(workspace)
+            return True
+
+    async def fs_list_dir(
+        self, workspace_id: str, path: str
+    ) -> list[tuple[str, bool, int | None]] | None:
+        runtime, native = await self._native_fs("list_dir_native", workspace_id)
+        if native is None:
+            return None
+        return await native(runtime, path)
+
+    async def _native_fs(self, attr: str, workspace_id: str):
+        """Resolve ``runtime`` plus a runtime-provider method by name, if any.
+
+        Caller passes the name (``"read_bytes"`` / ``"write_bytes"`` /
+        ``"list_dir_native"``); we return ``(runtime, callable)`` or
+        ``(runtime, None)`` when the method isn't exposed. Runtime
+        creation and start mirror :meth:`_exec_unlocked` so a cold-start
+        write doesn't bypass runtime provisioning.
+        """
+        method = getattr(self._runtime_provider, attr, None)
+        if method is None:
+            return None, None
+        runtime = await self._store.find_runtime_by_workspace(
+            workspace_id, self._runtime_provider.kind
+        )
+        if runtime is None:
+            runtime = await self.get_or_create_runtime(RuntimeRequest(workspace_id))
+        if runtime.state is RuntimeState.STOPPED:
+            runtime = await self._runtime_provider.start(runtime)
+        if runtime.state is RuntimeState.DELETED:
+            raise RuntimeNotFound(f"Runtime was deleted: {runtime.id}")
+        return runtime, method
 
     async def hibernate_runtime(self, runtime_id: str) -> None:
         runtime = await self._store.get_runtime(runtime_id)
@@ -278,7 +424,11 @@ class SandboxService:
         return result
 
     def _build_runtime_spec(
-        self, request: RuntimeRequest, workspace: Workspace, mount: Mount
+        self,
+        request: RuntimeRequest,
+        workspace: Workspace,
+        mount: Mount,
+        identity: Author | None = None,
     ) -> RuntimeSpec:
         workdir = mount.target or self._runtime_workdir
         network = request.network
@@ -290,11 +440,32 @@ class SandboxService:
         }
         if workspace.location.backend_workspace_id:
             labels["workspace_backend_id"] = workspace.location.backend_workspace_id
+        # Stash the project key on the runtime so the Daytona adapter can
+        # recover when its persisted sandbox id is gone (e.g. the user
+        # deleted the sandbox out-of-band, or it expired). Without these
+        # labels the runtime has no way to map its dead backend_runtime_id
+        # back to a (user, project) tuple for label-based lookup.
+        if workspace.request.user_id:
+            labels["user_id"] = workspace.request.user_id
+        if workspace.request.project_id:
+            labels["project_id"] = workspace.request.project_id
+        env = dict(request.env)
+        # Stamp the bot identity into the runtime env so every git
+        # commit run inside this runtime — through ``client.commit`` or
+        # raw ``sandbox_shell git commit`` — is attributed to the same
+        # author. The caller can still override per-exec via
+        # ``ExecRequest.env`` (per-exec env wins in
+        # ``LocalSubprocessRuntimeProvider._build_env``).
+        if identity is not None:
+            env.setdefault("GIT_AUTHOR_NAME", identity.name)
+            env.setdefault("GIT_AUTHOR_EMAIL", identity.email)
+            env.setdefault("GIT_COMMITTER_NAME", identity.name)
+            env.setdefault("GIT_COMMITTER_EMAIL", identity.email)
         return RuntimeSpec(
             image=request.image,
             workdir=workdir,
             mounts=(mount,),
-            env=dict(request.env),
+            env=env,
             resources=request.resources,
             network=network,
             labels=labels,

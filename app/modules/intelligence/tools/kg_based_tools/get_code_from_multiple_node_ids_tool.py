@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from langchain_core.tools import StructuredTool
 from neo4j import GraphDatabase
@@ -101,12 +101,32 @@ class GetCodeFromMultipleNodeIdsTool:
         self, project_id: str, node_id: str, project: Project
     ) -> Dict[str, Any]:
         node_data = self._get_node_data(project_id, node_id)
-        if node_data:
-            return self._process_result(node_data, project, node_id)
-        else:
+        if not node_data:
             return {
                 "error": f"Node with ID '{node_id}' not found in repo '{project_id}'"
             }
+        # Try the sandbox workspace first; fall through to CodeProviderService
+        # via _process_result if the sandbox can't service the read.
+        from app.modules.intelligence.tools.sandbox.read_helpers import (
+            read_file_via_sandbox,
+        )
+
+        file_path = node_data.get("file_path")
+        if file_path:
+            try:
+                content = await read_file_via_sandbox(
+                    project_id,
+                    self._get_relative_file_path(file_path),
+                    start_line=node_data.get("start_line"),
+                    end_line=node_data.get("end_line"),
+                )
+            except Exception:
+                content = None
+            if content is not None:
+                return self._process_result(
+                    node_data, project, node_id, code_content_override=content
+                )
+        return self._process_result(node_data, project, node_id)
 
     def _get_node_data(self, project_id: str, node_id: str) -> Dict[str, Any]:
         query = """
@@ -121,7 +141,12 @@ class GetCodeFromMultipleNodeIdsTool:
         return self.sql_db.query(Project).filter(Project.id == project_id).first()
 
     def _process_result(
-        self, node_data: Dict[str, Any], project: Project, node_id: str
+        self,
+        node_data: Dict[str, Any],
+        project: Project,
+        node_id: str,
+        *,
+        code_content_override: Optional[str] = None,
     ) -> Dict[str, Any]:
         file_path = node_data["file_path"]
         start_line = node_data["start_line"]
@@ -129,15 +154,18 @@ class GetCodeFromMultipleNodeIdsTool:
 
         relative_file_path = self._get_relative_file_path(file_path)
 
-        code_content = CodeProviderService(self.sql_db).get_file_content(
-            project.repo_name,
-            relative_file_path,
-            start_line,
-            end_line,
-            project.branch_name,
-            project.id,
-            project.commit_id,
-        )
+        if code_content_override is not None:
+            code_content = code_content_override
+        else:
+            code_content = CodeProviderService(self.sql_db).get_file_content(
+                project.repo_name,
+                relative_file_path,
+                start_line,
+                end_line,
+                project.branch_name,
+                project.id,
+                project.commit_id,
+            )
 
         docstring = None
         if node_data.get("docstring", None):

@@ -16,13 +16,10 @@ The important distinction is that "sandbox" is not one thing:
   workspace.
 
 The hexagonal sandbox module now lives at `app/src/sandbox/sandbox/` (domain
-ports, application service, API client, outbound adapters). The legacy
-`app/modules/repo_manager/repo_manager.py` still owns the `.repos/`
-filesystem layout, bare-repo cloning, and tiered eviction; the bridge at
-`app/modules/sandbox_repos/provider.py` adapts it to the sandbox
-`WorkspaceProvider` port for the production wiring. See **Current State** below
-for what is in place and **Known Gaps** for what still needs to be moved out
-of the legacy module.
+ports, application service, API client, outbound adapters). Local mode wires
+`LocalGitWorkspaceProvider` + `LocalRepoCacheProvider` directly; parsing keeps
+using `app/modules/repo_manager/repo_manager.py` for its own clone/eviction
+needs, but sandbox traffic no longer routes through it.
 
 This design keeps the repo/worktree lifecycle separate from the execution
 backend. The application layer asks for a workspace, then attaches a runtime to
@@ -176,14 +173,6 @@ that is shipped today.
 - `adapters/outbound/memory/store.py`, `memory/locks.py` — in-memory
   fallbacks.
 
-**Bridge to legacy `RepoManager`**
-- `app/modules/sandbox_repos/provider.py` — `RepoManagerWorkspaceProvider`.
-  In production wiring (`app/modules/intelligence/tools/sandbox/client.py`)
-  this is swapped in for `LocalGitWorkspaceProvider` so that parsing,
-  agent tooling, and eviction all flow through the legacy
-  `app.modules.repo_manager.RepoManager`. Keeps an in-memory cache only —
-  no rows in `JsonSandboxStore`.
-
 **Agent tool surface** (`app/modules/intelligence/tools/sandbox/`)
 - `client.py` — process-wide `SandboxClient` accessor (`get_sandbox_client`)
   and `resolve_workspace(...)` helper.
@@ -201,18 +190,16 @@ that is shipped today.
 Findings from the architectural audit; tracked by the **Implementation
 Roadmap** below.
 
-1. **Two parallel local providers, one is dead code.**
-   `LocalGitWorkspaceProvider` is the canonical hexagonal local adapter,
-   but the production wiring substitutes `RepoManagerWorkspaceProvider`
-   so `LocalGitWorkspaceProvider` is never called outside tests. The two
-   have drifted (different worktree path layouts, different metadata
-   schemas).
+1. **Two parallel local providers, one is dead code.** *(resolved)*
+   `LocalGitWorkspaceProvider` is the only local sandbox provider; the
+   `RepoManagerWorkspaceProvider` bridge has been removed. Parsing still
+   uses `RepoManager` for its own clone/eviction; sandbox traffic does not.
 
-2. **Dual unsynchronized persistence.**
-   `RepoManager` writes
-   `.repos/.meta/<owner>/<repo>/branch__commit.json`; `JsonSandboxStore`
-   writes `Workspace` records. They never reconcile. Eviction in one
-   leaves stale rows in the other.
+2. **Dual unsynchronized persistence.** *(resolved for sandbox traffic)*
+   With the bridge gone, sandbox state lives only in `JsonSandboxStore`.
+   Parsing's `RepoManager` metadata at
+   `.repos/.meta/<owner>/<repo>/branch__commit.json` is independent and
+   no longer needs to reconcile.
 
 3. **Eviction lives outside the sandbox application layer.**
    Volume tracking and tiered eviction (worktrees first at 80%, full
@@ -830,7 +817,7 @@ Postgres-ready store are all shipped. The post-revamp phases (P1-P8)
 each address a numbered gap from the audit. Status as of this
 session:
 
-### P1 — Unify the local provider — DONE (cutover is opt-in)
+### P1 — Unify the local provider — DONE
 
 Closes gaps 1, 2, 3.
 
@@ -839,23 +826,18 @@ Closes gaps 1, 2, 3.
   `adapters/outbound/memory/eviction.py`.
 * `LocalGitWorkspaceProvider` accepts `eviction=` kwarg, calls
   `evict_if_needed` on cache miss.
-* Production cutover is **gated** by env var:
-  ``SANDBOX_USE_CANONICAL_LOCAL=true`` switches
-  `intelligence/tools/sandbox/client.py` from the bridge to
-  `LocalGitWorkspaceProvider`. Default false to preserve operator
-  control over the migration window. `RepoManagerWorkspaceProvider` is
-  marked deprecated; it stays in tree until all environments have
-  flipped the flag.
-* **Operator note:** existing on-disk worktrees from the bridge
+* `LocalGitWorkspaceProvider` is now the only local provider. The
+  `RepoManagerWorkspaceProvider` bridge and the
+  `SANDBOX_USE_CANONICAL_LOCAL` flag have been removed; sandbox traffic
+  goes through the canonical adapter unconditionally.
+* **Operator note:** any on-disk worktrees created by the old bridge
   (layout: `<branch>` for shared, `<user>_<unique>_<branch>` for
-  conversation-scoped) are NOT migrated. The canonical adapter creates
-  fresh worktrees in the `<user>_<scope>_<branch>` layout. Bridge
-  worktrees with uncommitted state should be committed/pushed before
-  flipping the flag, or accept that they become inaccessible to
-  canonical-mode tools.
+  conversation-scoped) are not visible to the canonical adapter. New
+  conversations get fresh worktrees in the `<user>_<scope>_<branch>`
+  layout; commit/push any in-flight bridge worktree state before
+  upgrading.
 * Volume-aware policy (`VolumeBasedEvictionPolicy`) replacing the
-  `NoOp` default is a P1 follow-up; today eviction in the legacy path
-  flows through `RepoManager`'s thresholds and the canonical path runs
+  `NoOp` default is still a P1 follow-up; the canonical path runs
   unbounded until the policy is wired.
 
 ### P2 — Promote `RepoCache` to first-class — DONE
@@ -972,9 +954,9 @@ the existing in-memory and JSON ones, so the swap is a bootstrap-only
 change.
 
 **Track as a follow-up.** The current `JsonSandboxStore` is suitable
-for single-node deployments; multi-worker / multi-host setups should
-not flip to canonical-local until the Postgres adapter ships, since
-the JSON store's flush model assumes a single writer.
+for single-node deployments; multi-worker / multi-host setups need the
+Postgres adapter, since the JSON store's flush model assumes a single
+writer.
 
 ### Outstanding follow-ups (small)
 

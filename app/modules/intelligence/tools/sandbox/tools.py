@@ -62,6 +62,8 @@ from .tool_functions import (
     _exec_shell,
     _exec_text_editor,
     sandbox_git_tool,
+    sandbox_pr_comment_tool,
+    sandbox_pr_tool,
     sandbox_search_tool,
     sandbox_shell_tool,
     sandbox_text_editor_tool,
@@ -69,7 +71,9 @@ from .tool_functions import (
 from .tool_inputs import (
     SandboxGitInput,
     SandboxGitInputBound,
+    SandboxPRCommentInputLegacy,
     SandboxPullRequestInput,
+    SandboxPullRequestInputLegacy,
     SandboxSearchInput,
     SandboxSearchInputBound,
     SandboxShellInput,
@@ -107,7 +111,14 @@ _SHELL_DESC = (
     "Output is capped at ~80 KB by default — bump max_output_bytes "
     "for noisy builds. Use this for tests (pytest / vitest / cargo "
     "test), linters, type checks, file deletes / moves, anything "
-    "the editor tool doesn't cover."
+    "the editor tool doesn't cover. "
+    "The sandbox image has `ripgrep` (`rg`), `fd`, `jq`, `tree`, "
+    "`git`, `gh`, `python3`, and `node` preinstalled — for any "
+    "text/code search use `rg` (e.g. `rg -n PATTERN`, `rg -t py "
+    "PATTERN`, `rg -l PATTERN | xargs ...`), never `grep -r` or "
+    "`find ... -exec grep`. Prefer `sandbox_search` for plain "
+    "ripgrep queries; reach here only when you need shell pipes or "
+    "rg flags `sandbox_search` doesn't expose."
 )
 
 _SEARCH_DESC = (
@@ -137,6 +148,18 @@ _PR_DESC = (
     "tool only does the platform-side step. Returns "
     "{success, pr_id, url}. Available only when the workspace is "
     "writable and the harness wired a GitPlatformProvider."
+)
+
+_PR_COMMENT_DESC = (
+    "Post a comment on an existing pull request. Two shapes:\n"
+    "- Top-level: only `body` and `pr_number`. Posts a conversation "
+    "comment.\n"
+    "- Inline: set `path` and `line` (relative to repo root). Posts "
+    "a code-review comment at that location. `commit_id` is optional; "
+    "the platform anchors to the PR's HEAD when omitted.\n"
+    "Returns {success, comment_id, url}. Use this for review flows "
+    "(no workspace required) and for adding follow-up comments after "
+    "sandbox_pr opens a PR."
 )
 
 
@@ -206,6 +229,30 @@ def _legacy_tools() -> List[SimpleTool]:
             description=_GIT_DESC,
             func=sandbox_git_tool,
             args_schema=SandboxGitInput,
+        ),
+        # ``sandbox_pr`` deliberately has no capability gate in the
+        # legacy form — the underlying ``SandboxClient.create_pull_request``
+        # already refuses on read-only handles, and the
+        # ``GitPlatformProvider`` is wired in production, so when the
+        # agent's workspace is ANALYSIS or no platform is configured,
+        # the tool returns a typed error rather than a confusing
+        # platform exception.
+        SimpleTool(
+            name="sandbox_pr",
+            description=_PR_DESC,
+            func=sandbox_pr_tool,
+            args_schema=SandboxPullRequestInputLegacy,
+        ),
+        # ``sandbox_pr_comment`` is the consolidation target for the
+        # legacy ``code_provider_add_pr_comments`` tool — both go
+        # through the same ``GitPlatformProvider`` factory chain so
+        # the comment gets attributed to the same identity (App ->
+        # bot, OAuth -> user, env -> CI fallback).
+        SimpleTool(
+            name="sandbox_pr_comment",
+            description=_PR_COMMENT_DESC,
+            func=sandbox_pr_comment_tool,
+            args_schema=SandboxPRCommentInputLegacy,
         ),
     ]
 

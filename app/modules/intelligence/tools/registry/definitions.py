@@ -201,6 +201,24 @@ TOOL_DEFINITIONS: Dict[str, dict] = {
         "category": "sandbox",
         "short_description": "Git status / diff / log / commit / push on the worktree.",
     },
+    # ``sandbox_pr`` / ``sandbox_pr_comment`` are the consolidation
+    # targets for the four legacy ``code_provider_*`` integration tools.
+    # Both go through the same ``GitPlatformProvider`` factory chain so
+    # PR creation and comments get attributed to the same identity that
+    # signs the agent's commits (the Potpie GitHub App when installed).
+    "sandbox_pr": {
+        "tier": "high",
+        "category": "sandbox",
+        "short_description": "Open a PR from the worktree branch via the sandbox.",
+        "requires_confirmation": True,
+        "aliases": ["github_create_pull_request_sandbox"],
+    },
+    "sandbox_pr_comment": {
+        "tier": "high",
+        "category": "sandbox",
+        "short_description": "Post a top-level or inline comment on a PR via the sandbox.",
+        "aliases": ["github_add_pr_comments_sandbox"],
+    },
 }
 
 # --- Allow-lists ---
@@ -240,6 +258,8 @@ CODE_GEN_BASE_TOOLS: List[str] = [
     "sandbox_shell",
     "sandbox_search",
     "sandbox_git",
+    "sandbox_pr",
+    "sandbox_pr_comment",
 ]
 
 CODE_GEN_ADD_WHEN_NON_LOCAL: List[str] = [
@@ -255,9 +275,15 @@ CODE_GEN_ADD_WHEN_NON_LOCAL: List[str] = [
     "get_code_from_probable_node_name",
     "get_nodes_from_tags",
     "analyze_code_structure",
-    # PR creation lives outside the sandbox (auth chain in code_provider).
+    # PR / branch creation. ``sandbox_pr`` is the consolidated path
+    # (same ``GitPlatformProvider`` factory chain as ``sandbox_git``,
+    # so attribution stays consistent end-to-end). The legacy
+    # ``code_provider_*`` versions are kept registered for back-compat
+    # with prompts that still name them; they share the same App-token
+    # chain so attribution is equivalent.
     "code_provider_create_branch",
     "code_provider_create_pr",
+    "sandbox_pr",
 ]
 CODE_GEN_EXCLUDE_IN_LOCAL: List[str] = []
 
@@ -311,7 +337,11 @@ EXECUTE_TOOLS: List[str] = [
     "sandbox_shell",
     "sandbox_search",
     "sandbox_git",
-    # PR creation — outside the sandbox, uses code_provider's auth chain.
+    "sandbox_pr",
+    "sandbox_pr_comment",
+    # Legacy GitHub-API path — kept for back-compat. ``sandbox_pr`` is
+    # the preferred entry; both share the App-token chain so attribution
+    # is the same.
     "code_provider_create_branch",
     "code_provider_create_pr",
 ]
@@ -326,9 +356,22 @@ EXECUTE_EXCLUDE_IN_LOCAL: List[str] = []
 
 # Supervisor delegates writes to subagents — give it sandbox_search + sandbox_git
 # (status / diff / log) for inspection only. No editor / shell at the supervisor level.
+#
+# GitHub tools are also exposed at the supervisor level: with the github
+# integration subagent retired, the supervisor itself drives PR / issue work
+# directly. Restricted to non-local because in local-mode the user's IDE
+# tunnel handles repo writes — the GitHub HTTP path would race with it.
 SUPERVISOR_ADD_WHEN_NON_LOCAL: List[str] = [
     "sandbox_search",
     "sandbox_git",
+    "sandbox_pr",
+    "sandbox_pr_comment",
+    # GitHub tools — promoted from the (deleted) integration_github subagent.
+    "code_provider_tool",
+    "code_provider_create_branch",
+    "code_provider_create_pr",
+    "code_provider_add_pr_comments",
+    "code_provider_update_file",
 ]
 
 # Explore: minimal read-only set — sandbox_text_editor (view) + sandbox_search.
@@ -356,9 +399,13 @@ INTEGRATION_GITHUB_TOOLS: List[str] = [
     "code_provider_create_pr",
     "code_provider_add_pr_comments",
     "code_provider_update_file",
-    # Sandbox git surface (replaces apply_changes + git_commit + git_push +
-    # create_pr_workflow — push from sandbox_git, then code_provider_create_pr).
+    # Sandbox surface — preferred for new flows. ``sandbox_git`` covers
+    # commit/push; ``sandbox_pr`` opens PRs through the same App-token
+    # chain; ``sandbox_pr_comment`` posts review comments through the
+    # same chain.
     "sandbox_git",
+    "sandbox_pr",
+    "sandbox_pr_comment",
 ]
 INTEGRATION_CONFLUENCE_TOOLS: List[str] = [
     "get_confluence_spaces",
@@ -374,13 +421,18 @@ INTEGRATION_LINEAR_TOOLS: List[str] = [
     "update_linear_issue",
 ]
 
-# The four consolidated sandbox tools. Agents that want full sandbox access
-# include the "sandbox" allow-list group, or reference SANDBOX_TOOLS directly.
+# The full consolidated sandbox tool group. Agents that want full
+# sandbox access include the "sandbox" allow-list group, or reference
+# SANDBOX_TOOLS directly. ``sandbox_pr`` and ``sandbox_pr_comment``
+# share the GitPlatformProvider's auth chain — production wires that
+# in :func:`app.modules.intelligence.tools.sandbox.client.get_sandbox_client`.
 SANDBOX_TOOLS: List[str] = [
     "sandbox_text_editor",
     "sandbox_shell",
     "sandbox_search",
     "sandbox_git",
+    "sandbox_pr",
+    "sandbox_pr_comment",
 ]
 
 ALLOW_LIST_DEFINITIONS: List[AllowListDefinition] = [
