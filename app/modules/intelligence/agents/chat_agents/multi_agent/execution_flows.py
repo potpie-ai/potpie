@@ -446,12 +446,9 @@ class StreamingExecutionFlow:
                         if len(parts) >= 2:
                             tool_name = parts[1]
 
-                    logger.warning(
-                        "Tool '%s' exceeded max retries in multi-agent stream. "
-                        "This usually indicates the tool is failing repeatedly. Error: %s",
-                        tool_name,
-                        error_str,
-                        exc_info=True,
+                    logger.exception(
+                        f"Tool '{tool_name}' exceeded max retries in multi-agent stream. "
+                        f"This usually indicates the tool is failing repeatedly. Error: {error_str}"
                     )
                     yield ChatAgentResponse(
                         response=(
@@ -463,8 +460,8 @@ class StreamingExecutionFlow:
                         citations=[],
                     )
                 else:
-                    logger.error(
-                        "Error in standard multi-agent stream: %s", error_str, exc_info=True
+                    logger.exception(
+                        f"Error in standard multi-agent stream: {error_str}"
                     )
                     yield ChatAgentResponse(
                         response="\n\n*An error occurred during multi-agent streaming*\n\n",
@@ -541,9 +538,7 @@ class MultimodalStreamingExecutionFlow:
         except GenerationCancelled:
             raise
         except Exception as e:
-            logger.error(
-                f"Error in multimodal multi-agent stream: {str(e)}", exc_info=True
-            )
+            logger.exception(f"Error in multimodal multi-agent stream: {str(e)}")
             # Fallback to standard streaming
             async for chunk in self.standard_streaming_flow.run_stream(ctx):
                 yield chunk

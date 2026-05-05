@@ -53,6 +53,19 @@ class CodeProviderTool:
         cls.gh_token_list = [
             token.strip() for token in token_string.split(",") if token.strip()
         ]
+        # Also accept CODE_PROVIDER_TOKEN as a universal fallback
+        if not cls.gh_token_list:
+            code_provider_token = os.getenv("CODE_PROVIDER_TOKEN", "").strip()
+            if code_provider_token:
+                cls.gh_token_list = [code_provider_token]
+        # For non-GitHub providers, GH_TOKEN_LIST is not required
+        provider = os.getenv("CODE_PROVIDER", "github").lower()
+        if not cls.gh_token_list and provider != "github":
+            logger.info(
+                f"No GH_TOKEN_LIST configured for provider '{provider}' — "
+                "code provider tool will use provider-specific credentials"
+            )
+            return
         if not cls.gh_token_list:
             raise ValueError(
                 "GitHub token list is empty or not set in environment variables"
@@ -105,6 +118,11 @@ class CodeProviderTool:
     def get_public_github_instance(cls):
         if not cls.gh_token_list:
             cls.initialize_tokens()
+        if not cls.gh_token_list:
+            raise ValueError(
+                "GitHub token list is empty — cannot create a GitHub client for "
+                f"provider '{os.getenv('CODE_PROVIDER', 'github')}'"
+            )
         token = secrets.choice(cls.gh_token_list)
         return Github(token)
 

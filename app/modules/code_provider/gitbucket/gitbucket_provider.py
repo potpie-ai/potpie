@@ -1,3 +1,4 @@
+import os
 from typing import Any, Dict, List, Optional, Set
 import chardet
 from github import Github
@@ -37,6 +38,14 @@ class GitBucketProvider(ICodeProvider):
         self.base_url = base_url.rstrip("/")
         self.client: Optional[Github] = None
         self.auth_method: Optional[AuthMethod] = None
+        # Allow disabling SSL verification for self-signed certs (set CODE_PROVIDER_SSL_VERIFY=false)
+        ssl_verify_env = os.getenv("CODE_PROVIDER_SSL_VERIFY", "true").lower()
+        self.ssl_verify: bool = ssl_verify_env not in ("false", "0", "no")
+        if not self.ssl_verify:
+            logger.warning(
+                "SSL verification disabled for GitBucket (CODE_PROVIDER_SSL_VERIFY=false). "
+                "Do not use this in production without proper certificate management."
+            )
 
         logger.info(f"Initialized GitBucket provider with base_url: {self.base_url}")
 
@@ -50,7 +59,7 @@ class GitBucketProvider(ICodeProvider):
             token = credentials.get("token")
             if not token:
                 raise ValueError("PAT authentication requires 'token' in credentials")
-            self.client = Github(token, base_url=self.base_url)
+            self.client = Github(token, base_url=self.base_url, verify=self.ssl_verify)
             logger.info("Authenticated with GitBucket using PAT")
 
         elif method == AuthMethod.BASIC_AUTH:
@@ -59,7 +68,7 @@ class GitBucketProvider(ICodeProvider):
             if not username or not password:
                 raise ValueError("Basic auth requires 'username' and 'password'")
             # PyGithub supports basic auth via login/password
-            self.client = Github(username, password, base_url=self.base_url)
+            self.client = Github(username, password, base_url=self.base_url, verify=self.ssl_verify)
             logger.info(
                 f"Authenticated with GitBucket using Basic Auth for user: {username}"
             )
@@ -69,7 +78,7 @@ class GitBucketProvider(ICodeProvider):
             access_token = credentials.get("access_token")
             if not access_token:
                 raise ValueError("OAuth authentication requires 'access_token'")
-            self.client = Github(access_token, base_url=self.base_url)
+            self.client = Github(access_token, base_url=self.base_url, verify=self.ssl_verify)
             logger.info("Authenticated with GitBucket using OAuth token")
 
         elif method == AuthMethod.APP_INSTALLATION:

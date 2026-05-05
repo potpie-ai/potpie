@@ -52,6 +52,8 @@ def get_colgrep_index_queue_name(queue_prefix: str) -> str:
 # Construct the Redis URL
 if redisuser and redispassword:
     redis_url = f"redis://{redisuser}:{redispassword}@{redishost}:{redisport}/0"
+elif redispassword:
+    redis_url = f"redis://:{redispassword}@{redishost}:{redisport}/0"
 else:
     redis_url = f"redis://{redishost}:{redisport}/0"
 

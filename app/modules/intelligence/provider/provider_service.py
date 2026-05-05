@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Union, AsyncGenerator, Optional
 from pydantic import BaseModel
 from pydantic_ai.models import Model
 from litellm import litellm, AsyncOpenAI, acompletion
+import httpx
 import instructor
 from fastapi import HTTPException
 
@@ -64,6 +65,60 @@ if _litellm_debug:
     litellm.set_verbose = True  # type: ignore
     litellm._turn_on_debug()  # type: ignore
     logger.info("LiteLLM debug logging ENABLED (LITELLM_DEBUG=true)")
+
+
+def _resolve_llm_ssl_verify() -> Optional[Union[bool, str]]:
+    """Resolve per-request SSL verification settings for LiteLLM/OpenAI calls."""
+    ssl_verify_raw = os.getenv("LLM_SSL_VERIFY")
+    ssl_cert_file = os.getenv("LLM_SSL_CERT_FILE")
+
+    if ssl_cert_file:
+        ssl_cert_file = ssl_cert_file.strip()
+        if ssl_cert_file:
+            return ssl_cert_file
+
+    if ssl_verify_raw is None:
+        return None
+
+    normalized = ssl_verify_raw.strip()
+    if not normalized:
+        return None
+
+    if normalized.lower() in {"false", "0", "no", "off"}:
+        return False
+
+    if normalized.lower() in {"true", "1", "yes", "on"}:
+        return True
+
+    return normalized
+
+
+def _apply_llm_ssl_configuration(ssl_verify: Optional[Union[bool, str]]) -> None:
+    """Project LLM-scoped SSL settings onto LiteLLM's global SSL configuration."""
+    if ssl_verify is None:
+        return
+
+    litellm.ssl_verify = ssl_verify
+
+    if isinstance(ssl_verify, bool):
+        os.environ["SSL_VERIFY"] = "true" if ssl_verify else "false"
+        if not ssl_verify:
+            os.environ.pop("SSL_CERT_FILE", None)
+        return
+
+    os.environ["SSL_VERIFY"] = ssl_verify
+    if os.path.exists(ssl_verify):
+        os.environ["SSL_CERT_FILE"] = ssl_verify
+
+
+def _build_pydantic_openai_http_client(
+    ssl_verify: Optional[Union[bool, str]],
+) -> Optional[httpx.AsyncClient]:
+    """Build an httpx client for PydanticAI's OpenAI provider with repo SSL settings."""
+    if ssl_verify is None:
+        return None
+
+    return httpx.AsyncClient(verify=ssl_verify)
 
 OVERLOAD_ERROR_PATTERNS = {
     "anthropic": ["overloaded", "overloaded_error", "capacity", "rate limit exceeded"],
@@ -876,6 +931,10 @@ Rules:
         if config.api_version:
             params["api_version"] = config.api_version
 
+        ssl_verify = _resolve_llm_ssl_verify()
+        if ssl_verify is not None:
+            _apply_llm_ssl_configuration(ssl_verify)
+
         # Filter out falsy values litellm would not expect
         return {key: value for key, value in params.items() if value is not None}
 
@@ -1583,6 +1642,10 @@ Rules:
 
         openai_like_providers = {"openai", "openrouter", "azure", "ollama"}
         if config.auth_provider in openai_like_providers:
+            ssl_verify = _resolve_llm_ssl_verify()
+            if ssl_verify is not None:
+                _apply_llm_ssl_configuration(ssl_verify)
+
             if config.auth_provider == "ollama":
                 base_url_root = (
                     config.base_url
@@ -1590,6 +1653,10 @@ Rules:
                     or "http://localhost:11434"
                 )
                 provider_kwargs["base_url"] = base_url_root.rstrip("/") + "/v1"
+
+            http_client = _build_pydantic_openai_http_client(ssl_verify)
+            if http_client is not None:
+                provider_kwargs["http_client"] = http_client
 
             # Choose a custom OpenRouter-backed model when appropriate so we can
             # capture usage and cost from the streaming path.

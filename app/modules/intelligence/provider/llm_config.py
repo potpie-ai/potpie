@@ -2,8 +2,8 @@ from typing import Dict, Any, Optional
 import os
 
 # Default models
-DEFAULT_CHAT_MODEL = "openai/gpt-5.2"
-DEFAULT_INFERENCE_MODEL = "openai/gpt-5-mini"
+DEFAULT_CHAT_MODEL = "openai/coe-openai/gpt5.4"
+DEFAULT_INFERENCE_MODEL = "openai/coe-openai/gpt5.4"
 
 # Default context window for unknown models (tokens)
 DEFAULT_CONTEXT_WINDOW = 128000

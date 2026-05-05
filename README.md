@@ -67,6 +67,7 @@
    INFERENCE_MODEL=gpt-4o-mini
 
    # Database
+  POSTGRES_PASSWORD=mysecretpassword
    POSTGRES_SERVER=postgresql://postgres:mysecretpassword@localhost:5432/momentum
    NEO4J_URI=bolt://127.0.0.1:7687
    NEO4J_USERNAME=neo4j
@@ -75,8 +76,12 @@
    # Redis & Background Jobs
    REDISHOST=127.0.0.1
    REDISPORT=6379
-   BROKER_URL=redis://127.0.0.1:6379/0
+  REDISPASSWORD=myredissecret
+  BROKER_URL=redis://:myredissecret@127.0.0.1:6379/0
    CELERY_QUEUE_NAME=dev
+
+  # Optional when the Langfuse repo is stored elsewhere
+  # LANGFUSE_DIR=/absolute/path/to/langfuse
 
    # Project & Repo Management
    PROJECT_PATH=projects
@@ -102,7 +107,7 @@
    ./scripts/start.sh
    ```
 
-   This will start Docker services, apply migrations, start the FastAPI app, and start the Celery worker.
+  This will start the Langfuse Docker stack first so Docker provides the shared PostgreSQL and Redis services, then start Potpie Docker services, create the Potpie database if needed, apply migrations, start the FastAPI app, and start the Celery workers.
 
 5. **Health Check**
 

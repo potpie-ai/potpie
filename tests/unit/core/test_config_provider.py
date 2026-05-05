@@ -102,6 +102,17 @@ class TestConfigProvider:
             url = provider.get_redis_url()
             assert "redis://u:p@r:6379" in url or "u:p" in url
 
+    def test_get_redis_url_with_password_only_auth(self):
+        """get_redis_url includes password-only auth when no user is set."""
+        with patch.dict(
+            "os.environ",
+            {"REDISHOST": "r", "REDISPORT": "6379", "REDISPASSWORD": "p"},
+            clear=False,
+        ):
+            provider = ConfigProvider()
+            url = provider.get_redis_url()
+            assert url == "redis://:p@r:6379/0"
+
     def test_get_is_development_mode_enabled(self):
         """get_is_development_mode True when enabled."""
         with patch.dict("os.environ", {"isDevelopmentMode": "enabled"}, clear=False):

@@ -748,6 +748,7 @@ class BashCommandTool:
                 "/usr/bin",
                 "/bin",
                 "/opt/homebrew/bin",
+                "/snap/bin",
             ]
             safe_env = {
                 "PATH": ":".join(safe_path_entries),
