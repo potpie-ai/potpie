@@ -418,10 +418,9 @@ class ParsingService:
                     )
                 extracted_dir = str(extracted_dir)
 
-                self._schedule_colgrep_index_build(extracted_dir)
-
                 # Optional short-circuit: once RepoManager validated a usable worktree path,
-                # mark the project READY immediately and skip heavy analysis.
+                # mark the project READY immediately and skip heavy analysis
+                # (including ColGREP indexing).
                 if (
                     repo_manager_path
                     and _env_enabled("PARSING_SHORT_CIRCUIT_REPOMANAGER")
@@ -437,6 +436,8 @@ class ParsingService:
                         "message": "Project marked READY after RepoManager setup",
                         "id": project_id,
                     }
+
+                self._schedule_colgrep_index_build(extracted_dir)
 
                 Repo = _get_repo_class()
                 if repo is None or isinstance(repo, Repo):

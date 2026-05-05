@@ -178,4 +178,4 @@ async def test_short_circuit_marks_ready_and_returns_early(monkeypatch):
     service.project_service.update_project_status.assert_any_call(
         "proj-1", ProjectStatusEnum.READY
     )
-    service._schedule_colgrep_index_build.assert_called_once_with("/tmp/worktree")
+    service._schedule_colgrep_index_build.assert_not_called()

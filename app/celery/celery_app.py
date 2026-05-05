@@ -44,10 +44,6 @@ redisuser = os.getenv("REDISUSER", "")
 redispassword = os.getenv("REDISPASSWORD", "")
 queue_name = os.getenv("CELERY_QUEUE_NAME", "staging")
 
-def get_colgrep_index_queue_name(queue_prefix: str) -> str:
-    """Queue dedicated to background ColGREP index builds."""
-    return os.getenv("COLGREP_INDEX_QUEUE_NAME", f"{queue_prefix}_colgrep_index")
-
 
 # Construct the Redis URL
 if redisuser and redispassword:
@@ -121,9 +117,6 @@ def configure_celery(queue_prefix: str):
         task_routes={
             "app.celery.tasks.parsing_tasks.process_parsing": {
                 "queue": f"{queue_prefix}_process_repository"
-            },
-            "app.celery.tasks.parsing_tasks.process_colgrep_index": {
-                "queue": get_colgrep_index_queue_name(queue_prefix)
             },
             "app.celery.tasks.agent_tasks.execute_agent_background": {
                 "queue": f"{queue_prefix}_agent_tasks"

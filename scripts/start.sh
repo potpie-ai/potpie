@@ -106,16 +106,6 @@ fi
 require_langfuse_dir
 parse_postgres_server "${POSTGRES_SERVER:-}"
 
-export PATH="${PWD}/.tools/bin:${PATH}"
-echo "Ensuring ColGREP is available for local parsing and Docker builds..."
-if ! bash scripts/ensure_colgrep.sh; then
-  echo "Note: ColGREP setup failed; local parsing will continue without semantic indexing"
-elif [ -x "${PWD}/.tools/bin/colgrep-linux-amd64" ]; then
-  echo "Packaged Docker ColGREP ready at ${PWD}/.tools/bin/colgrep-linux-amd64"
-elif [ -x "${PWD}/.tools/bin/colgrep-linux-arm64" ]; then
-  echo "Packaged Docker ColGREP ready at ${PWD}/.tools/bin/colgrep-linux-arm64"
-fi
-
 APP_PORT="${APP_PORT:-8001}"
 
 if command -v lsof >/dev/null 2>&1; then
@@ -236,13 +226,8 @@ alembic upgrade heads
 echo "Starting momentum application..."
 gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app &
 
-COLGREP_INDEX_QUEUE="${COLGREP_INDEX_QUEUE_NAME:-${CELERY_QUEUE_NAME}_colgrep_index}"
-
 echo "Starting Celery worker..."
 celery -A app.celery.celery_app worker --loglevel=debug -Q "${CELERY_QUEUE_NAME}_process_repository,${CELERY_QUEUE_NAME}_agent_tasks" -E --concurrency=1 --pool=solo &
-
-echo "Starting ColGREP Celery worker..."
-celery -A app.celery.celery_app worker --loglevel=debug -Q "${COLGREP_INDEX_QUEUE}" -E --concurrency=1 --pool=solo -n "colgrep@%h" &
 
 echo "All services started. Press Ctrl+C to stop."
 wait

@@ -1,12 +1,10 @@
 # Celery worker entrypoint.
 # Run with the queues that agent/parsing tasks use, e.g.:
 #   celery -A app.celery.celery_app worker -l info -Q staging_agent_tasks,staging_process_repository
-#   celery -A app.celery.celery_app worker -l info -Q staging_colgrep_index
 # Or: ./scripts/run_celery_worker.sh
 # (Without -Q the worker only consumes the default "celery" queue and agent tasks never run here.)
 from app.celery.celery_app import celery_app, logger
 from app.celery.tasks.parsing_tasks import (
-    process_colgrep_index,  # Ensure the task is imported
     process_parsing,  # Ensure the task is imported
 )
 from app.celery.tasks.agent_tasks import (
@@ -25,7 +23,6 @@ def register_tasks():
 
     # Register parsing tasks
     celery_app.tasks.register(process_parsing)
-    celery_app.tasks.register(process_colgrep_index)
 
     # Register agent tasks
     celery_app.tasks.register(execute_agent_background)
