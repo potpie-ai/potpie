@@ -21,6 +21,7 @@ COPY pyproject.toml uv.lock ./
 COPY app/src/context-engine ./app/src/context-engine
 COPY app/src/integrations ./app/src/integrations
 COPY app/src/parsing ./app/src/parsing
+COPY app/src/sandbox ./app/src/sandbox
 
 # Install dependency layers first, including the local Rust extension
 RUN uv sync --frozen --no-install-project
