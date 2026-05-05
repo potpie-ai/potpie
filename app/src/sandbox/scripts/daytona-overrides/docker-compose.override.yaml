@@ -1,0 +1,72 @@
+# Layered on top of /Users/nandan/Desktop/Dev/daytona/docker/docker-compose.yaml
+# by scripts/setup-daytona-local.sh.
+#
+# Two changes:
+#   1. Move the Daytona dashboard host port from 3000 to ${DAYTONA_DASHBOARD_PORT}
+#      (default 3010) so port 3000 is free for the potpie frontend dev server.
+#      Inside the container the API still listens on 3000, so service-to-service
+#      URLs (`http://api:3000/api`) are untouched.
+#   2. Replace the dex config bind with our copy that whitelists the new
+#      `http://localhost:${DAYTONA_DASHBOARD_PORT}` redirect URIs in the
+#      daytona OIDC client. Without this, dashboard login fails with
+#      `invalid_redirect_uri` after the port move.
+#
+# `!override` is required for both fields. Compose merges list fields by
+# default (appending), which would leave the original `3000:3000` mapping live
+# and the unwanted dex config still mounted.
+
+services:
+  api:
+    ports: !override
+      - "${DAYTONA_DASHBOARD_PORT:-3010}:3000"
+    # The API container does string substitution into the dashboard's built JS
+    # at startup using DASHBOARD_BASE_API_URL (replaces %DAYTONA_BASE_API_URL%
+    # in main.ts) and emits dashboardUrl in /api/config from DASHBOARD_URL.
+    # Both default to localhost:3000 in upstream — point them at the host port
+    # we exposed above, otherwise the dashboard at localhost:3010 will try to
+    # call localhost:3000/api and fail with `TypeError: Failed to fetch`.
+    environment:
+      DASHBOARD_URL: http://localhost:${DAYTONA_DASHBOARD_PORT:-3010}/dashboard
+      DASHBOARD_BASE_API_URL: http://localhost:${DAYTONA_DASHBOARD_PORT:-3010}
+      # Local-dev permissiveness: the runner runs on the same Docker VM that
+      # also hosts Postgres, Redis, MinIO, etc. Memory routinely sits in the
+      # 80-90% range, which drags the runner's `availabilityScore` below the
+      # upstream default threshold of 10 → sandbox creation fails with
+      # `No available runners`. Lowering the threshold to 1 lets the runner
+      # be picked even under memory pressure (the score is also used to rank
+      # multiple runners — single-runner local dev doesn't need the gate).
+      # Bump RAM in Docker Desktop / Colima for the durable fix.
+      RUNNER_AVAILABILITY_SCORE_THRESHOLD: "1"
+      RUNNER_DECLARATIVE_BUILD_SCORE_THRESHOLD: "1"
+      # Daytona's upstream compose hard-codes `proxy.localhost:4000` as the
+      # toolbox/preview hostname, which is fine when consumers run inside the
+      # daytona-network (where Docker DNS resolves it) but breaks our potpie
+      # worker that runs on the macOS host. macOS's resolver doesn't map
+      # `proxy.localhost` to 127.0.0.1, so SDK calls die with NameResolutionError.
+      # Re-point the API at plain `localhost:4000` (the proxy is published on
+      # the host at that port already) so URLs the API returns are reachable.
+      # Sandbox preview URLs `<port>-<sandboxId>.localhost:4000` work too —
+      # macOS Sequoia resolves `*.localhost` via mDNS to 127.0.0.1.
+      PROXY_DOMAIN: localhost:4000
+      PROXY_TEMPLATE_URL: http://{{PORT}}-{{sandboxId}}.localhost:4000
+    # Upstream's substitution only replaces the `%DAYTONA_BASE_API_URL%`
+    # placeholder, but the dashboard is built with `VITE_API_URL=http://localhost:3000/api`
+    # baked in via Vite — that becomes a literal `BASE_PATH = "http://localhost:3000"`
+    # in the OpenAPI client and is the actual URL the dashboard fetches from.
+    # Re-write the literal in the bundled JS at startup before nest boots.
+    # `$$` escapes the `$` so compose passes the variable through to the shell.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        target_url="$${DASHBOARD_BASE_API_URL:-http://localhost:3000}"
+        if [ "$$target_url" != "http://localhost:3000" ]; then
+          find /daytona/dist/apps/dashboard -type f -name '*.js' \
+            -exec sed -i "s|http://localhost:3000|$$target_url|g" {} +
+        fi
+        exec node dist/apps/api/main.js
+
+  dex:
+    volumes: !override
+      - ${POTPIE_SANDBOX_DIR:?set by setup-daytona-local.sh}/scripts/daytona-overrides/dex-config.yaml:/etc/dex/config.yaml
+      - dex_db:/var/dex

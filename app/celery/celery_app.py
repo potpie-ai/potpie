@@ -128,6 +128,18 @@ def configure_celery(queue_prefix: str):
             "app.modules.event_bus.tasks.event_tasks.process_custom_event": {
                 "queue": "external-event"
             },
+            "app.modules.context_graph.tasks.context_graph_backfill_pot": {
+                "queue": "context-graph-etl"
+            },
+            "app.modules.context_graph.tasks.context_graph_ingest_pr": {
+                "queue": "context-graph-etl"
+            },
+            "app.modules.context_graph.tasks.context_graph_ingestion_agent_run": {
+                "queue": "context-graph-etl"
+            },
+            "app.modules.context_graph.tasks.context_graph_apply_episode": {
+                "queue": "context-graph-etl"
+            },
         },
         # Optimize task distribution
         worker_prefetch_multiplier=1,
@@ -555,3 +567,4 @@ from celery.contrib.abortable import AbortableTask  # noqa
 import app.celery.tasks.parsing_tasks  # noqa # Ensure the task module is imported
 import app.celery.tasks.agent_tasks  # noqa # Ensure the agent task module is imported
 import app.modules.event_bus.tasks.event_tasks  # noqa # Ensure event bus tasks are registered
+import app.modules.context_graph.tasks  # noqa # Ensure context graph tasks are registered

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import logging
 from typing import Any
 
-from pydantic_ai.models.openai import OpenAIModel, OpenAIStreamedResponse
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIStreamedResponse
 
 from app.modules.utils.logger import setup_logger
 from app.modules.intelligence.provider.openrouter_usage_context import (
@@ -48,9 +47,7 @@ class OpenRouterGlmStreamedResponse(OpenAIStreamedResponse):
                 cost = extra.get("total_cost") or extra.get("cost")
 
             prompt_tokens = (
-                getattr(u, "prompt_tokens", 0)
-                or getattr(u, "input_tokens", 0)
-                or 0
+                getattr(u, "prompt_tokens", 0) or getattr(u, "input_tokens", 0) or 0
             )
             completion_tokens = (
                 getattr(u, "completion_tokens", 0)
@@ -88,9 +85,9 @@ class OpenRouterGlmStreamedResponse(OpenAIStreamedResponse):
         return super()._map_usage(response)
 
 
-class OpenRouterGlmModel(OpenAIModel):
+class OpenRouterGlmModel(OpenAIChatModel):
     """
-    Custom OpenAIModel variant for OpenRouter-backed GLM models.
+    Custom OpenAIChatModel variant for OpenRouter-backed GLM models.
 
     It uses a custom streamed response class that extracts OpenRouter usage,
     including cost, from stream chunks and pushes it into the Celery task context.
@@ -100,4 +97,3 @@ class OpenRouterGlmModel(OpenAIModel):
     def _streamed_response_cls(self) -> type[OpenAIStreamedResponse]:
         """Use OpenRouterGlmStreamedResponse so we capture cost from stream chunks."""
         return OpenRouterGlmStreamedResponse
-

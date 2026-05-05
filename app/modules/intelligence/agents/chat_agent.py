@@ -75,6 +75,7 @@ class ChatContext(BaseModel):
     history: List[str]
     node_ids: Optional[List[str]] = None
     additional_context: str = ""
+    context_intelligence_bundle: Optional[Dict[str, Any]] = None
     query: str
     # Project parsing status - used to conditionally enable/disable tools
     project_status: Optional[str] = None

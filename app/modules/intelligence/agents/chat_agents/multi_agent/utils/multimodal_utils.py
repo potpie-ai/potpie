@@ -2,7 +2,7 @@
 
 import base64
 import mimetypes
-from typing import List, Optional, Sequence, Union, Dict
+from typing import List, Optional, Sequence
 
 from pydantic_ai.messages import DocumentUrl, ImageUrl, UserContent
 
@@ -162,7 +162,9 @@ def validate_and_get_document_url(doc_data: dict, attachment_id: str) -> Optiona
         return None
 
 
-def document_to_user_content(doc_data: dict, attachment_id: str) -> Optional[UserContent]:
+def document_to_user_content(
+    doc_data: dict, attachment_id: str
+) -> Optional[UserContent]:
     """Build a DocumentUrl for LLM file input, or a text note if the type is unsupported.
 
     Do not use ImageUrl for documents: OpenAI rejects non-image data URLs in image_url parts.
@@ -170,7 +172,9 @@ def document_to_user_content(doc_data: dict, attachment_id: str) -> Optional[Use
     document_url = validate_and_get_document_url(doc_data, attachment_id)
     if not document_url:
         return None
-    mime = coerce_document_mime(doc_data.get("mime_type"), doc_data.get("file_name", ""))
+    mime = coerce_document_mime(
+        doc_data.get("mime_type"), doc_data.get("file_name", "")
+    )
     if mime:
         return DocumentUrl(
             url=document_url,
@@ -184,9 +188,7 @@ def document_to_user_content(doc_data: dict, attachment_id: str) -> Optional[Use
         attachment_id,
         declared,
     )
-    return (
-        f'\n[Attached file "{file_name}" ({declared}) cannot be passed as a model file input.]\n'
-    )
+    return f'\n[Attached file "{file_name}" ({declared}) cannot be passed as a model file input.]\n'
 
 
 def create_multimodal_user_content(ctx: ChatContext) -> Sequence[UserContent]:

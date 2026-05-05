@@ -20,13 +20,16 @@ from github.GithubException import GithubException
 
 # Lazy import for GitPython - top-level import causes SIGSEGV in forked workers
 if TYPE_CHECKING:
-    import git as git_module
+    pass
 
 
 def _get_git_module():
     """Lazy import git module to avoid fork-safety issues."""
     import git
+
     return git
+
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.utils.logger import setup_logger
@@ -285,7 +288,9 @@ class GithubService:
         # Try new UserAuthProvider system first
         try:
             from app.modules.auth.auth_provider_model import UserAuthProvider
-            from app.modules.integrations.token_encryption import decrypt_token
+            from integrations.adapters.outbound.crypto.token_encryption import (
+                decrypt_token,
+            )
 
             github_provider = (
                 self.db.query(UserAuthProvider)
@@ -367,7 +372,7 @@ class GithubService:
         Same logic as get_github_oauth_token but with await session.execute(...).
         """
         from app.modules.auth.auth_provider_model import UserAuthProvider
-        from app.modules.integrations.token_encryption import decrypt_token
+        from integrations.adapters.outbound.crypto.token_encryption import decrypt_token
 
         stmt_user = select(User).where(User.uid == uid).limit(1)
         result_user = await session.execute(stmt_user)
@@ -1127,13 +1132,10 @@ class GithubService:
                 .group_by(Project.repo_name)
                 .subquery()
             )
-            stmt = (
-                select(Project)
-                .join(
-                    subquery,
-                    (Project.repo_name == subquery.c.repo_name)
-                    & (Project.id == subquery.c.min_id),
-                )
+            stmt = select(Project).join(
+                subquery,
+                (Project.repo_name == subquery.c.repo_name)
+                & (Project.id == subquery.c.min_id),
             )
             result = await async_session.execute(stmt)
             projects = result.scalars().all()
@@ -1344,9 +1346,7 @@ class GithubService:
             if async_redis:
                 cached_structure = await async_redis.get(cache_key)
             else:
-                cached_structure = await asyncio.to_thread(
-                    self.redis.get, cache_key
-                )
+                cached_structure = await asyncio.to_thread(self.redis.get, cache_key)
         except (RedisError, OSError) as e:
             logger.warning(
                 "Redis cache read failed for project_structure (cache_key=%s): %s",

@@ -1,7 +1,7 @@
 """Requirements Agent for generating core functional and non-functional requirements."""
+
 from pydantic_ai import Agent
 from app.modules.intelligence.provider.provider_service import ProviderService
-from .spec_models import RequirementsOutputCore
 
 REQUIREMENTS_AGENT_PROMPT = """You are **THE REQUIREMENTS AGENT**, a specification analyst.
 
@@ -70,7 +70,10 @@ def create_requirements_agent(
     llm_provider: ProviderService,
 ) -> Agent:
     """Create requirements agent for generating core FRs, NFRs, and success metrics."""
-    prompt = REQUIREMENTS_AGENT_PROMPT + "\n\nIMPORTANT: Return your response as valid JSON matching the RequirementsOutputCore schema."
+    prompt = (
+        REQUIREMENTS_AGENT_PROMPT
+        + "\n\nIMPORTANT: Return your response as valid JSON matching the RequirementsOutputCore schema."
+    )
     return Agent(
         model=llm_provider.get_pydantic_model(),
         system_prompt=prompt,

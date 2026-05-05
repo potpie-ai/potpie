@@ -72,7 +72,7 @@ def terminal_session_output_tool(input_data: TerminalSessionOutputInput) -> str:
                 formatted += f"\n... (error truncated, {len(error)} total characters)"
 
         if is_complete:
-            formatted += f"\n\n✅ **Process completed**"
+            formatted += "\n\n✅ **Process completed**"
         else:
             formatted += (
                 f"\n\n📊 **Next offset:** {offset} (use this for subsequent calls)"

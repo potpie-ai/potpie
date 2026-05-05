@@ -12,7 +12,10 @@ from typing import Optional, Dict, Any, List, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 
-from app.modules.integrations.token_encryption import encrypt_token, decrypt_token
+from integrations.adapters.outbound.crypto.token_encryption import (
+    decrypt_token,
+    encrypt_token,
+)
 
 # Constants
 LINKING_TOKEN_LENGTH = 32  # Length of URL-safe token for provider linking

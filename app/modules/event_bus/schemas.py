@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class EventMetadata(BaseModel):
@@ -53,8 +53,7 @@ class WebhookEvent(BaseModel):
         default_factory=EventMetadata, description="Event metadata"
     )
 
-    class Config:
-        json_encoders = {datetime: lambda v: v.isoformat() + "Z"}
+    model_config = ConfigDict()
 
 
 class CustomEvent(BaseModel):
@@ -76,8 +75,7 @@ class CustomEvent(BaseModel):
         default_factory=EventMetadata, description="Event metadata"
     )
 
-    class Config:
-        json_encoders = {datetime: lambda v: v.isoformat() + "Z"}
+    model_config = ConfigDict()
 
 
 class Event(BaseModel):
@@ -97,5 +95,4 @@ class Event(BaseModel):
         default_factory=datetime.utcnow, description="When event was created"
     )
 
-    class Config:
-        json_encoders = {datetime: lambda v: v.isoformat() + "Z"}
+    model_config = ConfigDict()

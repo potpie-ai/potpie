@@ -49,7 +49,10 @@ class BlastRadiusAgent(ChatAgent):
                 "fetch_file",
                 "fetch_files_batch",
                 "analyze_code_structure",
-                "bash_command",
+                "sandbox_text_editor",
+                "sandbox_shell",
+                "sandbox_search",
+                "sandbox_git",
             ],
             exclude_embedding_tools=exclude_embedding_tools,
         )
@@ -75,6 +78,7 @@ blast_radius_task_prompt = """
     HOW TO GUIDE:
 
     IMPORATANT: steps on HOW TO traverse the codebase:
+    SANDBOX TOOLING: the sandbox image ships with `ripgrep` (`rg`), `fd`, `jq`, `git`, and `gh` preinstalled. For any text/code search use `sandbox_search` (structured ripgrep) or `sandbox_shell` with `rg` (`rg -n PATTERN`, `rg -t py PATTERN`, `rg -l PATTERN | xargs ...`) — never `grep -r` or `find … -exec grep`.
     1. You can use websearch, docstrings, readme to understand current feature/code you are working with better. Understand how to use current feature in context of codebase
     2. Use AskKnowledgeGraphQueries tool to understand where perticular feature or functionality resides or to fetch specific code related to some keywords. Fetch file structure to understand the codebase better, Use FetchFile tool to fetch code from a file
     3. Use GetcodefromProbableNodeIDs tool to fetch code for perticular class or function in a file, Use analyze_code_structure to get all the class/function/nodes in a file

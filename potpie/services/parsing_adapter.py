@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 import traceback
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Dict, Optional
@@ -150,17 +149,16 @@ class LibraryParsingService:
             ProjectNotFoundError: If project not found
             ParsingError: If parsing fails
         """
-        from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
+        from app.modules.intelligence.tools.sandbox.project_sandbox import (
+            ProjectRef,
+            get_project_sandbox,
+        )
         from app.modules.parsing.graph_construction.code_graph_service import (
             CodeGraphService,
         )
         from app.modules.projects.projects_schema import ProjectStatusEnum
-        from git import Repo
 
         project_service = self._get_project_service()
-        parse_helper = self._get_parse_helper()
-        inference_service = self._get_inference_service()
-        extracted_dir = None
 
         try:
             if cleanup_graph:
@@ -186,48 +184,19 @@ class LibraryParsingService:
                         except Exception:
                             pass
 
-            repo_details = ParsingRequest(
-                repo_name=repo_name,
-                branch_name=branch_name,
-                repo_path=repo_path,
-                commit_id=commit_id,
+            base_ref = commit_id or branch_name
+            sandbox = get_project_sandbox()
+            handle = await sandbox.ensure(
+                user_id=self.user_id,
+                project_id=str(project_id),
+                repo=ProjectRef(
+                    repo_name=repo_name,
+                    base_ref=base_ref,
+                    repo_url=repo_path,
+                ),
             )
 
-            repo, owner, auth = await parse_helper.clone_or_copy_repository(
-                repo_details, self.user_id, project_id=project_id
-            )
-
-            if self._development_mode:
-                extracted_dir, project_id = await parse_helper.setup_project_directory(
-                    repo,
-                    branch_name,
-                    auth,
-                    repo_details,
-                    self.user_id,
-                    project_id,
-                    commit_id=commit_id,
-                )
-            else:
-                extracted_dir, project_id = await parse_helper.setup_project_directory(
-                    repo,
-                    branch_name,
-                    auth,
-                    repo,
-                    self.user_id,
-                    project_id,
-                    commit_id=commit_id,
-                )
-
-            if isinstance(repo, Repo):
-                language = parse_helper.detect_repo_language(extracted_dir)
-            else:
-                languages = repo.get_languages()
-                if languages:
-                    language = max(languages, key=languages.get).lower()
-                else:
-                    language = parse_helper.detect_repo_language(extracted_dir)
-
-            await self._analyze_directory(extracted_dir, project_id, language)
+            await self._analyze_workspace(handle, project_id)
 
             return {
                 "message": "The project has been parsed successfully",
@@ -256,48 +225,30 @@ class LibraryParsingService:
                 )
             raise ParsingError(f"Parsing failed for project {project_id}: {e}") from e
 
-        finally:
-            if (
-                extracted_dir
-                and isinstance(extracted_dir, str)
-                and os.path.exists(extracted_dir)
-                and extracted_dir.startswith(self._project_path)
-            ):
-                shutil.rmtree(extracted_dir, ignore_errors=True)
-
-    async def _analyze_directory(
+    async def _analyze_workspace(
         self,
-        extracted_dir: str,
+        handle,
         project_id: str,
-        language: str,
     ) -> None:
-        """Analyze directory and build knowledge graph.
+        """Run the in-sandbox parser for ``handle`` and persist the graph.
 
-        Args:
-            extracted_dir: Path to extracted repository
-            project_id: Project identifier
-            language: Detected programming language
+        Mirrors :meth:`ParsingService.analyze_workspace` from the web
+        app — same primitives (``ProjectSandbox.parse`` →
+        ``CodeGraphService.store_graph_from_artifacts``), without the
+        Slack/email side-effects the library doesn't ship.
 
-        Raises:
-            ParsingError: If analysis fails
+        Replaces the legacy ``_analyze_directory(extracted_dir, language, …)``
+        path. The host process never walks the repo tree itself; the
+        ``language != "other"`` gate is replaced by a non-FILE-node
+        count on the parsed payload.
         """
+        from app.modules.intelligence.tools.sandbox.project_sandbox import (
+            get_project_sandbox,
+        )
         from app.modules.parsing.graph_construction.code_graph_service import (
             CodeGraphService,
         )
-        from app.modules.parsing.graph_construction.parsing_helper import (
-            ParsingFailedError,
-        )
         from app.modules.projects.projects_schema import ProjectStatusEnum
-
-        logger.info(f"Analyzing directory: {extracted_dir} for project {project_id}")
-
-        if not isinstance(extracted_dir, str):
-            raise ParsingError(
-                f"Invalid extracted_dir type: {type(extracted_dir)}, value: {extracted_dir}"
-            )
-
-        if not os.path.exists(extracted_dir):
-            raise ParsingError(f"Directory not found: {extracted_dir}")
 
         project_service = self._get_project_service()
         inference_service = self._get_inference_service()
@@ -306,7 +257,18 @@ class LibraryParsingService:
         if not project_details:
             raise ProjectNotFoundError(f"Project with ID {project_id} not found")
 
-        if language == "other":
+        sandbox = get_project_sandbox()
+        try:
+            artifacts = await sandbox.parse(handle, timeout_s=900)
+        except Exception as e:
+            raise ParsingError(
+                f"Sandbox parse failed for project {project_id}: {e}"
+            ) from e
+
+        non_file_nodes = sum(
+            1 for n in artifacts.nodes if getattr(n, "node_type", None) != "FILE"
+        )
+        if non_file_nodes == 0:
             await project_service.update_project_status(
                 project_id, ProjectStatusEnum.ERROR
             )
@@ -322,9 +284,8 @@ class LibraryParsingService:
                 self._neo4j_config["password"],
                 self.db,
             )
-
-            code_graph_service.create_and_store_graph(
-                extracted_dir, project_id, self.user_id
+            code_graph_service.store_graph_from_artifacts(
+                artifacts, project_id, self.user_id
             )
 
             await project_service.update_project_status(
@@ -339,10 +300,8 @@ class LibraryParsingService:
 
             logger.info(f"Successfully parsed project {project_id}")
 
-        except ParsingFailedError as e:
-            raise ParsingError(str(e)) from e
         except Exception as e:
-            raise ParsingError(f"Failed to analyze directory: {e}") from e
+            raise ParsingError(f"Failed to analyze workspace: {e}") from e
         finally:
             if code_graph_service:
                 code_graph_service.close()

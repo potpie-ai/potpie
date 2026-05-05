@@ -26,7 +26,11 @@ from app.modules.code_provider.github.github_router import router as github_rout
 from app.modules.conversations.conversations_router import (
     router as conversations_router,
 )
-from app.modules.integrations.integrations_router import router as integrations_router
+from integrations.application.bootstrap import load_providers
+from integrations.adapters.inbound.http.integrations_router import (
+    router as integrations_router,
+)
+from integrations.adapters.inbound.http.sources_router import router as sources_router
 from app.modules.intelligence.agents.agents_router import router as agent_router
 from app.modules.intelligence.prompts.prompt_router import router as prompt_router
 from app.modules.intelligence.prompts.system_prompt_setup import SystemPromptSetup
@@ -48,6 +52,10 @@ from app.modules.search.search_router import router as search_router
 from app.modules.tunnel.tunnel_router import router as tunnel_router
 from app.modules.usage.usage_router import router as usage_router
 from app.modules.users.user_router import router as user_router
+from app.modules.context_graph.context_engine_http import (
+    potpie_context_engine_router,
+    potpie_context_pot_v1_router,
+)
 from app.modules.users.user_service import UserService
 from app.modules.utils.firebase_setup import FirebaseSetup
 from app.modules.utils.logger import configure_logging, setup_logger
@@ -55,6 +63,7 @@ from app.modules.utils.logging_middleware import LoggingContextMiddleware
 
 configure_logging()
 logger = setup_logger(__name__)
+load_providers()
 
 
 class MainApp:
@@ -195,8 +204,19 @@ class MainApp:
         self.app.include_router(
             integrations_router, prefix="/api/v1", tags=["Integrations"]
         )
+        self.app.include_router(sources_router, prefix="/api/v1", tags=["Sources"])
         self.app.include_router(
             knowledge_graph_router, prefix="/api/v1", tags=["Knowledge Graph"]
+        )
+        self.app.include_router(
+            potpie_context_engine_router,
+            prefix="/api/v1/context",
+            tags=["Context Graph API"],
+        )
+        self.app.include_router(
+            potpie_context_pot_v1_router,
+            prefix="/api/v1/context",
+            tags=["Context Graph API"],
         )
 
     def add_health_check(self):

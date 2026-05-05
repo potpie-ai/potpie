@@ -32,7 +32,7 @@ from .llm_config import (
 )
 from .exceptions import UnsupportedProviderError
 
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from app.modules.intelligence.provider.openrouter_gemini_model import (
     OpenRouterGeminiModel,
@@ -1473,9 +1473,9 @@ class ProviderService:
                     # Z-AI / GLM models via OpenRouter
                     model_class = OpenRouterGlmModel
                 else:
-                    model_class = OpenAIModel
+                    model_class = OpenAIChatModel
             else:
-                model_class = OpenAIModel
+                model_class = OpenAIChatModel
 
             return model_class(
                 model_name=model_name,

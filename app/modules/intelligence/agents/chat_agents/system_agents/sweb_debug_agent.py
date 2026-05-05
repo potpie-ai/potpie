@@ -48,6 +48,7 @@ class SWEBDebugAgent(ChatAgent):
         )
         tools = self.tools_provider.get_tools(
             [
+                # Discovery
                 "get_code_from_multiple_node_ids",
                 "get_node_neighbours_from_node_id",
                 "get_code_from_probable_node_name",
@@ -57,22 +58,8 @@ class SWEBDebugAgent(ChatAgent):
                 "fetch_file",
                 "fetch_files_batch",
                 "analyze_code_structure",
-                "bash_command",
-                "analyze_code_structure",
-                "add_file_to_changes",
-                "update_file_lines",
-                "replace_in_file",
-                "insert_lines",
-                "delete_lines",
-                "get_file_diff",
-                "show_diff",
-                "clear_file_from_changes",
-                "fetch_file",
-                "clear_all_changes",
-                "list_files_in_changes",
-                "delete_file_in_changes",
-                "update_file_in_changes",
-                "get_session_metadata",
+                "web_search_tool",
+                # Run state
                 "read_todos",
                 "write_todos",
                 "add_todo",
@@ -81,8 +68,11 @@ class SWEBDebugAgent(ChatAgent):
                 "add_subtask",
                 "set_dependency",
                 "get_available_tasks",
-                "show_updated_file",
-                "web_search_tool",
+                # Sandbox: read / edit / verify on the agent worktree.
+                "sandbox_text_editor",
+                "sandbox_shell",
+                "sandbox_search",
+                "sandbox_git",
             ]
         )
 
@@ -263,7 +253,7 @@ Before concluding code is missing, check if it exists but isn't working:
 ### 3d. Systematic Enumeration (for category problems)
 
 1. **Identify the category** (Is this one exception among many?)
-2. **List all members** using grep/search
+2. **List all members** using `sandbox_search` (ripgrep) or `sandbox_shell` with `rg` — never `grep -r` / `find … -exec grep`
 3. **Create gap analysis** and check inheritance
 4. **Map leak paths**
 
@@ -502,8 +492,12 @@ UNTIL: All cases pass
 
 ## Step 7: Implement
 
-- Make precise, surgical changes
-- Review with `show_diff` to verify no typos or unintended effects
+- Use `sandbox_text_editor command="str_replace"` for surgical edits;
+  `command="create"` only for genuinely new files.
+- After each set of edits, `sandbox_git command="diff"` to verify no typos
+  or unintended effects.
+- Use `sandbox_shell` to validate (tests / lint / typecheck — whatever the
+  project uses).
 
 ---
 
@@ -511,7 +505,7 @@ UNTIL: All cases pass
 
 - **Call `get_requirements`** - verify EACH requirement including GENERALIZED ISSUE, AFFECTED COMPONENTS, DESIGN FIX
 - Confirm your fix addresses the generalized pattern, not just the original symptom
-- Run `show_diff` as final result
+- `sandbox_git command="status"` + `command="diff"` is the final summary the user reviews
 
 ---
 

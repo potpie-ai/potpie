@@ -4,8 +4,8 @@ from unittest.mock import MagicMock, AsyncMock
 
 import pytest
 
-from app.modules.integrations.integrations_service import IntegrationsService
-from app.modules.integrations.integrations_schema import (
+from integrations.application.integrations_service import IntegrationsService
+from integrations.domain.integrations_schema import (
     IntegrationType,
     IntegrationStatus,
     AuthData,

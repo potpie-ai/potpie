@@ -1,12 +1,12 @@
 """Unit tests for parsing_helper (e.g. _fetch_github_branch_head_sha_http)."""
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from app.modules.parsing.graph_construction.parsing_helper import (
     _fetch_github_branch_head_sha_http,
-    ParsingServiceError,
     ParsingFailedError,
+    ParsingServiceError,
 )
 
 
@@ -59,3 +59,10 @@ class TestParsingExceptions:
     def test_parsing_failed_error_inherits(self):
         err = ParsingFailedError("failed")
         assert isinstance(err, ParsingServiceError)
+
+
+# Phase 5 retired the SANDBOX_PARSING_ENABLED flag and the
+# _clone_via_sandbox / clone_or_copy_repository fallback chain.
+# parse_directory now goes through ProjectSandbox unconditionally —
+# see tests/unit/parsing/test_sandbox_parse_flow.py for the new
+# coverage.

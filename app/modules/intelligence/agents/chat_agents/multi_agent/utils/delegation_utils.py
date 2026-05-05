@@ -10,19 +10,28 @@ logger = setup_logger(__name__)
 
 
 class AgentType(Enum):
-    """Types of specialized agents in the multi-agent system"""
+    """Types of specialized agents in the multi-agent system.
+
+    GitHub used to be a delegate agent here. It was retired: the supervisor
+    now drives the GitHub HTTP tools (``code_provider_*``) directly via its
+    own tool surface, since most GitHub work is a single tool call and the
+    isolation a subagent provided wasn't earning its coordination cost.
+    """
 
     SUPERVISOR = "supervisor"
     THINK_EXECUTE = "think_execute"  # Generic Think and Execute Agent
     JIRA = "jira"  # Jira Integration Agent
-    GITHUB = "github"  # GitHub Integration Agent
     CONFLUENCE = "confluence"  # Confluence Integration Agent
     LINEAR = "linear"  # Linear Integration Agent
 
 
 def is_delegation_tool(tool_name: str) -> bool:
-    """Check if a tool call is a delegation to a subagent"""
-    # Support both old format (delegate_to_github) and new format (delegate_to_github_agent)
+    """Check if a tool call is a delegation to a subagent.
+
+    Both legacy (``delegate_to_<type>``) and current
+    (``delegate_to_<type>_agent``) naming are accepted —
+    :func:`extract_agent_type_from_delegation_tool` strips the suffix.
+    """
     return tool_name.startswith("delegate_to_")
 
 

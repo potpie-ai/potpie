@@ -1,0 +1,4 @@
+interface:
+  display_name: "Potpie Agent Context"
+  short_description: "Gather project context through the minimal context port"
+  default_prompt: "Use $potpie-agent-context to gather bounded project context through context_resolve recipes."

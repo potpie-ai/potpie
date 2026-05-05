@@ -9,6 +9,10 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
+from app.modules.intelligence.tools.sandbox.read_helpers import (
+    format_dir_tree,
+    list_dir_via_sandbox,
+)
 from app.modules.intelligence.tools.tool_utils import truncate_response
 
 logger = logging.getLogger(__name__)
@@ -209,15 +213,38 @@ class GetCodeFileStructureTool:
             logger.debug(f"[get_code_file_structure] Local routing failed: {e}")
             return None
 
+    async def _try_sandbox(self, project_id: str, path: Optional[str]) -> Optional[str]:
+        """Read the directory tree from the project's sandbox analysis workspace.
+
+        Replaces the legacy LocalRepoService dispatch in CodeProviderService.
+        Returns the formatted tree string on success, ``None`` on failure
+        so the caller falls through to GitHub.
+        """
+        try:
+            structure = await list_dir_via_sandbox(project_id, path)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(f"[get_code_file_structure] sandbox list_dir failed: {exc}")
+            return None
+        if not structure:
+            return None
+        rendered = format_dir_tree(structure)
+        return rendered or None
+
     async def fetch_repo_structure(
         self, project_id: str, path: Optional[str] = None
     ) -> str:
-        # LOCAL-FIRST: Try LocalServer via tunnel first
+        # Tier 1 — VS Code extension tunnel (irreplaceable: IDE state).
         local_result = self._try_local_server(path)
         if local_result:
             return local_result
 
-        # Fall back to remote/CodeProviderService
+        # Tier 2 — sandbox analysis workspace.
+        sandbox_result = await self._try_sandbox(project_id, path)
+        if sandbox_result:
+            logger.info("[get_code_file_structure] ✅ Sandbox workspace returned tree")
+            return sandbox_result
+
+        # Tier 3 — CodeProviderService (GitHub or LocalRepoService).
         logger.debug(
             f"[get_code_file_structure] Falling back to remote for project {project_id}, path={path}"
         )

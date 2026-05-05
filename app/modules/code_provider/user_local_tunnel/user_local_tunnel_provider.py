@@ -21,7 +21,7 @@ logger = setup_logger(__name__)
 class UserLocalTunnelProvider(ICodeProvider):
     """
     Code provider that uses tunnel/extension to access local workspace files.
-    
+
     This provider communicates with LocalServer running in the VS Code extension
     via Cloudflare tunnel. It provides access to the user's local workspace
     without requiring direct filesystem access.
@@ -68,7 +68,11 @@ class UserLocalTunnelProvider(ICodeProvider):
             return None
 
     def _make_tunnel_request(
-        self, method: str, endpoint: str, params: Optional[Dict] = None, json_data: Optional[Dict] = None
+        self,
+        method: str,
+        endpoint: str,
+        params: Optional[Dict] = None,
+        json_data: Optional[Dict] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Make HTTP request to LocalServer via tunnel.
@@ -88,10 +92,12 @@ class UserLocalTunnelProvider(ICodeProvider):
             return None
 
         url = f"{tunnel_url}{endpoint}"
-        
+
         # Add query parameters if provided
         if params:
-            query_string = "&".join([f"{k}={url_quote(str(v))}" for k, v in params.items()])
+            query_string = "&".join(
+                [f"{k}={url_quote(str(v))}" for k, v in params.items()]
+            )
             url = f"{url}?{query_string}"
 
         logger.debug(f"[UserLocalTunnelProvider] Making {method} request to {url}")
@@ -160,7 +166,9 @@ class UserLocalTunnelProvider(ICodeProvider):
             return False
 
         # Try a simple request to verify tunnel is working
-        result = self._make_tunnel_request("GET", "/api/files/structure", params={"path": ""})
+        result = self._make_tunnel_request(
+            "GET", "/api/files/structure", params={"path": ""}
+        )
         return result is not None and result.get("success", False)
 
     # ============ Content Operations ============
@@ -193,7 +201,11 @@ class UserLocalTunnelProvider(ICodeProvider):
         )
 
         if not result or not result.get("success"):
-            error = result.get("error", "Unknown error") if result else "No response from tunnel"
+            error = (
+                result.get("error", "Unknown error")
+                if result
+                else "No response from tunnel"
+            )
             raise FileNotFoundError(f"Failed to read file '{file_path}': {error}")
 
         content = result.get("content", "")
@@ -232,7 +244,7 @@ class UserLocalTunnelProvider(ICodeProvider):
             params["path"] = path
         if max_depth:
             params["max_depth"] = str(max_depth)
-        
+
         result = self._make_tunnel_request(
             "GET",
             "/api/files/structure",
@@ -240,58 +252,66 @@ class UserLocalTunnelProvider(ICodeProvider):
         )
 
         if not result or not result.get("success"):
-            error = result.get("error", "Unknown error") if result else "No response from tunnel"
+            error = (
+                result.get("error", "Unknown error")
+                if result
+                else "No response from tunnel"
+            )
             logger.warning(f"Failed to get structure for path '{path}': {error}")
             return []
 
         # The structure endpoint returns a nested object structure
         # Format it to match the expected string format (like LocalRepoService does)
         structure_obj = result.get("structure", {})
-        
+
         if not structure_obj:
             logger.warning(f"Empty structure returned for path '{path}'")
             return []
-        
+
         # Format the structure object to a string
         structure_str = self._format_tree_structure(structure_obj)
-        
+
         # Return as a single formatted string entry
         # This matches what the code_provider_service expects (string format)
         return [{"path": path, "structure": structure_str}]
-    
+
     def _format_tree_structure(self, structure: Dict[str, Any]) -> str:
         """
         Format nested structure object to indented string format.
-        
+
         Matches the format used by LocalRepoService and GithubService.
-        
+
         Args:
             structure: Dictionary with 'name' and 'children' keys
-            
+
         Returns:
             Formatted string with indented hierarchy
         """
+
         def _format_node(node: Dict[str, Any], depth: int = 0) -> List[str]:
             output = []
             indent = "  " * depth
-            
+
             # Skip root name if it's the workspace root
             if depth > 0:
                 output.append(f"{indent}{node.get('name', '')}")
-            
+
             # Process children if present
             children = node.get("children", [])
             if children:
                 # Sort: directories first, then files, both alphabetically
                 sorted_children = sorted(
                     children,
-                    key=lambda x: (x.get("type") != "directory", x.get("name", "").lower())
+                    key=lambda x: (
+                        x.get("type") != "directory",
+                        x.get("name", "").lower(),
+                    ),
                 )
                 for child in sorted_children:
                     output.extend(_format_node(child, depth + 1))
-            
+
             return output
-        
+
         return "\n".join(_format_node(structure))
 
     # ============ Branch Operations ============
@@ -328,13 +348,41 @@ class UserLocalTunnelProvider(ICodeProvider):
         self, repo_name: str, state: str = "open", limit: int = 10
     ) -> List[Dict[str, Any]]:
         """List PRs - not supported for tunnel provider."""
-        raise NotImplementedError("Pull request operations not supported for tunnel provider")
+        raise NotImplementedError(
+            "Pull request operations not supported for tunnel provider"
+        )
 
     def get_pull_request(
         self, repo_name: str, pr_number: int, include_diff: bool = False
     ) -> Dict[str, Any]:
         """Get PR - not supported for tunnel provider."""
-        raise NotImplementedError("Pull request operations not supported for tunnel provider")
+        raise NotImplementedError(
+            "Pull request operations not supported for tunnel provider"
+        )
+
+    def get_pull_request_commits(
+        self, repo_name: str, pr_number: int
+    ) -> List[Dict[str, Any]]:
+        """Get PR commits - not supported for tunnel provider."""
+        raise NotImplementedError(
+            "Pull request operations not supported for tunnel provider"
+        )
+
+    def get_pull_request_review_comments(
+        self, repo_name: str, pr_number: int, limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """Get PR review comments - not supported for tunnel provider."""
+        raise NotImplementedError(
+            "Pull request operations not supported for tunnel provider"
+        )
+
+    def get_pull_request_issue_comments(
+        self, repo_name: str, pr_number: int, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """Get PR issue comments - not supported for tunnel provider."""
+        raise NotImplementedError(
+            "Pull request operations not supported for tunnel provider"
+        )
 
     def create_pull_request(
         self,
@@ -347,7 +395,9 @@ class UserLocalTunnelProvider(ICodeProvider):
         labels: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Create PR - not supported for tunnel provider."""
-        raise NotImplementedError("Pull request operations not supported for tunnel provider")
+        raise NotImplementedError(
+            "Pull request operations not supported for tunnel provider"
+        )
 
     def add_pull_request_comment(
         self,
@@ -359,7 +409,9 @@ class UserLocalTunnelProvider(ICodeProvider):
         line: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Add PR comment - not supported for tunnel provider."""
-        raise NotImplementedError("Pull request operations not supported for tunnel provider")
+        raise NotImplementedError(
+            "Pull request operations not supported for tunnel provider"
+        )
 
     def create_pull_request_review(
         self,
@@ -370,7 +422,9 @@ class UserLocalTunnelProvider(ICodeProvider):
         comments: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Create PR review - not supported for tunnel provider."""
-        raise NotImplementedError("Pull request operations not supported for tunnel provider")
+        raise NotImplementedError(
+            "Pull request operations not supported for tunnel provider"
+        )
 
     # ============ Issue Operations ============
 
@@ -413,12 +467,16 @@ class UserLocalTunnelProvider(ICodeProvider):
         self, user_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """List user repos - not supported for tunnel provider."""
-        logger.warning("list_user_repositories not supported for UserLocalTunnelProvider")
+        logger.warning(
+            "list_user_repositories not supported for UserLocalTunnelProvider"
+        )
         return []
 
     def get_user_organizations(self) -> List[Dict[str, Any]]:
         """Get user orgs - not supported for tunnel provider."""
-        logger.warning("get_user_organizations not supported for UserLocalTunnelProvider")
+        logger.warning(
+            "get_user_organizations not supported for UserLocalTunnelProvider"
+        )
         return []
 
     # ============ Provider Metadata ============

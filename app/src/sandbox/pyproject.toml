@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "potpie-sandbox"
+version = "0.1.0"
+description = "Potpie sandbox core with hexagonal workspace and runtime providers."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+daytona = ["daytona>=0.134.0"]
+dev = ["pytest>=8.0.0", "pytest-asyncio>=0.24.0", "ruff>=0.8.0"]
+
+[project.scripts]
+# Exposes the in-sandbox parser shim on PATH for the local sandbox
+# runtime. The Daytona image baked from images/agent-sandbox/Dockerfile
+# installs the same entry point — ProjectSandbox.parse() calls
+# `potpie-parse` regardless of backend, and this is what makes that
+# uniform call work in local mode without an extra installation step.
+potpie-parse = "sandbox.parser_runner.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sandbox"]
+
+[tool.hatch.build.targets.sdist]
+include = ["sandbox", "tests"]
+
+[tool.ruff]
+target-version = "py310"
+src = [".", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short"
+asyncio_mode = "auto"
+

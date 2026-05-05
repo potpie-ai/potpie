@@ -1,6 +1,4 @@
-from datetime import datetime, timedelta
-import os
-import httpx
+from datetime import datetime
 
 from fastapi import HTTPException
 from sqlalchemy import func, select
@@ -41,9 +39,7 @@ class UsageService:
             result = await session.execute(stmt)
             agent_query = result.all()
 
-            agent_message_counts = {
-                agent_id: count for agent_id, count in agent_query
-            }
+            agent_message_counts = {agent_id: count for agent_id, count in agent_query}
 
             total_human_messages = sum(agent_message_counts.values())
 
@@ -62,14 +58,25 @@ class UsageService:
         Check if user has available credits in Dodo.
         Auto-initializes free user if no Dodo customer exists.
 
+        When ``BILLING_ENABLED`` is unset/falsy (local dev), skip silently.
+
         Raises HTTPException with 402 status if credits are exhausted.
         """
+        from app.modules.billing.subscription_service import _billing_enabled
+
+        if not _billing_enabled():
+            return True
+
         # Get or create Dodo customer (auto-initializes free user)
-        dodo_customer_id = await billing_subscription_service.get_or_create_dodo_customer_id(user_id)
+        dodo_customer_id = (
+            await billing_subscription_service.get_or_create_dodo_customer_id(user_id)
+        )
 
         if not dodo_customer_id:
             # Could not get or create Dodo customer - allow usage but log warning
-            logger.warning(f"Could not get or create Dodo customer for user {user_id}, allowing usage")
+            logger.warning(
+                f"Could not get or create Dodo customer for user {user_id}, allowing usage"
+            )
             return True
 
         # Get real-time credit balance from Dodo
@@ -77,7 +84,9 @@ class UsageService:
 
         credits_available = credit_balance.get("credits_available", 0)
         plan_type = credit_balance.get("plan_type", "free")
-        credits_total = credit_balance.get("credits_total", 50 if plan_type == "free" else 500)
+        credits_total = credit_balance.get(
+            "credits_total", 50 if plan_type == "free" else 500
+        )
 
         if credits_available <= 0:
             raise HTTPException(

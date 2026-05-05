@@ -9,7 +9,7 @@ Uses git worktree to manage multiple branches/commits efficiently.
 """
 
 import os
-from typing import List, Dict, Any, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from app.modules.code_provider.base.code_provider_interface import (
     ICodeProvider,
@@ -19,6 +19,9 @@ from app.modules.repo_manager.repo_manager_interface import IRepoManager
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+if TYPE_CHECKING:
+    from git import Repo
 
 
 class RepoManagerCodeProviderWrapper(ICodeProvider):
@@ -92,6 +95,28 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
     ) -> Dict[str, Any]:
         """Delegate to wrapped provider."""
         return self._provider.get_pull_request(repo_name, pr_number, include_diff)
+
+    def get_pull_request_commits(
+        self, repo_name: str, pr_number: int
+    ) -> List[Dict[str, Any]]:
+        """Delegate to wrapped provider."""
+        return self._provider.get_pull_request_commits(repo_name, pr_number)
+
+    def get_pull_request_review_comments(
+        self, repo_name: str, pr_number: int, limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """Delegate to wrapped provider."""
+        return self._provider.get_pull_request_review_comments(
+            repo_name, pr_number, limit
+        )
+
+    def get_pull_request_issue_comments(
+        self, repo_name: str, pr_number: int, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """Delegate to wrapped provider."""
+        return self._provider.get_pull_request_issue_comments(
+            repo_name, pr_number, limit
+        )
 
     def create_pull_request(
         self,

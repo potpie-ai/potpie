@@ -1,4 +1,29 @@
-"""Tool registration: SimpleTool, exclusion sets, create_code_changes_management_tools."""
+"""Tool registration for the code_changes_manager package.
+
+**Deprecated as an agent file-edit surface.** With the sandbox cutover,
+``sandbox_text_editor`` / ``sandbox_search`` / ``sandbox_shell`` /
+``sandbox_git`` cover everything an agent used to do via this module's
+add_file / update_file / replace_in_file / show_diff tools. The harness no
+longer registers those tools (see ``tool_service.py`` — which now wires
+the sandbox tools instead).
+
+What remains here:
+
+  * Terminal-command tools (``execute_terminal_command``,
+    ``terminal_session_output``, ``terminal_session_signal``) — orthogonal
+    to file editing; they target the LocalServer tunnel, not the sandbox.
+  * The ``CodeChangesManager`` Redis state, retained because the
+    ``/conversations/.../sync_change`` HTTP endpoint
+    (``conversations_router.py``) uses it to track IDE-side edits the
+    user makes in VS Code so subsequent agent turns can see them. That
+    is a different lifecycle than agent edits and stays out of the
+    sandbox for now.
+
+The legacy file-edit tools (``add_file_to_changes`` etc.) are no longer
+returned by :func:`create_code_changes_management_tools`. The function
+keeps its name for backwards compatibility with any out-of-tree caller
+that imported it directly.
+"""
 
 import asyncio
 import inspect
@@ -125,8 +150,42 @@ CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL: frozenset[str] = frozenset(
 
 
 def create_code_changes_management_tools() -> List[SimpleTool]:
-    """Create all code changes management tools"""
+    """Returns the LocalServer terminal tools only.
 
+    The legacy file-edit tools have been retired — the sandbox tool group
+    covers their use cases. The function name is preserved for backwards
+    compatibility with any out-of-tree caller that imported it directly.
+    """
+    return [
+        SimpleTool(
+            name="execute_terminal_command",
+            description="Execute a shell command on the user's local machine via LocalServer tunnel. Use for running tests, builds, scripts, git commands, npm/pip commands, etc. Commands run directly on the local machine within the workspace directory with security restrictions. Supports both sync (immediate results) and async (long-running) modes. Commands are validated - dangerous commands are blocked by default. Examples: 'npm test', 'git status', 'python script.py', 'npm run dev' (async mode).",
+            func=_async_wrap_sync_tool(execute_terminal_command_tool),
+            args_schema=ExecuteTerminalCommandInput,
+        ),
+        SimpleTool(
+            name="terminal_session_output",
+            description="Get output from an async terminal session. Use this to poll for output from a long-running command that was started with execute_terminal_command in async mode. Returns incremental output from the specified offset, allowing you to stream output from long-running processes. Use the returned offset for subsequent calls to get new output.",
+            func=_async_wrap_sync_tool(terminal_session_output_tool),
+            args_schema=TerminalSessionOutputInput,
+        ),
+        SimpleTool(
+            name="terminal_session_signal",
+            description="Send a signal to a terminal session (e.g., SIGINT to stop a process). Use this to control long-running processes started in async mode. Common signals: SIGINT (Ctrl+C, default), SIGTERM (graceful shutdown), SIGKILL (force kill). Example: Stop a dev server by sending SIGINT to its session.",
+            func=_async_wrap_sync_tool(terminal_session_signal_tool),
+            args_schema=TerminalSessionSignalInput,
+        ),
+    ]
+
+
+def _legacy_unused_create_code_changes_management_tools() -> List[SimpleTool]:
+    """Old file-edit tool registrations, retained as a string for reference.
+
+    Not called from anywhere — left in place so a future cleanup PR can
+    delete the entire ``code_changes_manager`` package once the IDE-side
+    sync flow (``conversations_router.py /sync_change``) has been
+    re-routed through the sandbox workspace.
+    """
     tools = [
         SimpleTool(
             name="add_file_to_changes",

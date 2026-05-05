@@ -259,6 +259,7 @@ def logfire_trace_metadata(**kwargs: Any):
 
     try:
         import logfire
+
         baggage_cm = logfire.set_baggage(**str_attrs)
     except Exception as e:
         logger.debug(

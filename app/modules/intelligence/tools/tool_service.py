@@ -44,24 +44,7 @@ from app.modules.intelligence.tools.code_query_tools.get_file_content_by_path im
     fetch_file_tool,
     fetch_files_batch_tool,
 )
-from app.modules.intelligence.tools.code_query_tools.bash_command_tool import (
-    bash_command_tool,
-)
-from app.modules.intelligence.tools.code_query_tools.apply_changes_tool import (
-    apply_changes_tool,
-)
-from app.modules.intelligence.tools.code_query_tools.git_commit_tool import (
-    git_commit_tool,
-)
-from app.modules.intelligence.tools.code_query_tools.git_push_tool import (
-    git_push_tool,
-)
-from app.modules.intelligence.tools.code_query_tools.create_pr_workflow_tool import (
-    create_pr_workflow_tool,
-)
-from app.modules.intelligence.tools.code_query_tools.checkout_worktree_branch_tool import (
-    checkout_worktree_branch_tool,
-)
+from app.modules.intelligence.tools.context_tools import create_agent_context_tools
 from app.modules.intelligence.tools.tool_schema import ToolInfo, ToolInfoWithParameters
 from app.modules.intelligence.tools.web_tools.code_provider_tool import (
     code_provider_tool,
@@ -110,8 +93,8 @@ from app.modules.intelligence.tools.web_tools.web_search_tool import web_search_
 from app.modules.intelligence.provider.provider_service import ProviderService
 from langchain_core.tools import StructuredTool
 from .todo_management_tool import create_todo_management_tools
-from .code_changes_manager import create_code_changes_management_tools
 from .requirement_verification_tool import create_requirement_verification_tools
+from .sandbox.tools import create_sandbox_tools
 
 
 logger = setup_logger(__name__)
@@ -252,42 +235,21 @@ class ToolService:
             ),
         }
 
-        # Add bash command tool if repo manager is enabled
-        bash_tool = bash_command_tool(self.db, self.user_id)
-        if bash_tool:
-            tools["bash_command"] = bash_tool
+        for tool in create_agent_context_tools(self.db, self.user_id):
+            tools[tool.name] = tool
 
-        # Add git workflow tools if repo manager is enabled
-        apply_tool = apply_changes_tool(self.db, self.user_id)
-        if apply_tool:
-            tools["apply_changes"] = apply_tool
-
-        commit_tool = git_commit_tool(self.db, self.user_id)
-        if commit_tool:
-            tools["git_commit"] = commit_tool
-
-        push_tool = git_push_tool(self.db, self.user_id)
-        if push_tool:
-            tools["git_push"] = push_tool
-
-        # Add composite PR workflow tool if repo manager is enabled
-        pr_workflow_tool = create_pr_workflow_tool(self.db, self.user_id)
-        if pr_workflow_tool:
-            tools["create_pr_workflow"] = pr_workflow_tool
-
-        # Add checkout worktree branch tool if repo manager is enabled
-        checkout_branch_tool = checkout_worktree_branch_tool(self.db, self.user_id)
-        if checkout_branch_tool:
-            tools["checkout_worktree_branch"] = checkout_branch_tool
+        # bash_command, apply_changes, git_commit, git_push, create_pr_workflow,
+        # checkout_worktree_branch — all removed during the sandbox migration.
+        # Their replacements live in the sandbox tool group below.
 
         # Add todo management tools
         todo_tools = create_todo_management_tools()
         for tool in todo_tools:
             tools[tool.name] = tool
 
-        # Add code changes management tools
-        code_changes_tools = create_code_changes_management_tools()
-        for tool in code_changes_tools:
+        # Sandbox-backed tools replace the legacy code_changes_manager staging
+        # family; the CCM package is no longer registered here (plan phase 8).
+        for tool in create_sandbox_tools():
             tools[tool.name] = tool
 
         # Add requirement verification tools
