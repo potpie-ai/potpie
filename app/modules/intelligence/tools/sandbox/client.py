@@ -98,6 +98,77 @@ class ResolvedAuth:
     kind: AuthKind
 
 
+def _mint_scoped_installation_token(repo_name: str) -> str | None:
+    """Mint a GitHub App installation token scoped to ``repo_name`` only.
+
+    PyGithub's ``AppInstallationAuth.token`` (used elsewhere in the
+    codebase) mints a token valid for *every* repo in the installation.
+    For sandbox git ops that token rides into the container via
+    ``-c http.<host>.extraheader=...`` and into clone URLs as
+    ``x-access-token:<TOKEN>@host`` — so an unscoped token would let any
+    code path that influences the remote URL pivot to other repos in
+    the same org where Potpie's App is installed. Containment over the
+    URL gate is fragile; containment via the token itself is not.
+
+    Calls ``/app/installations/{id}/access_tokens`` with ``repositories:
+    [<short_name>]`` so GitHub issues a token whose ``repositories``
+    claim covers exactly one repo. ``permissions`` is omitted on
+    purpose: the token inherits whatever the App was granted at install
+    time, so installs configured for read-only continue to work.
+
+    Returns ``None`` on any failure (App not configured, repo not in
+    any installation, network error). Caller falls through to the next
+    auth-chain branch — this resolver is fail-open by design.
+    """
+    import requests
+    from github.Auth import AppAuth
+
+    from app.core.config_provider import config_provider
+
+    app_id = os.getenv("GITHUB_APP_ID")
+    private_key = config_provider.get_github_key()
+    if not app_id or not private_key:
+        return None
+    if not private_key.startswith("-----BEGIN"):
+        private_key = (
+            "-----BEGIN RSA PRIVATE KEY-----\n"
+            f"{private_key}\n"
+            "-----END RSA PRIVATE KEY-----\n"
+        )
+
+    jwt_token = AppAuth(app_id=app_id, private_key=private_key).create_jwt()
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {jwt_token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+    inst_resp = requests.get(
+        f"https://api.github.com/repos/{repo_name}/installation",
+        headers=headers,
+        timeout=60,
+    )
+    if inst_resp.status_code != 200:
+        return None
+    installation_id = inst_resp.json().get("id")
+    if not installation_id:
+        return None
+
+    # GitHub's ``repositories`` filter takes the short name only — the
+    # owner is implicit in the installation. Case must match the canonical
+    # repo name as stored on GitHub.
+    short_name = repo_name.split("/", 1)[-1]
+    token_resp = requests.post(
+        f"https://api.github.com/app/installations/{installation_id}/access_tokens",
+        headers=headers,
+        json={"repositories": [short_name]},
+        timeout=60,
+    )
+    if token_resp.status_code != 201:
+        return None
+    return token_resp.json().get("token")
+
+
 def _resolve_auth(
     user_id: str | None, repo_name: str | None = None
 ) -> ResolvedAuth:
@@ -109,7 +180,9 @@ def _resolve_auth(
 
       1. ``auth_token`` contextvar — set by the harness when a per-run
          token is pinned. Kind: ``"context"``.
-      2. GitHub App installation token for ``repo_name``. Kind: ``"app"``.
+      2. GitHub App installation token for ``repo_name``, scoped to that
+         single repo via the ``repositories`` filter on
+         ``/access_tokens``. Kind: ``"app"``.
       3. User OAuth token from ``GithubService`` (requires ``user_id``).
          Kind: ``"user_oauth"``.
       4. ``GH_TOKEN`` / ``GITHUB_TOKEN`` env vars (CI / dev fallback).
@@ -126,18 +199,9 @@ def _resolve_auth(
 
     if repo_name:
         try:
-            from app.modules.code_provider.provider_factory import (
-                CodeProviderFactory,
-            )
-
-            provider = CodeProviderFactory.create_github_app_provider(repo_name)
-            requester = getattr(
-                getattr(provider, "client", None), "_Github__requester", None
-            )
-            auth = getattr(requester, "auth", None) if requester else None
-            app_token = getattr(auth, "token", None) if auth else None
-            if app_token:
-                return ResolvedAuth(token=app_token, kind="app")
+            scoped = _mint_scoped_installation_token(repo_name)
+            if scoped:
+                return ResolvedAuth(token=scoped, kind="app")
         except Exception:
             pass
 

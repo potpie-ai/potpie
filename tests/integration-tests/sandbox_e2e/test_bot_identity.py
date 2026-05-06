@@ -11,7 +11,9 @@ the Potpie bot" actually work:
   default.
 * ``SandboxClient.push`` resolves a fresh token from
   ``RemoteAuthProvider`` per call and prepends
-  ``-c http.<host>.extraheader='AUTHORIZATION: bearer …'`` so push to a
+  ``-c http.<host>.extraheader='AUTHORIZATION: basic …'`` (Basic auth
+  with ``x-access-token`` as username — the scheme GitHub's smart-HTTP
+  backend reliably accepts for installation tokens) so push to a
   remote that requires auth works without ever persisting the token to
   ``.git/config``.
 

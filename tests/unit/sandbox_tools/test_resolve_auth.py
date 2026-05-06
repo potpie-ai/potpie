@@ -105,7 +105,7 @@ class TestResolveAuth:
         monkeypatch: pytest.MonkeyPatch,
         no_context_token: None,
     ) -> None:
-        """When the GitHub App lookup raises, the resolver swallows the
+        """When the GitHub App token mint raises, the resolver swallows the
         error and continues to the next branch instead of failing the
         clone outright. Without this, a transient App lookup blip would
         block every agent run.
@@ -114,8 +114,9 @@ class TestResolveAuth:
         def _boom(repo_name: str) -> Any:  # noqa: ARG001
             raise RuntimeError("App auth blew up")
 
-        with patch(
-            "app.modules.code_provider.provider_factory.CodeProviderFactory.create_github_app_provider",
+        with patch.object(
+            sandbox_client_mod,
+            "_mint_scoped_installation_token",
             side_effect=_boom,
         ):
             monkeypatch.setenv("GH_TOKEN", "fallback")
@@ -123,6 +124,26 @@ class TestResolveAuth:
         # We landed on env, not raised.
         assert result.kind == "env"
         assert result.token == "fallback"
+
+    def test_app_branch_returns_scoped_token(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        no_context_token: None,
+    ) -> None:
+        """When the App-token mint succeeds, the resolver returns it with
+        ``kind="app"`` and skips later branches. The token itself is
+        opaque to this layer — the scoping happens inside
+        ``_mint_scoped_installation_token``; here we just pin the wiring.
+        """
+        monkeypatch.setenv("GH_TOKEN", "would-be-fallback")
+        with patch.object(
+            sandbox_client_mod,
+            "_mint_scoped_installation_token",
+            return_value="ghs_scoped",
+        ) as mint:
+            result = _resolve_auth(user_id="u1", repo_name="owner/repo")
+        mint.assert_called_once_with("owner/repo")
+        assert result == ResolvedAuth(token="ghs_scoped", kind="app")
 
 
 # ======================================================================

@@ -725,11 +725,13 @@ class SandboxClient:
         Auth is injected per-call from the configured
         :class:`RemoteAuthProvider`: a freshly resolved token (App
         installation token in production) is passed via
-        ``-c http.<host>.extraheader='AUTHORIZATION: bearer …'`` so it
-        never lands in ``.git/config`` and never persists past this
-        invocation. The bare clone's ``origin`` URL was scrubbed at
-        clone time on purpose (caches are shared across users), so
-        without this re-injection, push to a private remote would fail.
+        ``-c http.<host>.extraheader='AUTHORIZATION: basic …'`` (Basic
+        with ``x-access-token`` as username, matching the clone URL
+        scheme) so it never lands in ``.git/config`` and never persists
+        past this invocation. The bare clone's ``origin`` URL was
+        scrubbed at clone time on purpose (caches are shared across
+        users), so without this re-injection, push to a private remote
+        would fail.
         """
         # `-c http.<host>.extraheader=...` has to come BEFORE the `push`
         # subcommand for git to honour it. Keep the option list separate
@@ -790,6 +792,15 @@ class SandboxClient:
         The token is freshly resolved on every call — installation
         tokens expire in 1h, so caching at acquire-session time would
         silently break long-running conversations.
+
+        Header form is HTTP Basic with ``x-access-token`` as the
+        username and the token as the password — the same convention
+        the clone-time URL uses (``https://x-access-token:<TOKEN>@host``)
+        and the same shape ``actions/checkout`` injects. GitHub's
+        smart-HTTP backend has always accepted this for installation
+        tokens; the ``Bearer`` scheme works for the REST API but is
+        not reliably accepted for git-over-HTTPS push, which surfaces
+        as ``remote: invalid credentials`` even with a valid token.
         """
         workspace = await self._service.get_workspace(handle.workspace_id)
         auth = await self._service.remote_auth_for(
@@ -798,7 +809,10 @@ class SandboxClient:
         if auth is None:
             return []
         host = workspace.request.repo.provider_host or "github.com"
-        header = f"AUTHORIZATION: bearer {auth.token}"
+        basic = base64.b64encode(
+            f"x-access-token:{auth.token}".encode()
+        ).decode("ascii")
+        header = f"AUTHORIZATION: basic {basic}"
         # `-c` overrides config for this invocation only; the token
         # never lands on disk. The host scope is important — a global
         # extraheader would match every HTTPS git operation in the
