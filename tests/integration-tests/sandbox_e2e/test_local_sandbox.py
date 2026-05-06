@@ -172,7 +172,8 @@ class TestWorkspaceLifecycle:
         # README.md from the fixture upstream made it through.
         assert (worktree / "README.md").read_text() == "hello sandbox\n"
         # The branch the handle reports should match what git thinks.
-        head = subprocess.run(
+        head = await asyncio.to_thread(
+            subprocess.run,
             ["git", "-C", str(worktree), "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True, text=True, check=True,
         )
@@ -187,17 +188,17 @@ class TestWorkspaceLifecycle:
         second message of a conversation must land on the same worktree
         the first one created, with the same files and the same id.
         """
-        kwargs = dict(
-            user_id="u1",
-            project_id="p1",
-            repo=REPO_NAME,
-            repo_url=str(upstream_repo),
-            branch="agent/edits-conv1",
-            base_ref="main",
-            create_branch=True,
-            mode=WorkspaceMode.EDIT,
-            conversation_id="conv1",
-        )
+        kwargs = {
+            "user_id": "u1",
+            "project_id": "p1",
+            "repo": REPO_NAME,
+            "repo_url": str(upstream_repo),
+            "branch": "agent/edits-conv1",
+            "base_ref": "main",
+            "create_branch": True,
+            "mode": WorkspaceMode.EDIT,
+            "conversation_id": "conv1",
+        }
         h1 = await local_client.acquire_session(**kwargs)
         h2 = await local_client.acquire_session(**kwargs)
         assert h1.workspace_id == h2.workspace_id
@@ -386,11 +387,7 @@ class TestConversationIsolation:
 
         await local_client.write_file(h_a, "ONLY_IN_A.txt", b"a-only\n")
         # h_b's directory must not have it.
-        listing = subprocess.run(
-            ["ls", h_b.local_path],
-            capture_output=True, text=True, check=True,
-        )
-        assert "ONLY_IN_A.txt" not in listing.stdout
+        assert "ONLY_IN_A.txt" not in os.listdir(h_b.local_path)
 
     async def test_same_branch_two_conversations_surfaces_typed_error(
         self, local_client: SandboxClient, upstream_repo: Path
@@ -505,7 +502,7 @@ class TestPathSafety:
         with pytest.raises(InvalidWorkspacePath):
             await local_client.read_file(handle, "/etc/passwd")
         with pytest.raises(InvalidWorkspacePath):
-            await local_client.write_file(handle, "/tmp/x", b"x")
+            await local_client.write_file(handle, "/etc/x", b"x")
 
     async def test_dotdot_traversal_is_rejected(
         self, local_client: SandboxClient, upstream_repo: Path
