@@ -1,14 +1,32 @@
 mod code_index;
+mod git;
 mod parse;
 mod tag_extract;
 
+use pyo3::create_exception;
+use pyo3::exceptions::PyException;
+
 pub use code_index::{create_code_indexes, get_text_files, process_files_parallel, CodeFile};
+pub use git::{bare_clone, list_files, FileEntry, GitError};
 pub use parse::{index, process_file};
 pub use tag_extract::{extract_graph, extract_tags};
+
+create_exception!(parsing_rs, GitRepositoryNotFoundError, PyException);
+create_exception!(parsing_rs, GitRefNotFoundError, PyException);
+create_exception!(parsing_rs, GitParseError, PyException);
 
 #[pyo3::prelude::pymodule]
 mod parsing_rs {
     use pyo3::prelude::*;
+
+    #[pymodule_export]
+    use super::GitRepositoryNotFoundError;
+    #[pymodule_export]
+    use super::GitRefNotFoundError;
+    #[pymodule_export]
+    use super::GitParseError;
+    #[pymodule_export]
+    use crate::git::FileEntry;
 
     #[pyo3::pyclass]
     #[derive(Clone, Debug, PartialEq)]
@@ -128,6 +146,45 @@ mod parsing_rs {
     }
 
     use crate::tag_extract::extract_graph as extract_graph_rs;
+
+    #[pyfunction]
+    fn bare_clone(
+        repo_url: &str,
+        dest_path: &str,
+        git_ref: &str,
+        auth_token: Option<&str>,
+    ) -> PyResult<()> {
+        crate::git::bare_clone(repo_url, dest_path, git_ref, auth_token).map_err(|e| match e {
+            crate::git::GitError::RepositoryNotFound => {
+                GitRepositoryNotFoundError::new_err(
+                    "repository not found, inaccessible, or authentication failed",
+                )
+            }
+            crate::git::GitError::RefNotFound => {
+                GitRefNotFoundError::new_err("git ref not found")
+            }
+            crate::git::GitError::MalformedTreeEntry { line: _, reason } => {
+                GitParseError::new_err(format!("malformed git tree entry: {reason}"))
+            }
+        })
+    }
+
+    #[pyfunction]
+    fn list_files(bare_repo_path: &str, git_ref: &str) -> PyResult<Vec<crate::git::FileEntry>> {
+        crate::git::list_files(bare_repo_path, git_ref).map_err(|e| match e {
+            crate::git::GitError::RepositoryNotFound => {
+                GitRepositoryNotFoundError::new_err(
+                    "repository not found, inaccessible, or authentication failed",
+                )
+            }
+            crate::git::GitError::RefNotFound => {
+                GitRefNotFoundError::new_err("git ref not found")
+            }
+            crate::git::GitError::MalformedTreeEntry { line: _, reason } => {
+                GitParseError::new_err(format!("malformed git tree entry: {reason}"))
+            }
+        })
+    }
 
     #[pyfunction]
     fn extract_graph(repo_dir: &str) -> GraphPayload {
