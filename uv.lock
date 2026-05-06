@@ -374,14 +374,15 @@ wheels = [
 
 [[package]]
 name = "authlib"
-version = "1.6.10"
+version = "1.7.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
+    { name = "joserfc" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/aa/e2/2cd626412bfc3c78b17ca5e5ea8d489f8cae31d40b061f4da0a89068d8a3/authlib-1.6.10.tar.gz", hash = "sha256:856a4f54d6ef3361ca6bb6d14a27e8b88f8097cca795fb428ffe13720e2ecde6", size = 165333, upload-time = "2026-04-13T13:30:34.718Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/36/98/7d93f30d029643c0275dbc0bd6d5a6f670661ee6c9a94d93af7ab4887600/authlib-1.7.2.tar.gz", hash = "sha256:2cea25fefcd4e7173bdf1372c0afc265c8034b23a8cd5dcb6a9164b826c64231", size = 176511, upload-time = "2026-05-06T08:10:23.116Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7d/f6/9093f1ed17b6e2f4ac50d214543d4ec5268902a70e2158a752a06423b5ef/authlib-1.6.10-py2.py3-none-any.whl", hash = "sha256:aa639b43292554539924a3b4aaa9e81cd67ab64d3e28b22428c61f1200240287", size = 244351, upload-time = "2026-04-13T13:30:33.34Z" },
+    { url = "https://files.pythonhosted.org/packages/fb/95/adcb68e20c34162e9135f370d6e31737719c2b6f94bc953fe7ed1f10fe21/authlib-1.7.2-py2.py3-none-any.whl", hash = "sha256:3e1faedc9d87e7d56a164eca3ccb6ace0d61b94abe83e92242f8dc8bba9b4a9f", size = 259548, upload-time = "2026-05-06T08:10:21.436Z" },
 ]
 
 [[package]]
@@ -2816,6 +2817,18 @@ wheels = [
 ]
 
 [[package]]
+name = "joserfc"
+version = "1.6.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3b/dc/5f768c2e391e9afabe5d18e3221346deb5fb6338565f1ccc9e7c6d7befdd/joserfc-1.6.5.tar.gz", hash = "sha256:1482a7db78fb4602e44ed89e51b599d052e091288c7c532c5b694e20149dec48", size = 231881, upload-time = "2026-05-06T04:58:13.408Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/54/3b/ad1cb22e75c963b1f07c8a2329bf47227ce7e4361df5eb2fb101b2ce33ef/joserfc-1.6.5-py3-none-any.whl", hash = "sha256:e9878a0f8243fe7b95e11fdda81374ca9f7a689e302751579d3dfdeec559675e", size = 70464, upload-time = "2026-05-06T04:58:11.668Z" },
+]
+
+[[package]]
 name = "jsonpatch"
 version = "1.33"
 source = { registry = "https://pypi.org/simple" }
@@ -4672,10 +4685,12 @@ dependencies = [
     { name = "langchain" },
     { name = "langchain-core" },
     { name = "langgraph" },
+    { name = "langsmith" },
     { name = "litellm" },
     { name = "logfire", extra = ["litellm"] },
     { name = "loguru" },
     { name = "lupa" },
+    { name = "mako" },
     { name = "mistralai" },
     { name = "neo4j" },
     { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -4744,7 +4759,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.17.1" },
     { name = "anthropic", specifier = ">=0.72.0" },
     { name = "asyncpg", specifier = ">=0.30.0" },
-    { name = "authlib", specifier = ">=1.6.9" },
+    { name = "authlib", specifier = ">=1.6.11" },
     { name = "boto3", specifier = ">=1.40.67" },
     { name = "celery", specifier = ">=5.5.3" },
     { name = "chardet", specifier = ">=5.2.0" },
@@ -4774,10 +4789,12 @@ requires-dist = [
     { name = "langchain", specifier = ">=1.0.3" },
     { name = "langchain-core", specifier = ">=1.2.28" },
     { name = "langgraph", specifier = ">=1.0.10" },
+    { name = "langsmith", specifier = ">=0.7.31" },
     { name = "litellm", specifier = ">=1.83.0" },
     { name = "logfire", extras = ["litellm"], specifier = ">=3.2.0" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "lupa", specifier = ">=2.7" },
+    { name = "mako", specifier = ">=1.3.11" },
     { name = "mistralai", specifier = "<2.0.0" },
     { name = "neo4j", specifier = ">=5.28.2" },
     { name = "networkx", specifier = ">=3.4.2" },
@@ -4801,8 +4818,8 @@ requires-dist = [
     { name = "pygments", specifier = ">=2.20.0" },
     { name = "pyjwt", specifier = ">=2.12.1" },
     { name = "pynacl", specifier = ">=1.6.2" },
-    { name = "python-dotenv", specifier = ">=1.2.1" },
-    { name = "python-multipart", specifier = ">=0.0.22" },
+    { name = "python-dotenv", specifier = ">=1.2.2" },
+    { name = "python-multipart", specifier = ">=0.0.26" },
     { name = "python-socketio", specifier = ">=5.11.0" },
     { name = "qdrant-client", specifier = ">=1.12.0" },
     { name = "redis", specifier = ">=7.0.1" },
