@@ -6,7 +6,7 @@ aiofile==3.9.0
     # via py-key-value-aio
 aiohappyeyeballs==2.6.1
     # via aiohttp
-aiohttp==3.13.5
+aiohttp==3.13.4
     # via
     #   potpie (pyproject.toml)
     #   firecrawl-py
@@ -98,7 +98,7 @@ chardet==5.2.0
     # via potpie (pyproject.toml)
 charset-normalizer==3.4.4
     # via requests
-click==8.3.1
+click==8.1.8
     # via
     #   celery
     #   click-didyoumean
@@ -186,7 +186,7 @@ genai-prices==0.0.52
     # via pydantic-ai-slim
 gitdb==4.0.12
     # via gitpython
-gitpython==3.1.46
+gitpython==3.1.50
     # via potpie (pyproject.toml)
 google-api-core==2.29.0
     # via
@@ -234,7 +234,9 @@ googleapis-common-protos==1.72.0
 greenlet==3.3.1
     # via potpie (pyproject.toml)
 grep-ast==0.9.0
-    # via potpie (pyproject.toml)
+    # via
+    #   potpie (pyproject.toml)
+    #   parsing
 griffelib==2.0.0
     # via
     #   fastmcp
@@ -250,6 +252,7 @@ grpcio==1.76.0
     #   googleapis-common-protos
     #   grpc-google-iam-v1
     #   grpcio-status
+    #   qdrant-client
     #   xai-sdk
 grpcio-status==1.76.0
     # via google-api-core
@@ -288,6 +291,7 @@ httpx==0.28.1
     #   openai
     #   pydantic-ai-slim
     #   pydantic-graph
+    #   qdrant-client
 httpx-sse==0.4.3
     # via mcp
 huggingface-hub==1.4.1
@@ -307,7 +311,7 @@ idna==3.11
     #   httpx
     #   requests
     #   yarl
-importlib-metadata==8.7.1
+importlib-metadata==8.5.0
     # via
     #   litellm
     #   opentelemetry-api
@@ -347,7 +351,7 @@ jsonpointer==3.0.0
     # via jsonpatch
 jsonref==1.1.0
     # via fastmcp
-jsonschema==4.26.0
+jsonschema==4.23.0
     # via
     #   litellm
     #   mcp
@@ -384,7 +388,7 @@ langgraph-sdk==0.3.3
     # via langgraph
 langsmith==0.6.8
     # via langchain-core
-litellm==1.83.0
+litellm==1.83.14
     # via potpie (pyproject.toml)
 logfire==4.22.0
     # via
@@ -395,7 +399,9 @@ logfire-api==4.22.0
     #   pydantic-evals
     #   pydantic-graph
 loguru==0.7.3
-    # via potpie (pyproject.toml)
+    # via
+    #   potpie (pyproject.toml)
+    #   parsing
 lupa==2.7
     # via potpie (pyproject.toml)
 mako==1.3.10
@@ -413,7 +419,9 @@ mcp==1.26.0
 mdurl==0.1.2
     # via markdown-it-py
 mistralai==1.9.11
-    # via pydantic-ai-slim
+    # via
+    #   potpie (pyproject.toml)
+    #   pydantic-ai-slim
 more-itertools==10.8.0
     # via
     #   jaraco-classes
@@ -433,6 +441,7 @@ nest-asyncio==1.6.0
 networkx==3.6.1
     # via
     #   potpie (pyproject.toml)
+    #   parsing
     #   torch
 newrelic==11.5.0
     # via potpie (pyproject.toml)
@@ -442,11 +451,12 @@ nltk==3.9.4
     # via potpie (pyproject.toml)
 numpy==2.4.2
     # via
+    #   qdrant-client
     #   scikit-learn
     #   scipy
     #   sentence-transformers
     #   transformers
-openai==2.16.0
+openai==2.24.0
     # via
     #   potpie (pyproject.toml)
     #   instructor
@@ -519,6 +529,8 @@ packaging==25.0
     #   opentelemetry-instrumentation
     #   transformers
     #   xai-sdk
+app/src/parsing
+    # via potpie (pyproject.toml)
 pathable==0.4.4
     # via jsonschema-path
 pathspec==1.0.4
@@ -529,6 +541,8 @@ pillow==12.2.0
     # via potpie (pyproject.toml)
 platformdirs==4.5.1
     # via fastmcp
+portalocker==3.2.0
+    # via qdrant-client
 postgres==4.0
     # via potpie (pyproject.toml)
 posthog==7.8.2
@@ -560,6 +574,7 @@ protobuf==6.33.5
     #   logfire
     #   opentelemetry-proto
     #   proto-plus
+    #   qdrant-client
     #   temporalio
     #   xai-sdk
 psycopg-binary==3.3.2
@@ -608,6 +623,7 @@ pydantic==2.12.5
     #   pydantic-evals
     #   pydantic-graph
     #   pydantic-settings
+    #   qdrant-client
     #   xai-sdk
 pydantic-ai==1.63.0
     # via potpie (pyproject.toml)
@@ -634,6 +650,7 @@ pygithub==2.8.1
 pygments==2.20.0
     # via
     #   potpie (pyproject.toml)
+    #   parsing
     #   rich
 pyjwt==2.12.1
     # via
@@ -655,7 +672,7 @@ python-dateutil==2.9.0.post0
     #   celery
     #   mistralai
     #   posthog
-python-dotenv==1.2.1
+python-dotenv==1.2.2
     # via
     #   potpie (pyproject.toml)
     #   fastmcp
@@ -683,6 +700,8 @@ pyyaml==6.0.3
     #   mistralai
     #   pydantic-evals
     #   transformers
+qdrant-client==1.17.1
+    # via potpie (pyproject.toml)
 redis==7.1.0
     # via potpie (pyproject.toml)
 referencing==0.36.2
@@ -831,6 +850,7 @@ transformers==5.2.0
 tree-sitter==0.25.2
     # via
     #   potpie (pyproject.toml)
+    #   parsing
     #   tree-sitter-language-pack
 tree-sitter-c-sharp==0.23.1
     # via tree-sitter-language-pack
@@ -840,14 +860,15 @@ tree-sitter-language-pack==0.13.0
     # via
     #   potpie (pyproject.toml)
     #   grep-ast
+    #   parsing
 tree-sitter-yaml==0.7.2
     # via tree-sitter-language-pack
-typer==0.24.1
+typer==0.23.1
     # via
     #   potpie (pyproject.toml)
     #   instructor
     #   typer-slim
-typer-slim==0.24.0
+typer-slim==0.23.1
     # via
     #   huggingface-hub
     #   transformers
@@ -904,6 +925,7 @@ urllib3==2.6.3
     #   potpie (pyproject.toml)
     #   botocore
     #   pygithub
+    #   qdrant-client
     #   requests
     #   sentry-sdk
     #   types-requests
