@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional, Dict, Any, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from uuid import UUID
 
 
@@ -49,8 +49,7 @@ class AuthProviderResponse(BaseModel):
     linked_at: datetime
     last_used_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserAuthProvidersResponse(BaseModel):
@@ -141,8 +140,7 @@ class OrganizationSSOConfigResponse(BaseModel):
     is_active: bool
     configured_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ===== Account Management =====
@@ -183,5 +181,4 @@ class AuthAuditLogResponse(BaseModel):
     created_at: datetime
     error_message: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

@@ -1,0 +1,35 @@
+# Mounted into daytona-dex-1 by ../docker-compose.override.yaml.
+# Mirrors the upstream dev config from daytona/docker/dex/config.yaml but adds
+# redirect URIs for the remapped dashboard port (default 3010 to free up 3000
+# for a frontend dev server). Keep the original 3000 entries so a stack started
+# without the override still works.
+issuer: http://localhost:5556/dex
+storage:
+  type: sqlite3
+  config:
+    file: /var/dex/dex.db
+
+web:
+  http: 0.0.0.0:5556
+  allowedOrigins: ['*']
+  allowedHeaders: ['x-requested-with']
+
+staticClients:
+  - id: daytona
+    redirectURIs:
+      - 'http://localhost:3000'
+      - 'http://localhost:3000/api/oauth2-redirect.html'
+      - 'http://localhost:3010'
+      - 'http://localhost:3010/api/oauth2-redirect.html'
+      - 'http://localhost:3009/callback'
+      - 'http://proxy.localhost:4000/callback'
+    name: 'Daytona'
+    public: true
+
+enablePasswordDB: true
+staticPasswords:
+  - email: 'dev@daytona.io'
+    # echo password | htpasswd -BinC 10 admin | cut -d: -f2
+    hash: '$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W'
+    username: 'admin'
+    userID: '1234'

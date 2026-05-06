@@ -82,6 +82,26 @@ class TestGetClientAndProject:
             assert client is None
             assert project is None
 
+    def test_get_client_gcp_enabled_false(self):
+        """Test returns None when the positive GCP flag is false"""
+        with patch.dict(
+            os.environ,
+            {
+                "isDevelopmentMode": "disabled",
+                "GCP_SECRET_MANAGER_ENABLED": "false",
+                "GCP_PROJECT": "test-project",
+            },
+            clear=False,
+        ):
+            with patch(
+                "app.modules.auth.api_key_service.secretmanager.SecretManagerServiceClient"
+            ) as client_cls:
+                client, project = APIKeyService.get_client_and_project()
+
+                assert client is None
+                assert project is None
+                client_cls.assert_not_called()
+
     def test_get_client_no_project_id(self):
         """Test returns None when GCP_PROJECT not set"""
         env = {"isDevelopmentMode": "disabled", "GCP_SECRET_MANAGER_DISABLED": "false"}
@@ -191,6 +211,33 @@ class TestCreateAPIKey:
 
             assert api_key.startswith("sk-")
             mock_db.add.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_api_key_uses_local_storage_when_gcp_enabled_false(
+        self, mock_db, mock_user_pref, valid_fernet_key
+    ):
+        """Test prod mode uses local storage when GCP_SECRET_MANAGER_ENABLED=false"""
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_user_pref
+
+        with patch.dict(
+            os.environ,
+            {
+                "isDevelopmentMode": "disabled",
+                "GCP_SECRET_MANAGER_ENABLED": "false",
+                "GCP_PROJECT": "test-project",
+                "SECRET_ENCRYPTION_KEY": valid_fernet_key,
+            },
+            clear=False,
+        ):
+            with patch(
+                "app.modules.auth.api_key_service.secretmanager.SecretManagerServiceClient"
+            ) as client_cls:
+                api_key = await APIKeyService.create_api_key("user-123", mock_db)
+
+                assert api_key.startswith("sk-")
+                assert "api_key_hash" in mock_user_pref.preferences
+                assert "encrypted_api_key" in mock_user_pref.preferences
+                client_cls.assert_not_called()
 
 
 class TestValidateAPIKey:

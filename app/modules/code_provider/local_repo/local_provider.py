@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional
 
 import pathspec
 
@@ -11,14 +11,11 @@ from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-# Lazy import for GitPython - top-level import causes SIGSEGV in forked workers
-if TYPE_CHECKING:
-    from git import Repo as RepoType
-
 
 def _get_git_imports():
     """Lazy import git module to avoid fork-safety issues."""
     from git import GitCommandError, InvalidGitRepositoryError, NoSuchPathError, Repo
+
     return GitCommandError, InvalidGitRepositoryError, NoSuchPathError, Repo
 
 
@@ -203,6 +200,7 @@ class LocalProvider(ICodeProvider):
             ValueError: If ref is invalid
         """
         from app.modules.code_provider.git_safe import safe_git_repo_operation
+
         GitCommandError, _, _, _ = _get_git_imports()
 
         expanded_path = os.path.abspath(
@@ -573,6 +571,25 @@ class LocalProvider(ICodeProvider):
         self, repo_name: str, pr_number: int, include_diff: bool = False
     ) -> Dict[str, Any]:
         raise NotImplementedError("LocalProvider does not support pull requests")
+
+    def get_pull_request_commits(
+        self, repo_name: str, pr_number: int
+    ) -> List[Dict[str, Any]]:
+        raise NotImplementedError("LocalProvider does not support pull requests")
+
+    def get_pull_request_review_comments(
+        self, repo_name: str, pr_number: int, limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        raise NotImplementedError(
+            "LocalProvider does not support pull request comments"
+        )
+
+    def get_pull_request_issue_comments(
+        self, repo_name: str, pr_number: int, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        raise NotImplementedError(
+            "LocalProvider does not support pull request comments"
+        )
 
     def create_pull_request(
         self,

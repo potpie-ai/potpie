@@ -145,13 +145,13 @@ def execute_terminal_command_tool(input_data: ExecuteTerminalCommandInput) -> st
             "⚠️ [execute_terminal_command] Workspace socket registration expired and was cleaned up"
         )
         return (
-            f"❌ **Workspace socket registration expired**\n\n"
-            f"The extension registration has expired and has been cleaned up.\n\n"
-            f"**To fix:**\n"
-            f"1. The VS Code extension should automatically re-register\n"
-            f"2. Try the command again in a few seconds\n"
-            f"3. If the issue persists, check the VS Code extension logs\n"
-            f"4. Ensure the extension is running and connected"
+            "❌ **Workspace socket registration expired**\n\n"
+            "The extension registration has expired and has been cleaned up.\n\n"
+            "**To fix:**\n"
+            "1. The VS Code extension should automatically re-register\n"
+            "2. Try the command again in a few seconds\n"
+            "3. If the issue persists, check the VS Code extension logs\n"
+            "4. Ensure the extension is running and connected"
         )
     elif error_type == "no_tunnel" or error_type == "no_user_id":
         # No workspace socket available: no user_id, or no workspace_id (repo not in context), or socket not registered

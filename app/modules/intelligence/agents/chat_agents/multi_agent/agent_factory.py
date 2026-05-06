@@ -1,5 +1,6 @@
 """Agent factory for creating supervisor and delegate agents"""
 
+import hashlib
 from typing import List, Dict, Callable, Any, cast
 from pydantic_ai import Agent, Tool, ModelSettings
 from pydantic_ai.mcp import MCPServerStreamableHTTP
@@ -12,7 +13,6 @@ from .utils.tool_utils import (
     sanitize_tool_name_for_api,
 )
 from .agent_instructions import (
-    DELEGATE_AGENT_INSTRUCTIONS,
     SEARCH_FLOW_INSTRUCTIONS,
     get_delegate_agent_instructions,
     get_integration_agent_instructions,
@@ -21,7 +21,10 @@ from .agent_instructions import (
 )
 from .utils.context_utils import create_supervisor_task_description
 from app.modules.intelligence.agents.chat_agent import ChatContext
-from app.modules.intelligence.tracing.logfire_tracer import should_instrument_pydantic_ai
+from app.modules.context_graph.bundle_renderer import supervisor_prefetch_section
+from app.modules.intelligence.tracing.logfire_tracer import (
+    should_instrument_pydantic_ai,
+)
 from ..agent_config import AgentConfig, TaskConfig
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.utils.logger import setup_logger
@@ -181,10 +184,11 @@ class AgentFactory:
                     break  # Don't check other patterns for this tool
         return filtered
 
-    # Phase 2: AgentType → registry allow-list id for integration agents
+    # Phase 2: AgentType → registry allow-list id for integration agents.
+    # GitHub used to live here; it was retired and its tools are now exposed
+    # directly on the supervisor (see SUPERVISOR_ADD_WHEN_NON_LOCAL).
     _INTEGRATION_ALLOW_LIST_MAP = {
         AgentType.JIRA: "integration_jira",
-        AgentType.GITHUB: "integration_github",
         AgentType.CONFLUENCE: "integration_confluence",
         AgentType.LINEAR: "integration_linear",
     }
@@ -198,18 +202,12 @@ class AgentFactory:
         """Build tool list for integration-specific agents.
 
         When tool_resolver is set (Phase 2), integration tool names are resolved from
-        registry allow-lists (integration_jira, integration_github, etc.). Otherwise
-        uses hardcoded integration_tools_map for backward compatibility.
+        registry allow-lists (integration_jira, integration_confluence, integration_linear).
+        Otherwise uses hardcoded integration_tools_map for backward compatibility.
 
-        GitHub agent also receives code changes tools for committing tracked changes.
+        Note: GitHub used to be an integration agent here; the subagent was
+        retired and its tools were promoted to the supervisor's tool set.
         """
-        # Import code changes tools here to avoid circular imports
-        from app.modules.intelligence.tools.code_changes_manager import (
-            CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL,
-            CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL,
-            create_code_changes_management_tools,
-        )
-
         if self.tool_resolver:
             allow_list_id = self._INTEGRATION_ALLOW_LIST_MAP.get(agent_type)
             if not allow_list_id:
@@ -247,18 +245,6 @@ class AgentFactory:
                     "get_jira_project_users",
                     "link_jira_issues",
                 ],
-                AgentType.GITHUB: [
-                    "github_tool",
-                    "code_provider_tool",
-                    "github_create_branch",
-                    "code_provider_create_branch",
-                    "github_create_pull_request",
-                    "code_provider_create_pr",
-                    "github_add_pr_comments",
-                    "code_provider_add_pr_comments",
-                    "github_update_branch",
-                    "code_provider_update_file",
-                ],
                 AgentType.CONFLUENCE: [
                     "get_confluence_spaces",
                     "get_confluence_page",
@@ -294,24 +280,6 @@ class AgentFactory:
                 )
 
         wrapped_tools = wrap_structured_tools(integration_tools)
-
-        if agent_type == AgentType.GITHUB:
-            code_changes_tools = create_code_changes_management_tools()
-            if local_mode:
-                code_changes_tools = [
-                    t
-                    for t in code_changes_tools
-                    if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL
-                ]
-            else:
-                code_changes_tools = [
-                    t
-                    for t in code_changes_tools
-                    if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL
-                ]
-            wrapped_tools = wrapped_tools + wrap_structured_tools(code_changes_tools)
-            wrapped_tools = deduplicate_tools_by_name(wrapped_tools)
-
         return wrapped_tools
 
     def build_delegate_agent_tools(
@@ -326,31 +294,17 @@ class AgentFactory:
         registry allow-list "execute". When use_tool_search_flow=True (Phase 3),
         delegate gets the three discovery meta-tools instead of the full list.
 
-        Subagents get code execution tools and code changes tools, but NOT:
+        Subagents get code execution tools and sandbox edit tools, but NOT:
         - Delegation tools (they don't delegate)
         - Todo management tools (supervisor-only for coordination)
         - Requirement verification tools (supervisor-only for verification)
         """
-        # Import tools here to avoid circular imports
-        from app.modules.intelligence.tools.code_changes_manager import (
-            CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL,
-            CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL,
-            create_code_changes_management_tools,
+        from app.modules.intelligence.tools.sandbox.tools import (
+            create_sandbox_tools,
         )
 
-        code_changes_tools = create_code_changes_management_tools()
-        if local_mode:
-            code_changes_tools = [
-                t
-                for t in code_changes_tools
-                if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL
-            ]
-        else:
-            code_changes_tools = [
-                t
-                for t in code_changes_tools
-                if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL
-            ]
+        # Sandbox tools work in both modes (no local-mode exclusion).
+        code_changes_tools = create_sandbox_tools()
 
         if self.tool_resolver:
             if use_tool_search_flow:
@@ -501,61 +455,6 @@ Provide comprehensive context:
 **NOTE**: The Jira agent will inform you if it cannot complete a task. If it says it cannot do something, adjust your approach or use a different subagent.
 
 **PARALLELIZATION:** Call multiple times in parallel for independent Jira operations."""
-        elif agent_type == AgentType.GITHUB:
-            description = """🐙 DELEGATE TO GITHUB AGENT - Specialized subagent for ALL GitHub repository operations.
-
-**CRITICAL - USE FOR ANY GITHUB-RELATED TASK:**
-This agent handles ALL GitHub operations. Use it whenever the task involves:
-- **GitHub, pull requests, PRs, branches, commits, repository operations**
-- **Fetching GitHub issues** (open issues, closed issues, specific issues)
-- **Creating or managing GitHub content** (PRs, branches, comments)
-- **Committing code changes** tracked in the conversation to GitHub
-- **ANY mention of GitHub, repository, issues, PRs, branches, or commits in the user's request**
-
-**WHAT IS THE GITHUB AGENT:**
-- An isolated execution context with **GitHub-specific tools** (github_tool, github_create_branch, github_create_pull_request, etc.)
-- **HAS ACCESS to code changes tools** - can read and use tracked code changes from the conversation
-- Receives ONLY what you provide: task_description + context
-- Does NOT inherit conversation history - starts fresh
-- Streams work to user, returns summary to you
-- Will tell you if it CANNOT complete the task - listen to its feedback
-
-**WHEN TO USE (use liberally for GitHub tasks):**
-- ✅ **Fetching GitHub issues** (all open issues, specific issues, issue details) - **PRIMARY USE CASE**
-- ✅ **Fetching pull requests** (PRs, PR details, PR diffs)
-- ✅ Creating pull requests and branches
-- ✅ Updating files in branches
-- ✅ **Committing tracked code changes** to a branch or PR
-- ✅ Adding PR review comments with code references
-- ✅ Managing repository operations
-- ✅ **ANY task involving GitHub, repository, issues, PRs, branches, or commits**
-- ✅ When user asks to "list issues", "fetch issues", "get issues", "show PRs", "create PR", "commit changes", etc.
-
-**CRITICAL - GITHUB ISSUE FETCHING:**
-- The GitHub agent uses `github_tool` to fetch issues and PRs
-- To fetch all open issues: Provide `repo_name="owner/repo"` in context
-- Example task: "Fetch and list all open issues in the nndn/coin_game repository"
-- The agent will use `github_tool(repo_name="nndn/coin_game", is_pull_request=False, issue_number=None)`
-
-**AVAILABLE OPERATIONS:**
-- **Fetch issues/PRs** using github_tool (PRIMARY tool for GitHub data)
-- Create branches and pull requests
-- Update files in branches (commit changes)
-- Add PR comments with code snippet references
-- **Access tracked code changes** (list_files_in_changes, get_file_from_changes, export_changes, show_diff, etc.)
-
-**CRITICAL - CONTEXT PARAMETER:**
-Provide comprehensive context:
-- **Repository name** (e.g., "owner/repo" or "nndn/coin_game") - **REQUIRED for issue/PR fetching**
-- Branch names (source and target)
-- PR numbers or issue numbers if known
-- File paths and content for updates
-- Commit messages and descriptions
-- **For committing changes**: Include project_id and branch name
-
-**NOTE**: The GitHub agent will inform you if it cannot complete a task. If it says it cannot do something, adjust your approach or use a different subagent.
-
-**PARALLELIZATION:** Call multiple times in parallel for independent GitHub operations."""
         elif agent_type == AgentType.CONFLUENCE:
             description = """📄 DELEGATE TO CONFLUENCE AGENT - Specialized subagent for ALL Confluence documentation operations.
 
@@ -698,34 +597,19 @@ Subagents DON'T get your history. Provide comprehensive context:
         Note: Todo/requirement tools are provided via the registry (SUPERVISOR_TOOLS), not via a
         separate toolset, to avoid name conflicts with MCP servers that may also expose read_todos.
 
-        Note: In local mode, code changes tools are filtered by CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL
-        (clear_file_from_changes, clear_all_changes, show_diff, export_changes, show_updated_file)
-        so the extension handles diff/export/display and clear behavior.
+        Note: Sandbox tools work in both modes — agent edits run against the
+        worktree, the extension still owns its own diff display via local
+        terminal tools.
         """
-        # Import tools here to avoid circular imports
-        from app.modules.intelligence.tools.code_changes_manager import (
-            CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL,
-            CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL,
-            create_code_changes_management_tools,
-        )
         from app.modules.intelligence.tools.requirement_verification_tool import (
             create_requirement_verification_tools,
         )
+        from app.modules.intelligence.tools.sandbox.tools import (
+            create_sandbox_tools,
+        )
 
-        # Create code changes tools; filter by local_mode so web doesn't get terminal tools and extension doesn't get show_diff/export/show_updated_file
-        code_changes_tools = create_code_changes_management_tools()
-        if local_mode:
-            code_changes_tools = [
-                t
-                for t in code_changes_tools
-                if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_IN_LOCAL
-            ]
-        else:
-            code_changes_tools = [
-                t
-                for t in code_changes_tools
-                if t.name not in CODE_CHANGES_TOOLS_EXCLUDE_WHEN_NON_LOCAL
-            ]
+        # Sandbox edit tools replace the legacy CCM staging family.
+        code_changes_tools = create_sandbox_tools()
         requirement_tools = create_requirement_verification_tools()
         delegation_tools = self.build_delegation_tools()
 
@@ -832,10 +716,11 @@ Subagents DON'T get your history. Provide comprehensive context:
         if cache_key in self._agent_instances:
             return self._agent_instances[cache_key]
 
-        # Determine if this is an integration agent
+        # Determine if this is an integration agent.
+        # GitHub used to be one; it was retired and its tools live on the
+        # supervisor directly (see SUPERVISOR_ADD_WHEN_NON_LOCAL).
         integration_agents = {
             AgentType.JIRA,
-            AgentType.GITHUB,
             AgentType.CONFLUENCE,
             AgentType.LINEAR,
         }
@@ -886,11 +771,21 @@ Subagents DON'T get your history. Provide comprehensive context:
         """Create the supervisor agent that coordinates other agents"""
         # Cache key includes conversation_id, local_mode, use_tool_search_flow, and chat_model
         # so we don't reuse an agent when the user switches model (thinking settings differ)
+        # Also hash additional_context: supervisor instructions embed CONTEXT from it; reusing
+        # a cached agent would freeze stale prefetch / file-structure context across turns.
         conversation_id = ctx.curr_agent_id
         local_mode = ctx.local_mode if hasattr(ctx, "local_mode") else False
         use_tool_search_flow = getattr(ctx, "use_tool_search_flow", False)
         chat_model = self.llm_provider.chat_config.model
-        cache_key = (conversation_id, local_mode, use_tool_search_flow, chat_model)
+        ac = ctx.additional_context or ""
+        additional_context_sig = hashlib.sha256(ac.encode()).hexdigest()[:16]
+        cache_key = (
+            conversation_id,
+            local_mode,
+            use_tool_search_flow,
+            chat_model,
+            additional_context_sig,
+        )
         if cache_key in self._supervisor_agents:
             logger.debug(
                 "Returning cached supervisor agent for conversation_id=%s, local_mode=%s, use_tool_search_flow=%s, chat_model=%s",
@@ -907,6 +802,11 @@ Subagents DON'T get your history. Provide comprehensive context:
         # Get supervisor task description
         supervisor_task_description = create_supervisor_task_description(ctx)
 
+        bundle = getattr(ctx, "context_intelligence_bundle", None)
+        prefetch_sup = (
+            supervisor_prefetch_section(bundle) if isinstance(bundle, dict) else ""
+        )
+
         # Generate supervisor instructions (task_description is code_gen_task_prompt or code_gen_task_prompt_local when code gen agent)
         task_description = config.tasks[0].description if config.tasks else ""
         if task_description and "local mode" in task_description.lower():
@@ -921,6 +821,7 @@ Subagents DON'T get your history. Provide comprehensive context:
             multimodal_instructions=multimodal_instructions,
             supervisor_task_description=supervisor_task_description,
             local_mode=local_mode,
+            prefetch_supervisor_section=prefetch_sup,
         )
         if use_tool_search_flow:
             instructions = instructions + SEARCH_FLOW_INSTRUCTIONS
@@ -997,18 +898,8 @@ def create_integration_agents() -> Dict[AgentType, AgentConfig]:
             ],
             max_iter=15,
         ),
-        AgentType.GITHUB: AgentConfig(
-            role="GitHub Integration Specialist",
-            goal="Handle all GitHub repository operations including PRs, branches, and commits",
-            backstory="""You are a specialized agent for GitHub operations. You handle pull requests, branches, file updates, and PR comments efficiently in an isolated context.""",
-            tasks=[
-                TaskConfig(
-                    description="""Execute GitHub operations as requested by the supervisor. Use GitHub tools to create branches, PRs, update files, and add comments. Return results in "## Task Result" format with PR numbers, branch names, and GitHub URLs.""",
-                    expected_output="Completed GitHub operations with PR numbers, branch names, commit SHAs, and GitHub URLs",
-                )
-            ],
-            max_iter=15,
-        ),
+        # GitHub integration agent removed: the supervisor calls
+        # ``code_provider_*`` and ``sandbox_git`` tools directly now.
         AgentType.CONFLUENCE: AgentConfig(
             role="Confluence Integration Specialist",
             goal="Handle all Confluence documentation operations including pages, spaces, and search",

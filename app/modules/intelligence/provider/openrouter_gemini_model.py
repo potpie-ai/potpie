@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from pydantic_ai.messages import ToolCallPart, ModelMessage, ModelResponse
-from pydantic_ai.models.openai import OpenAIModel, OpenAIStreamedResponse
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIStreamedResponse
 from pydantic_ai.models import ModelRequestParameters
 
 from app.modules.utils.logger import setup_logger
@@ -77,9 +77,9 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
         return super()._map_usage(response)
 
 
-class OpenRouterGeminiModel(OpenAIModel):
+class OpenRouterGeminiModel(OpenAIChatModel):
     """
-    Custom OpenAIModel variant that:
+    Custom OpenAIChatModel variant that:
     1. Adds OpenRouter's required Gemini-specific metadata (thought_signature)
     2. Tracks token usage and costs from OpenRouter's usage object
     """

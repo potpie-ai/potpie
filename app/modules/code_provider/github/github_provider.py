@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Optional
+from typing import Any
 import chardet
 from github import Github
 from github.Auth import AppAuth
@@ -18,13 +18,13 @@ class GitHubProvider(ICodeProvider):
 
     def __init__(self, base_url: str = "https://api.github.com"):
         self.base_url = base_url
-        self.client: Optional[Github] = None
-        self.auth_method: Optional[AuthMethod] = None
-        self._token_pool: List[str] = []
+        self.client: Github | None = None
+        self.auth_method: AuthMethod | None = None
+        self._token_pool: list[str] = []
 
     # ============ Authentication ============
 
-    def authenticate(self, credentials: Dict[str, Any], method: AuthMethod) -> Github:
+    def authenticate(self, credentials: dict[str, Any], method: AuthMethod) -> Github:
         """Authenticate with GitHub."""
         self.auth_method = method
 
@@ -77,7 +77,7 @@ class GitHubProvider(ICodeProvider):
         self.client = Github(base_url=self.base_url)
         return self.client
 
-    def get_supported_auth_methods(self) -> List[AuthMethod]:
+    def get_supported_auth_methods(self) -> list[AuthMethod]:
         return [
             AuthMethod.PERSONAL_ACCESS_TOKEN,
             AuthMethod.OAUTH_TOKEN,
@@ -91,7 +91,7 @@ class GitHubProvider(ICodeProvider):
 
     # ============ Repository Operations ============
 
-    def get_repository(self, repo_name: str) -> Dict[str, Any]:
+    def get_repository(self, repo_name: str) -> dict[str, Any]:
         """Get repository details."""
         self._ensure_authenticated()
 
@@ -131,9 +131,9 @@ class GitHubProvider(ICodeProvider):
         self,
         repo_name: str,
         file_path: str,
-        ref: Optional[str] = None,
-        start_line: Optional[int] = None,
-        end_line: Optional[int] = None,
+        ref: str | None = None,
+        start_line: int | None = None,
+        end_line: int | None = None,
     ) -> str:
         """Get file content."""
         self._ensure_authenticated()
@@ -165,9 +165,9 @@ class GitHubProvider(ICodeProvider):
         self,
         repo_name: str,
         path: str = "",
-        ref: Optional[str] = None,
+        ref: str | None = None,
         max_depth: int = 4,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get repository structure recursively."""
         self._ensure_authenticated()
 
@@ -177,7 +177,7 @@ class GitHubProvider(ICodeProvider):
             logger.error(f"GitHubProvider: Failed to get repo {repo_name}: {e}")
             raise
 
-        def _recurse(current_path: str, depth: int) -> List[Dict[str, Any]]:
+        def _recurse(current_path: str, depth: int) -> list[dict[str, Any]]:
             if depth > max_depth:
                 return []
 
@@ -230,7 +230,7 @@ class GitHubProvider(ICodeProvider):
 
     # ============ Branch Operations ============
 
-    def list_branches(self, repo_name: str) -> List[str]:
+    def list_branches(self, repo_name: str) -> list[str]:
         """List branches."""
         self._ensure_authenticated()
 
@@ -245,7 +245,7 @@ class GitHubProvider(ICodeProvider):
 
         return branches
 
-    def get_branch(self, repo_name: str, branch_name: str) -> Dict[str, Any]:
+    def get_branch(self, repo_name: str, branch_name: str) -> dict[str, Any]:
         """Get branch details."""
         self._ensure_authenticated()
 
@@ -260,7 +260,7 @@ class GitHubProvider(ICodeProvider):
 
     def create_branch(
         self, repo_name: str, branch_name: str, base_branch: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create branch."""
         self._ensure_authenticated()
 
@@ -301,7 +301,7 @@ class GitHubProvider(ICodeProvider):
 
     def compare_branches(
         self, repo_name: str, base_branch: str, head_branch: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Compare two branches using GitHub's compare API.
 
@@ -350,7 +350,7 @@ class GitHubProvider(ICodeProvider):
 
     def list_pull_requests(
         self, repo_name: str, state: str = "open", limit: int = 10
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """List pull requests."""
         self._ensure_authenticated()
 
@@ -374,7 +374,7 @@ class GitHubProvider(ICodeProvider):
 
     def get_pull_request(
         self, repo_name: str, pr_number: int, include_diff: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get pull request details."""
         self._ensure_authenticated()
 
@@ -409,6 +409,94 @@ class GitHubProvider(ICodeProvider):
 
         return result
 
+    def get_pull_request_commits(
+        self, repo_name: str, pr_number: int
+    ) -> list[dict[str, Any]]:
+        """Get commits associated with a pull request."""
+        self._ensure_authenticated()
+
+        repo = self.client.get_repo(repo_name)
+        pr = repo.get_pull(pr_number)
+        commits = []
+        for commit in pr.get_commits():
+            commit_author = None
+            if getattr(commit, "author", None):
+                commit_author = commit.author.login
+            elif getattr(commit, "commit", None) and getattr(
+                commit.commit, "author", None
+            ):
+                commit_author = commit.commit.author.name
+
+            committed_at = None
+            if getattr(commit, "commit", None) and getattr(
+                commit.commit, "author", None
+            ):
+                authored_dt = getattr(commit.commit.author, "date", None)
+                if authored_dt:
+                    committed_at = authored_dt.isoformat()
+
+            commits.append(
+                {
+                    "sha": commit.sha,
+                    "message": commit.commit.message if commit.commit else None,
+                    "author": commit_author,
+                    "committed_at": committed_at,
+                }
+            )
+        return commits
+
+    def get_pull_request_review_comments(
+        self, repo_name: str, pr_number: int, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        """Get review comments for a pull request."""
+        self._ensure_authenticated()
+
+        repo = self.client.get_repo(repo_name)
+        pr = repo.get_pull(pr_number)
+        comments = []
+        for idx, comment in enumerate(pr.get_review_comments()):
+            if idx >= limit:
+                break
+            comments.append(
+                {
+                    "id": comment.id,
+                    "body": comment.body,
+                    "user": {"login": comment.user.login} if comment.user else None,
+                    "path": comment.path,
+                    "line": comment.line,
+                    "in_reply_to_id": comment.in_reply_to_id,
+                    "diff_hunk": comment.diff_hunk,
+                    "created_at": comment.created_at.isoformat()
+                    if comment.created_at
+                    else None,
+                }
+            )
+        return comments
+
+    def get_pull_request_issue_comments(
+        self, repo_name: str, pr_number: int, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Get issue-level comments on a pull request discussion."""
+        self._ensure_authenticated()
+
+        repo = self.client.get_repo(repo_name)
+        pr = repo.get_pull(pr_number)
+        comments = []
+        for idx, comment in enumerate(pr.get_issue_comments()):
+            if idx >= limit:
+                break
+            comments.append(
+                {
+                    "id": comment.id,
+                    "body": comment.body,
+                    "user": {"login": comment.user.login} if comment.user else None,
+                    "created_at": comment.created_at.isoformat()
+                    if comment.created_at
+                    else None,
+                }
+            )
+        return comments
+
     def create_pull_request(
         self,
         repo_name: str,
@@ -416,9 +504,9 @@ class GitHubProvider(ICodeProvider):
         body: str,
         head_branch: str,
         base_branch: str,
-        reviewers: Optional[List[str]] = None,
-        labels: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
+        reviewers: list[str] | None = None,
+        labels: list[str] | None = None,
+    ) -> dict[str, Any]:
         """Create pull request."""
         self._ensure_authenticated()
 
@@ -475,10 +563,10 @@ class GitHubProvider(ICodeProvider):
         repo_name: str,
         pr_number: int,
         body: str,
-        commit_id: Optional[str] = None,
-        path: Optional[str] = None,
-        line: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        commit_id: str | None = None,
+        path: str | None = None,
+        line: int | None = None,
+    ) -> dict[str, Any]:
         """Add PR comment."""
         self._ensure_authenticated()
 
@@ -513,8 +601,8 @@ class GitHubProvider(ICodeProvider):
         pr_number: int,
         body: str,
         event: str,
-        comments: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        comments: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Create PR review."""
         self._ensure_authenticated()
 
@@ -549,7 +637,7 @@ class GitHubProvider(ICodeProvider):
 
     def list_issues(
         self, repo_name: str, state: str = "open", limit: int = 10
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """List issues."""
         self._ensure_authenticated()
 
@@ -569,7 +657,7 @@ class GitHubProvider(ICodeProvider):
             for issue in issues
         ]
 
-    def get_issue(self, repo_name: str, issue_number: int) -> Dict[str, Any]:
+    def get_issue(self, repo_name: str, issue_number: int) -> dict[str, Any]:
         """Get issue details."""
         self._ensure_authenticated()
 
@@ -588,8 +676,8 @@ class GitHubProvider(ICodeProvider):
         }
 
     def create_issue(
-        self, repo_name: str, title: str, body: str, labels: Optional[List[str]] = None
-    ) -> Dict[str, Any]:
+        self, repo_name: str, title: str, body: str, labels: list[str] | None = None
+    ) -> dict[str, Any]:
         """Create issue."""
         self._ensure_authenticated()
 
@@ -618,9 +706,9 @@ class GitHubProvider(ICodeProvider):
         content: str,
         commit_message: str,
         branch: str,
-        author_name: Optional[str] = None,
-        author_email: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        author_name: str | None = None,
+        author_email: str | None = None,
+    ) -> dict[str, Any]:
         """Create or update file."""
         self._ensure_authenticated()
 
@@ -672,8 +760,8 @@ class GitHubProvider(ICodeProvider):
     # ============ User/Organization Operations ============
 
     def list_user_repositories(
-        self, user_id: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        self, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """List user repositories."""
         self._ensure_authenticated()
 
@@ -695,7 +783,7 @@ class GitHubProvider(ICodeProvider):
             for repo in repos
         ]
 
-    def get_user_organizations(self) -> List[Dict[str, Any]]:
+    def get_user_organizations(self) -> list[dict[str, Any]]:
         """Get user organizations."""
         self._ensure_authenticated()
 
@@ -719,7 +807,7 @@ class GitHubProvider(ICodeProvider):
     def get_api_base_url(self) -> str:
         return self.base_url
 
-    def get_rate_limit_info(self) -> Dict[str, Any]:
+    def get_rate_limit_info(self) -> dict[str, Any]:
         """Get rate limit info."""
         self._ensure_authenticated()
 

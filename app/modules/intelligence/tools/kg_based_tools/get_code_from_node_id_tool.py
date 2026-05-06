@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from langchain_core.tools import StructuredTool
 from neo4j import GraphDatabase
@@ -53,7 +53,54 @@ class GetCodeFromNodeIdTool:
         )
 
     async def arun(self, project_id: str, node_id: str) -> Dict[str, Any]:
-        return await asyncio.to_thread(self.run, project_id, node_id)
+        """Async path: pre-fetch the node's code from the sandbox workspace,
+        then run the rest of the lookup in a thread.
+
+        On any sandbox miss / failure we fall through to the unmodified
+        ``run`` which goes through ``CodeProviderService``.
+        """
+        from app.modules.intelligence.tools.sandbox.read_helpers import (
+            read_file_via_sandbox,
+        )
+
+        try:
+            node_data = await asyncio.to_thread(
+                self._get_node_data, project_id, node_id
+            )
+        except Exception:
+            return await asyncio.to_thread(self.run, project_id, node_id)
+        if not node_data or "file_path" not in node_data or node_data["file_path"] is None:
+            return await asyncio.to_thread(self.run, project_id, node_id)
+        file_path = self._get_relative_file_path(node_data["file_path"])
+        try:
+            content = await read_file_via_sandbox(
+                project_id,
+                file_path,
+                start_line=node_data.get("start_line"),
+                end_line=node_data.get("end_line"),
+            )
+        except Exception:
+            content = None
+        if content is None:
+            return await asyncio.to_thread(self.run, project_id, node_id)
+
+        # Sandbox hit — finish the lookup in a thread so Neo4j is off-loop.
+        def _finish() -> Dict[str, Any]:
+            try:
+                project = self._get_project(project_id)
+                if project.user_id != self.user_id:
+                    raise ValueError(
+                        f"Project with ID '{project_id}' not found in database "
+                        f"for user '{self.user_id}'"
+                    )
+                return self._process_result(
+                    node_data, project, node_id, code_content_override=content
+                )
+            except Exception:
+                logger.exception("sandbox-fast-path finalization failed")
+                return self.run(project_id, node_id)
+
+        return await asyncio.to_thread(_finish)
 
     def run(self, project_id: str, node_id: str) -> Dict[str, Any]:
         """Synchronous version that handles the core logic"""
@@ -104,7 +151,12 @@ class GetCodeFromNodeIdTool:
         return project
 
     def _process_result(
-        self, node_data: Dict[str, Any], project: Project, node_id: str
+        self,
+        node_data: Dict[str, Any],
+        project: Project,
+        node_id: str,
+        *,
+        code_content_override: Optional[str] = None,
     ) -> Dict[str, Any]:
         # Check if node_data has the required fields
         if not node_data or "file_path" not in node_data:
@@ -123,15 +175,18 @@ class GetCodeFromNodeIdTool:
 
         relative_file_path = self._get_relative_file_path(file_path)
 
-        code_content = CodeProviderService(self.sql_db).get_file_content(
-            project.repo_name,
-            relative_file_path,
-            start_line,
-            end_line,
-            project.branch_name,
-            project.id,
-            project.commit_id,
-        )
+        if code_content_override is not None:
+            code_content = code_content_override
+        else:
+            code_content = CodeProviderService(self.sql_db).get_file_content(
+                project.repo_name,
+                relative_file_path,
+                start_line,
+                end_line,
+                project.branch_name,
+                project.id,
+                project.commit_id,
+            )
 
         docstring = None
         if node_data.get("docstring", None):

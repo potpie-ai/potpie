@@ -2,7 +2,32 @@ from app.modules.conversations.conversation.conversation_model import (  # noqa
     Conversation,
 )
 from app.modules.conversations.message.message_model import Message  # noqa
-from app.modules.integrations.integration_model import Integration  # noqa
+from integrations.adapters.outbound.postgres.integration_model import Integration  # noqa
+from integrations.adapters.outbound.postgres.project_source_model import (  # noqa
+    ProjectSource,
+)
+from adapters.outbound.postgres.models import (  # noqa
+    ContextSyncState,
+    ContextEventModel,
+    ContextEpisodeStepModel,
+    ContextReconciliationRun,
+)
+from app.modules.context_graph.context_graph_pot_model import ContextGraphPot  # noqa
+from app.modules.context_graph.context_graph_pot_member_model import (  # noqa
+    ContextGraphPotMember,
+)
+from app.modules.context_graph.context_graph_pot_repository_model import (  # noqa
+    ContextGraphPotRepository,
+)
+from app.modules.context_graph.context_graph_pot_integration_model import (  # noqa
+    ContextGraphPotIntegration,
+)
+from app.modules.context_graph.context_graph_pot_invitation_model import (  # noqa
+    ContextGraphPotInvitation,
+)
+from app.modules.context_graph.context_graph_pot_source_model import (  # noqa
+    ContextGraphPotSource,
+)
 from app.modules.media.media_model import MessageAttachment  # noqa
 from app.modules.intelligence.prompts.prompt_model import (  # noqa
     AgentPromptMapping,

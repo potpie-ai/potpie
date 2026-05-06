@@ -2,7 +2,16 @@ import json
 import re
 from typing import Annotated, Any, AsyncGenerator, List, Literal, Optional, Union
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -191,7 +200,8 @@ class ConversationAPI:
         content: str = Form(...),
         node_ids: Optional[str] = Form(None),
         tunnel_url: Optional[str] = Form(
-            None, description="Tunnel URL from VS Code extension for local server routing"
+            None,
+            description="Tunnel URL from VS Code extension for local server routing",
         ),
         images: Optional[List[UploadFile]] = File(None),
         attachment_ids: Optional[List[str]] = Form(
@@ -225,7 +235,9 @@ class ConversationAPI:
 
             # Process images if present and merge with pre-uploaded attachment_ids
             attachment_ids = list(attachment_ids) if attachment_ids else []
-            logger.info(f"[post_message] Received {len(images) if images else 0} images, {len(attachment_ids) if attachment_ids else 0} pre-uploaded attachment_ids")
+            logger.info(
+                f"[post_message] Received {len(images) if images else 0} images, {len(attachment_ids) if attachment_ids else 0} pre-uploaded attachment_ids"
+            )
             if images:
                 media_controller = MediaController(db, user_id, user_email)
                 for _i, image in enumerate(images):
@@ -275,7 +287,7 @@ class ConversationAPI:
                 attachment_ids=attachment_ids if attachment_ids else None,
                 tunnel_url=tunnel_url,
             )
-            
+
             logger.info(
                 f"[post_message] tunnel_url={tunnel_url}, conversation_id={conversation_id}, user_id={user_id}"
             )
@@ -670,11 +682,11 @@ async def sync_code_change_from_local(
     db: DbSession,
 ) -> dict:
     """Receive code changes that were applied locally and sync to CodeChangesManager.
-    
+
     This endpoint is called by the LocalServer after successfully applying a file change
     to the local IDE. The change is then synced to CodeChangesManager in the backend
     for persistence and agent context.
-    
+
     Request body should contain:
     - file_path: str
     - change_type: str (add, update, delete)
@@ -685,25 +697,24 @@ async def sync_code_change_from_local(
     from app.modules.intelligence.tools.code_changes_manager import (
         _get_code_changes_manager,
         _set_conversation_id,
-        _get_conversation_id,
     )
-    
+
     user_id = user["user_id"]
-    
+
     try:
         # Set conversation_id in context for CodeChangesManager
         _set_conversation_id(conversation_id)
-        
+
         # Get CodeChangesManager for this conversation
         manager = _get_code_changes_manager()
-        
+
         # Sync the change based on change_type
         change_type = change.get("change_type")
         file_path = change.get("file_path")
-        
+
         if not file_path:
             raise HTTPException(status_code=400, detail="file_path is required")
-        
+
         if change_type == "add":
             success = manager.add_file(
                 file_path=file_path,
@@ -732,22 +743,23 @@ async def sync_code_change_from_local(
         else:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid change_type: {change_type}. Must be 'add', 'update', or 'delete'"
+                detail=f"Invalid change_type: {change_type}. Must be 'add', 'update', or 'delete'",
             )
-        
+
         if success:
             logger.info(
                 f"Synced {change_type} change for '{file_path}' in conversation {conversation_id}"
             )
             return {
-                "message": f"Change synced successfully",
+                "message": "Change synced successfully",
                 "conversation_id": conversation_id,
                 "file_path": file_path,
                 "change_type": change_type,
             }
         else:
             raise HTTPException(
-                status_code=500, detail=f"Failed to sync {change_type} change for '{file_path}'"
+                status_code=500,
+                detail=f"Failed to sync {change_type} change for '{file_path}'",
             )
     except HTTPException:
         raise

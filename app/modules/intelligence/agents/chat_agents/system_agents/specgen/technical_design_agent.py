@@ -1,7 +1,7 @@
 """Technical Design Agent for generating data models, interfaces, and external dependencies."""
+
 from pydantic_ai import Agent
 from app.modules.intelligence.provider.provider_service import ProviderService
-from .spec_models import TechnicalDesignOutput
 
 TECHNICAL_DESIGN_AGENT_PROMPT = """You are **THE TECHNICAL DESIGN AGENT**, responsible for generating data models, interfaces, and external dependencies.
 
@@ -75,7 +75,10 @@ def create_technical_design_agent(
     llm_provider: ProviderService,
 ) -> Agent:
     """Create a technical design agent that generates data models, interfaces, and dependencies."""
-    prompt = TECHNICAL_DESIGN_AGENT_PROMPT + "\n\nIMPORTANT: Return your response as valid JSON matching the TechnicalDesignOutput schema."
+    prompt = (
+        TECHNICAL_DESIGN_AGENT_PROMPT
+        + "\n\nIMPORTANT: Return your response as valid JSON matching the TechnicalDesignOutput schema."
+    )
     return Agent(
         model=llm_provider.get_pydantic_model(),
         system_prompt=prompt,

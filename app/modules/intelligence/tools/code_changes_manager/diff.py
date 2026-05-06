@@ -1,13 +1,12 @@
 """Diff generation for code changes."""
 
 import difflib
-from typing import Dict, Optional
+from typing import Optional
 
 from sqlalchemy.orm import Session
 
 from app.modules.utils.logger import setup_logger
 
-from .models import ChangeType, FileChange
 
 logger = setup_logger(__name__)
 

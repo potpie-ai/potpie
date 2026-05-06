@@ -16,9 +16,12 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 # Install uv.
 COPY --from=ghcr.io/astral-sh/uv:0.9.6 /uv /uvx /bin/
 
-# Copy dependency metadata first for better layer caching
+# Copy dependency metadata and local path packages (editable deps in uv.lock)
 COPY pyproject.toml uv.lock ./
+COPY app/src/context-engine ./app/src/context-engine
+COPY app/src/integrations ./app/src/integrations
 COPY app/src/parsing ./app/src/parsing
+COPY app/src/sandbox ./app/src/sandbox
 
 # Install dependency layers first, including the local Rust extension
 RUN uv sync --frozen --no-install-project

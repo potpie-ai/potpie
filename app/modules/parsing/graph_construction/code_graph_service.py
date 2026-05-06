@@ -1,7 +1,5 @@
 import hashlib
-import os
 import time
-from pathlib import Path
 from typing import Dict, Optional
 
 from neo4j import GraphDatabase
@@ -9,7 +7,6 @@ from qdrant_client import QdrantClient
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
-from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
 from app.modules.parsing.knowledge_graph.qdrant_indexing_service import (
     INDEXABLE_NODE_TYPES,
     delete_hybrid_collection,
@@ -64,49 +61,63 @@ class CodeGraphService:
         if hasattr(self, "qdrant_client"):
             self.qdrant_client.close()
 
-    def create_and_store_graph(self, repo_dir, project_id, user_id):
-        graph_start_time = time.time()
-        # Ensure repo_dir is a string and absolute path
-        repo_dir = str(Path(repo_dir).resolve())
-        logger.info(
-            f"[GRAPH GENERATION] Starting graph creation for project {project_id}",
-            project_id=project_id,
-        )
-        logger.info(
-            f"[GRAPH GENERATION] Using repository directory: {repo_dir} (exists: {os.path.exists(repo_dir)}, isdir: {os.path.isdir(repo_dir)})",
-            project_id=project_id,
+    def store_graph_from_artifacts(
+        self, artifacts, project_id: str, user_id: str
+    ) -> None:
+        """Write a sandbox-parsed graph payload into neo4j + qdrant.
+
+        New entry point for the post-Phase-3 pipeline:
+        ``ProjectSandbox.parse(handle)`` returns a :class:`ParseArtifacts`,
+        which we feed straight in here. The host process never walks the
+        repo tree itself — that's the whole point of moving the parser
+        inside the sandbox.
+
+        Internally reuses the same DB-write path as the legacy
+        ``create_and_store_graph`` flow by reconstructing an
+        ``nx.MultiDiGraph`` first, so neo4j / qdrant insertion logic
+        stays untouched.
+        """
+        # Lazy import keeps the heavy parsing_repomap module (RepoMap,
+        # tree_sitter, grep_ast) off the critical path for callers that
+        # only want to hit the DBs.
+        from app.modules.parsing.graph_construction.parsing_repomap import (
+            _reconstruct_graph_from_payload,
         )
 
-        # Step 1: Create RepoMap and parse repository
-        repo_map_start = time.time()
-        logger.info(
-            "[GRAPH GENERATION] Step 1/4: Initializing RepoMap parser",
-            project_id=project_id,
-        )
-        self.repo_map = RepoMap(
-            root=repo_dir,
-            verbose=True,
-            main_model=SimpleTokenCounter(),
-            io=SimpleIO(),
-        )
-
-        parse_start = time.time()
-        logger.info(
-            "[GRAPH GENERATION] Step 2/4: Parsing repository structure",
-            project_id=project_id,
-        )
-        nx_graph = self.repo_map.create_graph(repo_dir)
-        parse_time = time.time() - parse_start
+        nx_graph = _reconstruct_graph_from_payload(artifacts)
         node_count = nx_graph.number_of_nodes()
         relationship_count = nx_graph.number_of_edges()
         logger.info(
-            f"[GRAPH GENERATION] Parsed repository: {node_count} nodes, {relationship_count} relationships in {parse_time:.2f}s",
+            f"[GRAPH GENERATION] Reconstructed graph from artifacts: "
+            f"{node_count} nodes, {relationship_count} relationships",
             project_id=project_id,
             node_count=node_count,
             relationship_count=relationship_count,
-            parse_time_seconds=parse_time,
         )
+        self._store_graph(nx_graph, project_id, user_id)
 
+    def _store_graph(
+        self,
+        nx_graph,
+        project_id: str,
+        user_id: str,
+        *,
+        graph_start_time: float | None = None,
+        parse_time: float | None = None,
+    ) -> None:
+        """Write ``nx_graph`` into neo4j and qdrant.
+
+        Extracted so both the in-sandbox parser path
+        (:meth:`store_graph_from_artifacts`) and the legacy host-FS
+        path (:meth:`create_and_store_graph`) share the same DB-side
+        code. Anything that needs to vary between the two paths
+        (logging timestamps that pre-date the call, parse durations
+        the caller already measured) comes in via keyword args.
+        """
+        if graph_start_time is None:
+            graph_start_time = time.time()
+        node_count = nx_graph.number_of_nodes()
+        relationship_count = nx_graph.number_of_edges()
         with self.driver.session() as session:
             db_start_time = time.time()
 
@@ -371,9 +382,16 @@ class CodeGraphService:
 
             db_time = time.time() - db_start_time
             total_time = time.time() - graph_start_time
-
+            # The artifacts path doesn't have a host-side parse phase
+            # to time, so the field is omitted from the log line when
+            # `parse_time` is None — keeps the legacy log shape stable
+            # while the new path skips the irrelevant metric.
+            parse_segment = (
+                f", Parsing: {parse_time:.2f}s" if parse_time is not None else ""
+            )
             logger.info(
-                f"[GRAPH GENERATION] Graph creation completed in {total_time:.2f}s (DB operations: {db_time:.2f}s, Parsing: {parse_time:.2f}s)",
+                f"[GRAPH GENERATION] Graph creation completed in {total_time:.2f}s "
+                f"(DB operations: {db_time:.2f}s{parse_segment})",
                 project_id=project_id,
                 total_time_seconds=total_time,
                 db_time_seconds=db_time,
@@ -397,11 +415,25 @@ class CodeGraphService:
         search_service.delete_project_index(project_id)
 
         if hasattr(self, "qdrant_client"):
-            delete_hybrid_collection(
-                self.qdrant_client,
-                self.get_qdrant_collection_name(project_id),
-                alias_name=self.get_qdrant_collection_alias(project_id),
-            )
+            # Qdrant cleanup is best-effort. The fresh parse rebuilds the
+            # hybrid collection from scratch, so failing to delete the old
+            # one only leaves a small orphaned collection (Qdrant's own
+            # retention sweeps it eventually). Don't take down a parse
+            # because the vector store is unreachable / rate-limited.
+            try:
+                delete_hybrid_collection(
+                    self.qdrant_client,
+                    self.get_qdrant_collection_name(project_id),
+                    alias_name=self.get_qdrant_collection_alias(project_id),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Qdrant cleanup failed for project %s — continuing parse "
+                    "anyway (the new index will rebuild from scratch). %s: %s",
+                    project_id,
+                    type(exc).__name__,
+                    exc,
+                )
 
     async def get_node_by_id(self, node_id: str, project_id: str) -> Optional[Dict]:
         with self.driver.session() as session:
@@ -421,45 +453,3 @@ class CodeGraphService:
             result = session.run(query)
             return [record.data() for record in result]
 
-
-class SimpleIO:
-    def read_text(self, fname):
-        """
-        Read file with multiple encoding fallbacks.
-
-        Tries encodings in order:
-        1. utf-8 (most common)
-        2. utf-8-sig (UTF-8 with BOM)
-        3. utf-16 (common in Windows files)
-        4. latin-1 (fallback that accepts all bytes)
-        """
-        encodings = ["utf-8", "utf-8-sig", "utf-16", "latin-1"]
-
-        for encoding in encodings:
-            try:
-                with open(fname, "r", encoding=encoding) as f:
-                    content = f.read()
-                    if encoding != "utf-8":
-                        logger.info(f"Read {fname} using {encoding} encoding")
-                    return content
-            except (UnicodeDecodeError, UnicodeError):
-                continue
-            except Exception:
-                logger.exception(f"Error reading {fname}")
-                return ""
-
-        logger.warning(
-            f"Could not read {fname} with any supported encoding. Skipping this file."
-        )
-        return ""
-
-    def tool_error(self, message):
-        logger.error(f"Error: {message}")
-
-    def tool_output(self, message):
-        logger.info(message)
-
-
-class SimpleTokenCounter:
-    def token_count(self, text):
-        return len(text.split())
