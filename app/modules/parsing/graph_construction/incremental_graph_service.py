@@ -534,10 +534,16 @@ class IncrementalGraphService:
             )
             return
 
-        collection_name = self.graph_service.get_qdrant_collection_name(project_id)
         collection_alias = self.graph_service.get_qdrant_collection_alias(
             project_id
         )
+        # After a staged full-rebuild, the alias points at the new
+        # staging collection and the original base collection name has
+        # been deleted. Always target the alias so incremental writes
+        # land in whatever collection currently holds the active
+        # index. Qdrant routes alias names transparently for both
+        # delete and upsert operations.
+        active_collection_name = collection_alias
 
         # Delete vector points for nodes we removed (deleted + modified
         # files). We re-derive the node_ids from the *old* graph state
@@ -550,7 +556,7 @@ class IncrementalGraphService:
             try:
                 delete_points_by_node_ids(
                     self.graph_service.qdrant_client,
-                    collection_name,
+                    active_collection_name,
                     file_paths=list(files_to_drop),
                 )
             except Exception:
@@ -585,13 +591,21 @@ class IncrementalGraphService:
         try:
             index_nodes_to_qdrant(
                 self.graph_service.qdrant_client,
-                collection_name,
+                # Target the alias, not the (possibly deleted) base
+                # collection name; same reasoning as the delete path.
+                active_collection_name,
                 nodes_to_index,
                 # Don't recreate — we want to add to the existing
                 # collection. The full-rebuild path passes
                 # recreate_collection=True.
                 recreate_collection=False,
                 alias_name=collection_alias,
+                # Preserve the persisted BM25 token vocabulary built
+                # during the full rebuild instead of overwriting it
+                # with one derived from only the dirty nodes. This
+                # keeps sparse term indices stable across older,
+                # already-indexed points.
+                preserve_bm25_vocabulary=True,
             )
         except Exception:
             logger.exception(
