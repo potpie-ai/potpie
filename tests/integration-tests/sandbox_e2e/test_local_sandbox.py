@@ -413,7 +413,7 @@ class TestConversationIsolation:
             branch=common_branch, base_ref="main", create_branch=True,
             mode=WorkspaceMode.EDIT, conversation_id="conv-x",
         )
-        with pytest.raises(RepoCacheUnavailable, match="already checked out"):
+        with pytest.raises(RepoCacheUnavailable, match=r"already (checked out|used by worktree)"):
             await local_client.acquire_session(
                 user_id="u1", project_id="p1",
                 repo=REPO_NAME, repo_url=str(upstream_repo),
