@@ -207,9 +207,16 @@ class ParsingService:
                 # required when the caller explicitly asks for a full
                 # rebuild (``full_rebuild=True``) so a corrupted or
                 # schema-mismatched graph can be recovered cleanly.
+                #
+                # ``full_rebuild=True`` must always force the wipe even
+                # when the caller passed ``cleanup_graph=False``;
+                # otherwise the "force full rebuild" contract breaks
+                # and stale/duplicate nodes can survive the rebuild.
                 full_rebuild = bool(
                     getattr(repo_details, "full_rebuild", False)
                 )
+                if full_rebuild:
+                    cleanup_graph = True
                 if cleanup_graph and full_rebuild:
                     neo4j_config = self._get_neo4j_config()
                     code_graph_service = None
