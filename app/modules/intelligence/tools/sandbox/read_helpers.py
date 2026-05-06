@@ -11,9 +11,15 @@ paths:
 
 The second tier was the legacy ``RepoManager`` surface, which we are
 phasing out. This module gives those tools a *third* tier — a sandbox
-``WorkspaceMode.ANALYSIS`` view of the project — so they can read from
-the same on-disk worktree the new ``sandbox_text_editor`` writes to,
-without each tool having to know about the workspace lifecycle.
+worktree view of the project — so they can read from the same on-disk
+worktree the new ``sandbox_text_editor`` writes to, without each tool
+having to know about the workspace lifecycle.
+
+When the run has a ``conversation_id`` we resolve the agent's EDIT
+workspace (branch ``agent/edits-<convid>``) so reads see the agent's
+in-flight edits. Without a conversation context we resolve a detached
+``WorkspaceMode.ANALYSIS`` worktree at the base branch — that path is
+used by parsing and other non-agent callers that have no edits to see.
 
 Order of preference in caller code:
 
@@ -37,14 +43,25 @@ from app.modules.intelligence.tools.sandbox.client import (
     lookup_project_summary,
     resolve_workspace,
 )
-from app.modules.intelligence.tools.sandbox.context import get_user_id
+from app.modules.intelligence.tools.sandbox.context import (
+    get_conversation_id,
+    get_user_id,
+)
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
 
 async def acquire_analysis_workspace(project_id: str) -> Optional[Any]:
-    """Resolve an ``ANALYSIS`` workspace handle for ``project_id``.
+    """Resolve a workspace handle for reading ``project_id`` files.
+
+    When a ``conversation_id`` is set on the contextvar we resolve the
+    same EDIT workspace the agent's ``sandbox_text_editor`` writes to —
+    otherwise reads would hit a separate ANALYSIS worktree at the base
+    branch and never see the in-flight edits. Without conversation
+    context (parsing pipeline, ad-hoc reads) we fall back to the
+    detached ANALYSIS worktree so we don't materialise a stray edit
+    branch.
 
     Returns ``None`` on any failure — caller is responsible for falling
     through to the legacy code path. We deliberately swallow exceptions
@@ -69,6 +86,13 @@ async def acquire_analysis_workspace(project_id: str) -> Optional[Any]:
     branch = summary.get("base_branch") or "main"
     repo_url = summary.get("repo_url") or None
 
+    if get_conversation_id():
+        mode = WorkspaceMode.EDIT
+        create_branch = True
+    else:
+        mode = WorkspaceMode.ANALYSIS
+        create_branch = False
+
     try:
         return await resolve_workspace(
             user_id=user_id,
@@ -77,8 +101,8 @@ async def acquire_analysis_workspace(project_id: str) -> Optional[Any]:
             repo_url=repo_url,
             branch=branch,
             base_ref=branch,
-            create_branch=False,
-            mode=WorkspaceMode.ANALYSIS,
+            create_branch=create_branch,
+            mode=mode,
         )
     except Exception as exc:  # noqa: BLE001
         logger.debug(

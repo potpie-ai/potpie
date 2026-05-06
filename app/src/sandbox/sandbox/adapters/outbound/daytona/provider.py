@@ -100,6 +100,7 @@ class DaytonaWorkspaceProvider:
         use_volume_for_bare: bool = False,
         volume_name_prefix: str = "potpie-bare",
         volume_mount_path: str = "/home/agent/work/.bare-cache",
+        stage_build_context: Callable[[Path], None] | None = None,
     ) -> None:
         self._client_factory = client_factory or _default_daytona_client
         self.snapshot = snapshot
@@ -152,6 +153,11 @@ class DaytonaWorkspaceProvider:
         self._by_key: dict[str, str] = {}
         self._snapshot_ensured = False
         self._snapshot_lock = threading.Lock()
+        # Build-context staging is injected so tests can pass a no-op
+        # without copying the multi-GB parsing/sandbox source trees into
+        # tmpdirs. Production passes None and `_stage_dockerfile_context`
+        # imports the real implementation lazily.
+        self._stage_build_context = stage_build_context
         # Cache resolved volume ids per user so we don't pay a round-trip
         # to Daytona on every sandbox creation. Volumes are stable and
         # outlive sandboxes; a process-wide cache is safe.
@@ -656,6 +662,16 @@ class DaytonaWorkspaceProvider:
                 from daytona.common.image import Image
                 from daytona.common.sandbox import Resources
 
+                # Stage `parsing_src/` and `sandbox_src/` next to the
+                # Dockerfile. The Daytona SDK ships the Dockerfile's
+                # directory as the build context tarball — without this
+                # the bundled Dockerfile's COPY steps resolve to nothing
+                # and the build silently fails on the runner side, which
+                # then surfaces to the user as "Snapshot not found" on
+                # the next sandbox-create call.
+                assert self.snapshot_dockerfile is not None
+                self._stage_dockerfile_context(self.snapshot_dockerfile)
+
                 image = Image.from_dockerfile(self.snapshot_dockerfile)
                 # Resources are baked into the snapshot — Daytona forbids
                 # overriding them at sandbox creation time when spawning
@@ -692,10 +708,34 @@ class DaytonaWorkspaceProvider:
                         f"after {self.snapshot_build_timeout_s:.0f}s — "
                         "check Daytona runner logs"
                     ) from exc
+                # Don't latch `_snapshot_ensured` on non-timeout failures
+                # either: a stage build failure shouldn't pin the process
+                # into "snapshot is fine" forever. The next call (or
+                # the operator's retry) gets to re-check / re-build.
                 logger.error(
                     "daytona snapshot %s build failed: %s", self.snapshot, exc
                 )
-                self._snapshot_ensured = True
+                raise RuntimeUnavailable(
+                    f"daytona snapshot {self.snapshot} build failed: {exc}"
+                ) from exc
+
+    def _stage_dockerfile_context(self, dockerfile: Path) -> None:
+        """Materialise the Dockerfile's COPY sources before submitting the build.
+
+        Uses the injected ``stage_build_context`` callable when set
+        (tests pass a no-op); otherwise imports the canonical staging
+        helper lazily so this module stays importable in environments
+        that don't have the canonical source dirs on disk.
+        """
+        if self._stage_build_context is not None:
+            self._stage_build_context(dockerfile)
+            return
+        from sandbox.bootstrap.snapshot_build import stage_build_context
+
+        stage_build_context(
+            dockerfile,
+            log=lambda msg: logger.info("daytona snapshot stage: %s", msg),
+        )
 
     def _wait_for_active(self, initial_state: str) -> None:
         """Poll Daytona until the snapshot reaches active (or timeout/fail).

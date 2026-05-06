@@ -32,7 +32,7 @@ from app.modules.intelligence.tools.sandbox import (
     read_helpers,
 )
 from app.modules.intelligence.tools.sandbox.context import set_run_context
-from sandbox import FileEntry, WorkspaceHandle
+from sandbox import FileEntry, WorkspaceHandle, WorkspaceMode
 
 
 @dataclass
@@ -114,15 +114,42 @@ def fake_client() -> Iterator[FakeSandboxClient]:
 # acquire_analysis_workspace
 # ----------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_acquire_workspace_returns_handle_on_happy_path(
+async def test_acquire_workspace_uses_edit_mode_when_conversation_active(
     fake_client: FakeSandboxClient,
 ) -> None:
     handle = await read_helpers.acquire_analysis_workspace("p1")
     assert handle is fake_client.handle
-    # The resolver must request ANALYSIS mode so we don't try to create a
-    # per-conversation branch for a read-only consumer.
+    # When a conversation is active we resolve the same EDIT workspace the
+    # agent's sandbox_text_editor writes to so reads see in-flight edits —
+    # otherwise reads hit a separate ANALYSIS worktree at the base branch
+    # and never see the agent's changes.
     [call] = [c for c in fake_client.calls if c.method == "get_workspace"]
-    assert call.kwargs["branch"] == "main"
+    assert call.kwargs["mode"] is WorkspaceMode.EDIT
+    assert call.kwargs["branch"] == "agent/edits-conv1"
+    assert call.kwargs["create_branch"] is True
+
+
+@pytest.mark.asyncio
+async def test_acquire_workspace_uses_analysis_mode_without_conversation() -> None:
+    # No conversation_id set on the contextvar — parsing pipeline / ad-hoc
+    # callers should not materialise a per-conversation edit branch.
+    set_run_context(user_id="u1", branch="main")
+    fake = FakeSandboxClient()
+    sandbox_client_mod.set_sandbox_client(fake)  # type: ignore[arg-type]
+    try:
+        with patch.object(
+            read_helpers, "lookup_project_summary", return_value=_SUMMARY
+        ), patch.object(
+            read_helpers, "get_conversation_id", return_value=None
+        ):
+            handle = await read_helpers.acquire_analysis_workspace("p1")
+        assert handle is fake.handle
+        [call] = [c for c in fake.calls if c.method == "get_workspace"]
+        assert call.kwargs["mode"] is WorkspaceMode.ANALYSIS
+        assert call.kwargs["branch"] == "main"
+        assert call.kwargs["create_branch"] is False
+    finally:
+        sandbox_client_mod.set_sandbox_client(None)
 
 
 @pytest.mark.asyncio

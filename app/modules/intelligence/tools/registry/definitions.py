@@ -19,21 +19,57 @@ OPTIONAL_TOOL_NAMES: FrozenSet[str] = frozenset(
 # Optional per-tool: short_description (≤100 chars for discovery), defer_loading (Phase 3)
 TOOL_DEFINITIONS: Dict[str, dict] = {
     # Search (Phase 4: read_only, idempotent)
+    # All search_* / semantic_search tools tunnel through a VS Code extension
+    # (see local_search_tools/__init__.py) and are only available when the
+    # caller is in local mode. They're not registered in ToolService at boot.
     "search_text": {
         "tier": "medium",
         "category": "search",
         "short_description": "Search for text in the codebase.",
         "read_only": True,
         "idempotent": True,
+        "local_mode_only": True,
     },
-    "search_files": {"tier": "medium", "category": "search"},
-    "search_symbols": {"tier": "medium", "category": "search"},
-    "search_workspace_symbols": {"tier": "medium", "category": "search"},
-    "search_references": {"tier": "medium", "category": "search"},
-    "search_definitions": {"tier": "medium", "category": "search"},
-    "search_code_structure": {"tier": "medium", "category": "search"},
-    "search_bash": {"tier": "low", "category": "search"},
-    "semantic_search": {"tier": "medium", "category": "search"},
+    "search_files": {
+        "tier": "medium",
+        "category": "search",
+        "local_mode_only": True,
+    },
+    "search_symbols": {
+        "tier": "medium",
+        "category": "search",
+        "local_mode_only": True,
+    },
+    "search_workspace_symbols": {
+        "tier": "medium",
+        "category": "search",
+        "local_mode_only": True,
+    },
+    "search_references": {
+        "tier": "medium",
+        "category": "search",
+        "local_mode_only": True,
+    },
+    "search_definitions": {
+        "tier": "medium",
+        "category": "search",
+        "local_mode_only": True,
+    },
+    "search_code_structure": {
+        "tier": "medium",
+        "category": "search",
+        "local_mode_only": True,
+    },
+    "search_bash": {
+        "tier": "low",
+        "category": "search",
+        "local_mode_only": True,
+    },
+    "semantic_search": {
+        "tier": "medium",
+        "category": "search",
+        "local_mode_only": True,
+    },
     # Terminal (local_mode_only: only sent when local_mode=True, i.e. VS Code extension)
     "execute_terminal_command": {
         "tier": "low",

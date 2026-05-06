@@ -26,85 +26,38 @@ from __future__ import annotations
 
 import argparse
 import os
-import shutil
 import sys
 from pathlib import Path
 
+# Make the in-repo `sandbox` package importable when running this script
+# from a checkout without a prior `pip install -e`. Resolves to
+# <repo>/app/src/sandbox/.
+_PACKAGE_DIR = Path(__file__).resolve().parents[1]
+if str(_PACKAGE_DIR) not in sys.path:
+    sys.path.insert(0, str(_PACKAGE_DIR))
+
+from sandbox.bootstrap.snapshot_build import (  # noqa: E402
+    DEFAULT_DOCKERFILE,
+    stage_build_context as _stage_build_context,
+)
+
 DEFAULT_NAME = "potpie/agent-sandbox"
 DEFAULT_VERSION = "0.1.0"
-# File lives at <repo>/app/src/sandbox/scripts/build_agent_snapshot.py.
-# parents indexed from the file: 0=scripts/, 1=sandbox/, 2=src/, 3=app/, 4=<repo>.
-REPO_ROOT = Path(__file__).resolve().parents[4]
-DEFAULT_DOCKERFILE = (
-    Path(__file__).resolve().parent.parent / "images" / "agent-sandbox" / "Dockerfile"
-)
-PARSING_CRATE_SRC = REPO_ROOT / "app" / "src" / "parsing"
-SANDBOX_PACKAGE_SRC = REPO_ROOT / "app" / "src" / "sandbox"
-
-# Subdirectories that should NOT be copied into the build context.
-# Common across both staged trees: `target/` is the cargo build cache
-# (huge), `.venv/` and `__pycache__` are local artifacts. For the
-# sandbox package we also drop `tests/` (image doesn't run them),
-# `images/` (recursive — includes our own staging dir), and
-# `scripts/` (host-only build helpers).
-_PARSING_EXCLUDE = {"target", "__pycache__", ".venv", "dist", ".pytest_cache"}
-_SANDBOX_EXCLUDE = {
-    "__pycache__", ".venv", "dist", ".pytest_cache",
-    "tests", "images", "scripts",
-}
-
-
-def _copytree_with_excludes(src: Path, dst: Path, exclude: set[str]) -> None:
-    """`shutil.copytree` wrapper that ignores any directory entry whose
-    name is in ``exclude``. Used both for the parsing crate and the
-    sandbox package — same shape, different exclusion sets."""
-
-    def _ignore(_dir: str, names: list[str]) -> list[str]:
-        return [n for n in names if n in exclude]
-
-    if dst.exists():
-        shutil.rmtree(dst)
-    shutil.copytree(src, dst, ignore=_ignore)
 
 
 def stage_build_context(dockerfile: Path) -> dict[str, Path]:
-    """Stage every COPY source the Dockerfile expects.
+    """Thin wrapper around :func:`sandbox.bootstrap.snapshot_build.stage_build_context`.
 
-    The Daytona SDK's ``Image.from_dockerfile`` extracts COPY sources
-    relative to the Dockerfile's directory and ships the resolved
-    tarball over the wire — anything outside that directory at extract
-    time is invisible. So we copy:
-
-    * ``app/src/parsing/`` → ``<dockerfile-dir>/parsing_src/`` —
-      consumed by the multi-stage parser-builder.
-    * ``app/src/sandbox/`` → ``<dockerfile-dir>/sandbox_src/`` —
-      pip-installed in the runtime stage so the ``potpie-parse``
-      console script lands on PATH alongside the rest of the package.
-
-    Idempotent: removes prior staging dirs before copying so accumulated
-    drift can't bleed across builds. Returns the mapping for logging.
+    Kept for back-compat (tests import this name) and to route log lines
+    through the script's stderr-with-arrow convention.
     """
-    if not PARSING_CRATE_SRC.exists():
-        raise SystemExit(
-            f"parsing crate not found at {PARSING_CRATE_SRC}; can't stage build context"
+    try:
+        return _stage_build_context(
+            dockerfile,
+            log=lambda msg: sys.stderr.write(f"==> {msg}\n"),
         )
-    if not SANDBOX_PACKAGE_SRC.exists():
-        raise SystemExit(
-            f"sandbox package not found at {SANDBOX_PACKAGE_SRC}; can't stage build context"
-        )
-
-    parsing_dst = dockerfile.parent / "parsing_src"
-    sandbox_dst = dockerfile.parent / "sandbox_src"
-    _copytree_with_excludes(PARSING_CRATE_SRC, parsing_dst, _PARSING_EXCLUDE)
-    _copytree_with_excludes(SANDBOX_PACKAGE_SRC, sandbox_dst, _SANDBOX_EXCLUDE)
-
-    sys.stderr.write(
-        f"==> staged parsing crate at {parsing_dst} "
-        f"(excluded: {', '.join(sorted(_PARSING_EXCLUDE))})\n"
-        f"==> staged sandbox package at {sandbox_dst} "
-        f"(excluded: {', '.join(sorted(_SANDBOX_EXCLUDE))})\n"
-    )
-    return {"parsing": parsing_dst, "sandbox": sandbox_dst}
+    except FileNotFoundError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def _print_log(chunk: str) -> None:

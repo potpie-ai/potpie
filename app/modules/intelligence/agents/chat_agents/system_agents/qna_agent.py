@@ -196,6 +196,9 @@ class QnAAgent(ChatAgent):
                     "\nContext graph prefetch (via context_resolve):\n"
                     f"{context_envelope}\n"
                 )
+        except ValueError as e:
+            # Expected when context graph isn't set up for this pot/user — skip silently.
+            logger.warning(f"Skipping context_resolve prefetch: {e}")
         except Exception:
             logger.exception("Failed prefetching context via context_resolve")
 

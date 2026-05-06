@@ -96,6 +96,30 @@ class SandboxClient:
     def container(self) -> SandboxContainer:
         return self._container
 
+    async def ensure_snapshot_ready(self) -> None:
+        """Ensure the backend's runtime image is registered and active.
+
+        For the Daytona workspace provider this triggers
+        ``_ensure_snapshot``: looks up the configured snapshot, builds it
+        from the bundled Dockerfile if missing, or waits for it to reach
+        ``active`` if a concurrent build is in-flight. Returns without
+        side effects for the local provider (nothing to register).
+
+        Intended to be called from backend startup so the snapshot is
+        ready before the first agent tool call instead of paying the
+        build cost on a user-facing request. Raises
+        ``RuntimeUnavailable`` if the snapshot can't be made ready
+        (e.g. build failure, snapshot stuck in error state) — callers
+        decide whether to soft-fail or block startup.
+        """
+        provider = self._container.workspace_provider
+        ensure = getattr(provider, "_ensure_snapshot", None)
+        if ensure is None:
+            return
+        # `_ensure_snapshot` is sync and may block on snapshot.create
+        # (multi-minute image build); push it off the event loop.
+        await asyncio.to_thread(ensure)
+
     # ------------------------------------------------------------------
     # Repo / workspace lifecycle
     # ------------------------------------------------------------------

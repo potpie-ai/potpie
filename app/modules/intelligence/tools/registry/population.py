@@ -126,15 +126,30 @@ def build_registry_from_tool_service(
     for allow_list in ALLOW_LIST_DEFINITIONS:
         registry.register_allow_list(allow_list.name, allow_list)
 
-    # Align with ToolService: compare keys
+    # Align with ToolService: compare keys.
+    # A registry name is "covered" if either the primary or any alias is registered
+    # in ToolService — aliases are alternate names for the same tool, and ToolService
+    # registers some primaries without their aliases. Tools marked local_mode_only
+    # are runtime-conditional (injected only when an IDE tunnel is connected) and
+    # are intentionally absent from ToolService.
     service_keys = set(tool_service.tools.keys())
     registry_all_names = set(registry.all_primary_names())
+    local_mode_only_names: set[str] = set()
     for n in registry.all_primary_names():
         meta = registry.get_metadata(n)
-        if meta:
-            registry_all_names.update(meta.aliases)
+        if not meta:
+            continue
+        registry_all_names.update(meta.aliases)
+        names_for_tool = {n, *meta.aliases}
+        if meta.local_mode_only:
+            local_mode_only_names.update(names_for_tool)
+        # If primary or any alias is in ToolService, treat the whole alias group as covered.
+        if names_for_tool & service_keys:
+            service_keys = service_keys | names_for_tool
 
-    in_registry_not_service = registry_all_names - service_keys - OPTIONAL_TOOL_NAMES
+    in_registry_not_service = (
+        registry_all_names - service_keys - OPTIONAL_TOOL_NAMES - local_mode_only_names
+    )
     in_service_not_registry = service_keys - registry_all_names
 
     if in_registry_not_service:

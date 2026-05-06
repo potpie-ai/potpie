@@ -272,6 +272,43 @@ class MainApp:
         finally:
             db.close()
 
+        await self._ensure_sandbox_snapshot()
+
+    async def _ensure_sandbox_snapshot(self) -> None:
+        """Pre-build the agent-sandbox snapshot when running on Daytona.
+
+        Without this, the build runs lazily on the first sandbox-tool
+        request, which means the user sees either a multi-minute hang
+        (cold build) or — if the build silently fails — a confusing
+        "Snapshot not found" error from the SDK. Running it at startup
+        moves the cost off the user-facing path and surfaces build
+        problems in deploy logs.
+
+        Soft-fail: a misconfigured or unreachable Daytona must not block
+        boot. Local-provider deploys early-exit because the workspace
+        provider has no ``_ensure_snapshot`` method.
+        """
+        provider_name = (
+            os.getenv("SANDBOX_WORKSPACE_PROVIDER", "local").strip().lower()
+        )
+        if provider_name != "daytona":
+            return
+        try:
+            from app.modules.intelligence.tools.sandbox.client import (
+                get_sandbox_client,
+            )
+
+            client = get_sandbox_client()
+            logger.info("Ensuring Daytona agent-sandbox snapshot is ready...")
+            await client.ensure_snapshot_ready()
+            logger.info("Daytona agent-sandbox snapshot is ready")
+        except Exception:
+            logger.exception(
+                "Failed to ensure Daytona agent-sandbox snapshot at startup; "
+                "sandbox tools may fail until the snapshot is built manually "
+                "(see app/src/sandbox/scripts/build_agent_snapshot.py)"
+            )
+
     async def shutdown_event(self):
         """Close async Redis and other resources on app shutdown."""
         if getattr(self.app.state, "async_redis_stream_manager", None):

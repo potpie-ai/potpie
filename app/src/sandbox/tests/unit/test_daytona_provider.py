@@ -538,6 +538,10 @@ async def test_missing_snapshot_is_built_on_first_sandbox_creation(
             snapshot="potpie/agent-sandbox:0.1.0",
             workspace_root="/home/daytona/workspace",
             snapshot_dockerfile=str(dockerfile),
+            # Skip the real source-tree copy (parsing/, sandbox/) — the
+            # SDK Image.from_dockerfile is stubbed above so the build
+            # context is never actually consumed.
+            stage_build_context=lambda _df: None,
         )
         await provider.get_or_create_workspace(
             WorkspaceRequest(
@@ -636,6 +640,7 @@ async def test_snapshot_build_timeout_surfaces_runtime_unavailable(
             snapshot_dockerfile=str(dockerfile),
             snapshot_build_timeout_s=0.05,
             snapshot_heartbeat_s=0.01,
+            stage_build_context=lambda _df: None,
         )
         with pytest.raises(RuntimeUnavailable, match="timed out"):
             await provider.get_or_create_workspace(
@@ -1525,6 +1530,7 @@ async def test_snapshot_build_passes_resources(tmp_path) -> None:
             snapshot_cpu=4,
             snapshot_memory_gb=8,
             snapshot_disk_gb=20,
+            stage_build_context=lambda _df: None,
         )
         await provider.get_or_create_workspace(
             WorkspaceRequest(
