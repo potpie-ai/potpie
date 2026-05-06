@@ -116,7 +116,11 @@ class TestParseDirectory:
             service = ParsingService(
                 db_session, "test-user", raise_library_exceptions=True
             )
-            repo_details = ParsingRequest(repo_name="owner/repo")
+            # ``full_rebuild=True`` forces the legacy cleanup-then-rebuild
+            # path; the default (incremental) path skips ``cleanup_graph``
+            # entirely, so this test wouldn't reach the failure point
+            # without the explicit opt-in.
+            repo_details = ParsingRequest(repo_name="owner/repo", full_rebuild=True)
             with pytest.raises(ParsingServiceError) as exc_info:
                 await service.parse_directory(
                     repo_details,
@@ -199,7 +203,10 @@ class TestNeo4jFailures:
             service = ParsingService(
                 db_session, "test-user", raise_library_exceptions=True
             )
-            repo_details = ParsingRequest(repo_name="owner/repo")
+            # The cleanup-graph path is the legacy full-rebuild route;
+            # the incremental default doesn't invoke it. Exercise the
+            # legacy path explicitly here.
+            repo_details = ParsingRequest(repo_name="owner/repo", full_rebuild=True)
             with pytest.raises((ParsingServiceError, ServiceUnavailable, Exception)):
                 await service.parse_directory(
                     repo_details,

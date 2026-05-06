@@ -95,6 +95,46 @@ class CodeGraphService:
             relationship_count=relationship_count,
         )
         self._store_graph(nx_graph, project_id, user_id)
+        # Seed per-file content hashes so the *next* parse can run
+        # incrementally. Done after the full rebuild succeeds — if the
+        # rebuild fails we don't want stale hashes pointing at a
+        # half-written graph.
+        self._write_file_content_hashes(artifacts, project_id)
+
+    def _write_file_content_hashes(self, artifacts, project_id: str) -> None:
+        """Stamp ``content_hash`` on the FILE nodes we just inserted.
+
+        Invoked from the full-rebuild path so the incremental path has a
+        baseline to diff against on the next run. Imported here rather
+        than at module top to keep the incremental layer optional —
+        if the import fails for any reason the full rebuild itself is
+        unaffected.
+        """
+        try:
+            from app.modules.parsing.graph_construction.incremental_graph_service import (  # noqa: E501
+                compute_file_hashes,
+            )
+        except ImportError:
+            logger.warning(
+                "[GRAPH GENERATION] incremental_graph_service unavailable; "
+                "skipping content_hash seeding",
+                project_id=project_id,
+            )
+            return
+        hashes = compute_file_hashes(artifacts)
+        if not hashes:
+            return
+        rows = [{"file_path": fp, "content_hash": h} for fp, h in hashes.items()]
+        with self.driver.session() as session:
+            session.run(
+                """
+                UNWIND $rows AS row
+                MATCH (n:FILE {repoId: $project_id, file_path: row.file_path})
+                SET n.content_hash = row.content_hash
+                """,
+                project_id=project_id,
+                rows=rows,
+            )
 
     def _store_graph(
         self,

@@ -201,7 +201,16 @@ class ParsingService:
                             "id": project_id,
                         }
 
-                if cleanup_graph:
+                # Skip the wholesale graph wipe when we're running an
+                # incremental update — the incremental path performs
+                # surgical deletes per changed file. The wipe is still
+                # required when the caller explicitly asks for a full
+                # rebuild (``full_rebuild=True``) so a corrupted or
+                # schema-mismatched graph can be recovered cleanly.
+                full_rebuild = bool(
+                    getattr(repo_details, "full_rebuild", False)
+                )
+                if cleanup_graph and full_rebuild:
                     neo4j_config = self._get_neo4j_config()
                     code_graph_service = None
                     try:
@@ -503,6 +512,10 @@ class ParsingService:
 
         neo4j_config = self._get_neo4j_config()
         service: CodeGraphService | None = None
+        # Pulled off the request schema (set by router/library callers).
+        # Defaults to incremental for both routes; ``full_rebuild=True``
+        # routes through the legacy path (cleanup_graph already ran).
+        full_rebuild = bool(getattr(repo_details, "full_rebuild", False))
         try:
             service = CodeGraphService(
                 neo4j_config["uri"],
@@ -511,11 +524,37 @@ class ParsingService:
                 self.db,
             )
             graph_gen_start = time.time()
-            logger.info(
-                "[PARSING] Step 2/3: writing graph to neo4j + qdrant",
-                project_id=project_id,
-            )
-            service.store_graph_from_artifacts(artifacts, str(project_id), user_id)
+            delta = None
+            if full_rebuild:
+                logger.info(
+                    "[PARSING] Step 2/3: full rebuild → writing graph to "
+                    "neo4j + qdrant",
+                    project_id=project_id,
+                )
+                service.store_graph_from_artifacts(
+                    artifacts, str(project_id), user_id
+                )
+            else:
+                # Lazy import to keep the incremental layer optional —
+                # the full-rebuild path is unaffected if it fails to
+                # import for any reason.
+                from app.modules.parsing.graph_construction.incremental_graph_service import (  # noqa: E501
+                    IncrementalGraphService,
+                )
+
+                logger.info(
+                    "[PARSING] Step 2/3: incremental update → diff + apply",
+                    project_id=project_id,
+                )
+                incremental = IncrementalGraphService(service)
+                delta = incremental.store_graph_from_artifacts_incremental(
+                    artifacts, str(project_id), user_id
+                )
+                logger.info(
+                    "[PARSING] Incremental delta: %s",
+                    delta.summary(),
+                    project_id=project_id,
+                )
             graph_gen_time = time.time() - graph_gen_start
 
             await self.project_service.update_project_status(
@@ -527,9 +566,26 @@ class ParsingService:
                 project_id=project_id,
             )
             inference_start = time.time()
-            cache_stats = await self.inference_service.run_inference(
-                str(project_id)
-            )
+            # Skip inference entirely when we know nothing changed —
+            # the existing graph (and its docstrings) are still valid.
+            if delta is not None and not delta.has_changes:
+                logger.info(
+                    "[PARSING] No graph changes detected; skipping inference",
+                    project_id=project_id,
+                )
+                await self.project_service.update_project_status(
+                    project_id, ProjectStatusEnum.READY
+                )
+                cache_stats = {
+                    "cache_hits": 0,
+                    "cache_misses": 0,
+                    "uncacheable_nodes": 0,
+                    "skipped_unchanged": True,
+                }
+            else:
+                cache_stats = await self.inference_service.run_inference(
+                    str(project_id)
+                )
             inference_time = time.time() - inference_start
             self.inference_service.log_graph_stats(project_id)
 

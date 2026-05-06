@@ -161,6 +161,50 @@ def _activate_collection_alias(
     return previous_collection
 
 
+def delete_points_by_node_ids(
+    client: Any,
+    collection_name: str,
+    *,
+    node_ids: Optional[List[str]] = None,
+    file_paths: Optional[List[str]] = None,
+) -> int:
+    """Delete points from a hybrid collection by node_id or file_path.
+
+    Used by the incremental update path to drop vector points that
+    correspond to graph nodes which were just removed (deleted/modified
+    files). At least one of ``node_ids`` or ``file_paths`` must be given.
+
+    Returns 0 silently if the collection doesn't exist — keeps the
+    incremental orchestrator's error path simple.
+    """
+    from qdrant_client import models  # type: ignore
+
+    if not node_ids and not file_paths:
+        return 0
+    if not client.collection_exists(collection_name):
+        return 0
+
+    must = []
+    if node_ids:
+        must.append(
+            models.FieldCondition(
+                key="node_id",
+                match=models.MatchAny(any=list(node_ids)),
+            )
+        )
+    if file_paths:
+        must.append(
+            models.FieldCondition(
+                key="file_path",
+                match=models.MatchAny(any=list(file_paths)),
+            )
+        )
+
+    selector = models.FilterSelector(filter=models.Filter(must=must))
+    client.delete(collection_name=collection_name, points_selector=selector)
+    return 1
+
+
 def delete_hybrid_collection(
     client: Any,
     collection_name: str,
