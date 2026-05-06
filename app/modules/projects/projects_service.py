@@ -1,7 +1,8 @@
+import uuid
 from datetime import datetime
 
 from fastapi import HTTPException
-from sqlalchemy import String, cast
+from sqlalchemy import String, cast, or_
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -181,10 +182,35 @@ class ProjectService:
             project_dict = {
                 "id": project.id,
                 "repo_name": project.repo_name,
+                "branch_name": project.branch_name,
                 "status": project.status,
             }
             project_list.append(project_dict)
         return project_list
+
+    async def create_workspace_project(
+        self, user_id: str, display_name: str | None = None
+    ) -> dict:
+        """Create a minimal project row so Sources (e.g. Linear) can attach without a parsed repo."""
+        project_id = str(uuid.uuid4())
+        name = (display_name or "").strip() or "Workspace"
+        project = Project(
+            id=project_id,
+            repo_name=name,
+            branch_name="-",
+            user_id=user_id,
+            repo_path=None,
+            commit_id=None,
+            status=ProjectStatusEnum.READY.value,
+            is_deleted=False,
+        )
+        ProjectService.create_project(self.db, project)
+        return {
+            "id": project_id,
+            "repo_name": name,
+            "branch_name": "-",
+            "status": project.status,
+        }
 
     async def update_project_status(self, project_id: str, status: ProjectStatusEnum):
         try:
@@ -384,7 +410,12 @@ class ProjectService:
         return db.query(Project).filter(Project.id == project_id).first()
 
     def get_projects_by_user_id(db: Session, user_id: str):
-        return db.query(Project).filter(Project.user_id == user_id).all()
+        return (
+            db.query(Project)
+            .filter(Project.user_id == user_id)
+            .filter(or_(Project.is_deleted.is_(False), Project.is_deleted.is_(None)))
+            .all()
+        )
 
     def create_project(db: Session, project: Project):
         project.created_at = datetime.utcnow()

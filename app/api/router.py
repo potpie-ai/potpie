@@ -1,15 +1,14 @@
 from datetime import datetime
 import logging
-import os
 from typing import List, Optional
 
-from fastapi import Depends, Header, HTTPException, Query, Request
+from fastapi import Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db, get_async_db
-from app.modules.auth.api_key_service import APIKeyService
+from app.modules.auth.api_key_deps import get_api_key_user
 from app.modules.conversations.conversation.conversation_controller import (
     ConversationController,
 )
@@ -32,15 +31,22 @@ from app.modules.parsing.graph_construction.parsing_schema import (
     ParsingStatusRequest,
 )
 from app.modules.projects.projects_controller import ProjectController
-from app.modules.users.user_service import AsyncUserService
 from app.modules.utils.APIRouter import APIRouter
 from app.modules.usage.usage_service import UsageService
 from app.modules.search.search_service import SearchService
 from app.modules.search.search_schema import SearchRequest, SearchResponse
-from app.modules.integrations.integrations_service import IntegrationsService
-from app.modules.integrations.integrations_schema import (
+from integrations.application.integrations_service import IntegrationsService
+from integrations.domain.integrations_schema import (
     IntegrationSaveRequest,
     IntegrationSaveResponse,
+)
+from adapters.inbound.http.api.v1.context.router import create_context_router
+from app.modules.context_graph.context_engine_http import (
+    POTPIE_CONTEXT_GRAPH_MUTATIONS,
+    get_context_engine_container_for_api_key,
+)
+from app.modules.context_graph.context_pot_routes import (
+    router as _context_pot_crud_router,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,41 +57,6 @@ router = APIRouter()
 class SimpleConversationRequest(BaseModel):
     project_ids: List[str]
     agent_ids: List[str]
-
-
-async def get_api_key_user(
-    x_api_key: Optional[str] = Header(None),
-    x_user_id: Optional[str] = Header(None),
-    db: Session = Depends(get_db),
-    async_db: AsyncSession = Depends(get_async_db),
-) -> dict:
-    """Dependency to validate API key and get user info."""
-    if not x_api_key:
-        raise HTTPException(
-            status_code=401,
-            detail="API key is required",
-            headers={"WWW-Authenticate": "ApiKey"},
-        )
-
-    if x_api_key == os.environ.get("INTERNAL_ADMIN_SECRET"):
-        user = await AsyncUserService(async_db).get_user_by_uid(x_user_id or "")
-        if not user:
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid user_id",
-                headers={"WWW-Authenticate": "ApiKey"},
-            )
-        return {"user_id": user.uid, "email": user.email, "auth_type": "api_key"}
-
-    user = await APIKeyService.validate_api_key(x_api_key, db)
-    if not user:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid API key",
-            headers={"WWW-Authenticate": "ApiKey"},
-        )
-
-    return user
 
 
 from app.modules.conversations.conversation_deps import get_async_redis_stream_manager
@@ -331,3 +302,24 @@ async def save_integration(
             data=None,
             error=f"Failed to save integration: {str(e)}",
         )
+
+
+# Context graph: same routes as /api/v1/context but authenticated with X-API-Key (Potpie API v2).
+_context_graph_v2_router = create_context_router(
+    require_auth=get_api_key_user,
+    get_container=get_context_engine_container_for_api_key,
+    get_db=get_db,
+    get_db_optional=get_db,
+    mutation_handlers=POTPIE_CONTEXT_GRAPH_MUTATIONS,
+    enforce_pot_access=True,
+)
+router.include_router(
+    _context_graph_v2_router,
+    prefix="/context",
+    tags=["Context Graph API"],
+)
+router.include_router(
+    _context_pot_crud_router,
+    prefix="/context",
+    tags=["Context Graph API"],
+)

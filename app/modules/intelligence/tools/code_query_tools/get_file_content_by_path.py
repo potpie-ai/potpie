@@ -1,6 +1,7 @@
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+import asyncio
 from typing import List, Optional, Type, Dict, Any
 from urllib.parse import quote as url_quote
 from pydantic import BaseModel, Field
@@ -10,6 +11,10 @@ from langchain_core.tools import StructuredTool
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_service import ProjectService
 from app.core.config_provider import config_provider
+from app.modules.intelligence.tools.sandbox.read_helpers import (
+    read_file_via_sandbox,
+    read_files_batch_via_sandbox,
+)
 from app.modules.intelligence.tools.tool_utils import truncate_response
 import httpx
 
@@ -200,7 +205,7 @@ class FetchFileTool:
 
             # Socket path: use Socket.IO RPC
             if tunnel_url.startswith(SOCKET_TUNNEL_PREFIX):
-                logger.info(f"[fetch_file] 🚀 Routing to LocalServer via Socket.IO")
+                logger.info("[fetch_file] 🚀 Routing to LocalServer via Socket.IO")
                 out = _execute_via_socket(
                     user_id=user_id,
                     conversation_id=conversation_id,
@@ -224,7 +229,7 @@ class FetchFileTool:
                     content = self.with_line_numbers(content, True, starting_line)
                 content = truncate_response(content)
                 logger.info(
-                    f"[fetch_file] ✅ LocalServer returned file content via Socket.IO"
+                    "[fetch_file] ✅ LocalServer returned file content via Socket.IO"
                 )
                 return {"success": True, "content": content, "source": "local"}
 
@@ -259,9 +264,7 @@ class FetchFileTool:
                         # Truncate if needed
                         content = truncate_response(content)
 
-                        logger.info(
-                            f"[fetch_file] ✅ LocalServer returned file content"
-                        )
+                        logger.info("[fetch_file] ✅ LocalServer returned file content")
                         return {
                             "success": True,
                             "content": content,
@@ -305,6 +308,43 @@ class FetchFileTool:
             logger.debug(f"[fetch_file] Local routing failed: {e}")
             return None
 
+    async def _try_sandbox(
+        self,
+        project_id: str,
+        file_path: str,
+        with_line_numbers: bool,
+        start_line: Optional[int],
+        end_line: Optional[int],
+    ) -> Optional[Dict[str, Any]]:
+        """Read from the project's sandbox analysis workspace.
+
+        Slots between the VS Code tunnel (priority-1, IDE state) and the
+        ``CodeProviderService`` GitHub fallback (priority-3, last resort).
+        Returns ``None`` on any failure so the caller falls through.
+        """
+        try:
+            content = await read_file_via_sandbox(
+                project_id,
+                file_path,
+                start_line=start_line,
+                end_line=end_line,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(f"[fetch_file] sandbox read failed: {exc}")
+            return None
+        if content is None:
+            return None
+        # Apply line limit guards (matches the GitHub-path checks).
+        limit_check = self._check_line_limits(content, start_line, end_line)
+        if not limit_check["success"]:
+            return limit_check
+        if with_line_numbers:
+            content = self.with_line_numbers(
+                content, True, starting_line=start_line or 1
+            )
+        content = truncate_response(content)
+        return {"success": True, "content": content, "source": "sandbox"}
+
     def _run(
         self,
         project_id: str,
@@ -320,6 +360,25 @@ class FetchFileTool:
             )
             if local_result:
                 return local_result
+
+            # Sandbox tier — replaces the legacy LocalRepoService path. Best-effort:
+            # if we're inside a running event loop the sync path can't await
+            # safely, so skip sandbox here and let _arun handle it. Async callers
+            # take the full tunnel → sandbox → GitHub chain via _arun.
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                # No running loop — safe to drive the async helper synchronously.
+                try:
+                    sandbox_result = asyncio.run(
+                        self._try_sandbox(
+                            project_id, file_path, with_line_numbers, start_line, end_line
+                        )
+                    )
+                    if sandbox_result:
+                        return sandbox_result
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug(f"[fetch_file] sync sandbox attempt skipped: {exc}")
 
             # Fall back to GitHub/remote
             logger.debug(f"[fetch_file] Falling back to remote for {file_path}")
@@ -431,7 +490,7 @@ class FetchFileTool:
                 "success": True,
                 "content": content,
             }
-        except FileNotFoundError as e:
+        except FileNotFoundError:
             # File not found - try local as last resort
             logger.warning(
                 f"File not found in remote: {file_path} - trying local fallback"
@@ -462,8 +521,33 @@ class FetchFileTool:
         start_line: Optional[int] = None,
         end_line: Optional[int] = None,
     ) -> Dict[str, Any]:
-        # Synchronously for compatibility, like GithubTool
-        return self._run(project_id, file_path, with_line_numbers, start_line, end_line)
+        """Async path: tunnel → sandbox → GitHub.
+
+        Inverted from the legacy delegation to ``_run`` so we can `await`
+        the sandbox helper without spinning up a nested event loop. The
+        sync ``_run`` path keeps the tunnel + GitHub tiers; only the
+        async path benefits from the sandbox hop.
+        """
+        try:
+            # Tier 1 — VS Code extension tunnel.
+            local_result = self._try_local_server(
+                file_path, with_line_numbers, start_line, end_line
+            )
+            if local_result:
+                return local_result
+
+            # Tier 2 — sandbox analysis workspace.
+            sandbox_result = await self._try_sandbox(
+                project_id, file_path, with_line_numbers, start_line, end_line
+            )
+            if sandbox_result:
+                return sandbox_result
+
+            # Tier 3 — CodeProviderService (GitHub or LocalRepoService).
+            return self._run(project_id, file_path, with_line_numbers, start_line, end_line)
+        except Exception as e:  # noqa: BLE001
+            logger.exception(f"Failed to fetch file content for {file_path}")
+            return {"success": False, "error": str(e), "content": None}
 
 
 def fetch_file_tool(
@@ -569,7 +653,55 @@ class FetchFilesBatchTool:
         paths: List[str],
         with_line_numbers: bool = False,
     ) -> Dict[str, Any]:
+        """Async batch read: tunnel → sandbox → per-file GitHub fallback."""
+        from app.modules.intelligence.tools.local_search_tools.tunnel_utils import (
+            read_files_batch_from_local_server,
+        )
+
+        # Tier 1 — VS Code extension tunnel (sync helper, but quick to test).
+        batch = read_files_batch_from_local_server(paths)
+        if batch is not None and "files" in batch:
+            return self._format_batch_result(batch["files"], with_line_numbers)
+
+        # Tier 2 — sandbox workspace, single workspace acquisition for the batch.
+        try:
+            sandbox_files = await read_files_batch_via_sandbox(project_id, paths)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(f"[fetch_files_batch] sandbox read failed: {exc}")
+            sandbox_files = None
+        if sandbox_files is not None:
+            return self._format_batch_result(sandbox_files, with_line_numbers)
+
+        # Tier 3 — per-file GitHub fallback (legacy path).
         return self._run(project_id, paths, with_line_numbers)
+
+    def _format_batch_result(
+        self, raw_files: List[Dict[str, Any]], with_line_numbers: bool
+    ) -> Dict[str, Any]:
+        """Apply truncation and optional line numbers to a batch payload.
+
+        Used by both the tunnel and sandbox tiers so they produce the same
+        shape: ``{success, files: [{path, content, line_count} | {path, error}]}``.
+        """
+        out: List[Dict[str, Any]] = []
+        for entry in raw_files:
+            path = entry.get("path", "")
+            error = entry.get("error")
+            if error is not None:
+                out.append({"path": path, "error": error})
+                continue
+            content = entry.get("content", "")
+            line_count = entry.get("line_count")
+            if with_line_numbers and content:
+                content = self.fetch_file_tool_instance.with_line_numbers(
+                    content, True, 1
+                )
+            content = truncate_response(content)
+            item: Dict[str, Any] = {"path": path, "content": content}
+            if line_count is not None:
+                item["line_count"] = line_count
+            out.append(item)
+        return {"success": True, "files": out}
 
 
 def fetch_files_batch_tool(sql_db: Session, user_id: str) -> StructuredTool:

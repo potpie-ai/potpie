@@ -1,7 +1,7 @@
 """Architecture Agent for generating architectural decision records."""
+
 from pydantic_ai import Agent
 from app.modules.intelligence.provider.provider_service import ProviderService
-from .spec_models import ArchitectureOutput
 
 ARCHITECTURE_AGENT_PROMPT = """You are **THE ARCHITECTURE AGENT**, responsible for generating evidence-backed architectural decisions.
 
@@ -84,7 +84,10 @@ def create_architecture_agent(
     llm_provider: ProviderService,
 ) -> Agent:
     """Create an architecture decision agent that generates ADRs."""
-    prompt = ARCHITECTURE_AGENT_PROMPT + "\n\nIMPORTANT: Return your response as valid JSON matching the ArchitectureOutput schema."
+    prompt = (
+        ARCHITECTURE_AGENT_PROMPT
+        + "\n\nIMPORTANT: Return your response as valid JSON matching the ArchitectureOutput schema."
+    )
     return Agent(
         model=llm_provider.get_pydantic_model(),
         system_prompt=prompt,

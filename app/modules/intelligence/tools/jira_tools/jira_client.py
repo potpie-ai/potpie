@@ -12,9 +12,9 @@ from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 import httpx
 
-from app.modules.integrations.integration_model import Integration
-from app.modules.integrations.integrations_schema import IntegrationType
-from app.modules.integrations.token_encryption import decrypt_token
+from integrations.adapters.outbound.postgres.integration_model import Integration
+from integrations.domain.integrations_schema import IntegrationType
+from integrations.adapters.outbound.crypto.token_encryption import decrypt_token
 from datetime import datetime, timezone, timedelta
 
 
@@ -1119,7 +1119,7 @@ async def get_jira_client_for_user(user_id: str, db: Session) -> JiraClient:
 
         # Refresh the token
         logger.info(f"Refreshing expired access token for user {user_id}...")
-        from app.modules.integrations.integrations_service import IntegrationsService
+        from integrations.application.integrations_service import IntegrationsService
 
         service = IntegrationsService(db)
         # Refresh will happen automatically in _get_jira_context

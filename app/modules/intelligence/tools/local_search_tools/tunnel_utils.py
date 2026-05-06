@@ -36,7 +36,10 @@ def _execute_via_socket(
 
     Returns the unwrapped result dict on success, or None if all attempts fail.
     """
-    from app.modules.tunnel.tunnel_service import get_tunnel_service, TunnelConnectionError
+    from app.modules.tunnel.tunnel_service import (
+        get_tunnel_service,
+        TunnelConnectionError,
+    )
 
     last_error: Optional[str] = None
     for attempt in range(1, _SOCKET_MAX_RETRIES + 2):  # +2: initial attempt + retries
@@ -79,16 +82,26 @@ def _execute_via_socket(
                 )
                 # #region agent log
                 try:
-                    with open("/Users/nandan/Desktop/Dev/potpie/.cursor/debug-dec41d.log", "a") as _f:
-                        _f.write('{"sessionId":"dec41d","hypothesisId":"H3,H5","location":"tunnel_utils:before_sleep","message":"before_time_sleep","data":{"attempt":%d,"delay":%.1f,"ts":%.3f}}\n' % (attempt, delay, time.time()))
+                    with open(
+                        "/Users/nandan/Desktop/Dev/potpie/.cursor/debug-dec41d.log", "a"
+                    ) as _f:
+                        _f.write(
+                            '{"sessionId":"dec41d","hypothesisId":"H3,H5","location":"tunnel_utils:before_sleep","message":"before_time_sleep","data":{"attempt":%d,"delay":%.1f,"ts":%.3f}}\n'
+                            % (attempt, delay, time.time())
+                        )
                 except Exception:
                     pass
                 # #endregion
                 time.sleep(delay)
                 # #region agent log
                 try:
-                    with open("/Users/nandan/Desktop/Dev/potpie/.cursor/debug-dec41d.log", "a") as _f:
-                        _f.write('{"sessionId":"dec41d","hypothesisId":"H3,H5","location":"tunnel_utils:after_sleep","message":"after_time_sleep","data":{"attempt":%d,"ts":%.3f}}\n' % (attempt, time.time()))
+                    with open(
+                        "/Users/nandan/Desktop/Dev/potpie/.cursor/debug-dec41d.log", "a"
+                    ) as _f:
+                        _f.write(
+                            '{"sessionId":"dec41d","hypothesisId":"H3,H5","location":"tunnel_utils:after_sleep","message":"after_time_sleep","data":{"attempt":%d,"ts":%.3f}}\n'
+                            % (attempt, time.time())
+                        )
                 except Exception:
                     pass
                 # #endregion
@@ -118,7 +131,11 @@ def _curl_equivalent_terminal_execute(
 
 def _is_cloudflare_tunnel_error(response_status: int, response_text: str) -> bool:
     """Check if the response indicates a tunnel/upstream error (e.g. 530, legacy HTTP tunnel)."""
-    return response_status == 530 or "tunnel" in response_text.lower() and "error" in response_text.lower()
+    return (
+        response_status == 530
+        or "tunnel" in response_text.lower()
+        and "error" in response_text.lower()
+    )
 
 
 def _is_tunnel_connection_error(response_status: int, response_text: str) -> bool:
@@ -476,7 +493,11 @@ def route_to_local_server(
             response = None
 
         # Socket path: tunnel_url is socket://{workspace_id}
-        if response is None and tunnel_url and tunnel_url.startswith(SOCKET_TUNNEL_PREFIX):
+        if (
+            response is None
+            and tunnel_url
+            and tunnel_url.startswith(SOCKET_TUNNEL_PREFIX)
+        ):
             logger.info(
                 f"[Tunnel Routing] 🚀 Routing {operation} to LocalServer via Socket.IO"
             )
@@ -614,7 +635,7 @@ def format_search_result(operation: str, result: dict) -> str:
     elif operation == "search_code_structure":
         symbols = result.get("symbols", [])
         if not symbols:
-            return f"📋 No code structure found"
+            return "📋 No code structure found"
 
         formatted = f"📋 **Found {len(symbols)} symbol(s):**\n\n"
         for symbol in symbols[:20]:
@@ -801,7 +822,7 @@ def route_terminal_command(
                 timeout=request_timeout_sec,
             )
             if result is not None:
-                logger.info(f"[Tunnel Routing] ✅ Terminal command succeeded")
+                logger.info("[Tunnel Routing] ✅ Terminal command succeeded")
                 return result, None
             return None, "tunnel_unreachable"
 
@@ -826,7 +847,7 @@ def route_terminal_command(
                 )
             if response.status_code == 200:
                 result = response.json()
-                logger.info(f"[Tunnel Routing] ✅ Terminal command succeeded")
+                logger.info("[Tunnel Routing] ✅ Terminal command succeeded")
                 return result, None
             logger.warning(
                 f"[Tunnel Routing] ❌ Terminal command failed ({response.status_code}): {response.text[:500]}"
@@ -888,6 +909,7 @@ def route_terminal_command(
                 _get_repository,
                 _get_branch,
             )
+
             tunnel_url_str = (
                 get_tunnel_service().get_tunnel_url(
                     user_id or "",
@@ -1131,7 +1153,7 @@ def format_terminal_result(result: Dict[str, Any]) -> str:
         formatted += f"\n⚠️ **Exit code:** {exit_code}"
 
     if warnings:
-        formatted += f"\n⚠️ **Warnings:**\n"
+        formatted += "\n⚠️ **Warnings:**\n"
         for warning in warnings[:5]:
             formatted += f"- {warning}\n"
         if len(warnings) > 5:

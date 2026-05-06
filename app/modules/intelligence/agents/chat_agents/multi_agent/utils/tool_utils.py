@@ -171,19 +171,55 @@ def handle_exception(tool_func):
         return wrapper
 
 
+def _sandbox_setup_banner_if_needed(tool_name: str, args_dict: dict[str, Any]) -> str:
+    """Return a one-line setup banner for the first sandbox_* call in a run.
+
+    Returns "" for non-sandbox tools, or after the first announcement, or if
+    project lookup fails. Always best-effort: must not raise into the streaming
+    path.
+    """
+    if not tool_name.startswith("sandbox_"):
+        return ""
+    try:
+        from app.modules.intelligence.tools.sandbox.context import (
+            get_conversation_id,
+            is_workspace_announced,
+            mark_workspace_announced,
+        )
+        from app.modules.intelligence.tools.sandbox.client import (
+            workspace_setup_banner,
+        )
+
+        if is_workspace_announced():
+            return ""
+        project_id = args_dict.get("project_id")
+        if not project_id:
+            return ""
+        banner = workspace_setup_banner(str(project_id), get_conversation_id())
+        if banner:
+            mark_workspace_announced()
+        return banner
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("workspace setup banner skipped: %s", exc)
+        return ""
+
+
 def create_tool_call_response(event: FunctionToolCallEvent) -> ToolCallResponse:
     """Create appropriate tool call response for regular or delegation tools"""
     tool_name = event.part.tool_name
     args_dict = _safe_parse_tool_args(event, tool_name)
 
-    command_tools = {"search_bash", "bash_command", "execute_terminal_command"}
+    setup_banner = _sandbox_setup_banner_if_needed(tool_name, args_dict)
+
+    command_tools = {"search_bash", "bash_command", "sandbox_shell", "execute_terminal_command"}
     if tool_name in command_tools:
         command = str(args_dict.get("command", "") or "").strip()
+        body = command or get_tool_run_message(tool_name, args_dict)
         return ToolCallResponse(
             call_id=event.part.tool_call_id or "",
             event_type=ToolCallEventType.CALL,
             tool_name=tool_name,
-            tool_response=command or get_tool_run_message(tool_name, args_dict),
+            tool_response=f"{setup_banner}\n{body}" if setup_banner else body,
             tool_call_details={"command": command} if command else {},
         )
     if is_delegation_tool(tool_name):
@@ -203,11 +239,12 @@ def create_tool_call_response(event: FunctionToolCallEvent) -> ToolCallResponse:
             },
         )
     else:
+        body = get_tool_run_message(tool_name, args_dict)
         return ToolCallResponse(
             call_id=event.part.tool_call_id or "",
             event_type=ToolCallEventType.CALL,
             tool_name=tool_name,
-            tool_response=get_tool_run_message(tool_name, args_dict),
+            tool_response=f"{setup_banner}\n{body}" if setup_banner else body,
             tool_call_details={
                 "summary": get_tool_call_info_content(tool_name, args_dict)
             },

@@ -19,6 +19,9 @@ from tree_sitter_language_pack import get_language, get_parser
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_service import ProjectService
 from app.core.config_provider import config_provider
+from app.modules.intelligence.tools.sandbox.read_helpers import (
+    read_file_via_sandbox,
+)
 
 # tree_sitter is throwing a FutureWarning
 warnings.simplefilter("ignore", category=FutureWarning)
@@ -573,9 +576,69 @@ class UniversalAnalyzeCodeTool:
         include_private: bool = False,
         language: Optional[str] = None,
     ) -> Dict[str, Any]:
-        return self._run(
-            project_id, file_path, include_methods, include_private, language
-        )
+        """Async path: try the sandbox workspace first, fall back to ``_run``.
+
+        ``_run`` already does cache check + GitHub fetch + analysis. We
+        intercept BEFORE the GitHub fetch by reading from the sandbox
+        and stuffing the result through the analyzer directly. On any
+        sandbox failure we delegate to ``_run`` (which still goes through
+        ``CodeProviderService``).
+        """
+        try:
+            content = await read_file_via_sandbox(project_id, file_path)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(f"[analyze_code_structure] sandbox read failed: {exc}")
+            content = None
+        if content is None:
+            return self._run(
+                project_id, file_path, include_methods, include_private, language
+            )
+        # Sandbox hit — reuse the analyzer pipeline without re-fetching.
+        try:
+            if not language:
+                language = self.analyzer.detect_language(file_path)
+                if not language:
+                    return {
+                        "success": False,
+                        "error": f"Could not detect programming language for file: {file_path}",
+                        "elements": [],
+                    }
+            elements = self.analyzer.analyze(
+                content, language, file_path, include_methods, include_private
+            )
+            elements_dict = [element.dict() for element in elements]
+            return {
+                "success": True,
+                "file_path": file_path,
+                "language": language,
+                "total_elements": len(elements_dict),
+                "elements": elements_dict,
+                "summary": {
+                    "classes": len([e for e in elements_dict if e["type"] == "class"]),
+                    "functions": len(
+                        [e for e in elements_dict if e["type"] == "function"]
+                    ),
+                    "methods": len([e for e in elements_dict if e["type"] == "method"]),
+                    "interfaces": len(
+                        [e for e in elements_dict if e["type"] == "interface"]
+                    ),
+                    "structs": len([e for e in elements_dict if e["type"] == "struct"]),
+                    "enums": len([e for e in elements_dict if e["type"] == "enum"]),
+                    "private_elements": len(
+                        [e for e in elements_dict if e["is_private"]]
+                    ),
+                    "async_functions": len([e for e in elements_dict if e["is_async"]]),
+                    "static_functions": len(
+                        [e for e in elements_dict if e["is_static"]]
+                    ),
+                },
+                "source": "sandbox",
+            }
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(f"Failed to analyze {language} file: {exc}")
+            return self._run(
+                project_id, file_path, include_methods, include_private, language
+            )
 
 
 def universal_analyze_code_tool(sql_db: Session, user_id: str):

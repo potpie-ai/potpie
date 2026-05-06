@@ -1,11 +1,19 @@
 """Streaming, conversational SpecGen agent: single agent, markdown + Mermaid output, no JSON."""
+
 from __future__ import annotations
 
 from typing import AsyncGenerator
 
-from app.modules.intelligence.agents.chat_agents.agent_config import AgentConfig, TaskConfig
+from app.modules.intelligence.agents.chat_agents.agent_config import (
+    AgentConfig,
+    TaskConfig,
+)
 from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
-from app.modules.intelligence.agents.chat_agent import ChatAgent, ChatAgentResponse, ChatContext
+from app.modules.intelligence.agents.chat_agent import (
+    ChatAgent,
+    ChatAgentResponse,
+    ChatContext,
+)
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.intelligence.prompts.prompt_service import PromptService
@@ -290,29 +298,34 @@ class SpecGenAgent(ChatAgent):
                 )
             ],
         )
-        tools = self.tools_provider.get_tools([
-            "get_code_from_multiple_node_ids",
-            "get_node_neighbours_from_node_id",
-            "get_code_from_probable_node_name",
-            "ask_knowledge_graph_queries",
-            "get_nodes_from_tags",
-            "get_code_file_structure",
-            "webpage_extractor",
-            "web_search_tool",
-            "fetch_file",
-            "analyze_code_structure",
-            "create_todo",
-            "update_todo_status",
-            "get_todo",
-            "list_todos",
-            "add_requirements",
-            "get_requirements",
-        ])
+        tools = self.tools_provider.get_tools(
+            [
+                "get_code_from_multiple_node_ids",
+                "get_node_neighbours_from_node_id",
+                "get_code_from_probable_node_name",
+                "ask_knowledge_graph_queries",
+                "get_nodes_from_tags",
+                "get_code_file_structure",
+                "webpage_extractor",
+                "web_search_tool",
+                "fetch_file",
+                "analyze_code_structure",
+                "create_todo",
+                "update_todo_status",
+                "get_todo",
+                "list_todos",
+                "add_requirements",
+                "get_requirements",
+            ]
+        )
         return PydanticRagAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         """Add minimal context (e.g. project_id) so tools have what they need."""
-        if ctx.project_id and f"project_id" not in (ctx.additional_context or "").lower():
+        if (
+            ctx.project_id
+            and "project_id" not in (ctx.additional_context or "").lower()
+        ):
             ctx.additional_context = (ctx.additional_context or "").strip()
             if ctx.additional_context:
                 ctx.additional_context += "\n\n"

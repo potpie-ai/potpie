@@ -35,11 +35,16 @@ from .routing import (
     _sync_file_from_local_server_to_redis,
     _fetch_file_content_from_local_server,
 )
-from .diff import create_unified_diff, generate_git_diff_patch, fetch_repo_file_content_for_diff
+from .diff import (
+    create_unified_diff,
+    generate_git_diff_patch,
+    fetch_repo_file_content_for_diff,
+)
 from .content_resolver import read_file_from_codebase
 from .models import ChangeType
 
 logger = setup_logger(__name__)
+
 
 # Tool functions
 def add_file_tool(input_data: AddFileInput) -> str:
@@ -77,6 +82,7 @@ def add_file_tool(input_data: AddFileInput) -> str:
         db = None
         if project_id:
             from app.core.database import get_db
+
             db = next(get_db())
         success = manager.add_file(
             file_path=input_data.file_path,
@@ -125,6 +131,7 @@ def update_file_tool(input_data: UpdateFileInput) -> str:
         db = None
         if input_data.project_id:
             from app.core.database import get_db
+
             db = next(get_db())
         success = manager.update_file(
             file_path=input_data.file_path,
@@ -200,6 +207,7 @@ def delete_file_tool(input_data: DeleteFileInput) -> str:
         db = None
         if input_data.project_id:
             from app.core.database import get_db
+
             db = next(get_db())
         success = manager.delete_file(
             file_path=input_data.file_path,
@@ -227,7 +235,7 @@ def get_file_tool(input_data: GetFileInput) -> str:
 
     # Check if we should route to LocalServer
     if _should_route_to_local_server():
-        logger.info(f"🔧 [Tool Call] Routing get_file_tool to LocalServer")
+        logger.info("🔧 [Tool Call] Routing get_file_tool to LocalServer")
         result = _route_to_local_server(
             "get_file",
             {
@@ -783,7 +791,7 @@ def show_updated_file_tool(input_data: ShowUpdatedFileInput) -> str:
     # Check if we should route to LocalServer (for single file)
     if input_data.file_paths and len(input_data.file_paths) == 1:
         if _should_route_to_local_server():
-            logger.info(f"🔧 [Tool Call] Routing show_updated_file_tool to LocalServer")
+            logger.info("🔧 [Tool Call] Routing show_updated_file_tool to LocalServer")
             result = _route_to_local_server(
                 "show_updated_file",
                 {
@@ -1195,9 +1203,7 @@ def get_comprehensive_metadata_tool(input_data: GetComprehensiveMetadataInput) -
         summary = manager.get_summary()
 
         cid = summary.get("conversation_id") or "(ephemeral)"
-        result = (
-            f"📊 **Complete Session State** (Conversation: {cid})\n\n"
-        )
+        result = f"📊 **Complete Session State** (Conversation: {cid})\n\n"
         result += f"**Total Files Changed:** {summary['total_files']}\n\n"
 
         change_emoji = {"add": "➕", "update": "✏️", "delete": "🗑️"}
@@ -1307,4 +1313,3 @@ def export_changes_tool(input_data: ExportChangesInput) -> str:
             format=input_data.format,
         )
         return "❌ Error exporting changes"
-

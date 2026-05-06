@@ -2,6 +2,12 @@
 Subscription Service for Dodo Payments
 
 This service interacts with stripe-potpie to get subscription information.
+
+Billing is **opt-in**. When ``BILLING_ENABLED`` is unset (or any falsy value),
+every method short-circuits to a free-tier stub: no HTTP calls, no error
+logs, no retries. Local dev runs without the stripe-potpie sidecar by
+default. To exercise the real billing path, set ``BILLING_ENABLED=true`` in
+``.env`` (and ``STRIPE_POTPIE_URL`` if it isn't on localhost).
 """
 
 import os
@@ -13,6 +19,20 @@ import httpx
 logger = logging.getLogger(__name__)
 
 STRIPE_POTPIE_URL = os.getenv("STRIPE_POTPIE_URL", "http://localhost:8003")
+
+_FREE_TIER_STATUS = {
+    "plan_type": "free",
+    "credits_total": 50,
+    "credits_used": 0,
+    "credits_available": 50,
+}
+
+
+def _billing_enabled() -> bool:
+    """Return True if the dodo/stripe-potpie integration should be hit."""
+    return os.getenv("BILLING_ENABLED", "").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
 
 
 class BillingSubscriptionService:
@@ -31,6 +51,8 @@ class BillingSubscriptionService:
         Returns:
             str: The Dodo customer ID or None if not found
         """
+        if not _billing_enabled():
+            return None
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(
@@ -63,6 +85,8 @@ class BillingSubscriptionService:
         Returns:
             str: The Dodo customer ID or None if creation failed
         """
+        if not _billing_enabled():
+            return None
         # First try to get existing customer ID
         dodo_customer_id = await BillingSubscriptionService.get_dodo_customer_id(user_id)
         if dodo_customer_id:
@@ -78,6 +102,8 @@ class BillingSubscriptionService:
         Initialize a free user in Dodo by calling stripe-potpie.
         Returns the dodo_customer_id if successful, None otherwise.
         """
+        if not _billing_enabled():
+            return None
         logger.info(f"[billing] Initializing free user in Dodo: {user_id}")
         try:
             async with httpx.AsyncClient() as client:
@@ -114,6 +140,8 @@ class BillingSubscriptionService:
         Returns:
             dict: Subscription status with credits from Dodo
         """
+        if not _billing_enabled():
+            return dict(_FREE_TIER_STATUS)
         try:
             async with httpx.AsyncClient() as client:
                 # Use the new credit-balance endpoint for real-time credits
@@ -127,21 +155,11 @@ class BillingSubscriptionService:
                     return response.json()
                 else:
                     logger.warning(f"Failed to get credit balance: {response.status_code}")
-                    return {
-                        "plan_type": "free",
-                        "credits_total": 50,
-                        "credits_used": 0,
-                        "credits_available": 50,
-                    }
+                    return dict(_FREE_TIER_STATUS)
 
         except Exception as e:
             logger.error(f"Error getting subscription status: {e}")
-            return {
-                "plan_type": "free",
-                "credits_total": 50,
-                "credits_used": 0,
-                "credits_available": 50,
-            }
+            return dict(_FREE_TIER_STATUS)
 
     @staticmethod
     async def get_credit_balance(user_id: str) -> dict:

@@ -4,7 +4,7 @@ import time
 import traceback
 from asyncio import create_task
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -15,13 +15,21 @@ from app.modules.code_provider.github.github_service import GithubService
 
 # Lazy import for GitPython - import at module level causes SIGSEGV in forked workers
 if TYPE_CHECKING:
-    from git import Repo as RepoType
+    pass
 
 
 def _get_repo_class():
     """Lazy import git.Repo to avoid fork-safety issues."""
     from git import Repo
+
     return Repo
+
+
+from app.modules.intelligence.tools.sandbox.project_sandbox import (
+    ProjectRef,
+    ProjectSandbox,
+    get_project_sandbox,
+)
 from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.parsing.graph_construction.parsing_helper import (
     ParseHelper,
@@ -32,10 +40,11 @@ from app.modules.parsing.knowledge_graph.inference_service import InferenceServi
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
-from app.modules.repo_manager import RepoManager
 from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.logger import log_context, setup_logger
 from app.modules.utils.parse_webhook_helper import ParseWebhookHelper
+from sandbox import WorkspaceHandle
+from sandbox.api.parser_wire import ParseArtifacts
 
 from .parsing_schema import ParsingRequest, RepoDetails
 
@@ -50,6 +59,7 @@ class ParsingService:
         *,
         neo4j_config: dict | None = None,
         raise_library_exceptions: bool = False,
+        project_sandbox: ProjectSandbox | None = None,
     ):
         """Initialize ParsingService.
 
@@ -60,6 +70,9 @@ class ParsingService:
                           If None, uses config_provider.
             raise_library_exceptions: If True, raise ParsingServiceError
                                       instead of HTTPException
+            project_sandbox: Override the process-wide project sandbox
+                             facade. Passed by tests; production uses
+                             :func:`get_project_sandbox` (one per worker).
         """
         self.db = db
         self.parse_helper = ParseHelper(db)
@@ -69,7 +82,7 @@ class ParsingService:
         self.github_service = CodeProviderService(db)
         self._neo4j_config = neo4j_config
         self._raise_library_exceptions = raise_library_exceptions
-        self.repo_manager = RepoManager()
+        self._project_sandbox = project_sandbox or get_project_sandbox()
 
     def close(self) -> None:
         """Close Neo4j-backed services (e.g. inference_service). Call when done with this instance."""
@@ -167,43 +180,22 @@ class ParsingService:
                         await project_manager.update_project_status(
                             project_id, ProjectStatusEnum.READY
                         )
-                        # Ensure worktree exists in repo manager when enabled
-                        if self.repo_manager and os.getenv(
-                            "REPO_MANAGER_ENABLED", "false"
-                        ).lower() == "true":
-                            repo_name = existing_project.get("project_name")
-                            branch = existing_project.get("branch_name")
-                            commit_id_val = existing_project.get("commit_id")
-                            repo_path = existing_project.get("repo_path")
-                            if repo_name and not repo_path:
-                                ref = commit_id_val if commit_id_val else branch
-                                if ref:
-                                    try:
-                                        github_service = GithubService(self.db)
-                                        user_token = github_service.get_github_oauth_token(user_id)
-                                        loop = asyncio.get_running_loop()
-                                        await loop.run_in_executor(
-                                            None,
-                                            lambda: self.repo_manager.prepare_for_parsing(
-                                                repo_name,
-                                                ref,
-                                                auth_token=user_token,
-                                                is_commit=bool(commit_id_val),
-                                                user_id=user_id,
-                                            ),
-                                        )
-                                        logger.info(
-                                            "Ensured worktree for already-parsed project %s (%s@%s)",
-                                            project_id,
-                                            repo_name,
-                                            ref,
-                                        )
-                                    except Exception:
-                                        logger.warning(
-                                            "Failed to ensure worktree for project %s",
-                                            project_id,
-                                            exc_info=True,
-                                        )
+                        # Re-up the project sandbox so the next agent run
+                        # / conversation message lands on a warm workspace.
+                        # ``ensure`` is idempotent and self-healing: no-op
+                        # if already alive, recreate-and-clone if not.
+                        # Best-effort — observability shouldn't fail the
+                        # already-parsed early return.
+                        await self._warm_project_sandbox_safe(
+                            user_id=user_id,
+                            project_id=str(project_id),
+                            repo_name=existing_project.get("project_name"),
+                            base_ref=(
+                                existing_project.get("commit_id")
+                                or existing_project.get("branch_name")
+                            ),
+                            repo_url=existing_project.get("repo_path"),
+                        )
                         return {
                             "message": "Project already parsed for requested commit",
                             "id": project_id,
@@ -238,148 +230,52 @@ class ParsingService:
                             except Exception:
                                 pass
 
-                # Convert ParsingRequest to RepoDetails
-                repo_details_converted = RepoDetails(
-                    repo_name=repo_details.repo_name or "",
-                    branch_name=repo_details.branch_name or "",
-                    repo_path=repo_details.repo_path,
-                    commit_id=repo_details.commit_id,
+                # Resolve the user's GitHub OAuth token; ProjectSandbox
+                # picks an env / GitHub-App fallback if this is None.
+                user_token = self._resolve_user_github_token(
+                    user_id, repo_details.repo_name
+                )
+
+                # Provision the project sandbox: clones the repo at
+                # base_ref into a long-lived ANALYSIS workspace. One
+                # sandbox per (user, project); subsequent calls
+                # (conversations, agent tools) reuse the same backing
+                # workspace via the same key.
+                base_ref = (
+                    repo_details.commit_id or repo_details.branch_name or ""
                 )
                 logger.info(
-                    "ParsingService: About to call clone_or_copy_repository",
+                    "ParsingService: ensuring project sandbox",
                     repo_name=repo_details.repo_name,
-                    repo_path=repo_details.repo_path,
+                    base_ref=base_ref,
                     project_id=project_id,
                 )
-                # Fetch user's GitHub OAuth token from user_auth_providers table
-                user_token = None
-                try:
-                    github_service = GithubService(self.db)
-                    user_token = github_service.get_github_oauth_token(user_id)
-                    if user_token:
-                        logger.info(
-                            "Using user's GitHub OAuth token for cloning",
-                            user_id=user_id,
-                            repo_name=repo_details.repo_name,
-                            token_prefix=user_token[:8] if len(user_token) > 8 else "short",
-                        )
-                    else:
-                        logger.warning(
-                            "No user GitHub OAuth token found - will use environment tokens",
-                            user_id=user_id,
-                            repo_name=repo_details.repo_name,
-                            reason="User may not have linked GitHub account or token expired",
-                        )
-                except Exception as e:
-                    logger.exception(
-                        "Failed to fetch user GitHub token - falling back to environment tokens",
-                        user_id=user_id,
-                        repo_name=repo_details.repo_name,
-                        error=str(e),
-                    )
-                (
-                    repo,
-                    _owner,
-                    auth,
-                    repo_manager_path,
-                ) = await self.parse_helper.clone_or_copy_repository(
-                    repo_details_converted, user_id, auth_token=user_token, project_id=str(project_id)
+                handle = await self._project_sandbox.ensure(
+                    user_id=user_id,
+                    project_id=str(project_id),
+                    repo=ProjectRef(
+                        repo_name=repo_details.repo_name or "",
+                        base_ref=base_ref,
+                        repo_url=repo_details.repo_path,
+                    ),
+                    auth_token=user_token,
                 )
                 logger.info(
-                    "ParsingService: clone_or_copy_repository completed",
-                    repo_name=repo_details.repo_name,
+                    "ParsingService: project sandbox ready",
+                    workspace_id=handle.workspace_id,
+                    backend_kind=handle.backend_kind,
                     project_id=project_id,
-                    repo_manager_path=repo_manager_path,
                 )
-                if config_provider.get_is_development_mode():
-                    (
-                        extracted_dir,
-                        returned_project_id,
-                    ) = await self.parse_helper.setup_project_directory(
-                        repo,
-                        repo_details.branch_name,
-                        auth,
-                        repo_details,
-                        user_id,
-                        str(project_id),
-                        commit_id=repo_details.commit_id,
-                        repo_manager_path=repo_manager_path,
-                        auth_token=user_token,
-                    )
-                else:
-                    (
-                        extracted_dir,
-                        returned_project_id,
-                    ) = await self.parse_helper.setup_project_directory(
-                        repo,
-                        repo_details.branch_name,
-                        auth,
-                        repo_details,
-                        user_id,
-                        str(project_id),
-                        commit_id=repo_details.commit_id,
-                        repo_manager_path=repo_manager_path,
-                        auth_token=user_token,
-                    )
 
-                # setup_project_directory returns str | None, but project_id is int
-                # Keep original project_id since it's already set and used as int throughout
-                # The returned value is only used for logging/debugging
-
-                # Ensure extracted_dir is a string
-                if extracted_dir is None:
-                    if self._raise_library_exceptions:
-                        raise ParsingServiceError(
-                            "Failed to set up project directory"
-                        )
-                    raise HTTPException(
-                        status_code=500, detail="Failed to set up project directory"
-                    )
-                extracted_dir = str(extracted_dir)
-
-                Repo = _get_repo_class()
-                if repo is None or isinstance(repo, Repo):
-                    # Local repo or cached repo without GitHub API access
-                    # Use local language detection
-                    # Always use extracted_dir as it's the canonical path for parsing
-                    # (repo_manager_path is set to extracted_dir when using RepoManager)
-                    language_dir = extracted_dir
-                    logger.info(
-                        f"Using extracted_dir for language detection: {language_dir} "
-                        f"(repo_manager_path: {repo_manager_path}, "
-                        f"repo.working_tree_dir: {repo.working_tree_dir if isinstance(repo, Repo) else 'N/A'})"
-                    )
-                    language = self.parse_helper.detect_repo_language(language_dir)
-                    logger.info(f"Detected language: {language}")
-                else:
-                    # PyGithub Repository object - use API for language detection
-                    languages = repo.get_languages()
-                    if languages:
-                        language = max(languages, key=languages.get).lower()
-                        logger.info(f"Detected language from GitHub API: {language}")
-                    else:
-                        logger.info(
-                            "GitHub API returned no languages, using local detection"
-                        )
-                        language = self.parse_helper.detect_repo_language(extracted_dir)
-                        logger.info(
-                            f"Detected language from local detection: {language}"
-                        )
-
-                logger.info(
-                    "ParsingService: About to analyze directory",
-                    extra={
-                        "extracted_dir": extracted_dir,
-                        "repo_manager_path": repo_manager_path,
-                        "repo_type": type(repo).__name__ if repo else "None",
-                        "repo_working_tree_dir": (
-                            repo.working_tree_dir if isinstance(repo, Repo) else "N/A"
-                        ),
-                        "language": language,
-                    },
-                )
-                await self.analyze_directory(
-                    extracted_dir, project_id, user_id, self.db, language, user_email
+                # Run the in-sandbox parser and persist the resulting
+                # graph. Replaces the host-FS analyze_directory path —
+                # the host process never walks the repo tree itself.
+                await self.analyze_workspace(
+                    handle=handle,
+                    project_id=project_id,
+                    user_id=user_id,
+                    user_email=user_email,
+                    repo_details=repo_details,
                 )
                 message = "The project has been parsed successfully"
                 return {"message": message, "id": project_id}
@@ -432,6 +328,270 @@ class ParsingService:
                     detail=f"Internal server error. Please contact support with project ID: {project_id}",
                 )
 
+    # ------------------------------------------------------------------
+    # Sandbox-based parsing helpers (Phase 3 of the migration).
+    # ------------------------------------------------------------------
+    def _resolve_user_github_token(
+        self, user_id: str, repo_name: str | None
+    ) -> str | None:
+        """Best-effort GitHub token lookup with the same logging shape
+        as the legacy clone path.
+
+        Falls back to ``None`` on any failure — ``ProjectSandbox.ensure``
+        threads it through to the local adapter's resolver chain (env
+        token → GitHub App → user OAuth), so a missing user token here
+        is recoverable rather than fatal.
+        """
+        try:
+            github_service = GithubService(self.db)
+            user_token = github_service.get_github_oauth_token(user_id)
+            if user_token:
+                logger.info(
+                    "Using user's GitHub OAuth token for sandbox provisioning",
+                    user_id=user_id,
+                    repo_name=repo_name,
+                    token_prefix=(
+                        user_token[:8] if len(user_token) > 8 else "short"
+                    ),
+                )
+            else:
+                logger.warning(
+                    "No user GitHub OAuth token found - sandbox will fall back "
+                    "to environment / app tokens",
+                    user_id=user_id,
+                    repo_name=repo_name,
+                )
+            return user_token
+        except Exception as e:
+            logger.exception(
+                "Failed to fetch user GitHub token; sandbox will fall back",
+                user_id=user_id,
+                repo_name=repo_name,
+                error=str(e),
+            )
+            return None
+
+    async def _warm_project_sandbox_safe(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        repo_name: str | None,
+        base_ref: str | None,
+        repo_url: str | None,
+    ) -> None:
+        """Re-up the project sandbox without failing the caller.
+
+        Used from the early-return branch in :meth:`parse_directory`
+        when the project is already parsed at the requested commit —
+        we still want to make sure the next agent run lands on a warm
+        sandbox, but that's a nice-to-have, not a precondition for the
+        early return.
+        """
+        if not repo_name or not base_ref:
+            return
+        try:
+            await self._project_sandbox.ensure(
+                user_id=user_id,
+                project_id=project_id,
+                repo=ProjectRef(
+                    repo_name=repo_name,
+                    base_ref=base_ref,
+                    repo_url=repo_url,
+                ),
+            )
+        except Exception:
+            logger.warning(
+                "Failed to warm project sandbox after early-return parse",
+                project_id=project_id,
+                user_id=user_id,
+                repo_name=repo_name,
+                base_ref=base_ref,
+                exc_info=True,
+            )
+
+    async def analyze_workspace(
+        self,
+        *,
+        handle: WorkspaceHandle,
+        project_id: str,
+        user_id: str,
+        user_email: str,
+        repo_details,
+    ) -> None:
+        """Run the in-sandbox parser and persist the resulting graph.
+
+        Phase-3 replacement for :meth:`analyze_directory`. The host
+        process never walks the repo tree itself — ``ProjectSandbox.parse``
+        invokes ``potpie-parse`` inside the workspace, streams NDJSON
+        back, and we feed the reconstructed graph straight into neo4j
+        and qdrant via :meth:`CodeGraphService.store_graph_from_artifacts`.
+
+        Refuses to proceed if the parser produced only FILE nodes —
+        that's the new "language not supported" gate, replacing the
+        host-side ``detect_repo_language``. parsing_rs handles every
+        language we care about, so empty output ⇒ no parseable code.
+        """
+        analysis_start_time = time.time()
+        project_details = await self.project_service.get_project_from_db_by_id(
+            project_id
+        )
+        if project_details:
+            repo_name = project_details.get("project_name")
+            branch_name = project_details.get("branch_name")
+        else:
+            error_msg = f"Project with ID {project_id} not found."
+            logger.bind(project_id=project_id, user_id=user_id).error(error_msg)
+            if self._raise_library_exceptions:
+                raise ParsingServiceError(error_msg)
+            raise HTTPException(status_code=404, detail="Project not found.")
+
+        logger.info(
+            "[PARSING] Step 1/3: in-sandbox parse",
+            project_id=project_id,
+            workspace_id=handle.workspace_id,
+            backend_kind=handle.backend_kind,
+        )
+        parse_start = time.time()
+        try:
+            artifacts: ParseArtifacts = await self._project_sandbox.parse(
+                handle, timeout_s=900
+            )
+        except Exception as exc:
+            logger.exception(
+                "[PARSING] In-sandbox parser failed",
+                project_id=project_id,
+                workspace_id=handle.workspace_id,
+            )
+            if self._raise_library_exceptions:
+                raise ParsingServiceError(
+                    f"Sandbox parse failed for project {project_id}: {exc}"
+                ) from exc
+            raise
+
+        parse_time = time.time() - parse_start
+        non_file_nodes = sum(
+            1 for n in artifacts.nodes if getattr(n, "node_type", None) != "FILE"
+        )
+        logger.info(
+            "[PARSING] In-sandbox parse complete: %d nodes (%d non-FILE), "
+            "%d edges in %.2fs",
+            len(artifacts.nodes),
+            non_file_nodes,
+            len(artifacts.relationships),
+            parse_time,
+            project_id=project_id,
+        )
+
+        # Replaces the legacy "if language != 'other'" gate. parsing_rs
+        # handles every language we ship a tree-sitter grammar for, so
+        # an empty non-FILE node count means the repo doesn't carry
+        # parseable code and the inference / search pipeline has
+        # nothing to chew on.
+        if non_file_nodes == 0:
+            await self.project_service.update_project_status(
+                project_id, ProjectStatusEnum.ERROR
+            )
+            if not self._raise_library_exceptions:
+                await ParseWebhookHelper().send_slack_notification(
+                    project_id, "Other"
+                )
+            self.inference_service.log_graph_stats(project_id)
+            raise ParsingFailedError(
+                "Repository doesn't consist of a language currently supported."
+            )
+
+        neo4j_config = self._get_neo4j_config()
+        service: CodeGraphService | None = None
+        try:
+            service = CodeGraphService(
+                neo4j_config["uri"],
+                neo4j_config["username"],
+                neo4j_config["password"],
+                self.db,
+            )
+            graph_gen_start = time.time()
+            logger.info(
+                "[PARSING] Step 2/3: writing graph to neo4j + qdrant",
+                project_id=project_id,
+            )
+            service.store_graph_from_artifacts(artifacts, str(project_id), user_id)
+            graph_gen_time = time.time() - graph_gen_start
+
+            await self.project_service.update_project_status(
+                project_id, ProjectStatusEnum.PARSED
+            )
+
+            logger.info(
+                "[PARSING] Step 3/3: running inference",
+                project_id=project_id,
+            )
+            inference_start = time.time()
+            cache_stats = await self.inference_service.run_inference(
+                str(project_id)
+            )
+            inference_time = time.time() - inference_start
+            self.inference_service.log_graph_stats(project_id)
+
+            await self.project_service.update_project_status(
+                project_id, ProjectStatusEnum.READY
+            )
+
+            if not self._raise_library_exceptions and user_email:
+                task = create_task(
+                    EmailHelper().send_email(user_email, repo_name, branch_name)
+                )
+
+                def _on_email_done(t: asyncio.Task) -> None:
+                    if t.cancelled():
+                        return
+                    try:
+                        exc = t.exception()
+                    except asyncio.CancelledError:
+                        return
+                    if exc is not None:
+                        logger.exception("Failed to send email", exc_info=exc)
+
+                task.add_done_callback(_on_email_done)
+
+            total_time = time.time() - analysis_start_time
+            cache_hit_rate = 0.0
+            if cache_stats and isinstance(cache_stats, dict):
+                total_cacheable = cache_stats.get(
+                    "cache_hits", 0
+                ) + cache_stats.get("cache_misses", 0)
+                if total_cacheable > 0:
+                    cache_hit_rate = (
+                        cache_stats.get("cache_hits", 0) / total_cacheable
+                    ) * 100
+                logger.info(
+                    f"[PARSING] Cache stats — hits: {cache_stats.get('cache_hits', 0)}, "
+                    f"misses: {cache_stats.get('cache_misses', 0)}, "
+                    f"uncacheable: {cache_stats.get('uncacheable_nodes', 0)}, "
+                    f"hit rate (cacheable only): {cache_hit_rate:.1f}%",
+                    project_id=project_id,
+                )
+
+            logger.info(
+                "[PARSING] Done in %.2fs (parse: %.2fs, graph: %.2fs, infer: %.2fs)",
+                total_time,
+                parse_time,
+                graph_gen_time,
+                inference_time,
+                project_id=project_id,
+                total_analysis_time_seconds=total_time,
+                parse_time_seconds=parse_time,
+                graph_gen_time_seconds=graph_gen_time,
+                inference_time_seconds=inference_time,
+            )
+            self.inference_service.log_graph_stats(project_id)
+        finally:
+            if service is not None:
+                try:
+                    service.close()
+                except Exception:
+                    pass
+
     def create_neo4j_indices(self, graph_manager):
         # Create existing indices from blar_graph
         graph_manager.create_entityId_index()
@@ -456,191 +616,6 @@ class ParsingService:
                 CREATE LOOKUP INDEX relationship_type_lookup IF NOT EXISTS FOR ()-[r]->() ON EACH type(r)
                 """
             session.run(rel_type_query)
-
-    async def analyze_directory(
-        self,
-        extracted_dir: str,
-        project_id: str,
-        user_id: str,
-        db,
-        language: str,
-        user_email: str,
-    ):
-        logger.info(
-            f"ParsingService: Parsing project {project_id}: Analyzing directory: {extracted_dir}"
-        )
-
-        # Validate that extracted_dir is a valid path
-        if not isinstance(extracted_dir, str):
-            error_msg = f"ParsingService: Invalid extracted_dir type: {type(extracted_dir)}, value: {extracted_dir}"
-            logger.bind(project_id=project_id, user_id=user_id).error(error_msg)
-            raise ValueError(
-                f"Expected string path, got {type(extracted_dir)}: {extracted_dir}"
-            )
-
-        if not os.path.exists(extracted_dir):
-            error_msg = f"ParsingService: Directory does not exist: {extracted_dir}"
-            logger.bind(project_id=project_id, user_id=user_id).error(error_msg)
-            raise FileNotFoundError(f"Directory not found: {extracted_dir}")
-
-        logger.info(
-            "ParsingService: Directory exists and is accessible", dir=extracted_dir
-        )
-        project_details = await self.project_service.get_project_from_db_by_id(
-            project_id
-        )
-        if project_details:
-            repo_name = project_details.get("project_name")
-            branch_name = project_details.get("branch_name")
-        else:
-            error_msg = f"Project with ID {project_id} not found."
-            logger.bind(project_id=project_id, user_id=user_id).error(error_msg)
-            if self._raise_library_exceptions:
-                raise ParsingServiceError(error_msg)
-            raise HTTPException(status_code=404, detail="Project not found.")
-
-        analysis_start_time = time.time()
-        logger.info(
-            f"[PARSING] Starting analysis for project {project_id} (language: {language})",
-            project_id=project_id,
-            user_id=user_id,
-            language=language,
-        )
-
-        service = None
-        if language != "other":
-            try:
-                # Step 1: Graph Generation
-                graph_gen_start = time.time()
-                logger.info(
-                    "[PARSING] Step 1/3: Graph generation",
-                    project_id=project_id,
-                )
-                neo4j_config = self._get_neo4j_config()
-                service = CodeGraphService(
-                    neo4j_config["uri"],
-                    neo4j_config["username"],
-                    neo4j_config["password"],
-                    db,
-                )
-
-                service.create_and_store_graph(extracted_dir, project_id, user_id)
-                graph_gen_time = time.time() - graph_gen_start
-                logger.info(
-                    f"[PARSING] Graph generation completed in {graph_gen_time:.2f}s",
-                    project_id=project_id,
-                    graph_gen_time_seconds=graph_gen_time,
-                )
-
-                status_update_start = time.time()
-                await self.project_service.update_project_status(
-                    project_id, ProjectStatusEnum.PARSED
-                )
-                status_update_time = time.time() - status_update_start
-
-                # Step 2: Inference
-                inference_start = time.time()
-                logger.info(
-                    "[PARSING] Step 2/3: Running inference",
-                    project_id=project_id,
-                )
-                cache_stats = await self.inference_service.run_inference(
-                    str(project_id)
-                )
-                inference_time = time.time() - inference_start
-                logger.info(
-                    f"[PARSING] Inference completed in {inference_time:.2f}s",
-                    project_id=project_id,
-                    inference_time_seconds=inference_time,
-                )
-                self.inference_service.log_graph_stats(project_id)
-
-                # Step 3: Final status update
-                final_status_start = time.time()
-                await self.project_service.update_project_status(
-                    project_id, ProjectStatusEnum.READY
-                )
-                final_status_time = time.time() - final_status_start
-
-                if not self._raise_library_exceptions and user_email:
-                    task = create_task(
-                        EmailHelper().send_email(user_email, repo_name, branch_name)
-                    )
-
-                    def _on_email_done(t: asyncio.Task) -> None:
-                        if t.cancelled():
-                            return
-                        try:
-                            exc = t.exception()
-                        except asyncio.CancelledError:
-                            return
-                        if exc is not None:
-                            logger.exception("Failed to send email", exc_info=exc)
-
-                    task.add_done_callback(_on_email_done)
-
-                total_analysis_time = time.time() - analysis_start_time
-
-                # Log cache statistics if available
-                cache_hit_rate = 0.0
-                if cache_stats and isinstance(cache_stats, dict):
-                    total_cacheable = cache_stats.get(
-                        "cache_hits", 0
-                    ) + cache_stats.get("cache_misses", 0)
-                    if total_cacheable > 0:
-                        cache_hit_rate = (
-                            cache_stats.get("cache_hits", 0) / total_cacheable
-                        ) * 100
-
-                    logger.info(
-                        f"[PARSING] Cache statistics - "
-                        f"Hits: {cache_stats.get('cache_hits', 0)} ({cache_stats.get('cache_hit_rate', 0):.1f}%), "
-                        f"Misses: {cache_stats.get('cache_misses', 0)} ({cache_stats.get('cache_miss_rate', 0):.1f}%), "
-                        f"Uncacheable: {cache_stats.get('uncacheable_nodes', 0)}, "
-                        f"Stored: {cache_stats.get('cache_stored', 0)}, "
-                        f"Cache hit rate (cacheable only): {cache_hit_rate:.1f}%",
-                        project_id=project_id,
-                        cache_hits=cache_stats.get("cache_hits", 0),
-                        cache_misses=cache_stats.get("cache_misses", 0),
-                        uncacheable_nodes=cache_stats.get("uncacheable_nodes", 0),
-                        cache_stored=cache_stats.get("cache_stored", 0),
-                        cache_hit_rate=cache_stats.get("cache_hit_rate", 0),
-                        cache_miss_rate=cache_stats.get("cache_miss_rate", 0),
-                        cache_hit_rate_cacheable_only=cache_hit_rate,
-                    )
-
-                logger.info(
-                    f"[PARSING] Analysis completed in {total_analysis_time:.2f}s: "
-                    f"Graph gen: {graph_gen_time:.2f}s, "
-                    f"Inference: {inference_time:.2f}s, "
-                    f"Status updates: {status_update_time + final_status_time:.2f}s",
-                    project_id=project_id,
-                    total_analysis_time_seconds=total_analysis_time,
-                    graph_gen_time_seconds=graph_gen_time,
-                    inference_time_seconds=inference_time,
-                    status_update_time_seconds=status_update_time + final_status_time,
-                )
-                logger.info(f"DEBUGNEO4J: After update project status {project_id}")
-                self.inference_service.log_graph_stats(project_id)
-            finally:
-                if service is not None:
-                    service.close()
-                logger.info(
-                    "[PARSING] Cleaned up graph service",
-                    project_id=project_id,
-                )
-                self.inference_service.log_graph_stats(project_id)
-        else:
-            await self.project_service.update_project_status(
-                project_id, ProjectStatusEnum.ERROR
-            )
-            if not self._raise_library_exceptions:
-                await ParseWebhookHelper().send_slack_notification(project_id, "Other")
-            logger.info(f"DEBUGNEO4J: After update project status {project_id}")
-            self.inference_service.log_graph_stats(project_id)
-            raise ParsingFailedError(
-                "Repository doesn't consist of a language currently supported."
-            )
 
 
 async def duplicate_graph(self, old_repo_id: str, new_repo_id: str):
