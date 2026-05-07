@@ -220,11 +220,26 @@ class IncrementalGraphService:
         existing_hashes = self._read_existing_file_hashes(project_id)
         new_hashes = compute_file_hashes(artifacts)
 
-        if not existing_hashes:
+        # Fall back to a full rebuild when hashes are absent *or* when
+        # coverage is partial (some FILE nodes lack content_hash). A
+        # partial-seeding gap means files without hashes are treated as
+        # "added", so their old nodes are never deleted and
+        # apoc.create.node() will duplicate them on the next incremental
+        # run. Comparing against the total FILE count in the graph lets
+        # us detect this case and force a clean slate.
+        total_file_count = self._count_file_nodes(project_id)
+        is_unseeded = (
+            not existing_hashes
+            or len(existing_hashes) != total_file_count
+        )
+        if is_unseeded:
             logger.info(
-                "[INCREMENTAL] No existing file hashes for project %s — "
-                "running full rebuild and seeding hashes",
+                "[INCREMENTAL] Incomplete hash coverage for project %s "
+                "(hashed=%d, total_files=%d) — running full rebuild and "
+                "seeding hashes",
                 project_id,
+                len(existing_hashes),
+                total_file_count,
             )
             self.graph_service.store_graph_from_artifacts(
                 artifacts, project_id, user_id
@@ -247,16 +262,27 @@ class IncrementalGraphService:
             return delta
 
         start = time.time()
-        self._apply_delta(
+        qdrant_ok = self._apply_delta(
             artifacts=artifacts,
             project_id=project_id,
             user_id=user_id,
             delta=delta,
         )
-        # Persist hashes for the next run. We update *all* files'
-        # hashes — including unchanged ones — so a corrupted hash on
-        # any file (e.g. from an aborted previous run) self-heals.
-        self._write_file_hashes(project_id, new_hashes)
+        if qdrant_ok:
+            # Persist hashes for the next run. We update *all* files'
+            # hashes — including unchanged ones — so a corrupted hash on
+            # any file (e.g. from an aborted previous run) self-heals.
+            self._write_file_hashes(project_id, new_hashes)
+        else:
+            # Qdrant sync failed. Skip writing hashes so the next parse
+            # sees the same delta and retries the vector update. The
+            # Neo4j graph is already consistent — only the search index
+            # is stale until the retry succeeds.
+            logger.warning(
+                "[INCREMENTAL] Skipping hash write for project %s because "
+                "Qdrant sync failed — will retry on next parse",
+                project_id,
+            )
 
         logger.info(
             "[INCREMENTAL] Applied delta in %.2fs",
@@ -289,6 +315,26 @@ class IncrementalGraphService:
     # ------------------------------------------------------------------
     # Neo4j operations
     # ------------------------------------------------------------------
+
+    def _count_file_nodes(self, project_id: str) -> int:
+        """Return the total number of FILE nodes for *project_id* in Neo4j.
+
+        Used to detect partial hash-seeding: if the count of FILE nodes
+        with a ``content_hash`` differs from the total FILE count, some
+        files were never hashed and the incremental path must not be used
+        (it would treat those files as "added" rather than "unchanged",
+        creating duplicates via apoc.create.node()).
+        """
+        with self.graph_service.driver.session() as session:
+            result = session.run(
+                """
+                MATCH (n:FILE {repoId: $project_id})
+                RETURN count(n) AS total
+                """,
+                project_id=project_id,
+            )
+            record = result.single()
+            return int(record["total"]) if record else 0
 
     def _read_existing_file_hashes(self, project_id: str) -> dict[str, str]:
         with self.graph_service.driver.session() as session:
@@ -469,7 +515,13 @@ class IncrementalGraphService:
         project_id: str,
         user_id: str,
         delta: GraphDelta,
-    ) -> None:
+    ) -> bool:
+        """Apply the delta to Neo4j and Qdrant.
+
+        Returns ``True`` when Qdrant sync completed without error, ``False``
+        when it failed (Neo4j is always updated regardless).  The return
+        value lets the caller decide whether to advance ``content_hash``.
+        """
         # Step 1: drop nodes (and their edges) for deleted + modified files.
         files_to_delete = delta.removed | delta.modified
         deleted = self._delete_files(project_id, files_to_delete)
@@ -492,7 +544,7 @@ class IncrementalGraphService:
 
         # Step 3: keep Qdrant in sync with the graph. Drop points for
         # nodes we removed; index the new dirty-file nodes.
-        self._update_qdrant(
+        return self._update_qdrant(
             artifacts=artifacts,
             project_id=project_id,
             user_id=user_id,
@@ -509,13 +561,15 @@ class IncrementalGraphService:
         project_id: str,
         user_id: str,
         delta: GraphDelta,
-    ) -> None:
+    ) -> bool:
         """Apply the delta to the project's Qdrant collection.
 
-        Best-effort: a failure here is logged but doesn't roll back the
-        Neo4j writes — same posture as the full-rebuild path, where
-        Qdrant errors are swallowed (the next parse rebuilds it from
-        scratch anyway).
+        Returns ``True`` on success, ``False`` on failure.  Failures are
+        logged but do not roll back Neo4j writes.  The return value is
+        threaded back to ``store_graph_from_artifacts_incremental`` so it
+        can decide whether to advance ``content_hash``: if we skip the
+        hash write on failure, the next parse will see the same delta and
+        retry the vector update automatically.
         """
         try:
             from app.modules.parsing.knowledge_graph.qdrant_indexing_service import (  # noqa: E501
@@ -532,7 +586,7 @@ class IncrementalGraphService:
                 "[INCREMENTAL] qdrant helper missing; skipping vector update",
                 project_id=project_id,
             )
-            return
+            return True  # Not a Qdrant error — no retry needed.
 
         collection_alias = self.graph_service.get_qdrant_collection_alias(
             project_id
@@ -561,9 +615,11 @@ class IncrementalGraphService:
                 )
             except Exception:
                 logger.exception(
-                    "[INCREMENTAL] Qdrant delete failed (non-fatal)",
+                    "[INCREMENTAL] Qdrant delete failed — hash write "
+                    "deferred to allow retry on next parse",
                     project_id=project_id,
                 )
+                return False
 
         # Index new/modified nodes into Qdrant.
         nodes_to_index = []
@@ -587,7 +643,7 @@ class IncrementalGraphService:
                 }
             )
         if not nodes_to_index:
-            return
+            return True
         try:
             index_nodes_to_qdrant(
                 self.graph_service.qdrant_client,
@@ -609,9 +665,12 @@ class IncrementalGraphService:
             )
         except Exception:
             logger.exception(
-                "[INCREMENTAL] Qdrant indexing failed (non-fatal)",
+                "[INCREMENTAL] Qdrant indexing failed — hash write "
+                "deferred to allow retry on next parse",
                 project_id=project_id,
             )
+            return False
+        return True
 
 
 # ---------------------------------------------------------------------------

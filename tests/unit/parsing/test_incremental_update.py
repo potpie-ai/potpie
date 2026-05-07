@@ -174,14 +174,21 @@ class TestGraphDeltaDiff:
 class _FakeNeo4jSession:
     """Captures Cypher calls so we can assert on them."""
 
-    def __init__(self, hash_rows=None):
+    def __init__(self, hash_rows=None, total_file_count: int = 0):
         self._hash_rows = hash_rows or []
+        self._total_file_count = total_file_count
         self.calls: list[tuple[str, dict]] = []
         # Return value for the read-hashes query — overridden via
         # set_hash_rows when the test wants to simulate prior state.
 
     def set_hash_rows(self, rows):
         self._hash_rows = rows
+        # Keep total file count in sync by default (full coverage).
+        self._total_file_count = len(rows)
+
+    def set_total_file_count(self, count: int):
+        """Override the FILE node count independently for partial-seeding tests."""
+        self._total_file_count = count
 
     def __enter__(self):
         return self
@@ -197,6 +204,9 @@ class _FakeNeo4jSession:
         # The hash-read query is the only one tests inspect the rows of.
         if "RETURN n.file_path AS file_path, n.content_hash AS content_hash" in query:
             return self._hash_rows
+        # The total-FILE-count query used by _count_file_nodes.
+        if "RETURN count(n) AS total" in query:
+            return [{"total": self._total_file_count}]
         return []
 
 
@@ -212,8 +222,8 @@ class _FakeNeo4jResult:
 
 
 class _FakeDriver:
-    def __init__(self):
-        self.session_obj = _FakeNeo4jSession()
+    def __init__(self, total_file_count: int = 0):
+        self.session_obj = _FakeNeo4jSession(total_file_count=total_file_count)
 
     def session(self):
         # Return the same session every time so tests can inspect
@@ -518,6 +528,96 @@ class TestStoreGraphFromArtifactsIncremental:
                     "C.py → C.py:baz is between two unchanged files and "
                     "should not be re-emitted"
                 )
+
+
+    def test_partial_seeding_forces_full_rebuild(self):
+        """If only some FILE nodes have content_hash, treat project as unseeded.
+
+        Verifies fix for: partial seeding gap where files without hashes
+        are treated as "added" → old nodes never deleted → duplicates.
+        """
+        graph = _make_graph_service()
+        graph.store_graph_from_artifacts = MagicMock(name="full_rebuild")
+        artifacts = _three_file_repo()
+
+        # Pre-seed only ONE of the three files' hashes.
+        existing = compute_file_hashes(artifacts)
+        only_a = [{"file_path": "A.py", "content_hash": existing["A.py"]}]
+        graph.driver.session_obj.set_hash_rows(only_a)
+        # But there are 3 FILE nodes in the graph (partial coverage).
+        graph.driver.session_obj.set_total_file_count(3)
+
+        service = IncrementalGraphService(graph)
+        delta = service.store_graph_from_artifacts_incremental(
+            artifacts, "p1", "u1"
+        )
+
+        # Must have fallen back to a full rebuild, not incremental.
+        graph.store_graph_from_artifacts.assert_called_once_with(
+            artifacts, "p1", "u1"
+        )
+        # Hashes are seeded for all files.
+        hash_writes = [
+            (q, p)
+            for q, p in graph.driver.session_obj.calls
+            if "SET n.content_hash" in q
+        ]
+        assert hash_writes, "expected a content_hash write after fallback rebuild"
+
+    def test_qdrant_failure_defers_hash_write(self):
+        """When Qdrant sync fails, content_hash must NOT be advanced.
+
+        Verifies fix for: Qdrant errors were swallowed but hashes were
+        written anyway, so the next parse saw "no changes" and skipped
+        the retry.
+        """
+        graph = _make_graph_service()
+        graph.store_graph_from_artifacts = MagicMock(name="full_rebuild")
+        original = _three_file_repo()
+        original_hashes = compute_file_hashes(original)
+        graph.driver.session_obj.set_hash_rows(
+            [
+                {"file_path": fp, "content_hash": h}
+                for fp, h in original_hashes.items()
+            ]
+        )
+
+        # Modify B.py so there's an actual delta to process.
+        modified_nodes = []
+        for node in original.nodes:
+            if node.id == "B.py:bar":
+                modified_nodes.append(
+                    _node("B.py:bar", "B.py", text="# changed")
+                )
+            else:
+                modified_nodes.append(node)
+        artifacts = _artifacts(modified_nodes, original.relationships)
+
+        service = IncrementalGraphService(graph)
+        # Make _update_qdrant fail by having qdrant_client raise on delete.
+        graph.qdrant_client.collection_exists = MagicMock(return_value=True)
+
+        with patch(
+            "app.modules.parsing.graph_construction.incremental_graph_service"
+            ".IncrementalGraphService._update_qdrant",
+            return_value=False,
+        ):
+            delta = service.store_graph_from_artifacts_incremental(
+                artifacts, "p1", "u1"
+            )
+
+        # Content hash must NOT have been written — retry must be possible.
+        hash_writes = [
+            (q, p)
+            for q, p in graph.driver.session_obj.calls
+            if "SET n.content_hash" in q
+        ]
+        assert not hash_writes, (
+            "content_hash must NOT be written when Qdrant sync fails — "
+            "next parse must be able to retry the vector update"
+        )
+        # Delta is still returned so the caller knows what happened.
+        assert delta.modified == {"B.py"}
 
 
 # ---------------------------------------------------------------------------
