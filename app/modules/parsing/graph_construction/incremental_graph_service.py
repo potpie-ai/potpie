@@ -47,6 +47,7 @@ Why diff at the file level?
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -71,6 +72,11 @@ _INDEXABLE_NODE_TYPES = {"CLASS", "FUNCTION", "INTERFACE"}
 # CodeGraphService._store_graph so an incrementally-inserted node
 # carries the same label set a full-rebuild node would.
 _TYPED_LABELS = {"FILE", "CLASS", "FUNCTION", "INTERFACE"}
+
+# Relationship types must be safe Neo4j identifiers: uppercase ASCII letters,
+# digits, and underscores only.  Any other value would allow Cypher injection
+# because rel_type is interpolated directly into the query string.
+_REL_TYPE_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 
 
 @dataclass(slots=True)
@@ -143,8 +149,8 @@ def compute_file_hashes(artifacts) -> dict[str, str]:
     if edges is None:
         edges = getattr(artifacts, "edges", [])
     for edge in edges:
-        source_id = getattr(edge, "source_id")
-        target_id = getattr(edge, "target_id")
+        source_id = edge.source_id
+        target_id = edge.target_id
         rel_type = getattr(edge, "relationship_type", None) or getattr(
             edge, "edge_type", "REFERENCES"
         )
@@ -479,8 +485,8 @@ class IncrementalGraphService:
                 edges = getattr(artifacts, "edges", [])
             edges_by_type: dict[str, list[dict]] = defaultdict(list)
             for edge in edges:
-                source_id = getattr(edge, "source_id")
-                target_id = getattr(edge, "target_id")
+                source_id = edge.source_id
+                target_id = edge.target_id
                 source_file = node_id_to_file.get(source_id, "")
                 target_file = node_id_to_file.get(target_id, "")
                 if (
@@ -491,6 +497,15 @@ class IncrementalGraphService:
                 rel_type = getattr(edge, "relationship_type", None) or getattr(
                     edge, "edge_type", "REFERENCES"
                 )
+                if not _REL_TYPE_RE.match(rel_type):
+                    logger.warning(
+                        "[INCREMENTAL] skipping edge with unsafe rel_type %r "
+                        "(source=%s target=%s)",
+                        rel_type,
+                        source_id,
+                        target_id,
+                    )
+                    continue
                 edges_by_type[rel_type].append(
                     {
                         "source_id": CodeGraphService.generate_node_id(
