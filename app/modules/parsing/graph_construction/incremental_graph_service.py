@@ -165,7 +165,7 @@ def compute_file_hashes(artifacts) -> dict[str, str]:
     for file_path in all_files:
         if not file_path:
             continue
-        h = hashlib.sha1()
+        h = hashlib.sha1(usedforsecurity=False)  # noqa: S324 — content-change fingerprint, not a security hash
         for tup in sorted(by_file_nodes.get(file_path, [])):
             h.update(repr(tup).encode("utf-8"))
             h.update(b"\x00")
@@ -577,16 +577,18 @@ class IncrementalGraphService:
                 index_nodes_to_qdrant,
             )
         except ImportError:
-            # Older builds may not expose delete_points_by_node_ids;
-            # fall back to a full Qdrant rebuild via
-            # CodeGraphService._store_graph's path. We keep this fallback
-            # narrow — only triggered when the helper genuinely doesn't
-            # exist.
+            # The Qdrant helper is not present in this build.  We cannot
+            # sync the vector index at all, so we must signal failure
+            # (return False) to prevent content_hash from advancing.
+            # Advancing the hash would permanently hide the stale search
+            # state; returning False ensures the caller skips the hash
+            # write and retries on the next parse.
             logger.warning(
-                "[INCREMENTAL] qdrant helper missing; skipping vector update",
+                "[INCREMENTAL] qdrant helper missing; "
+                "vector sync skipped — hash write deferred",
                 project_id=project_id,
             )
-            return True  # Not a Qdrant error — no retry needed.
+            return False
 
         collection_alias = self.graph_service.get_qdrant_collection_alias(
             project_id
