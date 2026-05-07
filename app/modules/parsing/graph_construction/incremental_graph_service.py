@@ -241,6 +241,12 @@ class IncrementalGraphService:
                 len(existing_hashes),
                 total_file_count,
             )
+            # Wipe the existing graph before the full rebuild so stale
+            # nodes from a partially-seeded (or interrupted) previous run
+            # are removed.  Without this, store_graph_from_artifacts()
+            # would encounter existing nodes and apoc.create.node() would
+            # duplicate them.
+            self.graph_service.cleanup_graph(project_id)
             self.graph_service.store_graph_from_artifacts(
                 artifacts, project_id, user_id
             )
@@ -522,8 +528,14 @@ class IncrementalGraphService:
         when it failed (Neo4j is always updated regardless).  The return
         value lets the caller decide whether to advance ``content_hash``.
         """
-        # Step 1: drop nodes (and their edges) for deleted + modified files.
-        files_to_delete = delta.removed | delta.modified
+        # Step 1: drop nodes (and their edges) for deleted + modified files,
+        # and also for *added* files.  Including added files makes the whole
+        # pipeline idempotent: if _update_qdrant() fails and hashes are not
+        # advanced, the next parse will see the same delta (including the same
+        # "added" set) and re-enter _apply_delta.  Without this, nodes for
+        # delta.added would already exist in Neo4j from the first attempt, and
+        # apoc.create.node() in step 2 would insert duplicates.
+        files_to_delete = delta.removed | delta.dirty  # dirty = added | modified
         deleted = self._delete_files(project_id, files_to_delete)
         logger.info(
             "[INCREMENTAL] Deleted %d nodes for %d files",
@@ -719,25 +731,39 @@ def reconstruct_subgraph(
     want to drag in tree_sitter / grep_ast just to build a subgraph.
     """
     graph = nx.MultiDiGraph()
+    # node_lookup lets us materialise boundary nodes (nodes whose file is NOT
+    # dirty but that are referenced by an edge crossing into a dirty file).
+    # Without this, graph.add_edge() would auto-create those nodes with empty
+    # attrs, producing a graph with a different shape from the full pipeline.
+    node_lookup: dict[str, object] = {}
     node_id_to_file: dict[str, str] = {}
-    for node in artifacts.nodes:
+
+    def _add_node(node) -> None:
+        """Add *node* to the graph if it isn't there yet."""
+        if graph.has_node(node.id):
+            return
         file_path = getattr(node, "file", "") or ""
-        node_id_to_file[node.id] = file_path
-        if file_path not in dirty_files:
-            continue
-        node_attrs = {
+        attrs = {
             "file": file_path,
             "line": getattr(node, "line", -1),
             "end_line": getattr(node, "end_line", -1),
             "type": getattr(node, "node_type", "UNKNOWN"),
             "name": getattr(node, "name", "") or "",
         }
-        if node_attrs["type"] != "FILE":
-            node_attrs["class_name"] = getattr(node, "class_name", None)
+        if attrs["type"] != "FILE":
+            attrs["class_name"] = getattr(node, "class_name", None)
         text = getattr(node, "text", None)
         if text is not None:
-            node_attrs["text"] = text
-        graph.add_node(node.id, **node_attrs)
+            attrs["text"] = text
+        graph.add_node(node.id, **attrs)
+
+    for node in artifacts.nodes:
+        file_path = getattr(node, "file", "") or ""
+        node_id_to_file[node.id] = file_path
+        node_lookup[node.id] = node
+        if file_path not in dirty_files:
+            continue
+        _add_node(node)
 
     edges = getattr(artifacts, "relationships", None)
     if edges is None:
@@ -747,6 +773,15 @@ def reconstruct_subgraph(
         target_file = node_id_to_file.get(edge.target_id, "")
         if source_file not in dirty_files and target_file not in dirty_files:
             continue
+        # Ensure both endpoints exist in the graph with proper attrs before
+        # calling add_edge.  For unchanged-file endpoints, this is the first
+        # time we materialise them — skipping this step lets nx auto-create
+        # the node with empty attrs and breaks neighbour metadata lookups in
+        # the inference layer.
+        if edge.source_id in node_lookup:
+            _add_node(node_lookup[edge.source_id])
+        if edge.target_id in node_lookup:
+            _add_node(node_lookup[edge.target_id])
         edge_type = getattr(edge, "edge_type", None) or getattr(
             edge, "relationship_type", "REFERENCES"
         )
