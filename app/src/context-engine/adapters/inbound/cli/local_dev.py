@@ -29,6 +29,10 @@ IN_PROGRESS_STATUSES = {
 }
 
 
+def _normalize_status(value: Any) -> str:
+    return str(value or "").strip().lower() or "unknown"
+
+
 def _repo_root() -> Path:
     env_root = os.getenv("POTPIE_REPO_ROOT")
     if env_root:
@@ -240,7 +244,7 @@ def parse(
     )
 
     project_id = result.get("project_id") or result.get("id")
-    status = str(result.get("status", "unknown"))
+    status = _normalize_status(result.get("status", "unknown"))
     if not project_id:
         typer.secho(
             "Parse response did not include a project id.",
@@ -284,7 +288,7 @@ def parse(
             user_id=user_id,
             timeout=15.0,
         )
-        status = str(status_result.get("status", "unknown"))
+        status = _normalize_status(status_result.get("status", "unknown"))
         if status != last_status:
             latest = status_result.get("latest")
             suffix = f" (latest={latest})" if latest is not None else ""
@@ -309,7 +313,7 @@ def _ensure_project_ready(
         user_id=user_id,
         timeout=15.0,
     )
-    status = str(status_result.get("status", "unknown"))
+    status = _normalize_status(status_result.get("status", "unknown"))
     if status not in READY_STATUSES:
         typer.secho(
             f"Project {project_id} is not ready yet (status: {status}).",

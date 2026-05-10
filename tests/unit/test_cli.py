@@ -24,9 +24,9 @@ def test_parse_submits_repo_and_polls_until_ready(monkeypatch, tmp_path: Path):
                 "repo_path": str(tmp_path.resolve()),
                 "branch_name": "main",
             }
-            return {"project_id": "project-1", "status": "submitted"}
+            return {"project_id": "project-1", "status": " submitted "}
         if method == "GET" and path == "/api/v1/parsing-status/project-1":
-            return {"status": "ready", "latest": True}
+            return {"status": "READY", "latest": True}
         raise AssertionError(f"Unexpected request {method} {path}")
 
     monkeypatch.setattr("adapters.inbound.cli.local_dev._request", fake_request)
@@ -70,7 +70,7 @@ def test_chat_creates_conversation_and_sends_single_message(monkeypatch):
     def fake_request(method, path, **kwargs):
         requests.append((method, path, kwargs.get("json_body")))
         if method == "GET" and path == "/api/v1/parsing-status/project-1":
-            return {"status": "ready", "latest": True}
+            return {"status": " READY ", "latest": True}
         if method == "POST" and path == "/api/v1/conversations/":
             assert kwargs["json_body"] == {
                 "project_ids": ["project-1"],
@@ -158,6 +158,46 @@ def test_start_uses_start_script(monkeypatch):
     script_path = Path(called["command"][1])
     assert script_path.parts[-2:] == ("scripts", "start.sh")
     assert called["cwd"].name == "potpie-bounty-work"
+
+
+@pytest.mark.parametrize(
+    ("system_name", "expected_engine", "expected_script"),
+    [
+        ("Linux", "/bin/bash", "stop.sh"),
+        ("Windows", "powershell", "stop.ps1"),
+    ],
+)
+def test_stop_uses_stop_script(
+    monkeypatch, tmp_path: Path, system_name, expected_engine, expected_script
+):
+    called = {}
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "stop.sh").write_text("")
+    (scripts_dir / "stop.ps1").write_text("")
+
+    monkeypatch.setattr(
+        "adapters.inbound.cli.local_dev.platform.system", lambda: system_name
+    )
+    monkeypatch.setattr(
+        "adapters.inbound.cli.local_dev.shutil.which", lambda name: "/bin/bash"
+    )
+    monkeypatch.setattr("adapters.inbound.cli.local_dev._repo_root", lambda: tmp_path)
+
+    def fake_call(command, cwd):
+        called["command"] = command
+        called["cwd"] = cwd
+        return 0
+
+    monkeypatch.setattr(subprocess, "call", fake_call)
+
+    result = runner.invoke(app, ["stop"])
+
+    assert result.exit_code == 0
+    assert called["command"][0] == expected_engine
+    script_path = Path(called["command"][-1])
+    assert script_path.parts[-2:] == ("scripts", expected_script)
+    assert called["cwd"] == tmp_path
 
 
 def test_context_cli_registers_local_dev_commands():
