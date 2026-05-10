@@ -51,6 +51,10 @@ from adapters.inbound.cli.potpie_api_config import (
     resolve_potpie_api_base_url,
     resolve_potpie_api_key,
 )
+from adapters.inbound.cli.local_dev import chat as local_chat
+from adapters.inbound.cli.local_dev import parse as local_parse
+from adapters.inbound.cli.local_dev import start as local_start
+from adapters.inbound.cli.local_dev import stop as local_stop
 from adapters.outbound.http.potpie_context_api_client import (
     IngestRejectedError,
     PotpieContextApiClient,
@@ -1725,6 +1729,12 @@ def ingest_cmd(
         raise typer.Exit(code=1)
 
     print_ingest_result(out, as_json=j)
+
+
+app.command(name="start")(local_start)
+app.command(name="stop")(local_stop)
+app.command(name="parse")(local_parse)
+app.command(name="chat")(local_chat)
 
 
 def main() -> None:
