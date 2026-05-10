@@ -141,7 +141,7 @@ def test_start_uses_start_script(monkeypatch):
     )
     monkeypatch.setattr(
         "adapters.inbound.cli.local_dev._repo_root",
-        lambda: Path("C:/Users/frogc/potpie-bounty-work"),
+        lambda: Path("/home/frogc/potpie-bounty-work"),
     )
 
     def fake_call(command, cwd):
@@ -179,9 +179,13 @@ def test_stop_uses_stop_script(
     monkeypatch.setattr(
         "adapters.inbound.cli.local_dev.platform.system", lambda: system_name
     )
-    monkeypatch.setattr(
-        "adapters.inbound.cli.local_dev.shutil.which", lambda name: "/bin/bash"
-    )
+
+    def fake_which(name):
+        if system_name == "Windows":
+            return "powershell" if name == "powershell" else None
+        return "/bin/bash" if name == "bash" else None
+
+    monkeypatch.setattr("adapters.inbound.cli.local_dev.shutil.which", fake_which)
     monkeypatch.setattr("adapters.inbound.cli.local_dev._repo_root", lambda: tmp_path)
 
     def fake_call(command, cwd):
