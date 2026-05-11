@@ -3,7 +3,7 @@ name = "potpie"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 dependencies = [
     "context-engine[all]",
     "potpie-integrations",
@@ -22,7 +22,7 @@ dependencies = [
     "firebase-admin>=7.1.0",
     "firecrawl-py>=4.6.0",
     "flower>=2.0.1",
-    "gitpython>=3.1.45",
+    "gitpython>=3.1.50",
     "google-cloud-secret-manager>=2.25.0",
     "google-cloud-storage>=3.5.0",
     "grep-ast>=0.6.0",
@@ -34,10 +34,10 @@ dependencies = [
     "joblib>=1.5.2",
     "kombu>=5.5.4",
     "langchain>=1.0.3",
-    "langchain-core>=1.2.28",
+    "langchain-core>=1.3.3",
     "langsmith>=0.7.31",
     "langgraph>=1.0.10",
-    "litellm>=1.83.0",
+    "litellm>=1.83.7,<1.83.8",
     "loguru>=0.7.3",
     "neo4j>=5.28.2",
     "networkx>=3.4.2",
@@ -60,7 +60,7 @@ dependencies = [
     "pynacl>=1.6.2",
     "python-dotenv>=1.2.2",
     "pyasn1>=0.6.3",
-    "python-multipart>=0.0.26",
+    "python-multipart>=0.0.27",
     "redis>=7.0.1",
     "python-socketio>=5.11.0",
     "requests>=2.33.1",
@@ -74,7 +74,7 @@ dependencies = [
     "transformers>=4.57.1",
     "tree-sitter>=0.20.4",
     "tree-sitter-language-pack>=0.13.0",
-    "mako>=1.3.11",
+    "mako>=1.3.12",
     "fastmcp>=3.2.0",
     "lupa>=2.7",
     "tornado>=6.5.5",
@@ -91,6 +91,12 @@ dependencies = [
     "potpie-sandbox",
     "daytona>=0.134.0",
 ]
+
+[tool.uv]
+# litellm 1.83.7 is the first release outside CVE-2026-42208 (<1.83.7) and pins openai==2.30.0,
+# which stays compatible with pydantic-ai + context-engine. Newer 1.83.x pins openai==2.24.0,
+# which breaks that stack. litellm still declares python-dotenv==1.0.1; override to match root.
+override-dependencies = ["python-dotenv>=1.2.2"]
 
 [tool.uv.sources]
 parsing = { path = "app/src/parsing" }

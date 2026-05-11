@@ -118,7 +118,7 @@ chardet==5.2.0
     #   pydantic-deep
 charset-normalizer==3.4.4
     # via requests
-click==8.3.1
+click==8.1.8
     # via
     #   celery
     #   click-didyoumean
@@ -225,7 +225,7 @@ genai-prices==0.0.52
     #   pydantic-ai-slim
 gitdb==4.0.12
     # via gitpython
-gitpython==3.1.46
+gitpython==3.1.50
     # via potpie (pyproject.toml)
 google-api-core==2.29.0
     # via
@@ -373,7 +373,7 @@ idna==3.11
     #   requests
     #   tldextract
     #   yarl
-importlib-metadata==8.7.1
+importlib-metadata==8.5.0
     # via
     #   litellm
     #   opentelemetry-api
@@ -415,7 +415,7 @@ jsonpointer==3.0.0
     # via jsonpatch
 jsonref==1.1.0
     # via fastmcp
-jsonschema==4.26.0
+jsonschema==4.23.0
     # via
     #   litellm
     #   mcp
@@ -431,13 +431,15 @@ kombu==5.6.2
     #   celery
 langchain==1.2.8
     # via potpie (pyproject.toml)
-langchain-core==1.2.28
+langchain-core==1.3.3
     # via
     #   potpie (pyproject.toml)
     #   langchain
     #   langgraph
     #   langgraph-checkpoint
     #   langgraph-prebuilt
+langchain-protocol==0.0.15
+    # via langchain-core
 langgraph==1.0.10
     # via
     #   potpie (pyproject.toml)
@@ -454,7 +456,7 @@ langsmith==0.8.1
     # via
     #   potpie (pyproject.toml)
     #   langchain-core
-litellm==1.83.0
+litellm==1.83.7
     # via potpie (pyproject.toml)
 logfire==4.22.0
     # via
@@ -531,7 +533,7 @@ numpy==2.4.2
     #   transformers
 obstore==0.8.2
     # via daytona
-openai==2.34.0
+openai==2.30.0
     # via
     #   potpie (pyproject.toml)
     #   graphiti-core
@@ -807,6 +809,7 @@ python-dateutil==2.9.0.post0
     #   posthog
 python-dotenv==1.2.2
     # via
+    #   --override (workspace)
     #   potpie (pyproject.toml)
     #   daytona
     #   fastmcp
@@ -1017,13 +1020,13 @@ tree-sitter-language-pack==0.13.0
     #   parsing
 tree-sitter-yaml==0.7.2
     # via tree-sitter-language-pack
-typer==0.24.1
+typer==0.23.1
     # via
     #   potpie (pyproject.toml)
     #   context-engine
     #   instructor
     #   typer-slim
-typer-slim==0.24.0
+typer-slim==0.23.1
     # via
     #   huggingface-hub
     #   transformers
@@ -1046,6 +1049,7 @@ typing-extensions==4.15.0
     #   grpcio
     #   huggingface-hub
     #   langchain-core
+    #   langchain-protocol
     #   logfire
     #   mcp
     #   nexus-rpc
