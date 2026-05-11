@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -38,10 +39,10 @@ def _print_health(api_url: str, timeout: float) -> int:
         print(f"Potpie API health check failed: HTTP {exc.code}", file=sys.stderr)
         return 1
     except URLError as exc:
+        if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+            print(f"Potpie API health check timed out at {url}", file=sys.stderr)
+            return 1
         print(f"Potpie API is not reachable at {url}: {exc.reason}", file=sys.stderr)
-        return 1
-    except TimeoutError:
-        print(f"Potpie API health check timed out at {url}", file=sys.stderr)
         return 1
 
     if body:

@@ -63,7 +63,7 @@ def test_status_runs_docker_compose_ps(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_health_prints_json_response(monkeypatch, capsys) -> None:
-    def fake_urlopen(url, timeout):
+    def fake_urlopen(url, *, timeout):
         assert url == "http://localhost:8001/health"
         assert timeout == 5.0
         return FakeResponse(b'{"status":"ok"}')
@@ -76,7 +76,8 @@ def test_health_prints_json_response(monkeypatch, capsys) -> None:
 
 
 def test_health_reports_unreachable_api(monkeypatch, capsys) -> None:
-    def fake_urlopen(_url, _timeout):
+    def fake_urlopen(_url, *, timeout):
+        assert timeout == 5.0
         raise cli.URLError("connection refused")
 
     monkeypatch.setattr(cli, "urlopen", fake_urlopen)
@@ -84,3 +85,15 @@ def test_health_reports_unreachable_api(monkeypatch, capsys) -> None:
     assert cli.main(["health", "--api-url", "http://127.0.0.1:9999"]) == 1
     captured = capsys.readouterr()
     assert "not reachable" in captured.err
+
+
+def test_health_reports_timeout(monkeypatch, capsys) -> None:
+    def fake_urlopen(_url, *, timeout):
+        assert timeout == 5.0
+        raise cli.URLError(TimeoutError("timed out"))
+
+    monkeypatch.setattr(cli, "urlopen", fake_urlopen)
+
+    assert cli.main(["health"]) == 1
+    captured = capsys.readouterr()
+    assert "timed out" in captured.err
