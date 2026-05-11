@@ -98,11 +98,10 @@
 4. **Start all services**
 
    ```bash
-   chmod +x scripts/start.sh
-   ./scripts/start.sh
+   uv run potpie start
    ```
 
-   This will start Docker services, apply migrations, start the FastAPI app, and start the Celery worker.
+   This starts the local development stack and waits for the API health check to come up. Startup logs are written to `.potpie/cli/start.log`.
 
 5. **Health Check**
 
@@ -110,7 +109,23 @@
    curl -X GET 'http://localhost:8001/health'
    ```
 
-6. **Check parsing status**
+6. **Parse a local repository**
+
+   ```bash
+   uv run potpie parse /absolute/path/to/your/repo --branch main
+   ```
+
+   The CLI submits the parse request, polls parsing status, and blocks until the project is ready. At the end it prints the `project_id`.
+
+7. **Chat with a parsed project**
+
+   ```bash
+   uv run potpie chat <project-id> --agent codebase_qna_agent
+   ```
+
+   This opens an interactive console session against your local Potpie server. Type `/exit` to close the session.
+
+8. **Check parsing status manually**
 
    ```bash
    curl -X GET 'http://localhost:8001/api/v1/parsing-status/your-project-id'
@@ -119,7 +134,7 @@
 To stop all services:
 
 ```bash
-./scripts/stop.sh
+uv run potpie stop
 ```
 
 #### Now set up Potpie Frontend

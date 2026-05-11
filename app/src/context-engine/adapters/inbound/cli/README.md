@@ -35,6 +35,26 @@ potpie -v search "query here"
 
 ## Commands
 
+### Local development
+
+These commands target a local Potpie checkout running in development mode and talk to the legacy `/api/v1` parse/chat routes instead of the context-graph `/api/v2` API.
+
+| Command | Description |
+|---------|-------------|
+| `potpie start` | Start the local Potpie dev stack in the background and wait for `/health` to come up. |
+| `potpie stop` | Stop the local Potpie dev stack and Docker Compose services. |
+| `potpie parse /path/to/repo --branch main` | Submit a local repository for parsing, poll status, and block until the project is ready. |
+| `potpie chat <project-id> --agent codebase_qna_agent` | Create or resume an interactive chat session for a parsed project. Type `/exit` to quit. |
+
+Examples:
+
+```bash
+uv run potpie start
+uv run potpie parse ~/src/my-repo --branch main
+uv run potpie chat 00000000-0000-0000-0000-000000000000 --agent codebase_qna_agent
+uv run potpie stop
+```
+
 ### `init-agent`
 
 Install the packaged agent bundle into the current repository. This writes a top-level `AGENTS.md` plus the repo-local `.agents/skills/potpie-*` files used by Codex-style agent workflows.

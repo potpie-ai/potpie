@@ -1,6 +1,8 @@
 import importlib.metadata
 import json
 import os
+import shutil
+import subprocess
 import time
 import uuid
 from datetime import datetime, timezone
@@ -55,6 +57,10 @@ from adapters.outbound.http.potpie_context_api_client import (
     IngestRejectedError,
     PotpieContextApiClient,
     PotpieContextApiError,
+)
+from adapters.outbound.http.potpie_local_api_client import (
+    PotpieLocalApiClient,
+    PotpieLocalApiError,
 )
 from adapters.outbound.settings_env import EnvContextEngineSettings
 from bootstrap.http_projects import pot_map_from_env
@@ -136,6 +142,294 @@ def _database_url_env_set() -> bool:
         or os.getenv("CONTEXT_ENGINE_DATABASE_URL")
         or os.getenv("POSTGRES_SERVER")
     )
+
+
+def _resolve_local_api_base_url() -> str:
+    for var in (
+        "POTPIE_LOCAL_API_URL",
+        "POTPIE_API_URL",
+        "POTPIE_BASE_URL",
+        "BASE_URL",
+    ):
+        value = os.getenv(var)
+        if value and value.strip():
+            return value.strip().rstrip("/")
+    host = os.getenv("POTPIE_HOST") or os.getenv("POTPIE_API_HOST") or "127.0.0.1"
+    port = os.getenv("POTPIE_PORT") or os.getenv("POTPIE_API_PORT") or "8001"
+    scheme = os.getenv("POTPIE_SCHEME") or "http"
+    return f"{scheme}://{host}:{port}"
+
+
+def _local_client_or_exit(verbose: bool) -> PotpieLocalApiClient:
+    try:
+        return PotpieLocalApiClient(
+            _resolve_local_api_base_url(),
+            bearer_token=os.getenv("POTPIE_BEARER_TOKEN"),
+        )
+    except ValueError as exc:
+        emit_error("Potpie local API not configured", str(exc), verbose=verbose)
+        raise typer.Exit(code=1) from exc
+
+
+def _format_local_api_error(exc: PotpieLocalApiError) -> str:
+    d = exc.detail
+    if isinstance(d, dict):
+        inner = d.get("detail")
+        if isinstance(inner, dict):
+            return json.dumps(inner)
+        if isinstance(inner, str):
+            return inner
+        return json.dumps(d)
+    return str(d)
+
+
+def _find_potpie_repo_root(start: Path | None = None) -> Path | None:
+    cur = (start or Path.cwd()).resolve()
+    for _ in range(24):
+        if (cur / "pyproject.toml").is_file() and (cur / "scripts").is_dir():
+            return cur
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    return None
+
+
+def _local_repo_root_or_exit(verbose: bool) -> Path:
+    root = _find_potpie_repo_root()
+    if root is not None:
+        return root
+    emit_error(
+        "Potpie checkout not found",
+        "Run this command inside a Potpie repository checkout.",
+        verbose=verbose,
+    )
+    raise typer.Exit(code=1)
+
+
+def _powershell_executable() -> str:
+    return shutil.which("powershell") or "powershell.exe"
+
+
+def _start_command(repo_root: Path) -> list[str]:
+    if os.name == "nt":
+        return [
+            _powershell_executable(),
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(repo_root / "scripts" / "start.ps1"),
+        ]
+    return ["bash", str(repo_root / "scripts" / "start.sh")]
+
+
+def _stop_command(repo_root: Path) -> list[str]:
+    if os.name == "nt":
+        return [
+            _powershell_executable(),
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(repo_root / "scripts" / "stop.ps1"),
+        ]
+    return ["bash", str(repo_root / "scripts" / "stop.sh")]
+
+
+def _run_cli_subprocess_or_exit(
+    command: list[str], *, cwd: Path, verbose: bool
+) -> None:
+    try:
+        subprocess.run(command, cwd=str(cwd), check=True)
+    except FileNotFoundError as exc:
+        emit_error(
+            "Required command not found",
+            f"Could not run {command[0]!r}. Install the missing dependency and try again.",
+            verbose=verbose,
+        )
+        raise typer.Exit(code=1) from exc
+    except subprocess.CalledProcessError as exc:
+        emit_error(
+            "Command failed",
+            f"{command[0]!r} exited with status {exc.returncode}.",
+            verbose=verbose,
+        )
+        raise typer.Exit(code=exc.returncode or 1) from exc
+
+
+def _launch_background_process_or_exit(
+    command: list[str], *, cwd: Path, log_path: Path, verbose: bool
+) -> int:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = (
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            | getattr(subprocess, "DETACHED_PROCESS", 0)
+        )
+    try:
+        with log_path.open("ab") as log_file:
+            process = subprocess.Popen(
+                command,
+                cwd=str(cwd),
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+                creationflags=creationflags,
+            )
+        return process.pid
+    except FileNotFoundError as exc:
+        emit_error(
+            "Required command not found",
+            f"Could not run {command[0]!r}. Install the missing dependency and try again.",
+            verbose=verbose,
+        )
+        raise typer.Exit(code=1) from exc
+    except OSError as exc:
+        emit_error("Could not start Potpie", str(exc), verbose=verbose)
+        raise typer.Exit(code=1) from exc
+
+
+def _wait_for_local_health(client: PotpieLocalApiClient, *, timeout_seconds: float) -> bool:
+    started = time.monotonic()
+    while (time.monotonic() - started) < timeout_seconds:
+        try:
+            code, _payload = client.get_health()
+        except OSError:
+            code = 0
+        if code == 200:
+            return True
+        time.sleep(2.0)
+    return False
+
+
+def _git_or_exit(verbose: bool) -> str:
+    git = shutil.which("git")
+    if git:
+        return git
+    emit_error("Git is required", "Install Git and try again.", verbose=verbose)
+    raise typer.Exit(code=1)
+
+
+def _git_capture(repo_path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [_git_or_exit(False), "-C", str(repo_path), *args],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _resolve_repo_path_or_exit(raw_path: str, verbose: bool) -> Path:
+    repo_path = Path(raw_path).expanduser().resolve()
+    if not repo_path.exists():
+        emit_error("Invalid repo path", f"{repo_path} does not exist.", verbose=verbose)
+        raise typer.Exit(code=1)
+    if not repo_path.is_dir():
+        emit_error(
+            "Invalid repo path", f"{repo_path} is not a directory.", verbose=verbose
+        )
+        raise typer.Exit(code=1)
+    completed = _git_capture(repo_path, ["rev-parse", "--is-inside-work-tree"])
+    if completed.returncode != 0 or completed.stdout.strip().lower() != "true":
+        emit_error(
+            "Invalid repository",
+            f"{repo_path} is not inside a git working tree.",
+            verbose=verbose,
+        )
+        raise typer.Exit(code=1)
+    return repo_path
+
+
+def _resolve_branch_or_exit(
+    repo_path: Path, branch: str | None, verbose: bool
+) -> str | None:
+    if branch and branch.strip():
+        wanted = branch.strip()
+        completed = _git_capture(repo_path, ["rev-parse", "--verify", wanted])
+        if completed.returncode != 0:
+            emit_error(
+                "Invalid branch",
+                f"Could not resolve {wanted!r} in {repo_path}.",
+                verbose=verbose,
+            )
+            raise typer.Exit(code=1)
+        return wanted
+
+    current = _git_capture(repo_path, ["branch", "--show-current"]).stdout.strip()
+    if current:
+        return current
+
+    fallback = _git_capture(repo_path, ["rev-parse", "--abbrev-ref", "HEAD"])
+    current = fallback.stdout.strip()
+    if current and current != "HEAD":
+        return current
+    return None
+
+
+def _wait_for_project_ready(
+    client: PotpieLocalApiClient,
+    project_id: str,
+    *,
+    poll_interval: float,
+    timeout_seconds: float,
+    show_progress: bool,
+    verbose: bool,
+) -> dict[str, Any]:
+    started = time.monotonic()
+    last_status: str | None = None
+    while True:
+        try:
+            payload = client.get_parsing_status(project_id)
+        except PotpieLocalApiError as exc:
+            emit_error(
+                "Could not fetch parsing status",
+                _format_local_api_error(exc),
+                verbose=verbose,
+            )
+            raise typer.Exit(code=1) from exc
+        status = str(payload.get("status") or "").strip().lower()
+        latest = bool(payload.get("latest"))
+        if show_progress and status and status != last_status:
+            print_plain_line(f"parse status: {status}", as_json=False)
+            last_status = status
+        if status == "ready" and latest:
+            return payload
+        if status == "error":
+            emit_error(
+                "Parsing failed",
+                f"Project {project_id} reached status=error.",
+                verbose=verbose,
+            )
+            raise typer.Exit(code=1)
+        if timeout_seconds > 0 and (time.monotonic() - started) >= timeout_seconds:
+            emit_error(
+                "Timed out waiting for parse",
+                f"Project {project_id} did not become ready within {int(timeout_seconds)}s.",
+                verbose=verbose,
+            )
+            raise typer.Exit(code=1)
+        time.sleep(max(poll_interval, 0.1))
+
+
+def _normalize_agent_ref(value: str) -> str:
+    return "".join(ch for ch in value.lower() if ch.isalnum())
+
+
+def _resolve_agent_id(rows: list[dict[str, Any]], wanted: str) -> str | None:
+    target = wanted.strip().lower()
+    normalized_target = _normalize_agent_ref(wanted)
+    for row in rows:
+        row_id = str(row.get("id") or "").strip()
+        row_name = str(row.get("name") or "").strip()
+        if row_id.lower() == target or row_name.lower() == target:
+            return row_id
+        if _normalize_agent_ref(row_id) == normalized_target:
+            return row_id
+        if row_name and _normalize_agent_ref(row_name) == normalized_target:
+            return row_id
+    return None
 
 
 def _ingest_result_from_http(status_code: int, data: dict[str, Any]) -> dict[str, Any]:
@@ -340,6 +634,276 @@ def doctor_cmd() -> None:
         summary_lines=summary,
     )
     print_doctor_report(snap, as_json=j)
+
+
+@app.command("start")
+def start_cmd() -> None:
+    """Start the local Potpie development stack in the background."""
+    j, v = _flags()
+    repo_root = _local_repo_root_or_exit(v)
+    command = _start_command(repo_root)
+    log_path = repo_root / ".potpie" / "cli" / "start.log"
+    pid = _launch_background_process_or_exit(
+        command, cwd=repo_root, log_path=log_path, verbose=v
+    )
+    healthy = _wait_for_local_health(_local_client_or_exit(v), timeout_seconds=60.0)
+    payload = {
+        "ok": healthy,
+        "pid": pid,
+        "cwd": str(repo_root),
+        "log_path": str(log_path),
+        "command": command,
+    }
+    if j:
+        print_json_blob(payload, as_json=True)
+        if healthy:
+            return
+        raise typer.Exit(code=1)
+    if healthy:
+        print_plain_line("Potpie start requested.", as_json=False)
+        print_plain_line(f"log: {log_path}", as_json=False)
+        print_plain_line(f"health: {_resolve_local_api_base_url()}/health", as_json=False)
+        return
+    emit_error(
+        "Potpie did not become healthy in time",
+        f"Check {log_path} for startup logs.",
+        verbose=v,
+    )
+    raise typer.Exit(code=1)
+
+
+@app.command("stop")
+def stop_cmd() -> None:
+    """Stop the local Potpie development stack using the repository scripts."""
+    j, v = _flags()
+    repo_root = _local_repo_root_or_exit(v)
+    command = _stop_command(repo_root)
+    _run_cli_subprocess_or_exit(command, cwd=repo_root, verbose=v)
+    if j:
+        print_json_blob({"ok": True, "cwd": str(repo_root)}, as_json=True)
+
+
+@app.command("parse")
+def parse_cmd(
+    repo_path: str = typer.Argument(..., help="Local git repository path to parse."),
+    branch: str | None = typer.Option(
+        None,
+        "--branch",
+        help="Branch to parse. Defaults to the current checked-out branch when available.",
+    ),
+    poll_interval: float = typer.Option(
+        2.0,
+        "--poll-interval",
+        min=0.1,
+        help="Polling interval in seconds while waiting for parse completion.",
+    ),
+    timeout_seconds: float = typer.Option(
+        1800.0,
+        "--timeout",
+        min=1.0,
+        help="Max seconds to wait for the project to become ready.",
+    ),
+) -> None:
+    """Parse a local repository, then block until the project is ready."""
+    j, v = _flags()
+    client = _local_client_or_exit(v)
+    resolved_repo = _resolve_repo_path_or_exit(repo_path, v)
+    resolved_branch = _resolve_branch_or_exit(resolved_repo, branch, v)
+    try:
+        payload = client.parse_directory(
+            repo_path=str(resolved_repo),
+            branch_name=resolved_branch,
+            repo_name=resolved_repo.name,
+        )
+    except PotpieLocalApiError as exc:
+        emit_error("Parse failed", _format_local_api_error(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+
+    project_id = str(payload.get("project_id") or "").strip()
+    if not project_id:
+        emit_error(
+            "Parse failed",
+            "Server response did not include a project_id.",
+            verbose=v,
+        )
+        raise typer.Exit(code=1)
+
+    if not j:
+        branch_label = resolved_branch or "current checkout"
+        print_plain_line(
+            f"Submitted parse for {resolved_repo} (branch {branch_label}).",
+            as_json=False,
+        )
+        print_plain_line(f"project_id: {project_id}", as_json=False)
+
+    status_payload = _wait_for_project_ready(
+        client,
+        project_id,
+        poll_interval=poll_interval,
+        timeout_seconds=timeout_seconds,
+        show_progress=not j,
+        verbose=v,
+    )
+    final_payload = {
+        "project_id": project_id,
+        "repo_path": str(resolved_repo),
+        "branch": resolved_branch,
+        **status_payload,
+    }
+    if j:
+        print_json_blob(final_payload, as_json=True)
+        return
+    print_plain_line(f"Parse ready: {project_id}", as_json=False)
+
+
+@app.command("chat")
+def chat_cmd(
+    project_id: str = typer.Argument(..., help="Parsed Potpie project id."),
+    agent: str = typer.Option(
+        ...,
+        "--agent",
+        help="Agent id or display name (for example: codebase_qna_agent).",
+    ),
+    branch: str | None = typer.Option(
+        None,
+        "--branch",
+        help="Optional branch to validate against the selected project.",
+    ),
+    conversation_id: str | None = typer.Option(
+        None,
+        "--conversation-id",
+        help="Resume an existing conversation instead of creating a new one.",
+    ),
+) -> None:
+    """Open an interactive local Potpie chat session for one parsed project."""
+    j, v = _flags()
+    client = _local_client_or_exit(v)
+    try:
+        projects = client.list_projects()
+    except PotpieLocalApiError as exc:
+        emit_error("Could not list projects", _format_local_api_error(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+
+    project_row = next(
+        (row for row in projects if str(row.get("id") or "") == project_id), None
+    )
+    if project_row is None:
+        emit_error(
+            "Unknown project",
+            f"{project_id!r} was not found in the local Potpie project list.",
+            verbose=v,
+        )
+        raise typer.Exit(code=1)
+    if branch and str(project_row.get("branch_name") or "") != branch:
+        emit_error(
+            "Project branch mismatch",
+            f"Project {project_id} belongs to branch {project_row.get('branch_name')!r}, not {branch!r}.",
+            verbose=v,
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        status_payload = client.get_parsing_status(project_id)
+    except PotpieLocalApiError as exc:
+        emit_error(
+            "Could not fetch parsing status",
+            _format_local_api_error(exc),
+            verbose=v,
+        )
+        raise typer.Exit(code=1) from exc
+    if str(status_payload.get("status") or "").lower() != "ready" or not bool(
+        status_payload.get("latest")
+    ):
+        emit_error(
+            "Project not ready",
+            f"Project {project_id} is not ready for chat yet.",
+            verbose=v,
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        agents = client.list_available_agents()
+    except PotpieLocalApiError as exc:
+        emit_error("Could not list agents", _format_local_api_error(exc), verbose=v)
+        raise typer.Exit(code=1) from exc
+    agent_id = _resolve_agent_id(agents, agent)
+    if agent_id is None:
+        emit_error(
+            "Unknown agent",
+            f"{agent!r} is not an available agent.",
+            verbose=v,
+        )
+        raise typer.Exit(code=1)
+
+    active_conversation_id = conversation_id
+    if not active_conversation_id:
+        try:
+            created = client.create_conversation(
+                project_id=project_id,
+                agent_id=agent_id,
+                title=f"CLI Chat {project_id}",
+            )
+        except PotpieLocalApiError as exc:
+            emit_error(
+                "Could not create conversation",
+                _format_local_api_error(exc),
+                verbose=v,
+            )
+            raise typer.Exit(code=1) from exc
+        active_conversation_id = str(created.get("conversation_id") or "").strip()
+        if not active_conversation_id:
+            emit_error(
+                "Could not create conversation",
+                "Server response did not include a conversation_id.",
+                verbose=v,
+            )
+            raise typer.Exit(code=1)
+
+    if j:
+        print_json_blob(
+            {
+                "conversation_id": active_conversation_id,
+                "project_id": project_id,
+                "agent_id": agent_id,
+            },
+            as_json=True,
+        )
+    else:
+        print_plain_line(
+            f"conversation_id: {active_conversation_id}", as_json=False
+        )
+        print_plain_line("Type /exit to end the chat session.", as_json=False)
+
+    while True:
+        try:
+            prompt = "" if j else "you> "
+            user_input = input(prompt)
+        except EOFError:
+            break
+        except KeyboardInterrupt:
+            print_plain_line("", as_json=False)
+            break
+        message = user_input.strip()
+        if not message:
+            continue
+        if message.lower() in {"/exit", "exit", "quit"}:
+            break
+        try:
+            response = client.send_message(active_conversation_id, message)
+        except PotpieLocalApiError as exc:
+            emit_error("Chat failed", _format_local_api_error(exc), verbose=v)
+            raise typer.Exit(code=1) from exc
+        if j:
+            print_json_blob(
+                {
+                    "conversation_id": active_conversation_id,
+                    "reply": response,
+                },
+                as_json=True,
+            )
+            continue
+        reply = str(response.get("message") or "").strip() or "(no response)"
+        print_plain_line(f"potpie> {reply}", as_json=False)
 
 
 @app.command("init-agent")
