@@ -97,3 +97,15 @@ def test_health_reports_timeout(monkeypatch, capsys) -> None:
     assert cli.main(["health"]) == 1
     captured = capsys.readouterr()
     assert "timed out" in captured.err
+
+
+def test_health_rejects_non_positive_timeout(capsys) -> None:
+    assert cli.main(["health", "--timeout", "0"]) == 1
+    captured = capsys.readouterr()
+    assert "timeout must be greater than 0" in captured.err
+
+
+def test_health_rejects_invalid_api_url(capsys) -> None:
+    assert cli.main(["health", "--api-url", "localhost:8001"]) == 1
+    captured = capsys.readouterr()
+    assert "Invalid API URL" in captured.err

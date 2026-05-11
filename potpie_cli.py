@@ -9,6 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
 from urllib.request import urlopen
 
 
@@ -16,10 +17,12 @@ DEFAULT_API_URL = "http://localhost:8001"
 
 
 def _project_root(path: str | None) -> Path:
+    """Resolve the Potpie repository root from a user-provided path."""
     return Path(path or ".").expanduser().resolve()
 
 
 def _script_path(root: Path, script_name: str) -> Path:
+    """Return the requested script path or raise when it is unavailable."""
     script = root / "scripts" / script_name
     if not script.exists():
         raise FileNotFoundError(f"{script} does not exist")
@@ -27,10 +30,24 @@ def _script_path(root: Path, script_name: str) -> Path:
 
 
 def _run(command: list[str], root: Path) -> int:
+    """Run a local command from the Potpie repository root."""
     return subprocess.run(command, cwd=root).returncode
 
 
 def _print_health(api_url: str, timeout: float) -> int:
+    """Call the Potpie API health endpoint and print a human-readable result."""
+    if timeout <= 0:
+        print("Health check timeout must be greater than 0.", file=sys.stderr)
+        return 1
+
+    parsed_api_url = urlparse(api_url)
+    if parsed_api_url.scheme not in {"http", "https"} or not parsed_api_url.netloc:
+        print(
+            f"Invalid API URL: {api_url}. Expected an http(s) base URL.",
+            file=sys.stderr,
+        )
+        return 1
+
     url = f"{api_url.rstrip('/')}/health"
     try:
         with urlopen(url, timeout=timeout) as response:
@@ -43,6 +60,9 @@ def _print_health(api_url: str, timeout: float) -> int:
             print(f"Potpie API health check timed out at {url}", file=sys.stderr)
             return 1
         print(f"Potpie API is not reachable at {url}: {exc.reason}", file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        print(f"Invalid health check configuration: {exc}", file=sys.stderr)
         return 1
 
     if body:
@@ -57,6 +77,7 @@ def _print_health(api_url: str, timeout: float) -> int:
 
 
 def _add_root_option(parser: argparse.ArgumentParser) -> None:
+    """Add the shared repository root option to a subcommand parser."""
     parser.add_argument(
         "--root",
         help="Path to the Potpie repository root. Defaults to the current directory.",
@@ -64,6 +85,7 @@ def _add_root_option(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the argument parser for the Potpie local development CLI."""
     parser = argparse.ArgumentParser(
         prog="potpie",
         description="Run and inspect a local Potpie development stack.",
@@ -108,6 +130,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the Potpie CLI with optional explicit arguments."""
     parser = build_parser()
     args = parser.parse_args(argv)
 
