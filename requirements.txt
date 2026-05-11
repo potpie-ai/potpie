@@ -225,7 +225,7 @@ genai-prices==0.0.52
     #   pydantic-ai-slim
 gitdb==4.0.12
     # via gitpython
-gitpython==3.1.46
+gitpython==3.1.50
     # via potpie (pyproject.toml)
 google-api-core==2.29.0
     # via
@@ -431,7 +431,7 @@ kombu==5.6.2
     #   celery
 langchain==1.2.8
     # via potpie (pyproject.toml)
-langchain-core==1.2.28
+langchain-core==1.3.3
     # via
     #   potpie (pyproject.toml)
     #   langchain
@@ -454,7 +454,7 @@ langsmith==0.8.1
     # via
     #   potpie (pyproject.toml)
     #   langchain-core
-litellm==1.83.0
+litellm==1.83.14
     # via potpie (pyproject.toml)
 logfire==4.22.0
     # via
