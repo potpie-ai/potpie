@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import potpie_cli as cli
 
 
@@ -65,7 +67,7 @@ def test_status_runs_docker_compose_ps(monkeypatch, tmp_path: Path) -> None:
 def test_health_prints_json_response(monkeypatch, capsys) -> None:
     def fake_urlopen(url, *, timeout):
         assert url == "http://localhost:8001/health"
-        assert timeout == 5.0
+        assert timeout == pytest.approx(5.0)
         return FakeResponse(b'{"status":"ok"}')
 
     monkeypatch.setattr(cli, "urlopen", fake_urlopen)
@@ -77,7 +79,7 @@ def test_health_prints_json_response(monkeypatch, capsys) -> None:
 
 def test_health_reports_unreachable_api(monkeypatch, capsys) -> None:
     def fake_urlopen(_url, *, timeout):
-        assert timeout == 5.0
+        assert timeout == pytest.approx(5.0)
         raise cli.URLError("connection refused")
 
     monkeypatch.setattr(cli, "urlopen", fake_urlopen)
@@ -89,7 +91,7 @@ def test_health_reports_unreachable_api(monkeypatch, capsys) -> None:
 
 def test_health_reports_timeout(monkeypatch, capsys) -> None:
     def fake_urlopen(_url, *, timeout):
-        assert timeout == 5.0
+        assert timeout == pytest.approx(5.0)
         raise cli.URLError(TimeoutError("timed out"))
 
     monkeypatch.setattr(cli, "urlopen", fake_urlopen)
