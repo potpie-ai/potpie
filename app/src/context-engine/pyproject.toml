@@ -45,7 +45,7 @@ all = [
     "hatchet-sdk>=1.29.0",
 ]
 dev = [
-    "pytest>=8.0.0",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.24.0",
     "ruff>=0.8.0",
 ]
