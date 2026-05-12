@@ -443,14 +443,31 @@ def bundle_to_agent_envelope(
     bundle: IntelligenceBundle,
     *,
     answer_summary: str | None = None,
+    synthesis_usage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return the stable minimal-port response envelope for agents.
 
     ``answer_summary`` overrides the deterministic count-string fallback when
     an LLM synthesizer produced a real answer. Pass ``None`` (default) to keep
     the fallback — ensuring the envelope never carries an empty summary.
+
+    ``synthesis_usage`` (optional) captures the synthesizer's last-call
+    usage (model, input/output tokens, latency_ms) so it can be surfaced under
+    ``meta.cost.synthesis``. Pass ``None`` when no LLM call was made.
     """
     bundle_dict = asdict(bundle)
+    meta = dict(bundle_dict["meta"]) if isinstance(bundle_dict["meta"], dict) else {}
+    cost: dict[str, Any] = {
+        "resolve_ms": meta.get("total_latency_ms", 0),
+        "per_call_latency_ms": dict(meta.get("per_call_latency_ms", {})),
+    }
+    if synthesis_usage is not None:
+        cost["synthesis"] = dict(synthesis_usage)
+    meta["cost"] = cost
+
+    quality = dict(bundle_dict["quality"]) if isinstance(bundle_dict["quality"], dict) else {}
+    quality["drift"] = _drift_summary(quality)
+
     return {
         "ok": True,
         "answer": {
@@ -479,13 +496,44 @@ def bundle_to_agent_envelope(
         "open_conflicts": bundle_dict["open_conflicts"],
         "coverage": bundle_dict["coverage"],
         "freshness": bundle_dict["freshness"],
-        "quality": bundle_dict["quality"],
+        "quality": quality,
         "verification_state": _verification_state(bundle),
         "fallbacks": bundle_dict["fallbacks"],
         "recommended_next_actions": bundle_dict["recommended_next_actions"],
         "errors": bundle_dict["errors"],
-        "meta": bundle_dict["meta"],
+        "meta": meta,
         "bundle": bundle_dict,
+    }
+
+
+def _drift_summary(quality_dict: dict[str, Any]) -> dict[str, Any]:
+    """Derive an agent-facing drift summary from the quality block.
+
+    The drift summary is the single place an agent reads to decide
+    "is this graph stale enough to verify before acting?". It mirrors the
+    ``quality.status`` taxonomy and surfaces the underlying signals.
+    """
+    metrics = quality_dict.get("metrics") or {}
+    status = quality_dict.get("status", "unknown")
+    return {
+        "status": status,
+        "signals": {
+            "stale_refs": int(metrics.get("stale_ref_count", 0) or 0),
+            "needs_verification_refs": int(
+                metrics.get("needs_verification_ref_count", 0) or 0
+            ),
+            "verification_failed_refs": int(
+                metrics.get("verification_failed_ref_count", 0) or 0
+            ),
+            "source_access_gaps": int(metrics.get("source_access_gap_count", 0) or 0),
+            "missing_coverage": int(metrics.get("missing_coverage_count", 0) or 0),
+            "fallbacks": int(metrics.get("fallback_count", 0) or 0),
+            "open_conflicts": len(quality_dict.get("conflicts") or []),
+        },
+        "thresholds": {
+            "watch": "any stale, missing, fallback, or unverified facts",
+            "degraded": "verification_failed or source_access_gap > 0",
+        },
     }
 
 

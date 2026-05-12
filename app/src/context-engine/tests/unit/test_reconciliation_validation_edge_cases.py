@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from application.use_cases.reconciliation_validation import (
+from application.services.reconciliation_validation import (
     MAX_EPISODES,
     MAX_GENERIC_EDGES,
     MAX_GENERIC_ENTITY_UPSERTS,

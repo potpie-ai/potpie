@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from application.use_cases.reconciliation_validation import validate_reconciliation_plan
+from application.services.reconciliation_validation import validate_reconciliation_plan
 from domain.context_events import EventRef
 from domain.errors import ReconciliationPlanValidationError
 from domain.graph_mutations import EdgeUpsert, EntityUpsert
@@ -29,7 +29,7 @@ def test_allowed_lifecycle_statuses_export() -> None:
 
 
 def test_phase_one_catalog_contains_project_context_domains() -> None:
-    assert ONTOLOGY_VERSION == "2026-04-phase-7"
+    assert ONTOLOGY_VERSION == "2026-04-phase-8-timeline"
     for label in (
         "Pot",
         "Repository",

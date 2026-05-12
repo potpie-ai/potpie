@@ -58,7 +58,7 @@ from domain.intelligence_models import (  # noqa: E402
     ContextResolutionRequest,
     ContextScope,
 )
-from domain.ports.jobs import NoOpJobEnqueue  # noqa: E402
+from domain.ports.context_graph_job_queue import NoOpContextGraphJobQueue  # noqa: E402
 
 DEFAULT_DATA = Path(__file__).with_name("mock_context_data.json")
 DEFAULT_REPORT = PACKAGE_ROOT / ".tmp" / "context-engine-lab-report.json"
@@ -452,11 +452,10 @@ def _build_in_process_client(pot_id: str, repo_name: str) -> TestClient:
         episodic=episodic,
         structural=structural,
         pots=ExplicitPotResolution({pot_id: repo_name}),
-        source_for_repo=lambda _repo_name: None,
         intelligence_provider=provider,
         resolution_service=ContextResolutionService(provider),
         reconciliation_agent=None,
-        jobs=NoOpJobEnqueue(),
+        jobs=NoOpContextGraphJobQueue(),
     )
 
     app = FastAPI()
@@ -466,7 +465,6 @@ def _build_in_process_client(pot_id: str, repo_name: str) -> TestClient:
             get_container=lambda: container,
             get_db=lambda: None,
             get_db_optional=lambda: None,
-            enforce_pot_access=False,
         ),
         prefix="/context",
     )
@@ -818,6 +816,20 @@ class _InMemoryEpisodicGraph:
     async def reset_pot_async(self, pot_id: str) -> dict[str, Any]:
         return self.reset_pot(pot_id)
 
+    def apply_entity_upserts(self, pot_id: str, items: list[Any], provenance: Any) -> int:
+        return len(items)
+
+    def apply_edge_upserts(self, pot_id: str, items: list[Any], provenance: Any) -> int:
+        return len(items)
+
+    def apply_edge_deletes(self, pot_id: str, items: list[Any], provenance: Any) -> int:
+        return len(items)
+
+    def apply_invalidations(
+        self, pot_id: str, items: list[Any], provenance: Any
+    ) -> int:
+        return len(items)
+
 
 class _InMemoryStructuralGraph:
     def get_change_history(
@@ -895,23 +907,6 @@ class _InMemoryStructuralGraph:
             "include": include or [],
             "query": query,
         }
-
-    def reset_pot(self, pot_id: str) -> dict[str, Any]:
-        return {"ok": True, "deleted": 0}
-
-    def upsert_entities(self, pot_id: str, items: list[Any], provenance: Any) -> int:
-        return len(items)
-
-    def upsert_edges(self, pot_id: str, items: list[Any], provenance: Any) -> int:
-        return len(items)
-
-    def delete_edges(self, pot_id: str, items: list[Any], provenance: Any) -> int:
-        return len(items)
-
-    def apply_invalidations(
-        self, pot_id: str, items: list[Any], provenance: Any
-    ) -> int:
-        return len(items)
 
     def expand_causal_neighbours(
         self,

@@ -194,11 +194,9 @@ def test_reconciliation_ledger_health_to_payload_empty() -> None:
     out = reconciliation_ledger_health_to_payload(ReconciliationLedgerHealth())
     assert out == {
         "run_counts": {},
-        "step_counts": {},
         "last_run_success_at": None,
         "last_run_failure_at": None,
         "recent_failed_runs": [],
-        "stuck_step_samples": [],
     }
 
 
@@ -206,19 +204,15 @@ def test_reconciliation_ledger_health_to_payload_serializes_timestamps() -> None
     ts = datetime(2026, 4, 21, 9, 0, tzinfo=timezone.utc)
     h = ReconciliationLedgerHealth(
         run_counts={"succeeded": 3, "failed": 1},
-        step_counts={"applied": 8, "failed": 2},
         last_run_success_at=ts,
         last_run_failure_at=ts,
         recent_failed_runs=[{"run_id": "r1", "error": "boom"}],
-        stuck_step_samples=[{"step_id": "s1", "status": "applying"}],
     )
     out = reconciliation_ledger_health_to_payload(h)
     assert out["run_counts"] == {"succeeded": 3, "failed": 1}
-    assert out["step_counts"] == {"applied": 8, "failed": 2}
     assert out["last_run_success_at"] == ts.isoformat()
     assert out["last_run_failure_at"] == ts.isoformat()
     assert out["recent_failed_runs"][0]["run_id"] == "r1"
-    assert out["stuck_step_samples"][0]["status"] == "applying"
 
 
 def test_build_source_capability_matrix_dedupes_by_provider_and_kind() -> None:
@@ -246,17 +240,13 @@ def test_source_capability_matrix_to_payload_includes_capabilities() -> None:
 def test_derive_maintenance_jobs_flags_event_errors_and_failed_runs() -> None:
     jobs = derive_maintenance_jobs(
         event_ledger=EventLedgerHealth(counts={"error": 3}),
-        reconciliation=ReconciliationLedgerHealth(
-            run_counts={"failed": 2},
-            stuck_step_samples=[{"step_id": "s1"}],
-        ),
+        reconciliation=ReconciliationLedgerHealth(run_counts={"failed": 2}),
         open_conflicts=[{"auto_resolvable": False, "issue_uuid": "i1"}],
     )
     actions = [j.action for j in jobs]
     assert actions == [
         "events.replay",
         "reconciliation.retry_failed_runs",
-        "reconciliation.retry_stuck_steps",
         "conflicts.resolve",
     ]
     assert all(j.severity == "warning" for j in jobs)

@@ -7,13 +7,13 @@ from datetime import datetime
 from typing import Any, Optional
 
 from adapters.outbound.graphiti.port import EpisodicGraphPort
-from adapters.outbound.neo4j.port import StructuralGraphPort
+from adapters.outbound.neo4j.port import StructuralReadPort
 from application.services.temporal_search import annotate_search_rows_temporally
 from domain.reconciliation_flags import causal_expand_enabled
 
 
 def get_change_history(
-    structural: StructuralGraphPort,
+    structural: StructuralReadPort,
     pot_id: str,
     *,
     function_name: Optional[str] = None,
@@ -62,7 +62,7 @@ def get_change_history(
 
 
 def get_timeline(
-    structural: StructuralGraphPort,
+    structural: StructuralReadPort,
     pot_id: str,
     *,
     since_iso: str,
@@ -76,7 +76,7 @@ def get_timeline(
 ) -> dict[str, Any]:
     """Timeline bundle for agents: activities + daily period rollups.
 
-    Backed by :meth:`StructuralGraphPort.get_timeline` — all scoping knobs
+    Backed by :meth:`StructuralReadPort.get_timeline` — all scoping knobs
     (user / feature / file / branch / verbs) compose with the time window.
     """
     return structural.get_timeline(
@@ -93,7 +93,7 @@ def get_timeline(
 
 
 def get_file_owners(
-    structural: StructuralGraphPort,
+    structural: StructuralReadPort,
     pot_id: str,
     file_path: str,
     limit: int = 5,
@@ -108,7 +108,7 @@ def get_file_owners(
 
 
 def get_decisions(
-    structural: StructuralGraphPort,
+    structural: StructuralReadPort,
     pot_id: str,
     *,
     file_path: Optional[str] = None,
@@ -151,7 +151,7 @@ def get_decisions(
 
 
 def get_pr_review_context(
-    structural: StructuralGraphPort,
+    structural: StructuralReadPort,
     pot_id: str,
     pr_number: int,
     repo_name: Optional[str] = None,
@@ -168,7 +168,7 @@ def get_pr_review_context(
 
 
 def get_pr_diff(
-    structural: StructuralGraphPort,
+    structural: StructuralReadPort,
     pot_id: str,
     pr_number: int,
     *,
@@ -188,7 +188,7 @@ def get_pr_diff(
 
 
 def get_project_graph(
-    structural: StructuralGraphPort,
+    structural: StructuralReadPort,
     pot_id: str,
     *,
     pr_number: Optional[int] = None,
@@ -211,7 +211,7 @@ _DRIFT_EDGE_TYPES = frozenset({"RELATED_TO", "GENERIC_ACTION", "MODIFIED"})
 
 
 def get_graph_overview(
-    structural: StructuralGraphPort,
+    structural: StructuralReadPort,
     episodic: EpisodicGraphPort | None,
     pot_id: str,
     *,
@@ -219,7 +219,7 @@ def get_graph_overview(
 ) -> dict[str, Any]:
     """Schema-health overview: label + edge coverage against the custom ontology.
 
-    Returns the raw structural aggregates from :class:`StructuralGraphPort`
+    Returns the raw structural aggregates from :class:`StructuralReadPort`
     enriched with ontology metadata (category, required properties, predicate
     family) so the UI can render "how well is my ingestion capturing my
     schema" without knowing the ontology shape.
@@ -658,7 +658,7 @@ def _seed_base_scores(rows: list[dict[str, Any]]) -> dict[str, float]:
 
 def merge_causal_expanded_search_rows(
     rows: list[dict[str, Any]],
-    structural: StructuralGraphPort,
+    structural: StructuralReadPort,
     pot_id: str,
     *,
     limit: int,
@@ -749,7 +749,7 @@ def search_pot_context(
     include_invalidated: bool = False,
     as_of: Optional[datetime] = None,
     episode_uuid: Optional[str] = None,
-    structural: Optional[StructuralGraphPort] = None,
+    structural: Optional[StructuralReadPort] = None,
 ) -> list[dict[str, Any]]:
     if not episodic.enabled:
         return []
@@ -788,7 +788,7 @@ async def search_pot_context_async(
     include_invalidated: bool = False,
     as_of: Optional[datetime] = None,
     episode_uuid: Optional[str] = None,
-    structural: Optional[StructuralGraphPort] = None,
+    structural: Optional[StructuralReadPort] = None,
 ) -> list[dict[str, Any]]:
     if not episodic.enabled:
         return []

@@ -6,9 +6,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from application.services.pr_bundle import fetch_full_pr
+from adapters.outbound.connectors.github.connector import _fetch_full_pr as fetch_full_pr
 from domain.episode_formatters import build_pr_episode
-from domain.ports.source_control import SourceControlPort
+from adapters.outbound.connectors.github.api_client import GitHubReadPort
 
 from benchmarks.models import BenchmarkDataset
 
@@ -55,8 +55,8 @@ def load_dataset(path: Path) -> BenchmarkDataset:
     return BenchmarkDataset.from_dict(raw)
 
 
-class DatasetSourceControl(SourceControlPort):
-    """SourceControlPort backed by benchmark PR fixtures.
+class DatasetSourceControl(GitHubReadPort):
+    """GitHubReadPort backed by benchmark PR fixtures.
 
     This mirrors how live PR data arrives: the ingestion layer asks for PR
     metadata, commits, review comments, issue comments, and linked issues.

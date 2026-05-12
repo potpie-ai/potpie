@@ -1,23 +1,24 @@
-"""Neo4j structural graph port (adapter-internal).
+"""Neo4j structural read port (adapter-internal).
 
-Moved in the P3 cleanup out of ``domain/ports/``: application code now
-depends only on :class:`domain.ports.context_graph.ContextGraphPort`,
-and the structural read/write surface is an implementation detail of
-the graphiti adapter stack.
+Phase 1 of the rebuild made Graphiti the only writer; the structural
+adapter is restricted to reads. The mutation methods (``upsert_entities``,
+``upsert_edges``, ``delete_edges``, ``apply_invalidations``,
+``reset_pot``) moved into the Graphiti adapter
+(``adapters/outbound/graphiti/canonical_writer.py`` plus
+``EpisodicGraphPort.apply_*``).
+
+Application-level code depends only on
+:class:`domain.ports.context_graph.ContextGraphPort`. This port is
+consumed by the Graphiti context-graph adapter and the intelligence
+adapter for exact structural reads. Phase 3 of the rebuild plan will
+collapse these read methods into a per-family ``ContextReader`` registry
+and retire this port.
 """
 
 from typing import Any, Protocol
 
-from domain.graph_mutations import (
-    EdgeDelete,
-    EdgeUpsert,
-    EntityUpsert,
-    InvalidationOp,
-    ProvenanceRef,
-)
 
-
-class StructuralGraphPort(Protocol):
+class StructuralReadPort(Protocol):
     def get_change_history(
         self,
         pot_id: str,
@@ -97,42 +98,12 @@ class StructuralGraphPort(Protocol):
         query: str | None = None,
     ) -> dict[str, Any]: ...
 
-    def reset_pot(self, pot_id: str) -> dict[str, Any]: ...
-
     def get_graph_overview(
         self,
         pot_id: str,
         *,
         top_entities_limit: int = 20,
     ) -> dict[str, Any]: ...
-
-    def upsert_entities(
-        self,
-        pot_id: str,
-        items: list[EntityUpsert],
-        provenance: ProvenanceRef,
-    ) -> int: ...
-
-    def upsert_edges(
-        self,
-        pot_id: str,
-        items: list[EdgeUpsert],
-        provenance: ProvenanceRef,
-    ) -> int: ...
-
-    def delete_edges(
-        self,
-        pot_id: str,
-        items: list[EdgeDelete],
-        provenance: ProvenanceRef,
-    ) -> int: ...
-
-    def apply_invalidations(
-        self,
-        pot_id: str,
-        items: list[InvalidationOp],
-        provenance: ProvenanceRef,
-    ) -> int: ...
 
     def expand_causal_neighbours(
         self,

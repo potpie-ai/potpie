@@ -242,9 +242,12 @@ async def test_answer_async_uses_synthesizer_summary() -> None:
             return captured_bundle
 
     synth = _RecordingSynth()
+    from application.services.context_reader_registry import ContextReaderRegistry
+
     adapter = GraphitiContextGraphAdapter(
         episodic=_Episodic(),  # type: ignore[arg-type]
         structural=_Structural(),  # type: ignore[arg-type]
+        readers=ContextReaderRegistry(),
         resolution_service=_ResolutionService(),
         answer_synthesizer=synth,
     )
@@ -282,9 +285,12 @@ async def test_answer_async_falls_back_when_synthesizer_returns_none() -> None:
             )
 
     synth = _RecordingSynth(return_value=None)
+    from application.services.context_reader_registry import ContextReaderRegistry
+
     adapter = GraphitiContextGraphAdapter(
         episodic=_Episodic(),  # type: ignore[arg-type]
         structural=_Structural(),  # type: ignore[arg-type]
+        readers=ContextReaderRegistry(),
         resolution_service=_ResolutionService(),
         answer_synthesizer=synth,
     )

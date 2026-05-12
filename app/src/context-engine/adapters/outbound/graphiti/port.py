@@ -1,16 +1,32 @@
 """Graphiti episodic graph port (adapter-internal).
 
-This protocol used to live in ``domain/ports/``. It was moved in the P3
-cleanup because the only callers are the graphiti adapter itself, the
-Neo4j structural counterpart, and intelligence adapters — none of which
-belong to the application layer. Application-level code depends on
+This is the substrate-level write port for the Context Engine. It owns:
+
+- Episodic ingestion via Graphiti (``add_episode``, ``write_episode_drafts``).
+- Canonical ontology mutations layered on top of Graphiti's driver
+  (``apply_entity_upserts``, ``apply_edge_upserts``, ``apply_edge_deletes``,
+  ``apply_invalidations``). Phase 1 of the rebuild consolidated these
+  here so there is a single writer.
+- Pot reset (``reset_pot``).
+- Read-side helpers Graphiti's high-level API does not expose
+  (``search``, conflict listing/resolution, classifier replay).
+
+Read-only structural queries (decisions, change history, project map,
+debugging memory, …) live behind :class:`StructuralReadPort`.
+Application-level code depends on
 :class:`domain.ports.context_graph.ContextGraphPort` only.
 """
 
 from datetime import datetime
 from typing import Any, Optional, Protocol
 
-from domain.graph_mutations import ProvenanceRef
+from domain.graph_mutations import (
+    EdgeDelete,
+    EdgeUpsert,
+    EntityUpsert,
+    InvalidationOp,
+    ProvenanceRef,
+)
 from domain.reconciliation import EpisodeDraft
 
 
@@ -37,6 +53,42 @@ class EpisodicGraphPort(Protocol):
         provenance: ProvenanceRef | None = None,
     ) -> list[Optional[str]]:
         """Write one or more ``EpisodeDraft`` values; return UUIDs in order."""
+        ...
+
+    def apply_entity_upserts(
+        self,
+        pot_id: str,
+        items: list[EntityUpsert],
+        provenance: ProvenanceRef,
+    ) -> int:
+        """MERGE canonical entities by ``(group_id, entity_key)``; return count."""
+        ...
+
+    def apply_edge_upserts(
+        self,
+        pot_id: str,
+        items: list[EdgeUpsert],
+        provenance: ProvenanceRef,
+    ) -> int:
+        """MERGE canonical typed edges between two entity_keys; return count."""
+        ...
+
+    def apply_edge_deletes(
+        self,
+        pot_id: str,
+        items: list[EdgeDelete],
+        provenance: ProvenanceRef,
+    ) -> int:
+        """Hard-delete canonical edges (audit fields stamped); return count."""
+        ...
+
+    def apply_invalidations(
+        self,
+        pot_id: str,
+        items: list[InvalidationOp],
+        provenance: ProvenanceRef,
+    ) -> int:
+        """Stamp ``valid_to`` on entity/edge and optionally add SUPERSEDES."""
         ...
 
     async def add_episode_async(

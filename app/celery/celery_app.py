@@ -131,13 +131,7 @@ def configure_celery(queue_prefix: str):
             "app.modules.context_graph.tasks.context_graph_backfill_pot": {
                 "queue": "context-graph-etl"
             },
-            "app.modules.context_graph.tasks.context_graph_ingest_pr": {
-                "queue": "context-graph-etl"
-            },
-            "app.modules.context_graph.tasks.context_graph_ingestion_agent_run": {
-                "queue": "context-graph-etl"
-            },
-            "app.modules.context_graph.tasks.context_graph_apply_episode": {
+            "app.modules.context_graph.tasks.context_graph_process_batch": {
                 "queue": "context-graph-etl"
             },
         },
@@ -165,6 +159,7 @@ def configure_celery(queue_prefix: str):
 
 
 configure_celery(queue_name)
+
 
 # Pydantic AI instrumentation is enabled; base_task.run_async uses asyncio.run()
 # per task so each run has a fresh event loop and OTel context (no deferred

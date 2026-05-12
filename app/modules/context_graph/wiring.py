@@ -23,11 +23,8 @@ from app.modules.context_graph.context_graph_pot_repository_model import (
 from app.modules.context_graph.context_graph_pot_source_model import (
     ContextGraphPotSource,
 )
-from adapters.outbound.source_resolvers import (
-    CompositeSourceResolver,
-    DocumentationUriResolver,
-    GitHubPullRequestResolver,
-)
+from adapters.outbound.connectors.github import GitHubConnector
+from application.services.source_connector_registry import SourceConnectorRegistry
 from bootstrap.container import ContextEngineContainer, build_container
 from domain.context_status import StatusSource
 from domain.source_references import SourceReferenceRecord
@@ -371,23 +368,24 @@ def _resolve_repo_for_pot(db: Session) -> "callable":
     return _resolver
 
 
-def _build_source_resolver(db: Session, source_for_repo):
-    """Compose the default host source-resolver chain.
+def _build_connector_registry(db: Session, source_for_repo) -> SourceConnectorRegistry:
+    """Compose the default host connector registry.
 
-    ``GitHubPullRequestResolver`` covers ``github:pr:*`` and legacy ``change``
-    refs that embed PR numbers; ``DocumentationUriResolver`` covers docs
-    refs with a stored summary/title (no live fetch by default). Adding a
-    ``content_fetcher`` here later enables live doc snippets.
+    Phase 2 replaced the standalone ``CompositeSourceResolver`` chain with a
+    :class:`SourceConnectorRegistry`. The GitHub connector wraps the same
+    ``GitHubPullRequestResolver`` internally and resolves a pot's primary
+    GitHub repo via the closure returned by :func:`_resolve_repo_for_pot`
+    (which also honours ``resolver_hint['repo_name']`` for multi-repo pots).
     """
-    return CompositeSourceResolver(
-        children=[
-            GitHubPullRequestResolver(
-                source_for_repo=source_for_repo,
-                repo_resolver=_resolve_repo_for_pot(db),
-            ),
-            DocumentationUriResolver(),
-        ]
+    registry = SourceConnectorRegistry()
+    registry.register(
+        GitHubConnector(
+            source_for_repo=source_for_repo,
+            repo_resolver=_resolve_repo_for_pot(db),
+            webhook_secret=(os.getenv("GITHUB_WEBHOOK_SECRET") or "").strip() or None,
+        )
     )
+    return registry
 
 
 def build_container_for_session(db: Session) -> ContextEngineContainer:
@@ -398,15 +396,11 @@ def build_container_for_session(db: Session) -> ContextEngineContainer:
     container = build_container(
         settings=PotpieContextEngineSettings(),
         pots=SqlalchemyPotResolution(db),
-        source_for_repo=source_for_repo,
+        connectors=_build_connector_registry(db, source_for_repo),
         reconciliation_agent=try_pydantic_deep_reconciliation_agent(),
         jobs=get_context_graph_job_queue(),
     )
     container.pot_source_listing = SqlalchemyPotSourceListing(db)
-    resolver = _build_source_resolver(db, source_for_repo)
-    container.source_resolver = resolver
-    if container.resolution_service is not None:
-        container.resolution_service.set_source_resolver(resolver)
     return container
 
 
@@ -418,13 +412,9 @@ def build_container_for_user_session(db: Session, user_id: str) -> ContextEngine
     container = build_container(
         settings=PotpieContextEngineSettings(),
         pots=UserScopedContextGraphPotResolution(db, user_id),
-        source_for_repo=source_for_repo,
+        connectors=_build_connector_registry(db, source_for_repo),
         reconciliation_agent=try_pydantic_deep_reconciliation_agent(),
         jobs=get_context_graph_job_queue(),
     )
     container.pot_source_listing = SqlalchemyPotSourceListing(db)
-    resolver = _build_source_resolver(db, source_for_repo)
-    container.source_resolver = resolver
-    if container.resolution_service is not None:
-        container.resolution_service.set_source_resolver(resolver)
     return container

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from application.use_cases.reconciliation_validation import validate_reconciliation_plan
+from application.services.reconciliation_validation import validate_reconciliation_plan
 from domain.context_events import EventRef
 from domain.errors import ReconciliationPlanValidationError
 from domain.graph_mutations import EdgeUpsert, EntityUpsert

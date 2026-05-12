@@ -1,4 +1,10 @@
-"""Shared handlers for context-graph background jobs (Celery, Hatchet, etc.)."""
+"""Job-runner adapters: thin shims between Hatchet/Celery tasks and verbs.
+
+Two background jobs exist: a backfill sweep (``handle_backfill_pot``) and
+a per-batch processor (``handle_process_batch``). Both are session-scoped
+and rebuild the container per call so host-side session-bound resolvers
+(e.g. ``SqlalchemyPotResolution``) stay valid.
+"""
 
 from __future__ import annotations
 
@@ -7,11 +13,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from application.use_cases.apply_episode_step import apply_episode_step_for_event
 from application.use_cases.backfill_pot import backfill_pot_context
-from domain.ingestion_event_models import IngestionSubmissionRequest
-from domain.ingestion_kinds import INGESTION_KIND_GITHUB_MERGED_PR
-from application.use_cases.run_ingestion_agent_worker import run_ingestion_agent_for_event
+from application.use_cases.process_batch import process_batch
 from bootstrap.container import ContextEngineContainer
 
 
@@ -28,102 +31,46 @@ def handle_backfill_pot(
     return backfill_pot_context(
         settings=container.settings,
         pots=container.pots,
-        source_for_repo=container.source_for_repo,
+        connectors=container.connectors,
         ledger=container.ledger(db),
-        context_graph=container.context_graph,
+        ingestion=container.ingestion_submission(db),
         pot_id=pot_id,
         target_repo_name=target_repo_name,
     )
 
 
-def handle_ingest_pr(
+def handle_process_batch(
     db: Session,
-    pot_id: str,
-    pr_number: int,
-    *,
-    is_live_bridge: bool = True,
-    repo_name: str | None = None,
-    build_container: Callable[[Session], ContextEngineContainer],
-) -> dict[str, Any]:
-    container = build_container(db)
-    svc = container.ingestion_submission(db)
-    req = IngestionSubmissionRequest(
-        pot_id=pot_id,
-        ingestion_kind=INGESTION_KIND_GITHUB_MERGED_PR,
-        source_channel="async_job",
-        source_system="github",
-        event_type="pull_request",
-        action="merged",
-        payload={
-            "pr_number": pr_number,
-            "is_live_bridge": is_live_bridge,
-            "repo_name": repo_name,
-        },
-        repo_name=repo_name,
-    )
-    receipt = svc.submit(req, sync=True)
-    if receipt.duplicate:
-        return {
-            "status": "duplicate",
-            "pot_id": pot_id,
-            "pr_number": pr_number,
-            "event_id": receipt.event_id,
-        }
-    if receipt.status == "error":
-        return {
-            "status": "error",
-            "pot_id": pot_id,
-            "pr_number": pr_number,
-            "event_id": receipt.event_id,
-            "error": receipt.error,
-        }
-    out = dict(receipt.extras or {})
-    out.setdefault("status", "success")
-    out["event_id"] = receipt.event_id
-    out["pot_id"] = pot_id
-    out["pr_number"] = pr_number
-    return out
-
-
-def handle_ingestion_agent_run(
-    db: Session,
-    event_id: str,
+    batch_id: str,
     *,
     build_container: Callable[[Session], ContextEngineContainer],
 ) -> dict[str, Any]:
-    container = build_container(db)
-    agent = container.reconciliation_agent
-    if agent is None:
-        return {"ok": False, "error": "no_reconciliation_agent"}
-    return run_ingestion_agent_for_event(
-        agent,
-        container.reconciliation_ledger(db),
-        event_id,
-        container.jobs,
-    )
+    """Claim one batch by id and run the reconciliation agent over it.
 
-
-def handle_apply_episode(
-    db: Session,
-    pot_id: str,
-    event_id: str,
-    sequence: int,
-    *,
-    build_container: Callable[[Session], ContextEngineContainer],
-) -> dict[str, Any]:
+    Called by the host worker once per ``jobs.enqueue_batch`` event. If the
+    batch is already claimed/running/done (a redundant enqueue races and
+    loses), ``claim_batch_by_id`` returns ``None`` and this is a no-op.
+    """
     container = build_container(db)
-    if container.context_graph is None:
-        return {"ok": False, "error": "context_graph_unavailable"}
-    r = apply_episode_step_for_event(
-        container.context_graph,
-        container.reconciliation_ledger(db),
-        event_id,
-        sequence,
+    if container.reconciliation_agent is None:
+        return {"status": "skipped", "reason": "no_reconciliation_agent"}
+    batches_repo = container.batch_repository(db)
+    batch = batches_repo.claim_batch_by_id(batch_id)
+    if batch is None:
+        return {"status": "skipped", "reason": "not_pending", "batch_id": batch_id}
+    outcome = process_batch(
+        batch=batch,
+        agent=container.reconciliation_agent,
+        batches=batches_repo,
+        reco_ledger=container.reconciliation_ledger(db),
+        checkpoints=container.agent_checkpoint_store(db),
+        pots=container.pots,
+        policy=container.policy(),
     )
     return {
-        "ok": r.ok,
-        "event_id": event_id,
-        "sequence": sequence,
-        "error": r.error,
-        "episode_uuids": r.episode_uuids,
+        "status": "ok" if outcome.ok else "failed",
+        "batch_id": outcome.batch_id,
+        "completed_event_ids": outcome.completed_event_ids,
+        "tool_call_count": outcome.tool_call_count,
+        "error": outcome.error,
     }

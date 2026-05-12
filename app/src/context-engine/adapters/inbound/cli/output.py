@@ -49,7 +49,6 @@ class DoctorSnapshot:
 
     context_graph_enabled: bool
     neo4j_effective_set: bool
-    neo4j_source: str  # "context_engine" | "legacy" | "missing"
     pot_maps_set: bool
     active_pot_id: str | None
     potpie_api_key_env: bool
@@ -103,7 +102,6 @@ def print_doctor_report(data: DoctorSnapshot, *, as_json: bool) -> None:
         payload = {
             "context_graph_enabled": data.context_graph_enabled,
             "neo4j_effective_set": data.neo4j_effective_set,
-            "neo4j_source": data.neo4j_source,
             "pot_maps_set": data.pot_maps_set,
             "active_pot_id": data.active_pot_id,
             "potpie_api_key_env": data.potpie_api_key_env,
@@ -126,7 +124,6 @@ def print_doctor_report(data: DoctorSnapshot, *, as_json: bool) -> None:
     ctx_tbl.add_row(
         "Neo4j URI (local)", "set" if data.neo4j_effective_set else "(missing)"
     )
-    ctx_tbl.add_row("Neo4j source", data.neo4j_source)
     if data.potpie_health_ok is not None:
         ctx_tbl.add_row(
             "GET /health",

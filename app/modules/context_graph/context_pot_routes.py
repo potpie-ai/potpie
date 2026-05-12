@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import secrets
 import uuid
@@ -57,6 +58,8 @@ from app.modules.utils.APIRouter import APIRouter
 INVITATION_DEFAULT_TTL_DAYS = 14
 _POT_SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
+logger = logging.getLogger(__name__)
+
 
 def _normalize_pot_slug(raw: str | None) -> str:
     slug = (raw or "").strip().lower()
@@ -102,6 +105,78 @@ def _serialize_invitation(row: ContextGraphPotInvitation) -> dict[str, Any]:
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "accepted_at": row.accepted_at.isoformat() if row.accepted_at else None,
     }
+
+
+def _enqueue_repo_bootstrap_event(
+    db: Session,
+    *,
+    pot_id: str,
+    repo_row: ContextGraphPotRepository,
+    submitted_by_uid: str,
+) -> str | None:
+    """Submit a ``repository.added`` event so the agent can seed the graph.
+
+    Best-effort: if the context-engine isn't enabled, the agent isn't wired,
+    or the submission fails for any reason, we log and return ``None`` so the
+    repo-attach itself still succeeds. The repo is already committed.
+    """
+    try:
+        from app.modules.context_graph.wiring import build_container_for_user_session
+        from domain.ingestion_event_models import IngestionSubmissionRequest
+        from domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
+    except Exception:
+        logger.exception(
+            "repo_attach_bootstrap: import failed; skipping bootstrap event"
+        )
+        return None
+
+    try:
+        container = build_container_for_user_session(db, submitted_by_uid)
+    except Exception:
+        logger.exception(
+            "repo_attach_bootstrap: container build failed for pot=%s", pot_id
+        )
+        return None
+
+    repo_full = f"{repo_row.owner}/{repo_row.repo}"
+    request = IngestionSubmissionRequest(
+        pot_id=pot_id,
+        ingestion_kind=INGESTION_KIND_AGENT_RECONCILIATION,
+        source_channel="repo_attach",
+        source_system=repo_row.provider or "github",
+        event_type="repository",
+        action="added",
+        source_id=f"repo_added:{repo_full}",
+        provider=repo_row.provider,
+        provider_host=repo_row.provider_host,
+        repo_name=repo_full,
+        payload={
+            "owner": repo_row.owner,
+            "repo": repo_row.repo,
+            "default_branch": repo_row.default_branch,
+            "remote_url": repo_row.remote_url,
+            "external_repo_id": repo_row.external_repo_id,
+            "submitted_by_user_id": submitted_by_uid,
+        },
+    )
+    try:
+        receipt = container.ingestion_submission(db).submit(
+            request, sync=False, wait=False
+        )
+    except Exception:
+        logger.exception(
+            "repo_attach_bootstrap: submit failed for pot=%s repo=%s",
+            pot_id,
+            repo_full,
+        )
+        return None
+    logger.info(
+        "repo_attach_bootstrap: enqueued event=%s pot=%s repo=%s",
+        receipt.event_id,
+        pot_id,
+        repo_full,
+    )
+    return receipt.event_id
 
 
 def _context_graph_pot_row_or_404(db: Session, pot_id: str) -> ContextGraphPot:
@@ -621,12 +696,16 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
         source = mirror_repository_into_sources(db, row, added_by_user_id=uid)
         db.commit()
         db.refresh(row)
+        bootstrap_event_id = _enqueue_repo_bootstrap_event(
+            db, pot_id=pot_id, repo_row=row, submitted_by_uid=uid
+        )
         return {
             "id": row.id,
             "repo_name": f"{row.owner}/{row.repo}",
             "provider": row.provider,
             "provider_host": row.provider_host,
             "source_id": source.id,
+            "bootstrap_event_id": bootstrap_event_id,
         }
 
     @r.delete("/pots/{pot_id}/repositories/{repository_id}")
@@ -994,11 +1073,15 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
         source = mirror_repository_into_sources(db, repository, added_by_user_id=uid)
         db.commit()
         db.refresh(source)
+        bootstrap_event_id = _enqueue_repo_bootstrap_event(
+            db, pot_id=pot_id, repo_row=repository, submitted_by_uid=uid
+        )
         return {
             "id": source.id,
             "repository_id": repository.id,
             "source": serialize_source(source),
             "already_attached": False,
+            "bootstrap_event_id": bootstrap_event_id,
         }
 
     @r.get("/pots/{pot_id}/sources/linear/teams")

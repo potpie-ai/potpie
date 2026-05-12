@@ -3,7 +3,7 @@ from app.modules.intelligence.agents.chat_agents.agent_config import (
     AgentConfig,
     TaskConfig,
 )
-from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
+from app.modules.intelligence.agents.chat_agents.pydantic_deep_agent import PydanticDeepRagAgent
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.exceptions import UnsupportedProviderError
 from app.modules.intelligence.provider.provider_service import ProviderService
@@ -63,7 +63,7 @@ class IntegrationTestAgent(ChatAgent):
             raise UnsupportedProviderError(
                 f"Model '{self.llm_provider.chat_config.model}' does not support Pydantic-based agents."
             )
-        return PydanticRagAgent(self.llm_provider, agent_config, tools)
+        return PydanticDeepRagAgent(self.llm_provider, agent_config, tools)
 
     def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if not ctx.node_ids or len(ctx.node_ids) == 0:

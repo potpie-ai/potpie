@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from adapters.outbound.source_resolvers.linear_issue import LinearIssueResolver
+from adapters.outbound.connectors.linear.resolver import LinearIssueResolver
 from domain.source_references import SourceReferenceRecord
 from domain.source_resolution import (
     PERMISSION_DENIED,

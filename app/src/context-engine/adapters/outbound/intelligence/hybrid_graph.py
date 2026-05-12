@@ -8,7 +8,7 @@ from typing import Any
 
 from adapters.outbound.graphiti.port import EpisodicGraphPort
 from adapters.outbound.graphiti.query_helpers import search_pot_context_async
-from adapters.outbound.neo4j.port import StructuralGraphPort
+from adapters.outbound.neo4j.port import StructuralReadPort
 from domain.intelligence_models import (
     ArtifactContext,
     ArtifactRef,
@@ -293,7 +293,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
     def __init__(
         self,
         episodic: EpisodicGraphPort,
-        structural: StructuralGraphPort,
+        structural: StructuralReadPort,
     ) -> None:
         self._episodic = episodic
         self._structural = structural

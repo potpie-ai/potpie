@@ -9,19 +9,15 @@ from typing import Any
 
 import pytest
 
-from adapters.outbound.reconciliation.linear_issue_plan import (
-    LinearIssuePlannerAgent,
-    build_linear_issue_plan,
-)
-from domain.context_events import ContextEvent, EventRef
-from domain.linear_events import (
+from adapters.outbound.connectors.linear.plan import build_linear_issue_plan
+from domain.context_events import EventRef
+from adapters.outbound.connectors.linear.events import (
     LinearComment,
     LinearIssueEvent,
     LinearPerson,
     LinearState,
     linear_issue_from_payload,
 )
-from domain.reconciliation import ReconciliationRequest
 
 pytestmark = pytest.mark.unit
 
@@ -136,34 +132,6 @@ def test_dedupes_entities_by_key() -> None:
     # The single user must appear only once in entity upserts.
     keys = [e.entity_key for e in plan.entity_upserts]
     assert keys.count("linear:user:user_priya") == 1
-
-
-def test_planner_agent_dispatches_on_event_payload_action() -> None:
-    agent = LinearIssuePlannerAgent()
-    event = ContextEvent(
-        event_id="evt-1",
-        pot_id="pot-1",
-        provider="linear",
-        provider_host="linear.app",
-        repo_name="team:team_eng",
-        source_system="linear",
-        event_type="linear_issue",
-        action="state_change",
-        source_id="linear:issue:ENG-42:state_change",
-        source_event_id="wh-1",
-        payload={
-            "action": "state_change",
-            "issue": _detail(),
-            "previous_state": {"name": "Triage", "type": "unstarted"},
-        },
-        occurred_at=datetime(2026, 4, 22, 12, 0, tzinfo=timezone.utc),
-        received_at=datetime(2026, 4, 22, 12, 0, tzinfo=timezone.utc),
-    )
-    plan = agent.run_reconciliation(
-        ReconciliationRequest(event=event, pot_id="pot-1", repo_name="team:team_eng")
-    )
-    assert plan.summary.startswith("linear ENG-42 state Triage → In Progress")
-    assert agent.capability_metadata()["agent"] == "linear_issue_planner"
 
 
 def test_benchmark_dataset_exposes_linear_issues() -> None:

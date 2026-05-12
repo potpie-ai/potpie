@@ -1,4 +1,4 @@
-from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
+from app.modules.intelligence.agents.chat_agents.pydantic_deep_agent import PydanticDeepRagAgent
 from app.modules.intelligence.agents.chat_agents.pydantic_multi_agent import (
     PydanticMultiAgent,
     AgentType as MultiAgentType,
@@ -113,13 +113,13 @@ class GeneralPurposeAgent(ChatAgent):
                     tool_resolver=self.tool_resolver,
                 )
             else:
-                logger.info("❌ Multi-agent disabled by config, using PydanticRagAgent")
-                return PydanticRagAgent(self.llm_provider, agent_config, tools)
+                logger.info("❌ Multi-agent disabled by config, using PydanticDeepRagAgent")
+                return PydanticDeepRagAgent(self.llm_provider, agent_config, tools)
         else:
             logger.error(
-                f"❌ Model '{self.llm_provider.chat_config.model}' does not support Pydantic - using fallback PydanticRagAgent"
+                f"❌ Model '{self.llm_provider.chat_config.model}' does not support Pydantic - using fallback PydanticDeepRagAgent"
             )
-            return PydanticRagAgent(self.llm_provider, agent_config, tools)
+            return PydanticDeepRagAgent(self.llm_provider, agent_config, tools)
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
         return await self._build_agent().run(ctx)

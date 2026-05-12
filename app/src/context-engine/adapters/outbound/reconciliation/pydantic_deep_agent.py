@@ -1,6 +1,18 @@
 """Reconciliation agent backed by pydantic-deep (PyPI: ``pydantic-deep``).
 
 Upstream: https://github.com/vstorm-co/pydantic-deepagents
+
+Single-agent ingestion: the agent receives a *batch* of recently-arrived
+``ContextEvent``s for a pot and runs to completion against a tool surface that
+includes:
+
+- read-only graph lookups (``context_search``, ``context_recent_changes``, …)
+- a fat mutation tool (``apply_graph_mutations``)
+- per-event control (``mark_event_processed``)
+- a terminal tool (``finish_batch``)
+
+Progress is checkpointed after every tool call so a worker crash mid-run can
+resume on a follow-up dispatch (see ``AgentCheckpointStorePort``).
 """
 
 from __future__ import annotations
@@ -8,11 +20,22 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Protocol
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
-from domain.context_events import EventRef
+from domain.context_events import ContextEvent, EventRef
+from domain.event_playbooks import (
+    EventPlaybook,
+    find_playbook,
+    render_playbooks_section,
+)
+from domain.graph_mutations import ProvenanceContext
+from domain.ports.agent_checkpoint_store import AgentCheckpointStorePort
+from domain.ports.context_graph import ContextGraphPort
 from domain.ports.reconciliation_tools import ReconciliationToolsPort
-from domain.reconciliation import ReconciliationPlan, ReconciliationRequest
+from domain.ports.telemetry import CostEvent, NoOpTelemetry, TelemetryPort
+from domain.reconciliation import ReconciliationRequest
+from domain.reconciliation_batch import BatchAgentContext, BatchAgentOutcome
 
 from adapters.outbound.reconciliation.context_graph_tools import (
     build_initial_context_snapshot,
@@ -22,154 +45,102 @@ from adapters.outbound.reconciliation.llm_plan_convert import (
 )
 from adapters.outbound.reconciliation.llm_plan_schema import LlmReconciliationPlan
 
+if TYPE_CHECKING:
+    from pydantic_ai.messages import ModelMessage
+
 logger = logging.getLogger(__name__)
 
-_RECONCILIATION_INSTRUCTIONS = """You are a context-graph reconciliation planner for a software project.
 
-You MUST return only the structured plan schema you are given. Do not execute tools that mutate external systems.
+_RECONCILIATION_INSTRUCTIONS = """You are a context-graph ingestion agent for a software project.
 
-You have access to bounded read-only context tools (when provided) to inspect
-existing graph memory before planning:
-- context_search(query, limit?, node_labels?): semantic search across the pot's facts
-- context_recent_changes(file_path?/function_name?/pr_number?, limit?): recent change history near a target
-- context_file_owners(file_path, limit?): owners/reviewers for a file
-- context_graph_overview(limit?): pot readiness + activity signal
+You receive a BATCH of recent events for one pot (project). Your job is to
+update the graph so it reflects what these events tell us about the project's
+state, decisions, work, incidents, owners, and timeline.
 
-Use tools to (1) confirm whether this event duplicates, refines, or conflicts
-with existing facts, (2) find entities to upsert against rather than creating
-duplicates, and (3) discover invalidations when the event supersedes prior
-facts. Every important mutation should be justified by either the event
-payload or tool-observed facts. Attach `evidence_refs` and a numeric
-`confidence` (0.0-1.0) to each mutation when possible.
+You operate by calling tools. The tools you have:
+
+Read tools — use these to learn what's already in the graph before deciding
+what to write:
+- context_search(query, limit?, node_labels?)
+- context_recent_changes(file_path?/function_name?/pr_number?, limit?)
+- context_file_owners(file_path, limit?)
+- context_graph_overview(limit?)
+
+Mutation tool — call this once per logical group of mutations (typically once
+per event you process):
+- apply_graph_mutations(plan, event_id, summary)
+  Where ``plan`` is a structured object with fields:
+    summary: str (one-line)
+    episodes: list[{name, episode_body, source_description, reference_time?}]
+    entity_upserts: list[{entity_key, labels, properties}]
+    edge_upserts: list[{edge_type, from_entity_key, to_entity_key, properties}]
+    edge_deletes: list[{edge_type, from_entity_key, to_entity_key}]
+    invalidations: list[{reason, target_entity_key?, edge_type?, from_entity_key?, to_entity_key?}]
+    evidence: list[{kind, ref, metadata?}]
+    confidence: float | null
+    warnings: list[str]
+  This tool is idempotent on stable entity_keys, so it is safe to retry the
+  same plan if a previous run partially succeeded.
+
+Per-event control:
+- mark_event_processed(event_id, summary): call AFTER you have applied the
+  mutations for this event. Marks the event as reconciled in the ledger.
+
+Terminal tool — call exactly once when you are done with the whole batch:
+- finish_batch(summary): signals you've handled every event you intend to
+  handle. Any event not passed to ``mark_event_processed`` will be marked
+  failed when the batch closes.
 
 Rules:
-- All structural mutations must belong to the given pot_id partition. Never reference another pot.
-- Prefer concise episode titles and bodies that capture decisions and rationale.
-- Use stable entity_key strings (e.g. github:pr:owner/repo:123) when upserting entities.
-- Only include structural mutations that are justified by the event payload and safe for the repository.
-- If unsure, add a warning and keep the plan minimal rather than inventing facts.
-- If context tools surface an existing entity, upsert against its key rather than creating a new one.
-- When this event supersedes a prior fact, emit an invalidation referencing the prior entity/edge.
+- All structural mutations must belong to the given pot_id partition. Never
+  reference another pot.
+- Use stable entity_key strings (e.g. ``github:pr:owner/repo:123``,
+  ``timeline:activity:<verb>:<short_hex>``,
+  ``timeline:period:daily:<pot_id>:<YYYY-MM-DD>``) so re-ingestion of the
+  same event upserts idempotently.
+- Always add at least one canonical label from the vocabulary below for entity
+  upserts. Do NOT use only generic "Entity".
+- Every event worth tracking produces at least one Activity upsert with the
+  edges PERFORMED (actor → Activity), TOUCHED (Activity → subject), and
+  IN_PERIOD (Activity → daily Period bucket).
+- Only mutate when you can justify it from the event payload or tool-observed
+  facts. If unsure, add a warning and keep the plan minimal rather than
+  inventing facts.
+- When this event supersedes a prior fact, emit an invalidation referencing
+  the prior entity/edge.
 
-Ontology guidance for entity upserts:
-- Always add at least one canonical label from the vocabulary below. Do NOT use only generic "Entity".
-- Use multiple labels when an entity spans categories (e.g., ["Decision", "Feature"]).
-- Include required properties for each label:
-  - Fix: fix_type (e.g., "code", "config", "infrastructure", "process"), summary
-  - DiagnosticSignal: signal_type (e.g., "metric", "log", "error_rate"), summary
-  - Incident: title, severity (e.g., "critical", "high", "medium", "low"), status
-  - Alert: title, severity, status
-  - Runbook: title
-  - Service: name, criticality (e.g., "critical", "standard", "experimental"), lifecycle_state
-  - Deployment: version, deployed_at
-  - For other labels, infer sensible values from the payload; never leave required properties empty.
+Canonical labels: Decision, Feature, Fix, BugPattern, DiagnosticSignal,
+Incident, Alert, Runbook, Service, Deployment, Document, Environment, Person,
+Team, Activity, Period.
 
-Canonical label vocabulary:
-- Decision: architectural choices, strategy decisions, ADRs, design choices
-- Feature: product features, capabilities, functionality, user-facing work
-- Fix: bug fixes, patches, resolutions to specific problems
-- BugPattern: recurring bugs, anti-patterns, known failure modes
-- DiagnosticSignal: metrics, monitoring signals, observability data, health checks
-- Incident: outages, failures, post-mortems, on-call events, production issues
-- Alert: alert rules, thresholds, paging rules, monitoring alerts
-- Runbook: operational procedures, playbooks, operational guides
-- Service: microservices, components, backends, systems, APIs
-- Deployment: deployment configs, release strategies, environments
-- Document: documentation, guides, READMEs, API docs, wikis
-- Environment: staging, production, dev, QA environments
-- Person / Team: owners, maintainers, reviewers, stakeholders
-- Activity: a timeline happening — verb performed by an actor at a time,
-  touching zero or more subjects. Emit one Activity per significant event
-  you see in the payload (merge, deploy, work-declaration, decision-made,
-  incident-opened, etc.). Required properties: verb, occurred_at, summary.
-  Verb is a short snake_case string from this preferred set:
-  merged_pr, opened_pr, reviewed_pr, authored_commit, opened_issue,
-  state_changed, commented, assigned, deployed, decided,
-  declared_progress, declared_completed, performed (fallback).
-- Period: daily-bucket rollup for Activities. You do not normally need to
-  create Periods by hand — the timeline helper handles this — but if the
-  event spans a multi-day effort you may upsert an explicit Period with
-  period_kind="declared" and label=<short_slug>.
+Common edge types: DECIDES_FOR, AFFECTS, RESOLVED, MITIGATES, IMPACTS,
+INDICATES, FIRED_IN, MATCHES_PATTERN, DEPENDS_ON, USES, CALLS, CONTAINS,
+IMPLEMENTS, EXPOSES, DEPLOYED_TO, HOSTS, OWNS, MEMBER_OF, ONCALL_FOR, REVIEWS,
+HAS_SIGNAL, HAS_ROOT_CAUSE, RELATED_TO, PERFORMED, TOUCHED, IN_PERIOD.
 
-Edge type guidance:
-- Use only these common edge types: DECIDES_FOR, AFFECTS, RESOLVED, MITIGATES, IMPACTS, INDICATES, FIRED_IN, MATCHES_PATTERN, DEPENDS_ON, USES, CALLS, CONTAINS, IMPLEMENTS, EXPOSES, DEPLOYED_TO, HOSTS, OWNS, MEMBER_OF, ONCALL_FOR, REVIEWS, HAS_SIGNAL, HAS_ROOT_CAUSE, RELATED_TO, PERFORMED, TOUCHED, IN_PERIOD
-- If unsure which edge type fits, use RELATED_TO as the safe fallback.
-
-Timeline-subgraph rules (apply to EVERY plan you produce):
-- Every event worth tracking produces at least one Activity upsert + the
-  edges PERFORMED (actor -> Activity), TOUCHED (Activity -> affected
-  subject), and IN_PERIOD (Activity -> daily Period bucket).
-- Identify the actor (Person or Agent) from the payload when possible —
-  commit author, PR merger, assignee, commenter, deploying user, the
-  coding-agent session running this reconciliation, etc. If no actor is
-  identifiable, emit the Activity without PERFORMED rather than guessing.
-- Use the deterministic Activity entity_key shape
-  ``timeline:activity:<verb>:<short_hex>`` and the Period entity_key shape
-  ``timeline:period:daily:<pot_id>:<YYYY-MM-DD>`` so re-ingestion of the
-  same event idempotently upserts the same rows.
-- The Activity's ``summary`` should be one short, human-readable line
-  naming who did what to what ("alice merged PR #42 in potpie/api"). This
-  is what the timeline query tool surfaces to downstream agents — write it
-  as if answering "what happened here?".
+Process the batch event-by-event. After all events are handled, call
+finish_batch with a one-line summary of what you did.
 """
 
 
-def _event_ref(request: ReconciliationRequest) -> EventRef:
-    return EventRef(
-        event_id=request.event.event_id,
-        source_system=request.event.source_system,
-        pot_id=request.pot_id,
-    )
+@dataclass
+class _BatchRunState:
+    """Mutable state shared across tool callables for one batch run."""
 
+    pot_id: str
+    repo_name: str | None
+    events_by_id: dict[str, ContextEvent]
+    context_graph: ContextGraphPort
+    completed_event_ids: list[str] = field(default_factory=list)
+    finish_called: bool = False
+    finish_summary: str | None = None
+    cleanup_callbacks: list[Any] = field(default_factory=list)
+    """Async or sync callables run after the agent loop exits (success or failure).
 
-def _user_prompt(
-    request: ReconciliationRequest,
-    *,
-    context_snapshot: dict[str, Any] | None = None,
-) -> str:
-    ev = request.event
-    payload: dict[str, Any] = {
-        "pot_id": request.pot_id,
-        "repo_name": request.repo_name,
-        "prior_attempts": request.prior_attempts,
-        "event": {
-            "event_id": ev.event_id,
-            "source_system": ev.source_system,
-            "event_type": ev.event_type,
-            "action": ev.action,
-            "pot_id": ev.pot_id,
-            "provider": ev.provider,
-            "provider_host": ev.provider_host,
-            "repo_name": ev.repo_name,
-            "source_id": ev.source_id,
-            "source_event_id": ev.source_event_id,
-            "artifact_refs": ev.artifact_refs,
-            "occurred_at": ev.occurred_at.isoformat() if ev.occurred_at else None,
-            "received_at": ev.received_at.isoformat() if ev.received_at else None,
-            "payload": ev.payload,
-        },
-    }
-    if context_snapshot:
-        payload["current_context_snapshot"] = context_snapshot
-    return json.dumps(payload, indent=2, default=str)
-
-
-def _semantic_seed_from_event(request: ReconciliationRequest) -> str | None:
-    """Derive a best-effort semantic search seed from the event payload."""
-    ev = request.event
-    candidates: list[str] = []
-    payload = ev.payload or {}
-    for key in ("title", "summary", "name", "description"):
-        val = payload.get(key) if isinstance(payload, dict) else None
-        if isinstance(val, str) and val.strip():
-            candidates.append(val.strip())
-            break
-    if ev.action:
-        candidates.append(ev.action)
-    if ev.event_type:
-        candidates.append(ev.event_type)
-    seed = " ".join(candidates).strip()
-    return seed[:200] or None
+    Tool builders that hold long-lived resources (e.g. a sandbox workspace)
+    register a cleanup here so the agent always releases them once the batch
+    finishes, regardless of whether ``finish_batch`` was called.
+    """
 
 
 def _pydantic_deep_version() -> str:
@@ -181,32 +152,140 @@ def _pydantic_deep_version() -> str:
         return "unknown"
 
 
-class AgentWorkRecorder(Protocol):
-    def record(
-        self,
-        event_kind: str,
-        *,
-        title: str | None = None,
-        body: str | None = None,
-        payload: dict[str, Any] | None = None,
-    ) -> None: ...
+def _provenance_from_event(ev: ContextEvent, *, agent_name: str) -> ProvenanceContext:
+    actor = getattr(ev, "actor", None)
+    return ProvenanceContext(
+        source_kind=ev.event_type or ev.ingestion_kind,
+        source_ref=ev.source_id or ev.source_event_id,
+        event_occurred_at=ev.occurred_at,
+        event_received_at=ev.received_at,
+        created_by_agent=agent_name,
+        actor_user_id=actor.user_id if actor else None,
+        actor_surface=actor.surface if actor else None,
+        actor_client_name=actor.client_name if actor else None,
+        actor_auth_method=actor.auth_method if actor else None,
+    )
 
 
-def _jsonable(value: Any) -> Any:
+def _event_summary(ev: ContextEvent) -> dict[str, Any]:
+    """Compact JSON-able view of one event for the agent's user prompt."""
+    return {
+        "event_id": ev.event_id,
+        "source_system": ev.source_system,
+        "event_type": ev.event_type,
+        "action": ev.action,
+        "ingestion_kind": ev.ingestion_kind,
+        "provider": ev.provider,
+        "provider_host": ev.provider_host,
+        "repo_name": ev.repo_name,
+        "source_id": ev.source_id,
+        "source_event_id": ev.source_event_id,
+        "occurred_at": ev.occurred_at.isoformat() if ev.occurred_at else None,
+        "received_at": ev.received_at.isoformat() if ev.received_at else None,
+        "payload": ev.payload,
+        "actor": ev.actor.to_payload() if ev.actor else None,
+    }
+
+
+def _semantic_seed_from_events(events: list[ContextEvent]) -> str | None:
+    parts: list[str] = []
+    for ev in events[:3]:
+        payload = ev.payload or {}
+        if isinstance(payload, dict):
+            for key in ("title", "summary", "name", "description"):
+                val = payload.get(key)
+                if isinstance(val, str) and val.strip():
+                    parts.append(val.strip())
+                    break
+        if ev.action:
+            parts.append(ev.action)
+    seed = " ".join(parts).strip()
+    return seed[:200] or None
+
+
+class _PydanticDeepCheckpointStoreBridge:
+    """Adapter: pydantic-deep ``CheckpointStore`` → our ``AgentCheckpointStorePort``.
+
+    pydantic-deep's CheckpointMiddleware expects an async store with multiple
+    snapshots keyed by id. We collapse that to one persisted snapshot per
+    batch (always the latest) since our recovery model is "resume from last
+    tool call," not "rewind to arbitrary historical point."
+    """
+
+    def __init__(
+        self, port: AgentCheckpointStorePort, *, batch_id: str
+    ) -> None:
+        self._port = port
+        self._batch_id = batch_id
+
+    async def save(self, checkpoint: Any) -> None:
+        from pydantic_ai.messages import ModelMessagesTypeAdapter
+
+        raw = ModelMessagesTypeAdapter.dump_json(list(checkpoint.messages))
+        try:
+            messages_json = json.loads(raw.decode("utf-8"))
+        except Exception:
+            logger.exception("checkpoint serialize failed for batch %s", self._batch_id)
+            return
+        if not isinstance(messages_json, list):
+            return
+        await asyncio.to_thread(
+            self._port.save,
+            self._batch_id,
+            messages_json=messages_json,
+            tool_call_count=int(checkpoint.turn or 0),
+        )
+
+    async def get(self, checkpoint_id: str) -> Any:
+        del checkpoint_id
+        return None
+
+    async def get_by_label(self, label: str) -> Any:
+        del label
+        return None
+
+    async def list_all(self) -> list[Any]:
+        return []
+
+    async def remove(self, checkpoint_id: str) -> bool:
+        del checkpoint_id
+        return False
+
+    async def remove_oldest(self) -> bool:
+        return False
+
+    async def count(self) -> int:
+        return 0
+
+    async def clear(self) -> None:
+        await asyncio.to_thread(self._port.delete, self._batch_id)
+
+
+def _playbooks_for_events(events: list[ContextEvent]) -> list[EventPlaybook]:
+    """Resolve and dedupe playbooks for a batch's events, preserving order."""
+    seen: dict[tuple[str, str, str], EventPlaybook] = {}
+    for ev in events:
+        pb = find_playbook(ev.source_system, ev.event_type, ev.action)
+        key = (pb.source_system, pb.event_type, pb.action)
+        if key not in seen:
+            seen[key] = pb
+    return list(seen.values())
+
+
+def _restore_message_history(prior: list[dict[str, Any]] | None) -> list["ModelMessage"]:
+    if not prior:
+        return []
     try:
-        return json.loads(json.dumps(value, default=str))
-    except TypeError:
-        return str(value)
+        from pydantic_ai.messages import ModelMessagesTypeAdapter
 
-
-def _json_dict(value: Any) -> dict[str, Any]:
-    if isinstance(value, dict):
-        return {str(k): _jsonable(v) for k, v in value.items()}
-    return {"value": _jsonable(value)}
+        return list(ModelMessagesTypeAdapter.validate_python(prior))
+    except Exception:
+        logger.exception("failed to restore message history; starting fresh")
+        return []
 
 
 class PydanticDeepReconciliationAgent:
-    """`ReconciliationAgentPort` using pydantic-deep structured output."""
+    """``ReconciliationAgentPort`` running a tool-driven loop on pydantic-deep."""
 
     def __init__(
         self,
@@ -214,6 +293,7 @@ class PydanticDeepReconciliationAgent:
         model: str | None = None,
         instructions: str | None = None,
         tools: ReconciliationToolsPort | None = None,
+        telemetry: TelemetryPort | None = None,
     ) -> None:
         import os
 
@@ -221,54 +301,247 @@ class PydanticDeepReconciliationAgent:
             "CONTEXT_ENGINE_RECONCILIATION_MODEL", "openai:gpt-5.4-mini"
         )
         self._instructions = instructions or _RECONCILIATION_INSTRUCTIONS
-        self._work_recorder: AgentWorkRecorder | None = None
         self._tools_port: ReconciliationToolsPort | None = tools
-
-    def set_work_event_recorder(self, recorder: AgentWorkRecorder | None) -> None:
-        self._work_recorder = recorder
+        self._context_graph: ContextGraphPort | None = None
+        self._extra_tool_builders: list[Any] = []
+        self._telemetry: TelemetryPort = telemetry or NoOpTelemetry()
 
     def set_context_tools(self, tools: ReconciliationToolsPort | None) -> None:
-        """Attach (or replace) the bounded context tools after construction."""
+        """Attach (or replace) the bounded read-only context tools."""
         self._tools_port = tools
 
-    def _record_work_event(
-        self,
-        event_kind: str,
-        *,
-        title: str | None = None,
-        body: str | None = None,
-        payload: dict[str, Any] | None = None,
-    ) -> None:
-        if self._work_recorder is None:
-            return
-        try:
-            self._work_recorder.record(
-                event_kind,
-                title=title,
-                body=body,
-                payload=payload,
-            )
-        except Exception:
-            logger.exception("failed to record reconciliation agent work event")
+    def set_context_graph(self, context_graph: ContextGraphPort | None) -> None:
+        """Required for the mutation tool (``apply_graph_mutations``)."""
+        self._context_graph = context_graph
+
+    def set_telemetry(self, telemetry: TelemetryPort | None) -> None:
+        """Replace the cost/drift telemetry sink (default: NoOp)."""
+        self._telemetry = telemetry or NoOpTelemetry()
+
+    def add_extra_tools(self, tool_builders: list[Any]) -> None:
+        """Register additional tool factories (e.g. github / sandbox tools).
+
+        Each builder is a callable ``(state) -> list[Tool]`` invoked at the
+        start of each ``run_batch`` so the tool can capture per-run state.
+        """
+        self._extra_tool_builders = list(tool_builders)
 
     def capability_metadata(self) -> dict[str, Any]:
         return {
             "agent": "pydantic-deep",
             "version": _pydantic_deep_version(),
-            "toolset_version": (
-                "context-aware-v1" if self._tools_port is not None else "read-only-plan"
-            ),
+            "toolset_version": "batch-tools-v1",
             "model": self._model,
             "has_context_tools": self._tools_port is not None,
+            "has_context_graph": self._context_graph is not None,
         }
 
-    def _build_agent_tools(self, request: ReconciliationRequest) -> list[Any]:
-        """Build pydantic-ai tool callables from the bounded tools port.
+    def run_batch(
+        self,
+        ctx: BatchAgentContext,
+        *,
+        checkpoints: AgentCheckpointStorePort | None = None,
+    ) -> BatchAgentOutcome:
+        if self._context_graph is None:
+            return BatchAgentOutcome(
+                ok=False,
+                error="context_graph_unavailable",
+            )
+        if not ctx.events:
+            return BatchAgentOutcome(ok=True)
 
-        Each callable logs PRE/POST via the existing work-recorder hooks; we
-        additionally record ``tool_result`` summaries at return time so
-        downstream ledger inspection can reproduce the agent's reasoning path.
+        try:
+            return asyncio.run(self._run_batch_async(ctx, checkpoints=checkpoints))
+        except Exception as exc:
+            logger.exception("batch agent run crashed for batch %s", ctx.batch_id)
+            return BatchAgentOutcome(ok=False, error=str(exc))
+
+    async def _run_batch_async(
+        self,
+        ctx: BatchAgentContext,
+        *,
+        checkpoints: AgentCheckpointStorePort | None,
+    ) -> BatchAgentOutcome:
+        from pydantic_deep import (
+            CheckpointMiddleware,
+            create_deep_agent,
+            create_default_deps,
+        )
+
+        state = _BatchRunState(
+            pot_id=ctx.pot_id,
+            repo_name=ctx.repo_name,
+            events_by_id={ev.event_id: ev for ev in ctx.events},
+            context_graph=self._context_graph,  # type: ignore[arg-type]
+        )
+
+        tool_callables: list[Any] = []
+        tool_callables.extend(self._build_read_tools(ctx))
+        tool_callables.extend(self._build_mutation_tools(state))
+        tool_callables.extend(self._build_control_tools(state))
+        for builder in self._extra_tool_builders:
+            try:
+                extras = builder(state) or []
+                tool_callables.extend(extras)
+            except Exception:
+                logger.exception("failed to build extra tool batch")
+
+        capabilities: list[Any] = []
+        if checkpoints is not None:
+            bridge = _PydanticDeepCheckpointStoreBridge(
+                checkpoints, batch_id=ctx.batch_id
+            )
+            capabilities.append(
+                CheckpointMiddleware(
+                    store=bridge,  # type: ignore[arg-type]
+                    frequency="every_tool",
+                    max_checkpoints=1,
+                )
+            )
+
+        agent_kwargs: dict[str, Any] = {}
+        if capabilities:
+            agent_kwargs["capabilities"] = capabilities
+
+        agent = create_deep_agent(
+            model=self._model,
+            instructions=self._compose_instructions(ctx),
+            include_todo=False,
+            include_filesystem=False,
+            include_subagents=False,
+            include_skills=False,
+            include_plan=False,
+            web_search=False,
+            web_fetch=False,
+            include_memory=False,
+            include_teams=False,
+            include_checkpoints=False,
+            include_builtin_subagents=False,
+            context_manager=False,
+            cost_tracking=False,
+            include_history_archive=False,
+            **agent_kwargs,
+        )
+        # Register our tools post-construction via ``tool_plain`` (takes_ctx=False).
+        # We deliberately do NOT pass them through ``create_deep_agent(tools=...)``
+        # because pydantic-deep re-registers user tools via ``agent.tool(fn)``,
+        # which forces ``takes_ctx=True`` and then fails schema generation for
+        # any handler whose first param is not annotated ``RunContext[...]``.
+        for tool in tool_callables:
+            fn = getattr(tool, "function", tool)
+            agent.tool_plain(
+                name=getattr(tool, "name", None),
+                description=getattr(tool, "description", None),
+            )(fn)
+        deps = create_default_deps()
+        prompt = self._build_prompt(ctx)
+        prior = _restore_message_history(ctx.prior_messages_json)
+
+        try:
+            result = await agent.run(prompt, deps=deps, message_history=prior)
+        finally:
+            await _run_cleanup_callbacks(state)
+
+        usage_payload: dict[str, Any] = {}
+        try:
+            u = result.usage()
+            input_tokens = (
+                u.input_tokens
+                if hasattr(u, "input_tokens")
+                else getattr(u, "request_tokens", None)
+            )
+            output_tokens = (
+                u.output_tokens
+                if hasattr(u, "output_tokens")
+                else getattr(u, "response_tokens", None)
+            )
+            usage_payload = {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": getattr(u, "total_tokens", None),
+            }
+        except Exception:
+            pass
+        logger.info(
+            "batch %s agent run finished: completed=%d finish_called=%s usage=%s",
+            ctx.batch_id,
+            len(state.completed_event_ids),
+            state.finish_called,
+            usage_payload,
+        )
+        try:
+            self._telemetry.record_cost(
+                CostEvent(
+                    pot_id=ctx.pot_id,
+                    kind="agent",
+                    model=self._model,
+                    input_tokens=_int_or_none(usage_payload.get("input_tokens")),
+                    output_tokens=_int_or_none(usage_payload.get("output_tokens")),
+                    total_tokens=_int_or_none(usage_payload.get("total_tokens")),
+                    batch_id=ctx.batch_id,
+                    metadata={
+                        "completed_events": len(state.completed_event_ids),
+                        "finish_called": state.finish_called,
+                    },
+                )
+            )
+        except Exception:
+            logger.debug("telemetry: agent cost emission failed", exc_info=True)
+
+        return BatchAgentOutcome(
+            ok=True,
+            completed_event_ids=list(state.completed_event_ids),
+            tool_call_count=len(state.completed_event_ids),
+        )
+
+    def _compose_instructions(self, ctx: BatchAgentContext) -> str:
+        """Merge the base instructions with per-event playbooks for this batch.
+
+        The base prompt teaches the agent the tool surface and rules; the
+        playbooks layer tells it, *for the specific event-kinds present*, what
+        the payload typically contains, what to extract, and which tools are
+        most useful. Without playbooks the agent has to guess from the event
+        body alone.
         """
+        playbooks = _playbooks_for_events(ctx.events)
+        sections: list[str] = [self._instructions.rstrip()]
+        rendered = render_playbooks_section(playbooks)
+        if rendered:
+            sections.append(rendered.rstrip())
+        if playbooks:
+            budget = max(pb.max_tool_calls for pb in playbooks)
+            sections.append(
+                f"TOOL BUDGET: aim to finish this batch in roughly {budget} "
+                f"tool calls. If you hit that ceiling, call ``finish_batch`` "
+                f"with a summary of what you covered so we can re-batch the rest."
+            )
+        return "\n\n".join(sections) + "\n"
+
+    def _build_prompt(self, ctx: BatchAgentContext) -> str:
+        body = {
+            "pot_id": ctx.pot_id,
+            "repo_name": ctx.repo_name,
+            "batch_id": ctx.batch_id,
+            "attempt_number": ctx.attempt_number,
+            "events": [_event_summary(ev) for ev in ctx.events],
+        }
+        if self._tools_port is not None and self._context_graph is not None:
+            try:
+                snapshot = build_initial_context_snapshot(
+                    self._tools_port,
+                    _request_for_first_event(ctx),
+                    semantic_seed=_semantic_seed_from_events(ctx.events),
+                )
+                if snapshot:
+                    body["current_context_snapshot"] = snapshot
+            except Exception:
+                logger.exception(
+                    "failed to build initial context snapshot for batch %s",
+                    ctx.batch_id,
+                )
+        return json.dumps(body, indent=2, default=str)
+
+    def _build_read_tools(self, ctx: BatchAgentContext) -> list[Any]:
         if self._tools_port is None:
             return []
         try:
@@ -277,12 +550,11 @@ class PydanticDeepReconciliationAgent:
             try:
                 from pydantic_deep import Tool  # type: ignore[import-not-found, no-redef]
             except Exception:
-                logger.warning(
-                    "pydantic-ai/pydantic-deep Tool not importable; skipping agent tool wiring"
-                )
+                logger.warning("pydantic-ai/pydantic-deep Tool not importable")
                 return []
 
         tools_port = self._tools_port
+        request = _request_for_first_event(ctx)
         descriptors = tools_port.list_tools(request)
         built: list[Any] = []
 
@@ -298,154 +570,163 @@ class PydanticDeepReconciliationAgent:
                 fn = _make_handler(desc.name)
                 built.append(Tool(fn, name=desc.name, description=desc.description))
             except Exception:
-                logger.exception("failed to build agent tool %s", desc.name)
+                logger.exception("failed to build read tool %s", desc.name)
         return built
 
-    def run_reconciliation(self, request: ReconciliationRequest) -> ReconciliationPlan:
+    def _build_mutation_tools(self, state: _BatchRunState) -> list[Any]:
         try:
-            from pydantic_deep import (
-                Hook,
-                HookEvent,
-                HookResult,
-                create_deep_agent,
-                create_default_deps,
-            )
-        except ImportError as exc:
-            raise ImportError(
-                "pydantic-deep is required for PydanticDeepReconciliationAgent. "
-                "Install: pip install 'context-engine[reconciliation-agent]'"
-            ) from exc
-
-        async def _record_pre_tool_use(hook_input: Any) -> Any:
-            self._record_work_event(
-                "tool_call",
-                title=getattr(hook_input, "tool_name", None),
-                payload={
-                    "event": getattr(hook_input, "event", None),
-                    "tool_name": getattr(hook_input, "tool_name", None),
-                    "tool_input": _json_dict(getattr(hook_input, "tool_input", {})),
-                },
-            )
-            return HookResult(allow=True)
-
-        async def _record_post_tool_use(hook_input: Any) -> Any:
-            result = getattr(hook_input, "tool_result", None)
-            self._record_work_event(
-                "tool_result",
-                title=getattr(hook_input, "tool_name", None),
-                body=str(result)[:20000] if result is not None else None,
-                payload={
-                    "event": getattr(hook_input, "event", None),
-                    "tool_name": getattr(hook_input, "tool_name", None),
-                    "tool_input": _json_dict(getattr(hook_input, "tool_input", {})),
-                    "tool_error": getattr(hook_input, "tool_error", None),
-                },
-            )
-            return HookResult(allow=True)
-
-        context_snapshot: dict[str, Any] | None = None
-        if self._tools_port is not None:
-            try:
-                context_snapshot = build_initial_context_snapshot(
-                    self._tools_port,
-                    request,
-                    semantic_seed=_semantic_seed_from_event(request),
-                )
-            except Exception:
-                logger.exception("failed to build initial context snapshot")
-                context_snapshot = None
-            if context_snapshot is not None:
-                self._record_work_event(
-                    "context_snapshot",
-                    title="initial context snapshot",
-                    payload={"snapshot_keys": sorted(context_snapshot.keys())},
-                )
-
-        tool_callables = self._build_agent_tools(request)
-
-        agent_kwargs: dict[str, Any] = {}
-        if tool_callables:
-            agent_kwargs["tools"] = tool_callables
-
-        agent = create_deep_agent(
-            model=self._model,
-            instructions=self._instructions,
-            output_type=LlmReconciliationPlan,
-            include_todo=False,
-            include_filesystem=False,
-            include_subagents=False,
-            include_skills=False,
-            include_plan=False,
-            include_web=False,
-            include_memory=False,
-            include_teams=False,
-            include_checkpoints=False,
-            include_general_purpose_subagent=False,
-            context_manager=False,
-            cost_tracking=False,
-            include_history_archive=False,
-            hooks=[
-                Hook(event=HookEvent.PRE_TOOL_USE, handler=_record_pre_tool_use),
-                Hook(event=HookEvent.POST_TOOL_USE, handler=_record_post_tool_use),
-                Hook(
-                    event=HookEvent.POST_TOOL_USE_FAILURE, handler=_record_post_tool_use
-                ),
-            ],
-            **agent_kwargs,
-        )
-        deps = create_default_deps()
-        prompt = _user_prompt(request, context_snapshot=context_snapshot)
-        self._record_work_event(
-            "prompt",
-            title="reconciliation request",
-            body=prompt,
-            payload={
-                "model": self._model,
-                "pot_id": request.pot_id,
-                "repo_name": request.repo_name,
-                "event_id": request.event.event_id,
-                "source_system": request.event.source_system,
-            },
-        )
-
-        async def _run() -> LlmReconciliationPlan:
-            result = await agent.run(prompt, deps=deps)
-            try:
-                messages = json.loads(result.new_messages_json().decode("utf-8"))
-            except Exception:
-                logger.exception(
-                    "failed to serialize pydantic-deep reconciliation messages"
-                )
-                messages = []
-            self._record_work_event(
-                "model_messages",
-                title="agent message history",
-                payload={
-                    "messages": messages,
-                    "usage": _json_dict(result.usage()),
-                    "pydantic_ai_run_id": getattr(result, "run_id", None),
-                },
-            )
-            return result.output
-
-        try:
-            llm_plan = asyncio.run(_run())
+            from pydantic_ai import Tool  # type: ignore[import-not-found]
         except Exception:
-            self._record_work_event("error", title="agent run failed")
-            logger.exception("pydantic-deep reconciliation run failed")
-            raise
+            from pydantic_deep import Tool  # type: ignore[import-not-found, no-redef]
 
-        ref = _event_ref(request)
-        plan = llm_plan_to_reconciliation_plan(llm_plan, event_ref=ref)
-        self._record_work_event(
-            "plan_output",
-            title="structured reconciliation plan",
-            body=plan.summary,
-            payload={
-                "episode_count": len(plan.episodes),
-                "entity_mutation_count": len(plan.entity_upserts),
-                "edge_mutation_count": len(plan.edge_upserts) + len(plan.edge_deletes),
-                "warning_count": len(plan.warnings),
-            },
-        )
-        return plan
+        agent_name = "pydantic-deep"
+
+        def apply_graph_mutations(
+            plan: dict[str, Any],
+            event_id: str,
+            summary: str,
+        ) -> dict[str, Any]:
+            """Apply a structured mutation plan against the context graph for a given event."""
+            del summary  # surfaced via plan.summary
+            event = state.events_by_id.get(event_id)
+            if event is None:
+                return {
+                    "ok": False,
+                    "error": f"unknown_event_id: {event_id}",
+                    "known_event_ids": sorted(state.events_by_id.keys()),
+                }
+            try:
+                llm_plan = LlmReconciliationPlan.model_validate(plan)
+            except Exception as exc:
+                return {"ok": False, "error": f"invalid_plan: {exc}"}
+            ref = EventRef(
+                event_id=event.event_id,
+                source_system=event.source_system,
+                pot_id=state.pot_id,
+            )
+            try:
+                domain_plan = llm_plan_to_reconciliation_plan(llm_plan, event_ref=ref)
+            except Exception as exc:
+                return {"ok": False, "error": f"plan_conversion_failed: {exc}"}
+            prov = _provenance_from_event(event, agent_name=agent_name)
+            try:
+                result = state.context_graph.apply_plan(
+                    domain_plan,
+                    expected_pot_id=state.pot_id,
+                    provenance_context=prov,
+                )
+            except Exception as exc:
+                logger.exception("apply_plan failed for batch event %s", event_id)
+                return {"ok": False, "error": f"apply_failed: {exc}"}
+            ms = result.mutation_summary
+            return {
+                "ok": result.ok,
+                "error": result.error,
+                "episode_uuids": list(result.episode_uuids or []),
+                "mutation_counts": {
+                    "episodes_written": ms.episodes_written,
+                    "entity_upserts_applied": ms.entity_upserts_applied,
+                    "edge_upserts_applied": ms.edge_upserts_applied,
+                    "edge_deletes_applied": ms.edge_deletes_applied,
+                    "invalidations_applied": ms.invalidations_applied,
+                },
+                "downgrades": list(result.downgrades or []),
+                "warnings": list(domain_plan.warnings or []),
+            }
+
+        return [
+            Tool(
+                apply_graph_mutations,
+                name="apply_graph_mutations",
+                description=(
+                    "Apply a structured graph mutation plan (episodes + entity/edge upserts/deletes "
+                    "+ invalidations) for a single event in this batch. Idempotent on stable "
+                    "entity_keys. Call once per event you process."
+                ),
+            )
+        ]
+
+    def _build_control_tools(self, state: _BatchRunState) -> list[Any]:
+        try:
+            from pydantic_ai import Tool  # type: ignore[import-not-found]
+        except Exception:
+            from pydantic_deep import Tool  # type: ignore[import-not-found, no-redef]
+
+        def mark_event_processed(event_id: str, summary: str) -> dict[str, Any]:
+            """Mark a single event as fully reconciled. Call after apply_graph_mutations for that event."""
+            del summary
+            if event_id not in state.events_by_id:
+                return {"ok": False, "error": f"unknown_event_id: {event_id}"}
+            if event_id not in state.completed_event_ids:
+                state.completed_event_ids.append(event_id)
+            return {
+                "ok": True,
+                "event_id": event_id,
+                "completed_count": len(state.completed_event_ids),
+            }
+
+        def finish_batch(summary: str) -> dict[str, Any]:
+            """Signal the batch is done. Call exactly once at the end of your run."""
+            state.finish_called = True
+            state.finish_summary = summary
+            return {
+                "ok": True,
+                "completed_event_ids": list(state.completed_event_ids),
+                "summary": summary,
+            }
+
+        return [
+            Tool(
+                mark_event_processed,
+                name="mark_event_processed",
+                description="Mark one event as processed once you have applied its mutations.",
+            ),
+            Tool(
+                finish_batch,
+                name="finish_batch",
+                description=(
+                    "Signal the batch is fully processed. Call exactly once when you have "
+                    "finished applying mutations for every event you intend to handle."
+                ),
+            ),
+        ]
+
+
+async def _run_cleanup_callbacks(state: _BatchRunState) -> None:
+    for cb in list(state.cleanup_callbacks):
+        try:
+            r = cb()
+            if asyncio.iscoroutine(r):
+                await r
+        except Exception:
+            logger.exception("cleanup callback failed")
+
+
+def _request_for_first_event(ctx: BatchAgentContext) -> ReconciliationRequest:
+    """Build a minimal ReconciliationRequest for read-tool dispatch.
+
+    The legacy ``ReconciliationToolsPort`` is per-event; for batch use we
+    bind it to the first event so ``pot_id`` and ``repo_name`` flow through
+    without requiring a port refactor.
+    """
+    first = ctx.events[0]
+    return ReconciliationRequest(
+        event=first,
+        pot_id=ctx.pot_id,
+        repo_name=ctx.repo_name or first.repo_name,
+    )
+
+
+def _int_or_none(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+__all__ = [
+    "PydanticDeepReconciliationAgent",
+    "_RECONCILIATION_INSTRUCTIONS",
+]

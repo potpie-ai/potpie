@@ -1,4 +1,10 @@
-"""Neo4j structural graph: canonical mutations and agent queries."""
+"""Neo4j structural reads (canonical exact reads for the agent surface).
+
+Phase 1 of the rebuild made Graphiti the only writer. The mutation
+methods that used to live here moved into the Graphiti adapter; this
+module is now read-only and Phase 3 will collapse it into a per-family
+``ContextReader`` registry.
+"""
 
 from __future__ import annotations
 
@@ -8,16 +14,9 @@ from typing import Any, Optional
 
 from neo4j import Driver, GraphDatabase
 
-from domain.graph_mutations import (
-    EdgeDelete,
-    EdgeUpsert,
-    EntityUpsert,
-    InvalidationOp,
-    ProvenanceRef,
-)
-from domain.ontology import ENTITY_TYPES, is_canonical_entity_label
+from domain.ontology import ENTITY_TYPES
 from domain.ports.settings import ContextEngineSettingsPort
-from adapters.outbound.neo4j.port import StructuralGraphPort
+from adapters.outbound.neo4j.port import StructuralReadPort
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +105,7 @@ def _driver_from_settings(settings: ContextEngineSettingsPort) -> Optional[Drive
     return GraphDatabase.driver(uri, auth=(user, password))
 
 
-class Neo4jStructuralAdapter(StructuralGraphPort):
+class Neo4jStructuralAdapter(StructuralReadPort):
     def __init__(self, settings: ContextEngineSettingsPort) -> None:
         self._settings = settings
 
@@ -114,21 +113,6 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
         if not self._settings.is_enabled():
             return None
         return _driver_from_settings(self._settings)
-
-    @staticmethod
-    def _ensure_indexes(session) -> None:
-        session.run(
-            "CREATE INDEX node_file_repo_idx IF NOT EXISTS "
-            "FOR (n:NODE) ON (n.file_path, n.repoId)"
-        )
-        session.run(
-            "CREATE INDEX entity_key_group_idx IF NOT EXISTS "
-            "FOR (e:Entity) ON (e.entity_key, e.group_id)"
-        )
-        session.run(
-            "CREATE INDEX entity_valid_to_idx IF NOT EXISTS "
-            "FOR (e:Entity) ON (e.valid_to)"
-        )
 
     def get_change_history(
         self,
@@ -1193,269 +1177,6 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
         finally:
             drv.close()
 
-    def upsert_entities(
-        self,
-        pot_id: str,
-        items: list[EntityUpsert],
-        provenance: ProvenanceRef,
-    ) -> int:
-        if not items:
-            return 0
-        drv = self._open()
-        if drv is None:
-            return 0
-        count = 0
-        prov_props = provenance.to_properties()
-        try:
-            with drv.session() as session:
-                for item in items:
-                    props = dict(item.properties)
-                    props["group_id"] = pot_id
-                    props["provenance_source_event"] = provenance.source_event_id
-                    props.update(prov_props)
-                    # Graphiti expects every :Entity node to have a non-null name.
-                    # Structural upserts may not include one, so fall back to entity_key.
-                    props.setdefault("name", item.entity_key)
-                    session.run(
-                        "MERGE (e:Entity {group_id: $gid, entity_key: $key}) "
-                        "ON CREATE SET e.uuid = randomUUID(), e.created_at = timestamp() "
-                        "SET e += $props",
-                        gid=pot_id,
-                        key=item.entity_key,
-                        props=props,
-                    )
-                    for lbl in item.labels:
-                        if lbl == "Entity":
-                            continue
-                        if not is_canonical_entity_label(lbl) or lbl not in ENTITY_TYPES:
-                            continue
-                        session.run(
-                            f"MATCH (e:Entity {{group_id: $gid, entity_key: $key}}) SET e:{lbl}",  # pyright: ignore[reportArgumentType]
-                            gid=pot_id,
-                            key=item.entity_key,
-                        )
-                    count += 1
-        finally:
-            drv.close()
-        return count
-
-    def upsert_edges(
-        self,
-        pot_id: str,
-        items: list[EdgeUpsert],
-        provenance: ProvenanceRef,
-    ) -> int:
-        if not items:
-            return 0
-        drv = self._open()
-        if drv is None:
-            return 0
-        count = 0
-        now_iso = _utc_now_iso()
-        prov_props = provenance.to_properties()
-        try:
-            with drv.session() as session:
-                for item in items:
-                    props = dict(item.properties)
-                    props.setdefault("valid_from", now_iso)
-                    props["provenance_source_event"] = provenance.source_event_id
-                    props.update(prov_props)
-                    res = session.run(
-                        f"MATCH (a:Entity {{group_id: $gid, entity_key: $from_key}}) "  # pyright: ignore[reportArgumentType]
-                        f"MATCH (b:Entity {{group_id: $gid, entity_key: $to_key}}) "
-                        f"MERGE (a)-[r:{item.edge_type}]->(b) "
-                        "SET r += $props "
-                        "RETURN count(r) AS cnt",
-                        gid=pot_id,
-                        from_key=item.from_entity_key,
-                        to_key=item.to_entity_key,
-                        props=props,
-                    )
-                    count += _count(res)
-        finally:
-            drv.close()
-        return count
-
-    def delete_edges(
-        self,
-        pot_id: str,
-        items: list[EdgeDelete],
-        provenance: ProvenanceRef,
-    ) -> int:
-        if not items:
-            return 0
-        drv = self._open()
-        if drv is None:
-            return 0
-        count = 0
-        # Stamp audit fields on the edge *before* DELETE so a query run in
-        # the same transaction against an APOC/edge-history side store can
-        # capture who deleted it. We also accept hard delete as today's
-        # default; the superseding invalidation path (``apply_invalidations``)
-        # is the preferred audit-preserving flow.
-        deleted_by = provenance.source_event_id
-        deleted_at = _utc_now_iso()
-        try:
-            with drv.session() as session:
-                for item in items:
-                    res = session.run(
-                        f"MATCH (a:Entity {{group_id: $gid, entity_key: $from_key}})"  # pyright: ignore[reportArgumentType]
-                        f"-[r:{item.edge_type}]->"
-                        f"(b:Entity {{group_id: $gid, entity_key: $to_key}}) "
-                        "SET r.prov_deleted_by = $deleted_by, "
-                        "    r.prov_deleted_at = $deleted_at "
-                        "WITH r DELETE r RETURN count(r) AS cnt",
-                        gid=pot_id,
-                        from_key=item.from_entity_key,
-                        to_key=item.to_entity_key,
-                        deleted_by=deleted_by,
-                        deleted_at=deleted_at,
-                    )
-                    count += _count(res)
-        finally:
-            drv.close()
-        return count
-
-    def apply_invalidations(
-        self,
-        pot_id: str,
-        items: list[InvalidationOp],
-        provenance: ProvenanceRef,
-    ) -> int:
-        if not items:
-            return 0
-        drv = self._open()
-        if drv is None:
-            return 0
-        count = 0
-        now_iso = _utc_now_iso()
-        prov_props = provenance.to_properties()
-        try:
-            with drv.session() as session:
-                for item in items:
-                    valid_to = item.valid_to or now_iso
-                    inv_props = dict(prov_props)
-                    inv_props["valid_to"] = valid_to
-                    inv_props["invalidation_reason"] = item.reason
-                    inv_props["invalidated_by"] = provenance.source_event_id
-                    inv_props["prov_valid_to"] = valid_to
-                    if item.target_entity_key:
-                        res = session.run(
-                            "MATCH (e:Entity {group_id: $gid, entity_key: $key}) "
-                            "SET e += $props "
-                            "RETURN count(e) AS cnt",
-                            gid=pot_id,
-                            key=item.target_entity_key,
-                            props=inv_props,
-                        )
-                        matched = _count(res)
-                        if matched and item.superseded_by_key:
-                            session.run(
-                                "MATCH (new:Entity {group_id: $gid, entity_key: $new_key}) "
-                                "MATCH (old:Entity {group_id: $gid, entity_key: $old_key}) "
-                                "MERGE (new)-[r:SUPERSEDES]->(old) "
-                                "SET r.reason = $reason, r.superseded_at = $valid_to",
-                                gid=pot_id,
-                                new_key=item.superseded_by_key,
-                                old_key=item.target_entity_key,
-                                reason=item.reason,
-                                valid_to=valid_to,
-                            )
-                        count += matched
-                    elif item.target_edge:
-                        edge_type, from_key, to_key = item.target_edge
-                        if not _is_safe_cypher_identifier(edge_type):
-                            logger.warning(
-                                "apply_invalidations: skipping non-canonical edge_type %r", edge_type
-                            )
-                            continue
-                        res = session.run(
-                            f"MATCH (a:Entity {{group_id: $gid, entity_key: $from_key}})"  # pyright: ignore[reportArgumentType]
-                            f"-[r:{edge_type}]->"
-                            f"(b:Entity {{group_id: $gid, entity_key: $to_key}}) "
-                            "SET r += $props "
-                            "RETURN count(r) AS cnt",
-                            gid=pot_id,
-                            from_key=from_key,
-                            to_key=to_key,
-                            props=inv_props,
-                        )
-                        matched = _count(res)
-                        if matched and item.superseded_by_key:
-                            session.run(
-                                "MATCH (new:Entity {group_id: $gid, entity_key: $new_key}) "
-                                "MATCH (old:Entity {group_id: $gid, entity_key: $to_key}) "
-                                "MERGE (new)-[r:SUPERSEDES]->(old) "
-                                "SET r.reason = $reason, r.superseded_at = $valid_to",
-                                gid=pot_id,
-                                new_key=item.superseded_by_key,
-                                to_key=to_key,
-                                reason=item.reason,
-                                valid_to=valid_to,
-                            )
-                        count += matched
-        finally:
-            drv.close()
-        return count
-
-    def reset_pot(self, pot_id: str) -> dict[str, Any]:
-        """Remove structural ``Entity`` / ``FILE`` / ``NODE`` data for this pot (default Neo4j database)."""
-        drv = self._open()
-        if drv is None:
-            return {
-                "ok": False,
-                "entity_deleted": 0,
-                "file_deleted": 0,
-                "node_deleted": 0,
-                "error": "neo4j_unavailable",
-            }
-        q_entity = """
-        MATCH (n:Entity {group_id: $pid})
-        CALL (n) {
-            DETACH DELETE n
-        } IN TRANSACTIONS OF 500 ROWS
-        """
-        q_file = """
-        MATCH (n:FILE {repoId: $pid})
-        CALL (n) {
-            DETACH DELETE n
-        } IN TRANSACTIONS OF 500 ROWS
-        """
-        q_node = """
-        MATCH (n:NODE {repoId: $pid})
-        CALL (n) {
-            DETACH DELETE n
-        } IN TRANSACTIONS OF 500 ROWS
-        """
-        entity_deleted = 0
-        file_deleted = 0
-        node_deleted = 0
-        try:
-            with drv.session() as session:
-                r = session.run(q_entity, pid=pot_id)
-                entity_deleted = int(r.consume().counters.nodes_deleted)
-                r = session.run(q_file, pid=pot_id)
-                file_deleted = int(r.consume().counters.nodes_deleted)
-                r = session.run(q_node, pid=pot_id)
-                node_deleted = int(r.consume().counters.nodes_deleted)
-        except Exception as exc:
-            logger.warning("reset_pot structural: %s", exc)
-            return {
-                "ok": False,
-                "entity_deleted": entity_deleted,
-                "file_deleted": file_deleted,
-                "node_deleted": node_deleted,
-                "error": str(exc),
-            }
-        finally:
-            drv.close()
-        return {
-            "ok": True,
-            "entity_deleted": entity_deleted,
-            "file_deleted": file_deleted,
-            "node_deleted": node_deleted,
-        }
-
     def expand_causal_neighbours(
         self,
         pot_id: str,
@@ -1730,39 +1451,6 @@ class Neo4jStructuralAdapter(StructuralGraphPort):
                 return [record.data() for record in res]
         finally:
             drv.close()
-
-
-_SAFE_CYPHER_IDENTIFIER_RE = None
-
-
-def _is_safe_cypher_identifier(value: str) -> bool:
-    """Return True only if value is a canonical ontology edge type (no Cypher injection risk)."""
-    import re
-
-    global _SAFE_CYPHER_IDENTIFIER_RE
-    if _SAFE_CYPHER_IDENTIFIER_RE is None:
-        _SAFE_CYPHER_IDENTIFIER_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
-    if not _SAFE_CYPHER_IDENTIFIER_RE.match(value):
-        return False
-    from domain.ontology import is_canonical_edge_type
-
-    return is_canonical_edge_type(value)
-
-
-def _utc_now_iso() -> str:
-    from datetime import datetime, timezone
-
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _count(neo4j_result) -> int:
-    record = neo4j_result.single()
-    return int(record["cnt"]) if record and record.get("cnt") is not None else 0
-
-
-def _int(result) -> int:
-    record = result.single()
-    return int(record["cnt"]) if record and record.get("cnt") is not None else 0
 
 
 def _project_map_labels_for_includes(include: list[str] | None) -> list[str]:

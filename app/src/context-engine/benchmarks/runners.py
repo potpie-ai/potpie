@@ -42,13 +42,23 @@ class ApiRunner:
         return await loop.run_in_executor(None, lambda: self.client.record(body, sync=True))
 
     async def ingest_pr(self, pr_number: int, repo_name: str | None = None) -> dict[str, Any]:
-        body = {"pot_id": self.pot_id, "pr_number": pr_number}
-        if repo_name or self.repo_name:
-            body["repo_name"] = repo_name or self.repo_name
+        repo = repo_name or self.repo_name or ""
+        body: dict[str, Any] = {
+            "pot_id": self.pot_id,
+            "ingestion_kind": "agent_reconciliation",
+            "source_system": "github",
+            "event_type": "pull_request",
+            "action": "merged",
+            "provider": "github",
+            "provider_host": "github.com",
+            "repo_name": repo,
+            "source_id": f"github:pr:{repo}:{pr_number}",
+            "payload": {"pr_number": pr_number, "repo_name": repo},
+        }
         loop = asyncio.get_running_loop()
 
         def _call() -> dict[str, Any]:
-            response = self.client.post_context("/ingest-pr", json_body=body)
+            response = self.client.post_context("/events/reconcile", json_body=body)
             self.client._raise_for_status(response)
             out = response.json()
             return out if isinstance(out, dict) else {}
@@ -77,9 +87,12 @@ class HttpE2ERunner:
         from adapters.outbound.graphiti.context_graph import GraphitiContextGraphAdapter
         from adapters.outbound.intelligence.mock import MockIntelligenceProvider
         from application.services.context_resolution import ContextResolutionService
-        from bootstrap.container import ContextEngineContainer
+        from bootstrap.container import (
+            ContextEngineContainer,
+            _default_reader_registry,
+        )
         from bootstrap.http_projects import ExplicitPotResolution
-        from domain.ports.jobs import NoOpJobEnqueue
+        from domain.ports.context_graph_job_queue import NoOpContextGraphJobQueue
         from scripts.context_engine_lab import _InMemoryEpisodicGraph, _InMemoryStructuralGraph, _LabSettings
 
         self.pot_id = pot_id
@@ -88,9 +101,11 @@ class HttpE2ERunner:
         structural = _InMemoryStructuralGraph()
         provider = MockIntelligenceProvider()
         resolution_service = ContextResolutionService(provider)
+        readers = _default_reader_registry(episodic=episodic, structural=structural)
         context_graph = GraphitiContextGraphAdapter(
             episodic=episodic,
             structural=structural,
+            readers=readers,
             resolution_service=resolution_service,
         )
         container = ContextEngineContainer(
@@ -98,11 +113,11 @@ class HttpE2ERunner:
             episodic=episodic,
             structural=structural,
             pots=ExplicitPotResolution({pot_id: repo_name or ""}),
-            source_for_repo=lambda _repo_name: None,
+            readers=readers,
             intelligence_provider=provider,
             resolution_service=resolution_service,
             reconciliation_agent=None,
-            jobs=NoOpJobEnqueue(),
+            jobs=NoOpContextGraphJobQueue(),
             context_graph=context_graph,
         )
         app = FastAPI()
@@ -112,7 +127,6 @@ class HttpE2ERunner:
                 get_container=lambda: container,
                 get_db=lambda: None,
                 get_db_optional=lambda: None,
-                enforce_pot_access=False,
             ),
             prefix="/context",
         )

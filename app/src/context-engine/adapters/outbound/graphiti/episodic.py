@@ -10,6 +10,12 @@ from datetime import datetime
 from collections.abc import Coroutine
 from typing import Any, Callable, Optional, TypeVar
 
+from adapters.outbound.graphiti.canonical_writer import (
+    apply_invalidations_async,
+    delete_edges_async,
+    upsert_edges_async,
+    upsert_entities_async,
+)
 from adapters.outbound.graphiti.edge_extraction_normalize import (
     install_extract_edges_normalize_patch,
 )
@@ -20,7 +26,13 @@ from domain.entity_schema import (
     GRAPHITI_CUSTOM_EXTRACTION_INSTRUCTIONS,
 )
 from adapters.outbound.graphiti.port import EpisodicGraphPort
-from domain.graph_mutations import ProvenanceRef
+from domain.graph_mutations import (
+    EdgeDelete,
+    EdgeUpsert,
+    EntityUpsert,
+    InvalidationOp,
+    ProvenanceRef,
+)
 from domain.ports.settings import ContextEngineSettingsPort
 from domain.reconciliation import EpisodeDraft
 
@@ -308,6 +320,77 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
                 )
             )
         return out
+
+    # ------------------------------------------------------------------
+    # Canonical ontology writes (Phase 1: single write path)
+    # ------------------------------------------------------------------
+    def apply_entity_upserts(
+        self,
+        pot_id: str,
+        items: list[EntityUpsert],
+        provenance: ProvenanceRef,
+    ) -> int:
+        if not self.enabled or not items:
+            return 0
+        g = self._get_graphiti()
+        if g is None:
+            return 0
+
+        async def _run() -> int:
+            return await upsert_entities_async(g.driver, pot_id, items, provenance)
+
+        return self._sync_run(_run)
+
+    def apply_edge_upserts(
+        self,
+        pot_id: str,
+        items: list[EdgeUpsert],
+        provenance: ProvenanceRef,
+    ) -> int:
+        if not self.enabled or not items:
+            return 0
+        g = self._get_graphiti()
+        if g is None:
+            return 0
+
+        async def _run() -> int:
+            return await upsert_edges_async(g.driver, pot_id, items, provenance)
+
+        return self._sync_run(_run)
+
+    def apply_edge_deletes(
+        self,
+        pot_id: str,
+        items: list[EdgeDelete],
+        provenance: ProvenanceRef,
+    ) -> int:
+        if not self.enabled or not items:
+            return 0
+        g = self._get_graphiti()
+        if g is None:
+            return 0
+
+        async def _run() -> int:
+            return await delete_edges_async(g.driver, pot_id, items, provenance)
+
+        return self._sync_run(_run)
+
+    def apply_invalidations(
+        self,
+        pot_id: str,
+        items: list[InvalidationOp],
+        provenance: ProvenanceRef,
+    ) -> int:
+        if not self.enabled or not items:
+            return 0
+        g = self._get_graphiti()
+        if g is None:
+            return 0
+
+        async def _run() -> int:
+            return await apply_invalidations_async(g.driver, pot_id, items, provenance)
+
+        return self._sync_run(_run)
 
     def _build_search_filters(
         self,
