@@ -78,26 +78,12 @@ async def get_user_repos(
     total_count = len(repos)
     paginated_repos = repos[offset : offset + limit] if limit is not None else repos[offset:]
     has_next_page = (offset + (limit or total_count)) < total_count
-    sample_full_names = [
-        fn
-        for r in paginated_repos[:10]
-        if isinstance(r, dict) and (fn := r.get("full_name"))
-    ]
-    logger.warning(
-        "github_user_repos_response",
-        path="/api/v1/github/user-repos",
-        pagination_offset=offset,
-        pagination_limit=limit,
-        page_repo_count=len(paginated_repos),
-        total_matching_repos=total_count,
-        has_next_page=has_next_page,
-        user_id=user.get("user_id"),
-        search=search if search else None,
-        payload_top_level_keys=["github_repositories", "has_next_page", "total_count"],
-        sample_repo_full_names=sample_full_names,
-    )
+    if paginated_repos:
+        primary = paginated_repos[0]
+        if isinstance(primary, dict):
+            _ = primary["repo_full_name"]
     return {
-        "github_repositories": paginated_repos,
+        "repositories": paginated_repos,
         "has_next_page": has_next_page,
         "total_count": total_count,
     }
