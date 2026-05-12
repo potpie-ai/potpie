@@ -14,7 +14,7 @@ aiofiles==24.1.0
     # via daytona
 aiohappyeyeballs==2.6.1
     # via aiohttp
-aiohttp==3.13.5
+aiohttp==3.13.4
     # via
     #   potpie (pyproject.toml)
     #   aiohttp-retry
@@ -159,8 +159,6 @@ daytona-toolbox-api-client-async==0.172.0
     # via daytona
 deprecated==1.3.1
     # via daytona
-diskcache==5.6.3
-    # via instructor
 distro==1.9.0
     # via
     #   anthropic
@@ -181,8 +179,6 @@ email-inspector==0.1.4
     # via potpie (pyproject.toml)
 email-validator==2.3.0
     # via pydantic
-eval-type-backport==0.3.1
-    # via mistralai
 exceptiongroup==1.3.1
     # via fastmcp
 executing==2.2.1
@@ -348,7 +344,6 @@ httpx==0.28.1
     #   langsmith
     #   litellm
     #   mcp
-    #   mistralai
     #   openai
     #   pydantic-ai-slim
     #   pydantic-graph
@@ -377,10 +372,8 @@ importlib-metadata==8.5.0
     # via
     #   litellm
     #   opentelemetry-api
-instructor==1.14.5
+instructor==1.15.1
     # via potpie (pyproject.toml)
-invoke==2.2.1
-    # via mistralai
 jaraco-classes==3.4.0
     # via keyring
 jaraco-context==6.1.0
@@ -456,7 +449,7 @@ langsmith==0.8.1
     # via
     #   potpie (pyproject.toml)
     #   langchain-core
-litellm==1.83.7
+litellm==1.83.14
     # via potpie (pyproject.toml)
 logfire==4.22.0
     # via
@@ -489,10 +482,6 @@ mcp==1.26.0
     #   pydantic-ai-slim
 mdurl==0.1.2
     # via markdown-it-py
-mistralai==1.9.11
-    # via
-    #   potpie (pyproject.toml)
-    #   pydantic-ai-slim
 more-itertools==10.8.0
     # via
     #   jaraco-classes
@@ -535,6 +524,7 @@ obstore==0.8.2
     # via daytona
 openai==2.30.0
     # via
+    #   --override (workspace)
     #   potpie (pyproject.toml)
     #   graphiti-core
     #   instructor
@@ -721,7 +711,6 @@ pydantic==2.12.5
     #   langsmith
     #   litellm
     #   mcp
-    #   mistralai
     #   openai
     #   openapi-pydantic
     #   pydantic-ai-backend
@@ -736,15 +725,13 @@ pydantic==2.12.5
     #   qdrant-client
     #   subagents-pydantic-ai
     #   xai-sdk
-pydantic-ai==1.75.0
-    # via potpie (pyproject.toml)
 pydantic-ai-backend==0.2.6
     # via pydantic-deep
 pydantic-ai-shields==0.3.2
     # via pydantic-deep
 pydantic-ai-slim==1.75.0
     # via
-    #   pydantic-ai
+    #   potpie (pyproject.toml)
     #   pydantic-ai-backend
     #   pydantic-ai-shields
     #   pydantic-ai-todo
@@ -805,7 +792,6 @@ python-dateutil==2.9.0.post0
     #   daytona-toolbox-api-client
     #   daytona-toolbox-api-client-async
     #   hatchet-sdk
-    #   mistralai
     #   posthog
 python-dotenv==1.2.2
     # via
@@ -837,7 +823,6 @@ pyyaml==6.0.3
     #   huggingface-hub
     #   jsonschema-path
     #   langchain-core
-    #   mistralai
     #   pydantic-ai-slim
     #   pydantic-evals
     #   transformers
@@ -1073,7 +1058,6 @@ typing-inspection==0.4.2
     # via
     #   hatchet-sdk
     #   mcp
-    #   mistralai
     #   pydantic
     #   pydantic-ai-slim
     #   pydantic-graph
@@ -1084,7 +1068,7 @@ tzlocal==5.3.1
     # via celery
 uncalled-for==0.3.1
     # via fastmcp
-urllib3==2.6.3
+urllib3==2.7.0
     # via
     #   potpie (pyproject.toml)
     #   botocore
