@@ -104,6 +104,7 @@ potpie-integrations = { path = "app/src/integrations", editable = true }
 potpie-sandbox = { path = "app/src/sandbox", editable = true }
 
 [project.scripts]
+potpie = "potpie.cli:main"
 potpie-seed = "seed.cli:main"
 
 [dependency-groups]
