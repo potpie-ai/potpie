@@ -248,6 +248,59 @@ MODEL_CONFIG_MAP = {
         "base_url": "https://openrouter.ai/api/v1",
         "api_version": None,
     },
+    # MiniMax (direct API — OpenAI-compatible)
+    "minimax/MiniMax-M2.7": {
+        "provider": "minimax",
+        "context_window": 1000000,
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": False,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": "https://api.minimax.io/v1",
+        "api_version": None,
+    },
+    "minimax/MiniMax-M2.7-highspeed": {
+        "provider": "minimax",
+        "context_window": 1000000,
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": False,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": "https://api.minimax.io/v1",
+        "api_version": None,
+    },
+    "minimax/MiniMax-M2.5": {
+        "provider": "minimax",
+        "context_window": 200000,
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": False,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": "https://api.minimax.io/v1",
+        "api_version": None,
+    },
+    "minimax/MiniMax-M2.5-highspeed": {
+        "provider": "minimax",
+        "context_window": 204000,
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": False,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": "https://api.minimax.io/v1",
+        "api_version": None,
+    },
 }
 
 
@@ -338,6 +391,7 @@ def get_config_for_model(model_string: str) -> Dict[str, Any]:
         "openrouter",
         "azure",
         "ollama",
+        "minimax",
     }
     return {
         "provider": provider,

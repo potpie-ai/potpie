@@ -492,8 +492,40 @@ AVAILABLE_MODELS = [
     ),
     AvailableModelOption(
         id="openrouter/minimax/minimax-m2.5",
+        name="MiniMax M2.5 (OpenRouter)",
+        description="MiniMax M2.5 via OpenRouter proxy",
+        provider="minimax",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
+    AvailableModelOption(
+        id="minimax/MiniMax-M2.7",
+        name="MiniMax M2.7",
+        description="MiniMax's latest flagship model with 1M-token context, strong on coding, reasoning, and agentic tasks",
+        provider="minimax",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
+    AvailableModelOption(
+        id="minimax/MiniMax-M2.7-highspeed",
+        name="MiniMax M2.7 Highspeed",
+        description="Fast variant of MiniMax M2.7 optimized for low-latency inference with 1M-token context",
+        provider="minimax",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
+    AvailableModelOption(
+        id="minimax/MiniMax-M2.5",
         name="MiniMax M2.5",
         description="Productivity-focused model strong on coding, office tasks, and document generation",
+        provider="minimax",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
+    AvailableModelOption(
+        id="minimax/MiniMax-M2.5-highspeed",
+        name="MiniMax M2.5 Highspeed",
+        description="Fast variant of MiniMax M2.5 with 204K context optimized for speed-sensitive workloads",
         provider="minimax",
         is_chat_model=True,
         is_inference_model=True,
@@ -1454,7 +1486,7 @@ class ProviderService:
         if config.api_version:
             provider_kwargs["api_version"] = config.api_version
 
-        openai_like_providers = {"openai", "openrouter", "azure", "ollama"}
+        openai_like_providers = {"openai", "openrouter", "azure", "ollama", "minimax"}
         if config.auth_provider in openai_like_providers:
             if config.auth_provider == "ollama":
                 base_url_root = (

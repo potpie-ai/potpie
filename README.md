@@ -61,7 +61,7 @@
    defaultUsername=defaultuser
 
    # AI / LLM Configuration
-   LLM_PROVIDER=openai                    # openai | ollama | anthropic | openrouter
+   LLM_PROVIDER=openai                    # openai | ollama | anthropic | openrouter | minimax
    OPENAI_API_KEY=sk-proj-your-key
    CHAT_MODEL=gpt-4o
    INFERENCE_MODEL=gpt-4o-mini
@@ -85,6 +85,8 @@
    > **`CHAT_MODEL`** and **`INFERENCE_MODEL`** are used for agent reasoning and knowledge graph generation respectively. Model names follow the `provider/model_name` format as expected by [LiteLLM](https://docs.litellm.ai/docs/providers).
 
    > **💡 Using Ollama instead?** Set `LLM_PROVIDER=ollama` and use `CHAT_MODEL=ollama_chat/qwen2.5-coder:7b` and `INFERENCE_MODEL=ollama_chat/qwen2.5-coder:7b`.
+
+   > **💡 Using MiniMax instead?** Set `MINIMAX_API_KEY=your-key` and use `CHAT_MODEL=minimax/MiniMax-M2.7` and `INFERENCE_MODEL=minimax/MiniMax-M2.7-highspeed`. MiniMax models support up to 1M-token context windows. Get your API key at [platform.minimax.io](https://platform.minimax.io).
 
    See `.env.template` for the full list of optional configuration (logging, feature flags, object storage, email, analytics, etc.).
 
