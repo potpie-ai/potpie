@@ -7,6 +7,7 @@ import json
 import os
 import signal
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -102,6 +103,25 @@ def _matches_tracked_process(tracked_process: TrackedProcess) -> bool:
     return command == expected or command.startswith(expected + " ")
 
 
+def _is_process_group_running(pid: int) -> bool:
+    try:
+        os.killpg(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _wait_for_process_group_exit(pid: int, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _is_process_group_running(pid):
+            return True
+        time.sleep(0.1)
+    return not _is_process_group_running(pid)
+
+
 @app.command()
 def start(
     sandbox: Optional[str] = typer.Option(
@@ -142,19 +162,37 @@ def stop():
     tracked_process = _read_tracked_process()
     if tracked_process is None:
         typer.echo("No tracked Potpie process is running.")
+        PID_FILE.unlink(missing_ok=True)
+        subprocess.run(["make", "infra-down"], check=False)
+        return
+
     elif not _matches_tracked_process(tracked_process):
         typer.echo("No tracked Potpie process is running.")
+        PID_FILE.unlink(missing_ok=True)
+        subprocess.run(["make", "infra-down"], check=False)
+        return
+
     else:
         try:
             os.killpg(tracked_process.pid, signal.SIGTERM)
-            typer.echo(f"Stopped Potpie process group for PID {tracked_process.pid}.")
         except ProcessLookupError:
             typer.echo("No tracked Potpie process is running.")
         except PermissionError:
-            typer.echo(f"Permission denied while stopping PID {tracked_process.pid}.")
+            typer.echo(
+                f"Permission denied while stopping PID {tracked_process.pid}.",
+                err=True,
+            )
+            raise typer.Exit(1)
+        else:
+            if not _wait_for_process_group_exit(tracked_process.pid):
+                typer.echo(
+                    f"Timed out while stopping PID {tracked_process.pid}.",
+                    err=True,
+                )
+                raise typer.Exit(1)
+            typer.echo(f"Stopped Potpie process group for PID {tracked_process.pid}.")
 
     PID_FILE.unlink(missing_ok=True)
-
     subprocess.run(["make", "infra-down"], check=False)
 
 
@@ -250,7 +288,12 @@ def chat(
         "-a",
         help="Agent id to chat with.",
     ),
-    branch: str = typer.Option("main", "--branch", "-b", help="Repository branch."),
+    branch: Optional[str] = typer.Option(
+        None,
+        "--branch",
+        "-b",
+        help="Optional branch override. Defaults to the project's branch.",
+    ),
     user_id: Optional[str] = typer.Option(
         None,
         "--user-id",
@@ -264,6 +307,13 @@ def chat(
             project = await runtime.projects.get(project_id)
             if project is None:
                 raise typer.BadParameter(f"Project not found: {project_id}")
+
+            project_branch = project.branch_name or branch or "main"
+            if branch and project.branch_name and branch != project.branch_name:
+                raise typer.BadParameter(
+                    f"Branch {branch!r} does not match project branch "
+                    f"{project.branch_name!r}."
+                )
 
             effective_user_id = user_id or runtime.config.default_user_id
             agent_handle = runtime.agents.get(agent)
@@ -295,7 +345,7 @@ def chat(
                     ),
                     user_id=effective_user_id,
                     repository=project.repo_name,
-                    branch=branch,
+                    branch=project_branch,
                     local_mode=True,
                 )
                 response = await agent_handle.query(ctx)
