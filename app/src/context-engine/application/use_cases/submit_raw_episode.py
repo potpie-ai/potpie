@@ -147,6 +147,12 @@ def submit_raw_episode(
         return RawEpisodeSubmissionResult(ok=True, status="applied", episode_uuid=uid)
 
     svc = container.ingestion_submission(db)
+    # ``IngestionSubmissionService.submit`` requires source_id; raw-episode
+    # callers don't supply one. Derive a stable, deduplicating source_id
+    # from idempotency_key (preferred) or the episode name. This keeps
+    # raw-episode ingest idempotent without forcing every caller to mint
+    # one.
+    source_id = idempotency_key or f"raw_episode:{name}"
     req = IngestionSubmissionRequest(
         pot_id=pot_id,
         ingestion_kind=INGESTION_KIND_RAW_EPISODE,
@@ -154,6 +160,7 @@ def submit_raw_episode(
         source_system="context_engine_raw",
         event_type="episode",
         action="ingest",
+        source_id=source_id,
         payload={
             "name": name,
             "episode_body": episode_body,

@@ -1,4 +1,18 @@
-"""Postgres implementation of ``AgentCheckpointStorePort``."""
+"""Postgres implementation of ``AgentCheckpointStorePort``.
+
+The checkpoint writer is invoked by pydantic-ai's ``CheckpointMiddleware``
+mid-agent-run, and the agent concurrently issues tool calls that hit
+Postgres through other ports bound to the *same* batch-scoped session.
+That race produces ``InvalidRequestError("This session is provisioning a
+new connection; concurrent operations are not permitted")`` because two
+coroutines try to use one connection at once.
+
+The fix here is to make checkpoint writes use a **fresh** SQLAlchemy
+session per call (opened from the batch session's bind / engine). The
+batch session keeps owning ledger + batch repo writes; the checkpoint
+store has its own short-lived sessions that can't collide with whatever
+the agent is doing on the main session.
+"""
 
 from __future__ import annotations
 
@@ -26,25 +40,35 @@ def _ensure_aware(dt: datetime) -> datetime:
 
 class SqlAlchemyAgentCheckpointStore(AgentCheckpointStorePort):
     def __init__(self, session: Session) -> None:
-        self._db = session
+        # Keep the original session around in case the host explicitly wants
+        # checkpoint writes on the same connection (e.g. tests under a
+        # transactional rollback fixture). Each call opens its own short
+        # session against the same engine to dodge concurrency collisions
+        # with mid-flight agent tool calls.
+        self._template = session
+
+    def _open(self) -> Session:
+        bind = self._template.get_bind()
+        return Session(bind=bind, autoflush=False, autocommit=False)
 
     def load(self, batch_id: str) -> AgentCheckpoint | None:
-        row = self._db.scalar(
-            select(ContextAgentCheckpointModel).where(
-                ContextAgentCheckpointModel.batch_id == batch_id
+        with self._open() as db:
+            row = db.scalar(
+                select(ContextAgentCheckpointModel).where(
+                    ContextAgentCheckpointModel.batch_id == batch_id
+                )
             )
-        )
-        if row is None:
-            return None
-        messages = row.messages_json
-        if not isinstance(messages, list):
-            messages = []
-        return AgentCheckpoint(
-            batch_id=row.batch_id,
-            messages_json=list(messages),
-            tool_call_count=row.tool_call_count or 0,
-            updated_at=_ensure_aware(row.updated_at) if row.updated_at else _utcnow(),
-        )
+            if row is None:
+                return None
+            messages = row.messages_json
+            if not isinstance(messages, list):
+                messages = []
+            return AgentCheckpoint(
+                batch_id=row.batch_id,
+                messages_json=list(messages),
+                tool_call_count=row.tool_call_count or 0,
+                updated_at=_ensure_aware(row.updated_at) if row.updated_at else _utcnow(),
+            )
 
     def save(
         self,
@@ -68,13 +92,15 @@ class SqlAlchemyAgentCheckpointStore(AgentCheckpointStorePort):
                 "updated_at": stmt.excluded.updated_at,
             },
         )
-        self._db.execute(stmt)
-        self._db.commit()
+        with self._open() as db:
+            db.execute(stmt)
+            db.commit()
 
     def delete(self, batch_id: str) -> None:
-        self._db.execute(
-            delete(ContextAgentCheckpointModel).where(
-                ContextAgentCheckpointModel.batch_id == batch_id
+        with self._open() as db:
+            db.execute(
+                delete(ContextAgentCheckpointModel).where(
+                    ContextAgentCheckpointModel.batch_id == batch_id
+                )
             )
-        )
-        self._db.commit()
+            db.commit()

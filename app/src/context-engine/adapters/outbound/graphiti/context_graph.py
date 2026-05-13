@@ -17,7 +17,10 @@ import asyncio
 from datetime import datetime
 from typing import Any
 
-from adapters.outbound.graphiti.apply_plan import apply_reconciliation_plan
+from adapters.outbound.graphiti.apply_plan import (
+    apply_reconciliation_plan,
+    apply_reconciliation_plan_async,
+)
 from adapters.outbound.graphiti.ingest_episode import ingest_episode as ingest_episode_uc
 from adapters.outbound.graphiti.port import EpisodicGraphPort
 from adapters.outbound.neo4j.port import StructuralReadPort
@@ -95,6 +98,21 @@ class GraphitiContextGraphAdapter(ContextGraphPort):
         provenance_context: ProvenanceContext | None = None,
     ) -> ReconciliationResult:
         return apply_reconciliation_plan(
+            self._episodic,
+            plan,
+            expected_pot_id=expected_pot_id,
+            provenance_context=provenance_context,
+        )
+
+    async def apply_plan_async(
+        self,
+        plan: ReconciliationPlan,
+        *,
+        expected_pot_id: str,
+        provenance_context: ProvenanceContext | None = None,
+    ) -> ReconciliationResult:
+        """Async-native plan apply — use from agent tools / async handlers."""
+        return await apply_reconciliation_plan_async(
             self._episodic,
             plan,
             expected_pot_id=expected_pot_id,

@@ -35,6 +35,8 @@ from domain.ontology import (
     is_canonical_edge_type,
     validate_structural_mutations,
 )
+
+_EDGE_TEMPORAL_BACKFILLS: tuple[str, ...] = ("valid_from", "valid_at", "observed_at")
 from domain.reconciliation import ReconciliationPlan
 from domain.reconciliation_flags import (
     infer_canonical_labels_enabled,
@@ -163,6 +165,7 @@ def _assert_iso_temporal_props(props: dict[str, object], ref: str) -> None:
 def _apply_soft_ontology_downgrades(plan: ReconciliationPlan) -> None:
     out = plan.ontology_downgrades
     allowed_nc = BASE_GRAPH_LABELS | CODE_GRAPH_LABELS
+    _backfill_edge_required_temporal_props(plan, out)
     for ent in plan.entity_upserts:
         props = dict(ent.properties)
         ent.properties = props
@@ -297,6 +300,56 @@ def _coerce_lifecycle_for_label(
             "to": "unknown",
         }
     )
+
+
+def _backfill_edge_required_temporal_props(
+    plan: ReconciliationPlan, out: list[dict[str, str]]
+) -> None:
+    """Fill ``valid_from`` / ``valid_at`` / ``observed_at`` from episode time when missing.
+
+    LLM extractors regularly emit timeline edges (``PERFORMED``, ``TOUCHED``, …)
+    without the required temporal anchor. The activity time is already captured
+    on the source episode's ``reference_time``, so use that (with now() as a
+    final fallback) rather than rejecting the whole batch.
+    """
+    # Use the first episode's reference_time as the temporal anchor when
+    # available — that's the closest signal we have for *when* the activity
+    # occurred. Fall back to now() for purely synthetic plans.
+    anchor: datetime | None = None
+    for ep in plan.episodes:
+        if isinstance(ep.reference_time, datetime):
+            anchor = ep.reference_time
+            break
+    if anchor is None:
+        anchor = datetime.now(timezone.utc)
+    if anchor.tzinfo is None:
+        anchor = anchor.replace(tzinfo=timezone.utc)
+    anchor_iso = anchor.isoformat()
+
+    for edge in plan.edge_upserts:
+        spec = EDGE_TYPES.get(edge.edge_type)
+        if spec is None:
+            continue
+        backfilled: list[str] = []
+        props = dict(edge.properties)
+        for prop in _EDGE_TEMPORAL_BACKFILLS:
+            if prop not in spec.required_properties:
+                continue
+            current = props.get(prop)
+            if current and str(current).strip():
+                continue
+            props[prop] = anchor_iso
+            backfilled.append(prop)
+        if backfilled:
+            edge.properties = props
+            out.append(
+                {
+                    "entity_uuid": f"{edge.from_entity_key}->{edge.to_entity_key}",
+                    "kind": "edge_temporal_backfill",
+                    "from": edge.edge_type,
+                    "to": ",".join(backfilled),
+                }
+            )
 
 
 def _maybe_rewrite_unknown_edge(edge: EdgeUpsert, out: list[dict[str, str]]) -> None:

@@ -102,6 +102,51 @@ class EpisodicGraphPort(Protocol):
     ) -> Optional[str]:
         ...
 
+    async def write_episode_drafts_async(
+        self,
+        pot_id: str,
+        drafts: list[EpisodeDraft],
+        provenance: ProvenanceRef | None = None,
+    ) -> list[Optional[str]]:
+        """Async-native episode batch write."""
+        ...
+
+    async def apply_entity_upserts_async(
+        self,
+        pot_id: str,
+        items: list[EntityUpsert],
+        provenance: ProvenanceRef,
+    ) -> int:
+        """Async-native MERGE for canonical entities. Use from async callers."""
+        ...
+
+    async def apply_edge_upserts_async(
+        self,
+        pot_id: str,
+        items: list[EdgeUpsert],
+        provenance: ProvenanceRef,
+    ) -> int:
+        """Async-native MERGE for canonical edges. Use from async callers."""
+        ...
+
+    async def apply_edge_deletes_async(
+        self,
+        pot_id: str,
+        items: list[EdgeDelete],
+        provenance: ProvenanceRef,
+    ) -> int:
+        """Async-native delete for canonical edges. Use from async callers."""
+        ...
+
+    async def apply_invalidations_async(
+        self,
+        pot_id: str,
+        items: list[InvalidationOp],
+        provenance: ProvenanceRef,
+    ) -> int:
+        """Async-native invalidation stamp. Use from async callers."""
+        ...
+
     def search(
         self,
         pot_id: str,

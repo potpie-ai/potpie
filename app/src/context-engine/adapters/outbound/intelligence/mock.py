@@ -246,7 +246,7 @@ class MockIntelligenceProvider(IntelligenceProvider):
             ),
             ProjectContextRecord(
                 family="preferences",
-                kind="Preference",
+                kind="Policy",
                 entity_key="preference:source-reference-first",
                 name="Source-reference-first graph memory",
                 summary="Store compact facts and source refs in graph. Fetch full diffs only when requested with summary, snippets, or verify policies.",
@@ -259,6 +259,82 @@ class MockIntelligenceProvider(IntelligenceProvider):
                 name="Context engine team",
                 summary="Owned by the platform team. Primary on-call rotates weekly.",
                 source_uri="app/src/context-engine/docs/owners.md",
+            ),
+            # --- v2 entity types --------------------------------------------
+            # These mirror the seed_v2_entities.json fixture so mock-mode
+            # scenarios that ask for initiatives / risks / policies / etc.
+            # have something to score against.
+            ProjectContextRecord(
+                family="initiatives",
+                kind="Initiative",
+                entity_key="initiative:context-engine-ontology-v2",
+                name="Context engine ontology v2 rollout",
+                summary="Initiative: collapse Constraint, Preference, AgentInstruction into Policy; add Initiative, Risk, OpenQuestion, Migration, FeatureFlag. Status: in_progress. Target 2026-06-30.",
+                source_uri="app/src/context-engine/docs/initiatives.md",
+            ),
+            ProjectContextRecord(
+                family="risks",
+                kind="Risk",
+                entity_key="risk:rate-limiting-webhooks",
+                name="Rate limiting on webhook retries",
+                summary="Risk: rate limiting on GitHub webhook retries could drop ingestion events under load. Severity: high. Status: open. Impact: missed events create coverage gaps the agent cannot detect.",
+                source_uri="app/src/context-engine/docs/risks.md",
+            ),
+            ProjectContextRecord(
+                family="risks",
+                kind="Risk",
+                entity_key="risk:ontology-drift",
+                name="Ontology drift during v2 rollout",
+                summary="Risk: agents may emit legacy entity labels during the v2 rollout window. Severity: medium. Status: open.",
+                source_uri="app/src/context-engine/docs/risks.md",
+            ),
+            ProjectContextRecord(
+                family="open_questions",
+                kind="OpenQuestion",
+                entity_key="open-question:activity-storage",
+                name="Timeline subgraph storage strategy",
+                summary="Open question: should Activity nodes carry the full subject set as embedded properties or as separate TOUCHED edges? Status: open.",
+                source_uri="app/src/context-engine/docs/open-questions.md",
+            ),
+            ProjectContextRecord(
+                family="migrations",
+                kind="Migration",
+                entity_key="migration:ledger-mongo-to-postgres",
+                name="Ledger service from MongoDB to Postgres",
+                summary="Migration: ledger service is migrating from MongoDB to Postgres. Migration kind: data. Phase: backfilling. Backfill nightly; cutover target 2026-05-20.",
+                source_uri="app/src/context-engine/docs/migrations.md",
+            ),
+            ProjectContextRecord(
+                family="feature_flags",
+                kind="FeatureFlag",
+                entity_key="feature-flag:checkout-v2",
+                name="checkout_v2_enabled",
+                summary="FeatureFlag: new checkout flow gated behind checkout_v2_enabled. Status: ramping. Rollout: 20%. Owner: payments team.",
+                source_uri="app/src/context-engine/docs/feature-flags.md",
+            ),
+            ProjectContextRecord(
+                family="policies",
+                kind="Policy",
+                entity_key="policy:source-refs-required",
+                name="Agent answers must include source refs",
+                summary="Policy: every agent answer must include at least one source reference for each material fact. Strength: required. Audience: agents.",
+                source_uri="app/src/context-engine/docs/policies.md",
+            ),
+            ProjectContextRecord(
+                family="agent_instructions",
+                kind="Policy",
+                entity_key="policy:agents-md-conventions",
+                name="AGENTS.md testing conventions",
+                summary="Policy: agents follow AGENTS.md testing conventions. Run unit tests before integration tests; prefer pytest fixtures over unittest classes.",
+                source_uri="AGENTS.md",
+            ),
+            ProjectContextRecord(
+                family="datastores",
+                kind="DataStore",
+                entity_key="datastore:ledger-postgres",
+                name="Ledger Postgres",
+                summary="Current data store for the ledger service. Migrated from MongoDB.",
+                source_uri="app/src/context-engine/docs/service-map.md",
             ),
         ]
         filtered = [
@@ -304,7 +380,7 @@ class MockIntelligenceProvider(IntelligenceProvider):
                     ],
                     diagnostic_signals=[
                         {
-                            "kind": "DiagnosticSignal",
+                            "kind": "Observation",
                             "summary": "memory leak in context graph worker",
                         }
                     ],
@@ -334,7 +410,7 @@ class MockIntelligenceProvider(IntelligenceProvider):
                     ],
                     diagnostic_signals=[
                         {
-                            "kind": "DiagnosticSignal",
+                            "kind": "Observation",
                             "summary": "Neo4j connection pool exhaustion",
                         }
                     ],
@@ -363,7 +439,7 @@ class MockIntelligenceProvider(IntelligenceProvider):
                 ],
                 diagnostic_signals=[
                     {
-                        "kind": "DiagnosticSignal",
+                        "kind": "Observation",
                         "summary": "repository ingestion timeout",
                     }
                 ],
@@ -373,7 +449,7 @@ class MockIntelligenceProvider(IntelligenceProvider):
         records.append(
             DebuggingMemoryRecord(
                 family="diagnostic_signals",
-                kind="DiagnosticSignal",
+                kind="Observation",
                 entity_key="signal:mock-timeout",
                 title="Repository ingestion timeout",
                 summary="Timeout while fetching repository metadata.",

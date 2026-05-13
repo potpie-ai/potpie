@@ -1,7 +1,7 @@
 """Tests for the ``repo_attach`` → ``repository.added`` event bootstrap.
 
 When a repository is attached to a pot, ``add_pot_repository`` calls the
-``_enqueue_repo_bootstrap_event`` helper to submit an event that the
+``_emit_bootstrap_event`` helper to submit an event that the
 context-engine's batched agent picks up and uses to seed the graph.
 """
 
@@ -12,8 +12,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.modules.context_graph.context_pot_routes import (
-    _enqueue_repo_bootstrap_event,
+from app.modules.context_graph.attach_repo_to_pot import (
+    _emit_bootstrap_event,
 )
 
 
@@ -56,11 +56,11 @@ def test_emits_repository_added_event_with_expected_fields(monkeypatch) -> None:
     )
 
     db = MagicMock()
-    eid = _enqueue_repo_bootstrap_event(
+    eid = _emit_bootstrap_event(
         db,
         pot_id="pot-1",
         repo_row=_repo_row(),
-        submitted_by_uid="user-7",
+        submitted_by_user_id="user-7",
     )
 
     assert eid == "evt-bootstrap-1"
@@ -96,11 +96,11 @@ def test_returns_none_when_container_build_fails(monkeypatch) -> None:
         _explode,
     )
     db = MagicMock()
-    out = _enqueue_repo_bootstrap_event(
+    out = _emit_bootstrap_event(
         db,
         pot_id="pot-1",
         repo_row=_repo_row(),
-        submitted_by_uid="u",
+        submitted_by_user_id="u",
     )
     assert out is None
 
@@ -117,10 +117,10 @@ def test_returns_none_when_submit_raises(monkeypatch) -> None:
         lambda _db, _uid: container,
     )
     db = MagicMock()
-    out = _enqueue_repo_bootstrap_event(
+    out = _emit_bootstrap_event(
         db,
         pot_id="pot-1",
         repo_row=_repo_row(),
-        submitted_by_uid="u",
+        submitted_by_user_id="u",
     )
     assert out is None

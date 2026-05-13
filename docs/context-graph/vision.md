@@ -55,6 +55,14 @@ Graphiti sits underneath as the episodic + temporal + hybrid-search substrate on
 
 The substrate is a deliberate choice, not a permanent commitment. It is right while we're earning the schema and the access patterns. If telemetry later shows it isn't pulling its weight, the boundary above it (the `ContextGraphPort`) is what makes a substrate swap possible.
 
+## Ontology is data, not control flow
+
+The canonical ontology is expected to evolve as we learn what agents actually need to answer. The engine treats it as **declarative data, not branching code.** Every entity and edge spec in [`domain/ontology.py`](../../app/src/context-engine/domain/ontology.py) carries the metadata its downstream consumers need — project-map family, fact family, source-of-truth, freshness TTL, classifier text cues, property signatures, endpoint inference, predicate family. The classifier, structural reader, hybrid graph, graph-quality policy, and query helpers all derive their tables from the spec at import time.
+
+The consequence: adding, renaming, or removing an entity or edge is a single-file edit. If you ever find yourself touching `structural.py`, `hybrid_graph.py`, or `ontology_classifier.py` to teach them about a label, the spec is missing a field — that is the bug to fix.
+
+The agent-facing contract (`include` keys, family names, response shapes) is decoupled from the internal entity labels. A label can be renamed without breaking the agent contract; an include key remaps via its `include_keys` field.
+
 ## Anti-goals
 
 These are not under-investments. They are decisions:

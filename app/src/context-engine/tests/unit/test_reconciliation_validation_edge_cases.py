@@ -196,8 +196,11 @@ def test_validate_exceeds_max_invalidations_raises() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_validate_ontology_error_message_samples_first_8() -> None:
-    # Create 12 invalid entity upserts — ontology will reject unknown labels
+def test_validate_ontology_error_message_samples_first_8(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Force strict mode so unknown labels surface as hard validation errors.
+    monkeypatch.setenv("CONTEXT_ENGINE_ONTOLOGY_STRICT", "1")
     upserts = [
         EntityUpsert(
             entity_key=f"thing:x:{i}",
@@ -213,9 +216,12 @@ def test_validate_ontology_error_message_samples_first_8() -> None:
     assert "more" in message  # suffix "... X more" should appear
 
 
-def test_validate_ontology_error_no_suffix_when_8_or_fewer() -> None:
+def test_validate_ontology_error_no_suffix_when_8_or_fewer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Each invalid entity upsert produces 2 ontology errors (unknown label + missing
     # public canonical label). 4 entities → 8 errors → no "... X more" suffix.
+    monkeypatch.setenv("CONTEXT_ENGINE_ONTOLOGY_STRICT", "1")
     upserts = [
         EntityUpsert(
             entity_key=f"thing:x:{i}",

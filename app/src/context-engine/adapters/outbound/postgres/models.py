@@ -196,7 +196,7 @@ class ContextReconciliationBatchModel(Base):
             "uq_context_reconciliation_batches_open_per_pot",
             "pot_id",
             unique=True,
-            postgresql_where=text("status IN ('pending','claimed','running')"),
+            postgresql_where=text("status = 'pending'"),
         ),
     )
 

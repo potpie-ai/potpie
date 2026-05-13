@@ -84,13 +84,27 @@ _register(
         ),
         available_data=(
             "Payload carries owner, repo, default_branch, and maybe a "
-            "remote_url. The full repo source is reachable via the sandbox "
-            "tools (sandbox_list_dir, sandbox_read_file, sandbox_search). "
-            "Start at the repo root and walk down."
+            "remote_url. The repo is cloned into the pot's sandbox on the "
+            "default branch and is reachable via sandbox_* tools. Multi-repo "
+            "pots: call sandbox_list_repos first; pass repo='owner/name' on "
+            "every tool. Start at the repo root and walk down."
         ),
         extract=(
             "Seed a Repository entity (entity_key ``github:repo:<owner>/<repo>``). "
-            "Then capture, where present:\n"
+            "A concrete walk that keeps you under the tool budget:\n"
+            "  1. sandbox_list_repos to confirm what's attached.\n"
+            "  2. sandbox_list_dir('.', repo) to see top-level layout.\n"
+            "  3. sandbox_read_file('README.md', repo) — or README.rst / docs/\n"
+            "     index — for purpose, audience, headline features.\n"
+            "  4. Read one manifest to derive language/build/runtime:\n"
+            "     package.json / pyproject.toml / Cargo.toml / go.mod / pom.xml.\n"
+            "  5. sandbox_list_dir on each top-level package/module dir one\n"
+            "     level deep to identify Modules and entry points.\n"
+            "  6. sandbox_search('ADR', glob='*.md') and sandbox_list_dir('docs')\n"
+            "     for architecture decisions / runbooks (record as Documents).\n"
+            "  7. sandbox_git_log(repo, limit=20) for project age + recent\n"
+            "     activity signal — seeds the first Activity entries.\n"
+            "Then capture, where the walk produces evidence:\n"
             "  - the project's purpose and audience (from README / about);\n"
             "  - top-level Modules / packages / services and their roles;\n"
             "  - notable Features (canonical label ``Feature``) — user-visible "
@@ -108,13 +122,16 @@ _register(
             "evidenced by the README or code surface; add a warning instead."
         ),
         tool_hints=(
+            "sandbox_list_repos",
             "sandbox_list_dir",
             "sandbox_read_file",
             "sandbox_search",
+            "sandbox_git_log",
+            "sandbox_git_show",
             "context_search",
             "context_graph_overview",
         ),
-        max_tool_calls=80,
+        max_tool_calls=120,
     )
 )
 

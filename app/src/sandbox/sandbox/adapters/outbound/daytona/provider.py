@@ -231,6 +231,75 @@ class DaytonaWorkspaceProvider:
             writable=writable,
         )
 
+    async def destroy_project_sandbox(
+        self, *, user_id: str, project_id: str
+    ) -> bool:
+        """Delete the shared sandbox for ``(user_id, project_id)`` if any.
+
+        Drops in-memory caches first so a subsequent ``ensure_sandbox`` for
+        the same project doesn't reuse the dead handle. Best-effort against
+        the SDK: a missing sandbox is treated as success. Returns ``True``
+        when something was deleted, ``False`` when there was nothing to do.
+        """
+        project_key = (user_id, project_id)
+        sandbox_id = self._project_sandbox_ids.pop(project_key, None)
+        self._project_locks.pop(project_key, None)
+        if sandbox_id is None:
+            sandbox = self._recover_project_sandbox(project_key)
+            if sandbox is None:
+                return False
+            sandbox_id = str(getattr(sandbox, "id", "") or "")
+        sandbox = self._sandboxes.pop(sandbox_id, None)
+        # Forget any bare-repo keys scoped to this sandbox so a fresh
+        # sandbox doesn't think it inherited the clone.
+        self._bare_repos = {
+            key for key in self._bare_repos if key[0] != sandbox_id
+        }
+        # Forget cached workspaces still pointing at the dead sandbox.
+        for ws_id, ws in list(self._by_id.items()):
+            if ws.location.backend_workspace_id == sandbox_id:
+                self._by_id.pop(ws_id, None)
+                self._by_key.pop(ws.key, None)
+        if not sandbox_id:
+            return False
+        delete_attrs = ("delete", "destroy", "remove")
+        for attr in delete_attrs:
+            delete_method = getattr(self.client, attr, None)
+            if callable(delete_method):
+                try:
+                    await asyncio.to_thread(delete_method, sandbox_id)
+                    return True
+                except Exception as exc:  # noqa: BLE001
+                    if _is_not_found(exc):
+                        return True
+                    logger.warning(
+                        "daytona: %s(%s) failed: %s",
+                        attr,
+                        sandbox_id,
+                        exc,
+                    )
+                    return False
+        # SDK exposes neither method — fall through to a per-sandbox call
+        # if the cached SDK object supports it.
+        if sandbox is not None:
+            for attr in delete_attrs:
+                method = getattr(sandbox, attr, None)
+                if callable(method):
+                    try:
+                        await asyncio.to_thread(method)
+                        return True
+                    except Exception as exc:  # noqa: BLE001
+                        if _is_not_found(exc):
+                            return True
+                        logger.warning(
+                            "daytona: sandbox.%s() failed for %s: %s",
+                            attr,
+                            sandbox_id,
+                            exc,
+                        )
+                        return False
+        return False
+
     async def is_alive(self, workspace: Workspace) -> bool:
         """Probe the Daytona SDK to see whether the backing sandbox still exists.
 
@@ -845,9 +914,15 @@ class DaytonaWorkspaceProvider:
         # Best-effort refresh of the requested ref. Transient network failures
         # don't fail the request — what's already in the bare repo is usually
         # enough for the worktree step.
+        #
+        # The ``<ref>:refs/heads/<ref>`` refspec lands the fetched tip as a
+        # local branch in the bare repo. Without it, a bare ``git fetch
+        # origin <ref>`` only updates ``FETCH_HEAD`` and ``git worktree add
+        # <ref>`` downstream fails with "fatal: invalid reference".
+        quoted = shlex.quote(base_ref)
         sandbox.process.exec(
             f"git -C {shlex.quote(bare_path)} fetch origin -- "
-            f"{shlex.quote(base_ref)} 2>/dev/null || true"
+            f"+{quoted}:refs/heads/{quoted} 2>/dev/null || true"
         )
 
     def _clone_bare(
@@ -878,8 +953,16 @@ class DaytonaWorkspaceProvider:
             raise RepoCacheUnavailable(f"git clone --bare failed: {message}")
         # `--filter=blob:none` defers blob downloads; an explicit fetch primes
         # the requested ref so `worktree add` can resolve it without surprise.
+        # Use ``<ref>:refs/heads/<ref>`` so the fetched tip becomes a real
+        # local branch — a plain ``fetch origin <ref>`` only writes
+        # ``FETCH_HEAD``, leaving ``worktree add <ref>`` to fail with
+        # "fatal: invalid reference" when the bare clone didn't already
+        # populate ``refs/heads/<ref>`` (seen on partial bare clones in the
+        # slim Daytona snapshot).
+        quoted = shlex.quote(base_ref)
         fetch = sandbox.process.exec(
-            f"git -C {shlex.quote(bare_path)} fetch origin -- {shlex.quote(base_ref)}"
+            f"git -C {shlex.quote(bare_path)} fetch origin -- "
+            f"+{quoted}:refs/heads/{quoted}"
         )
         if int(getattr(fetch, "exit_code", 0)) != 0:
             raise RepoCacheUnavailable(

@@ -35,9 +35,21 @@ class DockerRuntimeProvider:
     kind = "docker"
     capabilities = RuntimeCapabilities(preview_url=False, interactive_session=False)
 
-    def __init__(self, *, docker_bin: str = "docker", name_prefix: str = "potpie-sandbox") -> None:
+    def __init__(
+        self,
+        *,
+        docker_bin: str = "docker",
+        name_prefix: str = "potpie-sandbox",
+        default_image: str = "python:3.12-slim",
+    ) -> None:
+        # ``default_image`` is the container image used when the caller
+        # didn't pin one on the ``RuntimeRequest`` / ``RuntimeSpec``. The
+        # bootstrap wires this from ``SandboxSettings.docker_image`` so
+        # ``SANDBOX_DOCKER_IMAGE`` actually changes the image Docker
+        # mode boots (previously the env var was read but unused).
         self.docker_bin = docker_bin
         self.name_prefix = name_prefix
+        self.default_image = default_image
         self._runtimes: dict[str, Runtime] = {}
 
     async def create(self, workspace_id: str, spec: RuntimeSpec) -> Runtime:
@@ -132,7 +144,8 @@ class DockerRuntimeProvider:
                 cmd.extend(["--memory", f"{spec.resources.memory_mb}m"])
             if spec.resources.cpu:
                 cmd.extend(["--cpus", str(spec.resources.cpu)])
-        cmd.extend([spec.image, "tail", "-f", "/dev/null"])
+        image = spec.image or self.default_image
+        cmd.extend([image, "tail", "-f", "/dev/null"])
 
         result = self._run(cmd, 120)
         if result.returncode != 0:

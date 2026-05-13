@@ -205,6 +205,125 @@ def test_agent_exception_marks_batch_failed_and_events_failed() -> None:
     assert args[0] == "e1"
 
 
+def test_opens_runs_and_fans_work_events_across_events() -> None:
+    """Each pending event gets its own run, and the agent's trace is copied to all of them."""
+    batches = MagicMock()
+    batches.list_events_for_batch.return_value = [
+        BatchEventRef(event_id="e1", added_at=_now()),
+        BatchEventRef(event_id="e2", added_at=_now()),
+    ]
+    ledger = MagicMock()
+    ledger.get_event_by_id.side_effect = lambda eid: _event_row(eid)
+    ledger.next_attempt_number.side_effect = lambda _eid: 1
+    ledger.start_reconciliation_run.side_effect = lambda _eid, **_: f"run-{_eid}"
+    checkpoints = MagicMock()
+    checkpoints.load.return_value = None
+
+    history = [
+        {"kind": "request", "parts": [{"part_kind": "user-prompt", "content": "go"}]},
+        {
+            "kind": "response",
+            "parts": [
+                {
+                    "part_kind": "tool-call",
+                    "tool_name": "context_search",
+                    "args": {"q": "x"},
+                    "tool_call_id": "c1",
+                },
+                {"part_kind": "text", "content": "done"},
+            ],
+        },
+    ]
+
+    class _Stub:
+        def run_batch(self, ctx, *, checkpoints=None):
+            del checkpoints
+            from domain.reconciliation_batch import BatchAgentOutcome
+
+            return BatchAgentOutcome(
+                ok=True,
+                completed_event_ids=[ev.event_id for ev in ctx.events],
+                tool_call_count=1,
+                prompt="go",
+                agent_messages_json=history,
+                final_response="done",
+                agent_name="pydantic-deep",
+                agent_version="0.0.0",
+                toolset_version="batch-tools-v1",
+            )
+
+        def capability_metadata(self):
+            return {
+                "agent": "pydantic-deep",
+                "version": "0.0.0",
+                "toolset_version": "batch-tools-v1",
+            }
+
+    out = process_batch(
+        batch=_batch(),
+        agent=_Stub(),
+        batches=batches,
+        reco_ledger=ledger,
+        checkpoints=checkpoints,
+        pots=_pots(),
+    )
+
+    assert out.ok is True
+    # One run row started per pending event.
+    started_ids = {c.args[0] for c in ledger.start_reconciliation_run.call_args_list}
+    assert started_ids == {"e1", "e2"}
+    # The trace fanned into both runs (prompt + tool_call + plan_output = 3 work events × 2 runs).
+    appended_run_ids = {
+        c.args[0] for c in ledger.record_run_work_event.call_args_list
+    }
+    assert appended_run_ids == {"run-e1", "run-e2"}
+    appended_kinds_per_run: dict[str, list[str]] = {}
+    for c in ledger.record_run_work_event.call_args_list:
+        appended_kinds_per_run.setdefault(c.args[0], []).append(c.kwargs["event_kind"])
+    for kinds in appended_kinds_per_run.values():
+        assert kinds == ["prompt", "tool_call", "plan_output"]
+    # Both runs marked succeeded.
+    success_ids = {c.args[0] for c in ledger.record_run_success.call_args_list}
+    assert success_ids == {"run-e1", "run-e2"}
+
+
+def test_failing_run_marks_run_failed_and_records_error_event() -> None:
+    batches = MagicMock()
+    batches.list_events_for_batch.return_value = [
+        BatchEventRef(event_id="e1", added_at=_now()),
+    ]
+    ledger = MagicMock()
+    ledger.get_event_by_id.side_effect = lambda eid: _event_row(eid)
+    ledger.next_attempt_number.return_value = 1
+    ledger.start_reconciliation_run.return_value = "run-e1"
+    checkpoints = MagicMock()
+    checkpoints.load.return_value = None
+
+    class _Boom:
+        def run_batch(self, ctx, *, checkpoints=None):
+            del ctx, checkpoints
+            raise RuntimeError("kaboom")
+
+        def capability_metadata(self):
+            return {"agent": "x", "version": "1", "toolset_version": "v1"}
+
+    out = process_batch(
+        batch=_batch(),
+        agent=_Boom(),
+        batches=batches,
+        reco_ledger=ledger,
+        checkpoints=checkpoints,
+        pots=_pots(),
+    )
+
+    assert out.ok is False
+    ledger.record_run_failure.assert_called_once()
+    err_kinds = [
+        c.kwargs["event_kind"] for c in ledger.record_run_work_event.call_args_list
+    ]
+    assert "error" in err_kinds
+
+
 def test_resumes_with_prior_messages_when_checkpoint_exists() -> None:
     """When a checkpoint exists, ``BatchAgentContext.prior_messages_json`` is populated."""
 

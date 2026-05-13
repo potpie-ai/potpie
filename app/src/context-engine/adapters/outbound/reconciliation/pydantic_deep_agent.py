@@ -118,6 +118,52 @@ INDICATES, FIRED_IN, MATCHES_PATTERN, DEPENDS_ON, USES, CALLS, CONTAINS,
 IMPLEMENTS, EXPOSES, DEPLOYED_TO, HOSTS, OWNS, MEMBER_OF, ONCALL_FOR, REVIEWS,
 HAS_SIGNAL, HAS_ROOT_CAUSE, RELATED_TO, PERFORMED, TOUCHED, IN_PERIOD.
 
+Sandbox tools (when present):
+The pot may have one or more repositories cloned into a shared sandbox. Sandbox
+tools let you read the source, walk git history, and switch refs to ground the
+context graph in real code instead of webhook summaries.
+
+  - sandbox_list_repos() — call this FIRST when a sandbox tool is available.
+    Returns every repo attached to the pot. If more than one repo is attached,
+    every other sandbox tool requires repo='owner/name'. With a single repo
+    attached, the argument is optional.
+  - sandbox_list_dir(path, repo?) — one directory level, no recursion.
+  - sandbox_read_file(path, repo?) — up to ~256KB; binary returns base64.
+  - sandbox_search(pattern, glob?, case_sensitive?, repo?) — ripgrep, ~200 hits max.
+  - sandbox_git_log(repo?, path?, since?, limit?) — parsed commit history.
+  - sandbox_git_show(ref, repo?, path?) — commit or file content at a ref.
+  - sandbox_git_blame(path, line_start?, line_end?, repo?) — per-line authorship.
+  - sandbox_git_diff(base, head?, paths?, repo?) — unified diff between refs.
+  - sandbox_checkout(ref, repo?, force?) — detach HEAD onto a ref (fetch + checkout).
+
+Handling sandbox failure modes:
+  - The sandbox is provisioned lazily; if sandbox_list_repos returns an empty
+    list or sandbox_read_file errors with a clone-related message, the clone is
+    still in progress. Retry once after another tool call; if still empty, fall
+    back to graph + GitHub tools and add a warning instead of fabricating data.
+  - sandbox_checkout errors come back as {error, kind}. ``kind='unknown_ref'``
+    means the ref doesn't exist — emit a warning, do NOT invent the commit.
+    ``kind='conflict'`` means the worktree has uncommitted state; retry with
+    force=True only when the event payload requires that specific ref.
+    ``kind='network'`` or ``'auth'`` is transient/configuration — surface a
+    warning and continue with graph tools.
+  - Large files / diffs report ``truncated: true``. Narrow the path list or use
+    sandbox_git_log + sandbox_git_show to walk commits one at a time.
+  - {"error": "ambiguous_repo"} means you omitted ``repo=`` on a multi-repo
+    pot — re-issue the call with one of the repos listed under ``available``.
+  - {"error": "unknown_repo"} means the repo isn't attached to this pot.
+    Don't guess; call sandbox_list_repos again and use one of the returned
+    names.
+  - {"kind": "sandbox_unavailable", "transient": true} means the sandbox
+    infrastructure (Daytona/snapshot pull) failed before the call reached
+    the worktree. Retry the same call once; if it still fails, skip the
+    sandbox for this batch and continue with graph + GitHub tools rather
+    than aborting. Do NOT fabricate file contents to work around it.
+
+Per-batch sandbox budget: 40 calls for repository.added events; 15 for other
+events. Stop walking once you have enough to write the plan — the agent loop is
+not a free exploration session.
+
 Process the batch event-by-event. After all events are handled, call
 finish_batch with a one-line summary of what you did.
 """
@@ -297,8 +343,11 @@ class PydanticDeepReconciliationAgent:
     ) -> None:
         import os
 
+        # gpt-5 family models reject function tools + reasoning_effort on
+        # /v1/chat/completions ("openai:" prefix). The Responses endpoint
+        # ("openai-responses:" prefix) supports the combination.
         self._model = model or os.getenv(
-            "CONTEXT_ENGINE_RECONCILIATION_MODEL", "openai:gpt-5.4-mini"
+            "CONTEXT_ENGINE_RECONCILIATION_MODEL", "openai-responses:gpt-5.4-mini"
         )
         self._instructions = instructions or _RECONCILIATION_INSTRUCTIONS
         self._tools_port: ReconciliationToolsPort | None = tools
@@ -336,25 +385,47 @@ class PydanticDeepReconciliationAgent:
             "has_context_graph": self._context_graph is not None,
         }
 
+    def _agent_identity(self) -> tuple[str, str, str]:
+        return (
+            "pydantic-deep",
+            _pydantic_deep_version(),
+            "batch-tools-v1",
+        )
+
     def run_batch(
         self,
         ctx: BatchAgentContext,
         *,
         checkpoints: AgentCheckpointStorePort | None = None,
     ) -> BatchAgentOutcome:
+        agent_name, agent_version, toolset_version = self._agent_identity()
         if self._context_graph is None:
             return BatchAgentOutcome(
                 ok=False,
                 error="context_graph_unavailable",
+                agent_name=agent_name,
+                agent_version=agent_version,
+                toolset_version=toolset_version,
             )
         if not ctx.events:
-            return BatchAgentOutcome(ok=True)
+            return BatchAgentOutcome(
+                ok=True,
+                agent_name=agent_name,
+                agent_version=agent_version,
+                toolset_version=toolset_version,
+            )
 
         try:
             return asyncio.run(self._run_batch_async(ctx, checkpoints=checkpoints))
         except Exception as exc:
             logger.exception("batch agent run crashed for batch %s", ctx.batch_id)
-            return BatchAgentOutcome(ok=False, error=str(exc))
+            return BatchAgentOutcome(
+                ok=False,
+                error=str(exc),
+                agent_name=agent_name,
+                agent_version=agent_version,
+                toolset_version=toolset_version,
+            )
 
     async def _run_batch_async(
         self,
@@ -436,10 +507,25 @@ class PydanticDeepReconciliationAgent:
         deps = create_default_deps()
         prompt = self._build_prompt(ctx)
         prior = _restore_message_history(ctx.prior_messages_json)
+        agent_name, agent_version, toolset_version = self._agent_identity()
 
         try:
             result = await agent.run(prompt, deps=deps, message_history=prior)
-        finally:
+        except Exception as exc:
+            await _run_cleanup_callbacks(state)
+            logger.exception("agent.run() raised for batch %s", ctx.batch_id)
+            return BatchAgentOutcome(
+                ok=False,
+                completed_event_ids=list(state.completed_event_ids),
+                tool_call_count=len(state.completed_event_ids),
+                error=str(exc),
+                prompt=prompt,
+                agent_messages_json=None,
+                agent_name=agent_name,
+                agent_version=agent_version,
+                toolset_version=toolset_version,
+            )
+        else:
             await _run_cleanup_callbacks(state)
 
         usage_payload: dict[str, Any] = {}
@@ -488,10 +574,18 @@ class PydanticDeepReconciliationAgent:
         except Exception:
             logger.debug("telemetry: agent cost emission failed", exc_info=True)
 
+        messages_json, final_response = _serialize_agent_trace(result)
+
         return BatchAgentOutcome(
             ok=True,
             completed_event_ids=list(state.completed_event_ids),
             tool_call_count=len(state.completed_event_ids),
+            prompt=prompt,
+            agent_messages_json=messages_json,
+            final_response=final_response,
+            agent_name=agent_name,
+            agent_version=agent_version,
+            toolset_version=toolset_version,
         )
 
     def _compose_instructions(self, ctx: BatchAgentContext) -> str:
@@ -581,12 +675,17 @@ class PydanticDeepReconciliationAgent:
 
         agent_name = "pydantic-deep"
 
-        def apply_graph_mutations(
+        async def apply_graph_mutations(
             plan: dict[str, Any],
             event_id: str,
             summary: str,
         ) -> dict[str, Any]:
-            """Apply a structured mutation plan against the context graph for a given event."""
+            """Apply a structured mutation plan against the context graph for a given event.
+
+            Async so the apply path stays on the agent's event loop —
+            avoids the sync→asyncio.run→thread-pool bridge that
+            cross-bound Neo4j connections to a dead loop (see
+            apply_reconciliation_plan_async)."""
             del summary  # surfaced via plan.summary
             event = state.events_by_id.get(event_id)
             if event is None:
@@ -610,7 +709,7 @@ class PydanticDeepReconciliationAgent:
                 return {"ok": False, "error": f"plan_conversion_failed: {exc}"}
             prov = _provenance_from_event(event, agent_name=agent_name)
             try:
-                result = state.context_graph.apply_plan(
+                result = await state.context_graph.apply_plan_async(
                     domain_plan,
                     expected_pot_id=state.pot_id,
                     provenance_context=prov,
@@ -726,7 +825,55 @@ def _int_or_none(value: object) -> int | None:
         return None
 
 
+def _serialize_agent_trace(result: Any) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """Pull the full message history + final text response off a pydantic-ai result.
+
+    The message history is the source of truth for the reconciliation trace —
+    it contains every prompt, model response, tool call, and tool return in
+    order. We re-serialize via ``ModelMessagesTypeAdapter`` so the JSON shape
+    matches what the checkpoint store already persists (and what the work-
+    event renderer can re-parse).
+    """
+    messages_json: list[dict[str, Any]] | None = None
+    try:
+        from pydantic_ai.messages import ModelMessagesTypeAdapter
+
+        raw = ModelMessagesTypeAdapter.dump_json(list(result.all_messages()))
+        decoded = json.loads(raw.decode("utf-8"))
+        if isinstance(decoded, list):
+            messages_json = decoded
+    except Exception:
+        logger.exception("failed to serialize agent message history")
+
+    final_response: str | None = None
+    try:
+        text = result.output
+        if isinstance(text, str) and text.strip():
+            final_response = text
+    except Exception:
+        pass
+    if final_response is None and messages_json:
+        for msg in reversed(messages_json):
+            if not isinstance(msg, dict):
+                continue
+            if msg.get("kind") != "response":
+                continue
+            parts = msg.get("parts") or []
+            for part in parts:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("part_kind") == "text":
+                    content = part.get("content")
+                    if isinstance(content, str) and content.strip():
+                        final_response = content
+                        break
+            if final_response is not None:
+                break
+    return messages_json, final_response
+
+
 __all__ = [
     "PydanticDeepReconciliationAgent",
     "_RECONCILIATION_INSTRUCTIONS",
+    "_serialize_agent_trace",
 ]

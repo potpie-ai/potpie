@@ -39,6 +39,19 @@ class ContextGraphPort(Protocol):
     ) -> ReconciliationResult:
         ...
 
+    async def apply_plan_async(
+        self,
+        plan: ReconciliationPlan,
+        *,
+        expected_pot_id: str,
+        provenance_context: ProvenanceContext | None = None,
+    ) -> ReconciliationResult:
+        """Async-native plan apply. Preferred when called from inside an
+        event loop (e.g. agent tools, FastAPI handlers) — avoids the
+        sync→async→sync bridge that can cross-bind Neo4j connections to a
+        dead loop."""
+        ...
+
     def write_raw_episode(
         self,
         pot_id: str,

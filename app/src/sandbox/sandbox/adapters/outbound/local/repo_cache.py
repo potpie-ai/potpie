@@ -14,6 +14,7 @@ adapter (the doc explicitly forbids the adapter from owning that policy
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 from pathlib import Path
 
@@ -32,9 +33,22 @@ from sandbox.domain.models import (
     WorkspaceLocation,
     WorkspaceState,
     WorkspaceStorageKind,
-    new_id,
     utc_now,
 )
+
+
+def _deterministic_cache_id(key: str) -> str:
+    """Derive a stable cache id from the request key.
+
+    ``_by_id`` / ``_by_key`` only dedupe inside a single process; after
+    a restart they are empty. Without a deterministic id, the next
+    ``ensure_cache`` mints a fresh ``rc_<uuid>`` even though the bare
+    repo on disk and the persisted ``RepoCache`` row already exist —
+    leaving ``Workspace.repo_cache_id`` pointing at a row the store
+    doesn't have. Hashing the key keeps the id stable across restarts.
+    """
+    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+    return f"rc_{digest}"
 
 
 class LocalRepoCacheProvider:
@@ -117,7 +131,7 @@ class LocalRepoCacheProvider:
                 return existing
 
         cache = RepoCache(
-            id=new_id("rc"),
+            id=_deterministic_cache_id(key),
             key=key,
             repo=request.repo,
             location=WorkspaceLocation(

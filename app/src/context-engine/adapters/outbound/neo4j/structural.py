@@ -14,63 +14,18 @@ from typing import Any, Optional
 
 from neo4j import Driver, GraphDatabase
 
-from domain.ontology import ENTITY_TYPES
+from domain.ontology import ENTITY_TYPES, INCLUDE_KEY_LABELS
 from domain.ports.settings import ContextEngineSettingsPort
 from adapters.outbound.neo4j.port import StructuralReadPort
 
 logger = logging.getLogger(__name__)
 
-_PROJECT_MAP_LABELS_BY_INCLUDE: dict[str, tuple[str, ...]] = {
-    "purpose": ("Pot", "System"),
-    "repo_map": ("Repository",),
-    "service_map": (
-        "Service",
-        "Component",
-        "Interface",
-        "DataStore",
-        "Integration",
-        "Dependency",
-    ),
-    "feature_map": (
-        "Capability",
-        "Feature",
-        "Functionality",
-        "Requirement",
-        "RoadmapItem",
-    ),
-    "docs": ("Document",),
-    "tickets": ("Issue",),
-    "deployments": (
-        "Deployment",
-        "DeploymentTarget",
-        "DeploymentStrategy",
-        "Environment",
-    ),
-    "runbooks": ("Runbook",),
-    "local_workflows": ("LocalWorkflow",),
-    "scripts": ("Script",),
-    "config": ("ConfigVariable",),
-    "preferences": ("Preference",),
-    "agent_instructions": ("AgentInstruction",),
-    "operations": (
-        "Deployment",
-        "DeploymentTarget",
-        "DeploymentStrategy",
-        "Environment",
-        "Runbook",
-        "Script",
-        "ConfigVariable",
-        "LocalWorkflow",
-    ),
-    "owners": ("Person", "Team", "Role"),
-}
-
-_DEBUGGING_MEMORY_LABELS_BY_INCLUDE: dict[str, tuple[str, ...]] = {
-    "prior_fixes": ("Fix", "BugPattern", "Investigation"),
-    "diagnostic_signals": ("DiagnosticSignal",),
-    "incidents": ("Incident",),
-    "alerts": ("Alert",),
-}
+# Include-key → labels resolution is fully spec-driven. To add a new include
+# key, set ``project_map_family`` / ``debugging_family`` / ``include_keys`` on
+# the relevant entity in :mod:`domain.ontology`. Aggregates like ``operations``
+# live in :data:`INCLUDE_KEY_AGGREGATES` in the same module.
+_PROJECT_MAP_LABELS_BY_INCLUDE: dict[str, tuple[str, ...]] = INCLUDE_KEY_LABELS
+_DEBUGGING_MEMORY_LABELS_BY_INCLUDE: dict[str, tuple[str, ...]] = INCLUDE_KEY_LABELS
 
 
 def _merge_decision_result_rows(
@@ -790,6 +745,11 @@ class Neo4jStructuralAdapter(StructuralReadPort):
         """
         scope = scope or {}
         labels = _project_map_labels_for_includes(include)
+        # Rank nodes by which include the caller asked for FIRST. If the
+        # caller said ``include=["initiatives", "feature_map", "policies"]``
+        # we want Initiative nodes at the top of the result window, not
+        # Features (which the legacy hardcoded ranking always preferred).
+        priority_labels = _priority_labels_from_includes(include, labels)
         lim = max(1, min(limit, 100))
         drv = self._open()
         if drv is None:
@@ -837,12 +797,19 @@ class Neo4jStructuralAdapter(StructuralReadPort):
           )
         WITH n
         ORDER BY
+          // Priority labels come from the caller's include keys (in order).
+          // Any label not in that list falls back to the structural-default
+          // bucket (Service > Feature > Component > Document > everything).
           CASE
-            WHEN 'Service' IN labels(n) THEN 0
-            WHEN 'Feature' IN labels(n) THEN 1
-            WHEN 'Component' IN labels(n) THEN 2
-            WHEN 'Document' IN labels(n) THEN 3
-            ELSE 4
+            WHEN size($priority_labels) > 0
+              AND any(lbl IN $priority_labels WHERE lbl IN labels(n))
+              THEN [i IN range(0, size($priority_labels) - 1)
+                    WHERE $priority_labels[i] IN labels(n)][0]
+            WHEN 'Service' IN labels(n) THEN 1000
+            WHEN 'Feature' IN labels(n) THEN 1001
+            WHEN 'Component' IN labels(n) THEN 1002
+            WHEN 'Document' IN labels(n) THEN 1003
+            ELSE 1004
           END,
           coalesce(n.updated_at, n.created_at, 0) DESC,
           coalesce(n.name, n.title, n.entity_key, '') ASC
@@ -887,6 +854,7 @@ class Neo4jStructuralAdapter(StructuralReadPort):
         try:
             with drv.session() as session:
                 params = _project_graph_params(pot_id, pr_number, lim, labels, scope)
+                params["priority_labels"] = priority_labels
                 nodes = [record.data() for record in session.run(node_query, **params)]
                 edges = [record.data() for record in session.run(edge_query, **params)]
                 return {
@@ -1453,6 +1421,34 @@ class Neo4jStructuralAdapter(StructuralReadPort):
             drv.close()
 
 
+def _priority_labels_from_includes(
+    include: list[str] | None, fallback_labels: list[str]
+) -> list[str]:
+    """Return canonical labels in caller-stated include-key order.
+
+    The first include key the caller passed wins the highest rank in the
+    project-map ORDER BY. Each include key contributes its own canonical
+    labels (e.g. ``initiatives`` → ``Initiative``, ``feature_map`` →
+    ``Capability``, ``Feature``, ``Requirement``, ``RoadmapItem``). When the
+    caller doesn't pass any includes we fall through to the structural-default
+    ordering (Service > Feature > Component > Document) by returning an empty
+    list — the Cypher ORDER BY treats that as "use the default buckets only".
+    """
+    if not include:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in include:
+        for label in _PROJECT_MAP_LABELS_BY_INCLUDE.get(raw, ()):
+            if label in seen:
+                continue
+            out.append(label)
+            seen.add(label)
+    # Defensive: keep the priority list inside the label set we actually
+    # filter on so the ORDER BY can never reference labels not in scope.
+    return [label for label in out if label in fallback_labels]
+
+
 def _project_map_labels_for_includes(include: list[str] | None) -> list[str]:
     if not include:
         include = [
@@ -1519,7 +1515,7 @@ def _debugging_memory_labels_for_includes(include: list[str] | None) -> list[str
                 continue
             labels.append(label)
             seen.add(label)
-    return labels or ["Fix", "BugPattern", "Investigation", "DiagnosticSignal"]
+    return labels or list(INCLUDE_KEY_LABELS.get("debugging_memory", ()))
 
 
 def _debugging_memory_params(
@@ -1532,6 +1528,11 @@ def _debugging_memory_params(
     services = [str(value) for value in scope.get("services") or [] if value]
     environment = scope.get("environment")
     related = set(labels)
+    # Pull related labels from the agent-facing debugging_memory aggregate
+    # plus a handful of structural anchors. Anchor list stays narrow on
+    # purpose — anything that can show up via an entity's debugging_family
+    # is already in the aggregate.
+    related.update(INCLUDE_KEY_LABELS.get("debugging_memory", ()))
     related.update(
         {
             "Service",
@@ -1541,12 +1542,6 @@ def _debugging_memory_params(
             "PullRequest",
             "Commit",
             "Runbook",
-            "DiagnosticSignal",
-            "Incident",
-            "Alert",
-            "BugPattern",
-            "Investigation",
-            "Fix",
             "SourceReference",
         }
     )

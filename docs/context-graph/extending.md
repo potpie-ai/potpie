@@ -118,6 +118,94 @@ Do not invent new record types lightly. The full list lives in code; the criteri
 
 ---
 
+## Adding an ontology entity
+
+The ontology is **declarative**. Adding a new canonical entity is a single-file edit in [`app/src/context-engine/domain/ontology.py`](../../app/src/context-engine/domain/ontology.py) — no changes to the classifier, structural reader, hybrid graph, graph-quality policy, or query helpers. They all derive their tables from the spec.
+
+The minimum row:
+
+```python
+"FeatureFlag": _e(
+    "FeatureFlag",
+    "delivery_operations",                  # category — for human grouping in the catalog
+    "Runtime feature gate with rollout state. Critical for debugging and impact analysis.",
+    identity="provider plus flag key",      # how this entity is identified
+    required=("name", "status"),
+    lifecycle=FLAG_STATES,
+    # --- Wiring (each field below auto-wires one downstream behavior) ---
+    project_map_family="config",            # which family in project_map response
+    include_keys=("feature_flags", "config"),  # agent-contract include strings that surface this
+    fact_family="feature_flag",             # for freshness / source-of-truth lookup
+    source_of_truth=SOT_EXTERNAL,           # authoritative_external_truth | _code_truth | canonicalized_memory | soft_inference
+    freshness_ttl_hours=1 * DAY,
+    # --- Classifier signals (deterministic) ---
+    property_signatures=("flag_status", "rollout"),  # presence forces this label
+    text_patterns=(
+        r"\b(feature\s+flag|launchdarkly|growthbook|flagged\s+behind|gated\s+on)\b",
+    ),
+),
+```
+
+What each field automatically wires:
+
+| Field | Used by |
+|---|---|
+| `scope=True` | Marks the entity as a valid endpoint for `APPLIES_TO`, `CONFIGURED_BY`, `INFORMS`, `ASSIGNED` (any `@Scope` endpoint). |
+| `is_activity=True` | Marks the entity as participating in the timeline; ingestion stamps it with the `Activity` label too. |
+| `project_map_family` | `structural.py`'s project_map reader pulls this label into the named family. |
+| `debugging_family` | `structural.py`'s debugging_memory reader pulls this label into the named family. |
+| `include_keys` | `INCLUDE_KEY_LABELS` table — agents querying with one of these strings get this label's data. |
+| `fact_family` + `source_of_truth` + `freshness_ttl_hours` | `graph_quality.py`'s `fact_family_for_source_type` / `freshness_ttl_hours_for_source_type` lookups. |
+| `text_patterns` | `ENTITY_TEXT_CLASSIFIERS` table — `ontology_classifier.py` adds this label when these patterns match name/title/summary/statement/fact/rationale. |
+| `property_signatures` | `ENTITY_PROPERTY_SIGNATURES` table — presence of these property names on an extracted entity adds this label. |
+| `required_properties` + `lifecycle_states` | `validate_entity_upsert` rejects mutations that lack required props or use an invalid status. |
+
+Tests to update when adding an entity:
+- `tests/unit/test_ontology.py::test_phase_one_catalog_contains_project_context_domains` — add the new label to the assertion.
+- `tests/unit/test_ontology_classifier.py` — add a text-cue or property-signature test if you set those fields.
+
+That's it. Run `uv run pytest tests/unit/test_ontology*.py tests/unit/test_label_inference.py tests/unit/test_extraction_edges.py`; if those pass, the new entity is fully wired into the agent contract, the structural reader, the freshness policy, and the classifier.
+
+---
+
+## Adding an ontology edge
+
+Same shape, same file:
+
+```python
+"GATED_BY": _x(
+    "GATED_BY",
+    "Feature or code asset is gated behind a feature flag.",
+    [("Feature", "FeatureFlag"), ("CodeAsset", "FeatureFlag"), ("Service", "FeatureFlag")],
+    category="structural",
+    # Optional: lifecycle / predicate-family / endpoint-inference wiring
+    lifecycle_carrier=False,
+    predicate_family=None,
+    source_inferred=(),    # label(s) to add to source if this edge appears
+    target_inferred=("FeatureFlag",),  # label(s) to add to target
+),
+```
+
+Use `WILDCARD_ENDPOINT` (`"*"`) only for genuinely polymorphic edges (evidence, identity, supersession, lifecycle). Use `SCOPE_ENDPOINT` (`"@Scope"`) for "any scope label." Use `ACTIVITY_ENDPOINT` (`"@Activity"`) for "any timeline event." Otherwise enumerate the typed pairs — the validator can only do its job when both ends are named.
+
+For legacy LLM-emitted verbs that aren't canonical edges but should still drive endpoint inference, add a row to `EPISODIC_VERB_INFERRED_LABELS` instead.
+
+---
+
+## Renaming or removing an ontology entity
+
+The ontology is meant to evolve. Hard-renames are fine — the engine does not maintain backwards compatibility for old labels in the graph. Migration of existing data is LLM-powered and run out-of-band.
+
+Mechanics:
+
+1. Edit the row in `ENTITY_TYPES` (rename the key and `label`, or delete the row).
+2. Run `uv run pytest tests/unit/`. Test failures point to the exact downstream tests that referenced the old label.
+3. Run `uv run python -m benchmarks.cli mock --iterations 1 --baseline .tmp/bench-before.json --report .tmp/bench-after.json` to confirm no agent-contract regressions.
+
+Because every consumer derives from the spec, there is no second file to edit. If you find yourself editing `structural.py` / `hybrid_graph.py` / `ontology_classifier.py` to teach them about a new label, **that is a bug** — the spec is missing a field.
+
+---
+
 ## Adding a new intent
 
 Intents drive the default include set per task. Defined in `agent_context_port.CONTEXT_INTENTS` and `DEFAULT_INTENT_INCLUDES`. To add one:

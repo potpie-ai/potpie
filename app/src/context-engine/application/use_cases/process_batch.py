@@ -10,6 +10,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from application.services.agent_work_events import (
+    WorkEventRecord,
+    build_work_events,
+)
 from domain.actor import SYSTEM_ACTOR
 from domain.context_events import ContextEvent
 from domain.ports.agent_checkpoint_store import AgentCheckpointStorePort
@@ -28,6 +32,7 @@ from domain.ports.reconciliation_ledger import (
 from domain.reconciliation_batch import (
     BATCH_STATUS_DONE,
     BatchAgentContext,
+    BatchAgentOutcome,
     ReconciliationBatch,
 )
 
@@ -142,10 +147,22 @@ def process_batch(
 
     batches.mark_batch_running(batch.id)
 
+    capabilities = _capability_metadata(agent)
+    run_ids = _start_runs_for_pending(
+        reco_ledger,
+        pending_event_ids=pending_event_ids,
+        capabilities=capabilities,
+    )
+
     try:
         outcome = agent.run_batch(ctx, checkpoints=checkpoints)
     except Exception as exc:
         logger.exception("batch %s agent run failed", batch.id)
+        _flush_failure_trace(
+            reco_ledger,
+            run_ids=run_ids,
+            outcome=BatchAgentOutcome(ok=False, error=str(exc)),
+        )
         batches.mark_batch_failed(batch.id, str(exc))
         for eid in pending_event_ids:
             reco_ledger.record_event_failed(eid, str(exc))
@@ -158,6 +175,13 @@ def process_batch(
         )
 
     completed = list(outcome.completed_event_ids)
+
+    _flush_outcome_trace(
+        reco_ledger,
+        run_ids=run_ids,
+        outcome=outcome,
+        completed_event_ids=set(completed),
+    )
 
     if outcome.ok:
         batches.mark_batch_done(batch.id, completed_event_ids=completed)
@@ -178,6 +202,139 @@ def process_batch(
         tool_call_count=outcome.tool_call_count,
         error=outcome.error,
     )
+
+
+def _capability_metadata(agent: ReconciliationAgentPort) -> dict[str, str | None]:
+    meta: dict[str, object] = {}
+    fn = getattr(agent, "capability_metadata", None)
+    if callable(fn):
+        try:
+            raw = fn()
+        except Exception:
+            logger.debug("agent.capability_metadata() raised", exc_info=True)
+            raw = None
+        if isinstance(raw, dict):
+            meta = raw
+    return {
+        "agent_name": _str_or_none(meta.get("agent")),
+        "agent_version": _str_or_none(meta.get("version")),
+        "toolset_version": _str_or_none(meta.get("toolset_version")),
+    }
+
+
+def _start_runs_for_pending(
+    reco_ledger: ReconciliationLedgerPort,
+    *,
+    pending_event_ids: list[str],
+    capabilities: dict[str, str | None],
+) -> dict[str, str]:
+    """Open one reconciliation_run per pending event so the UI can show progress.
+
+    The batched agent runs once over all events; we materialize a run row per
+    event up front and later fan the same work-event log into each one.
+    Skipped on individual error so a single bad event doesn't poison the whole
+    batch.
+    """
+    run_ids: dict[str, str] = {}
+    for eid in pending_event_ids:
+        try:
+            attempt = reco_ledger.next_attempt_number(eid)
+            run_id = reco_ledger.start_reconciliation_run(
+                eid,
+                attempt_number=attempt,
+                agent_name=capabilities.get("agent_name"),
+                agent_version=capabilities.get("agent_version"),
+                toolset_version=capabilities.get("toolset_version"),
+            )
+            run_ids[eid] = run_id
+        except Exception:
+            logger.exception("failed to open reconciliation run for event %s", eid)
+    return run_ids
+
+
+def _flush_outcome_trace(
+    reco_ledger: ReconciliationLedgerPort,
+    *,
+    run_ids: dict[str, str],
+    outcome: BatchAgentOutcome,
+    completed_event_ids: set[str],
+) -> None:
+    """Persist the agent's trace + finalize each event run.
+
+    Work events are duplicated across every event's run in the batch — the
+    batch ran once, but each event needs its own work-event log so it
+    renders independently in the UI.
+    """
+    if not run_ids:
+        return
+    records = build_work_events(
+        prompt=outcome.prompt,
+        messages_json=outcome.agent_messages_json,
+        final_response=outcome.final_response,
+        error=None if outcome.ok else outcome.error,
+    )
+    for eid, run_id in run_ids.items():
+        _append_records(reco_ledger, run_id, records)
+        try:
+            if outcome.ok and eid in completed_event_ids:
+                reco_ledger.record_run_success(run_id)
+            else:
+                reco_ledger.record_run_failure(
+                    run_id,
+                    outcome.error or "agent_returned_not_ok",
+                )
+        except Exception:
+            logger.exception("failed to finalize reconciliation run %s", run_id)
+
+
+def _flush_failure_trace(
+    reco_ledger: ReconciliationLedgerPort,
+    *,
+    run_ids: dict[str, str],
+    outcome: BatchAgentOutcome,
+) -> None:
+    if not run_ids:
+        return
+    records = build_work_events(
+        prompt=outcome.prompt,
+        messages_json=outcome.agent_messages_json,
+        final_response=outcome.final_response,
+        error=outcome.error,
+    )
+    for run_id in run_ids.values():
+        _append_records(reco_ledger, run_id, records)
+        try:
+            reco_ledger.record_run_failure(
+                run_id, outcome.error or "agent_crashed"
+            )
+        except Exception:
+            logger.exception("failed to mark reconciliation run %s failed", run_id)
+
+
+def _append_records(
+    reco_ledger: ReconciliationLedgerPort,
+    run_id: str,
+    records: list[WorkEventRecord],
+) -> None:
+    for rec in records:
+        try:
+            reco_ledger.record_run_work_event(
+                run_id,
+                event_kind=rec.event_kind,
+                title=rec.title,
+                body=rec.body,
+                payload=rec.payload,
+            )
+        except Exception:
+            logger.exception(
+                "failed to append work event (kind=%s) to run %s",
+                rec.event_kind,
+                run_id,
+            )
+
+
+def _str_or_none(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
 def _event_from_row(row: ContextEventRow) -> ContextEvent:

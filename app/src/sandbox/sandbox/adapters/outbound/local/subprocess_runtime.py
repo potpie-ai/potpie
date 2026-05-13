@@ -32,7 +32,13 @@ class LocalSubprocessRuntimeProvider:
     kind = "local_subprocess"
     capabilities = RuntimeCapabilities()
 
-    def __init__(self, *, allow_write: bool = False) -> None:
+    def __init__(self, *, allow_write: bool = True) -> None:
+        # Local subprocess is explicitly *not* a security boundary (see
+        # the module docstring). The default matches that posture: if a
+        # caller has wired this provider, they have already accepted no
+        # isolation, and gating writes off would silently break the
+        # edit/commit/push flow. Tests that want read-only behavior pass
+        # ``allow_write=False`` explicitly.
         self.allow_write = allow_write
         self._runtimes: dict[str, Runtime] = {}
 

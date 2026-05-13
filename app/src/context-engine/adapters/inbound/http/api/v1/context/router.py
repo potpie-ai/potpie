@@ -678,6 +678,63 @@ def create_context_router(
         out["reconciliation_runs"] = run_payload
         return out
 
+    @router.post(
+        "/events/{event_id}/retry",
+        summary="Re-enqueue an ingestion event",
+        description=(
+            "Resets the event back to ``queued`` and coalesces it into the pot's "
+            "open batch so the reconciliation worker picks it up again. Works for "
+            "events in any lifecycle (error, done, processing, queued); "
+            "``upsert_open_batch_for_pot`` opens a fresh pending batch when one "
+            "is already in-flight, so a retry never races a running batch."
+        ),
+    )
+    def retry_context_event(
+        event_id: str,
+        actor: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+        db: Session = Depends(get_db),
+    ):
+        events = container.ingestion_event_store(db)
+        ev = events.get_event(event_id)
+        if ev is None:
+            raise HTTPException(status_code=404, detail="Unknown event_id")
+        _enforce(
+            container,
+            actor=actor,
+            resource=RESOURCE_POT,
+            action=ACTION_POT_SUBMIT_EVENT,
+            pot_id=ev.pot_id,
+        )
+
+        reco = container.reconciliation_ledger(db)
+        batches = container.batch_repository(db)
+        jobs = container.jobs
+
+        reco.mark_event_for_retry(event_id)
+        batch_id = batches.upsert_open_batch_for_pot(ev.pot_id, event_id)
+        reco.mark_event_queued(event_id)
+        if jobs is not None:
+            try:
+                jobs.enqueue_batch(batch_id)
+            except Exception:
+                _logger.exception(
+                    "retry_context_event: enqueue_batch failed for batch %s "
+                    "(event %s); batch is durable, next event will re-enqueue",
+                    batch_id,
+                    event_id,
+                )
+
+        return JSONResponse(
+            status_code=202,
+            content={
+                "status": "queued",
+                "event_id": event_id,
+                "batch_id": batch_id,
+                "previous_lifecycle_status": ev.status,
+            },
+        )
+
     @router.get(
         "/pots/{pot_id}/events",
         summary="List ingestion events for a pot (latest first)",

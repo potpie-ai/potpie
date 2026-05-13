@@ -44,8 +44,13 @@ class PydanticAIAnswerSynthesizer:
         timeout_s: float | None = None,
         telemetry: TelemetryPort | None = None,
     ) -> None:
+        # Use the Responses endpoint for gpt-5 family models. The
+        # synthesis path doesn't use function tools today, so it works on
+        # /v1/chat/completions too — but staying on /v1/responses keeps the
+        # reconciliation and synthesis paths consistent and tolerates future
+        # tool-augmented synthesis.
         self._model = model or os.getenv(
-            "CONTEXT_ENGINE_ANSWER_SYNTHESIS_MODEL", "openai:gpt-5.4-mini"
+            "CONTEXT_ENGINE_ANSWER_SYNTHESIS_MODEL", "openai-responses:gpt-5.4-mini"
         )
         self._timeout_s = timeout_s if timeout_s is not None else _DEFAULT_TIMEOUT_S
         self._telemetry: TelemetryPort = telemetry or NoOpTelemetry()

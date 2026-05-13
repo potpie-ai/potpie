@@ -11,7 +11,7 @@ from collections.abc import Coroutine
 from typing import Any, Callable, Optional, TypeVar
 
 from adapters.outbound.graphiti.canonical_writer import (
-    apply_invalidations_async,
+    apply_invalidations_async as _writer_apply_invalidations_async,
     delete_edges_async,
     upsert_edges_async,
     upsert_entities_async,
@@ -79,11 +79,15 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
 
         client = getattr(self._thread_local, "graphiti", None)
         client_loop = getattr(self._thread_local, "graphiti_loop", None)
-        if client is not None and client_loop is current_loop:
-            return client
-        if client is not None and client_loop is not current_loop:
-            # Graphiti/Neo4j async internals are loop-bound; do not reuse
-            # a client that was created under another event loop.
+        # A cached client whose binding loop has closed (or whose loop value is
+        # the sync-context sentinel ``None``) cannot be safely reused — its
+        # Neo4j driver's connections are still bound to that loop. We treat
+        # both "wrong loop" and "loop is closed/None" as cache misses.
+        if client is not None and client_loop is current_loop and current_loop is not None:
+            if not getattr(current_loop, "is_closed", lambda: False)():
+                return client
+        # Cache miss or stale binding: drop and rebuild below.
+        if client is not None:
             self._thread_local.graphiti = None
             self._thread_local.graphiti_loop = None
         try:
@@ -388,9 +392,88 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
             return 0
 
         async def _run() -> int:
-            return await apply_invalidations_async(g.driver, pot_id, items, provenance)
+            return await _writer_apply_invalidations_async(g.driver, pot_id, items, provenance)
 
         return self._sync_run(_run)
+
+    # ------------------------------------------------------------------
+    # Async-native variants. Use these from inside an event loop (agent
+    # tools, FastAPI handlers). They avoid the sync→async→sync bridge
+    # that can cross-bind Neo4j connections to a dead loop.
+    # ------------------------------------------------------------------
+    async def write_episode_drafts_async(
+        self,
+        pot_id: str,
+        drafts: list[EpisodeDraft],
+        provenance: ProvenanceRef | None = None,
+    ) -> list[Optional[str]]:
+        if not self.enabled or not drafts:
+            return [None] * len(drafts)
+        out: list[Optional[str]] = []
+        for d in drafts:
+            out.append(
+                await self.add_episode_async(
+                    pot_id=pot_id,
+                    name=d.name,
+                    episode_body=d.episode_body,
+                    source_description=d.source_description,
+                    reference_time=d.reference_time,
+                    provenance=provenance,
+                )
+            )
+        return out
+
+    async def apply_entity_upserts_async(
+        self,
+        pot_id: str,
+        items: list[EntityUpsert],
+        provenance: ProvenanceRef,
+    ) -> int:
+        if not self.enabled or not items:
+            return 0
+        g = self._get_graphiti()
+        if g is None:
+            return 0
+        return await upsert_entities_async(g.driver, pot_id, items, provenance)
+
+    async def apply_edge_upserts_async(
+        self,
+        pot_id: str,
+        items: list[EdgeUpsert],
+        provenance: ProvenanceRef,
+    ) -> int:
+        if not self.enabled or not items:
+            return 0
+        g = self._get_graphiti()
+        if g is None:
+            return 0
+        return await upsert_edges_async(g.driver, pot_id, items, provenance)
+
+    async def apply_edge_deletes_async(
+        self,
+        pot_id: str,
+        items: list[EdgeDelete],
+        provenance: ProvenanceRef,
+    ) -> int:
+        if not self.enabled or not items:
+            return 0
+        g = self._get_graphiti()
+        if g is None:
+            return 0
+        return await delete_edges_async(g.driver, pot_id, items, provenance)
+
+    async def apply_invalidations_async(
+        self,
+        pot_id: str,
+        items: list[InvalidationOp],
+        provenance: ProvenanceRef,
+    ) -> int:
+        if not self.enabled or not items:
+            return 0
+        g = self._get_graphiti()
+        if g is None:
+            return 0
+        return await _writer_apply_invalidations_async(g.driver, pot_id, items, provenance)
 
     def _build_search_filters(
         self,

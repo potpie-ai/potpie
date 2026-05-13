@@ -89,7 +89,7 @@ def build_github_pr_merged_plan(
         ),
         EntityUpsert(
             entity_key=pr_key,
-            labels=("Entity", "Change", "PullRequest"),
+            labels=("Entity", "PullRequest", "Activity"),
             properties={
                 "name": title,
                 "title": title,

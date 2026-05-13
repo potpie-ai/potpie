@@ -388,16 +388,154 @@ def _build_connector_registry(db: Session, source_for_repo) -> SourceConnectorRe
     return registry
 
 
+from typing import Callable, Optional, Tuple
+
+PotTokenResolver = Callable[
+    [Optional[str], Optional[str]],
+    Tuple[Optional[str], Optional[str]],
+]
+"""``(user_id, repo_name) -> (token, kind)`` — see :func:`_default_pot_token_resolver`."""
+
+
+def _default_pot_token_resolver(user_id: str | None, repo_name: str | None):
+    """Default chain: contextvar → GitHub App → user OAuth → env.
+
+    Returns ``(token, kind)`` so callers / telemetry can tell which branch
+    produced the token. Wraps :func:`_resolve_auth` so the existing chain
+    (which already prefers App-installation tokens, surviving the user
+    leaving the pot) stays the source of truth.
+    """
+    from app.modules.intelligence.tools.sandbox.client import _resolve_auth
+
+    resolved = _resolve_auth(user_id, repo_name)
+    return resolved.token, resolved.kind
+
+
+_POT_TOKEN_RESOLVER = _default_pot_token_resolver
+
+
+def set_pot_token_resolver(resolver) -> None:
+    """Override the per-attachment token resolver process-wide.
+
+    Lets alternate hosts (tests, on-prem deployments without GitHub-App
+    install) plug in their own resolution. Pass ``None`` to restore the
+    default chain.
+    """
+    global _POT_TOKEN_RESOLVER
+    _POT_TOKEN_RESOLVER = resolver or _default_pot_token_resolver
+
+
+def _build_pot_sandbox_resolver(db: Session):
+    """Resolve ``pot_id -> PotSandboxConfig`` (every repo attached to the pot).
+
+    Closes over the request-scoped DB session. Returns ``None`` when the pot
+    has no attached repos — ``build_sandbox_tools`` then silently skips
+    sandbox tools for that batch.
+
+    Tenant choice: the first attacher (oldest ``created_at`` row) owns the
+    pot's sandbox container, so per-pot Daytona/Docker state collapses into
+    one ``(user_id, pot_id)`` key regardless of who attached subsequent
+    repos. Per-repo clone tokens flow through the pluggable
+    :func:`set_pot_token_resolver` so GitHub-App installation tokens win
+    over user OAuth (and the choice is observable in telemetry).
+    """
+    from adapters.outbound.agent_tools.sandbox import (
+        PotSandboxConfig,
+        RepoAttachment,
+    )
+
+    def _resolver(pot_id: str):
+        rows = (
+            db.query(ContextGraphPotRepository)
+            .filter(ContextGraphPotRepository.pot_id == pot_id)
+            .order_by(ContextGraphPotRepository.created_at.asc())
+            .all()
+        )
+        if not rows:
+            return None
+        first = rows[0]
+        repos: list[RepoAttachment] = []
+        for r in rows:
+            full = f"{r.owner}/{r.repo}"
+            try:
+                token, kind = _POT_TOKEN_RESOLVER(r.added_by_user_id, full)
+            except Exception:
+                token, kind = None, "error"
+            repos.append(
+                RepoAttachment(
+                    owner=r.owner,
+                    repo=r.repo,
+                    default_branch=r.default_branch or "main",
+                    repo_url=r.remote_url,
+                    auth_token=token,
+                    auth_kind=kind,
+                )
+            )
+        return PotSandboxConfig(
+            user_id=first.added_by_user_id,
+            pot_id=pot_id,
+            provider_host=first.provider_host,
+            repos=repos,
+        )
+
+    return _resolver
+
+
+async def _sandbox_client_factory():
+    """Async wrapper that hands the agent the process-wide ``SandboxClient``."""
+    from app.modules.intelligence.tools.sandbox.client import get_sandbox_client
+
+    return get_sandbox_client()
+
+
+def _sandbox_tools_disabled() -> bool:
+    return (os.getenv("CONTEXT_ENGINE_DISABLE_SANDBOX_TOOLS") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _attach_sandbox_tools(agent, db: Session) -> None:
+    """Best-effort: wire the sandbox tool builder onto the reconciliation agent.
+
+    Soft-fails if the context-engine package isn't importable or the host has
+    explicitly disabled sandbox tools — the agent still runs with its graph and
+    GitHub tools intact.
+    """
+    if agent is None or _sandbox_tools_disabled():
+        return
+    try:
+        from adapters.outbound.agent_tools.sandbox import build_sandbox_tools
+    except Exception:
+        return
+    attach = getattr(agent, "add_extra_tools", None)
+    if attach is None:
+        return
+    resolver = _build_pot_sandbox_resolver(db)
+    attach(
+        [
+            build_sandbox_tools(
+                client_factory=_sandbox_client_factory,
+                pot_resolver=resolver,
+            )
+        ]
+    )
+
+
 def build_container_for_session(db: Session) -> ContextEngineContainer:
     def source_for_repo(repo_name: str):
         provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
         return CodeProviderSourceControl(provider)
 
+    agent = try_pydantic_deep_reconciliation_agent()
+    _attach_sandbox_tools(agent, db)
     container = build_container(
         settings=PotpieContextEngineSettings(),
         pots=SqlalchemyPotResolution(db),
         connectors=_build_connector_registry(db, source_for_repo),
-        reconciliation_agent=try_pydantic_deep_reconciliation_agent(),
+        reconciliation_agent=agent,
         jobs=get_context_graph_job_queue(),
     )
     container.pot_source_listing = SqlalchemyPotSourceListing(db)
@@ -409,11 +547,13 @@ def build_container_for_user_session(db: Session, user_id: str) -> ContextEngine
         provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
         return CodeProviderSourceControl(provider)
 
+    agent = try_pydantic_deep_reconciliation_agent()
+    _attach_sandbox_tools(agent, db)
     container = build_container(
         settings=PotpieContextEngineSettings(),
         pots=UserScopedContextGraphPotResolution(db, user_id),
         connectors=_build_connector_registry(db, source_for_repo),
-        reconciliation_agent=try_pydantic_deep_reconciliation_agent(),
+        reconciliation_agent=agent,
         jobs=get_context_graph_job_queue(),
     )
     container.pot_source_listing = SqlalchemyPotSourceListing(db)

@@ -107,78 +107,6 @@ def _serialize_invitation(row: ContextGraphPotInvitation) -> dict[str, Any]:
     }
 
 
-def _enqueue_repo_bootstrap_event(
-    db: Session,
-    *,
-    pot_id: str,
-    repo_row: ContextGraphPotRepository,
-    submitted_by_uid: str,
-) -> str | None:
-    """Submit a ``repository.added`` event so the agent can seed the graph.
-
-    Best-effort: if the context-engine isn't enabled, the agent isn't wired,
-    or the submission fails for any reason, we log and return ``None`` so the
-    repo-attach itself still succeeds. The repo is already committed.
-    """
-    try:
-        from app.modules.context_graph.wiring import build_container_for_user_session
-        from domain.ingestion_event_models import IngestionSubmissionRequest
-        from domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
-    except Exception:
-        logger.exception(
-            "repo_attach_bootstrap: import failed; skipping bootstrap event"
-        )
-        return None
-
-    try:
-        container = build_container_for_user_session(db, submitted_by_uid)
-    except Exception:
-        logger.exception(
-            "repo_attach_bootstrap: container build failed for pot=%s", pot_id
-        )
-        return None
-
-    repo_full = f"{repo_row.owner}/{repo_row.repo}"
-    request = IngestionSubmissionRequest(
-        pot_id=pot_id,
-        ingestion_kind=INGESTION_KIND_AGENT_RECONCILIATION,
-        source_channel="repo_attach",
-        source_system=repo_row.provider or "github",
-        event_type="repository",
-        action="added",
-        source_id=f"repo_added:{repo_full}",
-        provider=repo_row.provider,
-        provider_host=repo_row.provider_host,
-        repo_name=repo_full,
-        payload={
-            "owner": repo_row.owner,
-            "repo": repo_row.repo,
-            "default_branch": repo_row.default_branch,
-            "remote_url": repo_row.remote_url,
-            "external_repo_id": repo_row.external_repo_id,
-            "submitted_by_user_id": submitted_by_uid,
-        },
-    )
-    try:
-        receipt = container.ingestion_submission(db).submit(
-            request, sync=False, wait=False
-        )
-    except Exception:
-        logger.exception(
-            "repo_attach_bootstrap: submit failed for pot=%s repo=%s",
-            pot_id,
-            repo_full,
-        )
-        return None
-    logger.info(
-        "repo_attach_bootstrap: enqueued event=%s pot=%s repo=%s",
-        receipt.event_id,
-        pot_id,
-        repo_full,
-    )
-    return receipt.event_id
-
-
 def _context_graph_pot_row_or_404(db: Session, pot_id: str) -> ContextGraphPot:
     row = db.query(ContextGraphPot).filter(ContextGraphPot.id == pot_id).first()
     if row is None:
@@ -476,12 +404,21 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
             if _pot_slug_exists(db, s, exclude_pot_id=pot_id):
                 raise HTTPException(status_code=409, detail="slug already in use")
             row.slug = s
+        archive_transition = False
         if body.archived is not None:
             from datetime import datetime, timezone
 
+            was_archived = row.archived_at is not None
             row.archived_at = datetime.now(timezone.utc) if body.archived else None
+            archive_transition = bool(body.archived) and not was_archived
         db.commit()
         db.refresh(row)
+        if archive_transition:
+            from app.modules.context_graph.archive_pot_cleanup import (
+                dispatch_pot_sandbox_cleanup,
+            )
+
+            dispatch_pot_sandbox_cleanup(db, pot_id=pot_id)
         return _pot_summary(row, role=role)
 
     @r.get("/pots/{pot_id}/members")
@@ -655,57 +592,42 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
         db: Session = Depends(get_db),
         user: dict[str, Any] = Depends(auth_dep),
     ) -> dict[str, Any]:
+        from app.modules.context_graph.attach_repo_to_pot import (
+            attach_repo_to_pot,
+            UnknownPotError,
+        )
+
         uid = _uid(user)
         require_manage_repos(db, uid, pot_id)
-        _context_graph_pot_row_or_404(db, pot_id)
-        owner = body.owner.strip()
-        repo = body.repo.strip()
-        if not owner or not repo:
+        if not body.owner.strip() or not body.repo.strip():
             raise HTTPException(status_code=400, detail="owner and repo required")
-        exists = (
-            db.query(ContextGraphPotRepository)
-            .filter(
-                ContextGraphPotRepository.pot_id == pot_id,
-                ContextGraphPotRepository.provider == body.provider.strip(),
-                ContextGraphPotRepository.provider_host == body.provider_host.strip(),
-                ContextGraphPotRepository.owner == owner,
-                ContextGraphPotRepository.repo == repo,
+        try:
+            result = attach_repo_to_pot(
+                db,
+                pot_id=pot_id,
+                provider=body.provider,
+                provider_host=body.provider_host,
+                owner=body.owner,
+                repo=body.repo,
+                external_repo_id=body.external_repo_id,
+                remote_url=body.remote_url,
+                default_branch=body.default_branch,
+                submitted_by_user_id=uid,
             )
-            .first()
-        )
-        if exists is not None:
+        except UnknownPotError:
+            raise HTTPException(status_code=404, detail="Unknown pot_id.")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        if result.already_attached:
             raise HTTPException(status_code=409, detail="Repository already attached")
-        rid = str(uuid.uuid4())
-        row = ContextGraphPotRepository(
-            id=rid,
-            pot_id=pot_id,
-            provider=body.provider.strip(),
-            provider_host=body.provider_host.strip(),
-            owner=owner,
-            repo=repo,
-            external_repo_id=(body.external_repo_id or "").strip() or None,
-            remote_url=(body.remote_url or "").strip() or None,
-            default_branch=(body.default_branch or "").strip() or None,
-            added_by_user_id=uid,
-        )
-        db.add(row)
-        db.flush()
-        pot_row = db.query(ContextGraphPot).filter(ContextGraphPot.id == pot_id).first()
-        if pot_row is not None and not (pot_row.primary_repo_name or "").strip():
-            pot_row.primary_repo_name = f"{owner}/{repo}"
-        source = mirror_repository_into_sources(db, row, added_by_user_id=uid)
-        db.commit()
-        db.refresh(row)
-        bootstrap_event_id = _enqueue_repo_bootstrap_event(
-            db, pot_id=pot_id, repo_row=row, submitted_by_uid=uid
-        )
+        row = result.repository
         return {
             "id": row.id,
             "repo_name": f"{row.owner}/{row.repo}",
             "provider": row.provider,
             "provider_host": row.provider_host,
-            "source_id": source.id,
-            "bootstrap_event_id": bootstrap_event_id,
+            "source_id": result.source_id,
+            "bootstrap_event_id": result.bootstrap_event_id,
         }
 
     @r.delete("/pots/{pot_id}/repositories/{repository_id}")
@@ -715,25 +637,25 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
         db: Session = Depends(get_db),
         user: dict[str, Any] = Depends(auth_dep),
     ) -> dict[str, Any]:
+        from app.modules.context_graph.detach_repo_from_pot import (
+            UnknownPotError as _DetachUnknownPot,
+            UnknownRepositoryError,
+            detach_repo_from_pot,
+        )
+
         uid = _uid(user)
         require_manage_repos(db, uid, pot_id)
-        _context_graph_pot_row_or_404(db, pot_id)
-        row = (
-            db.query(ContextGraphPotRepository)
-            .filter(
-                ContextGraphPotRepository.pot_id == pot_id,
-                ContextGraphPotRepository.id == repository_id,
+        try:
+            result = detach_repo_from_pot(
+                db,
+                pot_id=pot_id,
+                repository_id=repository_id,
             )
-            .first()
-        )
-        if row is None:
+        except _DetachUnknownPot:
+            raise HTTPException(status_code=404, detail="Unknown pot_id.")
+        except UnknownRepositoryError:
             raise HTTPException(status_code=404, detail="Repository not found")
-        unmirror_repository_from_sources(db, row)
-        db.delete(row)
-        db.flush()
-        _recompute_pot_primary_repo_name(db, pot_id)
-        db.commit()
-        return {"ok": True, "removed_id": repository_id}
+        return {"ok": True, "removed_id": result.repository_id}
 
     @r.get("/pots/{pot_id}/integrations")
     def list_pot_integrations(
@@ -1018,71 +940,43 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
         both the repository row (what context-engine queries for ingestion) and
         the source row (what the UI lists on the Sources tab).
         """
+        from app.modules.context_graph.attach_repo_to_pot import (
+            attach_repo_to_pot,
+            UnknownPotError,
+        )
+
         uid = _uid(user)
         require_manage_repos(db, uid, pot_id)
-        _context_graph_pot_row_or_404(db, pot_id)
-        owner = body.owner.strip()
-        repo = body.repo.strip()
-        if not owner or not repo:
+        if not body.owner.strip() or not body.repo.strip():
             raise HTTPException(status_code=400, detail="owner and repo required")
-        provider = "github"
         provider_host = body.provider_host.strip() or "github.com"
-
-        existing_repo = (
-            db.query(ContextGraphPotRepository)
-            .filter(
-                ContextGraphPotRepository.pot_id == pot_id,
-                ContextGraphPotRepository.provider == provider,
-                ContextGraphPotRepository.provider_host == provider_host,
-                ContextGraphPotRepository.owner == owner,
-                ContextGraphPotRepository.repo == repo,
+        try:
+            result = attach_repo_to_pot(
+                db,
+                pot_id=pot_id,
+                provider="github",
+                provider_host=provider_host,
+                owner=body.owner,
+                repo=body.repo,
+                external_repo_id=body.external_repo_id,
+                remote_url=body.remote_url,
+                default_branch=body.default_branch,
+                submitted_by_user_id=uid,
             )
-            .first()
-        )
-        if existing_repo is not None:
-            source = mirror_repository_into_sources(
-                db, existing_repo, added_by_user_id=uid
-            )
-            db.commit()
-            return {
-                "id": source.id,
-                "repository_id": existing_repo.id,
-                "source": serialize_source(source),
-                "already_attached": True,
-            }
+        except UnknownPotError:
+            raise HTTPException(status_code=404, detail="Unknown pot_id.")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
-        repository = ContextGraphPotRepository(
-            id=str(uuid.uuid4()),
-            pot_id=pot_id,
-            provider=provider,
-            provider_host=provider_host,
-            owner=owner,
-            repo=repo,
-            external_repo_id=(body.external_repo_id or "").strip() or None,
-            remote_url=(body.remote_url or "").strip() or None,
-            default_branch=(body.default_branch or "").strip() or None,
-            added_by_user_id=uid,
-        )
-        db.add(repository)
-        db.flush()
-
-        pot_row = db.query(ContextGraphPot).filter(ContextGraphPot.id == pot_id).first()
-        if pot_row is not None and not (pot_row.primary_repo_name or "").strip():
-            pot_row.primary_repo_name = f"{owner}/{repo}"
-
-        source = mirror_repository_into_sources(db, repository, added_by_user_id=uid)
-        db.commit()
-        db.refresh(source)
-        bootstrap_event_id = _enqueue_repo_bootstrap_event(
-            db, pot_id=pot_id, repo_row=repository, submitted_by_uid=uid
-        )
-        return {
-            "id": source.id,
-            "repository_id": repository.id,
-            "source": serialize_source(source),
-            "already_attached": False,
-            "bootstrap_event_id": bootstrap_event_id,
+        response: dict[str, Any] = {
+            "id": result.source_id,
+            "repository_id": result.repository_id,
+            "source": serialize_source(result.source),
+            "already_attached": result.already_attached,
         }
+        if not result.already_attached:
+            response["bootstrap_event_id"] = result.bootstrap_event_id
+        return response
 
     @r.get("/pots/{pot_id}/sources/linear/teams")
     def list_pot_linear_teams(

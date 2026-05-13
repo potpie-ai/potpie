@@ -59,6 +59,15 @@ class BatchAgentOutcome:
     completed_event_ids: list[str] = field(default_factory=list)
     tool_call_count: int = 0
     error: str | None = None
+    prompt: str | None = None
+    """The user prompt passed to the agent (one record per batch run)."""
+    agent_messages_json: list[dict[str, Any]] | None = None
+    """Serialized ``result.all_messages()`` from pydantic-ai; the agent trace."""
+    final_response: str | None = None
+    """Last text response emitted by the agent (the wrap-up message), if any."""
+    agent_name: str | None = None
+    agent_version: str | None = None
+    toolset_version: str | None = None
 
 
 @dataclass(slots=True, frozen=True)

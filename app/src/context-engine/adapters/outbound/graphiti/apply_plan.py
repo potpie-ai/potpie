@@ -105,3 +105,69 @@ def apply_reconciliation_plan(
         error=None,
         downgrades=list(plan.ontology_downgrades),
     )
+
+
+async def apply_reconciliation_plan_async(
+    episodic: EpisodicGraphPort,
+    plan: ReconciliationPlan,
+    *,
+    expected_pot_id: str,
+    provenance_context: ProvenanceContext | None = None,
+) -> ReconciliationResult:
+    """Async-native plan apply.
+
+    Use this from inside an event loop (agent tools, FastAPI handlers).
+    It avoids the sync→async→sync bridge in ``GraphitiEpisodicAdapter._sync_run``
+    that was crashing with ``Future attached to a different loop`` when called
+    from a worker thread whose Graphiti client was bound to an earlier loop.
+    """
+    validate_reconciliation_plan(plan, expected_pot_id)
+
+    graph_updated_at = datetime.now(timezone.utc)
+
+    prov = _build_provenance(
+        plan,
+        pot_id=expected_pot_id,
+        episode_uuid=None,
+        context=provenance_context,
+        graph_updated_at=graph_updated_at,
+    )
+    episode_uuids = await episodic.write_episode_drafts_async(
+        expected_pot_id, plan.episodes, prov
+    )
+    primary_uuid = next((u for u in episode_uuids if u), None) or ""
+
+    summary = MutationSummary(
+        episodes_written=len([u for u in episode_uuids if u]),
+    )
+
+    try:
+        prov2 = _build_provenance(
+            plan,
+            pot_id=expected_pot_id,
+            episode_uuid=primary_uuid or None,
+            context=provenance_context,
+            graph_updated_at=graph_updated_at,
+        )
+        summary.entity_upserts_applied = await episodic.apply_entity_upserts_async(
+            expected_pot_id, plan.entity_upserts, prov2
+        )
+        summary.edge_upserts_applied = await episodic.apply_edge_upserts_async(
+            expected_pot_id, plan.edge_upserts, prov2
+        )
+        summary.edge_deletes_applied = await episodic.apply_edge_deletes_async(
+            expected_pot_id, plan.edge_deletes, prov2
+        )
+        summary.invalidations_applied = await episodic.apply_invalidations_async(
+            expected_pot_id, plan.invalidations, prov2
+        )
+    except Exception as exc:
+        raise ReconciliationApplyError(str(exc)) from exc
+
+    return ReconciliationResult(
+        ok=True,
+        episode_uuids=episode_uuids,
+        mutation_summary=summary,
+        error=None,
+        downgrades=list(plan.ontology_downgrades),
+    )

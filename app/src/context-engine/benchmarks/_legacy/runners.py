@@ -244,7 +244,14 @@ def make_runner(
     repo_name: str | None = None,
 ) -> BenchmarkRunner:
     pid = pot_id or dataset.pot_id
-    repo = repo_name or dataset.repo_name
+    # ``dataset.repo_name`` is a hint, not a constraint — the manifest's repo
+    # may not match the actual pot's attached repos when the benchmark runs
+    # against a developer's local pot. Auto-injecting it as a scope filter
+    # then causes the structural reader to filter out every fact (the pot has
+    # ``potpie-ai/potpie``, the manifest says ``potpie/api``). Only use the
+    # manifest repo when the caller explicitly opts in via ``--repo-name`` or
+    # when running the in-process / mock modes (where the fixtures are scoped
+    # to the manifest repo by construction).
     if mode == "api":
         from adapters.inbound.cli.credentials_store import get_active_pot_id
         from adapters.inbound.cli.potpie_api_config import resolve_potpie_api_base_url, resolve_potpie_api_key
@@ -256,8 +263,9 @@ def make_runner(
             base_url=resolve_potpie_api_base_url(),
             api_key=api_key,
             pot_id=pot_id or get_active_pot_id() or dataset.pot_id,
-            repo_name=repo,
+            repo_name=repo_name,
         )
+    repo = repo_name or dataset.repo_name
     if mode == "http-e2e":
         return HttpE2ERunner(pot_id=pid, repo_name=repo)
     if mode == "mock":
@@ -269,12 +277,21 @@ def _episode_body(pot_id: str, episode: dict[str, Any]) -> dict[str, Any]:
     reference_time = episode.get("reference_time") or datetime.now(timezone.utc).isoformat()
     if isinstance(reference_time, datetime):
         reference_time = reference_time.isoformat()
+    # The ingestion endpoint requires source_id. Synthesize from the
+    # fixture's idempotency_key (stable across runs) so benchmark seeds are
+    # idempotent. Fixtures may override by carrying source_id directly.
+    source_id = (
+        episode.get("source_id")
+        or episode.get("idempotency_key")
+        or f"benchmark:episode:{abs(hash(episode.get('name') or ''))}"
+    )
     return {
         "pot_id": pot_id,
         "name": episode["name"],
         "episode_body": episode.get("episode_body") or episode.get("body") or "",
         "source_description": episode.get("source_description") or episode.get("source") or "benchmark",
         "reference_time": reference_time,
+        "source_id": source_id,
         "idempotency_key": episode.get("idempotency_key"),
     }
 

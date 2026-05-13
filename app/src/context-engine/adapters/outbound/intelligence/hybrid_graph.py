@@ -28,36 +28,31 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_NODE_LABELS = ["PullRequest", "Decision", "Issue", "Feature"]
 
-_PROJECT_MAP_FAMILIES_BY_LABEL = {
-    "Pot": "purpose",
-    "Repository": "repo_map",
-    "System": "purpose",
-    "Service": "service_map",
-    "Component": "service_map",
-    "Capability": "feature_map",
-    "Feature": "feature_map",
-    "Functionality": "feature_map",
-    "Requirement": "feature_map",
-    "RoadmapItem": "feature_map",
-    "Interface": "service_map",
-    "DataStore": "service_map",
-    "Integration": "service_map",
-    "Dependency": "service_map",
-    "Document": "docs",
-    "Issue": "tickets",
-    "Deployment": "deployments",
-    "DeploymentTarget": "deployments",
-    "DeploymentStrategy": "deployments",
-    "Environment": "deployments",
-    "Runbook": "runbooks",
-    "Script": "scripts",
-    "ConfigVariable": "config",
-    "Preference": "preferences",
-    "AgentInstruction": "agent_instructions",
-    "LocalWorkflow": "local_workflows",
-    "Person": "owners",
-    "Team": "owners",
-}
+# Label → family mappings are derived from the ontology spec so renaming or
+# adding an entity only requires a single edit in :mod:`domain.ontology`.
+from domain.ontology import (
+    ENTITY_DEBUGGING_FAMILY,
+    ENTITY_PROJECT_MAP_FAMILY,
+    INCLUDE_KEY_LABELS,
+)
+
+_PROJECT_MAP_FAMILIES_BY_LABEL = ENTITY_PROJECT_MAP_FAMILY
+_DEBUGGING_MEMORY_FAMILIES_BY_LABEL = ENTITY_DEBUGGING_FAMILY
+
+
+# Reverse index: canonical label → every include key that names it.
+# Derived from ``INCLUDE_KEY_LABELS`` so adding a new include key to an
+# entity spec (or aggregating it into ``operations``) wires itself into the
+# project-map filter automatically.
+def _build_include_keys_by_label() -> dict[str, frozenset[str]]:
+    out: dict[str, set[str]] = {}
+    for key, labels in INCLUDE_KEY_LABELS.items():
+        for label in labels:
+            out.setdefault(label, set()).add(key)
+    return {label: frozenset(keys) for label, keys in out.items()}
+
+
+_INCLUDE_KEYS_BY_LABEL: dict[str, frozenset[str]] = _build_include_keys_by_label()
 
 _OPERATIONS_FAMILIES = {
     "deployments",
@@ -65,15 +60,6 @@ _OPERATIONS_FAMILIES = {
     "scripts",
     "config",
     "local_workflows",
-}
-
-_DEBUGGING_MEMORY_FAMILIES_BY_LABEL = {
-    "Fix": "prior_fixes",
-    "BugPattern": "prior_fixes",
-    "Investigation": "prior_fixes",
-    "DiagnosticSignal": "diagnostic_signals",
-    "Incident": "incidents",
-    "Alert": "alerts",
 }
 
 
@@ -491,9 +477,21 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
         include: list[str],
         limit: int = 12,
     ) -> list[ProjectContextRecord]:
-        query_include = set(include)
+        # Keep caller order while expanding aggregates like ``operations`` —
+        # the structural reader uses the order to rank priority labels.
+        query_include_ordered: list[str] = []
+        query_include: set[str] = set()
+        for inc in include:
+            if inc in query_include:
+                continue
+            query_include_ordered.append(inc)
+            query_include.add(inc)
         if "operations" in query_include:
-            query_include.update(_OPERATIONS_FAMILIES)
+            for op_fam in _OPERATIONS_FAMILIES:
+                if op_fam in query_include:
+                    continue
+                query_include_ordered.append(op_fam)
+                query_include.add(op_fam)
         structural_scope = {
             "repo_name": scope.repo_name,
             "services": list(scope.services),
@@ -510,7 +508,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
                 pr_number=scope.pr_number,
                 limit=max(1, min(limit, 100)),
                 scope=structural_scope,
-                include=sorted(query_include),
+                include=query_include_ordered,
             )
 
         try:
@@ -526,8 +524,16 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
             item = _row_to_project_context_record(row)
             if item is None:
                 continue
-            if query_include and item.family not in query_include:
-                continue
+            if query_include:
+                # Accept the record if any of the entity's include keys (the
+                # primary family + every spec-declared include alias) overlaps
+                # with the caller's include set. Without this, entities whose
+                # ``project_map_family`` differs from the include key the
+                # caller used (e.g. Migration's family is ``changes`` but the
+                # caller said ``migrations``) were silently filtered out.
+                entity_keys = _INCLUDE_KEYS_BY_LABEL.get(item.kind, frozenset())
+                if not (entity_keys & query_include) and item.family not in query_include:
+                    continue
             out.append(item)
         return out[:limit]
 
