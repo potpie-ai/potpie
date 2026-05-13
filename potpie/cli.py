@@ -140,17 +140,20 @@ def start(
 def stop():
     """Stop local Potpie services started by `potpie start`."""
     tracked_process = _read_tracked_process()
-    if tracked_process and _matches_tracked_process(tracked_process):
+    if tracked_process is None:
+        typer.echo("No tracked Potpie process is running.")
+    elif not _matches_tracked_process(tracked_process):
+        typer.echo("No tracked Potpie process is running.")
+    else:
         try:
             os.killpg(tracked_process.pid, signal.SIGTERM)
             typer.echo(f"Stopped Potpie process group for PID {tracked_process.pid}.")
         except ProcessLookupError:
             typer.echo("No tracked Potpie process is running.")
-    else:
-        typer.echo("No tracked Potpie process is running.")
+        except PermissionError:
+            typer.echo(f"Permission denied while stopping PID {tracked_process.pid}.")
 
-    if PID_FILE.exists():
-        PID_FILE.unlink()
+    PID_FILE.unlink(missing_ok=True)
 
     subprocess.run(["make", "infra-down"], check=False)
 
@@ -270,7 +273,7 @@ def chat(
             while True:
                 try:
                     query = typer.prompt("you")
-                except (EOFError, KeyboardInterrupt):
+                except typer.Abort:
                     typer.echo()
                     break
 
