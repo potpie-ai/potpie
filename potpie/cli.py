@@ -99,7 +99,7 @@ def _matches_tracked_process(tracked_process: TrackedProcess) -> bool:
         return False
 
     expected = " ".join(tracked_process.command)
-    return expected in command
+    return command == expected or command.startswith(expected + " ")
 
 
 @app.command()
