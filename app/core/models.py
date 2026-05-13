@@ -23,4 +23,5 @@ from app.modules.auth.auth_provider_model import (  # noqa
     OrganizationSSOConfig,
     AuthAuditLog,
 )
+from app.modules.feedback.feedback_model import FeedbackVote  # noqa
 # WorkspaceTunnel is stored in Redis (see tunnel_service.get/set_workspace_tunnel_record)

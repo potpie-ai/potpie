@@ -24,6 +24,7 @@ from app.modules.code_provider.github.github_router import router as github_rout
 from app.modules.conversations.conversations_router import (
     router as conversations_router,
 )
+from app.modules.feedback.feedback_router import router as feedback_router
 from app.modules.integrations.integrations_router import router as integrations_router
 from app.modules.intelligence.agents.agents_router import router as agent_router
 from app.modules.intelligence.prompts.prompt_router import router as prompt_router
@@ -188,6 +189,7 @@ class MainApp:
         self.app.include_router(
             knowledge_graph_router, prefix="/api/v1", tags=["Knowledge Graph"]
         )
+        self.app.include_router(feedback_router, prefix="/api/v1", tags=["Feedback"])
 
     def add_health_check(self):
         @self.app.get("/health", tags=["Health"])
