@@ -111,9 +111,9 @@ def start(
     ),
 ):
     """Start local Potpie services in the background."""
-    existing_pid = _read_pid()
-    if existing_pid and _is_running(existing_pid):
-        typer.echo(f"Potpie is already running with PID {existing_pid}.")
+    tracked_process = _read_tracked_process()
+    if tracked_process and _matches_tracked_process(tracked_process):
+        typer.echo(f"Potpie is already running with PID {tracked_process.pid}.")
         return
 
     STATE_DIR.mkdir(exist_ok=True)
@@ -121,13 +121,13 @@ def start(
     if sandbox:
         command.append(f"SANDBOX={sandbox}")
 
-    log_file = LOG_FILE.open("a")
-    process = subprocess.Popen(
-        command,
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
+    with LOG_FILE.open("a") as log_file:
+        process = subprocess.Popen(
+            command,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
     PID_FILE.write_text(
         json.dumps({"pid": process.pid, "command": command}) + "\n"
     )
@@ -161,9 +161,9 @@ def stop():
 @app.command()
 def status():
     """Show whether a tracked local Potpie process is running."""
-    pid = _read_pid()
-    if pid and _is_running(pid):
-        typer.echo(f"Potpie is running with PID {pid}.")
+    tracked_process = _read_tracked_process()
+    if tracked_process and _matches_tracked_process(tracked_process):
+        typer.echo(f"Potpie is running with PID {tracked_process.pid}.")
         typer.echo("API: http://localhost:8001")
         return
     typer.echo("Potpie is not running.")
@@ -279,6 +279,8 @@ def chat(
 
                 if query.strip() in {"/exit", "/quit"}:
                     break
+                if not query.strip():
+                    continue
 
                 ctx = ChatContext(
                     project_id=project.id,
