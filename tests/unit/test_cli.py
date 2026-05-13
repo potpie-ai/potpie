@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 from typer.testing import CliRunner
 
@@ -38,7 +39,12 @@ def test_start_writes_pid_and_log_path(monkeypatch):
     with runner.isolated_filesystem():
         result = runner.invoke(app, ["start", "--sandbox", "local"])
         pid_file = Path(".potpie/potpie.pid")
+        log_file = Path(".potpie/potpie.log")
 
         assert result.exit_code == 0
-        assert pid_file.read_text() == "12345\n"
+        assert json.loads(pid_file.read_text()) == {
+            "pid": 12345,
+            "command": ["make", "dev", "SANDBOX=local"],
+        }
+        assert log_file.exists()
         assert "Started Potpie with PID 12345." in result.output

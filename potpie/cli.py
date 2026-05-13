@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import signal
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -23,6 +25,12 @@ app = typer.Typer(
 STATE_DIR = Path(".potpie")
 PID_FILE = STATE_DIR / "potpie.pid"
 LOG_FILE = STATE_DIR / "potpie.log"
+
+
+@dataclass(frozen=True)
+class TrackedProcess:
+    pid: int
+    command: list[str]
 
 
 def _run(coro):
@@ -45,11 +53,27 @@ def _repo_name_from_path(repo_path: Path) -> str:
     return f"{parent}/{repo_path.name}"
 
 
-def _read_pid() -> Optional[int]:
+def _read_tracked_process() -> Optional[TrackedProcess]:
     try:
-        return int(PID_FILE.read_text().strip())
-    except (FileNotFoundError, ValueError):
+        content = PID_FILE.read_text().strip()
+    except FileNotFoundError:
         return None
+
+    try:
+        data = json.loads(content)
+        return TrackedProcess(pid=int(data["pid"]), command=list(data["command"]))
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        try:
+            return TrackedProcess(pid=int(content), command=["make", "dev"])
+        except ValueError:
+            return None
+
+
+def _read_pid() -> Optional[int]:
+    tracked_process = _read_tracked_process()
+    if tracked_process is None:
+        return None
+    return tracked_process.pid
 
 
 def _is_running(pid: int) -> bool:
@@ -60,6 +84,22 @@ def _is_running(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def _matches_tracked_process(tracked_process: TrackedProcess) -> bool:
+    if not _is_running(tracked_process.pid):
+        return False
+
+    try:
+        command = subprocess.check_output(
+            ["ps", "-p", str(tracked_process.pid), "-o", "command="],
+            text=True,
+        ).strip()
+    except (subprocess.SubprocessError, OSError):
+        return False
+
+    expected = " ".join(tracked_process.command)
+    return expected in command
 
 
 @app.command()
@@ -88,7 +128,9 @@ def start(
         stderr=subprocess.STDOUT,
         start_new_session=True,
     )
-    PID_FILE.write_text(f"{process.pid}\n")
+    PID_FILE.write_text(
+        json.dumps({"pid": process.pid, "command": command}) + "\n"
+    )
 
     typer.echo(f"Started Potpie with PID {process.pid}.")
     typer.echo("Logs: .potpie/potpie.log")
@@ -97,10 +139,13 @@ def start(
 @app.command()
 def stop():
     """Stop local Potpie services started by `potpie start`."""
-    pid = _read_pid()
-    if pid and _is_running(pid):
-        os.killpg(pid, signal.SIGTERM)
-        typer.echo(f"Stopped Potpie process group for PID {pid}.")
+    tracked_process = _read_tracked_process()
+    if tracked_process and _matches_tracked_process(tracked_process):
+        try:
+            os.killpg(tracked_process.pid, signal.SIGTERM)
+            typer.echo(f"Stopped Potpie process group for PID {tracked_process.pid}.")
+        except ProcessLookupError:
+            typer.echo("No tracked Potpie process is running.")
     else:
         typer.echo("No tracked Potpie process is running.")
 
