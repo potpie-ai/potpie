@@ -10,12 +10,13 @@ from app.modules.intelligence.tools.local_search_tools.tunnel_utils import (
 )
 
 from .debug_tunnel_utils import route_debug_command
+from .watch_store import merge_into_expressions
 
 
 class DebugSnapshotInput(BaseModel):
     expressions: Optional[List[str]] = Field(
         default=None,
-        description="Expressions to evaluate in the current frame (e.g. len(items), user.email)",
+        description="Expressions to evaluate in the current frame (e.g. len(items), user.email). Persistent watches registered via add_watch are merged in automatically.",
     )
     wait: bool = Field(
         default=True,
@@ -31,6 +32,9 @@ class DebugSnapshotInput(BaseModel):
 def debug_snapshot_tool(input_data: DebugSnapshotInput) -> str:
     user_id, conversation_id = get_context_vars()
     payload = input_data.model_dump(exclude_none=True)
+    merged = merge_into_expressions(user_id, conversation_id, payload.get("expressions"))
+    if merged:
+        payload["expressions"] = merged
     return route_debug_command("debug_snapshot", payload, user_id, conversation_id)
 
 

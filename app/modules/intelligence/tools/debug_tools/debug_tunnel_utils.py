@@ -32,6 +32,8 @@ DEBUG_ENDPOINTS: Dict[str, str] = {
     "debug_continue": "/api/debug/continue",
     "debug_select_frame": "/api/debug/select-frame",
     "debug_list_sessions": "/api/debug/sessions",
+    "debug_list_launch_configs": "/api/debug/launch-configs",
+    "debug_list_adapters": "/api/debug/adapters",
 }
 
 _DEBUG_OPERATION_TIMEOUT_SECS: Dict[str, float] = {
@@ -45,6 +47,8 @@ _DEBUG_OPERATION_TIMEOUT_SECS: Dict[str, float] = {
     "debug_continue": 10.0,
     "debug_set_breakpoints": 30.0,
     "debug_select_frame": 30.0,
+    "debug_list_launch_configs": 5.0,
+    "debug_list_adapters": 5.0,
 }
 
 _SNAPSHOT_LIKE_OPS = frozenset(
@@ -89,6 +93,12 @@ def format_debug_result(operation: str, result: Any) -> str:
 
     if operation == "debug_list_sessions":
         return _format_sessions_result(result)
+
+    if operation == "debug_list_launch_configs":
+        return _format_launch_configs_result(result)
+
+    if operation == "debug_list_adapters":
+        return _format_adapters_result(result)
 
     if operation in _SNAPSHOT_LIKE_OPS:
         return _format_snapshot_result(result)
@@ -216,6 +226,38 @@ def _format_sessions_result(result: Dict[str, Any]) -> str:
         lines.append(f"{sid:<12} {prog:<24} {lang:<10} {st}")
     if len(sessions) > 30:
         lines.append(f"... and {len(sessions) - 30} more")
+    return "\n".join(lines)
+
+
+def _format_launch_configs_result(result: Dict[str, Any]) -> str:
+    configs = result.get("configs") or []
+    if not configs:
+        return "No launch configurations found. Check .vscode/launch.json in the workspace."
+    lines = ["Available launch configurations:"]
+    for cfg in configs:
+        if not isinstance(cfg, dict):
+            continue
+        name = cfg.get("name") or "Unnamed"
+        typ = cfg.get("type") or "?"
+        req = cfg.get("request") or "launch"
+        prog = cfg.get("program") or cfg.get("module") or ""
+        lines.append(f"  - **{name}** ({typ} / {req})" + (f" → `{prog}`" if prog else ""))
+    return "\n".join(lines)
+
+
+def _format_adapters_result(result: Dict[str, Any]) -> str:
+    adapters = result.get("adapters") or []
+    if not adapters:
+        return "No debug adapters detected."
+    lines = ["Available debug adapters:"]
+    for a in adapters:
+        if not isinstance(a, dict):
+            continue
+        lang = a.get("language") or "?"
+        available = a.get("available", False)
+        ext_id = a.get("extension_id") or ""
+        status = "available" if available else "not installed"
+        lines.append(f"  - **{lang}**: {status}" + (f" ({ext_id})" if ext_id else ""))
     return "\n".join(lines)
 
 
