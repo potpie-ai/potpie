@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import shutil
 from pathlib import Path
 
 import pytest
@@ -16,13 +17,17 @@ runner = CliRunner()
 
 
 def _make_git_repo(path: Path) -> Path:
+    git = shutil.which("git")
+    if git is None:
+        pytest.skip("git is required for CLI repository tests")
+
     path.mkdir()
-    subprocess.run(["git", "init", "-b", "main"], cwd=path, check=True)
+    subprocess.run([git, "init", "-b", "main"], cwd=path, check=True)
     (path / "README.md").write_text("test\n")
-    subprocess.run(["git", "add", "README.md"], cwd=path, check=True)
+    subprocess.run([git, "add", "README.md"], cwd=path, check=True)
     subprocess.run(
         [
-            "git",
+            git,
             "-c",
             "user.email=test@example.com",
             "-c",

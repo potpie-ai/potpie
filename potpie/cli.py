@@ -450,8 +450,7 @@ def parse_cmd(
                 raise CLIError("Parsing failed.")
             if timeout and (time.monotonic() - start_time) >= timeout:
                 raise CLIError(f"Timed out waiting for parsing after {timeout:g}s.")
-            if poll_interval > 0:
-                time.sleep(poll_interval)
+            time.sleep(max(poll_interval, 0.1))
     except CLIError as exc:
         _echo_error(str(exc))
         raise typer.Exit(code=1) from exc
