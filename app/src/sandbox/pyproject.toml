@@ -6,12 +6,12 @@ build-backend = "hatchling.build"
 name = "potpie-sandbox"
 version = "0.1.0"
 description = "Potpie sandbox core with hexagonal workspace and runtime providers."
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 dependencies = []
 
 [project.optional-dependencies]
 daytona = ["daytona>=0.134.0"]
-dev = ["pytest>=8.0.0", "pytest-asyncio>=0.24.0", "ruff>=0.8.0"]
+dev = ["pytest>=9.0.3", "pytest-asyncio>=0.24.0", "ruff>=0.8.0"]
 
 [project.scripts]
 # Exposes the in-sandbox parser shim on PATH for the local sandbox

@@ -1,5 +1,5 @@
 """
-Integration tests for ParsingService (parse_directory, analyze_directory) with mocks.
+Integration tests for ParsingService.parse_directory with mocks.
 
 Heavy mocking of ParseHelper, CodeGraphService, InferenceService, ProjectService;
 no real Neo4j/Git/RepoManager required.
@@ -11,7 +11,6 @@ import pytest
 from neo4j.exceptions import ServiceUnavailable
 
 from app.modules.parsing.graph_construction.parsing_helper import (
-    ParsingFailedError,
     ParsingServiceError,
 )
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
@@ -168,94 +167,6 @@ class TestParseDirectory:
                 )
 
 
-class TestAnalyzeDirectory:
-    """Test ParsingService.analyze_directory behavior with mocks."""
-
-    @pytest.mark.asyncio
-    async def test_analyze_directory_invalid_extracted_dir_type(self, db_session):
-        """Pass non-string extracted_dir; expect ValueError."""
-        service = ParsingService(db_session, "test-user")
-        with pytest.raises(ValueError) as exc_info:
-            await service.analyze_directory(
-                extracted_dir=12345,  # type: ignore
-                project_id="proj-1",
-                user_id="test-user",
-                db=db_session,
-                language="python",
-                user_email="test@example.com",
-            )
-        assert "string" in str(exc_info.value).lower() or "type" in str(exc_info.value).lower()
-
-    @pytest.mark.asyncio
-    async def test_analyze_directory_directory_missing(self, db_session):
-        """Path does not exist; expect FileNotFoundError."""
-        service = ParsingService(db_session, "test-user")
-        with pytest.raises(FileNotFoundError) as exc_info:
-            await service.analyze_directory(
-                extracted_dir="/nonexistent/path/12345",
-                project_id="proj-1",
-                user_id="test-user",
-                db=db_session,
-                language="python",
-                user_email="test@example.com",
-            )
-        assert "nonexistent" in str(exc_info.value).lower() or "not exist" in str(exc_info.value).lower() or "not found" in str(exc_info.value).lower()
-
-    @pytest.mark.asyncio
-    async def test_analyze_directory_project_not_in_db(self, db_session, tmp_path):
-        """get_project_from_db_by_id returns None; expect ParsingServiceError or HTTPException 404."""
-        (tmp_path / "dummy").mkdir(exist_ok=True)
-        mock_project_service = MagicMock()
-        mock_project_service.get_project_from_db_by_id = AsyncMock(return_value=None)
-        with patch(
-            "app.modules.parsing.graph_construction.parsing_service.ProjectService",
-            return_value=mock_project_service,
-        ):
-            service = ParsingService(
-                db_session, "test-user", raise_library_exceptions=True
-            )
-            with pytest.raises((ParsingServiceError, Exception)) as exc_info:
-                await service.analyze_directory(
-                    extracted_dir=str(tmp_path / "dummy"),
-                    project_id="nonexistent-proj",
-                    user_id="test-user",
-                    db=db_session,
-                    language="python",
-                    user_email="test@example.com",
-                )
-            assert "not found" in str(exc_info.value).lower() or "404" in str(exc_info.value)
-
-    @pytest.mark.asyncio
-    async def test_analyze_directory_language_other(self, db_session, tmp_path):
-        """language 'other'; expect status ERROR and ParsingFailedError."""
-        (tmp_path / "dummy").mkdir(exist_ok=True)
-        mock_project_service = MagicMock()
-        mock_project_service.get_project_from_db_by_id = AsyncMock(
-            return_value={"project_name": "repo", "branch_name": "main"}
-        )
-        mock_project_service.update_project_status = AsyncMock()
-        with patch(
-            "app.modules.parsing.graph_construction.parsing_service.ProjectService",
-            return_value=mock_project_service,
-        ):
-            service = ParsingService(
-                db_session, "test-user", raise_library_exceptions=True
-            )
-            with pytest.raises(ParsingFailedError) as exc_info:
-                await service.analyze_directory(
-                    extracted_dir=str(tmp_path / "dummy"),
-                    project_id="proj-1",
-                    user_id="test-user",
-                    db=db_session,
-                    language="other",
-                    user_email="test@example.com",
-                )
-            assert "supported" in str(exc_info.value).lower() or "language" in str(exc_info.value).lower()
-            mock_project_service.update_project_status.assert_called_once()
-            call_args = mock_project_service.update_project_status.call_args
-            assert call_args[0][1] == ProjectStatusEnum.ERROR or str(call_args[0][1]).lower() == "error"
-
-
 class TestNeo4jFailures:
     """Test Neo4j connection and operation failures (Part 4.4 of plan)."""
 
@@ -297,53 +208,6 @@ class TestNeo4jFailures:
                     project_id=project_id,
                     cleanup_graph=True,
                 )
-
-    @pytest.mark.asyncio
-    async def test_inference_service_failure(self, db_session, tmp_path):
-        """InferenceService.run_inference failure → status ERROR."""
-        (tmp_path / "dummy").mkdir(exist_ok=True)
-        (tmp_path / "dummy" / "test.py").write_text("print('hello')")
-
-        mock_project_service = MagicMock()
-        mock_project_service.get_project_from_db_by_id = AsyncMock(
-            return_value={"project_name": "repo", "branch_name": "main"}
-        )
-        mock_project_service.update_project_status = AsyncMock()
-
-        mock_code_graph = MagicMock()
-        mock_code_graph.create_and_store_graph = MagicMock()
-        mock_code_graph.close = MagicMock()
-
-        mock_inference = MagicMock()
-        mock_inference.run_inference = AsyncMock(
-            side_effect=RuntimeError("LLM provider timeout")
-        )
-        mock_inference.log_graph_stats = MagicMock()
-        mock_inference.close = MagicMock()
-
-        with patch(
-            "app.modules.parsing.graph_construction.parsing_service.ProjectService",
-            return_value=mock_project_service,
-        ), patch(
-            "app.modules.parsing.graph_construction.parsing_service.CodeGraphService",
-            return_value=mock_code_graph,
-        ), patch(
-            "app.modules.parsing.graph_construction.parsing_service.InferenceService",
-            return_value=mock_inference,
-        ):
-            service = ParsingService(
-                db_session, "test-user", raise_library_exceptions=True
-            )
-            with pytest.raises((ParsingServiceError, RuntimeError, Exception)):
-                await service.analyze_directory(
-                    extracted_dir=str(tmp_path / "dummy"),
-                    project_id="proj-inference-fail",
-                    user_id="test-user",
-                    db=db_session,
-                    language="python",
-                    user_email="test@example.com",
-                )
-
 
 class TestProjectServiceOwnership:
     """Test ProjectService ownership checks (Part 4.6 of plan)."""
