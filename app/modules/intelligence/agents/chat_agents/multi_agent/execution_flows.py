@@ -57,6 +57,9 @@ def init_managers(
     from app.modules.intelligence.tools.sandbox.context import (
         set_run_context as _set_sandbox_run_context,
     )
+    from app.modules.intelligence.tools.code_changes_manager.lifecycle import (
+        _init_code_changes_manager,
+    )
 
     _reset_todo_manager()
     _set_sandbox_run_context(
@@ -66,6 +69,16 @@ def init_managers(
         local_mode=local_mode,
     )
     _reset_requirement_manager()
+    # debug_* / tunnel helpers read user_id from code_changes_manager ContextVars.
+    _init_code_changes_manager(
+        conversation_id=conversation_id,
+        agent_id=agent_id,
+        user_id=user_id,
+        tunnel_url=tunnel_url,
+        local_mode=local_mode,
+        repository=repository,
+        branch=branch,
+    )
     logger.info(
         f"🔄 Initialized managers for agent run (conversation_id={conversation_id}, agent_id={agent_id}, user_id={user_id}, tunnel_url={tunnel_url})"
     )

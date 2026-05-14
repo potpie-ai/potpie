@@ -32,7 +32,13 @@ class DebugAgent(ChatAgent):
         self.llm_provider = llm_provider
         self.prompt_provider = prompt_provider
 
-    def _build_agent(self, ctx: Optional[ChatContext] = None) -> ChatAgent:
+    def _build_agent(
+        self, ctx: Optional[ChatContext] = None, local_mode: bool = False
+    ) -> ChatAgent:
+        task_prompt = debug_task_prompt
+        if local_mode:
+            task_prompt = debug_task_prompt + debug_tools_prompt_section
+
         agent_config = AgentConfig(
             role="Debugging and Code Analysis Specialist",
             goal="Provide comprehensive debugging solutions and code analysis by identifying root causes, tracing code flows, and delivering precise fixes. For general queries, maintain a conversational approach while grounding responses in code context.",
@@ -48,7 +54,7 @@ class DebugAgent(ChatAgent):
                 """,
             tasks=[
                 TaskConfig(
-                    description=debug_task_prompt,
+                    description=task_prompt,
                     expected_output="Markdown formatted chat response to user's query grounded in provided code context and tool results. For debugging tasks, includes root cause analysis, fix location rationale, and implementation details.",
                 )
             ],
@@ -91,6 +97,35 @@ class DebugAgent(ChatAgent):
             ],
             exclude_embedding_tools=exclude_embedding_tools,
         )
+
+        if local_mode:
+            debug_tool_names = [
+                "debug_start",
+                "debug_stop",
+                "debug_set_breakpoints",
+                "debug_snapshot",
+                "debug_step_into",
+                "debug_step_out",
+                "debug_step_over",
+                "debug_continue",
+                "debug_select_frame",
+                "debug_list_sessions",
+                "execute_terminal_command",
+                "search_text",
+                "search_files",
+            ]
+            extra = self.tools_provider.get_tools(
+                debug_tool_names,
+                exclude_embedding_tools=exclude_embedding_tools,
+            )
+            got = {getattr(t, "name", None) for t in extra}
+            missing = [n for n in debug_tool_names if n not in got]
+            if missing:
+                logger.warning(
+                    "DebugAgent local_mode: requested tools missing from ToolService — {}",
+                    missing,
+                )
+            tools.extend(extra)
 
         supports_pydantic = self.llm_provider.supports_pydantic("chat")
         should_use_multi = MultiAgentConfig.should_use_multi_agent("debugging_agent")
@@ -148,14 +183,67 @@ class DebugAgent(ChatAgent):
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
         ctx = await self._enriched_context(ctx)
-        return await self._build_agent(ctx).run(ctx)
+        local_mode = bool(getattr(ctx, "local_mode", False))
+        return await self._build_agent(ctx, local_mode=local_mode).run(ctx)
 
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         ctx = await self._enriched_context(ctx)
-        async for chunk in self._build_agent(ctx).run_stream(ctx):
+        local_mode = bool(getattr(ctx, "local_mode", False))
+        async for chunk in self._build_agent(ctx, local_mode=local_mode).run_stream(
+            ctx
+        ):
             yield chunk
+
+
+
+debug_tools_prompt_section = """
+---
+
+## DEBUGGER TOOLS (available in VS Code local mode)
+
+You have access to a full interactive debugger through the VS Code extension. These tools
+let you inspect RUNTIME state — variable values, call stacks, and expression evaluation —
+which is often essential for bugs that cannot be found by reading code alone.
+
+### When to Use the Debugger
+
+Use the debugger when:
+- The bug involves incorrect runtime values (wrong calculation, unexpected None, type mismatch)
+- Static analysis of code is insufficient to determine the root cause
+- You need to verify your hypothesis about variable state at a specific point
+- The code path is complex with multiple branches and you need to confirm which path executes
+
+Do NOT use the debugger when:
+- The bug is clearly a syntax or structural issue visible in the code
+- You already have enough context from static analysis tools
+
+### Debugger Workflow
+
+1. **Reproduce first**: Use `execute_terminal_command` to run the program normally and see the buggy output
+2. **Set strategic breakpoints**: Use `debug_set_breakpoints` at locations where you suspect the bug manifests
+3. **Start debug session**: Use `debug_start` to launch the program under the debugger
+4. **Capture state**: Use `debug_snapshot` (with wait=True) to run to the first breakpoint and capture
+   the call stack, local variables, and any expressions you want to evaluate
+5. **Analyze**: Compare actual variable values to expected values
+6. **Navigate**: Use `debug_step_over`, `debug_step_into`, `debug_step_out` to trace execution line-by-line
+7. **Inspect frames**: Use `debug_select_frame` to look at variables in caller functions
+8. **Continue**: Use `debug_continue` to run to the next breakpoint
+9. **Clean up**: Always call `debug_stop` when done
+
+### Key Principles
+
+- `debug_snapshot` is your primary inspection tool — it bundles stack trace + locals + expression
+  evaluation into one call
+- After every step (step_into, step_over, step_out), you automatically get a snapshot back
+- Set breakpoints BEFORE starting the debug session
+- Use the `expressions` parameter of `debug_snapshot` to evaluate arbitrary expressions in the
+  current scope (e.g., `len(items)`, `user.email`, `type(result)`)
+- Always clean up: call `debug_stop` when your investigation is complete
+- If the program finishes without hitting a breakpoint, `debug_snapshot` will time out —
+  reconsider your breakpoint placement
+"""
 
 
 debug_task_prompt = """

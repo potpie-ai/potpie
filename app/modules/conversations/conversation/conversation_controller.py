@@ -120,11 +120,20 @@ class ConversationController:
             raise HTTPException(status_code=500, detail=str(e))
 
     async def post_message(
-        self, conversation_id: str, message: MessageRequest, stream: bool = True
+        self,
+        conversation_id: str,
+        message: MessageRequest,
+        stream: bool = True,
+        local_mode: bool = False,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         try:
             async for chunk in self.service.store_message(
-                conversation_id, message, MessageType.HUMAN, self.user_id, stream
+                conversation_id,
+                message,
+                MessageType.HUMAN,
+                self.user_id,
+                stream,
+                local_mode=local_mode,
             ):
                 yield chunk
         except ConversationNotFoundError as e:

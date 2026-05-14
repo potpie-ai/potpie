@@ -18,6 +18,7 @@ if platform.system() == "Darwin":
         # Already set, which is fine
         pass
 
+from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
 from dotenv import load_dotenv
@@ -30,8 +31,13 @@ from app.modules.utils.logger import configure_logging, setup_logger
 from celery import Celery
 from celery.signals import worker_process_init, worker_process_shutdown
 
-# Load environment variables from a .env file if present
-load_dotenv()
+# Load .env from repo root so worker env is correct even when cwd is not the project directory
+# (e.g. IDE-launched Celery). Falls back to default dotenv search if file is missing.
+_repo_dotenv = Path(__file__).resolve().parents[2] / ".env"
+if _repo_dotenv.is_file():
+    load_dotenv(_repo_dotenv)
+else:
+    load_dotenv()
 
 # Configure logging
 configure_logging()

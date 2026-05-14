@@ -295,9 +295,10 @@ class ConversationAPI:
             controller = ConversationController(db, async_db, user_id, user_email)
 
             if not stream:
-                # Non-streaming behavior unchanged
+                # Non-streaming: must pass local_mode (VS Code extension User-Agent)
+                # so debugger/terminal tools are available to the agent.
                 message_stream = controller.post_message(
-                    conversation_id, message, stream
+                    conversation_id, message, stream, local_mode=local_mode
                 )
                 async for chunk in message_stream:
                     return chunk
