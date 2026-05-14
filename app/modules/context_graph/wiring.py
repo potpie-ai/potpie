@@ -24,6 +24,7 @@ from app.modules.context_graph.context_graph_pot_source_model import (
     ContextGraphPotSource,
 )
 from adapters.outbound.connectors.github import GitHubConnector
+from adapters.outbound.connectors.linear.connector import LinearConnector
 from application.services.source_connector_registry import SourceConnectorRegistry
 from bootstrap.container import ContextEngineContainer, build_container
 from domain.context_status import StatusSource
@@ -376,7 +377,17 @@ def _build_connector_registry(db: Session, source_for_repo) -> SourceConnectorRe
     ``GitHubPullRequestResolver`` internally and resolves a pot's primary
     GitHub repo via the closure returned by :func:`_resolve_repo_for_pot`
     (which also honours ``resolver_hint['repo_name']`` for multi-repo pots).
+
+    The Linear connector resolves its access token per call via
+    :class:`ContextEngineLinearFetcher`, which walks
+    ``pot_id → project_sources → integrations`` and decrypts the stored
+    OAuth token; this keeps the connector multi-tenant without coupling
+    it to any single workspace.
     """
+    from integrations.adapters.outbound.linear.context_engine_fetcher import (
+        ContextEngineLinearFetcher,
+    )
+
     registry = SourceConnectorRegistry()
     registry.register(
         GitHubConnector(
@@ -384,6 +395,9 @@ def _build_connector_registry(db: Session, source_for_repo) -> SourceConnectorRe
             repo_resolver=_resolve_repo_for_pot(db),
             webhook_secret=(os.getenv("GITHUB_WEBHOOK_SECRET") or "").strip() or None,
         )
+    )
+    registry.register(
+        LinearConnector(fetcher=ContextEngineLinearFetcher(db))
     )
     return registry
 

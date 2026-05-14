@@ -333,15 +333,11 @@ def _status_value(issue: LinearIssue) -> str:
     if issue.state is None:
         return "unknown"
     type_ = (issue.state.type or "").lower()
-    if type_ == "completed":
+    if type_ in {"completed", "canceled"}:
         return "closed"
-    if type_ == "canceled":
-        return "closed"
-    if type_ == "started":
+    if type_ in {"backlog", "unstarted", "started", "triage"}:
         return "open"
-    if type_ in {"backlog", "unstarted"}:
-        return "open"
-    return "open"
+    return "unknown"
 
 
 def _comment_entity(

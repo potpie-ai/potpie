@@ -1,7 +1,7 @@
 """Research Agent for gathering codebase patterns and external documentation."""
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
-from app.modules.intelligence.agents.chat_agents.pydantic_deep_agent import PydanticDeepRagAgent
+from app.modules.intelligence.agents.chat_agents.pydantic_deep_agent import PydanticDeepAgent
 from app.modules.intelligence.agents.chat_agents.agent_config import AgentConfig, TaskConfig
 from app.modules.utils.logger import setup_logger
 
@@ -101,7 +101,7 @@ A comprehensive 500-1000 word synthesis of all findings covering:
 def create_research_agent(
     llm_provider: ProviderService,
     tools_provider: ToolService,
-) -> PydanticDeepRagAgent:
+) -> PydanticDeepAgent:
     """Create research agent for parallel codebase and documentation exploration."""
     agent_config = AgentConfig(
         role="Codebase Research Agent",
@@ -141,4 +141,4 @@ def create_research_agent(
         logger.warning(f"[RESEARCH_AGENT] Missing tools: {missing_tools}")
     logger.info(f"[RESEARCH_AGENT] Successfully constructed with {len(tools)} tools: {retrieved_tool_names}")
     
-    return PydanticDeepRagAgent(llm_provider, agent_config, tools)
+    return PydanticDeepAgent(llm_provider, agent_config, tools)

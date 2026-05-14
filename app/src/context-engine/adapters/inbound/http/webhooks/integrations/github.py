@@ -9,9 +9,7 @@ this module is just transport glue.
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -20,6 +18,7 @@ from adapters.inbound.http.deps import get_container_or_503
 from domain.actor import Actor
 from domain.ingestion_event_models import IngestionSubmissionRequest
 from domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
+from domain.ports.pot_resolution import RepoRef
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +28,7 @@ github_router = APIRouter()
 @github_router.post("/github")
 async def github_webhook(request: Request):
     body = await request.body()
-    headers = dict(request.headers)
+    headers = {k.lower(): v for k, v in request.headers.items()}
 
     container = get_container_or_503()
     if not container.settings.is_enabled():
@@ -51,27 +50,33 @@ async def github_webhook(request: Request):
         return {"processed": False, "reason": "ignored_event"}
 
     repo_name = event.repo_name or ""
-    if not repo_name:
+    if not repo_name or "/" not in repo_name:
         raise HTTPException(status_code=400, detail="missing repository in event")
 
-    mapping_raw = os.getenv("CONTEXT_ENGINE_REPO_TO_POT", "").strip()
-    if not mapping_raw:
-        raise HTTPException(
-            status_code=503,
-            detail='CONTEXT_ENGINE_REPO_TO_POT env required, e.g. {"owner/repo":"pot-uuid"}',
-        )
-    repo_to_pot = json.loads(mapping_raw)
-    pot_id = repo_to_pot.get(repo_name)
-    if not pot_id:
+    owner, repo = repo_name.split("/", 1)
+    ref = RepoRef(
+        provider=event.provider or "github",
+        provider_host=event.provider_host or "github.com",
+        owner=owner,
+        repo=repo,
+    )
+    pot_ids = container.pots.find_pots_for_repo(ref)
+    if not pot_ids:
         return {"processed": False, "reason": "no_pot_for_repo", "repo_name": repo_name}
+    if len(pot_ids) > 1:
+        logger.warning(
+            "github_webhook: %s pots match %s; routing to first (%s)",
+            len(pot_ids),
+            repo_name,
+            pot_ids[0],
+        )
+    pot_id = pot_ids[0]
 
     factory = make_session_factory()
     if factory is None:
         raise HTTPException(status_code=503, detail="DATABASE_URL not configured")
 
-    delivery_id = (
-        headers.get("X-GitHub-Delivery") or headers.get("x-github-delivery") or ""
-    )
+    delivery_id = headers.get("x-github-delivery") or ""
     sender_login = (event.payload.get("sender_login") or "").strip() or None
     actor = Actor(
         user_id=f"webhook:github:{delivery_id}" if delivery_id else "webhook:github:unknown",
@@ -94,6 +99,8 @@ async def github_webhook(request: Request):
             source_id=event.source_id,
             source_event_id=event.source_event_id,
             repo_name=event.repo_name,
+            provider=event.provider,
+            provider_host=event.provider_host,
             actor=actor,
         )
         receipt = svc.submit(req)

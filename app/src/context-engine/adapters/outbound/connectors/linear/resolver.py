@@ -78,7 +78,7 @@ class LinearIssueResolver:
         budget: ResolverBudget,
         auth: ResolverAuthContext,
     ) -> SourceResolutionResult:
-        _ = pot_id, auth  # Linear auth is attached to the injected fetcher.
+        _ = auth  # Linear auth is attached to the injected fetcher.
         policy = normalize_source_policy(source_policy)
         out = SourceResolutionResult()
         if policy not in {"summary", "verify", "snippets"}:
@@ -115,7 +115,7 @@ class LinearIssueResolver:
                 continue
 
             try:
-                payload = self._fetcher.get_issue(identifier)
+                payload = self._fetcher.get_issue(identifier, pot_id=pot_id)
             except PermissionError as exc:
                 out.fallbacks.append(
                     ResolverFallback(

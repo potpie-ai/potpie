@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -144,6 +145,37 @@ def attach_linear_team_source(
     db.add(row)
     db.flush()
     return row, False
+
+
+def touch_pot_source_sync(
+    db: Session,
+    source_id: str,
+    *,
+    error: str | None = None,
+) -> None:
+    """Stamp ``last_sync_at`` / ``last_error`` / ``health_score`` after a sync run.
+
+    ``health_score`` is stored as TEXT in this table for forward compat; we
+    parse it as int, adjust, and write it back as a string.
+    """
+    row = (
+        db.query(ContextGraphPotSource)
+        .filter(ContextGraphPotSource.id == source_id)
+        .first()
+    )
+    if row is None:
+        return
+    row.last_sync_at = datetime.now(timezone.utc)
+    row.last_error = error
+    try:
+        current = int(row.health_score) if row.health_score is not None else 100
+    except (TypeError, ValueError):
+        current = 100
+    if error:
+        row.health_score = str(max(0, current - 10))
+    else:
+        row.health_score = str(min(100, current + 5))
+    db.commit()
 
 
 def serialize_source(row: ContextGraphPotSource) -> dict[str, Any]:

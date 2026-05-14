@@ -22,7 +22,15 @@ class LinearIssueFetcher(Protocol):
     (``ENG-123``) or the opaque Linear UUID — adapters normalize internally.
     ``None`` signals "not found"; raising is reserved for transport or auth
     errors so the resolver can translate them to fallback codes.
+
+    ``pot_id`` lets multi-tenant adapters pick the right credentials per
+    call. Single-tenant adapters (e.g. an env-keyed fetcher) ignore it.
     """
 
-    def get_issue(self, issue_id: str) -> dict[str, Any] | None:
+    def get_issue(
+        self,
+        issue_id: str,
+        *,
+        pot_id: str | None = None,
+    ) -> dict[str, Any] | None:
         ...

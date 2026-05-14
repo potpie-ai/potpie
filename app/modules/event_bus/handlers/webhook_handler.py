@@ -122,28 +122,44 @@ class WebhookEventHandler:
     def _process_linear_webhook(
         self, event_type: str, payload: Dict[str, Any], integration: Any
     ) -> Dict[str, Any]:
-        """Process Linear webhook events."""
-        self.logger.info(f"Processing Linear webhook: {event_type}")
+        """Delegate to the integrations module's Linear webhook use case.
 
-        # Extract relevant data from Linear webhook
-        result = {
-            "integration_type": "linear",
-            "event_type": event_type,
-            "webhook_data": {
-                "action": payload.get("action"),
-                "data": payload.get("data", {}),
-                "created_at": payload.get("createdAt"),
-                "updated_at": payload.get("updatedAt"),
-            },
-        }
+        The integration_type-specific routing logic lives in
+        :mod:`integrations.application.process_linear_webhook`. This
+        handler stays a thin Celery-side dispatcher.
 
-        # Add specific processing based on event type
-        if event_type.startswith("issue."):
-            result["issue_data"] = payload.get("data", {})
-        elif event_type.startswith("project."):
-            result["project_data"] = payload.get("data", {})
+        Payload errors (malformed envelope, missing organizationId) are
+        non-retryable: re-running won't fix the body. We log and return
+        a structured non-error result so Celery doesn't retry. Anything
+        else propagates so the Celery base task can mark the task
+        failed and retry per its policy.
+        """
+        _ = integration  # multi-tenant fan-out happens inside the use case
+        from integrations.application.process_linear_webhook import (
+            process_linear_webhook,
+        )
+        from integrations.domain.exceptions import (
+            WebhookPayloadError,
+            WebhookSignatureError,
+        )
 
-        return result
+        self.logger.info(
+            "Dispatching Linear webhook to use case: event_type=%s", event_type
+        )
+        try:
+            return process_linear_webhook(self.db, payload=payload)
+        except (WebhookPayloadError, WebhookSignatureError) as exc:
+            # Non-retryable: structured payload error. Log, ack, move on.
+            self.logger.warning(
+                "Linear webhook payload rejected (non-retryable): %s", exc
+            )
+            return {
+                "integration_type": "linear",
+                "event_type": event_type,
+                "processed": False,
+                "reason": exc.__class__.__name__,
+                "detail": str(exc),
+            }
 
     def _process_sentry_webhook(
         self, event_type: str, payload: Dict[str, Any], integration: Any
