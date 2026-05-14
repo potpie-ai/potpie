@@ -77,7 +77,7 @@ _DEEP_BUILTIN_TODO_TOOL_NAMES = frozenset(
 )
 
 
-class PydanticDeepRagAgent(PydanticRagAgent):
+class PydanticDeepAgent(PydanticRagAgent):
     """``PydanticRagAgent`` drop-in backed by ``pydantic-deep``.
 
     Constructor signature is intentionally identical to ``PydanticRagAgent``
@@ -290,4 +290,4 @@ def _bind_default_deps(agent: Agent, deps: object) -> None:
     agent.run = run_with_deps  # type: ignore[method-assign]
 
 
-__all__ = ["PydanticDeepRagAgent"]
+__all__ = ["PydanticDeepAgent"]

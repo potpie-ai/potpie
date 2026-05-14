@@ -3,9 +3,6 @@ from app.modules.conversations.conversation.conversation_model import (  # noqa
 )
 from app.modules.conversations.message.message_model import Message  # noqa
 from integrations.adapters.outbound.postgres.integration_model import Integration  # noqa
-from integrations.adapters.outbound.postgres.project_source_model import (  # noqa
-    ProjectSource,
-)
 from adapters.outbound.postgres.models import (  # noqa
     ContextAgentCheckpointModel,
     ContextEventModel,

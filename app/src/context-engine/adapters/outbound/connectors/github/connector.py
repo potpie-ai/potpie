@@ -20,6 +20,7 @@ import hmac
 import json
 import logging
 from typing import Any, Callable, Iterable, Mapping, Sequence
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from adapters.outbound.connectors.github.api_client import (
@@ -168,10 +169,13 @@ class GitHubConnector(SourceConnectorPort):
         if action != "closed" or not pr.get("merged"):
             return None
 
-        repo = (body.get("repository") or {}).get("full_name")
+        repository = body.get("repository") or {}
+        repo = repository.get("full_name")
         pr_number = pr.get("number")
         if not repo or pr_number is None:
             return None
+
+        provider_host = _provider_host_from_repo(repository) or "github.com"
 
         delivery_id = (
             headers.get("X-GitHub-Delivery") or headers.get("x-github-delivery") or ""
@@ -184,7 +188,7 @@ class GitHubConnector(SourceConnectorPort):
             action="merged",
             pot_id="",  # filled in by the inbound dispatcher per pot mapping
             provider="github",
-            provider_host="github.com",
+            provider_host=provider_host,
             repo_name=repo,
             source_id=f"pr_{int(pr_number)}_merged",
             source_event_id=str(delivery_id) or None,
@@ -256,6 +260,23 @@ class GitHubConnector(SourceConnectorPort):
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------
+def _provider_host_from_repo(repository: Mapping[str, Any]) -> str | None:
+    """Derive provider host from a webhook ``repository`` object.
+
+    Webhooks from GitHub Enterprise Server carry a host other than
+    ``github.com``; ``html_url`` is the only consistently-present field
+    that surfaces it.
+    """
+    for key in ("html_url", "url", "clone_url", "git_url"):
+        raw = repository.get(key)
+        if not isinstance(raw, str) or not raw:
+            continue
+        host = urlparse(raw).hostname
+        if host:
+            return host.lower()
+    return None
+
+
 def _verify_signature(body: bytes, signature: str | None, secret: str) -> bool:
     if not signature or not signature.startswith("sha256="):
         return False

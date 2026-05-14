@@ -63,13 +63,22 @@ class LinearOAuth:
             logger.warning("Linear OAuth credentials not configured")
 
     def get_authorization_url(
-        self, redirect_uri: str, state: Optional[str] = None, scope: str = "read"
+        self,
+        redirect_uri: str,
+        state: Optional[str] = None,
+        scope: str = "read",
+        prompt: Optional[str] = "consent",
     ) -> str:
         """
         Generate authorization URL for OAuth flow
         Following: https://developers.linear.app/docs/oauth
+
+        ``prompt`` defaults to ``"consent"`` so Linear shows the workspace
+        picker every time. Without it, Linear silently picks the user's
+        primary workspace if they've previously authorized the app, which
+        means users who belong to multiple workspaces can't install into
+        the one they actually want.
         """
-        # Build query parameters with proper URL encoding
         params = {
             "client_id": self.client_id,
             "response_type": "code",
@@ -79,10 +88,10 @@ class LinearOAuth:
 
         if state:
             params["state"] = state
+        if prompt:
+            params["prompt"] = prompt
 
-        # Use urllib.parse.urlencode for proper URL encoding
         query_string = urllib.parse.urlencode(params, safe="")
-
         auth_url = f"https://linear.app/oauth/authorize?{query_string}"
         return auth_url
 

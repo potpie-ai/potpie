@@ -4,7 +4,7 @@ from app.modules.intelligence.agents.chat_agents.agent_config import (
     AgentConfig,
     TaskConfig,
 )
-from app.modules.intelligence.agents.chat_agents.pydantic_deep_agent import PydanticDeepRagAgent
+from app.modules.intelligence.agents.chat_agents.pydantic_deep_agent import PydanticDeepAgent
 from app.modules.intelligence.agents.chat_agents.pydantic_multi_agent import (
     PydanticMultiAgent,
     AgentType as MultiAgentType,
@@ -162,13 +162,13 @@ class QnAAgent(ChatAgent):
                     tools_provider=self.tools_provider,
                 )
             else:
-                logger.info("❌ Multi-agent disabled by config, using PydanticDeepRagAgent")
-                return PydanticDeepRagAgent(self.llm_provider, agent_config, tools)
+                logger.info("❌ Multi-agent disabled by config, using PydanticDeepAgent")
+                return PydanticDeepAgent(self.llm_provider, agent_config, tools)
         else:
             logger.error(
-                f"❌ Model '{self.llm_provider.chat_config.model}' does not support Pydantic - using fallback PydanticDeepRagAgent"
+                f"❌ Model '{self.llm_provider.chat_config.model}' does not support Pydantic - using fallback PydanticDeepAgent"
             )
-            return PydanticDeepRagAgent(self.llm_provider, agent_config, tools)
+            return PydanticDeepAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         # Start from the same minimal context port exposed through MCP and CLI.

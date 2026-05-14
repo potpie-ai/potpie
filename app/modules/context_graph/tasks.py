@@ -48,13 +48,22 @@ def context_graph_backfill_pot(
 @celery_app.task(
     bind=True,
     base=ContextGraphTask,
-    name="app.modules.context_graph.tasks.context_graph_sync_linear_project_source",
+    name="app.modules.context_graph.tasks.context_graph_sync_linear_pot_source",
     queue="context-graph-etl",
 )
-def context_graph_sync_linear_project_source(self, project_source_id: str) -> dict:
-    from integrations.adapters.outbound.linear.linear_sync import sync_linear_project_source
+def context_graph_sync_linear_pot_source(self, pot_source_id: str) -> dict:
+    """Backfill a Linear ``context_graph_pot_sources`` row into the graph.
 
-    return sync_linear_project_source(self.db, project_source_id)
+    Invoked when a Linear team is attached to a pot via the context-engine
+    sources API; enumerates issues for that team and feeds each through
+    ``LinearConnector.normalize_webhook`` → ``IngestionSubmissionService``
+    so backfill and live webhooks share the same admission path.
+    """
+    from integrations.application.backfill_linear_source import (
+        backfill_linear_source,
+    )
+
+    return backfill_linear_source(self.db, pot_source_id)
 
 
 @celery_app.task(

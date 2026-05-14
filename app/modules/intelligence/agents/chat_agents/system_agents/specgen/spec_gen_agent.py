@@ -8,7 +8,7 @@ from app.modules.intelligence.agents.chat_agents.agent_config import (
     AgentConfig,
     TaskConfig,
 )
-from app.modules.intelligence.agents.chat_agents.pydantic_deep_agent import PydanticDeepRagAgent
+from app.modules.intelligence.agents.chat_agents.pydantic_deep_agent import PydanticDeepAgent
 from app.modules.intelligence.agents.chat_agent import (
     ChatAgent,
     ChatAgentResponse,
@@ -260,7 +260,7 @@ Any assumptions, follow-ups, or caveats.
 
 
 class SpecGenAgent(ChatAgent):
-    """Streaming, conversational spec agent: one PydanticDeepRagAgent, markdown + Mermaid output."""
+    """Streaming, conversational spec agent: one PydanticDeepAgent, markdown + Mermaid output."""
 
     def __init__(
         self,
@@ -318,7 +318,7 @@ class SpecGenAgent(ChatAgent):
                 "get_requirements",
             ]
         )
-        return PydanticDeepRagAgent(self.llm_provider, agent_config, tools)
+        return PydanticDeepAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         """Add minimal context (e.g. project_id) so tools have what they need."""

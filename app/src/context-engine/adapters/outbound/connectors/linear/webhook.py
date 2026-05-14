@@ -64,12 +64,19 @@ def _issue_event(
     updated_from = body.get("updatedFrom")
     action = raw_action or "update"
     previous_state = None
+    new_state_id: str | None = None
     if action == "update" and isinstance(updated_from, dict) and updated_from.get("stateId"):
         action = "state_change"
         previous_state = {
             "name": str(updated_from.get("stateName") or "previous"),
             "type": updated_from.get("stateType"),
         }
+        current_state = data.get("state") if isinstance(data.get("state"), dict) else None
+        new_state_id = (
+            str(current_state.get("id"))
+            if current_state and current_state.get("id")
+            else None
+        )
 
     team_id = _team_id(data)
     payload: dict[str, Any] = {
@@ -79,7 +86,7 @@ def _issue_event(
     if previous_state is not None:
         payload["previous_state"] = previous_state
 
-    source_id = _issue_source_id(identifier or issue_id, action)
+    source_id = _issue_source_id(identifier or issue_id, action, new_state_id)
     occurred_at = parse_linear_datetime(body.get("createdAt") or data.get("updatedAt"))
     return ContextEvent(
         event_id=str(uuid4()),
@@ -137,7 +144,11 @@ def _comment_event(
     )
 
 
-def _issue_source_id(identifier: str, action: str) -> str:
+def _issue_source_id(
+    identifier: str, action: str, state_id: str | None = None
+) -> str:
+    if action == "state_change" and state_id:
+        return f"linear:issue:{identifier}:state_change:{state_id}"
     return f"linear:issue:{identifier}:{action}"
 
 

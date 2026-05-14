@@ -451,6 +451,37 @@ class DaytonaWorkspaceProvider:
         self._project_sandbox_ids[project_key] = sandbox_id
         return sandbox
 
+    def ensure_started(self, sandbox: Any) -> None:
+        """Block until ``sandbox`` is in the ``started`` state.
+
+        The hot path on Daytona Cloud is: a cached SDK handle from
+        ``self._sandboxes`` whose underlying container was auto-stopped
+        between requests. ``refresh_data`` pulls the authoritative state;
+        if it's stopped/stopping we call ``sandbox.start()``, which the
+        Daytona SDK implements as a synchronous wait-until-started, so
+        the call returns only once the container is back up. A handle
+        that's already ``started`` (or in a transient state ``start()``
+        won't accept) is a no-op.
+        """
+        refresh = getattr(sandbox, "refresh_data", None)
+        if callable(refresh):
+            try:
+                refresh()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("daytona: refresh_data before start failed: %s", exc)
+        state = _state_value(sandbox)
+        if state == "started":
+            return
+        start = getattr(sandbox, "start", None)
+        if not callable(start):
+            return
+        logger.info(
+            "daytona: sandbox %s is %s — calling start() and waiting",
+            getattr(sandbox, "id", "?"),
+            state or "unknown",
+        )
+        start()
+
     def _recover_project_sandbox(self, project_key: tuple[str, str]) -> Any | None:
         """Find an existing potpie-managed sandbox for ``(user, project)``.
 
@@ -1378,30 +1409,42 @@ class DaytonaRuntimeProvider:
         sandbox = self._sandbox_with_recovery(runtime)
         command = _command_string(request)
         cwd = request.cwd or runtime.spec.workdir
+
+        def _do_exec(sb: Any) -> Any:
+            return sb.process.exec(
+                command,
+                cwd=cwd,
+                env=dict(request.env) or None,
+                timeout=request.timeout_s,
+            )
+
         try:
-            response = sandbox.process.exec(
-                command,
-                cwd=cwd,
-                env=dict(request.env) or None,
-                timeout=request.timeout_s,
-            )
+            response = _do_exec(sandbox)
         except Exception as exc:
-            # The SDK can return a stale handle from `client.get(id)` even
-            # after Daytona destroyed the sandbox — we only learn about it
-            # when we actually try to exec. Recover via labels and retry
-            # exactly once so the agent's tool call doesn't bubble a
-            # confusing "Sandbox with ID … not found" error.
-            if not _is_not_found(exc):
+            # Two lifecycle failure modes recover here, both with a single
+            # retry: (a) the SDK returned a stale handle for a sandbox
+            # Daytona has since destroyed (404), and (b) Daytona Cloud
+            # auto-stopped the container between requests so the cached
+            # handle still resolves but exec hits "Is the Sandbox
+            # started?". The second case is the common one in
+            # long-running workers — see [[ensure_started]].
+            if _is_not_found(exc):
+                recovered = self._recover_runtime(
+                    runtime,
+                    dead_sandbox_id=str(
+                        getattr(sandbox, "id", runtime.backend_runtime_id)
+                    ),
+                )
+                if recovered is None:
+                    raise
+                response = _do_exec(recovered)
+            elif _is_not_started(exc):
+                await asyncio.to_thread(
+                    self._workspace_provider.ensure_started, sandbox
+                )
+                response = _do_exec(sandbox)
+            else:
                 raise
-            recovered = self._recover_runtime(runtime, dead_sandbox_id=str(getattr(sandbox, "id", runtime.backend_runtime_id)))
-            if recovered is None:
-                raise
-            response = recovered.process.exec(
-                command,
-                cwd=cwd,
-                env=dict(request.env) or None,
-                timeout=request.timeout_s,
-            )
         stdout = _response_stdout(response)
         exit_code = int(getattr(response, "exit_code", 0))
         if request.max_output_bytes and len(stdout) > request.max_output_bytes:
@@ -1433,20 +1476,22 @@ class DaytonaRuntimeProvider:
     # for symmetry: typed responses, no shell-injection surface.
     # ------------------------------------------------------------------
     async def read_bytes(self, runtime: Runtime, path: str) -> bytes:
-        sandbox = self._sandbox_with_recovery(runtime)
-        return await asyncio.to_thread(sandbox.fs.download_file, path)
+        return await self._fs_call(runtime, lambda sb: sb.fs.download_file(path))
 
     async def write_bytes(
         self, runtime: Runtime, path: str, content: bytes
     ) -> None:
-        sandbox = self._sandbox_with_recovery(runtime)
         # `upload_file` overwrites by default; parent must exist. Mkdir is
         # cheap on Daytona (toolbox-side `mkdir -p`) and keeps the call
         # site free of race-y "create then write" branches.
         parent = str(PurePosixPath(path).parent)
-        if parent and parent not in (".", "/"):
-            await asyncio.to_thread(sandbox.fs.create_folder, parent, "755")
-        await asyncio.to_thread(sandbox.fs.upload_file, content, path)
+
+        def _do(sb: Any) -> None:
+            if parent and parent not in (".", "/"):
+                sb.fs.create_folder(parent, "755")
+            sb.fs.upload_file(content, path)
+
+        await self._fs_call(runtime, _do)
 
     async def list_dir_native(
         self, runtime: Runtime, path: str
@@ -1459,9 +1504,8 @@ class DaytonaRuntimeProvider:
         directories; we surface that as an empty list to mirror the
         ``ls -1Ap`` exec path's "no listing on missing dir" semantics.
         """
-        sandbox = self._sandbox_with_recovery(runtime)
         try:
-            entries = await asyncio.to_thread(sandbox.fs.list_files, path)
+            entries = await self._fs_call(runtime, lambda sb: sb.fs.list_files(path))
         except Exception as exc:
             if _is_not_found(exc):
                 return []
@@ -1488,6 +1532,30 @@ class DaytonaRuntimeProvider:
                 f"Daytona sandbox not found: {runtime.backend_runtime_id}"
             )
         return sandbox
+
+    async def _fs_call(
+        self, runtime: Runtime, fn: Callable[[Any], Any]
+    ) -> Any:
+        """Run ``fn(sandbox)`` against the runtime's sandbox on a worker thread.
+
+        Recovers from the auto-stop lifecycle: if Daytona Cloud stopped
+        the container between calls, ``fn`` raises with a "Sandbox not
+        started" signature; we block on ``ensure_started`` (synchronous
+        SDK ``start()``) and retry once. We deliberately do **not**
+        recover on ``_is_not_found`` here — ``fs.*`` calls also raise
+        404-shaped errors for missing *paths*, and minting a fresh
+        sandbox in response would corrupt ``backend_runtime_id``.
+        """
+        sandbox = self._sandbox_with_recovery(runtime)
+        try:
+            return await asyncio.to_thread(fn, sandbox)
+        except Exception as exc:
+            if not _is_not_started(exc):
+                raise
+            await asyncio.to_thread(
+                self._workspace_provider.ensure_started, sandbox
+            )
+            return await asyncio.to_thread(fn, sandbox)
 
     def _sandbox_with_recovery(self, runtime: Runtime) -> Any:
         """Resolve the runtime's sandbox, recovering once if it's gone.
@@ -1656,6 +1724,23 @@ def _is_not_found(exc: Exception) -> bool:
         pass
     message = str(exc).lower()
     return "not found" in message or "404" in message
+
+
+def _is_not_started(exc: Exception) -> bool:
+    """Match a Daytona "sandbox is stopped" error surfaced from exec/fs.
+
+    Daytona Cloud auto-stops idle sandboxes. The next exec on a cached
+    SDK handle then fails with ``"failed to resolve container IP ...
+    Is the Sandbox started?"`` — the sandbox exists (so ``_is_not_found``
+    doesn't trip) but its container is down. No typed error class covers
+    this; we match on the message.
+    """
+    message = str(exc).lower()
+    return (
+        "is the sandbox started" in message
+        or "failed to resolve container ip" in message
+        or "no ip address found" in message
+    )
 
 
 def _is_timeout(exc: Exception) -> bool:

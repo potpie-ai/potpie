@@ -1224,6 +1224,153 @@ async def test_exec_recovery_no_labels_propagates_error() -> None:
 
 
 # ----------------------------------------------------------------------------
+# Auto-stop lifecycle: Daytona Cloud stops idle sandboxes; the next exec /
+# fs call on the cached handle surfaces as "Is the Sandbox started?". The
+# provider must call ``start()`` (blocking) and retry, transparent to the
+# caller.
+# ----------------------------------------------------------------------------
+class _StoppedThenStartedProcess(FakeProcess):
+    """First exec raises the Daytona "sandbox stopped" error; then succeeds.
+
+    The signature mirrors the actual Daytona Cloud error: the sandbox
+    exists (so a 404 isn't raised) but the container is stopped, so the
+    SDK fails to resolve a container IP.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.stopped = True
+
+    def exec(self, command: str, **kwargs: object):
+        if self.stopped:
+            self.stopped = False
+            raise RuntimeError(
+                "bad request: failed to resolve container IP after 3 "
+                "attempts: no IP address found. Is the Sandbox started?"
+            )
+        return super().exec(command, **kwargs)
+
+
+class _StoppedThenStartedFs(FakeFs):
+    """First fs call raises the Daytona "sandbox stopped" error; then succeeds."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.stopped = True
+
+    def download_file(self, remote_path: str, timeout: int = 0) -> bytes:
+        if self.stopped:
+            self.stopped = False
+            raise RuntimeError(
+                "bad request: failed to resolve container IP after 3 "
+                "attempts: no IP address found. Is the Sandbox started?"
+            )
+        return super().download_file(remote_path, timeout)
+
+
+@pytest.mark.asyncio
+async def test_exec_auto_starts_stopped_sandbox_and_retries() -> None:
+    """Auto-stopped sandbox → exec calls ``start()`` (blocking) and retries.
+
+    Repros the staging symptom: a cached SDK handle is still valid (so
+    the 404 recovery path doesn't fire), but exec returns Daytona's
+    "Is the Sandbox started?" error. The provider must restart and
+    retry transparently — the tool layer never sees the error.
+    """
+    client = FakeDaytonaClient()
+    workspace_provider = DaytonaWorkspaceProvider(
+        client_factory=lambda: client,
+        workspace_root="/home/daytona/workspace",
+    )
+    runtime_provider = DaytonaRuntimeProvider(workspace_provider)
+    service = SandboxService(
+        workspace_provider=workspace_provider,
+        runtime_provider=runtime_provider,
+        store=InMemorySandboxStore(),
+        locks=InMemoryLockManager(),
+    )
+    workspace = await service.get_or_create_workspace(
+        WorkspaceRequest(
+            user_id="u-auto-start",
+            project_id="p-auto-start",
+            repo=RepoIdentity(
+                repo_name="owner/repo",
+                repo_url="https://github.com/owner/repo.git",
+            ),
+            base_ref="main",
+            mode=WorkspaceMode.EDIT,
+            conversation_id="c1",
+            create_branch=True,
+        )
+    )
+    await service.get_or_create_runtime(RuntimeRequest(workspace.id))
+
+    sandbox = client.get("sbx_1")
+    # Reset the start tracker — provider.create() doesn't go through
+    # FakeSandbox.start(), but we want to assert the auto-restart path
+    # called it exactly because the container looked stopped.
+    sandbox.started = False
+    sandbox.state = "stopped"
+    sandbox.process = _StoppedThenStartedProcess()
+
+    result = await service.exec(workspace.id, ExecRequest(cmd=("echo", "ok")))
+
+    assert result.exit_code == 0
+    # Provider observed the "stopped" error, called start() (blocking
+    # in the real SDK), and retried — both observable as `started` flip
+    # to True and the process now in the "live" branch.
+    assert sandbox.started is True
+    assert sandbox.state == "started"
+    assert sandbox.process.stopped is False
+
+
+@pytest.mark.asyncio
+async def test_fs_read_auto_starts_stopped_sandbox_and_retries() -> None:
+    """Same auto-start guarantee covers the native fs path."""
+    client = FakeDaytonaClient()
+    workspace_provider = DaytonaWorkspaceProvider(
+        client_factory=lambda: client,
+        workspace_root="/home/daytona/workspace",
+    )
+    runtime_provider = DaytonaRuntimeProvider(workspace_provider)
+    service = SandboxService(
+        workspace_provider=workspace_provider,
+        runtime_provider=runtime_provider,
+        store=InMemorySandboxStore(),
+        locks=InMemoryLockManager(),
+    )
+    workspace = await service.get_or_create_workspace(
+        WorkspaceRequest(
+            user_id="u-fs-start",
+            project_id="p-fs-start",
+            repo=RepoIdentity(
+                repo_name="owner/repo",
+                repo_url="https://github.com/owner/repo.git",
+            ),
+            base_ref="main",
+            mode=WorkspaceMode.EDIT,
+            conversation_id="c1",
+            create_branch=True,
+        )
+    )
+    await service.get_or_create_runtime(RuntimeRequest(workspace.id))
+
+    sandbox = client.get("sbx_1")
+    sandbox.started = False
+    sandbox.state = "stopped"
+    stoppable = _StoppedThenStartedFs()
+    stoppable.files["/home/daytona/workspace/owner_private/x.txt"] = b"hi"
+    sandbox.fs = stoppable
+
+    data = await service.fs_read_file(
+        workspace.id, "/home/daytona/workspace/owner_private/x.txt"
+    )
+    assert data == b"hi"
+    assert sandbox.started is True
+    assert sandbox.fs.stopped is False
+
+
+# ----------------------------------------------------------------------------
 # Native fs path: writes / reads / list_dir on Daytona must go through
 # ``sandbox.fs.*`` rather than the broken ``sandbox.process.exec`` stdin pipe.
 # ----------------------------------------------------------------------------
