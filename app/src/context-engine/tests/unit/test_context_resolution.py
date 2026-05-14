@@ -642,40 +642,10 @@ async def test_review_intent_works_without_diff_fetch_under_default_policy() -> 
     assert bundle.source_resolution.snippets == []
 
 
-@pytest.mark.asyncio
-async def test_pr_artifact_with_summary_policy_routes_through_resolver() -> None:
-    provider = MockIntelligenceProvider()
-    svc = ContextResolutionService(provider, source_resolver=_StubGitHubArtifactResolver())
-    req = ContextResolutionRequest(
-        pot_id="p1",
-        query="Summarize PR 42",
-        artifact_ref=ArtifactRef(kind="pr", identifier="42"),
-        source_policy="summary",
-    )
-    bundle = await resolve_context(svc, req)
-    # Artifact ref must carry source_system='github' so the resolver dispatches.
-    pr_refs = [r for r in bundle.source_refs if r.source_type == "pr"]
-    assert pr_refs and pr_refs[0].source_system == "github"
-    assert bundle.source_resolution.summaries
-    assert bundle.source_resolution.summaries[0].summary.endswith("42")
-
-
-@pytest.mark.asyncio
-async def test_pr_artifact_with_snippets_policy_returns_bounded_diff() -> None:
-    provider = MockIntelligenceProvider()
-    svc = ContextResolutionService(provider, source_resolver=_StubGitHubArtifactResolver())
-    req = ContextResolutionRequest(
-        pot_id="p1",
-        query="Show me what changed in PR 42",
-        artifact_ref=ArtifactRef(kind="pr", identifier="42"),
-        source_policy="snippets",
-    )
-    bundle = await resolve_context(svc, req)
-    assert bundle.source_resolution.snippets
-    snip = bundle.source_resolution.snippets[0]
-    assert snip.location == "b/x.py"
-    # Snippet content stays bounded — assertion is structural, not heuristic.
-    assert len(snip.snippet) < 10_000
+# Phase 2: PR-specific artifact resolution tests were removed alongside the
+# legacy ``_infer_source_system("pr") == "github"`` default. After Phase 2 the
+# connector registry routes refs by their explicit ``source_system``;
+# resolver dispatch is covered by ``test_source_connector_registry``.
 
 
 @pytest.mark.asyncio

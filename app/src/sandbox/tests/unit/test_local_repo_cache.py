@@ -173,9 +173,13 @@ async def test_delete_cache_removes_bare_dir(tmp_path: Path) -> None:
 
     assert not bare.exists(), "bare repo dir must be removed on delete"
     assert await provider.get_cache(cache.id) is None
-    # A fresh ensure call must mint a NEW id (the old one is gone).
+    # A fresh ensure call re-clones the bare and reuses the same
+    # deterministic id (derived from the request key). Same key ⇒ same
+    # id is the invariant that keeps ``Workspace.repo_cache_id`` stable
+    # across process restarts.
     fresh = await provider.ensure_cache(_make_request(source))
-    assert fresh.id != cache.id
+    assert fresh.id == cache.id
+    assert Path(fresh.location.local_path).exists()  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio

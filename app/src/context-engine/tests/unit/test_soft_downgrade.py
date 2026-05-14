@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from application.use_cases.reconciliation_validation import validate_reconciliation_plan
+from application.services.reconciliation_validation import validate_reconciliation_plan
 from domain.context_events import EventRef
 from domain.errors import ReconciliationPlanValidationError
 from domain.graph_mutations import EdgeUpsert, EntityUpsert
@@ -114,7 +114,10 @@ def test_soft_fail_coerces_decision_lifecycle(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_soft_fail_off_still_rejects(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL", raising=False)
+    # Soft-fail is now ON by default; the legacy reject-on-error behaviour
+    # is only available by explicitly opting in to strict mode.
+    monkeypatch.setenv("CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL", "0")
+    monkeypatch.setenv("CONTEXT_ENGINE_ONTOLOGY_STRICT", "1")
     monkeypatch.setenv("CONTEXT_ENGINE_INFER_LABELS", "0")
 
     plan = ReconciliationPlan(

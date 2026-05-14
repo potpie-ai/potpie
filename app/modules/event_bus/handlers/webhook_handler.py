@@ -327,18 +327,19 @@ class WebhookEventHandler:
         payload: Dict[str, Any],
     ) -> Dict[str, Any]:
         from app.modules.context_graph.wiring import build_container_for_session
-        from domain.ingestion_kinds import INGESTION_KIND_GITHUB_MERGED_PR
+        from domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
         from domain.ingestion_event_models import IngestionSubmissionRequest
 
         container = build_container_for_session(self.db)
         request = IngestionSubmissionRequest(
             pot_id=pot_id,
-            ingestion_kind=INGESTION_KIND_GITHUB_MERGED_PR,
+            ingestion_kind=INGESTION_KIND_AGENT_RECONCILIATION,
             source_channel="webhook",
             source_system="github",
             event_type="pull_request",
             action="merged",
             repo_name=repo_name,
+            source_id=f"github:pr:{repo_name}:{pr_number}",
             source_event_id=source_event_id,
             payload={
                 "pr_number": pr_number,
@@ -347,5 +348,5 @@ class WebhookEventHandler:
                 "is_live_bridge": True,
             },
         )
-        receipt = container.ingestion_submission(self.db).submit(request, sync=False)
+        receipt = container.ingestion_submission(self.db).submit(request)
         return {"event_id": receipt.event_id, "status": receipt.status}

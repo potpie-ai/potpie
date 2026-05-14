@@ -262,6 +262,57 @@ class SandboxClient:
         """Remove the worktree (and its runtime). The repo cache survives."""
         await self._service.destroy_workspace(handle.workspace_id)
 
+    async def detach_repo_from_pot(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        repo: str,
+    ) -> int:
+        """Drop every workspace for ``(user_id, project_id, repo)``.
+
+        Used when a repo is removed from a pot: tears down the per-repo
+        worktree(s) but leaves the shared sandbox container in place so the
+        other pot repos keep running. Returns how many workspaces were
+        destroyed. The bare clone in the repo cache survives — it is shared
+        across pots and the host is responsible for any GC decision.
+        """
+        removed = 0
+        for workspace in await self._service._store.list_workspaces():
+            req = workspace.request
+            if req.user_id != user_id:
+                continue
+            if req.project_id != project_id:
+                continue
+            if req.repo.repo_name != repo:
+                continue
+            try:
+                await self._service.destroy_workspace(workspace.id)
+                removed += 1
+            except Exception:  # noqa: BLE001
+                continue
+        return removed
+
+    async def destroy_pot_sandbox(
+        self,
+        *,
+        user_id: str,
+        project_id: str,
+        delete_repo_caches: bool = False,
+    ) -> dict[str, int]:
+        """Tear down everything for a pot: workspaces, runtimes, the shared sandbox.
+
+        Wraps :meth:`SandboxService.destroy_pot_container`. ``delete_repo_caches``
+        is gated by the host (see ``CONTEXT_ENGINE_GC_BARE_ON_POT_DELETE``) —
+        bare clones are shared across pots and should not be removed without
+        cross-pot reference checks.
+        """
+        return await self._service.destroy_pot_container(
+            user_id=user_id,
+            project_id=project_id,
+            delete_repo_caches=delete_repo_caches,
+        )
+
     async def is_alive(self, handle: WorkspaceHandle) -> bool:
         """Cheap liveness probe — does the backing workspace still exist?
 

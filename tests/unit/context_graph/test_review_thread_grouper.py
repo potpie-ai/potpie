@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from domain.review_thread_grouper import group_review_threads
+from adapters.outbound.connectors.github.review_threads import group_review_threads
 
 pytestmark = pytest.mark.unit
 

@@ -9,13 +9,11 @@ from fastapi.testclient import TestClient
 
 
 def test_ingest_422_json_body(monkeypatch) -> None:
-    from application.use_cases.run_raw_episode_ingestion import (
-        RunRawEpisodeIngestionResult,
-    )
+    from application.use_cases.submit_raw_episode import RawEpisodeSubmissionResult
     from adapters.inbound.http.api.v1.context.router import create_context_router
 
     def fake_run(**_kwargs):
-        return RunRawEpisodeIngestionResult(
+        return RawEpisodeSubmissionResult(
             ok=False,
             status="reconciliation_rejected",
             event_id="3d6ab2c2-4f43-4a5f-8b3c-12bee7386613",
@@ -29,7 +27,7 @@ def test_ingest_422_json_body(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(
-        "adapters.inbound.http.api.v1.context.router.run_raw_episode_ingestion",
+        "adapters.inbound.http.api.v1.context.router.submit_raw_episode",
         fake_run,
     )
     monkeypatch.setenv("CONTEXT_ENGINE_INGEST_422", "1")
@@ -67,13 +65,11 @@ def test_ingest_422_json_body(monkeypatch) -> None:
 
 
 def test_ingest_legacy_503_when_422_disabled(monkeypatch) -> None:
-    from application.use_cases.run_raw_episode_ingestion import (
-        RunRawEpisodeIngestionResult,
-    )
+    from application.use_cases.submit_raw_episode import RawEpisodeSubmissionResult
     from adapters.inbound.http.api.v1.context.router import create_context_router
 
     def fake_run(**_kwargs):
-        return RunRawEpisodeIngestionResult(
+        return RawEpisodeSubmissionResult(
             ok=False,
             status="reconciliation_rejected",
             event_id="e1",
@@ -82,7 +78,7 @@ def test_ingest_legacy_503_when_422_disabled(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(
-        "adapters.inbound.http.api.v1.context.router.run_raw_episode_ingestion",
+        "adapters.inbound.http.api.v1.context.router.submit_raw_episode",
         fake_run,
     )
     monkeypatch.setenv("CONTEXT_ENGINE_INGEST_422", "0")

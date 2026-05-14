@@ -1,0 +1,137 @@
+id: debug_postgres_pool_exhaustion_recurrence
+use_case: debugging
+tier: quick
+description: |
+  90 days ago, checkout-api hit a Postgres connection pool exhaustion
+  incident (OPS-218). Root cause: a migration bumped per-worker
+  connections from 4 to 8 without raising the pool ceiling — math broke
+  during the 09:15-09:45 UTC morning ramp (12 workers × 8 = 96 conns +
+  4 admin = 100/100 pool pegged).
+
+  The fix landed in PR #892: clamped per-worker conns back to 4, added
+  a fleet-wide `pg_pool_utilization` alert at 80%, and a runbook at
+  `runbooks/db-pool-exhaustion.md`. A postmortem (OPS-220) was
+  published that recorded an explicit decision:
+
+      "Worker fleet expansions over +25% from baseline must include a
+       pool-ceiling check signed off by a DBA before merge."
+
+  Today (OPS-389), a *different engineer* (bench-user-4 — new to the
+  team, no prior knowledge of OPS-218) reports the *same symptoms* on
+  a *different service*: inventory-svc throwing 503s in the same
+  09:15-09:45 UTC window with the same `connection_pool_exhausted`
+  error string, after a fleet expansion 18 → 24 workers (+33%).
+
+  The agent's debugging query should:
+    1. Recognize this matches OPS-218 (same symptom signature, same
+       root-cause class — not a novel incident).
+    2. Surface the runbook entry that was written during the prior fix.
+    3. Cite the OPS-220 decision (+25% fleet rule) AND notice the
+       current +33% expansion violates it.
+    4. Recommend concrete first actions tied to the prior fix
+       (check pg_stat_activity; clamp per-worker if utilization > 80%;
+       follow the runbook).
+
+  This is the canonical debugging scenario for the bench. It exercises:
+    - Linear Issue + Comment ingestion through the deterministic connector
+    - Cross-issue ontology (OPS-218 ↔ OPS-220 ↔ OPS-389 must connect)
+    - Decision extraction from a postmortem body (OPS-220 contains an
+      explicit decision the reconciliation agent should pull out)
+    - Multi-actor reasoning (5 personas: filer, owner, reviewer, DBA,
+      new engineer)
+    - The agent's recurrence-detection capability (the synthesis judge
+      checks that the answer connects today's symptoms to prior history
+      rather than treating OPS-389 as novel).
+
+ingest:
+  - { event: linear/issue_create__OPS-218.json, at: "-90d" }
+  - { event: linear/issue_state_change__OPS-218__triage_to_in_progress.json, at: "-90d" }
+  - { event: linear/comment_create__OPS-218__root_cause.json, at: "-89d" }
+  - { event: linear/comment_create__OPS-218__fix_landed.json, at: "-85d" }
+  - { event: linear/issue_state_change__OPS-218__in_progress_to_done.json, at: "-85d" }
+  - { event: linear/issue_create__OPS-220__postmortem.json, at: "-80d" }
+  - { event: linear/issue_create__OPS-389.json, at: "0d" }
+
+post_ingest_assertions:
+  graph_must_contain_entities:
+    - { label: Issue, key_pattern: "OPS-218" }
+    - { label: Issue, key_pattern: "OPS-220" }
+    - { label: Issue, key_pattern: "OPS-389" }
+    - { label: Person, min_count: 3 }
+    - { label: Decision, min_count: 1 }
+  graph_must_contain_edges:
+    - { from_label: Person, to_label: Issue, type: ASSIGNED }
+    - { from_label: Person, to_label: Issue, type: CREATED, min_count: 1 }
+  no_orphan_entities: false
+  reconciliation:
+    soft_downgrades_max: 2
+    failed_events_max: 0
+
+query:
+  intent: debugging
+  scope: { service: inventory-svc }
+  include: [prior_fixes, incidents, decisions, recent_changes, owners, causal_chain]
+  mode: balanced
+  source_policy: summary
+
+retrieval_assertions:
+  required_includes_used: [decisions, incidents]
+  source_refs_min: 3
+  must_cite_event_id: linear/issue_create__OPS-218.json
+  forbid_in_answer:
+    - "I don't have information"
+    - "no relevant context"
+    - "no prior incidents"
+
+judge:
+  pass_score: 70
+  criteria:
+    - name: surfaces_prior_incident
+      weight: 30
+      pass_threshold: 4
+      prompt: |
+        Does the answer explicitly reference the prior incident OPS-218
+        from ~90 days ago, naming it by its identifier (OPS-218)?
+        Vague mentions like "a similar past incident" do not count —
+        the identifier or the precise title must appear.
+    - name: identifies_recurrence_pattern
+      weight: 20
+      pass_threshold: 3
+      prompt: |
+        Does the answer connect today's symptoms (connection pool
+        exhaustion, the 09:15-09:45 UTC window, the post-fleet-expansion
+        trigger) to the prior root-cause class — i.e. does the agent
+        recognize this is a recurrence of a known pattern rather than
+        treat OPS-389 as novel? "This matches the pattern we saw in
+        OPS-218" or equivalent is what we're looking for.
+    - name: cites_decision_or_policy
+      weight: 20
+      pass_threshold: 3
+      prompt: |
+        Does the answer reference the OPS-220 postmortem decision
+        (the +25% fleet-expansion rule that requires a DBA pool-ceiling
+        check)? Bonus credit if it notes the current incident's +33%
+        expansion (18 → 24 workers) violates the rule — this is the
+        single most useful synthesis the engine can do for the new
+        engineer here.
+    - name: actionable_first_steps
+      weight: 15
+      pass_threshold: 3
+      prompt: |
+        Does the answer give concrete first actions that a new engineer
+        could execute right now — e.g. checking pg_stat_activity on
+        inventory-prod-db, clamping inventory-svc per-worker connections
+        to 4, following `runbooks/db-pool-exhaustion.md`? A purely
+        descriptive answer with no actionable guidance fails this
+        criterion.
+    - name: no_hallucination
+      weight: 15
+      pass_threshold: 5
+      prompt: |
+        Are all factual claims grounded in the retrieved facts? Valid
+        identifiers in the supporting data: OPS-218, OPS-220, OPS-389,
+        PR #892, PR #875, runbooks/db-pool-exhaustion.md, checkout-api,
+        inventory-svc, checkout-prod-db, inventory-prod-db, bench-user-1
+        through bench-user-5. Any other PR numbers, file paths, commit
+        SHAs, person names, or service names mentioned in the answer
+        are hallucinations and must fail this criterion.

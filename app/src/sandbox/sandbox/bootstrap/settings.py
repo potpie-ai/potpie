@@ -15,6 +15,9 @@ from pathlib import Path
 DEFAULT_AGENT_SNAPSHOT = "potpie/agent-sandbox:0.2.1"
 DEFAULT_AGENT_DOCKER_IMAGE = "potpie/agent-sandbox:0.2.1"
 
+_VALID_PROVIDERS = frozenset({"local", "daytona"})
+_VALID_RUNTIMES = frozenset({"local_subprocess", "docker", "daytona"})
+
 # Bundled Dockerfile that defines the agent-sandbox snapshot. Resolved relative
 # to this file so the path is correct whether the package is run from source
 # or installed into a venv.
@@ -30,7 +33,13 @@ class SandboxSettings:
     repos_base_path: str = ".repos"
     metadata_path: str | None = None
     docker_image: str = DEFAULT_AGENT_DOCKER_IMAGE
-    local_allow_write: bool = False
+    # Local subprocess explicitly *is not* a security boundary (see
+    # ``LocalSubprocessRuntimeProvider`` docstring): a caller who selects
+    # ``runtime=local_subprocess`` has already accepted that. Defaulting
+    # writes off would silently break the edit/commit/push flow without
+    # adding any real safety. Read-only callers can flip this back via
+    # ``SANDBOX_LOCAL_ALLOW_WRITE=false``.
+    local_allow_write: bool = True
     daytona_snapshot: str | None = DEFAULT_AGENT_SNAPSHOT
     daytona_workspace_root: str = "/home/agent/work"
     daytona_snapshot_dockerfile: str | None = None
@@ -81,6 +90,35 @@ class SandboxSettings:
     # (/proc, /sys, /etc, /bin, /sbin, /lib, /lib64, /boot, /dev).
     daytona_volume_mount_path: str = "/home/agent/work/.bare-cache"
 
+    def __post_init__(self) -> None:
+        """Fail fast on misconfiguration.
+
+        Previously an unknown ``SANDBOX_WORKSPACE_PROVIDER`` /
+        ``SANDBOX_RUNTIME_PROVIDER`` surfaced only when the bootstrap
+        tried to materialise the adapter — deep inside the first agent
+        call inside a Celery task. Validating here turns it into a
+        process-start error with a clear message.
+        """
+        if self.provider not in _VALID_PROVIDERS:
+            raise ValueError(
+                f"Unsupported SANDBOX_WORKSPACE_PROVIDER={self.provider!r}; "
+                f"expected one of {sorted(_VALID_PROVIDERS)}"
+            )
+        if self.runtime not in _VALID_RUNTIMES:
+            raise ValueError(
+                f"Unsupported SANDBOX_RUNTIME_PROVIDER={self.runtime!r}; "
+                f"expected one of {sorted(_VALID_RUNTIMES)}"
+            )
+        # Daytona's runtime is wired to its workspace provider (the
+        # sandbox is the runtime), so mixing it with the local
+        # workspace provider can't work — flag it early.
+        if self.runtime == "daytona" and self.provider != "daytona":
+            raise ValueError(
+                "SANDBOX_RUNTIME_PROVIDER=daytona requires "
+                "SANDBOX_WORKSPACE_PROVIDER=daytona (the Daytona runtime "
+                "lives inside the Daytona workspace)"
+            )
+
 
 def settings_from_env() -> SandboxSettings:
     base = os.getenv("SANDBOX_REPOS_BASE_PATH", ".repos")
@@ -96,7 +134,7 @@ def settings_from_env() -> SandboxSettings:
         repos_base_path=base,
         metadata_path=metadata,
         docker_image=os.getenv("SANDBOX_DOCKER_IMAGE", DEFAULT_AGENT_DOCKER_IMAGE),
-        local_allow_write=_bool_env("SANDBOX_LOCAL_ALLOW_WRITE", False),
+        local_allow_write=_bool_env("SANDBOX_LOCAL_ALLOW_WRITE", True),
         daytona_snapshot=os.getenv("DAYTONA_SNAPSHOT") or DEFAULT_AGENT_SNAPSHOT,
         daytona_workspace_root=os.getenv(
             "DAYTONA_WORKSPACE_ROOT", "/home/agent/work"

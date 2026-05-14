@@ -40,7 +40,9 @@ def test_legitimate_modified_pr_to_file() -> None:
     assert is_legitimate_pr_code_modified(("PullRequest", "Entity"), ("FILE", "Entity"))
 
 
-def test_vague_modified_remapped_to_migration(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_vague_modified_remapped_to_lifecycle_transition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_STRICT_EXTRACTION", "0")
     edge = SimpleNamespace(
         name="MODIFIED",
@@ -54,7 +56,10 @@ def test_vague_modified_remapped_to_migration(monkeypatch: pytest.MonkeyPatch) -
         SimpleNamespace(uuid="t1", labels=["DataStore", "Entity"]),
     ]
     out = normalize_graphiti_extracted_edges([edge], nodes)
-    assert out[0].name == "MIGRATED_TO"
+    # v2 collapses the MIGRATED_TO / PLANNED / DELIVERED / DEPRECATED /
+    # DECOMMISSIONED verbs into a single LIFECYCLE_TRANSITION edge that
+    # carries a ``verb`` and ``lifecycle_status`` on its attributes.
+    assert out[0].name == "LIFECYCLE_TRANSITION"
     assert out[0].attributes.get("lifecycle_status") == "completed"
 
 

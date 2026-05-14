@@ -1,227 +1,169 @@
-"""Benchmark orchestration."""
+"""Per-scenario orchestration: create pot → ingest → snapshot → query → judge → drop.
+
+This is the only place the three axes are composed into a single
+``ScenarioResult``. Keeping the per-scenario lifecycle in one function
+makes it obvious what the bench is doing and where it can fail.
+"""
 
 from __future__ import annotations
 
-import asyncio
+import logging
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
-from benchmarks.dataset import build_pr_seed_episodes
-from benchmarks.evaluator import evaluate_response, grade, latency_stats, summarize_response
-from benchmarks.models import BenchmarkDataset, BenchmarkReport, ScenarioResult
-from benchmarks.runners import BenchmarkRunner
+from adapters.outbound.http.potpie_context_api_client import PotpieContextApiClient
+
+from benchmarks.core.graph_inspect import snapshot_graph
+from benchmarks.core.ingestion import IngestionOutcome, replay_all
+from benchmarks.core.lifecycle import EphemeralPot, create_ephemeral_pot, reset_pot
+from benchmarks.core.query import resolve_context
+from benchmarks.core.replay import to_replay_events
+from benchmarks.core.result import AxisScore, ScenarioResult
+from benchmarks.core.scenario import Scenario
+from benchmarks.evaluators.ingestion_quality import evaluate_ingestion_quality
+from benchmarks.evaluators.llm_judge import evaluate_synthesis
+from benchmarks.evaluators.retrieval import evaluate_retrieval
+
+logger = logging.getLogger(__name__)
 
 
-async def run_benchmark(
-    runner: BenchmarkRunner,
-    dataset: BenchmarkDataset,
+def _aggregate(scenario: Scenario, ingestion_score: float, retrieval_score: float, synthesis_score: float) -> float:
+    w = scenario.axis_weights
+    return ingestion_score * w.ingestion + retrieval_score * w.retrieval + synthesis_score * w.synthesis
+
+
+def _empty_axis(reason: str) -> AxisScore:
+    return AxisScore(score=0.0, passed=False, errors=[reason])
+
+
+def run_scenario(
     *,
-    mode: str,
-    iterations: int,
-    concurrency: int,
-    scenario_concurrency: int,
-    seed: bool,
-    ingest_pr_live: bool,
-    baseline: dict[str, Any] | None = None,
-) -> BenchmarkReport:
-    seed_result = await _seed_dataset(runner, dataset, seed=seed, ingest_pr_live=ingest_pr_live)
-    scenario_semaphore = asyncio.Semaphore(max(1, scenario_concurrency))
-
-    async def run_one(scenario: dict[str, Any]) -> ScenarioResult:
-        async with scenario_semaphore:
-            return await _run_scenario(runner, scenario, iterations=iterations, concurrency=concurrency)
-
-    scenario_tasks = [asyncio.create_task(run_one(s)) for s in dataset.scenarios]
-    scenario_results = await asyncio.gather(*scenario_tasks)
-
-    total_score = sum(item.score for item in scenario_results)
-    max_score = sum(item.max_score for item in scenario_results)
-    pass_threshold = float(dataset.thresholds.get("pass_score", 0.75))
-    ratio = total_score / max_score if max_score else 0.0
-    regressions = _compare_baseline(scenario_results, baseline, dataset.thresholds)
-    summary = {
-        "ok": (
-            ratio >= pass_threshold
-            and not regressions
-            and all(item.errors == 0 for item in scenario_results)
-            and all(item.ok for item in scenario_results)
-        ),
-        "score": round(ratio, 4),
-        "grade": grade(total_score, max_score),
-        "scenario_count": len(scenario_results),
-        "error_count": sum(item.errors for item in scenario_results),
-        "pass_score": pass_threshold,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-    return BenchmarkReport(
-        dataset={"name": dataset.name, "version": dataset.version},
-        target={
-            "mode": mode,
-            "pot_id": runner.pot_id,
-            "repo_name": runner.repo_name,
-            "iterations": iterations,
-            "concurrency": concurrency,
-            "scenario_concurrency": scenario_concurrency,
-        },
-        summary=summary,
-        scenarios=scenario_results,
-        seed=seed_result,
-        regressions=regressions,
-    )
-
-
-async def _seed_dataset(
-    runner: BenchmarkRunner,
-    dataset: BenchmarkDataset,
-    *,
-    seed: bool,
-    ingest_pr_live: bool,
-) -> dict[str, Any]:
-    result: dict[str, Any] = {"enabled": seed, "episodes": 0, "records": 0, "prs": 0, "errors": []}
-    if not seed:
-        return result
-    episodes = list(dataset.seed_episodes)
-    if not ingest_pr_live:
-        episodes.extend(build_pr_seed_episodes(dataset))
-
-    for episode in episodes:
-        try:
-            await runner.seed_episode(episode)
-            result["episodes"] += 1
-        except Exception as exc:
-            result["errors"].append({"kind": "episode", "name": episode.get("name"), "error": str(exc)})
-
-    for record in dataset.seed_records:
-        try:
-            await runner.seed_record(record)
-            result["records"] += 1
-        except Exception as exc:
-            result["errors"].append({"kind": "record", "type": record.get("type"), "error": str(exc)})
-
-    if ingest_pr_live:
-        for bundle in dataset.pr_bundles:
-            try:
-                await runner.ingest_pr(
-                    int(bundle["pr_data"]["number"]),
-                    str(bundle.get("repo_name") or dataset.repo_name),
-                )
-                result["prs"] += 1
-            except Exception as exc:
-                result["errors"].append({"kind": "pr", "number": bundle.get("pr_data", {}).get("number"), "error": str(exc)})
-    return result
-
-
-async def _run_scenario(
-    runner: BenchmarkRunner,
-    scenario: dict[str, Any],
-    *,
-    iterations: int,
-    concurrency: int,
+    scenario: Scenario,
+    client: PotpieContextApiClient,
+    fixtures_root: Path,
+    judge_client: Any | None = None,
+    ingest_timeout_s: float = 180.0,
+    skip_judge: bool = False,
 ) -> ScenarioResult:
-    latencies: list[float] = []
-    errors = 0
-    best_score = 0.0
-    best_max = 0.0
-    best_assertions: list[dict[str, Any]] = []
-    last_response: dict[str, Any] = {}
-    semaphore = asyncio.Semaphore(max(1, concurrency))
+    """Run a single scenario end-to-end against a real engine.
 
-    async def once() -> tuple[float, dict[str, Any] | None, str | None]:
-        async with semaphore:
-            start = time.perf_counter()
+    Always returns a ``ScenarioResult``. Internal failures are captured
+    in axis errors / scenario.error rather than raised, so a single bad
+    scenario doesn't sink the whole run.
+    """
+    logger.info("scenario %s: starting", scenario.id)
+    start_total = time.monotonic()
+    pot: EphemeralPot | None = None
+    latency: dict[str, float] = {}
+
+    try:
+        pot = create_ephemeral_pot(client, scenario_id=scenario.id)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("scenario %s: pot creation failed", scenario.id)
+        return ScenarioResult(
+            id=scenario.id,
+            use_case=scenario.use_case,
+            tier=scenario.tier,
+            aggregate_score=0.0,
+            aggregate_passed=False,
+            ingestion=_empty_axis(f"pot creation failed: {exc}"),
+            retrieval=_empty_axis("skipped (no pot)"),
+            synthesis=_empty_axis("skipped (no pot)"),
+            latency_ms={},
+            pot_id=None,
+            error=f"pot_creation_failed: {exc}",
+        )
+
+    assert pot is not None  # narrows for type-checker after the try/except above.
+    try:
+        anchor = datetime.now(timezone.utc)
+        events = to_replay_events(scenario.ingest, fixtures_root, anchor=anchor)
+
+        ingest_started = time.monotonic()
+        outcomes: list[IngestionOutcome] = replay_all(
+            client, pot.pot_id, events,
+            timeout_s=ingest_timeout_s,
+            fallback_repo_name=pot.repo_name,
+        )
+        latency["ingest_total_ms"] = (time.monotonic() - ingest_started) * 1000
+
+        snapshot = snapshot_graph(client, pot.pot_id)
+        ingestion_eval = evaluate_ingestion_quality(
+            snapshot=snapshot,
+            outcomes=outcomes,
+            assertions=scenario.post_ingest_assertions,
+        )
+        ingestion_axis = AxisScore(
+            score=ingestion_eval.score,
+            passed=ingestion_eval.passed,
+            details=ingestion_eval.details,
+            errors=ingestion_eval.errors,
+        )
+
+        query_started = time.monotonic()
+        try:
+            response = resolve_context(client, pot.pot_id, scenario.query)
+            latency["query_ms"] = (time.monotonic() - query_started) * 1000
+            retrieval_eval = evaluate_retrieval(response, scenario.retrieval_assertions)
+            retrieval_axis = AxisScore(
+                score=retrieval_eval.score,
+                passed=retrieval_eval.passed,
+                details=retrieval_eval.details,
+                errors=retrieval_eval.errors,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("scenario %s: query failed", scenario.id)
+            response = {}
+            retrieval_axis = _empty_axis(f"query failed: {exc}")
+
+        if skip_judge:
+            synthesis_axis = AxisScore(
+                score=0.0,
+                passed=False,
+                details={"skipped": True},
+                errors=["judge skipped via --skip-judge"],
+            )
+        elif response:
+            judge_started = time.monotonic()
             try:
-                response = await runner.query(_scenario_query(runner, scenario))
-                error = None
-            except Exception as exc:
-                response = None
-                error = str(exc)
-            latency = (time.perf_counter() - start) * 1000.0
-            return latency, response, error
+                synthesis_eval = evaluate_synthesis(
+                    description=scenario.description,
+                    query=scenario.query,
+                    response=response,
+                    rubric=scenario.judge,
+                    client=judge_client,
+                )
+                latency["judge_ms"] = (time.monotonic() - judge_started) * 1000
+                synthesis_axis = AxisScore(
+                    score=synthesis_eval.score,
+                    passed=synthesis_eval.passed,
+                    details=synthesis_eval.details,
+                    errors=synthesis_eval.errors,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("scenario %s: judge failed", scenario.id)
+                synthesis_axis = _empty_axis(f"judge failed: {exc}")
+        else:
+            synthesis_axis = _empty_axis("skipped (no query response)")
 
-    for task in asyncio.as_completed([asyncio.create_task(once()) for _ in range(iterations)]):
-        latency, response, error = await task
-        latencies.append(latency)
-        if error or response is None:
-            errors += 1
-            best_assertions.append({"name": "request", "passed": False, "weight": 1.0, "detail": error})
-            continue
-        normalized = _normalize_response(response)
-        last_response = normalized
-        score, max_score, assertions = evaluate_response(normalized, scenario, latency_ms=latency)
-        if max_score and score / max_score >= (best_score / best_max if best_max else -1):
-            best_score = score
-            best_max = max_score
-            best_assertions = assertions
+        aggregate = _aggregate(scenario, ingestion_axis.score, retrieval_axis.score, synthesis_axis.score)
+        passed = ingestion_axis.passed and retrieval_axis.passed and synthesis_axis.passed
+        latency["total_ms"] = (time.monotonic() - start_total) * 1000
 
-    scenario_grade = grade(best_score, best_max)
-    threshold = float(scenario.get("pass_score", 0.75))
-    ok = errors == 0 and (best_score / best_max if best_max else 0.0) >= threshold
-    return ScenarioResult(
-        id=str(scenario["id"]),
-        feature=str(scenario.get("feature") or "context_graph"),
-        intent=scenario.get("intent"),
-        ok=ok,
-        score=best_score,
-        max_score=best_max,
-        grade=scenario_grade,
-        errors=errors,
-        iterations=iterations,
-        latency=latency_stats(latencies),
-        assertions=best_assertions,
-        response_summary=summarize_response(last_response),
-    )
-
-
-def _scenario_query(runner: BenchmarkRunner, scenario: dict[str, Any]) -> dict[str, Any]:
-    body = dict(scenario["request"])
-    body.setdefault("pot_id", runner.pot_id)
-    scope = dict(body.get("scope") or {})
-    if runner.repo_name and "repo_name" not in scope:
-        scope["repo_name"] = runner.repo_name
-    if scope:
-        body["scope"] = scope
-    return body
-
-
-def _normalize_response(response: dict[str, Any]) -> dict[str, Any]:
-    result = response.get("result")
-    if isinstance(result, dict) and (
-        "answer" in result or "coverage" in result or "source_refs" in result
-    ):
-        normalized = dict(result)
-        normalized.setdefault("kind", response.get("kind"))
-        normalized.setdefault("goal", response.get("goal"))
-        normalized.setdefault("strategy", response.get("strategy"))
-        return normalized
-    return response
-
-
-def _compare_baseline(
-    results: list[ScenarioResult],
-    baseline: dict[str, Any] | None,
-    thresholds: dict[str, Any],
-) -> list[dict[str, Any]]:
-    if not baseline:
-        return []
-    max_score_drop = float(thresholds.get("max_score_drop", 0.05))
-    max_p95_latency_ratio = float(thresholds.get("max_p95_latency_ratio", 1.25))
-    previous = {item["id"]: item for item in baseline.get("scenarios", []) if isinstance(item, dict)}
-    regressions: list[dict[str, Any]] = []
-    for current in results:
-        old = previous.get(current.id)
-        if not old:
-            continue
-        old_score = float(old.get("score") or 0.0) / float(old.get("max_score") or 1.0)
-        new_score = current.score / current.max_score if current.max_score else 0.0
-        if old_score - new_score > max_score_drop:
-            regressions.append(
-                {"id": current.id, "kind": "score_drop", "previous": round(old_score, 4), "current": round(new_score, 4)}
-            )
-        old_p95 = ((old.get("latency_ms") or {}).get("p95") or 0) if isinstance(old.get("latency_ms"), dict) else 0
-        new_p95 = current.latency.p95_ms or 0
-        if old_p95 and new_p95 / old_p95 > max_p95_latency_ratio:
-            regressions.append(
-                {"id": current.id, "kind": "latency_p95", "previous": old_p95, "current": new_p95}
-            )
-    return regressions
+        return ScenarioResult(
+            id=scenario.id,
+            use_case=scenario.use_case,
+            tier=scenario.tier,
+            aggregate_score=aggregate,
+            aggregate_passed=passed,
+            ingestion=ingestion_axis,
+            retrieval=retrieval_axis,
+            synthesis=synthesis_axis,
+            latency_ms=latency,
+            pot_id=pot.pot_id,
+        )
+    finally:
+        if pot is not None:
+            reset_pot(client, pot)

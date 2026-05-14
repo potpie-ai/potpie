@@ -10,7 +10,7 @@ from adapters.outbound.reconciliation.context_graph_tools import (
     ContextGraphReconciliationTools,
     build_initial_context_snapshot,
 )
-from application.use_cases.reconciliation_validation import (
+from application.services.reconciliation_validation import (
     validate_reconciliation_plan,
 )
 from domain.context_events import ContextEvent, EventRef
@@ -197,9 +197,9 @@ def test_pydantic_deep_agent_exposes_tools_setter() -> None:
     )
 
     agent = PydanticDeepReconciliationAgent()
-    assert agent.capability_metadata()["toolset_version"] == "read-only-plan"
-    graph = _FakeGraph()
-    agent.set_context_tools(ContextGraphReconciliationTools(graph))
-    meta = agent.capability_metadata()
-    assert meta["toolset_version"] == "context-aware-v1"
-    assert meta["has_context_tools"] is True
+    base_meta = agent.capability_metadata()
+    assert base_meta["toolset_version"] == "batch-tools-v1"
+    assert base_meta["has_context_tools"] is False
+    agent.set_context_tools(ContextGraphReconciliationTools(_FakeGraph()))
+    after = agent.capability_metadata()
+    assert after["has_context_tools"] is True

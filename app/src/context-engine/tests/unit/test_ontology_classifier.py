@@ -77,12 +77,41 @@ def test_fix_type_forces_fix() -> None:
     assert "Fix" in _labels(("Entity",), {"fix_type": "code"})
 
 
-def test_signal_type_forces_diagnostic_signal() -> None:
-    assert "DiagnosticSignal" in _labels(("Entity",), {"signal_type": "metric"})
+def test_signal_type_forces_observation() -> None:
+    # Diagnostic signals collapse into Observation in v2.
+    assert "Observation" in _labels(("Entity",), {"signal_type": "metric"})
 
 
-def test_interface_type_forces_interface() -> None:
-    assert "Interface" in _labels(("Entity",), {"interface_type": "rest"})
+def test_interface_type_forces_api_contract() -> None:
+    # Legacy ``interface_type`` property routes to APIContract.
+    assert "APIContract" in _labels(("Entity",), {"interface_type": "rest"})
+
+
+def test_strength_property_forces_policy() -> None:
+    # New Policy entity is signalled by ``strength`` or ``audience``.
+    assert "Policy" in _labels(("Entity",), {"strength": "required"})
+
+
+def test_migration_kind_property_forces_migration() -> None:
+    assert "Migration" in _labels(("Entity",), {"migration_kind": "schema"})
+
+
+def test_risk_text_cue() -> None:
+    assert "Risk" in _labels(
+        ("Entity",), {"summary": "Risk: rate limiting may break webhook retries."}
+    )
+
+
+def test_initiative_text_cue() -> None:
+    assert "Initiative" in _labels(
+        ("Entity",), {"name": "Auth rewrite workstream — Q3 launch"}
+    )
+
+
+def test_feature_flag_text_cue() -> None:
+    assert "FeatureFlag" in _labels(
+        ("Entity",), {"summary": "Gated behind a feature flag for staged rollout."}
+    )
 
 
 def test_canonical_type_hint_is_respected() -> None:
@@ -127,19 +156,22 @@ def test_runbook_text_cue() -> None:
 
 
 def test_agent_instruction_text_cue() -> None:
-    assert "AgentInstruction" in _labels(
+    # AgentInstruction merged into Policy in v2.
+    assert "Policy" in _labels(
         ("Entity",), {"title": "AGENTS.md — testing conventions"}
     )
 
 
 def test_constraint_text_cue() -> None:
-    assert "Constraint" in _labels(
+    # Constraint merged into Policy in v2.
+    assert "Policy" in _labels(
         ("Entity",), {"statement": "Never store access tokens in plaintext."}
     )
 
 
 def test_preference_text_cue() -> None:
-    assert "Preference" in _labels(
+    # Preference merged into Policy in v2.
+    assert "Policy" in _labels(
         ("Entity",), {"summary": "The team prefers pytest fixtures over unittest."}
     )
 

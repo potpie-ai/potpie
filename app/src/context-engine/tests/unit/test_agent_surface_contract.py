@@ -46,13 +46,6 @@ def test_mcp_exposes_exactly_the_four_agent_tools() -> None:
     )
 
 
-def test_mcp_does_not_expose_private_ingest_helper() -> None:
-    # context_ingest_episode exists in the module for internal use but must NOT
-    # be registered as an MCP tool.
-    names = {t.name for t in asyncio.run(mcp.list_tools())}
-    assert "context_ingest_episode" not in names
-
-
 def test_every_recipe_is_a_context_resolve_shape() -> None:
     assert CONTEXT_RESOLVE_RECIPES, "recipe catalog must not be empty"
     for intent, recipe in CONTEXT_RESOLVE_RECIPES.items():

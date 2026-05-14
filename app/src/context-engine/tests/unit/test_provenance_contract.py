@@ -62,7 +62,7 @@ def test_provenance_ref_omits_none_fields() -> None:
     assert props == {"prov_pot_id": "p", "prov_source_event_id": "e"}
 
 
-def test_apply_reconciliation_plan_threads_full_provenance_to_applier() -> None:
+def test_apply_reconciliation_plan_threads_full_provenance_to_episodic() -> None:
     plan = ReconciliationPlan(
         event_ref=EventRef(event_id="evt-1", source_system="github", pot_id="pot-1"),
         summary="s",
@@ -96,12 +96,10 @@ def test_apply_reconciliation_plan_threads_full_provenance_to_applier() -> None:
 
     episodic = MagicMock()
     episodic.write_episode_drafts.return_value = ["ep-1"]
-    structural = MagicMock()
-    applier = MagicMock()
-    applier.apply_entity_upserts.return_value = 1
-    applier.apply_edge_upserts.return_value = 1
-    applier.apply_edge_deletes.return_value = 0
-    applier.apply_invalidations.return_value = 0
+    episodic.apply_entity_upserts.return_value = 2
+    episodic.apply_edge_upserts.return_value = 1
+    episodic.apply_edge_deletes.return_value = 0
+    episodic.apply_invalidations.return_value = 0
 
     ctx = ProvenanceContext(
         source_kind="pull_request",
@@ -114,15 +112,13 @@ def test_apply_reconciliation_plan_threads_full_provenance_to_applier() -> None:
 
     apply_reconciliation_plan(
         episodic,
-        structural,
         plan,
         expected_pot_id="pot-1",
-        mutation_applier=applier,
         provenance_context=ctx,
     )
 
     # Entity upsert received a fully populated ProvenanceRef.
-    call = applier.apply_entity_upserts.call_args
+    call = episodic.apply_entity_upserts.call_args
     prov: ProvenanceRef = call.args[2]
     assert prov.pot_id == "pot-1"
     assert prov.source_event_id == "evt-1"
@@ -159,20 +155,17 @@ def test_apply_reconciliation_plan_works_without_provenance_context() -> None:
     )
     episodic = MagicMock()
     episodic.write_episode_drafts.return_value = []
-    applier = MagicMock()
-    applier.apply_entity_upserts.return_value = 1
-    applier.apply_edge_upserts.return_value = 0
-    applier.apply_edge_deletes.return_value = 0
-    applier.apply_invalidations.return_value = 0
+    episodic.apply_entity_upserts.return_value = 1
+    episodic.apply_edge_upserts.return_value = 0
+    episodic.apply_edge_deletes.return_value = 0
+    episodic.apply_invalidations.return_value = 0
 
     apply_reconciliation_plan(
         episodic,
-        MagicMock(),
         plan,
         expected_pot_id="pot-2",
-        mutation_applier=applier,
     )
-    prov = applier.apply_entity_upserts.call_args.args[2]
+    prov = episodic.apply_entity_upserts.call_args.args[2]
     assert prov.pot_id == "pot-2"
     assert prov.source_event_id == "evt-2"
     assert prov.source_system == "github"
@@ -314,10 +307,17 @@ def test_context_graph_result_model_dump_keeps_provenance_nested() -> None:
     episodic = MagicMock()
     episodic.enabled = True
     structural = MagicMock()
-    adapter = GraphitiContextGraphAdapter(episodic=episodic, structural=structural)
+    from adapters.outbound.readers import SemanticSearchReader
+    from application.services.context_reader_registry import ContextReaderRegistry
+
+    readers = ContextReaderRegistry()
+    readers.register(SemanticSearchReader(episodic=episodic, structural=structural))
+    adapter = GraphitiContextGraphAdapter(
+        episodic=episodic, structural=structural, readers=readers
+    )
 
     with patch(
-        "adapters.outbound.graphiti.context_graph.search_pot_context",
+        "adapters.outbound.readers.semantic_search.search_pot_context",
         return_value=rows_with_provenance,
     ):
         result = adapter.query(

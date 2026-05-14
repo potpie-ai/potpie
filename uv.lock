@@ -850,6 +850,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.0.0" },
     { name = "neo4j", marker = "extra == 'all'", specifier = ">=5.28.0" },
     { name = "neo4j", marker = "extra == 'graph'", specifier = ">=5.28.0" },
+    { name = "openai", marker = "extra == 'benchmarks'", specifier = ">=1.50.0" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'all'", specifier = ">=3.2" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2.0" },
@@ -859,6 +860,7 @@ requires-dist = [
     { name = "pygithub", marker = "extra == 'github'", specifier = ">=2.8.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
+    { name = "pyyaml", marker = "extra == 'benchmarks'", specifier = ">=6.0" },
     { name = "rich", specifier = ">=13.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "sqlalchemy", marker = "extra == 'all'", specifier = ">=2.0" },
@@ -866,7 +868,7 @@ requires-dist = [
     { name = "typer", specifier = ">=0.15.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
 ]
-provides-extras = ["postgres", "graph", "github", "reconciliation-agent", "hatchet", "all", "dev"]
+provides-extras = ["postgres", "benchmarks", "graph", "github", "reconciliation-agent", "hatchet", "all", "dev"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest-cov", specifier = ">=7.1.0" }]

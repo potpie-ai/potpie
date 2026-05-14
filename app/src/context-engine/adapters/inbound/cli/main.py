@@ -248,16 +248,6 @@ def doctor_cmd() -> None:
     s = EnvContextEngineSettings()
     cg = s.is_enabled()
     neo = bool(s.neo4j_uri())
-    ce_neo = bool(
-        os.getenv("CONTEXT_ENGINE_NEO4J_URI") or os.getenv("CONTEXT_ENGINE_NEO4J_URL")
-    )
-    legacy_neo = bool(os.getenv("NEO4J_URI") or os.getenv("NEO4J_URL"))
-    if ce_neo:
-        neo_src = "context_engine"
-    elif legacy_neo:
-        neo_src = "legacy"
-    else:
-        neo_src = "missing"
 
     has_potpie_key_env = bool(os.getenv("POTPIE_API_KEY"))
     has_stored_key = bool(get_stored_api_key())
@@ -320,7 +310,6 @@ def doctor_cmd() -> None:
     snap = DoctorSnapshot(
         context_graph_enabled=cg,
         neo4j_effective_set=neo,
-        neo4j_source=neo_src,
         pot_maps_set=maps_set,
         active_pot_id=get_active_pot_id() or None,
         potpie_api_key_env=has_potpie_key_env,
