@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import gc
 import logging
 import threading
 from datetime import datetime
@@ -39,6 +40,26 @@ from domain.reconciliation import EpisodeDraft
 logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
+
+
+def _swallow_event_loop_closed(loop: asyncio.AbstractEventLoop, context: dict) -> None:
+    """Asyncio exception handler that drops the noisy "Event loop is closed" race.
+
+    The openai SDK's ``AsyncHttpxClientWrapper.__del__`` schedules an aclose()
+    via ``loop.create_task`` when a wrapper is GC'd. If GC fires after our
+    ``_close_graphiti_for_running_loop`` drain but before ``asyncio.run``
+    closes the loop, the aclose's inner ``loop.call_soon`` lands on a
+    half-torn-down loop and raises ``RuntimeError: Event loop is closed``.
+    The ingest itself already succeeded; the task error is pure noise that
+    pollutes logs and looks like a real failure.
+    """
+    exc = context.get("exception")
+    if isinstance(exc, RuntimeError) and "Event loop is closed" in str(exc):
+        return
+    message = context.get("message") or ""
+    if "Event loop is closed" in message:
+        return
+    loop.default_exception_handler(context)
 
 
 class GraphitiEpisodicAdapter(EpisodicGraphPort):
@@ -196,9 +217,39 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
             logger.debug("Graphiti close after sync run: %s", exc)
         self._thread_local.graphiti = None
         self._thread_local.graphiti_loop = None
+        # Drop the last user-visible references above; force GC NOW so any
+        # `AsyncHttpxClientWrapper.__del__` (openai SDK) fires while the loop
+        # is still alive — its finalizer schedules an aclose() coroutine via
+        # ``loop.create_task`` and that aclose internally walks down to
+        # ``asyncio.SelectorTransport.close()`` which calls ``loop.call_soon``.
+        # If we let GC run after ``asyncio.run`` has torn the loop down, the
+        # call_soon raises ``RuntimeError: Event loop is closed`` and the task
+        # is reported as "Task exception was never retrieved".
+        gc.collect()
+        try:
+            current = asyncio.current_task()
+            late = [
+                t
+                for t in asyncio.all_tasks(loop)
+                if t is not current and not t.done()
+            ]
+            if late:
+                await asyncio.gather(*late, return_exceptions=True)
+        except Exception as exc:
+            logger.debug("Graphiti post-gc drain: %s", exc)
 
     def _sync_run(self, factory: Callable[[], Coroutine[Any, Any, _T]]) -> _T:
         async def _wrapped() -> _T:
+            # Silence noisy "Task exception was never retrieved" / "Event loop
+            # is closed" warnings emitted when openai SDK's
+            # ``AsyncHttpxClientWrapper.__del__`` schedules an aclose() that
+            # races with ``asyncio.run`` tearing the loop down. We do drain
+            # these explicitly in ``_close_graphiti_for_running_loop``; the
+            # handler is a belt-and-braces filter for anything GC fires after
+            # our last drain point but before loop close.
+            asyncio.get_running_loop().set_exception_handler(
+                _swallow_event_loop_closed
+            )
             try:
                 return await factory()
             finally:

@@ -33,7 +33,7 @@ import shlex
 import threading
 import time
 from pathlib import Path, PurePosixPath
-from typing import Any, AsyncIterator, Callable
+from typing import Any, AsyncIterator, Callable, Optional
 from urllib.parse import quote, urlparse
 
 logger = logging.getLogger(__name__)
@@ -148,7 +148,16 @@ class DaytonaWorkspaceProvider:
         self._sandboxes: dict[str, Any] = {}                          # sandbox_id -> SDK object
         self._project_sandbox_ids: dict[tuple[str, str], str] = {}    # (user, project) -> sandbox_id
         self._bare_repos: set[tuple[str, str]] = set()                # (sandbox_id, repo_name)
-        self._project_locks: dict[tuple[str, str], asyncio.Lock] = {}
+        # Cross-thread lock so an agent tool call serialises against a
+        # background prewarm that's still cloning the bare repo. An
+        # ``asyncio.Lock`` would only synchronise within one event loop;
+        # the prewarm thread runs its own ``asyncio.run`` loop, and the
+        # FastAPI request runs on a different loop, so they each grab
+        # their own asyncio lock instance and the second caller dives
+        # straight into a half-cloned bare repo. ``threading.Lock`` is
+        # process-wide and works regardless of which loop owns the call.
+        self._project_locks: dict[tuple[str, str], threading.Lock] = {}
+        self._project_locks_meta = threading.Lock()
         self._by_id: dict[str, Workspace] = {}
         self._by_key: dict[str, str] = {}
         self._snapshot_ensured = False
@@ -177,14 +186,38 @@ class DaytonaWorkspaceProvider:
             return existing
 
         project_key = (request.user_id, request.project_id)
-        lock = self._project_locks.setdefault(project_key, asyncio.Lock())
-        async with lock:
+        # Move the whole locked critical section into a worker thread. The
+        # lock is a ``threading.Lock`` so it serialises across the prewarm
+        # daemon thread (its own asyncio loop) and the request thread —
+        # the second caller blocks here until the first finishes the clone
+        # and worktree setup, then picks up the cached workspace via
+        # ``_lookup_existing``. Without this, the agent races the prewarm
+        # straight into a half-cloned bare repo and ``worktree add`` fails.
+        return await asyncio.to_thread(
+            self._get_or_create_workspace_locked, request, project_key, key
+        )
+
+    def _get_or_create_workspace_locked(
+        self,
+        request: WorkspaceRequest,
+        project_key: tuple[str, str],
+        key: str,
+    ) -> Workspace:
+        # ``setdefault`` is atomic in CPython, but the default arg is
+        # evaluated before the call so racing threads each build a Lock —
+        # only one is stored, the other is discarded. The meta-lock around
+        # the lookup avoids that wasted construction and gives us a single
+        # point to extend later (e.g., per-project ref-counts for eviction).
+        with self._project_locks_meta:
+            lock = self._project_locks.get(project_key)
+            if lock is None:
+                lock = threading.Lock()
+                self._project_locks[project_key] = lock
+        with lock:
             existing = self._lookup_existing(key)
             if existing is not None:
                 return existing
-            workspace = await asyncio.to_thread(
-                self._create_workspace_sync, request, project_key
-            )
+            workspace = self._create_workspace_sync(request, project_key)
             self._by_id[workspace.id] = workspace
             self._by_key[workspace.key] = workspace.id
             return workspace
@@ -924,6 +957,81 @@ class DaytonaWorkspaceProvider:
             f"git -C {shlex.quote(bare_path)} fetch origin -- "
             f"+{quoted}:refs/heads/{quoted} 2>/dev/null || true"
         )
+        # If the requested ref still doesn't resolve (repo's default branch
+        # isn't actually ``base_ref`` — e.g. attached without a default_branch
+        # so we defaulted to "main" but the repo uses "master"), alias it to
+        # the remote's actual default so ``worktree add`` doesn't fail with
+        # "not a valid object name".
+        self._ensure_local_ref(sandbox, bare_path, base_ref)
+
+    def _detect_remote_default_branch(
+        self, sandbox: Any, bare_path: str
+    ) -> Optional[str]:
+        """Read the remote's default branch via ``ls-remote --symref``.
+
+        Output shape::
+
+            ref: refs/heads/master\\tHEAD
+            <sha>\\tHEAD
+
+        Returns ``None`` if the call fails or the output doesn't carry a
+        symref line (older ``git``, no remote, transient network issue).
+        """
+        result = sandbox.process.exec(
+            f"git -C {shlex.quote(bare_path)} ls-remote --symref origin HEAD"
+        )
+        if int(getattr(result, "exit_code", 0)) != 0:
+            return None
+        payload = _payload(result) or ""
+        prefix = "ref: refs/heads/"
+        for line in payload.splitlines():
+            line = line.strip()
+            if not line.startswith(prefix):
+                continue
+            head, _, _ = line[len(prefix):].partition("\t")
+            head = head.strip()
+            if head:
+                return head
+        return None
+
+    def _ensure_local_ref(
+        self, sandbox: Any, bare_path: str, base_ref: str
+    ) -> None:
+        """Make ``refs/heads/<base_ref>`` resolve in the bare repo.
+
+        Called after clone/fetch. If the fetch couldn't bring the requested
+        ref down (because the repo's default branch isn't ``base_ref``), we
+        detect the remote's actual default and alias ``refs/heads/<base_ref>``
+        to it via ``update-ref``. The bare clone already copied every
+        ``refs/heads/*`` from origin, so the actual default's ref is local.
+
+        Silently no-ops on success or when we can't resolve a default — the
+        downstream ``worktree add`` will surface the original error.
+        """
+        quoted = shlex.quote(base_ref)
+        check = sandbox.process.exec(
+            f"git -C {shlex.quote(bare_path)} show-ref --verify --quiet "
+            f"refs/heads/{quoted}"
+        )
+        if int(getattr(check, "exit_code", 0)) == 0:
+            return
+        default = self._detect_remote_default_branch(sandbox, bare_path)
+        if not default or default == base_ref:
+            return
+        logger.warning(
+            "daytona: requested base_ref %r not present on origin for %s; "
+            "aliasing refs/heads/%s to remote default %r so worktree add can "
+            "resolve it. Attach the repo with the correct default_branch to "
+            "silence this.",
+            base_ref,
+            bare_path,
+            base_ref,
+            default,
+        )
+        sandbox.process.exec(
+            f"git -C {shlex.quote(bare_path)} update-ref "
+            f"refs/heads/{quoted} refs/heads/{shlex.quote(default)}"
+        )
 
     def _clone_bare(
         self, sandbox: Any, clone_url: str, bare_path: str, base_ref: str
@@ -965,9 +1073,26 @@ class DaytonaWorkspaceProvider:
             f"+{quoted}:refs/heads/{quoted}"
         )
         if int(getattr(fetch, "exit_code", 0)) != 0:
-            raise RepoCacheUnavailable(
-                f"git fetch failed: {_sanitize_git_error(_payload(fetch))}"
+            # The fetch fails when the repo's default branch isn't
+            # ``base_ref`` (common when the repo was attached without an
+            # explicit default_branch and we defaulted to "main" but the
+            # repo uses "master"). Fall back to the remote's actual default
+            # — the bare clone above already populated every refs/heads/*
+            # so the fallback is a cheap update-ref. Only raise if we
+            # genuinely can't get a usable local ref.
+            payload = _sanitize_git_error(_payload(fetch))
+            self._ensure_local_ref(sandbox, bare_path, base_ref)
+            verify = sandbox.process.exec(
+                f"git -C {shlex.quote(bare_path)} show-ref --verify --quiet "
+                f"refs/heads/{quoted}"
             )
+            if int(getattr(verify, "exit_code", 0)) != 0:
+                raise RepoCacheUnavailable(f"git fetch failed: {payload}")
+        else:
+            # Fetch succeeded — make absolutely sure the local ref landed
+            # (some git versions silently exit 0 even if the partial-clone
+            # promisor-side rejected the refspec).
+            self._ensure_local_ref(sandbox, bare_path, base_ref)
         # Verify — the slim Daytona snapshot's toolbox can return success on
         # a 204 body that is hard to introspect, so prove the repo materialised.
         status = sandbox.process.exec(
