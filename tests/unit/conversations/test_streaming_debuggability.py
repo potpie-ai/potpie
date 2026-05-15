@@ -341,6 +341,9 @@ class TestStuckStateEmission:
             }
         )
         mgr.publish_event = AsyncMock()
+        # Dedup miss (no prior emission) + successful set
+        mgr.redis_client.exists = AsyncMock(return_value=False)
+        mgr.redis_client.set = AsyncMock(return_value=True)
 
         emitted = await mgr.emit_stuck_state_if_overdue(
             "conv-1", "run-1", "staging_agent_tasks"
@@ -447,6 +450,8 @@ class TestStuckStateEmission:
             }
         )
         mgr.publish_event = AsyncMock()
+        mgr.redis_client.exists = AsyncMock(return_value=False)
+        mgr.redis_client.set = AsyncMock(return_value=True)
 
         emitted = await mgr.emit_stuck_state_if_overdue(
             "conv-5", "run-5", "staging_agent_tasks", threshold_seconds=5
@@ -455,3 +460,213 @@ class TestStuckStateEmission:
         assert emitted is True
         payload = mgr.publish_event.call_args.args[3]
         assert payload["threshold_seconds"] == "5"
+
+
+# ---------------------------------------------------------------------------
+# Running-stuck vs queued-stuck distinction
+# ---------------------------------------------------------------------------
+
+class TestRunningStuckEmission:
+    """`RedisStreamManager.emit_running_stuck_if_idle` publishes a
+    `stuck` stream event with ``phase=running`` when the run is running
+    but no events have crossed the wire for the idle threshold."""
+
+    def _build_sync_mgr(self):
+        with patch(
+            "app.modules.conversations.utils.redis_streaming.ConfigProvider"
+        ) as mock_cp, patch(
+            "app.modules.conversations.utils.redis_streaming.redis"
+        ) as mock_redis:
+            mock_cp.return_value.get_redis_url.return_value = (
+                "redis://localhost:6379/0"
+            )
+            mock_cp.get_stream_ttl_secs.return_value = 3600
+            mock_cp.get_stream_maxlen.return_value = 1000
+            mock_redis.from_url.return_value = MagicMock()
+            mgr = RedisStreamManager()
+        return mgr
+
+    def test_emits_running_stuck_with_phase_field_when_idle(self):
+        import time
+
+        mgr = self._build_sync_mgr()
+        mgr.get_task_status = MagicMock(return_value="running")
+        mgr.get_task_enqueue_metadata = MagicMock(
+            return_value={"queue_name": "staging_agent_tasks"}
+        )
+        mgr.task_pickup_diagnostics = MagicMock(
+            return_value={
+                "task_id": "task-1",
+                "queue_name": "staging_agent_tasks",
+                "queue_depth_at_enqueue": "0",
+                "queue_depth_at_pickup": "0",
+                "pickup_latency_ms": "5000",
+            }
+        )
+        mgr.redis_client.exists = MagicMock(return_value=False)
+        mgr.redis_client.set = MagicMock(return_value=True)
+        mgr.publish_event = MagicMock()
+
+        # Last event 120s ago - well past the 60s default idle threshold.
+        last_event_at = time.time() - 120
+
+        emitted = mgr.emit_running_stuck_if_idle(
+            "conv-1", "run-1", last_event_at
+        )
+
+        assert emitted is True
+        mgr.publish_event.assert_called_once()
+        args = mgr.publish_event.call_args.args
+        assert args[2] == "stuck"
+        payload = args[3]
+        # Phase distinguishes this from the queued-stuck case
+        assert payload["phase"] == "running"
+        assert payload["status"] == "stuck"
+        assert "idle_seconds" in payload
+        assert int(payload["idle_seconds"]) >= 120
+        # Pickup diagnostics are spread in so a triager can see the same
+        # queue depth fields as in the `running` event
+        assert payload["task_id"] == "task-1"
+        assert payload["queue_name"] == "staging_agent_tasks"
+
+    def test_does_not_emit_when_under_idle_threshold(self):
+        import time
+
+        mgr = self._build_sync_mgr()
+        mgr.get_task_status = MagicMock(return_value="running")
+        mgr.publish_event = MagicMock()
+        mgr.redis_client.exists = MagicMock(return_value=False)
+
+        # 5s idle - well below the 60s default threshold.
+        emitted = mgr.emit_running_stuck_if_idle(
+            "conv-2", "run-2", time.time() - 5
+        )
+
+        assert emitted is False
+        mgr.publish_event.assert_not_called()
+
+    def test_does_not_emit_when_task_is_queued_not_running(self):
+        import time
+
+        mgr = self._build_sync_mgr()
+        # Status is still queued, not running. That's queued-stuck, not
+        # running-stuck. The phases are intentionally distinct.
+        mgr.get_task_status = MagicMock(return_value="queued")
+        mgr.publish_event = MagicMock()
+        mgr.redis_client.exists = MagicMock(return_value=False)
+
+        emitted = mgr.emit_running_stuck_if_idle(
+            "conv-3", "run-3", time.time() - 300
+        )
+
+        assert emitted is False
+        mgr.publish_event.assert_not_called()
+
+    def test_does_not_emit_when_dedup_key_exists(self):
+        import time
+
+        mgr = self._build_sync_mgr()
+        mgr.get_task_status = MagicMock(return_value="running")
+        mgr.publish_event = MagicMock()
+        # Dedup key already present from a previous emission
+        mgr.redis_client.exists = MagicMock(return_value=True)
+
+        emitted = mgr.emit_running_stuck_if_idle(
+            "conv-4", "run-4", time.time() - 300
+        )
+
+        assert emitted is False
+        mgr.publish_event.assert_not_called()
+
+    def test_sets_dedup_key_after_successful_emit(self):
+        import time
+
+        mgr = self._build_sync_mgr()
+        mgr.get_task_status = MagicMock(return_value="running")
+        mgr.get_task_enqueue_metadata = MagicMock(return_value={})
+        mgr.task_pickup_diagnostics = MagicMock(return_value={})
+        mgr.redis_client.exists = MagicMock(return_value=False)
+        mgr.redis_client.set = MagicMock(return_value=True)
+        mgr.publish_event = MagicMock()
+
+        mgr.emit_running_stuck_if_idle("conv-5", "run-5", time.time() - 300)
+
+        # The TTL key prevents storming the stream on subsequent timeouts
+        mgr.redis_client.set.assert_called_once()
+        set_args = mgr.redis_client.set.call_args
+        assert "chat:stuck_emitted:running:conv-5:run-5" in set_args.args[0]
+        # TTL should be a positive integer (>= max(threshold*2, 60))
+        ttl = set_args.kwargs.get("ex") or set_args.args[-1]
+        assert int(ttl) >= 60
+
+
+class TestQueuedStuckCarriesPhaseField:
+    """The existing queued-stuck event now also carries ``phase=queued``
+    so consumers can switch on the same field across both cases."""
+
+    def _build_async_mgr(self):
+        with patch(
+            "app.modules.conversations.utils.redis_streaming.ConfigProvider"
+        ) as mock_cp, patch(
+            "app.modules.conversations.utils.redis_streaming.AsyncRedis"
+        ) as mock_async_redis:
+            mock_cp.return_value.get_redis_url.return_value = (
+                "redis://localhost:6379/0"
+            )
+            mock_cp.get_stream_ttl_secs.return_value = 3600
+            mock_cp.get_stream_maxlen.return_value = 1000
+            mock_async_redis.from_url.return_value = AsyncMock()
+            mgr = AsyncRedisStreamManager()
+        return mgr
+
+    @pytest.mark.asyncio
+    async def test_queued_stuck_payload_includes_phase_field(self):
+        import time
+
+        mgr = self._build_async_mgr()
+        mgr.get_task_enqueue_metadata = AsyncMock(
+            return_value={
+                "task_id": "task-1",
+                "queue_name": "staging_agent_tasks",
+                "enqueued_at": str(time.time() - 120),
+            }
+        )
+        mgr.get_task_status = AsyncMock(return_value="queued")
+        mgr.task_pickup_diagnostics = AsyncMock(return_value={})
+        mgr.publish_event = AsyncMock()
+        # The async client mock supports `await mgr.redis_client.exists(...)`;
+        # we want dedup miss (not yet emitted).
+        mgr.redis_client.exists = AsyncMock(return_value=False)
+        mgr.redis_client.set = AsyncMock(return_value=True)
+
+        emitted = await mgr.emit_stuck_state_if_overdue(
+            "conv-1", "run-1", "staging_agent_tasks"
+        )
+
+        assert emitted is True
+        payload = mgr.publish_event.call_args.args[3]
+        assert payload["phase"] == "queued"
+        assert payload["status"] == "stuck"
+
+    @pytest.mark.asyncio
+    async def test_queued_dedup_blocks_second_emit_within_window(self):
+        import time
+
+        mgr = self._build_async_mgr()
+        mgr.get_task_enqueue_metadata = AsyncMock(
+            return_value={
+                "enqueued_at": str(time.time() - 120),
+                "queue_name": "staging_agent_tasks",
+            }
+        )
+        mgr.get_task_status = AsyncMock(return_value="queued")
+        mgr.publish_event = AsyncMock()
+        # Dedup key already present
+        mgr.redis_client.exists = AsyncMock(return_value=True)
+
+        emitted = await mgr.emit_stuck_state_if_overdue(
+            "conv-2", "run-2", "staging_agent_tasks"
+        )
+
+        assert emitted is False
+        mgr.publish_event.assert_not_called()

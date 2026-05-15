@@ -15,22 +15,45 @@ logger = setup_logger(__name__)
 
 TASK_METADATA_TTL_SECONDS = 600
 
-# Default stuck-task threshold. If a run is still in "queued" state after this
-# many seconds since enqueue, we emit a `stuck` event on its stream so the
-# client / monitoring can render the run as unhealthy without waiting forever.
-# Tunable via QUEUED_STUCK_THRESHOLD_SECONDS env var.
+# Default stuck-task thresholds. Two distinct phases:
+#   * queued_stuck: run accepted but no worker picked it up within N seconds.
+#   * running_stuck: worker is running but has not emitted a chunk/progress
+#     event for N seconds (agent hung mid-flight).
+# Tunable via QUEUED_STUCK_THRESHOLD_SECONDS / RUNNING_STUCK_IDLE_THRESHOLD_SECONDS.
 DEFAULT_STUCK_THRESHOLD_SECONDS = 30
+DEFAULT_RUNNING_STUCK_IDLE_SECONDS = 60
 
 
 def _stuck_threshold_seconds() -> int:
-    raw = os.getenv("QUEUED_STUCK_THRESHOLD_SECONDS", "").strip()
+    return _positive_int_env(
+        "QUEUED_STUCK_THRESHOLD_SECONDS", DEFAULT_STUCK_THRESHOLD_SECONDS
+    )
+
+
+def _running_stuck_idle_seconds() -> int:
+    return _positive_int_env(
+        "RUNNING_STUCK_IDLE_THRESHOLD_SECONDS", DEFAULT_RUNNING_STUCK_IDLE_SECONDS
+    )
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
     if not raw:
-        return DEFAULT_STUCK_THRESHOLD_SECONDS
+        return default
     try:
         value = int(raw)
-        return value if value > 0 else DEFAULT_STUCK_THRESHOLD_SECONDS
+        return value if value > 0 else default
     except ValueError:
-        return DEFAULT_STUCK_THRESHOLD_SECONDS
+        return default
+
+
+def _stuck_dedup_key(phase: str, conversation_id: str, run_id: str) -> str:
+    """Redis key (with TTL) used to prevent stuck-state storms.
+
+    A separate key per phase so a queued-stuck emission doesn't block a later
+    running-stuck emission for the same run.
+    """
+    return f"chat:stuck_emitted:{phase}:{conversation_id}:{run_id}"
 
 
 def _current_trace_id() -> str:
@@ -172,6 +195,92 @@ class RedisStreamManager:
             ),
         }
 
+    def emit_running_stuck_if_idle(
+        self,
+        conversation_id: str,
+        run_id: str,
+        last_event_at: float,
+        idle_threshold_seconds: Optional[int] = None,
+    ) -> bool:
+        """Emit a `stuck` stream event with ``phase=running`` when a running
+        task has gone idle past the threshold.
+
+        Companion to :py:meth:`AsyncRedisStreamManager.emit_stuck_state_if_overdue`
+        which covers the queued-stuck case. This one runs on the consumer side
+        (inside :py:meth:`consume_stream`) because we don't know "no event has
+        arrived for N seconds" until we see it from the read loop.
+
+        No-ops when:
+          * `last_event_at` is missing / zero / in the future
+          * elapsed-since-last-event is below the threshold
+          * the task isn't in ``running`` state (queued/completed/error)
+          * a running-stuck event was already emitted for this run (TTL key)
+        """
+        threshold = (
+            idle_threshold_seconds
+            if idle_threshold_seconds and idle_threshold_seconds > 0
+            else _running_stuck_idle_seconds()
+        )
+        try:
+            last_event_at = float(last_event_at)
+        except (TypeError, ValueError):
+            return False
+        if last_event_at <= 0:
+            return False
+        idle_seconds = time.time() - last_event_at
+        if idle_seconds < threshold:
+            return False
+
+        status = self.get_task_status(conversation_id, run_id)
+        if status != "running":
+            return False
+
+        # Phase-specific dedup so we don't storm the stream while idle.
+        dedup_key = _stuck_dedup_key("running", conversation_id, run_id)
+        try:
+            if self.redis_client.exists(dedup_key):
+                return False
+        except Exception:
+            # Dedup is best-effort; if Redis is glitching we still try to emit
+            # so the operator sees *something*. Worst case: one extra event.
+            pass
+
+        metadata = self.get_task_enqueue_metadata(conversation_id, run_id)
+        fallback_queue_name = metadata.get("queue_name", "") or ""
+        diagnostics = self.task_pickup_diagnostics(
+            conversation_id, run_id, fallback_queue_name
+        )
+        self.publish_event(
+            conversation_id,
+            run_id,
+            "stuck",
+            {
+                "status": "stuck",
+                "phase": "running",
+                "message": (
+                    f"Worker is running but has not emitted any chunk/progress "
+                    f"event for {int(idle_seconds)}s (threshold {threshold}s)."
+                ),
+                "idle_seconds": str(int(idle_seconds)),
+                "threshold_seconds": str(threshold),
+                **diagnostics,
+            },
+        )
+        try:
+            self.redis_client.set(dedup_key, "1", ex=max(threshold * 2, 60))
+        except Exception as e:
+            logger.warning("Failed to set running-stuck dedup key: %s", e)
+        logger.warning(
+            "Emitted running-stuck state for %s:%s "
+            "(idle=%ds, threshold=%ds, queue=%s)",
+            conversation_id,
+            run_id,
+            int(idle_seconds),
+            threshold,
+            diagnostics.get("queue_name", fallback_queue_name),
+        )
+        return True
+
     def publish_event(
         self, conversation_id: str, run_id: str, event_type: str, payload: dict
     ):
@@ -232,6 +341,10 @@ class RedisStreamManager:
     ) -> Generator[dict, None, None]:
         """Synchronous Redis stream consumption for HTTP streaming"""
         key = self.stream_key(conversation_id, run_id)
+        # Watchdog: when the run is `running` but no event has crossed the
+        # wire for ``RUNNING_STUCK_IDLE_THRESHOLD_SECONDS``, emit a stuck
+        # event with ``phase=running``. Updated on every event we forward.
+        last_event_at = time.time()
 
         try:
             # Only replay existing events if cursor is explicitly provided (for reconnection)
@@ -240,6 +353,7 @@ class RedisStreamManager:
                 events = self.redis_client.xrange(key, min=cursor, max="+")
 
                 for event_id, event_data in events:
+                    last_event_at = time.time()
                     formatted_event = self._format_event(event_id, event_data)
                     yield formatted_event
 
@@ -297,11 +411,27 @@ class RedisStreamManager:
 
                 events = self.redis_client.xread({key: last_id}, block=5000, count=1)
                 if not events:
+                    # No event in the last ~5s. If the run is still running
+                    # and has gone idle past the threshold, publish a
+                    # `running` stuck event. Helper no-ops when not warranted,
+                    # so we can call it freely on every timeout iteration.
+                    try:
+                        self.emit_running_stuck_if_idle(
+                            conversation_id, run_id, last_event_at
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "emit_running_stuck_if_idle raised during "
+                            "consume_stream; continuing: %s",
+                            e,
+                            exc_info=True,
+                        )
                     continue
 
                 for stream_key, stream_events in events:
                     for event_id, event_data in stream_events:
                         last_id = event_id
+                        last_event_at = time.time()
                         event = self._format_event(event_id, event_data)
 
                         # Check for end events
@@ -894,6 +1024,13 @@ class AsyncRedisStreamManager:
         if status != "queued":
             return False
 
+        # Dedup: a queued-stuck event is published at most once per
+        # (conversation_id, run_id) within ``threshold * 2`` seconds. The key
+        # is phase-specific so a later running-stuck emission isn't blocked.
+        dedup_key = _stuck_dedup_key("queued", conversation_id, run_id)
+        if await self.redis_client.exists(dedup_key):
+            return False
+
         diagnostics = await self.task_pickup_diagnostics(
             conversation_id, run_id, fallback_queue_name
         )
@@ -903,6 +1040,7 @@ class AsyncRedisStreamManager:
             "stuck",
             {
                 "status": "stuck",
+                "phase": "queued",
                 "message": (
                     f"Task has been queued for {int(elapsed_seconds)}s without "
                     f"being picked up by a worker (threshold {threshold}s)."
@@ -912,8 +1050,9 @@ class AsyncRedisStreamManager:
                 **diagnostics,
             },
         )
+        await self.redis_client.set(dedup_key, "1", ex=max(threshold * 2, 60))
         logger.warning(
-            "Emitted stuck-task state for %s:%s "
+            "Emitted queued-stuck state for %s:%s "
             "(elapsed=%ds, threshold=%ds, queue=%s)",
             conversation_id,
             run_id,
