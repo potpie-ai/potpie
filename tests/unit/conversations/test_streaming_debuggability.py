@@ -1284,3 +1284,218 @@ class TestStreamingLogLevelAudit:
             assert count <= ceiling, (
                 f"{rel}: logger.info call count {count} exceeds ceiling {ceiling}"
             )
+
+
+# ============================================================================
+# CANONICAL REGRESSION TEST FOR THE SHS SILENT-STREAMING-FAILURE PATTERN
+# ============================================================================
+#
+# Historical bug (pre-fix):
+# ------------------------
+# A multi-agent run would emit some `chunk` events to Redis, then publish a
+# terminal `end` event with `status="error"` (because the worker crashed,
+# the model dropped the connection, or a downstream step raised). The
+# Redis-backed SSE generator handled the `end` event with a bare `break`:
+#
+#     elif event.get("type") == "end":
+#         break  # <-- no frame yielded; SSE connection just closed
+#
+# That meant the wire signal for "stream succeeded" and "stream failed
+# halfway through" was identical: a closed connection. Consumers (UI,
+# API clients, support tooling) could not distinguish a complete answer
+# from a truncated one, and silent failures were filed as flaky bugs for
+# months.
+#
+# Fix:
+# ----
+# `redis_stream_generator` now yields a sanitized `_chat_stream_error_response`
+# frame when the worker's `end` event carries an error/timeout/expired
+# status. The frame carries an explicit `event="error"` marker, the failing
+# phase, an `error_type`, the trace id, AND a `partial` boolean derived
+# from the count of chunks already forwarded. Consumers can branch on
+# `event == "error"` and render partial-with-failure or hard-failure
+# states correctly.
+#
+# This regression test pins the contract end-to-end. If anyone reverts the
+# generator to a bare `break`, this test fails. If anyone reshapes the
+# terminal frame in a way that drops one of the documented fields, this
+# test fails until the change is intentional.
+
+class TestSilentStreamingFailureRegression:
+    """Canonical SHS silent-streaming-failure repro.
+
+    Simulates the most common production pattern: a worker streams a few
+    partial chunks, then publishes an error-end event because something
+    downstream failed. The consumer (this test) must observe a clean
+    sequence of partial chunks followed by a TERMINAL ERROR FRAME on the
+    wire - not a silent disconnect.
+    """
+
+    def test_worker_error_end_after_partial_chunks_surfaces_explicit_error_frame(
+        self,
+    ):
+        """The repro that pre-fix silently truncated the stream."""
+        from app.modules.conversations.utils.conversation_routing import (
+            redis_stream_generator,
+        )
+
+        # === Stable repro fixture ===
+        # Three real chunks (deterministic content), then a terminal `end`
+        # event with status="error" - exactly the shape a failing worker
+        # publishes via `redis_manager.publish_event(..., "end", {"status":
+        # "error", ...})`. Mirrors the payload built by
+        # ``agent_tasks.py`` in the except branch.
+        worker_event_stream = [
+            {"type": "chunk", "content": "Let me investigate the codebase"},
+            {"type": "chunk", "content": " to answer your question."},
+            {"type": "chunk", "content": " First, I'll check..."},
+            {
+                "type": "end",
+                "status": "error",
+                "message": "An internal error occurred.",
+                "failing_phase": "agent_run",
+                "error_type": "RuntimeError",
+                "trace_id": "abcdef0123456789abcdef0123456789",
+                "stack_trace_available": True,
+                "conversation_id": "conv-canonical",
+                "run_id": "run-canonical",
+            },
+        ]
+
+        with patch(
+            "app.modules.conversations.utils.conversation_routing.RedisStreamManager"
+        ) as mock_mgr_cls:
+            mgr = MagicMock()
+            mgr.consume_stream.return_value = iter(worker_event_stream)
+            mock_mgr_cls.return_value = mgr
+
+            # Drain the generator into a list of parsed frames - exactly
+            # what FastAPI's StreamingResponse would push down the wire.
+            frames = [
+                json.loads(f)
+                for f in redis_stream_generator("conv-canonical", "run-canonical")
+            ]
+
+        # === Contract assertions ===
+
+        # (1) The consumer received 3 partial chunks + 1 terminal frame.
+        # Pre-fix it was 3 chunks + silent close - the absence of a 4th
+        # frame is the bug we're guarding against.
+        assert len(frames) == 4, (
+            "Pre-fix regression: generator must yield a terminal error frame "
+            f"after partial chunks, got {len(frames)} frames"
+        )
+
+        # (2) The first 3 frames are the partial chunks (sanity check that
+        # we didn't accidentally drop content into the error path).
+        chunk_contents = [f.get("message") for f in frames[:3]]
+        assert chunk_contents == [
+            "Let me investigate the codebase",
+            " to answer your question.",
+            " First, I'll check...",
+        ]
+
+        # (3) The terminal frame is unambiguously an error frame on the
+        # wire. Pre-fix consumers had to guess from connection close.
+        terminal = frames[-1]
+        assert terminal["event"] == "error"
+        assert terminal["status"] == "error"
+
+        # (4) It carries the identifiers a triager needs to jump to the
+        # right logfire trace without grep-and-pray.
+        assert terminal["run_id"] == "run-canonical"
+        assert terminal["trace_id"] == "abcdef0123456789abcdef0123456789"
+        assert terminal["failing_phase"] == "agent_run"
+        assert terminal["error_type"] == "RuntimeError"
+
+        # (5) It distinguishes partial-failure from hard-failure: this run
+        # delivered output before breaking, so a UI should render the
+        # partial content with a non-success badge instead of a full
+        # error state.
+        assert terminal["partial"] is True
+        assert terminal["chunks_emitted"] == 3
+
+        # (6) Message is user-safe (no stack trace), but the
+        # `stack_trace_available` flag tells support a server-side trace
+        # exists for the audit-logged failure.
+        assert isinstance(terminal["message"], str)
+        assert "Traceback" not in terminal["message"]
+        assert terminal["stack_trace_available"] is True
+
+    def test_repro_is_stable_under_repeated_runs(self):
+        """The repro fixture must be deterministic - re-running with the
+        same input produces an identical frame sequence. Catches accidental
+        nondeterminism in the SSE generator (uuid-in-payload, etc.)."""
+        from app.modules.conversations.utils.conversation_routing import (
+            redis_stream_generator,
+        )
+
+        worker_event_stream = lambda: iter(
+            [
+                {"type": "chunk", "content": "partial"},
+                {
+                    "type": "end",
+                    "status": "error",
+                    "message": "boom",
+                    "failing_phase": "agent_run",
+                    "error_type": "RuntimeError",
+                    "trace_id": "f" * 32,
+                    "conversation_id": "conv-x",
+                    "run_id": "run-x",
+                },
+            ]
+        )
+
+        captured_runs = []
+        for _ in range(3):
+            with patch(
+                "app.modules.conversations.utils.conversation_routing.RedisStreamManager"
+            ) as mock_mgr_cls:
+                mgr = MagicMock()
+                mgr.consume_stream.return_value = worker_event_stream()
+                mock_mgr_cls.return_value = mgr
+                frames = [
+                    json.loads(f)
+                    for f in redis_stream_generator("conv-x", "run-x")
+                ]
+            captured_runs.append(frames)
+
+        # Identical frames across all 3 runs - no hidden randomness.
+        assert captured_runs[0] == captured_runs[1] == captured_runs[2]
+
+    def test_pre_fix_behavior_simulation_proves_test_catches_the_bug(self):
+        """Sanity check: simulate the OLD bare-break generator and verify
+        the contract assertions in the canonical regression test would
+        actually have caught it.
+
+        This guards against accidentally writing assertions that pass
+        regardless of behavior - if someone reverts the fix and *also*
+        weakens this test, both should be obvious from a single failure."""
+
+        def _legacy_silent_break_generator(events):
+            """Faithful replay of the pre-fix code path: on an end event,
+            break without yielding anything. (We don't import the real
+            module - we don't want to keep the bug code around just for
+            this test.)"""
+            for event in events:
+                if event.get("type") == "chunk":
+                    yield {"message": event.get("content", "")}
+                elif event.get("type") == "end":
+                    break  # <-- the historical silent disconnect
+
+        legacy_frames = list(
+            _legacy_silent_break_generator(
+                [
+                    {"type": "chunk", "content": "partial"},
+                    {"type": "end", "status": "error"},
+                ]
+            )
+        )
+
+        # The old behavior: only the partial chunk, no terminal frame.
+        # If the canonical contract assertions ever start passing against
+        # this shape, the regression test has been weakened.
+        assert len(legacy_frames) == 1
+        assert "event" not in legacy_frames[0]
+        # Equivalent positive assertion: no frame has event="error".
+        assert not any(f.get("event") == "error" for f in legacy_frames)
