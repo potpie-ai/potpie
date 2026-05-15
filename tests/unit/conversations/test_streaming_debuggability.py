@@ -670,3 +670,111 @@ class TestQueuedStuckCarriesPhaseField:
 
         assert emitted is False
         mgr.publish_event.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Explicit error payloads on streaming failure (no silent disconnects)
+# ---------------------------------------------------------------------------
+
+class TestExplicitErrorPayloads:
+    """Three acceptance criteria:
+      1. Terminal failures include `status` and `message`.
+      2. SSE emits an error payload (frame, not just close).
+      3. Silent disconnects are replaced for covered failure modes.
+    """
+
+    @pytest.mark.asyncio
+    async def test_get_stream_yields_error_frame_when_inner_stream_raises(self):
+        """`get_stream` wraps controller-side async generators. If the inner
+        raises, the wrapper must emit an explicit error JSON frame before the
+        connection closes; otherwise the client just sees a truncated stream."""
+        from app.modules.conversations.conversations_router import get_stream
+
+        class _Chunk:
+            def __init__(self, content):
+                self._content = content
+            def dict(self):
+                return {"message": self._content}
+
+        async def inner():
+            yield _Chunk("partial-1")
+            yield _Chunk("partial-2")
+            raise RuntimeError("controller blew up")
+
+        frames = []
+        async for f in get_stream(inner()):
+            frames.append(json.loads(f))
+
+        # Two real chunks, then the terminal error frame
+        assert len(frames) == 3
+        assert frames[0]["message"] == "partial-1"
+        assert frames[1]["message"] == "partial-2"
+        terminal = frames[2]
+        assert terminal["event"] == "error"
+        assert terminal["status"] == "error"
+        assert "message" in terminal and terminal["message"]
+        # Diagnostic fields propagated from _stream_failure_fields
+        assert terminal["failing_phase"] == "get_stream"
+        assert terminal["error_type"] == "RuntimeError"
+        assert "trace_id" in terminal
+
+    @pytest.mark.asyncio
+    async def test_get_stream_passes_through_clean_streams_unchanged(self):
+        """Hardening must not change the happy path."""
+        from app.modules.conversations.conversations_router import get_stream
+
+        class _Chunk:
+            def __init__(self, content):
+                self._content = content
+            def dict(self):
+                return {"message": self._content}
+
+        async def inner():
+            yield _Chunk("only-1")
+            yield _Chunk("only-2")
+
+        frames = [json.loads(f) async for f in get_stream(inner())]
+        assert [f["message"] for f in frames] == ["only-1", "only-2"]
+        # No injected error frame on success
+        assert not any(f.get("event") == "error" for f in frames)
+
+    def test_redis_stream_generator_yields_error_frame_on_end_with_error_status(self):
+        """Existing redis_stream_generator path - assert the AC contract."""
+        from app.modules.conversations.utils.conversation_routing import (
+            redis_stream_generator,
+        )
+
+        # Stub the manager via patch: the generator instantiates one inline.
+        with patch(
+            "app.modules.conversations.utils.conversation_routing.RedisStreamManager"
+        ) as mock_mgr_cls:
+            mgr = MagicMock()
+            mgr.consume_stream.return_value = iter([
+                {"type": "chunk", "content": "partial"},
+                {
+                    "type": "end",
+                    "status": "error",
+                    "message": "Worker exploded",
+                    "failing_phase": "agent_run",
+                    "error_type": "RuntimeError",
+                    "trace_id": "abc123",
+                    "stack_trace_available": True,
+                },
+            ])
+            mock_mgr_cls.return_value = mgr
+
+            frames = [
+                json.loads(f)
+                for f in redis_stream_generator("conv-1", "run-1")
+            ]
+
+        # Chunk + terminal error frame
+        assert len(frames) == 2
+        terminal = frames[-1]
+        assert terminal["event"] == "error"
+        assert terminal["status"] == "error"
+        # Message + failing phase travel together so clients can route
+        assert terminal["message"] == "Worker exploded"
+        assert terminal["failing_phase"] == "agent_run"
+        assert terminal["error_type"] == "RuntimeError"
+        assert terminal["trace_id"] == "abc123"

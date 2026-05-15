@@ -1,4 +1,5 @@
 import json
+import traceback
 from typing import Any, AsyncGenerator, List, Optional, Union, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
@@ -41,20 +42,55 @@ from app.modules.conversations.conversation_deps import (
     get_async_session_service,
 )
 from app.modules.conversations.utils.conversation_routing import (
+    _chat_stream_error_response,
     normalize_run_id,
     async_ensure_unique_run_id,
     redis_stream_generator,
     start_celery_task_and_stream,
 )
-from app.modules.conversations.utils.redis_streaming import AsyncRedisStreamManager
+from app.modules.conversations.utils.redis_streaming import (
+    AsyncRedisStreamManager,
+    _stream_failure_fields,
+)
 
 router = APIRouter()
 logger = setup_logger(__name__)
 
 
 async def get_stream(data_stream: AsyncGenerator[Any, None]):
-    async for chunk in data_stream:
-        yield json.dumps(chunk.dict())
+    """Wrap a controller-side async stream and surface failures explicitly.
+
+    When the underlying generator raises mid-iteration, FastAPI's
+    `StreamingResponse` otherwise just closes the connection silently;
+    consumers see a half-message and have to guess. We now yield a final
+    error frame (same `_chat_stream_error_response` shape used by the
+    Redis-backed stream) before letting the connection close.
+    """
+    try:
+        async for chunk in data_stream:
+            yield json.dumps(chunk.dict())
+    except Exception as e:
+        stack_trace = traceback.format_exc()
+        failure_fields = _stream_failure_fields(
+            "", "", "get_stream", e, stream_id="0-0"
+        )
+        logger.error(
+            "get_stream raised mid-iteration: %s",
+            e,
+            exc_info=True,
+            extra={"stack_trace": stack_trace, **failure_fields},
+        )
+        yield json.dumps(
+            _chat_stream_error_response(
+                {
+                    "type": "end",
+                    "status": "error",
+                    "message": "Stream error while consuming events.",
+                    **failure_fields,
+                },
+                run_id="",
+            )
+        )
 
 
 class ConversationAPI:
@@ -375,18 +411,12 @@ class ConversationAPI:
             logger.error(f"Failed to get last human message for regenerate: {str(e)}")
             attachment_ids = []
 
+        from app.celery.celery_app import queue_name
         from app.celery.tasks.agent_tasks import execute_regenerate_background
 
+        agent_queue_name = f"{queue_name}_agent_tasks"
+
         await async_redis.set_task_status(conversation_id, run_id, "queued")
-        await async_redis.publish_event(
-            conversation_id,
-            run_id,
-            "queued",
-            {
-                "status": "queued",
-                "message": "Regeneration task queued for processing",
-            },
-        )
 
         task_result = execute_regenerate_background.delay(
             conversation_id=conversation_id,
@@ -397,9 +427,33 @@ class ConversationAPI:
             local_mode=local_mode,
         )
 
+        queue_depth = await async_redis.get_queue_depth(agent_queue_name)
+        enqueued_at = await async_redis.record_task_enqueue(
+            conversation_id,
+            run_id,
+            task_result.id,
+            agent_queue_name,
+            queue_depth,
+        )
+
         await async_redis.set_task_id(conversation_id, run_id, task_result.id)
         logger.info(
-            f"Started regenerate task {task_result.id} for {conversation_id}:{run_id}"
+            f"Started regenerate task {task_result.id} for {conversation_id}:{run_id} "
+            f"queue={agent_queue_name} queue_depth={queue_depth} "
+            f"enqueued_at={enqueued_at:.6f}"
+        )
+        await async_redis.publish_event(
+            conversation_id,
+            run_id,
+            "queued",
+            {
+                "status": "queued",
+                "message": "Regeneration task queued for processing",
+                "task_id": task_result.id,
+                "queue_name": agent_queue_name,
+                "queue_depth_at_enqueue": queue_depth,
+                "enqueued_at": enqueued_at,
+            },
         )
 
         task_started = await async_redis.wait_for_task_start(
