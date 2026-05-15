@@ -225,21 +225,13 @@ async def start_celery_task_and_stream(
     Start a Celery background task and return a streaming response.
     Uses async Redis so the event loop is not blocked.
     """
+    from app.celery.celery_app import queue_name
     from app.celery.tasks.agent_tasks import execute_agent_background
+
+    agent_queue_name = f"{queue_name}_agent_tasks"
 
     # Set initial "queued" status before starting the task
     await async_redis_manager.set_task_status(conversation_id, run_id, "queued")
-
-    # Publish a queued event so the client knows the task is accepted
-    await async_redis_manager.publish_event(
-        conversation_id,
-        run_id,
-        "queued",
-        {
-            "status": "queued",
-            "message": "Task queued for processing",
-        },
-    )
 
     # Start background task
     task_result = execute_agent_background.delay(
@@ -254,9 +246,42 @@ async def start_celery_task_and_stream(
         tunnel_url=tunnel_url,
     )
 
+    queue_depth = await async_redis_manager.get_queue_depth(agent_queue_name)
+    enqueued_at = await async_redis_manager.record_task_enqueue(
+        conversation_id,
+        run_id,
+        task_result.id,
+        agent_queue_name,
+        queue_depth,
+    )
+
     # Store the Celery task ID for later revocation
     await async_redis_manager.set_task_id(conversation_id, run_id, task_result.id)
-    logger.info(f"Started agent task {task_result.id} for {conversation_id}:{run_id}")
+    logger.info(
+        "Started agent task %s for %s:%s queue=%s queue_depth=%s enqueued_at=%.6f",
+        task_result.id,
+        conversation_id,
+        run_id,
+        agent_queue_name,
+        queue_depth,
+        enqueued_at,
+    )
+
+    # Publish a queued event with queue state so stream consumers can correlate
+    # task start signals with broker backlog.
+    await async_redis_manager.publish_event(
+        conversation_id,
+        run_id,
+        "queued",
+        {
+            "status": "queued",
+            "message": "Task queued for processing",
+            "task_id": task_result.id,
+            "queue_name": agent_queue_name,
+            "queue_depth_at_enqueue": queue_depth,
+            "enqueued_at": enqueued_at,
+        },
+    )
 
     # Wait for task to reach any terminal or active state (avoids blocking 30s if task goes straight to completed/error)
     task_started = await async_redis_manager.wait_for_task_start(
@@ -299,21 +324,13 @@ async def start_celery_task_and_wait(
     Start a Celery background task and wait for the complete response.
     Uses async Redis for setup; stream collection runs in thread pool.
     """
+    from app.celery.celery_app import queue_name
     from app.celery.tasks.agent_tasks import execute_agent_background
+
+    agent_queue_name = f"{queue_name}_agent_tasks"
 
     # Set initial "queued" status before starting the task
     await async_redis_manager.set_task_status(conversation_id, run_id, "queued")
-
-    # Publish a queued event so the client knows the task is accepted
-    await async_redis_manager.publish_event(
-        conversation_id,
-        run_id,
-        "queued",
-        {
-            "status": "queued",
-            "message": "Task queued for processing",
-        },
-    )
 
     # Start background task
     task_result = execute_agent_background.delay(
@@ -328,10 +345,41 @@ async def start_celery_task_and_wait(
         tunnel_url=tunnel_url,
     )
 
+    queue_depth = await async_redis_manager.get_queue_depth(agent_queue_name)
+    enqueued_at = await async_redis_manager.record_task_enqueue(
+        conversation_id,
+        run_id,
+        task_result.id,
+        agent_queue_name,
+        queue_depth,
+    )
+
     # Store the Celery task ID for later revocation
     await async_redis_manager.set_task_id(conversation_id, run_id, task_result.id)
     logger.info(
-        f"Started agent task {task_result.id} for {conversation_id}:{run_id} (non-streaming)"
+        "Started agent task %s for %s:%s queue=%s queue_depth=%s enqueued_at=%.6f (non-streaming)",
+        task_result.id,
+        conversation_id,
+        run_id,
+        agent_queue_name,
+        queue_depth,
+        enqueued_at,
+    )
+
+    # Publish a queued event with queue state so stream consumers can correlate
+    # task start signals with broker backlog.
+    await async_redis_manager.publish_event(
+        conversation_id,
+        run_id,
+        "queued",
+        {
+            "status": "queued",
+            "message": "Task queued for processing",
+            "task_id": task_result.id,
+            "queue_name": agent_queue_name,
+            "queue_depth_at_enqueue": queue_depth,
+            "enqueued_at": enqueued_at,
+        },
     )
 
     # Wait for task to reach any terminal or active state (avoids blocking 30s if task goes straight to completed/error)

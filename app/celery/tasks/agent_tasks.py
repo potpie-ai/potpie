@@ -10,7 +10,7 @@ except ImportError:  # pragma: no cover - optional dependency
 
 from sqlalchemy.orm import Session
 
-from app.celery.celery_app import celery_app
+from app.celery.celery_app import celery_app, queue_name
 from app.celery.tasks.base_task import BaseTask
 from app.modules.conversations.utils.redis_streaming import (
     RedisStreamManager,
@@ -30,6 +30,8 @@ from app.modules.intelligence.provider.openrouter_usage_context import (
 )
 
 logger = setup_logger(__name__)
+
+AGENT_TASKS_QUEUE_NAME = f"{queue_name}_agent_tasks"
 
 
 def _resolve_user_email_for_celery(db: Session, user_id: str) -> str:
@@ -193,6 +195,27 @@ def execute_agent_background(
                 try:
                     # Set task status to indicate task has started
                     redis_manager.set_task_status(conversation_id, run_id, "running")
+                    pickup_diagnostics = redis_manager.task_pickup_diagnostics(
+                        conversation_id, run_id, AGENT_TASKS_QUEUE_NAME
+                    )
+                    logger.info(
+                        f"Agent task picked up conversation_id={conversation_id} "
+                        f"run_id={run_id} task_id={pickup_diagnostics.get('task_id', '')} "
+                        f"queue={pickup_diagnostics.get('queue_name', AGENT_TASKS_QUEUE_NAME)} "
+                        f"queue_depth_at_enqueue={pickup_diagnostics.get('queue_depth_at_enqueue', '')} "
+                        f"queue_depth_at_pickup={pickup_diagnostics.get('queue_depth_at_pickup', '')} "
+                        f"pickup_latency_ms={pickup_diagnostics.get('pickup_latency_ms', '')}"
+                    )
+                    redis_manager.publish_event(
+                        conversation_id,
+                        run_id,
+                        "running",
+                        {
+                            "status": "running",
+                            "message": "Task picked up by worker",
+                            **pickup_diagnostics,
+                        },
+                    )
 
                     # Collect OpenRouter usage so we can send it in the end event (API will log it)
                     init_usage_context()
@@ -616,6 +639,27 @@ def execute_regenerate_background(
             try:
                 # Set task status to indicate task has started
                 redis_manager.set_task_status(conversation_id, run_id, "running")
+                pickup_diagnostics = redis_manager.task_pickup_diagnostics(
+                    conversation_id, run_id, AGENT_TASKS_QUEUE_NAME
+                )
+                logger.info(
+                    f"Regenerate task picked up conversation_id={conversation_id} "
+                    f"run_id={run_id} task_id={pickup_diagnostics.get('task_id', '')} "
+                    f"queue={pickup_diagnostics.get('queue_name', AGENT_TASKS_QUEUE_NAME)} "
+                    f"queue_depth_at_enqueue={pickup_diagnostics.get('queue_depth_at_enqueue', '')} "
+                    f"queue_depth_at_pickup={pickup_diagnostics.get('queue_depth_at_pickup', '')} "
+                    f"pickup_latency_ms={pickup_diagnostics.get('pickup_latency_ms', '')}"
+                )
+                redis_manager.publish_event(
+                    conversation_id,
+                    run_id,
+                    "running",
+                    {
+                        "status": "running",
+                        "message": "Regeneration task picked up by worker",
+                        **pickup_diagnostics,
+                    },
+                )
 
                 # Collect OpenRouter usage so we can record cost in Logfire
                 init_usage_context()

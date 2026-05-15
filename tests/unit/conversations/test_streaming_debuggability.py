@@ -101,6 +101,80 @@ class TestPublishEventStampsTraceId:
         assert len(event_data["trace_id"]) == 32
 
 
+class TestQueuePickupDiagnostics:
+    @patch("app.modules.conversations.utils.redis_streaming.time.time")
+    @patch("app.modules.conversations.utils.redis_streaming.ConfigProvider")
+    @patch("app.modules.conversations.utils.redis_streaming.redis")
+    def test_sync_enqueue_metadata_and_pickup_diagnostics(
+        self, mock_redis, mock_cp, mock_time
+    ):
+        mock_cp.return_value.get_redis_url.return_value = "redis://localhost:6379/0"
+        mock_cp.get_stream_ttl_secs.return_value = 3600
+        mock_cp.get_stream_maxlen.return_value = 1000
+        client = MagicMock()
+        client.llen.return_value = 7
+        client.hgetall.return_value = {
+            b"task_id": b"celery-1",
+            b"queue_name": b"staging_agent_tasks",
+            b"enqueued_at": b"100.0",
+            b"queue_depth_at_enqueue": b"7",
+        }
+        mock_redis.from_url.return_value = client
+        mock_time.side_effect = [100.0, 102.0]
+
+        mgr = RedisStreamManager()
+        queue_depth = mgr.get_queue_depth("staging_agent_tasks")
+        enqueued_at = mgr.record_task_enqueue(
+            "conv-1", "run-1", "celery-1", "staging_agent_tasks", queue_depth
+        )
+        diagnostics = mgr.task_pickup_diagnostics(
+            "conv-1", "run-1", "staging_agent_tasks"
+        )
+
+        assert queue_depth == 7
+        assert enqueued_at == 100.0
+        client.hset.assert_called_once()
+        assert client.hset.call_args.kwargs["mapping"]["task_id"] == "celery-1"
+        assert diagnostics == {
+            "task_id": "celery-1",
+            "queue_name": "staging_agent_tasks",
+            "queue_depth_at_enqueue": "7",
+            "queue_depth_at_pickup": "7",
+            "pickup_latency_ms": "2000",
+        }
+
+    @pytest.mark.asyncio
+    @patch("app.modules.conversations.utils.redis_streaming.time.time")
+    @patch("app.modules.conversations.utils.redis_streaming.ConfigProvider")
+    @patch("app.modules.conversations.utils.redis_streaming.AsyncRedis")
+    async def test_async_enqueue_metadata_records_queue_depth(
+        self, mock_async_redis, mock_cp, mock_time
+    ):
+        mock_cp.return_value.get_redis_url.return_value = "redis://localhost:6379/0"
+        mock_cp.get_stream_ttl_secs.return_value = 3600
+        mock_cp.get_stream_maxlen.return_value = 1000
+        client = AsyncMock()
+        client.llen.return_value = 3
+        mock_async_redis.from_url.return_value = client
+        mock_time.return_value = 123.456
+
+        mgr = AsyncRedisStreamManager()
+        queue_depth = await mgr.get_queue_depth("staging_agent_tasks")
+        enqueued_at = await mgr.record_task_enqueue(
+            "conv-1", "run-1", "celery-1", "staging_agent_tasks", queue_depth
+        )
+
+        assert queue_depth == 3
+        assert enqueued_at == 123.456
+        client.hset.assert_awaited_once()
+        assert client.hset.call_args.kwargs["mapping"] == {
+            "task_id": "celery-1",
+            "queue_name": "staging_agent_tasks",
+            "enqueued_at": "123.456",
+            "queue_depth_at_enqueue": "3",
+        }
+
+
 class TestSSEGeneratorLogsTracebackAndIds:
     @patch("app.modules.conversations.utils.conversation_routing.logger")
     @patch("app.modules.conversations.utils.conversation_routing.RedisStreamManager")

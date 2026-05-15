@@ -12,6 +12,8 @@ from app.modules.intelligence.provider.openrouter_usage_context import estimate_
 
 logger = setup_logger(__name__)
 
+TASK_METADATA_TTL_SECONDS = 600
+
 
 def _current_trace_id() -> str:
     """Return the active OpenTelemetry trace id as a 32-char hex string, or ''.
@@ -66,6 +68,91 @@ class RedisStreamManager:
 
     def stream_key(self, conversation_id: str, run_id: str) -> str:
         return f"chat:stream:{conversation_id}:{run_id}"
+
+    def task_enqueue_key(self, conversation_id: str, run_id: str) -> str:
+        return f"task:enqueue:{conversation_id}:{run_id}"
+
+    def get_queue_depth(self, queue_name: str) -> Optional[int]:
+        """Return Redis broker queue depth for a Celery queue, if available."""
+        try:
+            return int(self.redis_client.llen(queue_name))
+        except Exception as e:
+            logger.warning(
+                f"Failed to read queue depth for {queue_name}: {e}",
+            )
+            return None
+
+    def record_task_enqueue(
+        self,
+        conversation_id: str,
+        run_id: str,
+        task_id: str,
+        queue_name: str,
+        queue_depth: Optional[int],
+    ) -> float:
+        """Store enqueue metadata so worker pickup can calculate wait time."""
+        enqueued_at = time.time()
+        key = self.task_enqueue_key(conversation_id, run_id)
+        mapping = {
+            "task_id": task_id,
+            "queue_name": queue_name,
+            "enqueued_at": str(enqueued_at),
+            "queue_depth_at_enqueue": (
+                "" if queue_depth is None else str(queue_depth)
+            ),
+        }
+        self.redis_client.hset(key, mapping=mapping)
+        self.redis_client.expire(key, TASK_METADATA_TTL_SECONDS)
+        return enqueued_at
+
+    def get_task_enqueue_metadata(
+        self, conversation_id: str, run_id: str
+    ) -> dict:
+        key = self.task_enqueue_key(conversation_id, run_id)
+        raw = self.redis_client.hgetall(key) or {}
+        metadata = {}
+        for key_item, value_item in raw.items():
+            key_str = (
+                key_item.decode()
+                if isinstance(key_item, bytes)
+                else str(key_item)
+            )
+            value_str = (
+                value_item.decode()
+                if isinstance(value_item, bytes)
+                else str(value_item)
+            )
+            metadata[key_str] = value_str
+        return metadata
+
+    def task_pickup_diagnostics(
+        self,
+        conversation_id: str,
+        run_id: str,
+        fallback_queue_name: str,
+    ) -> dict:
+        metadata = self.get_task_enqueue_metadata(conversation_id, run_id)
+        queue_name = metadata.get("queue_name") or fallback_queue_name
+        queue_depth_at_pickup = self.get_queue_depth(queue_name)
+
+        pickup_latency_ms = None
+        try:
+            enqueued_at = float(metadata.get("enqueued_at") or "")
+            pickup_latency_ms = int((time.time() - enqueued_at) * 1000)
+        except (TypeError, ValueError):
+            pass
+
+        return {
+            "task_id": metadata.get("task_id", ""),
+            "queue_name": queue_name,
+            "queue_depth_at_enqueue": metadata.get("queue_depth_at_enqueue", ""),
+            "queue_depth_at_pickup": (
+                "" if queue_depth_at_pickup is None else str(queue_depth_at_pickup)
+            ),
+            "pickup_latency_ms": (
+                "" if pickup_latency_ms is None else str(pickup_latency_ms)
+            ),
+        }
 
     def publish_event(
         self, conversation_id: str, run_id: str, event_type: str, payload: dict
@@ -521,6 +608,47 @@ class AsyncRedisStreamManager:
 
     def stream_key(self, conversation_id: str, run_id: str) -> str:
         return f"chat:stream:{conversation_id}:{run_id}"
+
+    def task_enqueue_key(self, conversation_id: str, run_id: str) -> str:
+        return f"task:enqueue:{conversation_id}:{run_id}"
+
+    async def get_queue_depth(self, queue_name: str) -> Optional[int]:
+        """Return Redis broker queue depth for a Celery queue, if available."""
+        try:
+            depth = await _retry_redis_async(
+                lambda: self.redis_client.llen(queue_name)
+            )
+            return int(depth)
+        except Exception as e:
+            logger.warning(
+                f"Failed to read queue depth for {queue_name}: {e}",
+            )
+            return None
+
+    async def record_task_enqueue(
+        self,
+        conversation_id: str,
+        run_id: str,
+        task_id: str,
+        queue_name: str,
+        queue_depth: Optional[int],
+    ) -> float:
+        """Store enqueue metadata so worker pickup can calculate wait time."""
+        enqueued_at = time.time()
+        key = self.task_enqueue_key(conversation_id, run_id)
+        mapping = {
+            "task_id": task_id,
+            "queue_name": queue_name,
+            "enqueued_at": str(enqueued_at),
+            "queue_depth_at_enqueue": (
+                "" if queue_depth is None else str(queue_depth)
+            ),
+        }
+        await _retry_redis_async(lambda: self.redis_client.hset(key, mapping=mapping))
+        await _retry_redis_async(
+            lambda: self.redis_client.expire(key, TASK_METADATA_TTL_SECONDS)
+        )
+        return enqueued_at
 
     async def set_task_status(
         self, conversation_id: str, run_id: str, status: str
