@@ -42,8 +42,13 @@ RUN uv sync --frozen
 # Env path for newrelic.ini
 ENV NEW_RELIC_CONFIG_FILE=/app/newrelic.ini
 
-# Copy the Supervisor configuration file into the container
-COPY deployment/prod/celery/celery-api-supervisord.conf /etc/supervisor/conf.d/celery-api-supervisord.conf
+# Install the Supervisor config from the source tree copied by `COPY . .`
+# above. A dedicated `COPY <conf> /etc/...` instruction has repeatedly been
+# served from a stale Docker layer cache on the build node (shipping an old
+# single-program conf under a correct commit tag). `RUN cp` depends on the
+# `COPY . .` layer, which busts whenever any file in the context changes, so
+# /etc always matches the committed conf regardless of build-cache state.
+RUN cp /app/deployment/prod/celery/celery-api-supervisord.conf /etc/supervisor/conf.d/celery-api-supervisord.conf
 
 # Expose the port that the app runs on
 EXPOSE 8001
