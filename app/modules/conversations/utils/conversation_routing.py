@@ -6,6 +6,7 @@ Contains common functions for session management, Redis streaming, and Celery ta
 import asyncio
 import json
 import logging
+import traceback
 import uuid
 from typing import Generator, Optional
 
@@ -21,9 +22,29 @@ from app.modules.conversations.conversation.conversation_schema import (
 from app.modules.conversations.utils.redis_streaming import (
     AsyncRedisStreamManager,
     RedisStreamManager,
+    _stream_failure_fields,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _chat_stream_error_response(event: dict, run_id: str) -> dict:
+    """Return a chat-compatible, sanitized diagnostic frame for failed streams."""
+    return {
+        "event": "error",
+        "status": event.get("status", "error"),
+        "message": event.get("message", "An internal error occurred."),
+        "citations": [],
+        "tool_calls": [],
+        "thinking": None,
+        "conversation_id": event.get("conversation_id"),
+        "run_id": event.get("run_id") or run_id,
+        "trace_id": event.get("trace_id", ""),
+        "failing_phase": event.get("failing_phase", "unknown"),
+        "error_type": event.get("error_type", ""),
+        "stack_trace_available": bool(event.get("stack_trace_available")),
+        "stream_id": event.get("stream_id"),
+    }
 
 
 def normalize_run_id(
@@ -143,12 +164,48 @@ def redis_stream_generator(
                 yield json_response
 
             elif event.get("type") == "end":
+                if event.get("status") in {"error", "timeout", "expired"}:
+                    yield json.dumps(
+                        _chat_stream_error_response(event, run_id),
+                        default=json_serializer,
+                    )
                 # End the stream when we receive an end event
                 break
 
     except Exception as e:
-        logger.error(f"Redis streaming error: {str(e)}")
-        # Don't yield error events to match original behavior
+        stack_trace = traceback.format_exc()
+        # Full stack + identifying fields so a silent SSE close is debuggable
+        # by run_id / trace_id alone. The client receives only sanitized
+        # identifiers; the full traceback stays server-side.
+        failure_fields = _stream_failure_fields(
+            conversation_id,
+            run_id,
+            "sse_consume",
+            e,
+            stream_id=cursor or "0-0",
+        )
+        logger.error(
+            "Redis streaming error in sse_consume phase: %s",
+            e,
+            exc_info=True,
+            extra={
+                "cursor": cursor,
+                "stack_trace": stack_trace,
+                **failure_fields,
+            },
+        )
+        yield json.dumps(
+            _chat_stream_error_response(
+                {
+                    "type": "end",
+                    "status": "error",
+                    "message": "Stream error while consuming events.",
+                    **failure_fields,
+                },
+                run_id,
+            ),
+            default=json_serializer,
+        )
 
 
 async def start_celery_task_and_stream(

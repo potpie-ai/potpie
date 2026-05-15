@@ -2,6 +2,7 @@ import asyncio
 import json
 import redis
 import time
+import traceback
 from datetime import datetime
 from typing import Generator, Optional
 
@@ -10,6 +11,43 @@ from app.modules.utils.logger import setup_logger
 from app.modules.intelligence.provider.openrouter_usage_context import estimate_cost_for_log
 
 logger = setup_logger(__name__)
+
+
+def _current_trace_id() -> str:
+    """Return the active OpenTelemetry trace id as a 32-char hex string, or ''.
+
+    Lets stream consumers correlate a stuck stream to its logfire trace in one
+    click. Never raises - if OTel isn't installed or no span is active we
+    return an empty string and stay out of the event's way.
+    """
+    try:
+        from opentelemetry import trace as _ot_trace
+
+        ctx = _ot_trace.get_current_span().get_span_context()
+        if ctx and ctx.is_valid:
+            return format(ctx.trace_id, "032x")
+    except Exception:
+        pass
+    return ""
+
+
+def _stream_failure_fields(
+    conversation_id: str,
+    run_id: str,
+    failing_phase: str,
+    error: Optional[BaseException] = None,
+    stream_id: str = "0-0",
+) -> dict:
+    """Build sanitized stream diagnostics; full traceback stays in logs."""
+    return {
+        "conversation_id": conversation_id,
+        "run_id": run_id,
+        "trace_id": _current_trace_id(),
+        "failing_phase": failing_phase,
+        "error_type": type(error).__name__ if error else "",
+        "stack_trace_available": bool(error),
+        "stream_id": stream_id,
+    }
 
 
 class RedisStreamManager:
@@ -58,6 +96,7 @@ class RedisStreamManager:
             "conversation_id": conversation_id,
             "run_id": run_id,
             "created_at": datetime.utcnow().isoformat(),
+            "trace_id": _current_trace_id(),
             **{k: serialize_value(v) for k, v in payload.items()},
         }
 
@@ -123,7 +162,12 @@ class RedisStreamManager:
                             "type": "end",
                             "status": "timeout",
                             "message": "Stream creation timeout - task may be queued",
-                            "stream_id": "0-0",
+                            **_stream_failure_fields(
+                                conversation_id,
+                                run_id,
+                                "stream_creation_wait",
+                                stream_id="0-0",
+                            ),
                         }
                         return
 
@@ -137,7 +181,12 @@ class RedisStreamManager:
                         "type": "end",
                         "status": "expired",
                         "message": "Stream expired",
-                        "stream_id": last_id,
+                        **_stream_failure_fields(
+                            conversation_id,
+                            run_id,
+                            "redis_stream_ttl",
+                            stream_id=last_id,
+                        ),
                     }
                     return
 
@@ -195,12 +244,30 @@ class RedisStreamManager:
                         yield event
 
         except Exception as e:
-            logger.error(f"Error consuming Redis stream {key}: {str(e)}")
+            stack_trace = traceback.format_exc()
+            logger.error(
+                f"Error consuming Redis stream {key}: {str(e)}",
+                exc_info=True,
+                **_stream_failure_fields(
+                    conversation_id,
+                    run_id,
+                    "redis_consume",
+                    e,
+                    stream_id=cursor or "0-0",
+                ),
+                stack_trace=stack_trace,
+            )
             yield {
                 "type": "end",
                 "status": "error",
                 "message": f"Stream error: {str(e)}",
-                "stream_id": cursor or "0-0",
+                **_stream_failure_fields(
+                    conversation_id,
+                    run_id,
+                    "redis_consume",
+                    e,
+                    stream_id=cursor or "0-0",
+                ),
             }
 
     def _format_event(self, event_id, event_data: dict) -> dict:
@@ -522,6 +589,7 @@ class AsyncRedisStreamManager:
             "conversation_id": conversation_id,
             "run_id": run_id,
             "created_at": datetime.utcnow().isoformat(),
+            "trace_id": _current_trace_id(),
             **{k: serialize_value(v) for k, v in payload.items()},
         }
         try:

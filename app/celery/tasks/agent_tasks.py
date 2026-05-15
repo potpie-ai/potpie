@@ -1,5 +1,6 @@
 import asyncio
 import os
+import traceback
 from typing import Optional, List
 
 try:
@@ -11,7 +12,10 @@ from sqlalchemy.orm import Session
 
 from app.celery.celery_app import celery_app
 from app.celery.tasks.base_task import BaseTask
-from app.modules.conversations.utils.redis_streaming import RedisStreamManager
+from app.modules.conversations.utils.redis_streaming import (
+    RedisStreamManager,
+    _current_trace_id,
+)
 from app.modules.users.user_model import User
 from app.modules.users.user_service import UserService
 from app.modules.utils.logger import setup_logger, log_context
@@ -185,6 +189,7 @@ def execute_agent_background(
                     f"Starting background agent execution with tunnel_url={tunnel_url}, "
                     f"local_mode={local_mode}, conversation_id={conversation_id}"
                 )
+                current_phase = "setup"
                 try:
                     # Set task status to indicate task has started
                     redis_manager.set_task_status(conversation_id, run_id, "running")
@@ -381,6 +386,7 @@ def execute_agent_background(
                     # Convert asyncio.CancelledError to RuntimeError so Celery's result callback
                     # receives (failed, retval, runtime) instead of ExceptionInfo (avoids
                     # "cannot unpack non-iterable ExceptionInfo object").
+                    current_phase = "agent_run"
                     try:
                         completed = self.run_async(run_agent())
                     except asyncio.CancelledError as e:
@@ -392,6 +398,7 @@ def execute_agent_background(
                             "Agent stream was cancelled during execution"
                         ) from e
 
+                    current_phase = "post_process"
                     # Collect OpenRouter usage and record cost in Logfire (for all outcomes)
                     usages = get_and_clear_usages()
                     total_cost = _record_openrouter_cost_in_logfire(
@@ -464,11 +471,16 @@ def execute_agent_background(
                     return completed
 
                 except Exception:
+                    trace_id = _current_trace_id()
+                    stack_trace = traceback.format_exc()
                     logger.exception(
                         "Background agent execution failed",
                         conversation_id=conversation_id,
                         run_id=run_id,
                         user_id=user_id,
+                        trace_id=trace_id,
+                        failing_phase=current_phase,
+                        stack_trace=stack_trace,
                     )
 
                     # Collect OpenRouter usage and record partial cost in Logfire (even on error)
@@ -527,16 +539,20 @@ def execute_agent_background(
                             run_id=run_id,
                         )
 
-                    # Ensure end event is always published
+                    import sys as _sys
+
+                    _exc_type, _exc_val, _ = _sys.exc_info()
+                    error_payload = {
+                        "status": "error",
+                        "message": "An internal error occurred.",
+                        "error_type": _exc_type.__name__ if _exc_type else "Unknown",
+                        "failing_phase": current_phase,
+                        "trace_id": trace_id,
+                        "stack_trace_available": True,
+                    }
                     try:
                         redis_manager.publish_event(
-                            conversation_id,
-                            run_id,
-                            "end",
-                            {
-                                "status": "error",
-                                "message": "An internal error occurred.",
-                            },
+                            conversation_id, run_id, "end", error_payload
                         )
                     except Exception:
                         logger.exception(
@@ -596,6 +612,7 @@ def execute_regenerate_background(
             conversation_id=conversation_id, user_id=user_id, run_id=run_id
         ):
             logger.info("Starting background regenerate execution")
+            current_phase = "setup"
             try:
                 # Set task status to indicate task has started
                 redis_manager.set_task_status(conversation_id, run_id, "running")
@@ -763,8 +780,8 @@ def execute_regenerate_background(
                             return False  # Indicate cancellation
 
                 # Run the async regeneration on the worker's long-lived loop
-                # Run the async regeneration on the worker's long-lived loop
                 # Convert asyncio.CancelledError to RuntimeError for Celery callback stability.
+                current_phase = "agent_run"
                 try:
                     completed = self.run_async(run_regeneration())
                 except asyncio.CancelledError as e:
@@ -776,6 +793,7 @@ def execute_regenerate_background(
                         "Regeneration stream was cancelled during execution"
                     ) from e
 
+                current_phase = "post_process"
                 # Collect OpenRouter usage and record cost in Logfire (for all outcomes)
                 usages = get_and_clear_usages()
                 total_cost = _record_openrouter_cost_in_logfire(
@@ -831,12 +849,17 @@ def execute_regenerate_background(
                 # Return the completion status so on_success can check if it was cancelled
                 return completed
 
-            except Exception as e:
+            except Exception:
+                trace_id = _current_trace_id()
+                stack_trace = traceback.format_exc()
                 logger.exception(
                     "Background regenerate execution failed",
                     conversation_id=conversation_id,
                     run_id=run_id,
                     user_id=user_id,
+                    trace_id=trace_id,
+                    failing_phase=current_phase,
+                    stack_trace=stack_trace,
                 )
 
                 # Collect OpenRouter usage and record partial cost in Logfire (even on error)
@@ -891,16 +914,20 @@ def execute_regenerate_background(
                         user_id=user_id,
                     )
 
-                # Ensure end event is always published
+                import sys as _sys
+
+                _exc_type, _exc_val, _ = _sys.exc_info()
+                error_payload = {
+                    "status": "error",
+                    "message": "An internal error occurred.",
+                    "error_type": _exc_type.__name__ if _exc_type else "Unknown",
+                    "failing_phase": current_phase,
+                    "trace_id": trace_id,
+                    "stack_trace_available": True,
+                }
                 try:
                     redis_manager.publish_event(
-                        conversation_id,
-                        run_id,
-                        "end",
-                        {
-                            "status": "error",
-                            "message": "An internal error occurred.",
-                        },
+                        conversation_id, run_id, "end", error_payload
                     )
                 except Exception:
                     logger.exception(
