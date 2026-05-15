@@ -36,7 +36,11 @@ from adapters.outbound.policy import DefaultPolicyAdapter
 from adapters.outbound.postgres.agent_checkpoint_store import (
     SqlAlchemyAgentCheckpointStore,
 )
+from adapters.outbound.postgres.agent_execution_log import (
+    PostgresAgentExecutionLog,
+)
 from adapters.outbound.postgres.batch_repository import SqlAlchemyBatchRepository
+from adapters.outbound.postgres.ingestion_config import SqlAlchemyIngestionConfig
 from adapters.outbound.postgres.delegating_event_query_service import (
     DelegatingEventQueryService,
 )
@@ -56,6 +60,11 @@ from application.services.context_reader_registry import ContextReaderRegistry
 from application.services.context_resolution import ContextResolutionService
 from application.services.source_connector_registry import SourceConnectorRegistry
 from domain.ports.event_query_service import EventQueryService
+from domain.ports.event_stream import (
+    EventStreamPublisherPort,
+    NoOpEventStreamPublisher,
+)
+from domain.ports.ingestion_config import IngestionConfigPort
 from domain.ports.context_graph import ContextGraphPort
 from adapters.outbound.graphiti.port import EpisodicGraphPort
 from domain.ports.intelligence_provider import IntelligenceProvider
@@ -102,6 +111,12 @@ class ContextEngineContainer:
     Both are surfaced by ``context_status``."""
     telemetry: TelemetryPort | None = None
     """Cost + drift sink. ``None`` is treated as ``NoOpTelemetry``."""
+    event_stream_publisher: EventStreamPublisherPort = field(
+        default_factory=NoOpEventStreamPublisher
+    )
+    """Live activity / status publisher. NoOp by default; the API process
+    swaps in a Redis adapter so the events screen can stream agent activity
+    end-to-end."""
 
     def policy(self) -> PolicyPort:
         """Return the centralized authorization port for this container.
@@ -131,6 +146,15 @@ class ContextEngineContainer:
     def agent_checkpoint_store(self, session: Session) -> SqlAlchemyAgentCheckpointStore:
         return SqlAlchemyAgentCheckpointStore(session)
 
+    def agent_execution_log(self, session: Session) -> PostgresAgentExecutionLog:
+        """Durable agent execution log: the live token/tool stream *and*
+        the crash-resume substrate. Session-scoped like the checkpoint
+        store; opens its own short sessions per write internally."""
+        return PostgresAgentExecutionLog(session)
+
+    def ingestion_config(self, session: Session) -> IngestionConfigPort:
+        return SqlAlchemyIngestionConfig(session)
+
     def ingestion_event_store(self, session: Session) -> SqlAlchemyIngestionEventStore:
         return SqlAlchemyIngestionEventStore(session)
 
@@ -152,6 +176,7 @@ class ContextEngineContainer:
             events=self.ingestion_event_store(session),
             batches=self.batch_repository(session),
             jobs=self.jobs or NoOpContextGraphJobQueue(),
+            ingestion_config=self.ingestion_config(session),
         )
 
 
@@ -212,9 +237,11 @@ def build_container(
     reconciliation_agent: ReconciliationAgentPort | None = None,
     jobs: ContextGraphJobQueuePort | None = None,
     telemetry: TelemetryPort | None = None,
+    event_stream_publisher: EventStreamPublisherPort | None = None,
 ) -> ContextEngineContainer:
     s = settings or EnvContextEngineSettings()
     telemetry_sink = telemetry or _default_telemetry()
+    stream_publisher = event_stream_publisher or _default_event_stream_publisher()
     episodic = GraphitiEpisodicAdapter(s)
     structural = Neo4jStructuralAdapter(s)
     intelligence_provider = HybridGraphIntelligenceProvider(
@@ -241,6 +268,7 @@ def build_container(
     )
     _attach_reconciliation_context(reconciliation_agent, context_graph)
     _attach_reconciliation_telemetry(reconciliation_agent, telemetry_sink)
+    _attach_reconciliation_event_stream(reconciliation_agent, stream_publisher)
     return ContextEngineContainer(
         settings=s,
         episodic=episodic,
@@ -254,6 +282,7 @@ def build_container(
         reconciliation_agent=reconciliation_agent,
         jobs=jobs or NoOpContextGraphJobQueue(),
         telemetry=telemetry_sink,
+        event_stream_publisher=stream_publisher,
     )
 
 
@@ -284,6 +313,44 @@ def _attach_reconciliation_telemetry(
     setter = getattr(agent, "set_telemetry", None)
     if setter is not None:
         setter(telemetry)
+
+
+def _attach_reconciliation_event_stream(
+    agent: ReconciliationAgentPort | None,
+    publisher: EventStreamPublisherPort,
+) -> None:
+    """Wire the live publisher into the agent if it accepts one.
+
+    Falling back to NoOp lets old hosts (no Redis configured) continue to
+    work — they just don't get live activity streaming.
+    """
+    if agent is None:
+        return
+    setter = getattr(agent, "set_event_stream_publisher", None)
+    if setter is not None:
+        setter(publisher)
+
+
+def _default_event_stream_publisher() -> EventStreamPublisherPort:
+    """Build the Redis publisher when REDIS_URL is set; NoOp otherwise.
+
+    The Redis adapter constructor lazily connects, so failure to reach Redis
+    surfaces only when an event actually fires — not at container build.
+    Wrapped in try/except so a transient ImportError or misconfigured URL
+    doesn't break the rest of the engine.
+    """
+    import os
+
+    if not os.getenv("REDIS_URL"):
+        return NoOpEventStreamPublisher()
+    try:
+        from adapters.outbound.event_stream.redis_publisher import (
+            RedisEventStreamPublisher,
+        )
+
+        return RedisEventStreamPublisher()
+    except Exception:  # noqa: BLE001 — fall back is intentional
+        return NoOpEventStreamPublisher()
 
 
 def _default_repo_resolver(

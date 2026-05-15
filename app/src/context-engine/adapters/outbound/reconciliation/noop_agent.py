@@ -22,8 +22,9 @@ class NoOpReconciliationAgent:
         ctx: BatchAgentContext,
         *,
         checkpoints: AgentCheckpointStorePort | None = None,
+        execution_log: object | None = None,
     ) -> BatchAgentOutcome:
-        del checkpoints
+        del checkpoints, execution_log
         return BatchAgentOutcome(
             ok=True,
             completed_event_ids=[ev.event_id for ev in ctx.events],

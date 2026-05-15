@@ -102,8 +102,13 @@ def test_processes_pending_events_and_marks_batch_done() -> None:
     args, kwargs = batches.mark_batch_done.call_args
     assert args[0] == "batch-1"
     assert sorted(kwargs["completed_event_ids"]) == ["e1", "e2"]
-    assert {c.args[0] for c in ledger.record_event_reconciled.call_args_list} == {"e1", "e2"}
-    checkpoints.delete.assert_called_once_with("batch-1")
+    # Bulk: one record_events_reconciled call carrying every completed id,
+    # not N single-id calls.
+    ledger.record_events_reconciled.assert_called_once()
+    (reconciled_ids,), _ = ledger.record_events_reconciled.call_args
+    assert sorted(reconciled_ids) == ["e1", "e2"]
+    # Resume checkpoint is now cleared via the execution log on success;
+    # that contract is covered in test_agent_execution_log.py.
 
 
 def test_skips_already_processed_events() -> None:
@@ -150,7 +155,8 @@ def test_empty_batch_closes_immediately() -> None:
     assert out.completed_event_ids == []
     batches.mark_batch_done.assert_called_once_with("batch-1", completed_event_ids=[])
     batches.mark_batch_running.assert_not_called()
-    checkpoints.delete.assert_called_once_with("batch-1")
+    # Resume checkpoint is now cleared via the execution log on success;
+    # that contract is covered in test_agent_execution_log.py.
 
 
 def test_done_batch_is_a_noop() -> None:
@@ -181,8 +187,8 @@ def test_agent_exception_marks_batch_failed_and_events_failed() -> None:
     checkpoints.load.return_value = None
 
     class _Boom:
-        def run_batch(self, ctx, *, checkpoints=None):
-            del ctx, checkpoints
+        def run_batch(self, ctx, *, checkpoints=None, execution_log=None):
+            del ctx, checkpoints, execution_log
             raise RuntimeError("kaboom")
 
         def capability_metadata(self):
@@ -200,9 +206,9 @@ def test_agent_exception_marks_batch_failed_and_events_failed() -> None:
     assert out.ok is False
     assert "kaboom" in (out.error or "")
     batches.mark_batch_failed.assert_called_once()
-    ledger.record_event_failed.assert_called_once()
-    args, _ = ledger.record_event_failed.call_args
-    assert args[0] == "e1"
+    ledger.record_events_failed.assert_called_once()
+    (failed_ids, _err), _ = ledger.record_events_failed.call_args
+    assert sorted(failed_ids) == ["e1"]
 
 
 def test_opens_runs_and_fans_work_events_across_events() -> None:
@@ -236,8 +242,8 @@ def test_opens_runs_and_fans_work_events_across_events() -> None:
     ]
 
     class _Stub:
-        def run_batch(self, ctx, *, checkpoints=None):
-            del checkpoints
+        def run_batch(self, ctx, *, checkpoints=None, execution_log=None):
+            del checkpoints, execution_log
             from domain.reconciliation_batch import BatchAgentOutcome
 
             return BatchAgentOutcome(
@@ -300,8 +306,8 @@ def test_failing_run_marks_run_failed_and_records_error_event() -> None:
     checkpoints.load.return_value = None
 
     class _Boom:
-        def run_batch(self, ctx, *, checkpoints=None):
-            del ctx, checkpoints
+        def run_batch(self, ctx, *, checkpoints=None, execution_log=None):
+            del ctx, checkpoints, execution_log
             raise RuntimeError("kaboom")
 
         def capability_metadata(self):
@@ -324,8 +330,11 @@ def test_failing_run_marks_run_failed_and_records_error_event() -> None:
     assert "error" in err_kinds
 
 
-def test_resumes_with_prior_messages_when_checkpoint_exists() -> None:
-    """When a checkpoint exists, ``BatchAgentContext.prior_messages_json`` is populated."""
+def test_resumes_with_prior_messages_when_execution_log_has_resume_state() -> None:
+    """A durable resume state repopulates ``prior_messages_json`` on the
+    first chunk (the execution log subsumes the old checkpoint store)."""
+
+    from domain.ports.agent_execution_log import ResumeState
 
     batches = MagicMock()
     batches.list_events_for_batch.return_value = [
@@ -335,21 +344,35 @@ def test_resumes_with_prior_messages_when_checkpoint_exists() -> None:
     ledger.get_event_by_id.return_value = _event_row("e1")
     checkpoints = MagicMock()
 
-    class _Checkpoint:
-        messages_json = [{"role": "assistant", "content": "prior"}]
-        tool_call_count = 3
+    class _FakeLog:
+        def load_resume_state(self, batch_id):
+            return ResumeState(
+                batch_id=batch_id,
+                messages_json=[{"role": "assistant", "content": "prior"}],
+                tool_call_count=3,
+                completed_event_ids=[],
+                last_seq=5,
+                chunk_index=0,
+            )
 
-    checkpoints.load.return_value = _Checkpoint()
+        def append(self, **_):
+            pass
+
+        def clear(self, *_):
+            pass
 
     captured = {}
 
     class _Capture:
-        def run_batch(self, ctx, *, checkpoints=None):
+        def run_batch(self, ctx, *, checkpoints=None, execution_log=None):
             captured["prior"] = ctx.prior_messages_json
             captured["attempt"] = ctx.attempt_number
+            captured["start_seq"] = ctx.start_seq
             from domain.reconciliation_batch import BatchAgentOutcome
 
-            return BatchAgentOutcome(ok=True, completed_event_ids=["e1"])
+            return BatchAgentOutcome(
+                ok=True, completed_event_ids=["e1"], last_seq=5
+            )
 
         def capability_metadata(self):
             return {}
@@ -361,7 +384,10 @@ def test_resumes_with_prior_messages_when_checkpoint_exists() -> None:
         reco_ledger=ledger,
         checkpoints=checkpoints,
         pots=_pots(),
+        execution_log=_FakeLog(),
     )
 
     assert captured["prior"] == [{"role": "assistant", "content": "prior"}]
     assert captured["attempt"] == 2
+    # Seq continues past the durable watermark (run_started consumed 6).
+    assert captured["start_seq"] >= 5

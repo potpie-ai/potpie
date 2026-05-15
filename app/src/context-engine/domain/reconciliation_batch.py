@@ -49,6 +49,16 @@ class BatchAgentContext:
     prior_messages_json: list[dict[str, Any]] | None = None
     """Resumption checkpoint (pydantic-deep message history) when continuing a crashed run."""
     attempt_number: int = 1
+    chunk_index: int = 0
+    """0-based chunk this run covers (chunked batches). Namespaces streamed
+    model-part ids and is persisted into the resume checkpoint."""
+    chunks_total: int = 1
+    start_seq: int = 0
+    """Execution-log seq to continue from. Non-zero when resuming a crashed
+    run or running a later chunk so the append-only log stays monotonic."""
+    resume_completed_event_ids: list[str] = field(default_factory=list)
+    """Events a prior (crashed) attempt already finished — the agent must
+    not redo their side effects."""
 
 
 @dataclass(slots=True)
@@ -68,6 +78,9 @@ class BatchAgentOutcome:
     agent_name: str | None = None
     agent_version: str | None = None
     toolset_version: str | None = None
+    last_seq: int = 0
+    """Highest execution-log seq this run emitted. Threads into the next
+    chunk's ``start_seq`` so the batch's append-only log stays monotonic."""
 
 
 @dataclass(slots=True, frozen=True)

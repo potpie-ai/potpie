@@ -225,6 +225,40 @@ class ContextReconciliationBatchEventModel(Base):
     )
 
 
+class ContextPotIngestionConfigModel(Base):
+    """Per-pot ingestion mode + window.
+
+    Phase 4: events admitted on a windowed pot accumulate without enqueuing.
+    A scheduled task flushes the open batch once it's older than
+    ``window_minutes`` (or above ``min_batch_size``). All pots are
+    initialised to ``windowed/5min`` via migration so the platform default
+    is the documented behaviour, but operators / pot owners can switch any
+    pot to ``immediate`` (legacy behaviour) at any time.
+    """
+
+    __tablename__ = "context_pot_ingestion_config"
+
+    pot_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    mode: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default=text("'windowed'")
+    )
+    window_minutes: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("5")
+    )
+    # NULL = no early-flush trigger (only the time window applies).
+    min_batch_size: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+    updated_at: Mapped[object] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_by_user_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+
+
 class ContextAgentCheckpointModel(Base):
     """Persisted agent message history for crash resumption + observability."""
 
@@ -239,8 +273,80 @@ class ContextAgentCheckpointModel(Base):
     tool_call_count: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )
+    # Durable execution bookkeeping (Phase: durable agent execution log).
+    # ``completed_event_ids`` lets a resumed run skip events the crashed run
+    # already finished; ``last_seq`` continues the append-only execution log
+    # without colliding with already-streamed records; ``chunk_index`` is the
+    # 0-based chunk the crashed run was on (chunked batches).
+    completed_event_ids: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    last_seq: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    chunk_index: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
     updated_at: Mapped[object] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ContextAgentExecutionLogModel(Base):
+    """Append-only durable log of one batch's agent run.
+
+    This is *both* the live stream the events screen tails and the durable
+    history. One row per discrete record (tool call, mutation, …) or one
+    row per coalesced model part (``text`` / ``thinking``) grown in place.
+
+    ``seq`` is a per-batch monotonic cursor. Discrete records take the next
+    seq and never change it. A coalesced part keeps its ``part_id`` but has
+    its ``seq`` bumped to the latest on every flush, so a cursor-based tail
+    (``seq > cursor``) re-delivers the growing part for free.
+    """
+
+    __tablename__ = "context_agent_execution_log"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    batch_id: Mapped[str] = mapped_column(
+        String(255),
+        ForeignKey("context_reconciliation_batches.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    record_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    # Set for coalesced model parts (text / thinking); NULL for discrete
+    # records. Unique per batch so upserts grow the right row.
+    part_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    done: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    # NULL = batch-level record; set when a record is attributable to one
+    # event (mutation_applied / event_processed) so the per-event stream can
+    # project it.
+    event_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    payload: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    created_at: Mapped[object] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        # Cursor-ordered replay/tail for one batch + idempotent discrete
+        # append (a resumed run that re-issues a seq is a conflict no-op).
+        UniqueConstraint(
+            "batch_id",
+            "seq",
+            name="uq_context_agent_execution_log_batch_seq",
+        ),
+        # Grow-the-right-part upsert. Postgres treats NULLs as distinct so
+        # this does not constrain discrete (part_id IS NULL) records.
+        UniqueConstraint(
+            "batch_id",
+            "part_id",
+            name="uq_context_agent_execution_log_batch_part",
+        ),
     )
 
 

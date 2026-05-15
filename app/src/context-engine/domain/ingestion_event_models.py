@@ -147,6 +147,10 @@ class EventListFilters:
     actor_surfaces: tuple[str, ...] | None = None
     submitted_after: datetime | None = None
     submitted_before: datetime | None = None
+    # Free-text needle, matched case-insensitively against event_id /
+    # repo_name / event_type / action / payload->>'name' /
+    # payload->>'title'. Adapters that don't support this just ignore it.
+    q: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -117,7 +117,24 @@ class ReconciliationLedgerPort(Protocol):
 
     def record_event_reconciled(self, event_id: str) -> None: ...
 
+    def record_events_reconciled(self, event_ids: list[str]) -> None:
+        """Bulk ``record_event_reconciled``: ``→ reconciled`` for all ids in one
+        statement.
+
+        No-op on an empty list. All-or-nothing — a failure leaves none of the
+        ids transitioned, so a bulk completion never half-applies. Prefer this
+        over a per-event loop when closing a batch/chunk (the common path).
+        """
+
     def record_event_failed(self, event_id: str, error: str) -> None: ...
+
+    def record_events_failed(self, event_ids: list[str], error: str) -> None:
+        """Bulk ``record_event_failed``: ``→ failed`` for all ids in one
+        statement, sharing the batch/chunk-level ``error``.
+
+        No-op on an empty list. All-or-nothing, same as
+        ``record_events_reconciled``.
+        """
 
     def list_runs_for_event(self, event_id: str) -> list[ReconciliationRunRow]: ...
 
@@ -130,6 +147,16 @@ class ReconciliationLedgerPort(Protocol):
 
     def mark_event_for_retry(self, event_id: str) -> None:
         """Set event status to ``received`` so ``claim_event_for_processing`` can run again."""
+
+    def mark_events_for_retry(self, event_ids: list[str]) -> None:
+        """Bulk ``mark_event_for_retry``: set every id to ``received`` in one statement.
+
+        No-op on an empty list. All-or-nothing — a failure leaves none of
+        the ids transitioned, so a bulk retry never half-applies.
+        """
+
+    def mark_events_queued(self, event_ids: list[str]) -> None:
+        """Bulk ``mark_event_queued``: ``received`` → ``queued`` for all ids in one statement."""
 
     def delete_all_for_pot(self, pot_id: str) -> int:
         """Remove reconciliation rows for ``pot_id``; returns rows removed."""

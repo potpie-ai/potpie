@@ -9,6 +9,9 @@ from application.use_cases.context_graph_jobs import (
     handle_backfill_pot,
     handle_process_batch,
 )
+from application.use_cases.flush_windowed_batches import (
+    flush_ready_windowed_pots,
+)
 
 
 class ContextGraphTask(Task):
@@ -84,3 +87,29 @@ def context_graph_process_batch(self, batch_id: str) -> dict:
         batch_id,
         build_container=build_container_for_session,
     )
+
+
+@celery_app.task(
+    bind=True,
+    base=ContextGraphTask,
+    name="app.modules.context_graph.tasks.context_graph_flush_windowed_batches",
+    queue="context-graph-etl",
+)
+def context_graph_flush_windowed_batches(self) -> dict:
+    """Beat-scheduled: enqueue any windowed pots whose open batch is ripe.
+
+    Runs every minute (see ``celery_app.conf.beat_schedule``). Idempotent:
+    re-running within a window only re-enqueues already-claimed batches,
+    which the worker rejects via ``claim_batch_by_id``.
+    """
+    container = build_container_for_session(self.db)
+    outcome = flush_ready_windowed_pots(
+        config=container.ingestion_config(self.db),
+        batches=container.batch_repository(self.db),
+        jobs=container.jobs,
+    )
+    return {
+        "pot_ids_flushed": outcome.pot_ids_flushed,
+        "batches_enqueued": outcome.batches_enqueued,
+        "errors": outcome.errors,
+    }

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -57,6 +57,17 @@ UNKNOWN_POT_DETAIL = (
     "Unknown pot_id for this user (create with POST /api/v2/context/pots "
     "and attach at least one repository)."
 )
+
+
+def _ndjson_line(event: dict[str, Any]) -> bytes:
+    """Serialize one stream event as a UTF-8 NDJSON line.
+
+    Matches the chat streaming client contract: one JSON object per line so
+    the consumer can parse line-by-line without needing SSE framing.
+    """
+    import json as _json
+
+    return (_json.dumps(event, default=str) + "\n").encode("utf-8")
 
 _logger = logging.getLogger(__name__)
 
@@ -146,6 +157,35 @@ def _context_graph_jsonable(value: Any) -> Any:
     if isinstance(value, (list, tuple, set)):
         return [_context_graph_jsonable(v) for v in value]
     return str(value)
+
+
+class BatchRetryEventsRequest(BaseModel):
+    """Bulk-retry request body. Capped at 200 to avoid a runaway batch.
+
+    Caller passes only event_ids; the route enforces that all belong to the
+    URL's ``pot_id``. Larger bulk operations should rely on windowed
+    batching instead of a single jumbo retry.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    event_ids: list[str] = Field(..., min_length=1, max_length=200)
+
+
+class IngestionConfigBody(BaseModel):
+    """PUT /pots/{pot_id}/ingestion-config body.
+
+    ``mode`` is constrained at the schema level so pydantic returns 422
+    before we hit the adapter — this is the failure mode our integration
+    tests pin down (otherwise an unknown mode would silently no-op when
+    the adapter is mocked).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["immediate", "windowed"] = Field(
+        ..., description="'immediate' or 'windowed'"
+    )
+    window_minutes: int = Field(5, ge=1, le=1440)
+    min_batch_size: int | None = Field(None, ge=1)
 
 
 class HardResetRequest(BaseModel):
@@ -735,6 +775,114 @@ def create_context_router(
             },
         )
 
+    @router.post(
+        "/pots/{pot_id}/events/batch-retry",
+        summary="Re-enqueue a set of events as one open batch",
+        description=(
+            "Bulk variant of ``/events/{event_id}/retry``. Validates every "
+            "event belongs to ``pot_id`` up-front (no partial apply on a bad "
+            "set), then in three bulk statements marks the whole set for "
+            "retry, drops it into the pot's open pending batch in one "
+            "insert, and enqueues that batch once. The worker hands the "
+            "entire batch to the agent in one chunked pass. Pre-existing "
+            "in-flight batches are not interrupted — a fresh pending batch "
+            "is opened in that case, so this is always safe to call."
+        ),
+    )
+    def batch_retry_events(
+        pot_id: str,
+        body: BatchRetryEventsRequest,
+        actor: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+        db: Session = Depends(get_db),
+    ):
+        if not body.event_ids:
+            raise HTTPException(
+                status_code=400, detail="event_ids must be non-empty"
+            )
+        # Cap to a sane batch — bigger bulk ops should use windowed batching.
+        if len(body.event_ids) > 200:
+            raise HTTPException(
+                status_code=400,
+                detail="event_ids exceeds 200; submit smaller batches",
+            )
+        # De-dupe inputs while preserving order so the response mirrors the request.
+        seen: set[str] = set()
+        unique_ids: list[str] = []
+        for eid in body.event_ids:
+            if eid in seen:
+                continue
+            seen.add(eid)
+            unique_ids.append(eid)
+
+        _enforce(
+            container,
+            actor=actor,
+            resource=RESOURCE_POT,
+            action=ACTION_POT_SUBMIT_EVENT,
+            pot_id=pot_id,
+        )
+
+        events_store = container.ingestion_event_store(db)
+        # Validate each event exists and belongs to this pot up-front so we
+        # don't partially apply a retry on a mixed-pot bulk.
+        rows = []
+        for eid in unique_ids:
+            ev = events_store.get_event(eid)
+            if ev is None:
+                raise HTTPException(
+                    status_code=404, detail=f"Unknown event_id: {eid}"
+                )
+            if ev.pot_id != pot_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"event_id {eid} does not belong to pot {pot_id}"
+                    ),
+                )
+            rows.append(ev)
+
+        reco = container.reconciliation_ledger(db)
+        batches = container.batch_repository(db)
+        jobs = container.jobs
+
+        event_ids = [ev.event_id for ev in rows]
+
+        # Three bulk statements for the whole set — not a per-event loop.
+        # Each step is all-or-nothing, so the request can't half-apply: if
+        # any step raises it propagates as a 5xx with nothing partially
+        # transitioned, rather than silently queueing some events and
+        # dropping others. The full set lands in one pending batch, which
+        # the worker then hands to the agent in a single chunked pass.
+        reco.mark_events_for_retry(event_ids)
+        batch_id = batches.add_events_to_open_batch_for_pot(pot_id, event_ids)
+        reco.mark_events_queued(event_ids)
+
+        if jobs is not None:
+            try:
+                jobs.enqueue_batch(batch_id)
+            except Exception:
+                # The batch is durable; the windowed flusher / next event
+                # on this pot re-enqueues. Don't fail the request for a
+                # transient broker blip after the writes committed.
+                _logger.exception(
+                    "batch_retry_events: enqueue_batch failed for batch %s "
+                    "(pot %s); batch is durable, will be re-enqueued",
+                    batch_id,
+                    pot_id,
+                )
+
+        return JSONResponse(
+            status_code=202,
+            content={
+                "status": "queued",
+                "pot_id": pot_id,
+                "batch_id": batch_id,
+                "event_ids": event_ids,
+                "count": len(event_ids),
+            },
+        )
+
     @router.get(
         "/pots/{pot_id}/events",
         summary="List ingestion events for a pot (latest first)",
@@ -778,6 +926,15 @@ def create_context_router(
             None,
             description="Only return events submitted at or before this ISO 8601 datetime.",
         ),
+        q: str | None = Query(
+            None,
+            description=(
+                "Free-text needle (case-insensitive) matched against "
+                "event_id, repo_name, event_type, action, and the raw "
+                "episode title fields."
+            ),
+            max_length=200,
+        ),
     ) -> dict[str, Any]:
         _enforce(
             container,
@@ -786,6 +943,11 @@ def create_context_router(
             action=ACTION_POT_READ,
             pot_id=pot_id,
         )
+        # Normalize empty / whitespace-only q to None so the filter dataclass
+        # treats "no needle" uniformly.
+        q_norm = q.strip() if q else None
+        if q_norm == "":
+            q_norm = None
         filters = EventListFilters(
             statuses=_parse_event_status_filters(status),
             ingestion_kinds=tuple(ingestion_kind) if ingestion_kind else None,
@@ -795,6 +957,7 @@ def create_context_router(
             actor_surfaces=tuple(actor_surface) if actor_surface else None,
             submitted_after=from_date,
             submitted_before=to_date,
+            q=q_norm,
         )
         page = container.event_query_service(db).list_events(
             pot_id, filters, cursor=cursor, limit=limit
@@ -803,6 +966,324 @@ def create_context_router(
             "items": [ingestion_event_to_payload(ev) for ev in page.items],
             "next_cursor": page.next_cursor,
         }
+
+    # ----- Per-pot ingestion config & force flush ------------------------------
+    # Lets the user toggle between immediate and windowed batching and
+    # force-flush the open batch on demand. The "Queued: N ⚡" CTA in the
+    # list view calls /ingest/flush.
+
+    @router.get(
+        "/pots/{pot_id}/ingestion-config",
+        summary="Get the pot's ingestion mode and window",
+    )
+    def get_ingestion_config(
+        pot_id: str,
+        actor: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+        db: Session = Depends(get_db),
+    ) -> dict[str, Any]:
+        _enforce(
+            container,
+            actor=actor,
+            resource=RESOURCE_POT,
+            action=ACTION_POT_READ,
+            pot_id=pot_id,
+        )
+        cfg = container.ingestion_config(db).get(pot_id)
+        return {
+            "pot_id": cfg.pot_id,
+            "mode": cfg.mode,
+            "window_minutes": cfg.window_minutes,
+            "min_batch_size": cfg.min_batch_size,
+        }
+
+    @router.put(
+        "/pots/{pot_id}/ingestion-config",
+        summary="Update the pot's ingestion mode and window",
+    )
+    def put_ingestion_config(
+        pot_id: str,
+        body: IngestionConfigBody,
+        actor: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+        db: Session = Depends(get_db),
+    ) -> dict[str, Any]:
+        _enforce(
+            container,
+            actor=actor,
+            resource=RESOURCE_POT,
+            action=ACTION_POT_SUBMIT_EVENT,
+            pot_id=pot_id,
+        )
+        actor_uid = getattr(actor, "id", None) or getattr(actor, "sub", None)
+        try:
+            cfg = container.ingestion_config(db).set(
+                pot_id=pot_id,
+                mode=body.mode,  # type: ignore[arg-type]
+                window_minutes=body.window_minutes,
+                min_batch_size=body.min_batch_size,
+                actor_user_id=actor_uid if isinstance(actor_uid, str) else None,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        db.commit()
+        return {
+            "pot_id": cfg.pot_id,
+            "mode": cfg.mode,
+            "window_minutes": cfg.window_minutes,
+            "min_batch_size": cfg.min_batch_size,
+        }
+
+    @router.post(
+        "/pots/{pot_id}/ingest/flush",
+        summary="Force-enqueue the pot's open pending batch (manual flush)",
+        description=(
+            "Closes-and-enqueues the pot's open pending batch immediately, "
+            "ignoring the windowed timer. Works for any ingestion mode — "
+            "useful as an escape hatch if the user wants their queued "
+            "events processed right now. Returns 200 with ``batch_id=None`` "
+            "when there is nothing pending to flush."
+        ),
+    )
+    def force_flush_pot_endpoint(
+        pot_id: str,
+        actor: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+        db: Session = Depends(get_db),
+    ) -> dict[str, Any]:
+        from application.use_cases.flush_windowed_batches import force_flush_pot
+
+        _enforce(
+            container,
+            actor=actor,
+            resource=RESOURCE_POT,
+            action=ACTION_POT_SUBMIT_EVENT,
+            pot_id=pot_id,
+        )
+        batch_id = force_flush_pot(
+            pot_id=pot_id,
+            batches=container.batch_repository(db),
+            jobs=container.jobs,
+        )
+        return {
+            "pot_id": pot_id,
+            "batch_id": batch_id,
+            "status": "queued" if batch_id else "no_pending_batch",
+        }
+
+    @router.get(
+        "/pots/{pot_id}/ingest/pipeline",
+        summary="Open-batch / window state for the pipeline UI",
+        description=(
+            "Snapshot the pot's ingestion pipeline: mode + window, the open "
+            "(pending) batch with its event count and window deadline. Backs "
+            "the events-screen 'batched / queued' section + countdown."
+        ),
+    )
+    def get_ingest_pipeline(
+        pot_id: str,
+        actor: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+        db: Session = Depends(get_db),
+    ) -> dict[str, Any]:
+        from datetime import timedelta
+
+        _enforce(
+            container,
+            actor=actor,
+            resource=RESOURCE_POT,
+            action=ACTION_POT_READ,
+            pot_id=pot_id,
+        )
+        cfg = container.ingestion_config(db).get(pot_id)
+        batches = container.batch_repository(db)
+        open_batch: dict[str, Any] | None = None
+        open_id = batches.get_open_batch_id_for_pot(pot_id)
+        if open_id:
+            b = batches.get_batch(open_id)
+            refs = batches.list_events_for_batch(open_id)
+            pending = [r for r in refs if r.processed_at is None]
+            created_at = getattr(b, "created_at", None) if b else None
+            deadline = None
+            if (
+                created_at is not None
+                and cfg.mode == "windowed"
+                and cfg.window_minutes
+            ):
+                deadline = (
+                    created_at + timedelta(minutes=cfg.window_minutes)
+                ).isoformat()
+            open_batch = {
+                "batch_id": open_id,
+                "created_at": created_at.isoformat() if created_at else None,
+                "event_count": len(pending),
+                "window_deadline": deadline,
+            }
+        return {
+            "pot_id": pot_id,
+            "mode": cfg.mode,
+            "window_minutes": cfg.window_minutes,
+            "min_batch_size": cfg.min_batch_size,
+            "open_batch": open_batch,
+            "queued_event_count": (
+                open_batch["event_count"] if open_batch else 0
+            ),
+        }
+
+    # ----- Live event streaming -------------------------------------------------
+    # Two endpoints: per-event activity (side panel) and per-pot status deltas
+    # (list view). Both return ``StreamingResponse`` of newline-delimited JSON
+    # so the chat-stream client pattern can be reused on the frontend.
+
+    @router.get(
+        "/events/{event_id}/stream",
+        summary="Stream live agent activity for one event (NDJSON)",
+        description=(
+            "Tails the durable agent execution log for the batch this event "
+            "belongs to: model text / thinking token deltas, tool calls + "
+            "results, graph mutations, then a terminal ``{type:'end'}``. "
+            "Replays records after ``cursor`` (a seq) then live-tails. The "
+            "log is durable, so a reconnect resumes exactly where it left "
+            "off and survives a worker crash."
+        ),
+    )
+    def stream_event_activity(
+        event_id: str,
+        actor: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+        db: Session = Depends(get_db),
+        cursor: str | None = Query(
+            None,
+            description="Execution-log seq to resume after (last seen stream_id).",
+        ),
+        idle_timeout_seconds: float = Query(
+            120.0, ge=1.0, le=600.0,
+            description="Close the connection if no events arrive within this window.",
+        ),
+    ):
+        events = container.event_query_service(db)
+        ev = events.get_event(event_id)
+        if ev is None:
+            raise HTTPException(status_code=404, detail="Unknown event_id")
+        _enforce(
+            container,
+            actor=actor,
+            resource=RESOURCE_POT,
+            action=ACTION_POT_READ,
+            pot_id=ev.pot_id,
+        )
+
+        batch_id = container.batch_repository(db).get_latest_batch_id_for_event(
+            event_id
+        )
+        try:
+            cursor_seq = int(cursor) if cursor not in (None, "") else 0
+        except (TypeError, ValueError):
+            cursor_seq = 0
+        exec_log = container.agent_execution_log(db)
+
+        def _iter() -> Any:
+            if batch_id is None:
+                # Event admitted but not yet batched/run. Emit a transient
+                # end so the client backs off and reconnects until the
+                # agent picks it up (the durable log appears then).
+                yield _ndjson_line(
+                    {
+                        "type": "end",
+                        "status": "queued",
+                        "message": "Event is queued; agent has not started.",
+                        "stream_id": str(cursor_seq),
+                    }
+                )
+                return
+            try:
+                for event in exec_log.replay_and_tail(
+                    batch_id=batch_id,
+                    cursor_seq=cursor_seq,
+                    idle_timeout_seconds=idle_timeout_seconds,
+                ):
+                    yield _ndjson_line(event)
+            except Exception as exc:  # noqa: BLE001
+                _logger.warning(
+                    "stream_event_activity iterator failed for %s: %s",
+                    event_id,
+                    exc,
+                )
+                yield _ndjson_line(
+                    {"type": "end", "status": "error", "message": str(exc)}
+                )
+
+        from fastapi.responses import StreamingResponse
+
+        return StreamingResponse(
+            _iter(),
+            media_type="application/x-ndjson",
+            headers={
+                # Disable proxy buffering so chunks reach the browser immediately.
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @router.get(
+        "/pots/{pot_id}/events/stream",
+        summary="Stream live status deltas for events in a pot (NDJSON)",
+        description=(
+            "Tails ``{type:'status'|'end'}`` records as events in the pot "
+            "transition. Subscribed by the list view to update row indicators "
+            "without polling. The stream never naturally ends — clients "
+            "disconnect when they navigate away. ``idle_timeout_seconds`` "
+            "bounds an unattended connection."
+        ),
+    )
+    def stream_pot_events(
+        pot_id: str,
+        actor: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+        cursor: str | None = Query(
+            None,
+            description="Redis stream id to resume after (last seen stream_id).",
+        ),
+        idle_timeout_seconds: float = Query(
+            120.0, ge=1.0, le=600.0,
+            description="Close the connection if no events arrive within this window.",
+        ),
+    ):
+        _enforce(
+            container,
+            actor=actor,
+            resource=RESOURCE_POT,
+            action=ACTION_POT_READ,
+            pot_id=pot_id,
+        )
+        publisher = container.event_stream_publisher
+
+        def _iter() -> Any:
+            try:
+                for event in publisher.replay_and_tail_pot_status(
+                    pot_id=pot_id,
+                    cursor=cursor,
+                    idle_timeout_seconds=idle_timeout_seconds,
+                ):
+                    yield _ndjson_line(event)
+            except Exception as exc:  # noqa: BLE001
+                _logger.warning(
+                    "stream_pot_events iterator failed for %s: %s", pot_id, exc
+                )
+                yield _ndjson_line(
+                    {"type": "end", "status": "error", "message": str(exc)}
+                )
+
+        from fastapi.responses import StreamingResponse
+
+        return StreamingResponse(
+            _iter(),
+            media_type="application/x-ndjson",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @router.post(
         "/record",

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -45,9 +46,42 @@ class SqlAlchemyBatchRepository(BatchRepositoryPort):
         self._db = session
 
     def upsert_open_batch_for_pot(self, pot_id: str, event_id: str) -> str:
-        # Serialize per-pot upsert with a transaction-scoped advisory lock so two
-        # concurrent producers can't both insert a "first" batch for the same pot.
-        # `pg_advisory_xact_lock` is released automatically at COMMIT/ROLLBACK.
+        # Single-event admission/retry: a degenerate bulk of one. One code
+        # path keeps the coalescing + advisory-lock semantics identical.
+        return self.add_events_to_open_batch_for_pot(pot_id, [event_id])
+
+    def add_events_to_open_batch_for_pot(
+        self, pot_id: str, event_ids: list[str]
+    ) -> str:
+        if not event_ids:
+            raise ValueError("event_ids must be non-empty")
+        # De-dupe while preserving order so a caller passing the same id
+        # twice doesn't widen the VALUES list needlessly.
+        unique_ids = list(dict.fromkeys(event_ids))
+
+        batch_id = self._resolve_or_create_pending_batch_id(pot_id)
+
+        # One bulk membership insert for the whole set. The composite PK
+        # (batch_id, event_id) makes this idempotent — re-adding an event
+        # already in the batch is a no-op, not a duplicate or an error.
+        self._db.execute(
+            pg_insert(ContextReconciliationBatchEventModel)
+            .values(
+                [{"batch_id": batch_id, "event_id": eid} for eid in unique_ids]
+            )
+            .on_conflict_do_nothing()
+        )
+        self._db.commit()
+        return batch_id
+
+    def _resolve_or_create_pending_batch_id(self, pot_id: str) -> str:
+        """Return the pot's open pending batch id, creating one if needed.
+
+        Serializes per-pot with a transaction-scoped advisory lock so two
+        concurrent producers can't both insert a "first" batch for the same
+        pot. ``pg_advisory_xact_lock`` is released automatically at
+        COMMIT/ROLLBACK. Does not commit — the caller owns the transaction.
+        """
         self._db.execute(
             text("SELECT pg_advisory_xact_lock(hashtext(:pot_id))"),
             {"pot_id": pot_id},
@@ -56,7 +90,7 @@ class SqlAlchemyBatchRepository(BatchRepositoryPort):
         # Coalesce into the pot's pending batch only. Events landing while a
         # batch is claimed/running get a *new* pending batch — the in-flight
         # run has already snapshotted its event list and would otherwise
-        # silently drop the new event.
+        # silently drop the new events.
         existing = self._db.scalar(
             select(ContextReconciliationBatchModel)
             .where(
@@ -66,39 +100,33 @@ class SqlAlchemyBatchRepository(BatchRepositoryPort):
             .order_by(ContextReconciliationBatchModel.created_at.asc())
             .limit(1)
         )
+        if existing is not None:
+            return existing.id
 
-        if existing is None:
-            batch_id = str(uuid4())
-            row = ContextReconciliationBatchModel(
+        batch_id = str(uuid4())
+        self._db.add(
+            ContextReconciliationBatchModel(
                 id=batch_id,
                 pot_id=pot_id,
                 status=BATCH_STATUS_PENDING,
                 attempt_count=0,
             )
-            self._db.add(row)
-            try:
-                self._db.flush()
-            except IntegrityError:
-                # Lost the race despite the advisory lock (e.g. another node
-                # without the same hash). Re-select.
-                self._db.rollback()
-                existing = self._db.scalar(
-                    select(ContextReconciliationBatchModel).where(
-                        ContextReconciliationBatchModel.pot_id == pot_id,
-                        ContextReconciliationBatchModel.status == BATCH_STATUS_PENDING,
-                    )
+        )
+        try:
+            self._db.flush()
+        except IntegrityError:
+            # Lost the race despite the advisory lock (e.g. another node
+            # without the same hash). Re-select.
+            self._db.rollback()
+            existing = self._db.scalar(
+                select(ContextReconciliationBatchModel).where(
+                    ContextReconciliationBatchModel.pot_id == pot_id,
+                    ContextReconciliationBatchModel.status == BATCH_STATUS_PENDING,
                 )
-                if existing is None:
-                    raise
-                batch_id = existing.id
-            else:
-                self._add_event_membership(batch_id, event_id)
-                self._db.commit()
-                return batch_id
-
-        batch_id = existing.id
-        self._add_event_membership(batch_id, event_id)
-        self._db.commit()
+            )
+            if existing is None:
+                raise
+            return existing.id
         return batch_id
 
     def claim_batch_by_id(self, batch_id: str) -> ReconciliationBatch | None:
@@ -174,6 +202,37 @@ class SqlAlchemyBatchRepository(BatchRepositoryPort):
             )
         self._db.commit()
 
+    def get_open_batch_id_for_pot(self, pot_id: str) -> str | None:
+        row_id = self._db.scalar(
+            select(ContextReconciliationBatchModel.id)
+            .where(
+                ContextReconciliationBatchModel.pot_id == pot_id,
+                ContextReconciliationBatchModel.status == BATCH_STATUS_PENDING,
+            )
+            .order_by(ContextReconciliationBatchModel.created_at.asc())
+            .limit(1)
+        )
+        return row_id  # type: ignore[return-value]
+
+    def get_latest_batch_id_for_event(self, event_id: str) -> str | None:
+        """Most-recent batch this event belongs to (for the activity stream).
+
+        An event is re-added to a fresh open batch on retry, so we want the
+        newest membership — that's the run the user is watching.
+        """
+        row_id = self._db.scalar(
+            select(ContextReconciliationBatchEventModel.batch_id)
+            .join(
+                ContextReconciliationBatchModel,
+                ContextReconciliationBatchModel.id
+                == ContextReconciliationBatchEventModel.batch_id,
+            )
+            .where(ContextReconciliationBatchEventModel.event_id == event_id)
+            .order_by(ContextReconciliationBatchModel.created_at.desc())
+            .limit(1)
+        )
+        return row_id  # type: ignore[return-value]
+
     def mark_batch_failed(self, batch_id: str, error: str) -> None:
         self._db.execute(
             update(ContextReconciliationBatchModel)
@@ -185,26 +244,6 @@ class SqlAlchemyBatchRepository(BatchRepositoryPort):
             )
         )
         self._db.commit()
-
-    def _add_event_membership(self, batch_id: str, event_id: str) -> None:
-        existing = self._db.scalar(
-            select(ContextReconciliationBatchEventModel).where(
-                ContextReconciliationBatchEventModel.batch_id == batch_id,
-                ContextReconciliationBatchEventModel.event_id == event_id,
-            )
-        )
-        if existing is not None:
-            return
-        self._db.add(
-            ContextReconciliationBatchEventModel(
-                batch_id=batch_id,
-                event_id=event_id,
-            )
-        )
-        try:
-            self._db.flush()
-        except IntegrityError:
-            self._db.rollback()  # concurrent insert — that's fine
 
     @staticmethod
     def _to_batch(row: ContextReconciliationBatchModel) -> ReconciliationBatch:

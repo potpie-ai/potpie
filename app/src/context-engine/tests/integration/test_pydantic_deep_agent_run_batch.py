@@ -109,9 +109,10 @@ def test_run_batch_invokes_finish_batch_tool_via_test_model() -> None:
 
     assert out.ok is True
     # ``completed_event_ids`` is sourced from ``state.completed_event_ids``,
-    # which is only populated by ``mark_event_processed``. ``finish_batch``
-    # alone leaves it empty — that's expected here. We just need the run to
-    # not crash, which it would if tool registration was broken.
+    # which is only populated by ``mark_events_processed`` (the singular
+    # ``mark_event_processed`` delegates to it). ``finish_batch`` alone
+    # leaves it empty — that's expected here. We just need the run to not
+    # crash, which it would if tool registration was broken.
     assert out.completed_event_ids == []
 
 

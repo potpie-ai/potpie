@@ -23,6 +23,7 @@ from domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
 from domain.ingestion_event_models import EventReceipt, IngestionSubmissionRequest
 from domain.ports.batch_repository import BatchRepositoryPort
 from domain.ports.context_graph_job_queue import ContextGraphJobQueuePort
+from domain.ports.ingestion_config import IngestionConfigPort
 from domain.ports.ingestion_event_store import IngestionEventStore
 from domain.ports.ingestion_submission import IngestionSubmissionService
 from domain.ports.pot_resolution import PotResolutionPort, resolve_write_repo
@@ -52,6 +53,7 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
         events: IngestionEventStore,
         batches: BatchRepositoryPort,
         jobs: ContextGraphJobQueuePort,
+        ingestion_config: IngestionConfigPort | None = None,
     ) -> None:
         self._settings = settings
         self._pots = pots
@@ -60,6 +62,7 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
         self._events = events
         self._batches = batches
         self._jobs = jobs
+        self._ingestion_config = ingestion_config
 
     def submit(
         self,
@@ -130,7 +133,14 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
             repo_name=repo_name,
         )
 
-        outcome = admit_event(self._reco, self._batches, self._jobs, scope, event)
+        outcome = admit_event(
+            self._reco,
+            self._batches,
+            self._jobs,
+            scope,
+            event,
+            ingestion_config=self._ingestion_config,
+        )
 
         if not outcome.inserted:
             ev = self._events.get_event(outcome.event_id)

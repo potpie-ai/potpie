@@ -104,6 +104,65 @@ Co-Founder, Potpie 🥧</p>
         email = await _send_with_resend(params)
         return email
 
+    async def send_pot_invitation(
+        self,
+        to_address,
+        pot_name,
+        inviter_name,
+        invite_url,
+        expires_at=None,
+    ):
+        """Email a pending pot invitation with its accept link.
+
+        Best-effort: gated by TRANSACTION_EMAILS_ENABLED and a recipient,
+        mirroring send_email. Callers should treat a falsy return / raised
+        exception as "email not delivered" and never let it fail the
+        invitation itself.
+        """
+        if not self.transaction_emails_enabled:
+            return
+
+        if not to_address or not invite_url:
+            return
+
+        pot_label = pot_name or "a Potpie pot"
+        inviter_label = inviter_name or "A teammate"
+        expiry_line = (
+            f"<p>This invitation expires on <strong>{expires_at}</strong>.</p>"
+            if expires_at
+            else ""
+        )
+
+        params = {
+            "from": f"Potpie <{self.from_address}>",
+            "to": to_address,
+            "subject": f"You've been invited to {pot_label} on Potpie 🥧",
+            "reply_to": "dhiren@potpie.ai",
+            "html": f"""
+<p>Hi!</p>
+
+<p><strong>{inviter_label}</strong> invited you to collaborate on
+<strong>{pot_label}</strong> in Potpie.</p>
+
+<p><a href='{invite_url}'>Accept the invitation</a> to join. Make sure you
+sign in with <strong>{to_address}</strong> — invitations are tied to the
+invited email address.</p>
+
+<p>Or paste this link into your browser:<br />
+<a href='{invite_url}'>{invite_url}</a></p>
+
+{expiry_line}
+
+<p>If you weren't expecting this, you can safely ignore this email.</p>
+
+<p>Best,<br />
+The Potpie Team 🥧</p>
+            """,
+        }
+
+        email = await _send_with_resend(params)
+        return email
+
     async def send_parsing_failure_alert(
         self,
         repo_name: str,

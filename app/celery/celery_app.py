@@ -134,6 +134,22 @@ def configure_celery(queue_prefix: str):
             "app.modules.context_graph.tasks.context_graph_process_batch": {
                 "queue": "context-graph-etl"
             },
+            "app.modules.context_graph.tasks.context_graph_flush_windowed_batches": {
+                "queue": "context-graph-etl"
+            },
+        },
+        # Phase 4: every minute, sweep windowed pots and enqueue any whose
+        # open batch is older than the configured window_minutes. The task
+        # itself is idempotent — running it more often than necessary only
+        # adds load proportional to ready pots, not all pots.
+        beat_schedule={
+            "context-graph-flush-windowed-batches": {
+                "task": "app.modules.context_graph.tasks.context_graph_flush_windowed_batches",
+                "schedule": float(
+                    os.getenv("CONTEXT_ENGINE_WINDOW_FLUSH_INTERVAL_SECS", "60")
+                ),
+                "options": {"queue": "context-graph-etl"},
+            },
         },
         # Optimize task distribution
         worker_prefetch_multiplier=1,

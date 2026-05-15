@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 
 from sqlalchemy import func
@@ -37,6 +38,8 @@ from domain.ports.pot_resolution import (
 )
 from domain.ports.pot_source_listing import PotSourceListingPort
 from domain.ports.settings import ContextEngineSettingsPort
+
+logger = logging.getLogger(__name__)
 
 
 class PotpieContextEngineSettings(ContextEngineSettingsPort):
@@ -511,31 +514,104 @@ def _sandbox_tools_disabled() -> bool:
     )
 
 
-def _attach_sandbox_tools(agent, db: Session) -> None:
-    """Best-effort: wire the sandbox tool builder onto the reconciliation agent.
+def _build_pot_user_resolver(db: Session):
+    """Resolve ``pot_id -> user_id`` (the account the pot is configured under).
 
-    Soft-fails if the context-engine package isn't importable or the host has
-    explicitly disabled sandbox tools — the agent still runs with its graph and
-    GitHub tools intact.
+    Used to scope host-coupled tools (web search / page extraction) to the
+    pot owner's provider keys and quota in the worker path, which has no
+    request user. Prefers the explicit pot owner row, falling back to the
+    oldest repo attacher so a legacy pot with no ``user_id`` still resolves.
     """
-    if agent is None or _sandbox_tools_disabled():
-        return
-    try:
-        from adapters.outbound.agent_tools.sandbox import build_sandbox_tools
-    except Exception:
+
+    def _resolver(pot_id: str | None) -> str | None:
+        if not pot_id:
+            return None
+        pot = (
+            db.query(ContextGraphPot)
+            .filter(ContextGraphPot.id == pot_id)
+            .first()
+        )
+        if pot is not None and getattr(pot, "user_id", None):
+            return pot.user_id
+        repo = (
+            db.query(ContextGraphPotRepository)
+            .filter(ContextGraphPotRepository.pot_id == pot_id)
+            .order_by(ContextGraphPotRepository.created_at.asc())
+            .first()
+        )
+        if repo is not None and getattr(repo, "added_by_user_id", None):
+            return repo.added_by_user_id
+        return None
+
+    return _resolver
+
+
+def _attach_agent_tools(agent, db: Session, *, source_for_repo) -> None:
+    """Best-effort: wire every extra tool surface onto the reconciliation agent.
+
+    ``add_extra_tools`` *replaces* the agent's builder list, so all surfaces
+    (sandbox + GitHub + Linear + web) must be assembled and registered in a
+    single call. Each surface is added independently and any failing import
+    is skipped so a missing optional dependency degrades that surface only —
+    the agent still runs with whatever tools resolved.
+
+    Every surface stays scoped to the account the pot is configured under:
+    sandbox/GitHub via the per-repo token chain, Linear via the pot's
+    connected OAuth integration, web via the pot owner's provider keys.
+    """
+    if agent is None:
         return
     attach = getattr(agent, "add_extra_tools", None)
     if attach is None:
         return
-    resolver = _build_pot_sandbox_resolver(db)
-    attach(
-        [
-            build_sandbox_tools(
-                client_factory=_sandbox_client_factory,
-                pot_resolver=resolver,
+
+    builders: list = []
+
+    if not _sandbox_tools_disabled():
+        try:
+            from adapters.outbound.agent_tools.sandbox import build_sandbox_tools
+
+            builders.append(
+                build_sandbox_tools(
+                    client_factory=_sandbox_client_factory,
+                    pot_resolver=_build_pot_sandbox_resolver(db),
+                )
             )
-        ]
-    )
+        except Exception:
+            logger.exception("failed to build sandbox tool surface")
+
+    try:
+        from adapters.outbound.connectors.github.agent_tools import (
+            build_github_tools,
+        )
+
+        builders.append(build_github_tools(source_for_repo))
+    except Exception:
+        logger.exception("failed to build github tool surface")
+
+    try:
+        from adapters.outbound.connectors.linear.agent_tools import (
+            build_linear_tools,
+        )
+        from integrations.adapters.outbound.linear.context_engine_fetcher import (
+            ContextEngineLinearFetcher,
+        )
+
+        builders.append(build_linear_tools(ContextEngineLinearFetcher(db)))
+    except Exception:
+        logger.exception("failed to build linear tool surface")
+
+    try:
+        from app.modules.context_graph.agent_web_tools import build_web_tools
+
+        builders.append(
+            build_web_tools(db=db, user_resolver=_build_pot_user_resolver(db))
+        )
+    except Exception:
+        logger.exception("failed to build web tool surface")
+
+    if builders:
+        attach(builders)
 
 
 def build_container_for_session(db: Session) -> ContextEngineContainer:
@@ -544,7 +620,7 @@ def build_container_for_session(db: Session) -> ContextEngineContainer:
         return CodeProviderSourceControl(provider)
 
     agent = try_pydantic_deep_reconciliation_agent()
-    _attach_sandbox_tools(agent, db)
+    _attach_agent_tools(agent, db, source_for_repo=source_for_repo)
     container = build_container(
         settings=PotpieContextEngineSettings(),
         pots=SqlalchemyPotResolution(db),
@@ -562,7 +638,7 @@ def build_container_for_user_session(db: Session, user_id: str) -> ContextEngine
         return CodeProviderSourceControl(provider)
 
     agent = try_pydantic_deep_reconciliation_agent()
-    _attach_sandbox_tools(agent, db)
+    _attach_agent_tools(agent, db, source_for_repo=source_for_repo)
     container = build_container(
         settings=PotpieContextEngineSettings(),
         pots=UserScopedContextGraphPotResolution(db, user_id),

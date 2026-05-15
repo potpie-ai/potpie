@@ -242,23 +242,46 @@ class SqlAlchemyReconciliationLedger(ReconciliationLedgerPort):
         self._db.commit()
 
     def record_event_reconciled(self, event_id: str) -> None:
-        self._db.execute(
-            update(ContextEventModel)
-            .where(ContextEventModel.id == event_id)
-            .values(status="reconciled")
-        )
+        self.record_events_reconciled([event_id])
+
+    def record_events_reconciled(self, event_ids: list[str]) -> None:
+        if not event_ids:
+            return
+        self._bulk_set_status(event_ids, "reconciled")
         self._db.commit()
 
     def record_event_failed(self, event_id: str, error: str) -> None:
+        self.record_events_failed([event_id], error)
+
+    def record_events_failed(self, event_ids: list[str], error: str) -> None:
+        if not event_ids:
+            return
         logger.warning(
-            "context event %s reconciliation failed: %s", event_id, error[:2000]
+            "context event reconciliation failed (%d event(s)): %s",
+            len(event_ids),
+            error[:2000],
         )
-        self._db.execute(
-            update(ContextEventModel)
-            .where(ContextEventModel.id == event_id)
-            .values(status="failed")
-        )
+        self._bulk_set_status(event_ids, "failed")
         self._db.commit()
+
+    # Postgres caps bind parameters (~32767) and a multi-thousand-element IN
+    # list bloats the planner; window the UPDATE so a single huge batch still
+    # commits as one transaction (all-or-nothing) without blowing the limit.
+    _STATUS_UPDATE_WINDOW = 1000
+
+    def _bulk_set_status(self, event_ids: list[str], status: str) -> None:
+        """Issue ``UPDATE … SET status WHERE id IN (…)`` over windowed id slices.
+
+        Does NOT commit — the caller owns the transaction boundary so the
+        whole bulk transition is atomic across windows.
+        """
+        window = self._STATUS_UPDATE_WINDOW
+        for i in range(0, len(event_ids), window):
+            self._db.execute(
+                update(ContextEventModel)
+                .where(ContextEventModel.id.in_(event_ids[i : i + window]))
+                .values(status=status)
+            )
 
     def list_runs_for_event(self, event_id: str) -> list[ReconciliationRunRow]:
         rows = self._db.scalars(
@@ -310,18 +333,29 @@ class SqlAlchemyReconciliationLedger(ReconciliationLedgerPort):
         return int(n or 0) + 1
 
     def mark_event_for_retry(self, event_id: str) -> None:
+        self.mark_events_for_retry([event_id])
+
+    def mark_events_for_retry(self, event_ids: list[str]) -> None:
+        if not event_ids:
+            return
         self._db.execute(
             update(ContextEventModel)
-            .where(ContextEventModel.id == event_id)
+            .where(ContextEventModel.id.in_(event_ids))
             .values(status="received")
         )
         self._db.commit()
 
     def mark_event_queued(self, event_id: str) -> None:
+        self.mark_events_queued([event_id])
+
+    def mark_events_queued(self, event_ids: list[str]) -> None:
+        if not event_ids:
+            return
         self._db.execute(
             update(ContextEventModel)
             .where(
-                ContextEventModel.id == event_id, ContextEventModel.status == "received"
+                ContextEventModel.id.in_(event_ids),
+                ContextEventModel.status == "received",
             )
             .values(status="queued")
         )

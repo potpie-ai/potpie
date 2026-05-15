@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
+import os
 import re
 import secrets
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
+from urllib.parse import quote
 
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
@@ -21,6 +25,7 @@ from app.modules.context_graph.context_graph_pot_integration_model import (
 )
 from app.modules.context_graph.context_graph_pot_invitation_model import (
     INVITATION_STATUS_ACCEPTED,
+    INVITATION_STATUS_DECLINED,
     INVITATION_STATUS_EXPIRED,
     INVITATION_STATUS_PENDING,
     INVITATION_STATUS_REVOKED,
@@ -53,6 +58,7 @@ from app.modules.context_graph.pot_sources_service import (
 )
 from app.modules.users.user_model import User
 from app.modules.utils.APIRouter import APIRouter
+from app.modules.utils.email_helper import EmailHelper
 
 
 INVITATION_DEFAULT_TTL_DAYS = 14
@@ -92,8 +98,69 @@ def _invitation_token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def _as_aware_utc(dt: datetime | None) -> datetime | None:
+    """Normalize a stored timestamp to aware-UTC before comparing to ``now``.
+
+    ``expires_at`` is written aware-UTC, but a naive value can come back
+    depending on the driver/dialect. Comparing naive vs. aware raises a
+    TypeError, so treat a naive DB value as UTC (which is what we store).
+    """
+    if dt is not None and dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _invite_url(token: str) -> str:
+    """Public accept link the invitee opens. Mirrors the frontend's
+    ``${origin}/pots/join?token=...`` path; the host comes from FRONTEND_URL.
+    """
+    base = os.environ.get("FRONTEND_URL", "https://app.potpie.ai").rstrip("/")
+    return f"{base}/pots/join?token={quote(token, safe='')}"
+
+
+def _dispatch_invitation_email(
+    *,
+    to_email: str,
+    pot_name: str | None,
+    inviter_name: str | None,
+    token: str,
+    expires_at: datetime | None,
+) -> None:
+    """Fire-and-forget the invitation email from a sync route.
+
+    Runs in a daemon thread so a slow/failing Resend call never blocks or
+    breaks invite creation/resend. EmailHelper itself no-ops unless
+    TRANSACTION_EMAILS_ENABLED is set.
+    """
+
+    invite_url = _invite_url(token)
+    expires_display = (
+        expires_at.strftime("%B %d, %Y") if expires_at is not None else None
+    )
+
+    def _run() -> None:
+        try:
+            asyncio.run(
+                EmailHelper().send_pot_invitation(
+                    to_email,
+                    pot_name,
+                    inviter_name,
+                    invite_url,
+                    expires_display,
+                )
+            )
+        except Exception:
+            logger.exception(
+                "Failed to send pot invitation email to %s", to_email
+            )
+
+    threading.Thread(
+        target=_run, name="pot-invite-email", daemon=True
+    ).start()
+
+
 def _serialize_invitation(row: ContextGraphPotInvitation) -> dict[str, Any]:
-    return {
+    out: dict[str, Any] = {
         "id": row.id,
         "pot_id": row.pot_id,
         "email": row.email,
@@ -105,6 +172,12 @@ def _serialize_invitation(row: ContextGraphPotInvitation) -> dict[str, Any]:
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "accepted_at": row.accepted_at.isoformat() if row.accepted_at else None,
     }
+    # Only pending invites can still be shared. Surfacing the token lets the
+    # owner re-copy the link / resend; it's not a bearer credential because
+    # accept also checks the signed-in user's email matches.
+    if row.status == INVITATION_STATUS_PENDING and row.token:
+        out["token"] = row.token
+    return out
 
 
 def _context_graph_pot_row_or_404(db: Session, pot_id: str) -> ContextGraphPot:
@@ -127,7 +200,127 @@ def _recompute_pot_primary_repo_name(db: Session, pot_id: str) -> None:
     pot.primary_repo_name = f"{first.owner}/{first.repo}" if first else None
 
 
-def _pot_summary(row: ContextGraphPot, *, role: str | None = None) -> dict[str, Any]:
+def _pending_invitation_payload(
+    row: ContextGraphPotInvitation,
+) -> dict[str, Any]:
+    """The not-yet-answered invite to attach to a pot the user can see.
+
+    The token is surfaced so the UI can call accept/decline directly. This is
+    the same exposure the model/migration already deemed safe (token is an
+    identifier, not a bearer credential — accept/decline re-check the
+    signed-in user's email), and here it is scoped strictly tighter: only the
+    invite addressed to the requesting user's own email is ever attached.
+    """
+    return {
+        "id": row.id,
+        "role": normalize_role(row.role),
+        "token": row.token,
+        "status": row.status,
+        "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+    }
+
+
+def _user_email_lower(db: Session, uid: str) -> str:
+    me = db.query(User).filter(User.uid == uid).first()
+    return (me.email or "").lower() if me and me.email else ""
+
+
+def _pending_invitation_for(
+    db: Session, *, pot_id: str, email_lower: str
+) -> ContextGraphPotInvitation | None:
+    """A single pending invite for ``email_lower`` on ``pot_id`` (or None).
+
+    Invitation emails are always stored lowercased at creation, so matching
+    against a lowered user email is correct.
+    """
+    if not email_lower:
+        return None
+    return (
+        db.query(ContextGraphPotInvitation)
+        .filter(
+            ContextGraphPotInvitation.pot_id == pot_id,
+            ContextGraphPotInvitation.email == email_lower,
+            ContextGraphPotInvitation.status == INVITATION_STATUS_PENDING,
+        )
+        .first()
+    )
+
+
+def _remove_auto_added_member(
+    db: Session, *, pot_id: str, user_id: str
+) -> bool:
+    """Drop a pot membership that an invite auto-created.
+
+    Called when an invite is declined (by the invitee) or revoked (by the
+    owner): the invitee was added on invite, so opting out / being revoked
+    must also remove the membership and make the pot disappear for them.
+    An owner row is never removed (defensive — owners are not invited).
+    Returns True if a row was deleted.
+    """
+    m = (
+        db.query(ContextGraphPotMember)
+        .filter(
+            ContextGraphPotMember.pot_id == pot_id,
+            ContextGraphPotMember.user_id == user_id,
+        )
+        .first()
+    )
+    if m is not None and normalize_role(m.role) != POT_ROLE_OWNER:
+        db.delete(m)
+        return True
+    return False
+
+
+# FE-actionable signal: the invitee authenticated but has no account yet.
+# Account creation is owned by the frontend (`/api/v1/signup`); the join
+# page detects this code and routes the user through signup, after which
+# reopening the link resolves by uid and the email match below applies.
+INVITE_SIGNUP_REQUIRED_DETAIL = (
+    "No account found for this email. Please sign up first, then reopen "
+    "the invitation link."
+)
+
+
+def _require_invited_user(
+    db: Session,
+    *,
+    claims: dict[str, Any],
+    uid: str,
+    invite_email: str,
+) -> None:
+    """Match the signed-in account to the invite; never provision.
+
+    Signup is a frontend responsibility (`/api/v1/signup`). Here we only
+    require that an account already exists for the signed-in identity and
+    that its email matches the invitation. A brand-new invitee who has not
+    signed up yet gets a distinct 401 the join page can act on.
+
+    The email check prefers the verified Firebase *token* email (the
+    authoritative signed-in identity) and falls back to the stored row.
+    """
+    invite_email_l = (invite_email or "").lower()
+    token_email = str(claims.get("email") or "").strip().lower()
+
+    user = db.query(User).filter(User.uid == uid).first()
+    if user is None:
+        raise HTTPException(
+            status_code=401, detail=INVITE_SIGNUP_REQUIRED_DETAIL
+        )
+
+    signed_in_email = token_email or (user.email or "").lower()
+    if signed_in_email != invite_email_l:
+        raise HTTPException(
+            status_code=403,
+            detail="Invitation email does not match the signed-in user.",
+        )
+
+
+def _pot_summary(
+    row: ContextGraphPot,
+    *,
+    role: str | None = None,
+    pending_invitation: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     out: dict[str, Any] = {
         "id": row.id,
         "display_name": row.display_name,
@@ -140,6 +333,9 @@ def _pot_summary(row: ContextGraphPot, *, role: str | None = None) -> dict[str, 
     }
     if role is not None:
         out["role"] = role
+    # Present only while the user has not answered the invite, so the UI can
+    # show an Accept / Decline banner on an otherwise-normal pot.
+    out["pending_invitation"] = pending_invitation
     return out
 
 
@@ -307,7 +503,35 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
             .order_by(ContextGraphPot.created_at.desc())
             .all()
         )
-        return [_pot_summary(r, role=role) for r, role in rows]
+        # One batched lookup for the user's own un-answered invites across all
+        # visible pots (avoids an N+1 over _pending_invitation_for).
+        pending_by_pot: dict[str, ContextGraphPotInvitation] = {}
+        pot_ids = [pot.id for pot, _ in rows]
+        email_lower = _user_email_lower(db, uid)
+        if pot_ids and email_lower:
+            for iv in (
+                db.query(ContextGraphPotInvitation)
+                .filter(
+                    ContextGraphPotInvitation.pot_id.in_(pot_ids),
+                    ContextGraphPotInvitation.email == email_lower,
+                    ContextGraphPotInvitation.status
+                    == INVITATION_STATUS_PENDING,
+                )
+                .all()
+            ):
+                pending_by_pot[iv.pot_id] = iv
+        return [
+            _pot_summary(
+                pot,
+                role=role,
+                pending_invitation=(
+                    _pending_invitation_payload(pending_by_pot[pot.id])
+                    if pot.id in pending_by_pot
+                    else None
+                ),
+            )
+            for pot, role in rows
+        ]
 
     @r.post("/pots")
     def create_context_pot(
@@ -385,7 +609,16 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
         uid = _uid(user)
         role = require_pot_member(db, uid, pot_id)
         row = _context_graph_pot_row_or_404(db, pot_id)
-        return _pot_summary(row, role=role)
+        iv = _pending_invitation_for(
+            db, pot_id=pot_id, email_lower=_user_email_lower(db, uid)
+        )
+        return _pot_summary(
+            row,
+            role=role,
+            pending_invitation=(
+                _pending_invitation_payload(iv) if iv is not None else None
+            ),
+        )
 
     @r.patch("/pots/{pot_id}")
     def patch_context_pot(
@@ -764,7 +997,7 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
     ) -> dict[str, Any]:
         uid = _uid(user)
         require_manage_members(db, uid, pot_id)
-        _context_graph_pot_row_or_404(db, pot_id)
+        pot = _context_graph_pot_row_or_404(db, pot_id)
 
         role = parse_assignable_role(body.role)
         email = str(body.email).strip().lower()
@@ -811,14 +1044,40 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
             role=role,
             invited_by_user_id=uid,
             token_hash=token_hash,
+            token=token,
             status=INVITATION_STATUS_PENDING,
             expires_at=now + timedelta(days=max(1, int(ttl_days))),
         )
         db.add(row)
+        # Auto-add: if the invitee already has an account, make them a member
+        # immediately so the pot is visible in their UI right away. They can
+        # still accept (keep it) or decline (get removed). The 409 above
+        # guarantees they are not already a member here. Brand-new invitees
+        # have no uid yet, so for them membership is created on accept.
+        if existing_user is not None:
+            db.add(
+                ContextGraphPotMember(
+                    pot_id=pot_id,
+                    user_id=existing_user.uid,
+                    role=normalize_role(role),
+                    invited_by_user_id=uid,
+                )
+            )
         db.commit()
         db.refresh(row)
+
+        inviter = db.query(User).filter(User.uid == uid).first()
+        _dispatch_invitation_email(
+            to_email=email,
+            pot_name=pot.display_name or pot.slug,
+            inviter_name=(inviter.display_name or inviter.email)
+            if inviter is not None
+            else None,
+            token=token,
+            expires_at=row.expires_at,
+        )
+
         out = _serialize_invitation(row)
-        # Return token ONCE so the caller can share the invite link.
         out["token"] = token
         return out
 
@@ -847,7 +1106,62 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
                 status_code=400, detail="Only pending invitations can be revoked"
             )
         row.status = INVITATION_STATUS_REVOKED
+        # The invitee was auto-added on invite — revoking must also eject them
+        # so the pot disappears from their UI (mirrors decline).
+        invited_user = (
+            db.query(User).filter(User.email == row.email).first()
+        )
+        if invited_user is not None:
+            _remove_auto_added_member(
+                db, pot_id=pot_id, user_id=invited_user.uid
+            )
         db.commit()
+        return {"ok": True, "invitation_id": invitation_id}
+
+    @r.post("/pots/{pot_id}/invitations/{invitation_id}/resend")
+    def resend_pot_invitation(
+        pot_id: str,
+        invitation_id: str,
+        db: Session = Depends(get_db),
+        user: dict[str, Any] = Depends(auth_dep),
+    ) -> dict[str, Any]:
+        uid = _uid(user)
+        require_manage_members(db, uid, pot_id)
+        pot = _context_graph_pot_row_or_404(db, pot_id)
+        row = (
+            db.query(ContextGraphPotInvitation)
+            .filter(
+                ContextGraphPotInvitation.pot_id == pot_id,
+                ContextGraphPotInvitation.id == invitation_id,
+            )
+            .first()
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="Invitation not found")
+        if row.status != INVITATION_STATUS_PENDING:
+            raise HTTPException(
+                status_code=400,
+                detail="Only pending invitations can be resent",
+            )
+        if not row.token:
+            # Legacy row created before tokens were persisted and missed the
+            # backfill — re-mint so it becomes shareable again.
+            token, token_hash = _mint_invitation_token()
+            row.token = token
+            row.token_hash = token_hash
+            db.commit()
+            db.refresh(row)
+
+        inviter = db.query(User).filter(User.uid == uid).first()
+        _dispatch_invitation_email(
+            to_email=row.email,
+            pot_name=pot.display_name or pot.slug,
+            inviter_name=(inviter.display_name or inviter.email)
+            if inviter is not None
+            else None,
+            token=row.token,
+            expires_at=row.expires_at,
+        )
         return {"ok": True, "invitation_id": invitation_id}
 
     @r.post("/pot-invitations/{token}/accept")
@@ -871,19 +1185,15 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
         now = datetime.now(timezone.utc)
         if row.status != INVITATION_STATUS_PENDING:
             raise HTTPException(status_code=400, detail=f"Invitation is {row.status}")
-        if row.expires_at is not None and row.expires_at < now:
+        expires_at = _as_aware_utc(row.expires_at)
+        if expires_at is not None and expires_at < now:
             row.status = INVITATION_STATUS_EXPIRED
             db.commit()
             raise HTTPException(status_code=400, detail="Invitation has expired")
 
-        accepting_user = db.query(User).filter(User.uid == uid).first()
-        if accepting_user is None:
-            raise HTTPException(status_code=401, detail="Unknown user")
-        if (accepting_user.email or "").lower() != row.email.lower():
-            raise HTTPException(
-                status_code=403,
-                detail="Invitation email does not match the signed-in user.",
-            )
+        _require_invited_user(
+            db, claims=user, uid=uid, invite_email=row.email
+        )
 
         existing = (
             db.query(ContextGraphPotMember)
@@ -907,6 +1217,40 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
         row.accepted_by_user_id = uid
         db.commit()
         return {"ok": True, "pot_id": row.pot_id, "role": normalize_role(row.role)}
+
+    @r.post("/pot-invitations/{token}/decline")
+    def decline_pot_invitation(
+        token: str,
+        db: Session = Depends(get_db),
+        user: dict[str, Any] = Depends(auth_dep),
+    ) -> dict[str, Any]:
+        uid = _uid(user)
+        if not token or len(token) < 16:
+            raise HTTPException(status_code=400, detail="Invalid invitation token")
+        row = (
+            db.query(ContextGraphPotInvitation)
+            .filter(
+                ContextGraphPotInvitation.token_hash == _invitation_token_hash(token)
+            )
+            .first()
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="Invitation not found")
+        if row.status != INVITATION_STATUS_PENDING:
+            raise HTTPException(status_code=400, detail=f"Invitation is {row.status}")
+
+        _require_invited_user(
+            db, claims=user, uid=uid, invite_email=row.email
+        )
+
+        # Opting out: remove the membership the invite auto-created so the pot
+        # disappears from their UI. No-op for a brand-new invitee who was never
+        # auto-added (no account at invite time) — declining still records the
+        # choice and stops the invite from being accepted later.
+        _remove_auto_added_member(db, pot_id=row.pot_id, user_id=uid)
+        row.status = INVITATION_STATUS_DECLINED
+        db.commit()
+        return {"ok": True, "pot_id": row.pot_id, "declined": True}
 
     # ---- Pot sources (the data-scope layer, separate from integrations) --
 

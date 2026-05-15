@@ -8,7 +8,8 @@ includes:
 
 - read-only graph lookups (``context_search``, ``context_recent_changes``, …)
 - a fat mutation tool (``apply_graph_mutations``)
-- per-event control (``mark_event_processed``)
+- event-completion control (``mark_events_processed`` /
+  ``mark_event_processed``)
 - a terminal tool (``finish_batch``)
 
 Progress is checkpointed after every tool call so a worker crash mid-run can
@@ -20,8 +21,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from domain.context_events import ContextEvent, EventRef
 from domain.event_playbooks import (
@@ -31,7 +33,15 @@ from domain.event_playbooks import (
 )
 from domain.graph_mutations import ProvenanceContext
 from domain.ports.agent_checkpoint_store import AgentCheckpointStorePort
+from domain.ports.agent_execution_log import (
+    AgentExecutionLogPort,
+    NoOpAgentExecutionLog,
+)
 from domain.ports.context_graph import ContextGraphPort
+from domain.ports.event_stream import (
+    EventStreamPublisherPort,
+    NoOpEventStreamPublisher,
+)
 from domain.ports.reconciliation_tools import ReconciliationToolsPort
 from domain.ports.telemetry import CostEvent, NoOpTelemetry, TelemetryPort
 from domain.reconciliation import ReconciliationRequest
@@ -82,14 +92,18 @@ per event you process):
   This tool is idempotent on stable entity_keys, so it is safe to retry the
   same plan if a previous run partially succeeded.
 
-Per-event control:
-- mark_event_processed(event_id, summary): call AFTER you have applied the
-  mutations for this event. Marks the event as reconciled in the ledger.
+Event-completion control:
+- mark_events_processed(event_ids, summary): PREFERRED. After you have applied
+  mutations for a group of events, pass all of their event_ids in ONE call.
+  This is the scalable path — do not loop a per-event tool call when you can
+  mark the whole group at once. Idempotent; safe to include ids already marked.
+- mark_event_processed(event_id, summary): single-event convenience for when
+  exactly one event remains. Same effect as a one-element bulk call.
 
 Terminal tool — call exactly once when you are done with the whole batch:
 - finish_batch(summary): signals you've handled every event you intend to
-  handle. Any event not passed to ``mark_event_processed`` will be marked
-  failed when the batch closes.
+  handle. Any event not passed to ``mark_events_processed`` /
+  ``mark_event_processed`` will be marked failed when the batch closes.
 
 Rules:
 - All structural mutations must belong to the given pot_id partition. Never
@@ -117,6 +131,34 @@ Common edge types: DECIDES_FOR, AFFECTS, RESOLVED, MITIGATES, IMPACTS,
 INDICATES, FIRED_IN, MATCHES_PATTERN, DEPENDS_ON, USES, CALLS, CONTAINS,
 IMPLEMENTS, EXPOSES, DEPLOYED_TO, HOSTS, OWNS, MEMBER_OF, ONCALL_FOR, REVIEWS,
 HAS_SIGNAL, HAS_ROOT_CAUSE, RELATED_TO, PERFORMED, TOUCHED, IN_PERIOD.
+
+External source tools (when present):
+The pot's connected integrations expose read tools so you can ground the
+graph in primary sources instead of terse webhook summaries. They run
+against the account configured for this pot. If a tool errors, add a
+warning and keep the plan minimal — never invent the data it would have
+returned.
+
+  GitHub (read-only; pass repo_name='owner/name'):
+  - github_get_pull_request(repo_name, pr_number, include_diff?)
+  - github_get_pull_request_commits(repo_name, pr_number)
+  - github_get_pull_request_review_comments(repo_name, pr_number, limit?)
+  - github_get_pull_request_issue_comments(repo_name, pr_number, limit?)
+  - github_get_issue(repo_name, issue_number)
+    Prefer these over guessing PR/issue intent from a one-word action.
+
+  Linear:
+  - linear_get_issue(issue_id) — accepts 'ENG-123' or the Linear UUID.
+    Use it to resolve issue references in commits, branch names, or PR
+    bodies before writing a Decision/Feature/Fix tied to that work.
+
+  Web (use sparingly — only to ground an external reference an event
+  actually names, not for open-ended research):
+  - web_search(query) — cited answer for vendor changelogs, dependency
+    advisories, SDK/API behaviour, incident status. Pass a full question.
+  - web_extract_page(url) — markdown of one page the event links to (a
+    doc, RFC, or postmortem). Cite it; treat an unreachable page as
+    unknown, not as fact.
 
 Sandbox tools (when present):
 The pot may have one or more repositories cloned into a shared sandbox. Sandbox
@@ -164,8 +206,10 @@ Per-batch sandbox budget: 40 calls for repository.added events; 15 for other
 events. Stop walking once you have enough to write the plan — the agent loop is
 not a free exploration session.
 
-Process the batch event-by-event. After all events are handled, call
-finish_batch with a one-line summary of what you did.
+Work the batch in groups: apply mutations for the events, then mark the whole
+group done with a single ``mark_events_processed(event_ids, summary)`` call
+rather than one tool call per event. After every event you intend to handle is
+marked, call finish_batch with a one-line summary of what you did.
 """
 
 
@@ -180,6 +224,10 @@ class _BatchRunState:
     completed_event_ids: list[str] = field(default_factory=list)
     finish_called: bool = False
     finish_summary: str | None = None
+    sink: "_ExecutionLogSink | None" = None
+    """Durable execution-log sink so tools can emit semantic records
+    (``mutation_applied`` with real counts, ``event_processed``) beyond the
+    raw tool_call/tool_result the stream handler already captures."""
     cleanup_callbacks: list[Any] = field(default_factory=list)
     """Async or sync callables run after the agent loop exits (success or failure).
 
@@ -249,20 +297,289 @@ def _semantic_seed_from_events(events: list[ContextEvent]) -> str | None:
     return seed[:200] or None
 
 
-class _PydanticDeepCheckpointStoreBridge:
-    """Adapter: pydantic-deep ``CheckpointStore`` → our ``AgentCheckpointStorePort``.
+class _SeqAllocator:
+    """Monotonic per-batch-run seq counter for the execution log.
 
-    pydantic-deep's CheckpointMiddleware expects an async store with multiple
-    snapshots keyed by id. We collapse that to one persisted snapshot per
-    batch (always the latest) since our recovery model is "resume from last
-    tool call," not "rewind to arbitrary historical point."
+    Used single-threaded: the stream handler and process_batch allocate
+    synchronously *before* scheduling the (threaded) DB write, so seq order
+    matches emission order with no lock. Seeded from the resume checkpoint's
+    ``last_seq`` so a resumed / later-chunk run never reuses a seq.
+    """
+
+    __slots__ = ("_n",)
+
+    def __init__(self, start: int = 0) -> None:
+        self._n = int(start)
+
+    def next(self) -> int:
+        self._n += 1
+        return self._n
+
+    @property
+    def current(self) -> int:
+        return self._n
+
+
+class _ExecutionLogSink:
+    """Thin synchronous façade tools / handlers use to append log records.
+
+    Every write is best-effort: a Postgres hiccup degrades liveness but
+    must never fail the agent run (mirrors the old Redis publisher's
+    contract).
     """
 
     def __init__(
-        self, port: AgentCheckpointStorePort, *, batch_id: str
+        self,
+        log: AgentExecutionLogPort,
+        *,
+        batch_id: str,
+        seq: _SeqAllocator,
     ) -> None:
-        self._port = port
+        self._log = log
         self._batch_id = batch_id
+        self._seq = seq
+
+    def emit(
+        self,
+        record_type: str,
+        payload: dict[str, Any],
+        *,
+        event_id: str | None = None,
+    ) -> None:
+        try:
+            self._log.append(
+                batch_id=self._batch_id,
+                seq=self._seq.next(),
+                record_type=record_type,  # type: ignore[arg-type]
+                payload=payload,
+                event_id=event_id,
+            )
+        except Exception:  # noqa: BLE001 - liveness must not fail ingestion
+            logger.warning(
+                "execution-log emit (%s) failed for batch %s",
+                record_type,
+                self._batch_id,
+                exc_info=True,
+            )
+
+    def upsert_part(
+        self,
+        *,
+        record_type: str,
+        part_id: str,
+        content: str,
+        done: bool,
+    ) -> None:
+        try:
+            self._log.upsert_part(
+                batch_id=self._batch_id,
+                seq=self._seq.next(),
+                record_type=record_type,  # type: ignore[arg-type]
+                part_id=part_id,
+                content=content,
+                done=done,
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "execution-log part upsert failed for batch %s",
+                self._batch_id,
+                exc_info=True,
+            )
+
+
+# How often a still-streaming model part is durably flushed. Deltas always
+# accumulate in memory immediately; this just bounds row-churn on long
+# responses (the chosen "coalesce per part, ~flush window" semantics).
+_PART_FLUSH_SECONDS = 0.4
+
+
+def _coerce_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str)
+    except Exception:
+        return str(value)
+
+
+def _make_event_stream_handler(
+    sink: _ExecutionLogSink,
+) -> Callable[[Any, Any], Any]:
+    """Build a pydantic-ai ``event_stream_handler``.
+
+    Translates the live agent event stream into durable execution-log
+    records as it happens:
+
+    - text / thinking parts stream token-by-token, coalesced per part
+      (grown in place, flushed on a short cadence + finalized on part end);
+    - each tool call lands the instant the model finishes forming it
+      (before it executes);
+    - each tool result lands the instant the tool returns.
+    """
+
+    # part_id -> {"buf": str, "last_flush": float, "rtype": "text"|"thinking"}
+    parts: dict[str, dict[str, Any]] = {}
+    # pydantic-ai resets part ``index`` per model response; bump a response
+    # counter on each index==0 start so part_ids stay unique across the run.
+    state = {"resp": 0}
+
+    def _part_id(index: int) -> str:
+        return f"r{state['resp']}p{index}"
+
+    async def handler(_run_ctx: Any, stream: Any) -> None:
+        from pydantic_ai.messages import (
+            FunctionToolCallEvent,
+            FunctionToolResultEvent,
+            PartDeltaEvent,
+            PartEndEvent,
+            PartStartEvent,
+            TextPart,
+            TextPartDelta,
+            ThinkingPart,
+            ThinkingPartDelta,
+        )
+
+        async for event in stream:
+            try:
+                if isinstance(event, PartStartEvent):
+                    if event.index == 0:
+                        state["resp"] += 1
+                    part = event.part
+                    rtype: str | None = None
+                    if isinstance(part, TextPart):
+                        rtype = "text"
+                    elif isinstance(part, ThinkingPart):
+                        rtype = "thinking"
+                    if rtype is None:
+                        continue
+                    pid = _part_id(event.index)
+                    initial = getattr(part, "content", "") or ""
+                    parts[pid] = {
+                        "buf": initial,
+                        "last_flush": time.monotonic(),
+                        "rtype": rtype,
+                    }
+                    await asyncio.to_thread(
+                        sink.upsert_part,
+                        record_type=rtype,
+                        part_id=pid,
+                        content=initial,
+                        done=False,
+                    )
+
+                elif isinstance(event, PartDeltaEvent):
+                    delta = event.delta
+                    if isinstance(delta, (TextPartDelta, ThinkingPartDelta)):
+                        pid = _part_id(event.index)
+                        slot = parts.get(pid)
+                        if slot is None:
+                            # Delta before start (rare) — open lazily.
+                            rtype = (
+                                "thinking"
+                                if isinstance(delta, ThinkingPartDelta)
+                                else "text"
+                            )
+                            slot = parts[pid] = {
+                                "buf": "",
+                                "last_flush": 0.0,
+                                "rtype": rtype,
+                            }
+                        slot["buf"] += delta.content_delta or ""
+                        now = time.monotonic()
+                        if now - slot["last_flush"] >= _PART_FLUSH_SECONDS:
+                            slot["last_flush"] = now
+                            await asyncio.to_thread(
+                                sink.upsert_part,
+                                record_type=slot["rtype"],
+                                part_id=pid,
+                                content=slot["buf"],
+                                done=False,
+                            )
+
+                elif isinstance(event, PartEndEvent):
+                    part = event.part
+                    if isinstance(part, (TextPart, ThinkingPart)):
+                        pid = _part_id(event.index)
+                        rtype = (
+                            "thinking"
+                            if isinstance(part, ThinkingPart)
+                            else "text"
+                        )
+                        content = getattr(part, "content", "") or (
+                            parts.get(pid, {}).get("buf", "")
+                        )
+                        parts.pop(pid, None)
+                        await asyncio.to_thread(
+                            sink.upsert_part,
+                            record_type=rtype,
+                            part_id=pid,
+                            content=content,
+                            done=True,
+                        )
+
+                elif isinstance(event, FunctionToolCallEvent):
+                    p = event.part
+                    await asyncio.to_thread(
+                        sink.emit,
+                        "tool_call",
+                        {
+                            "tool_name": getattr(p, "tool_name", None),
+                            "tool_call_id": getattr(p, "tool_call_id", None),
+                            "args": getattr(p, "args", None),
+                            "title": getattr(p, "tool_name", None),
+                        },
+                    )
+
+                elif isinstance(event, FunctionToolResultEvent):
+                    r = event.result
+                    await asyncio.to_thread(
+                        sink.emit,
+                        "tool_result",
+                        {
+                            "tool_name": getattr(r, "tool_name", None),
+                            "tool_call_id": getattr(r, "tool_call_id", None),
+                            "content": _coerce_text(
+                                getattr(r, "content", None)
+                            ),
+                            "title": getattr(r, "tool_name", None),
+                        },
+                    )
+            except Exception:  # noqa: BLE001 - never let streaming break a run
+                logger.debug(
+                    "event_stream_handler swallowed an event error",
+                    exc_info=True,
+                )
+
+    return handler
+
+
+class _ExecutionLogCheckpointBridge:
+    """pydantic-deep ``CheckpointStore`` → durable resume state.
+
+    ``CheckpointMiddleware(frequency="every_tool")`` calls ``save`` after
+    every tool call. We persist the pydantic-ai message history *plus*
+    durable bookkeeping (``completed_event_ids`` so a resumed run skips
+    finished events; ``last_seq`` so it continues the append-only log;
+    ``chunk_index`` for chunked batches). One snapshot per batch — recovery
+    is "resume from last tool call," not arbitrary rewind.
+    """
+
+    def __init__(
+        self,
+        log: AgentExecutionLogPort,
+        *,
+        batch_id: str,
+        state: "_BatchRunState",
+        seq: _SeqAllocator,
+        chunk_index: int,
+    ) -> None:
+        self._log = log
+        self._batch_id = batch_id
+        self._state = state
+        self._seq = seq
+        self._chunk_index = chunk_index
 
     async def save(self, checkpoint: Any) -> None:
         from pydantic_ai.messages import ModelMessagesTypeAdapter
@@ -271,15 +588,20 @@ class _PydanticDeepCheckpointStoreBridge:
         try:
             messages_json = json.loads(raw.decode("utf-8"))
         except Exception:
-            logger.exception("checkpoint serialize failed for batch %s", self._batch_id)
+            logger.exception(
+                "checkpoint serialize failed for batch %s", self._batch_id
+            )
             return
         if not isinstance(messages_json, list):
             return
         await asyncio.to_thread(
-            self._port.save,
-            self._batch_id,
+            self._log.checkpoint,
+            batch_id=self._batch_id,
             messages_json=messages_json,
-            tool_call_count=int(checkpoint.turn or 0),
+            tool_call_count=int(getattr(checkpoint, "turn", 0) or 0),
+            completed_event_ids=list(self._state.completed_event_ids),
+            last_seq=self._seq.current,
+            chunk_index=self._chunk_index,
         )
 
     async def get(self, checkpoint_id: str) -> Any:
@@ -304,7 +626,7 @@ class _PydanticDeepCheckpointStoreBridge:
         return 0
 
     async def clear(self) -> None:
-        await asyncio.to_thread(self._port.delete, self._batch_id)
+        await asyncio.to_thread(self._log.clear, self._batch_id)
 
 
 def _playbooks_for_events(events: list[ContextEvent]) -> list[EventPlaybook]:
@@ -340,6 +662,7 @@ class PydanticDeepReconciliationAgent:
         instructions: str | None = None,
         tools: ReconciliationToolsPort | None = None,
         telemetry: TelemetryPort | None = None,
+        stream_publisher: EventStreamPublisherPort | None = None,
     ) -> None:
         import os
 
@@ -354,6 +677,9 @@ class PydanticDeepReconciliationAgent:
         self._context_graph: ContextGraphPort | None = None
         self._extra_tool_builders: list[Any] = []
         self._telemetry: TelemetryPort = telemetry or NoOpTelemetry()
+        self._stream_publisher: EventStreamPublisherPort = (
+            stream_publisher or NoOpEventStreamPublisher()
+        )
 
     def set_context_tools(self, tools: ReconciliationToolsPort | None) -> None:
         """Attach (or replace) the bounded read-only context tools."""
@@ -366,6 +692,12 @@ class PydanticDeepReconciliationAgent:
     def set_telemetry(self, telemetry: TelemetryPort | None) -> None:
         """Replace the cost/drift telemetry sink (default: NoOp)."""
         self._telemetry = telemetry or NoOpTelemetry()
+
+    def set_event_stream_publisher(
+        self, publisher: EventStreamPublisherPort | None
+    ) -> None:
+        """Wire the live activity publisher. Use NoOp to disable streaming."""
+        self._stream_publisher = publisher or NoOpEventStreamPublisher()
 
     def add_extra_tools(self, tool_builders: list[Any]) -> None:
         """Register additional tool factories (e.g. github / sandbox tools).
@@ -397,7 +729,12 @@ class PydanticDeepReconciliationAgent:
         ctx: BatchAgentContext,
         *,
         checkpoints: AgentCheckpointStorePort | None = None,
+        execution_log: AgentExecutionLogPort | None = None,
     ) -> BatchAgentOutcome:
+        # ``checkpoints`` is retained for call-site compatibility but is no
+        # longer the resume substrate — the durable execution log subsumes
+        # it (message history + completion bookkeeping in one store).
+        del checkpoints
         agent_name, agent_version, toolset_version = self._agent_identity()
         if self._context_graph is None:
             return BatchAgentOutcome(
@@ -416,7 +753,9 @@ class PydanticDeepReconciliationAgent:
             )
 
         try:
-            return asyncio.run(self._run_batch_async(ctx, checkpoints=checkpoints))
+            return asyncio.run(
+                self._run_batch_async(ctx, execution_log=execution_log)
+            )
         except Exception as exc:
             logger.exception("batch agent run crashed for batch %s", ctx.batch_id)
             return BatchAgentOutcome(
@@ -431,7 +770,7 @@ class PydanticDeepReconciliationAgent:
         self,
         ctx: BatchAgentContext,
         *,
-        checkpoints: AgentCheckpointStorePort | None,
+        execution_log: AgentExecutionLogPort | None,
     ) -> BatchAgentOutcome:
         from pydantic_deep import (
             CheckpointMiddleware,
@@ -439,12 +778,26 @@ class PydanticDeepReconciliationAgent:
             create_default_deps,
         )
 
+        exec_log: AgentExecutionLogPort = (
+            execution_log or NoOpAgentExecutionLog()
+        )
+        seq = _SeqAllocator(ctx.start_seq)
+        sink = _ExecutionLogSink(exec_log, batch_id=ctx.batch_id, seq=seq)
+
         state = _BatchRunState(
             pot_id=ctx.pot_id,
             repo_name=ctx.repo_name,
             events_by_id={ev.event_id: ev for ev in ctx.events},
             context_graph=self._context_graph,  # type: ignore[arg-type]
+            sink=sink,
         )
+        # A resumed run already finished these events — seed them so the
+        # agent doesn't redo their side effects and the checkpoint keeps
+        # reporting them as done.
+        if ctx.resume_completed_event_ids:
+            for eid in ctx.resume_completed_event_ids:
+                if eid not in state.completed_event_ids:
+                    state.completed_event_ids.append(eid)
 
         tool_callables: list[Any] = []
         tool_callables.extend(self._build_read_tools(ctx))
@@ -457,22 +810,26 @@ class PydanticDeepReconciliationAgent:
             except Exception:
                 logger.exception("failed to build extra tool batch")
 
-        capabilities: list[Any] = []
-        if checkpoints is not None:
-            bridge = _PydanticDeepCheckpointStoreBridge(
-                checkpoints, batch_id=ctx.batch_id
+        prompt = self._build_prompt(ctx)
+        # CheckpointMiddleware drives the durable checkpoint after every tool
+        # call; the bridge persists message history + completion bookkeeping
+        # into the execution log. Always on — with a NoOp log it is inert.
+        bridge = _ExecutionLogCheckpointBridge(
+            exec_log,
+            batch_id=ctx.batch_id,
+            state=state,
+            seq=seq,
+            chunk_index=ctx.chunk_index,
+        )
+        capabilities: list[Any] = [
+            CheckpointMiddleware(
+                store=bridge,  # type: ignore[arg-type]
+                frequency="every_tool",
+                max_checkpoints=1,
             )
-            capabilities.append(
-                CheckpointMiddleware(
-                    store=bridge,  # type: ignore[arg-type]
-                    frequency="every_tool",
-                    max_checkpoints=1,
-                )
-            )
+        ]
 
-        agent_kwargs: dict[str, Any] = {}
-        if capabilities:
-            agent_kwargs["capabilities"] = capabilities
+        agent_kwargs: dict[str, Any] = {"capabilities": capabilities}
 
         agent = create_deep_agent(
             model=self._model,
@@ -505,12 +862,20 @@ class PydanticDeepReconciliationAgent:
                 description=getattr(tool, "description", None),
             )(fn)
         deps = create_default_deps()
-        prompt = self._build_prompt(ctx)
         prior = _restore_message_history(ctx.prior_messages_json)
         agent_name, agent_version, toolset_version = self._agent_identity()
+        # The handler turns the live agent event stream (text / thinking
+        # token deltas, tool call/result) into durable execution-log records
+        # as they happen — this is the "as live as possible" path.
+        stream_handler = _make_event_stream_handler(sink)
 
         try:
-            result = await agent.run(prompt, deps=deps, message_history=prior)
+            result = await agent.run(
+                prompt,
+                deps=deps,
+                message_history=prior,
+                event_stream_handler=stream_handler,
+            )
         except Exception as exc:
             await _run_cleanup_callbacks(state)
             logger.exception("agent.run() raised for batch %s", ctx.batch_id)
@@ -524,6 +889,7 @@ class PydanticDeepReconciliationAgent:
                 agent_name=agent_name,
                 agent_version=agent_version,
                 toolset_version=toolset_version,
+                last_seq=seq.current,
             )
         else:
             await _run_cleanup_callbacks(state)
@@ -586,6 +952,7 @@ class PydanticDeepReconciliationAgent:
             agent_name=agent_name,
             agent_version=agent_version,
             toolset_version=toolset_version,
+            last_seq=seq.current,
         )
 
     def _compose_instructions(self, ctx: BatchAgentContext) -> str:
@@ -718,17 +1085,33 @@ class PydanticDeepReconciliationAgent:
                 logger.exception("apply_plan failed for batch event %s", event_id)
                 return {"ok": False, "error": f"apply_failed: {exc}"}
             ms = result.mutation_summary
+            counts = {
+                "episodes_written": ms.episodes_written,
+                "entity_upserts_applied": ms.entity_upserts_applied,
+                "edge_upserts_applied": ms.edge_upserts_applied,
+                "edge_deletes_applied": ms.edge_deletes_applied,
+                "invalidations_applied": ms.invalidations_applied,
+            }
+            # Semantic stream record: powers the live "graph updated +N
+            # nodes / +M edges" surface + the stylized graph pulse. Emitted
+            # only on a real apply so the UI never animates a no-op.
+            if result.ok and state.sink is not None:
+                await asyncio.to_thread(
+                    state.sink.emit,
+                    "mutation_applied",
+                    {
+                        "title": "Graph updated",
+                        "counts": counts,
+                        "summary": llm_plan.summary,
+                        "episode_uuids": list(result.episode_uuids or []),
+                    },
+                    event_id=event_id,
+                )
             return {
                 "ok": result.ok,
                 "error": result.error,
                 "episode_uuids": list(result.episode_uuids or []),
-                "mutation_counts": {
-                    "episodes_written": ms.episodes_written,
-                    "entity_upserts_applied": ms.entity_upserts_applied,
-                    "edge_upserts_applied": ms.edge_upserts_applied,
-                    "edge_deletes_applied": ms.edge_deletes_applied,
-                    "invalidations_applied": ms.invalidations_applied,
-                },
+                "mutation_counts": counts,
                 "downgrades": list(result.downgrades or []),
                 "warnings": list(domain_plan.warnings or []),
             }
@@ -751,18 +1134,50 @@ class PydanticDeepReconciliationAgent:
         except Exception:
             from pydantic_deep import Tool  # type: ignore[import-not-found, no-redef]
 
-        def mark_event_processed(event_id: str, summary: str) -> dict[str, Any]:
-            """Mark a single event as fully reconciled. Call after apply_graph_mutations for that event."""
-            del summary
-            if event_id not in state.events_by_id:
-                return {"ok": False, "error": f"unknown_event_id: {event_id}"}
-            if event_id not in state.completed_event_ids:
-                state.completed_event_ids.append(event_id)
+        def mark_events_processed(
+            event_ids: list[str], summary: str
+        ) -> dict[str, Any]:
+            """Mark MANY events fully reconciled in one call.
+
+            The scalable path: when you've applied mutations for a group of
+            events (or are closing out the batch), pass every finished
+            event_id here in a single call instead of one tool call per
+            event. Idempotent — ids already marked are skipped.
+            """
+            known: list[str] = []
+            unknown: list[str] = []
+            for eid in event_ids:
+                (known if eid in state.events_by_id else unknown).append(eid)
+            newly = [
+                eid
+                for eid in known
+                if eid not in state.completed_event_ids
+            ]
+            state.completed_event_ids.extend(newly)
+            # One stream record per event: each event row in the UI flips to
+            # "reconciled" off its own event_processed record (keyed by the
+            # event_id column), so this stays per-event by contract. The
+            # scalability win is collapsing N agent tool calls into one and
+            # the single bulk ledger UPDATE in process_batch — not fewer
+            # stream rows (best-effort liveness, same total volume).
+            if state.sink is not None:
+                for eid in newly:
+                    state.sink.emit(
+                        "event_processed",
+                        {"title": "Event reconciled", "summary": summary},
+                        event_id=eid,
+                    )
             return {
-                "ok": True,
-                "event_id": event_id,
+                "ok": not unknown,
+                "marked": newly,
+                "unknown_event_ids": unknown,
                 "completed_count": len(state.completed_event_ids),
             }
+
+        def mark_event_processed(event_id: str, summary: str) -> dict[str, Any]:
+            """Mark a single event as fully reconciled. Prefer
+            ``mark_events_processed`` when you have more than one."""
+            return mark_events_processed([event_id], summary)
 
         def finish_batch(summary: str) -> dict[str, Any]:
             """Signal the batch is done. Call exactly once at the end of your run."""
@@ -776,9 +1191,21 @@ class PydanticDeepReconciliationAgent:
 
         return [
             Tool(
+                mark_events_processed,
+                name="mark_events_processed",
+                description=(
+                    "Mark MANY events processed in one call. Preferred: pass every "
+                    "event_id you've applied mutations for here instead of calling "
+                    "mark_event_processed once per event. Idempotent."
+                ),
+            ),
+            Tool(
                 mark_event_processed,
                 name="mark_event_processed",
-                description="Mark one event as processed once you have applied its mutations.",
+                description=(
+                    "Mark a single event processed once you have applied its "
+                    "mutations. Use mark_events_processed for more than one."
+                ),
             ),
             Tool(
                 finish_batch,

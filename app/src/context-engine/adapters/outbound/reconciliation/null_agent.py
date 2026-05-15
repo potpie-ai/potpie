@@ -16,8 +16,9 @@ class NullReconciliationAgent:
         ctx: BatchAgentContext,
         *,
         checkpoints: AgentCheckpointStorePort | None = None,
+        execution_log: object | None = None,
     ) -> BatchAgentOutcome:
-        del ctx, checkpoints
+        del ctx, checkpoints, execution_log
         raise NotImplementedError(
             "Reconciliation agent not configured; provide a host-backed ReconciliationAgentPort "
             "(install context-engine[reconciliation-agent])"

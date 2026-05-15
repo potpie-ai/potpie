@@ -66,6 +66,8 @@ def handle_process_batch(
         checkpoints=container.agent_checkpoint_store(db),
         pots=container.pots,
         policy=container.policy(),
+        stream_publisher=container.event_stream_publisher,
+        execution_log=container.agent_execution_log(db),
     )
     return {
         "status": "ok" if outcome.ok else "failed",
