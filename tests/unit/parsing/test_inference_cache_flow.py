@@ -87,7 +87,7 @@ def test_update_neo4j_persists_content_hash(monkeypatch):
 
     class FakeProjectManager:
         def get_project_from_db_by_id_sync(self, repo_id):
-            return {"repo_path": "/tmp/repo"}
+            return {"repo_path": "/repo"}
 
     service = object.__new__(InferenceService)
     fake_driver = FakeDriver()
