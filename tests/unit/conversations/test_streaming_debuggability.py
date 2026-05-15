@@ -948,3 +948,144 @@ class TestPartialOutputMarker:
         assert terminal["status"] == "error"
         assert terminal["partial"] is False
         assert terminal["chunks_emitted"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Structured streaming logs (no print statements)
+# ---------------------------------------------------------------------------
+
+class TestStructuredStreamingLogs:
+    """Acceptance criteria:
+      1. Print statements in the target flow are removed.
+      2. Structured logs include the right identifiers.
+      3. Log format supports debugging of failures and timing.
+    """
+
+    def test_no_print_statements_in_streaming_flow(self):
+        """Regression guard: the four streaming-flow files must not contain
+        any bare ``print(...)`` calls. Print to stdout bypasses loguru, has
+        no identifiers, and can't be filtered by trace_id / run_id."""
+        import pathlib
+        import re
+
+        repo_root = pathlib.Path(__file__).resolve().parents[3]
+        targets = [
+            "app/celery/tasks/agent_tasks.py",
+            "app/modules/conversations/utils/conversation_routing.py",
+            "app/modules/conversations/utils/redis_streaming.py",
+            "app/modules/conversations/conversations_router.py",
+        ]
+        print_re = re.compile(r"^\s*print\(", re.MULTILINE)
+        offenders = []
+        for rel in targets:
+            text = (repo_root / rel).read_text()
+            for m in print_re.finditer(text):
+                line_no = text.count("\n", 0, m.start()) + 1
+                offenders.append(f"{rel}:{line_no}")
+        assert not offenders, (
+            "print() found in the streaming flow: " + ", ".join(offenders)
+        )
+
+    def test_log_openrouter_usage_emits_structured_fields(self):
+        from app.celery.tasks.agent_tasks import _log_openrouter_usage
+
+        usages = [
+            {
+                "model": "openrouter/anthropic/claude-3.7-sonnet",
+                "prompt_tokens": 1200,
+                "completion_tokens": 340,
+                "total_tokens": 1540,
+                "cost": 0.018,
+            }
+        ]
+
+        with patch(
+            "app.celery.tasks.agent_tasks.logger"
+        ) as mock_logger:
+            _log_openrouter_usage(
+                usages,
+                outcome="completed",
+                total_cost=0.018,
+                conversation_id="conv-1",
+                run_id="run-1",
+            )
+
+        # Two log lines: per-usage line + summary line
+        assert mock_logger.info.call_count == 2
+
+        # First call: per-usage line. Kwargs carry all the structured fields.
+        first_call = mock_logger.info.call_args_list[0]
+        first_kwargs = first_call.kwargs
+        assert first_kwargs["model"] == "openrouter/anthropic/claude-3.7-sonnet"
+        assert first_kwargs["prompt_tokens"] == 1200
+        assert first_kwargs["completion_tokens"] == 340
+        assert first_kwargs["total_tokens"] == 1540
+        assert first_kwargs["cost"] == 0.018
+        assert first_kwargs["cost_estimated"] is False
+        assert first_kwargs["outcome"] == "completed"
+        # Identifiers the ticket asks for
+        assert first_kwargs["conversation_id"] == "conv-1"
+        assert first_kwargs["run_id"] == "run-1"
+        assert "trace_id" in first_kwargs
+
+        # Second call: summary line. Carries the run-level fields.
+        second_call = mock_logger.info.call_args_list[1]
+        second_kwargs = second_call.kwargs
+        assert second_kwargs["total_cost"] == 0.018
+        assert second_kwargs["outcome"] == "completed"
+        assert second_kwargs["usage_count"] == 1
+        assert second_kwargs["conversation_id"] == "conv-1"
+        assert second_kwargs["run_id"] == "run-1"
+
+    def test_log_openrouter_usage_marks_partial_on_error_outcome(self):
+        """The message prefix and the structured ``outcome`` field both
+        flip when a run failed mid-flight, so triage can filter by outcome
+        without parsing the message."""
+        from app.celery.tasks.agent_tasks import _log_openrouter_usage
+
+        usages = [
+            {
+                "model": "model-x",
+                "prompt_tokens": 50,
+                "completion_tokens": 10,
+                "total_tokens": 60,
+                "cost": None,
+            }
+        ]
+
+        with patch("app.celery.tasks.agent_tasks.logger") as mock_logger:
+            _log_openrouter_usage(
+                usages,
+                outcome="error_partial",
+                total_cost=0.0,
+                conversation_id="conv-2",
+                run_id="run-2",
+            )
+
+        # Per-usage line uses the "partial" message prefix
+        first_call = mock_logger.info.call_args_list[0]
+        assert "[OpenRouter usage - partial]" in first_call.args[0]
+        # Structured outcome field present on the line for log aggregators
+        assert first_call.kwargs["outcome"] == "error_partial"
+        # Cost was None on the wire -> ``cost_estimated`` flips to True
+        assert first_call.kwargs["cost_estimated"] is True
+
+        # Summary line uses the "partial" prefix too
+        second_call = mock_logger.info.call_args_list[1]
+        assert "[LLM cost - partial before error]" in second_call.args[0]
+
+    def test_log_openrouter_usage_no_op_when_usages_empty(self):
+        """Empty usage list -> helper is a no-op (no log lines). Keeps
+        the call sites safe to invoke unconditionally."""
+        from app.celery.tasks.agent_tasks import _log_openrouter_usage
+
+        with patch("app.celery.tasks.agent_tasks.logger") as mock_logger:
+            _log_openrouter_usage(
+                [],
+                outcome="completed",
+                total_cost=0.0,
+                conversation_id="conv-3",
+                run_id="run-3",
+            )
+
+        mock_logger.info.assert_not_called()

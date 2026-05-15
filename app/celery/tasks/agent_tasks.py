@@ -87,6 +87,86 @@ def _clear_pydantic_ai_http_client_cache() -> None:
         logger.debug("Could not clear pydantic_ai HTTP client cache: %s", e)
 
 
+def _log_openrouter_usage(
+    usages: List[dict],
+    *,
+    outcome: str,
+    total_cost: float,
+    conversation_id: str,
+    run_id: str,
+) -> None:
+    """Emit structured log lines for OpenRouter usage / cost.
+
+    Replaces the ad-hoc ``logger.info(msg) + print(msg, flush=True)`` pattern
+    that previously lived in 4 different places in this file. Each per-call
+    line carries the model + token + cost fields as structured kwargs (not
+    just embedded in the message string) so an aggregator can filter by
+    ``conversation_id``, ``run_id``, ``model``, or ``outcome`` without
+    parsing the message body.
+
+    ``outcome`` is one of:
+      * ``"completed"`` - normal end of a successful run
+      * ``"error_partial"`` - cost recorded before/during a failure
+      * ``"cancelled"`` - run cancelled mid-flight
+    """
+    if not usages:
+        return
+
+    prefix = (
+        "[OpenRouter usage - partial]"
+        if outcome == "error_partial"
+        else "[OpenRouter usage]"
+    )
+    trace_id = _current_trace_id()
+    for u in usages:
+        c = u.get("cost")
+        pt = u.get("prompt_tokens", 0) or 0
+        ct = u.get("completion_tokens", 0) or 0
+        if c is not None:
+            cost_str = f", cost={c} credits"
+        else:
+            est = estimate_cost_for_log(pt, ct) if (pt or ct) else 0.0
+            cost_str = (
+                f", cost≈{est} credits (estimated)" if (pt or ct) else ""
+            )
+        message = (
+            f"{prefix} model={u.get('model', '')} "
+            f"prompt_tokens={pt} completion_tokens={ct} "
+            f"total_tokens={u.get('total_tokens', 0)}{cost_str}"
+        )
+        logger.info(
+            message,
+            model=u.get("model", ""),
+            prompt_tokens=pt,
+            completion_tokens=ct,
+            total_tokens=u.get("total_tokens", 0),
+            cost=c,
+            cost_estimated=(c is None),
+            outcome=outcome,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            trace_id=trace_id,
+        )
+
+    summary_prefix = (
+        "[LLM cost - partial before error]"
+        if outcome == "error_partial"
+        else "[LLM cost this run]"
+    )
+    summary_message = f"{summary_prefix} total={total_cost} credits"
+    if outcome != "error_partial":
+        summary_message += " (see lines above for per-call breakdown)"
+    logger.info(
+        summary_message,
+        total_cost=total_cost,
+        outcome=outcome,
+        usage_count=len(usages),
+        conversation_id=conversation_id,
+        run_id=run_id,
+        trace_id=trace_id,
+    )
+
+
 def _record_openrouter_cost_in_logfire(usages: List[dict], outcome: str) -> float:
     """
     Compute total OpenRouter cost from usages and record as Logfire span attribute.
@@ -437,38 +517,18 @@ def execute_agent_background(
                         }
                         if usages:
                             end_payload["usage_json"] = usages
-                            # Log per-usage details (total_cost already computed and recorded in Logfire)
-                            for u in usages:
-                                c = u.get("cost")
-                                pt = u.get("prompt_tokens", 0) or 0
-                                ct = u.get("completion_tokens", 0) or 0
-                                if c is not None:
-                                    cost_str = f", cost={c} credits"
-                                else:
-                                    est = (
-                                        estimate_cost_for_log(pt, ct)
-                                        if (pt or ct)
-                                        else 0.0
-                                    )
-                                    cost_str = (
-                                        f", cost≈{est} credits (estimated, not in run total)"
-                                        if (pt or ct)
-                                        else ""
-                                    )
-                                msg = (
-                                    f"[OpenRouter usage] model={u.get('model', '')} "
-                                    f"prompt_tokens={pt} completion_tokens={ct} "
-                                    f"total_tokens={u.get('total_tokens', 0)}{cost_str}"
-                                )
-                                logger.info(msg)
-                                print(msg, flush=True)
-                            if usages:
-                                summary = (
-                                    f"[LLM cost this run] total={total_cost} credits "
-                                    "(see lines above for per-call breakdown)"
-                                )
-                                logger.info(summary)
-                                print(summary, flush=True)
+                            # Structured per-usage + summary log lines so we
+                            # can grep by conversation_id / run_id / model
+                            # without parsing the message body. Helper also
+                            # removes the legacy ``print(msg, flush=True)``
+                            # noise that previously lived inline.
+                            _log_openrouter_usage(
+                                usages,
+                                outcome="completed",
+                                total_cost=total_cost,
+                                conversation_id=conversation_id,
+                                run_id=run_id,
+                            )
                         redis_manager.publish_event(
                             conversation_id,
                             run_id,
@@ -511,42 +571,14 @@ def execute_agent_background(
                         usages = get_and_clear_usages()
                         total_cost = _record_openrouter_cost_in_logfire(usages, "error")
 
-                        # Log partial cost to Celery logs so failed runs also show cost
-                        if usages:
-                            for u in usages:
-                                c = u.get("cost")
-                                pt = u.get("prompt_tokens", 0) or 0
-                                ct = u.get("completion_tokens", 0) or 0
-                                if c is not None:
-                                    cost_str = f", cost={c} credits"
-                                else:
-                                    est = (
-                                        estimate_cost_for_log(pt, ct)
-                                        if (pt or ct)
-                                        else 0.0
-                                    )
-                                    cost_str = (
-                                        f", cost≈{est} credits (estimated)"
-                                        if (pt or ct)
-                                        else ""
-                                    )
-                                msg = (
-                                    "[OpenRouter usage - partial] "
-                                    f"model={u.get('model', '')} "
-                                    f"prompt_tokens={pt} completion_tokens={ct} "
-                                    f"total_tokens={u.get('total_tokens', 0)}{cost_str}"
-                                )
-                                logger.info(msg)
-                                print(msg, flush=True)
-                            logger.info(
-                                "[LLM cost - partial before error] "
-                                f"total={total_cost} credits"
-                            )
-                            print(
-                                "[LLM cost - partial before error] "
-                                f"total={total_cost} credits",
-                                flush=True,
-                            )
+                        # Structured partial-cost logs for failed runs.
+                        _log_openrouter_usage(
+                            usages,
+                            outcome="error_partial",
+                            total_cost=total_cost,
+                            conversation_id=conversation_id,
+                            run_id=run_id,
+                        )
                     except Exception as cost_error:
                         logger.warning(
                             "Failed to record partial cost on error: %s", cost_error
@@ -844,33 +876,14 @@ def execute_regenerate_background(
                     usages, "completed" if completed else "cancelled"
                 )
 
-                # Log usage to Celery logs (for both completed and cancelled)
-                if usages:
-                    for u in usages:
-                        c = u.get("cost")
-                        pt = u.get("prompt_tokens", 0) or 0
-                        ct = u.get("completion_tokens", 0) or 0
-                        if c is not None:
-                            cost_str = f", cost={c} credits"
-                        else:
-                            est = estimate_cost_for_log(pt, ct) if (pt or ct) else 0.0
-                            cost_str = (
-                                f", cost≈{est} credits (estimated)"
-                                if (pt or ct)
-                                else ""
-                            )
-                        msg = (
-                            f"[OpenRouter usage] model={u.get('model', '')} "
-                            f"prompt_tokens={pt} completion_tokens={ct} "
-                            f"total_tokens={u.get('total_tokens', 0)}{cost_str}"
-                        )
-                        logger.info(msg)
-                        print(msg, flush=True)
-                    logger.info(f"[LLM cost this run] total={total_cost} credits")
-                    print(
-                        f"[LLM cost this run] total={total_cost} credits",
-                        flush=True,
-                    )
+                # Structured usage logs for both completed and cancelled runs.
+                _log_openrouter_usage(
+                    usages,
+                    outcome="completed" if completed else "cancelled",
+                    total_cost=total_cost,
+                    conversation_id=conversation_id,
+                    run_id=run_id,
+                )
 
                 # Only publish completion event if not cancelled
                 if completed:
@@ -911,37 +924,14 @@ def execute_regenerate_background(
                     usages = get_and_clear_usages()
                     total_cost = _record_openrouter_cost_in_logfire(usages, "error")
 
-                    # Log partial cost to Celery logs so failed runs also show cost
-                    if usages:
-                        for u in usages:
-                            c = u.get("cost")
-                            pt = u.get("prompt_tokens", 0) or 0
-                            ct = u.get("completion_tokens", 0) or 0
-                            if c is not None:
-                                cost_str = f", cost={c} credits"
-                            else:
-                                est = (
-                                    estimate_cost_for_log(pt, ct) if (pt or ct) else 0.0
-                                )
-                                cost_str = (
-                                    f", cost≈{est} credits (estimated)"
-                                    if (pt or ct)
-                                    else ""
-                                )
-                            msg = (
-                                f"[OpenRouter usage - partial] model={u.get('model', '')} "
-                                f"prompt_tokens={pt} completion_tokens={ct} "
-                                f"total_tokens={u.get('total_tokens', 0)}{cost_str}"
-                            )
-                            logger.info(msg)
-                            print(msg, flush=True)
-                        logger.info(
-                            f"[LLM cost - partial before error] total={total_cost} credits"
-                        )
-                        print(
-                            f"[LLM cost - partial before error] total={total_cost} credits",
-                            flush=True,
-                        )
+                    # Structured partial-cost logs for the failed regenerate run.
+                    _log_openrouter_usage(
+                        usages,
+                        outcome="error_partial",
+                        total_cost=total_cost,
+                        conversation_id=conversation_id,
+                        run_id=run_id,
+                    )
                 except Exception as cost_error:
                     logger.warning(
                         "Failed to record partial cost on error: %s", cost_error
