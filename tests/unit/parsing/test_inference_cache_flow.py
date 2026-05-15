@@ -113,3 +113,4 @@ def test_update_neo4j_persists_content_hash(monkeypatch):
     query, kwargs = fake_driver.session_obj.calls[0]
     assert "n.content_hash = item.content_hash" in query
     assert kwargs["batch"][0]["content_hash"] == "hash-1"
+    assert kwargs["clear_source"] is False

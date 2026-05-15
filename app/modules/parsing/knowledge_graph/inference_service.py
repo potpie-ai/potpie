@@ -1449,11 +1449,13 @@ class InferenceService:
                     SET n.docstring = item.docstring,
                         n.embedding = item.embedding,
                         n.tags = item.tags,
-                        n.content_hash = item.content_hash
-                    """
-                    + ("" if is_local_repo else "\nREMOVE n.text, n.signature"),
+                        n.content_hash = item.content_hash,
+                        n.text = CASE WHEN $clear_source THEN null ELSE n.text END,
+                        n.signature = CASE WHEN $clear_source THEN null ELSE n.signature END
+                    """,
                     batch=batch,
                     repo_id=repo_id,
+                    clear_source=not is_local_repo,
                 )
 
         logger.info(
@@ -1552,11 +1554,13 @@ class InferenceService:
                     SET n.docstring = item.docstring,
                         n.embedding = item.embedding,
                         n.tags = item.tags,
-                        n.content_hash = item.content_hash
-                    """
-                    + ("" if is_local_repo else "\nREMOVE n.text, n.signature"),
+                        n.content_hash = item.content_hash,
+                        n.text = CASE WHEN $clear_source THEN null ELSE n.text END,
+                        n.signature = CASE WHEN $clear_source THEN null ELSE n.signature END
+                    """,
                     batch=batch,
                     repo_id=repo_id,
+                    clear_source=not is_local_repo,
                 )
 
     def create_vector_index(self):
