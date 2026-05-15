@@ -65,9 +65,15 @@ async def get_stream(data_stream: AsyncGenerator[Any, None]):
     consumers see a half-message and have to guess. We now yield a final
     error frame (same `_chat_stream_error_response` shape used by the
     Redis-backed stream) before letting the connection close.
+
+    The terminal error frame carries a ``partial`` flag derived from
+    ``chunks_emitted`` so consumers can tell "delivered N chunks then
+    failed" from "failed before any output".
     """
+    chunks_emitted = 0
     try:
         async for chunk in data_stream:
+            chunks_emitted += 1
             yield json.dumps(chunk.dict())
     except Exception as e:
         stack_trace = traceback.format_exc()
@@ -75,10 +81,16 @@ async def get_stream(data_stream: AsyncGenerator[Any, None]):
             "", "", "get_stream", e, stream_id="0-0"
         )
         logger.error(
-            "get_stream raised mid-iteration: %s",
+            "get_stream raised mid-iteration: %s "
+            "(chunks_emitted_before_failure=%d)",
             e,
+            chunks_emitted,
             exc_info=True,
-            extra={"stack_trace": stack_trace, **failure_fields},
+            extra={
+                "stack_trace": stack_trace,
+                "chunks_emitted": chunks_emitted,
+                **failure_fields,
+            },
         )
         yield json.dumps(
             _chat_stream_error_response(
@@ -89,6 +101,7 @@ async def get_stream(data_stream: AsyncGenerator[Any, None]):
                     **failure_fields,
                 },
                 run_id="",
+                chunks_emitted=chunks_emitted,
             )
         )
 

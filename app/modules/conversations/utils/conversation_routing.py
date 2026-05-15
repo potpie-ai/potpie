@@ -28,8 +28,21 @@ from app.modules.conversations.utils.redis_streaming import (
 logger = logging.getLogger(__name__)
 
 
-def _chat_stream_error_response(event: dict, run_id: str) -> dict:
-    """Return a chat-compatible, sanitized diagnostic frame for failed streams."""
+def _chat_stream_error_response(
+    event: dict, run_id: str, chunks_emitted: int = 0
+) -> dict:
+    """Return a chat-compatible, sanitized diagnostic frame for failed streams.
+
+    ``chunks_emitted`` is the number of `chunk` events the SSE bridge has
+    already forwarded to the client when the failure was observed. The
+    derived ``partial`` flag lets consumers distinguish:
+
+      * `status="error" partial=false` -> hard failure, nothing useful was
+        delivered (caller should retry / show a full error UI).
+      * `status="error" partial=true`  -> the run delivered some output
+        before failing (caller may surface the partial content + a
+        non-success badge).
+    """
     return {
         "event": "error",
         "status": event.get("status", "error"),
@@ -44,6 +57,10 @@ def _chat_stream_error_response(event: dict, run_id: str) -> dict:
         "error_type": event.get("error_type", ""),
         "stack_trace_available": bool(event.get("stack_trace_available")),
         "stream_id": event.get("stream_id"),
+        # Partial-output marker: explicit non-success state for a run that
+        # delivered some chunks but didn't complete cleanly.
+        "partial": bool(chunks_emitted),
+        "chunks_emitted": int(chunks_emitted),
     }
 
 
@@ -137,6 +154,11 @@ def redis_stream_generator(
         f"Stream consumer started for {conversation_id}:{run_id}, waiting for events"
     )
 
+    # Count of `chunk` events forwarded to the client. Used to set the
+    # `partial` flag on any terminal error frame so consumers can tell
+    # "delivered N chunks then failed" from "failed before any output".
+    chunks_emitted = 0
+
     try:
         for event in redis_manager.consume_stream(conversation_id, run_id, cursor):
             # Convert to ChatMessageResponse format for compatibility
@@ -150,6 +172,7 @@ def redis_stream_generator(
                     thinking=event.get("thinking"),
                 )
                 json_response = json.dumps(response.dict(), default=json_serializer)
+                chunks_emitted += 1
                 yield json_response
 
             elif event.get("type") == "queued":
@@ -166,7 +189,9 @@ def redis_stream_generator(
             elif event.get("type") == "end":
                 if event.get("status") in {"error", "timeout", "expired"}:
                     yield json.dumps(
-                        _chat_stream_error_response(event, run_id),
+                        _chat_stream_error_response(
+                            event, run_id, chunks_emitted=chunks_emitted
+                        ),
                         default=json_serializer,
                     )
                 # End the stream when we receive an end event
@@ -185,12 +210,15 @@ def redis_stream_generator(
             stream_id=cursor or "0-0",
         )
         logger.error(
-            "Redis streaming error in sse_consume phase: %s",
+            "Redis streaming error in sse_consume phase: %s "
+            "(chunks_emitted_before_failure=%d)",
             e,
+            chunks_emitted,
             exc_info=True,
             extra={
                 "cursor": cursor,
                 "stack_trace": stack_trace,
+                "chunks_emitted": chunks_emitted,
                 **failure_fields,
             },
         )
@@ -203,6 +231,7 @@ def redis_stream_generator(
                     **failure_fields,
                 },
                 run_id,
+                chunks_emitted=chunks_emitted,
             ),
             default=json_serializer,
         )

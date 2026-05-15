@@ -778,3 +778,173 @@ class TestExplicitErrorPayloads:
         assert terminal["failing_phase"] == "agent_run"
         assert terminal["error_type"] == "RuntimeError"
         assert terminal["trace_id"] == "abc123"
+
+
+# ---------------------------------------------------------------------------
+# Partial-vs-failure distinction
+# ---------------------------------------------------------------------------
+
+class TestPartialOutputMarker:
+    """Acceptance criteria:
+      1. Partial output has a non-success state.
+      2. Failure and partial cases are distinguishable.
+      3. The state is visible in the result path used for debugging.
+    """
+
+    def test_error_frame_marks_partial_true_when_chunks_were_emitted(self):
+        """A run that delivered some output before failing must NOT look
+        the same as a run that failed before producing anything."""
+        from app.modules.conversations.utils.conversation_routing import (
+            redis_stream_generator,
+        )
+
+        with patch(
+            "app.modules.conversations.utils.conversation_routing.RedisStreamManager"
+        ) as mock_mgr_cls:
+            mgr = MagicMock()
+            mgr.consume_stream.return_value = iter([
+                {"type": "chunk", "content": "tok-1"},
+                {"type": "chunk", "content": "tok-2"},
+                {"type": "chunk", "content": "tok-3"},
+                {
+                    "type": "end",
+                    "status": "error",
+                    "message": "Worker hit a snag",
+                    "failing_phase": "agent_run",
+                    "error_type": "RuntimeError",
+                },
+            ])
+            mock_mgr_cls.return_value = mgr
+
+            frames = [
+                json.loads(f)
+                for f in redis_stream_generator("conv-1", "run-1")
+            ]
+
+        # 3 chunks + terminal error frame
+        assert len(frames) == 4
+        terminal = frames[-1]
+        # Non-success state
+        assert terminal["status"] == "error"
+        # Distinguishes "got something, then failed" from a clean failure
+        assert terminal["partial"] is True
+        assert terminal["chunks_emitted"] == 3
+
+    def test_error_frame_marks_partial_false_when_no_chunks_were_emitted(self):
+        """Hard failure with no output -> partial=false. This is what tells
+        a UI to show a full error state instead of partial-content + badge."""
+        from app.modules.conversations.utils.conversation_routing import (
+            redis_stream_generator,
+        )
+
+        with patch(
+            "app.modules.conversations.utils.conversation_routing.RedisStreamManager"
+        ) as mock_mgr_cls:
+            mgr = MagicMock()
+            mgr.consume_stream.return_value = iter([
+                {
+                    "type": "end",
+                    "status": "error",
+                    "message": "Worker died on setup",
+                    "failing_phase": "setup",
+                    "error_type": "ConnectionError",
+                },
+            ])
+            mock_mgr_cls.return_value = mgr
+
+            frames = [
+                json.loads(f)
+                for f in redis_stream_generator("conv-2", "run-2")
+            ]
+
+        # Just the terminal error frame
+        assert len(frames) == 1
+        terminal = frames[0]
+        assert terminal["status"] == "error"
+        assert terminal["partial"] is False
+        assert terminal["chunks_emitted"] == 0
+
+    def test_error_frame_marks_partial_when_generator_itself_raises_after_chunks(self):
+        """The except-branch path also needs to carry chunks_emitted, not
+        just the end-event path."""
+        from app.modules.conversations.utils.conversation_routing import (
+            redis_stream_generator,
+        )
+
+        class _BoomIter:
+            """Iterator that yields some chunks then raises - mirrors a
+            Redis consumer that dies mid-stream."""
+            def __init__(self):
+                self._items = iter([
+                    {"type": "chunk", "content": "tok-a"},
+                    {"type": "chunk", "content": "tok-b"},
+                ])
+            def __iter__(self):
+                return self
+            def __next__(self):
+                try:
+                    return next(self._items)
+                except StopIteration:
+                    raise ConnectionError("redis blew up")
+
+        with patch(
+            "app.modules.conversations.utils.conversation_routing.RedisStreamManager"
+        ) as mock_mgr_cls:
+            mgr = MagicMock()
+            mgr.consume_stream.return_value = _BoomIter()
+            mock_mgr_cls.return_value = mgr
+
+            frames = [
+                json.loads(f)
+                for f in redis_stream_generator("conv-3", "run-3")
+            ]
+
+        # 2 chunks + terminal error frame from the except branch
+        assert len(frames) == 3
+        terminal = frames[-1]
+        assert terminal["event"] == "error"
+        assert terminal["partial"] is True
+        assert terminal["chunks_emitted"] == 2
+        # Failing phase distinguishes this from the worker-side error
+        assert terminal["failing_phase"] == "sse_consume"
+
+    @pytest.mark.asyncio
+    async def test_get_stream_terminal_frame_marks_partial(self):
+        """Same marker propagates through the non-Redis bridge."""
+        from app.modules.conversations.conversations_router import get_stream
+
+        class _Chunk:
+            def __init__(self, content):
+                self._content = content
+            def dict(self):
+                return {"message": self._content}
+
+        async def inner():
+            yield _Chunk("a")
+            yield _Chunk("b")
+            yield _Chunk("c")
+            raise RuntimeError("controller blew up")
+
+        frames = [json.loads(f) async for f in get_stream(inner())]
+
+        assert len(frames) == 4
+        terminal = frames[-1]
+        assert terminal["status"] == "error"
+        assert terminal["partial"] is True
+        assert terminal["chunks_emitted"] == 3
+
+    @pytest.mark.asyncio
+    async def test_get_stream_pure_failure_marks_partial_false(self):
+        from app.modules.conversations.conversations_router import get_stream
+
+        async def inner():
+            raise RuntimeError("died before producing anything")
+            yield  # pragma: no cover - unreachable, keeps inner a generator
+
+        frames = [json.loads(f) async for f in get_stream(inner())]
+
+        assert len(frames) == 1
+        terminal = frames[0]
+        assert terminal["status"] == "error"
+        assert terminal["partial"] is False
+        assert terminal["chunks_emitted"] == 0
