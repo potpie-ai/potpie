@@ -82,7 +82,7 @@ dev: env-check infra-up sync migrate sandbox-prep ## Start infra, sync deps, mig
 	  --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app & \
 	GUNICORN_PID=$$!; \
 	$(SANDBOX_OVERRIDE) celery -A app.celery.celery_app worker --loglevel=debug \
-	  -Q "$$CELERY_Q" -E --concurrency=1 --pool=solo & \
+	  -Q "$$CELERY_Q" -E --concurrency=1 --pool=solo -B --schedule=.celerybeat-schedule & \
 	CELERY_PID=$$!; \
 	trap 'kill -TERM $$GUNICORN_PID $$CELERY_PID 2>/dev/null || true; \
 	      wait $$GUNICORN_PID $$CELERY_PID 2>/dev/null || true' INT TERM EXIT; \
@@ -146,7 +146,7 @@ api: ## Run only the FastAPI server (assumes infra is up). Honors SANDBOX=...
 
 worker: ## Run only the Celery worker (assumes infra is up). Honors SANDBOX=...
 	@$(LOAD_ENV) $(SET_CELERY_Q) $(SANDBOX_OVERRIDE) uv run celery -A app.celery.celery_app worker --loglevel=debug \
-	  -Q "$$CELERY_Q" -E --concurrency=1 --pool=solo
+	  -Q "$$CELERY_Q" -E --concurrency=1 --pool=solo -B --schedule=.celerybeat-schedule
 
 stop: ## Kill API + worker processes and stop infra
 	-pkill -f "gunicorn" || true
