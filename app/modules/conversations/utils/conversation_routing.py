@@ -300,6 +300,17 @@ async def start_celery_task_and_stream(
         logger.warning(
             f"Background task failed to start within 30s for {conversation_id}:{run_id} - may still be queued"
         )
+        # Stuck-state emission: best-effort - the run still gets returned as a
+        # StreamingResponse, but the stream will now contain a `stuck` event
+        # the client can render. Helper logs + no-ops on failure.
+        try:
+            await async_redis_manager.emit_stuck_state_if_overdue(
+                conversation_id, run_id, agent_queue_name
+            )
+        except Exception as e:
+            logger.warning(
+                "emit_stuck_state_if_overdue raised; continuing: %s", e, exc_info=True
+            )
 
     # Return Redis stream response (sync generator runs in Starlette thread pool)
     return StreamingResponse(
@@ -396,6 +407,17 @@ async def start_celery_task_and_wait(
         logger.warning(
             f"Background task failed to start within 30s for {conversation_id}:{run_id} - may still be queued"
         )
+        # Same stuck-state hook as the streaming path: caller still waits for
+        # the run to complete (or time out elsewhere), but the stream now
+        # records that the task missed its pickup deadline.
+        try:
+            await async_redis_manager.emit_stuck_state_if_overdue(
+                conversation_id, run_id, agent_queue_name
+            )
+        except Exception as e:
+            logger.warning(
+                "emit_stuck_state_if_overdue raised; continuing: %s", e, exc_info=True
+            )
 
     # Collect all chunks from the stream (sync consume_stream in thread pool)
     full_message = ""

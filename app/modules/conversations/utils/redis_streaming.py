@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import redis
 import time
 import traceback
@@ -13,6 +14,23 @@ from app.modules.intelligence.provider.openrouter_usage_context import estimate_
 logger = setup_logger(__name__)
 
 TASK_METADATA_TTL_SECONDS = 600
+
+# Default stuck-task threshold. If a run is still in "queued" state after this
+# many seconds since enqueue, we emit a `stuck` event on its stream so the
+# client / monitoring can render the run as unhealthy without waiting forever.
+# Tunable via QUEUED_STUCK_THRESHOLD_SECONDS env var.
+DEFAULT_STUCK_THRESHOLD_SECONDS = 30
+
+
+def _stuck_threshold_seconds() -> int:
+    raw = os.getenv("QUEUED_STUCK_THRESHOLD_SECONDS", "").strip()
+    if not raw:
+        return DEFAULT_STUCK_THRESHOLD_SECONDS
+    try:
+        value = int(raw)
+        return value if value > 0 else DEFAULT_STUCK_THRESHOLD_SECONDS
+    except ValueError:
+        return DEFAULT_STUCK_THRESHOLD_SECONDS
 
 
 def _current_trace_id() -> str:
@@ -836,6 +854,74 @@ class AsyncRedisStreamManager:
                     return True
             await asyncio.sleep(0.5)
         return False
+
+    async def emit_stuck_state_if_overdue(
+        self,
+        conversation_id: str,
+        run_id: str,
+        fallback_queue_name: str,
+        threshold_seconds: Optional[int] = None,
+    ) -> bool:
+        """Emit a `stuck` stream event if a queued run is overdue for pickup.
+
+        Returns True iff a stuck event was published. No-ops when:
+          * `task:enqueue:*` is missing/malformed (we cannot compute elapsed)
+          * elapsed-since-enqueue is below the threshold
+          * the task already transitioned out of "queued" (running / completed /
+            error / cancelled) - it is not actually stuck anymore.
+
+        Idempotent only as far as Redis xadd is concerned; callers are expected
+        to invoke this once per timeout boundary (e.g. when wait_for_task_start
+        returns False). Consumers may de-dup by `event_type == "stuck"` on the
+        same `run_id` if they care.
+        """
+        threshold = (
+            threshold_seconds
+            if threshold_seconds and threshold_seconds > 0
+            else _stuck_threshold_seconds()
+        )
+
+        metadata = await self.get_task_enqueue_metadata(conversation_id, run_id)
+        try:
+            enqueued_at = float(metadata.get("enqueued_at") or "")
+        except (TypeError, ValueError):
+            return False
+        elapsed_seconds = time.time() - enqueued_at
+        if elapsed_seconds < threshold:
+            return False
+
+        status = await self.get_task_status(conversation_id, run_id)
+        if status != "queued":
+            return False
+
+        diagnostics = await self.task_pickup_diagnostics(
+            conversation_id, run_id, fallback_queue_name
+        )
+        await self.publish_event(
+            conversation_id,
+            run_id,
+            "stuck",
+            {
+                "status": "stuck",
+                "message": (
+                    f"Task has been queued for {int(elapsed_seconds)}s without "
+                    f"being picked up by a worker (threshold {threshold}s)."
+                ),
+                "elapsed_seconds": str(int(elapsed_seconds)),
+                "threshold_seconds": str(threshold),
+                **diagnostics,
+            },
+        )
+        logger.warning(
+            "Emitted stuck-task state for %s:%s "
+            "(elapsed=%ds, threshold=%ds, queue=%s)",
+            conversation_id,
+            run_id,
+            int(elapsed_seconds),
+            threshold,
+            diagnostics.get("queue_name", fallback_queue_name),
+        )
+        return True
 
     async def aclose(self) -> None:
         await self.redis_client.aclose()

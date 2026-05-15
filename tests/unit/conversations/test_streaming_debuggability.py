@@ -290,3 +290,168 @@ class TestErrorEventPayloadShape:
         # trace_id key always present (possibly empty)
         assert "trace_id" in payload
         assert payload["stack_trace_available"] is True
+
+
+# ---------------------------------------------------------------------------
+# Stuck-task state emission
+# ---------------------------------------------------------------------------
+
+class TestStuckStateEmission:
+    """`AsyncRedisStreamManager.emit_stuck_state_if_overdue` publishes a
+    `stuck` stream event when a queued task is overdue for pickup, and
+    no-ops on every other branch (under threshold, already running,
+    missing enqueue metadata)."""
+
+    def _build_async_mgr(self):
+        """Build an AsyncRedisStreamManager without touching real Redis."""
+        with patch(
+            "app.modules.conversations.utils.redis_streaming.ConfigProvider"
+        ) as mock_cp, patch(
+            "app.modules.conversations.utils.redis_streaming.AsyncRedis"
+        ) as mock_async_redis:
+            mock_cp.return_value.get_redis_url.return_value = (
+                "redis://localhost:6379/0"
+            )
+            mock_cp.get_stream_ttl_secs.return_value = 3600
+            mock_cp.get_stream_maxlen.return_value = 1000
+            mock_async_redis.from_url.return_value = AsyncMock()
+            mgr = AsyncRedisStreamManager()
+        return mgr
+
+    @pytest.mark.asyncio
+    async def test_emits_stuck_event_when_overdue_and_still_queued(self):
+        mgr = self._build_async_mgr()
+        # Enqueued 120s ago, threshold 30s by default -> overdue.
+        mgr.get_task_enqueue_metadata = AsyncMock(
+            return_value={
+                "task_id": "task-1",
+                "queue_name": "staging_agent_tasks",
+                "enqueued_at": str(__import__("time").time() - 120),
+                "queue_depth_at_enqueue": "42",
+            }
+        )
+        mgr.get_task_status = AsyncMock(return_value="queued")
+        mgr.task_pickup_diagnostics = AsyncMock(
+            return_value={
+                "task_id": "task-1",
+                "queue_name": "staging_agent_tasks",
+                "queue_depth_at_enqueue": "42",
+                "queue_depth_at_pickup": "3",
+                "pickup_latency_ms": "120000",
+            }
+        )
+        mgr.publish_event = AsyncMock()
+
+        emitted = await mgr.emit_stuck_state_if_overdue(
+            "conv-1", "run-1", "staging_agent_tasks"
+        )
+
+        assert emitted is True
+        mgr.publish_event.assert_awaited_once()
+        args = mgr.publish_event.call_args
+        # Positional: (conversation_id, run_id, event_type, payload)
+        assert args.args[0] == "conv-1"
+        assert args.args[1] == "run-1"
+        assert args.args[2] == "stuck"
+        payload = args.args[3]
+        # Required identifiers per the ticket's DoD
+        assert payload["status"] == "stuck"
+        assert payload["task_id"] == "task-1"
+        assert payload["queue_name"] == "staging_agent_tasks"
+        assert payload["queue_depth_at_enqueue"] == "42"
+        assert payload["queue_depth_at_pickup"] == "3"
+        assert "elapsed_seconds" in payload
+        assert "threshold_seconds" in payload
+        assert int(payload["elapsed_seconds"]) >= 120
+
+    @pytest.mark.asyncio
+    async def test_does_not_emit_when_under_threshold(self):
+        mgr = self._build_async_mgr()
+        # Enqueued only 5s ago -> not stuck yet (default threshold 30s).
+        mgr.get_task_enqueue_metadata = AsyncMock(
+            return_value={
+                "task_id": "task-2",
+                "queue_name": "staging_agent_tasks",
+                "enqueued_at": str(__import__("time").time() - 5),
+                "queue_depth_at_enqueue": "0",
+            }
+        )
+        mgr.get_task_status = AsyncMock(return_value="queued")
+        mgr.publish_event = AsyncMock()
+        mgr.task_pickup_diagnostics = AsyncMock()
+
+        emitted = await mgr.emit_stuck_state_if_overdue(
+            "conv-2", "run-2", "staging_agent_tasks"
+        )
+
+        assert emitted is False
+        mgr.publish_event.assert_not_called()
+        mgr.task_pickup_diagnostics.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_does_not_emit_when_task_has_started_running(self):
+        mgr = self._build_async_mgr()
+        # Enqueued ages ago AND already running -> not stuck.
+        mgr.get_task_enqueue_metadata = AsyncMock(
+            return_value={
+                "task_id": "task-3",
+                "queue_name": "staging_agent_tasks",
+                "enqueued_at": str(__import__("time").time() - 300),
+            }
+        )
+        mgr.get_task_status = AsyncMock(return_value="running")
+        mgr.publish_event = AsyncMock()
+
+        emitted = await mgr.emit_stuck_state_if_overdue(
+            "conv-3", "run-3", "staging_agent_tasks"
+        )
+
+        assert emitted is False
+        mgr.publish_event.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_does_not_emit_when_enqueue_metadata_is_missing(self):
+        mgr = self._build_async_mgr()
+        # No enqueued_at -> we cannot compute elapsed, must no-op.
+        mgr.get_task_enqueue_metadata = AsyncMock(return_value={})
+        mgr.get_task_status = AsyncMock(return_value="queued")
+        mgr.publish_event = AsyncMock()
+
+        emitted = await mgr.emit_stuck_state_if_overdue(
+            "conv-4", "run-4", "staging_agent_tasks"
+        )
+
+        assert emitted is False
+        mgr.publish_event.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_explicit_threshold_overrides_env_default(self):
+        mgr = self._build_async_mgr()
+        # Enqueued 10s ago. Default threshold 30s says "not stuck", but the
+        # caller asks for 5s -> should emit.
+        mgr.get_task_enqueue_metadata = AsyncMock(
+            return_value={
+                "task_id": "task-5",
+                "queue_name": "staging_agent_tasks",
+                "enqueued_at": str(__import__("time").time() - 10),
+            }
+        )
+        mgr.get_task_status = AsyncMock(return_value="queued")
+        mgr.task_pickup_diagnostics = AsyncMock(
+            return_value={
+                "task_id": "task-5",
+                "queue_name": "staging_agent_tasks",
+                "queue_depth_at_enqueue": "1",
+                "queue_depth_at_pickup": "1",
+                "pickup_latency_ms": "10000",
+            }
+        )
+        mgr.publish_event = AsyncMock()
+
+        emitted = await mgr.emit_stuck_state_if_overdue(
+            "conv-5", "run-5", "staging_agent_tasks", threshold_seconds=5
+        )
+
+        assert emitted is True
+        payload = mgr.publish_event.call_args.args[3]
+        assert payload["threshold_seconds"] == "5"
