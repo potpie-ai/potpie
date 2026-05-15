@@ -1089,3 +1089,198 @@ class TestStructuredStreamingLogs:
             )
 
         mock_logger.info.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Log-volume audit: noisy heartbeats demoted, lifecycle events kept at INFO
+# ---------------------------------------------------------------------------
+
+class TestStreamingLogLevelAudit:
+    """Acceptance criteria:
+      1. Heartbeat and wait logs are identified.
+      2. Low-value logs are demoted to debug or removed.
+      3. The remaining info-level logs are intentional.
+    """
+
+    STREAMING_FLOW_FILES = [
+        "app/celery/tasks/agent_tasks.py",
+        "app/modules/conversations/utils/conversation_routing.py",
+        "app/modules/conversations/utils/redis_streaming.py",
+        "app/modules/conversations/conversations_router.py",
+        "app/modules/intelligence/agents/chat_agents/multi_agent/stream_processor.py",
+    ]
+
+    @staticmethod
+    def _read(rel: str) -> str:
+        import pathlib
+
+        return (
+            pathlib.Path(__file__).resolve().parents[3] / rel
+        ).read_text()
+
+    @staticmethod
+    def _window_for_needle(text: str, needle: str) -> str:
+        """Return the needle's own line plus the 4 preceding lines.
+
+        Lets us check the logger level on the call that produced this
+        message regardless of whether the call is single-line
+        (``logger.info(f"msg ...")``) or multi-line
+        (``logger.info(\\n    f"msg ..."\\n)``).
+        """
+        idx = text.find(needle)
+        if idx < 0:
+            return ""
+        lines = text.splitlines()
+        # Convert byte-offset into line index
+        running = 0
+        line_index = 0
+        for i, line in enumerate(lines):
+            if running + len(line) + 1 > idx:  # +1 for the newline
+                line_index = i
+                break
+            running += len(line) + 1
+        start = max(0, line_index - 4)
+        return "\n".join(lines[start : line_index + 1])
+
+    def test_heartbeat_and_wait_logs_are_no_longer_info(self):
+        """The high-frequency boot / wait / cleanup messages must live at
+        DEBUG so they don't dominate an INFO-level production log stream
+        during incident triage."""
+        cases = [
+            (
+                "app/modules/conversations/utils/conversation_routing.py",
+                "Stream consumer started for",
+            ),
+            (
+                "app/modules/conversations/utils/conversation_routing.py",
+                "Task start check done for",
+            ),
+            (
+                "app/modules/conversations/utils/redis_streaming.py",
+                "Cleared session for",
+            ),
+            (
+                "app/celery/tasks/agent_tasks.py",
+                "Starting background agent execution",
+            ),
+            (
+                "app/celery/tasks/agent_tasks.py",
+                "Starting background regenerate execution",
+            ),
+            (
+                "app/modules/conversations/conversations_router.py",
+                "[post_message] tunnel_url=",
+            ),
+        ]
+        for rel, needle in cases:
+            text = self._read(rel)
+            assert needle in text, f"needle not found in {rel}: {needle!r}"
+            window = self._window_for_needle(text, needle)
+            assert "logger.debug" in window, (
+                f"{rel}: log line containing {needle!r} is not at debug level"
+            )
+
+    def test_per_node_and_per_tool_call_stream_processor_logs_are_debug(self):
+        """The 1300-line stream_processor.py was the loudest offender: per
+        agent run it would emit 5x-50x INFO lines just for node / tool-call
+        bookkeeping. Those are now DEBUG."""
+        text = self._read(
+            "app/modules/intelligence/agents/chat_agents/multi_agent/stream_processor.py"
+        )
+        # Spot-check a few noisy messages that previously were INFO.
+        noisy_needles = [
+            "Processing node #",
+            "Starting model request stream",
+            "Finished model request stream",
+            "Processing call_tools node",
+            "Completed call_tools node",
+            "Starting tool call processing",
+            "FunctionToolCallEvent #",
+            "FunctionToolResultEvent #",
+            "Checking delegation",
+            "Delegation tool detected",
+            "Stream exhausted - Completed",
+        ]
+        for needle in noisy_needles:
+            assert needle in text, f"sentinel {needle!r} should still exist"
+            window = self._window_for_needle(text, needle)
+            assert "logger.debug" in window, (
+                f"stream_processor noisy log {needle!r} is not at debug level"
+            )
+
+    def test_lifecycle_events_are_still_info(self):
+        """Intentional INFO log lines that the SHS operator should see
+        during normal investigation must NOT have been swept away."""
+        cases = [
+            # Per-task pickup diagnostics: the high-signal start signal.
+            (
+                "app/celery/tasks/agent_tasks.py",
+                "Agent task picked up conversation_id=",
+            ),
+            (
+                "app/celery/tasks/agent_tasks.py",
+                "Regenerate task picked up conversation_id=",
+            ),
+            # Terminal task lifecycle.
+            (
+                "app/celery/tasks/agent_tasks.py",
+                "Background agent execution completed",
+            ),
+            (
+                "app/celery/tasks/agent_tasks.py",
+                "Background regenerate execution completed",
+            ),
+            # Cancellation lifecycle.
+            (
+                "app/celery/tasks/agent_tasks.py",
+                "Background agent execution cancelled",
+            ),
+            (
+                # f-string form distinguishes the log call from the
+                # method's docstring "Set cancellation signal ...".
+                "app/modules/conversations/utils/redis_streaming.py",
+                'f"Set cancellation signal for',
+            ),
+            # Stream lifecycle.
+            (
+                "app/modules/conversations/utils/redis_streaming.py",
+                "Stream {key} ended with status:",
+            ),
+            # Reasoning artifact save (one-time, useful).
+            (
+                "app/modules/intelligence/agents/chat_agents/multi_agent/stream_processor.py",
+                "Reasoning content saved with hash:",
+            ),
+        ]
+        for rel, needle in cases:
+            text = self._read(rel)
+            assert needle in text, (
+                f"intentional INFO line missing from {rel}: {needle!r}"
+            )
+            window = self._window_for_needle(text, needle)
+            assert "logger.info" in window, (
+                f"{rel}: line containing {needle!r} should still be INFO"
+            )
+
+    def test_info_log_count_per_file_below_ceiling(self):
+        """Hard-coded upper bound per file: if a noisy logger.info(...) ever
+        sneaks back in, this test fails so a reviewer can decide whether the
+        new log is genuinely lifecycle-level or should be at DEBUG.
+
+        Numbers reflect the post-audit baseline; bump deliberately if you
+        add a real lifecycle event."""
+        import re
+        ceilings = {
+            "app/celery/tasks/agent_tasks.py": 15,
+            "app/modules/conversations/utils/conversation_routing.py": 6,
+            "app/modules/conversations/utils/redis_streaming.py": 8,
+            "app/modules/conversations/conversations_router.py": 4,
+            "app/modules/intelligence/agents/chat_agents/multi_agent/stream_processor.py": 4,
+        }
+        info_re = re.compile(r"^\s*logger\.info\(", re.MULTILINE)
+        for rel, ceiling in ceilings.items():
+            text = self._read(rel)
+            count = len(info_re.findall(text))
+            assert count <= ceiling, (
+                f"{rel}: logger.info call count {count} exceeds ceiling {ceiling}"
+            )

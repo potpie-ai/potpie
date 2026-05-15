@@ -267,7 +267,10 @@ def execute_agent_background(
             with log_context(
                 conversation_id=conversation_id, user_id=user_id, run_id=run_id
             ):
-                logger.info(
+                # DEBUG: boot-print. The interesting moment is `pickup
+                # diagnostics` below (one line with queue depth + latency),
+                # not this constant-content boot line.
+                logger.debug(
                     f"Starting background agent execution with tunnel_url={tunnel_url}, "
                     f"local_mode={local_mode}, conversation_id={conversation_id}"
                 )
@@ -666,7 +669,8 @@ def execute_regenerate_background(
         with log_context(
             conversation_id=conversation_id, user_id=user_id, run_id=run_id
         ):
-            logger.info("Starting background regenerate execution")
+            # DEBUG: boot-print mirror of execute_agent_background.
+            logger.debug("Starting background regenerate execution")
             current_phase = "setup"
             try:
                 # Set task status to indicate task has started

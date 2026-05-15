@@ -306,7 +306,10 @@ class ConversationAPI:
                 tunnel_url=tunnel_url,
             )
             
-            logger.info(
+            # DEBUG: every-message boot print. The interesting events
+            # (queue + pickup, agent run completed/failed) emit their own
+            # INFO lines downstream.
+            logger.debug(
                 f"[post_message] tunnel_url={tunnel_url}, conversation_id={conversation_id}, user_id={user_id}"
             )
 

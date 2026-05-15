@@ -150,7 +150,9 @@ def redis_stream_generator(
         return str(obj)
 
     redis_manager = RedisStreamManager()
-    logger.info(
+    # DEBUG: heartbeat that fires on every SSE connect. Useful during
+    # active investigation but otherwise dominates INFO output.
+    logger.debug(
         f"Stream consumer started for {conversation_id}:{run_id}, waiting for events"
     )
 
@@ -322,7 +324,9 @@ async def start_celery_task_and_stream(
             logger.info(
                 f"Task already {status} for {conversation_id}:{run_id} - stream will contain result"
             )
-    logger.info(
+    # DEBUG: trivial wait-completion marker. The interesting case (timeout)
+    # already has its own WARNING below.
+    logger.debug(
         f"Task start check done for {conversation_id}:{run_id} (started={task_started})"
     )
     if not task_started:

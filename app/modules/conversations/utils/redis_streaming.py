@@ -640,7 +640,9 @@ class RedisStreamManager:
             status_key = f"task:status:{conversation_id}:{run_id}"
             self.redis_client.delete(stream_key, cancel_key, task_id_key, status_key)
 
-            logger.info(
+            # DEBUG: routine cleanup. The failure case below stays at ERROR
+            # so anything that matters is still visible at INFO.
+            logger.debug(
                 f"Cleared session for {conversation_id}:{run_id} (stream and keys removed from Redis)"
             )
         except Exception as e:
@@ -958,7 +960,8 @@ class AsyncRedisStreamManager:
                     stream_key, cancel_key, task_id_key, status_key
                 )
             )
-            logger.info(
+            # DEBUG: routine async cleanup mirror of the sync clear_session.
+            logger.debug(
                 f"Cleared session for {conversation_id}:{run_id} (stream and keys removed)"
             )
         except Exception as e:

@@ -368,7 +368,7 @@ class StreamProcessor:
                     f"tool_name={tool_name}, call_id={event.result.tool_call_id or 'N/A'}"
                 )
             tool_result.is_complete = True
-            logger.info(
+            logger.debug(
                 f"[yield_tool_result_event] Yielding delegation result: tool_name={tool_name}, "
                 f"call_id={event.result.tool_call_id or 'N/A'}, is_complete={tool_result.is_complete}, "
                 f"event_type={tool_result.event_type}"
@@ -445,7 +445,7 @@ class StreamProcessor:
             processed_nodes.append(node)
             node_counts[node_type] = node_counts.get(node_type, 0) + 1
 
-            logger.info(
+            logger.debug(
                 f"[{context}] Processing node #{sum(node_counts.values()) - node_counts['skipped_duplicates']}: "
                 f"type={node_type}, node_id={id(node)}, "
                 f"counts={{model_request: {node_counts['model_request']}, call_tools: {node_counts['call_tools']}, end: {node_counts['end']}}}"
@@ -455,7 +455,7 @@ class StreamProcessor:
                 # Stream tokens from the model's request. We do not retry on stream errors:
                 # node.stream(ctx) may only be called once per node; a second call raises
                 # AssertionError "stream() should only be called once per node".
-                logger.info(
+                logger.debug(
                     f"[{context}] Starting model request stream (model_request #{node_counts['model_request']})"
                 )
                 error_response = None
@@ -475,7 +475,7 @@ class StreamProcessor:
                                 if callable(check) and check():
                                     raise GenerationCancelled()
                                 yield chunk
-                            logger.info(
+                            logger.debug(
                                 f"[{context}] Finished model request stream: yielded {chunk_count} chunks"
                             )
                         except Exception as e:
@@ -513,7 +513,7 @@ class StreamProcessor:
             elif is_call_tools:
                 # Handle tool calls and results
                 context_type = "SUPERVISOR" if current_context else "SUBAGENT"
-                logger.info(
+                logger.debug(
                     f"[{context}] Processing call_tools node ({context_type} context), "
                     f"node_id={id(node)}, current_context={current_context is not None}"
                 )
@@ -521,7 +521,7 @@ class StreamProcessor:
                     node, run.ctx, current_context=current_context
                 ):
                     yield response
-                logger.info(
+                logger.debug(
                     f"[{context}] Completed call_tools node ({context_type} context), node_id={id(node)}"
                 )
 
@@ -569,7 +569,7 @@ class StreamProcessor:
                 tool_result_event_count = 0
 
                 context_type = "SUPERVISOR" if current_context else "SUBAGENT"
-                logger.info(
+                logger.debug(
                     f"[process_tool_call_node] Starting tool call processing ({context_type} context)"
                 )
 
@@ -579,7 +579,7 @@ class StreamProcessor:
                     output_queue: asyncio.Queue,
                 ):
                     """Continuously consume from delegation queue and forward to output queue"""
-                    logger.info(
+                    logger.debug(
                         f"[consume_delegation_queue] Starting consumer for tool_call_id={tool_call_id[:8]}..."
                     )
                     chunks_consumed = 0
@@ -818,7 +818,7 @@ class StreamProcessor:
                         # Check if this is a delegation tool
                         is_delegation = is_delegation_tool(tool_name)
 
-                        logger.info(
+                        logger.debug(
                             f"[process_tool_call_node] FunctionToolCallEvent #{tool_call_event_count} ({context_type}): "
                             f"tool_name={tool_name}, tool_call_id={tool_call_id[:8]}..., "
                             f"is_delegation={is_delegation}"
@@ -826,7 +826,7 @@ class StreamProcessor:
 
                         # CRITICAL: Log when supervisor calls a delegation tool
                         if current_context and is_delegation:
-                            logger.info(
+                            logger.debug(
                                 f"[process_tool_call_node] 🎯 SUPERVISOR DELEGATION TOOL CALL: "
                                 f"tool_name={tool_name}, call_id={tool_call_id[:8]}..., "
                                 f"context_type={context_type}"
@@ -840,7 +840,7 @@ class StreamProcessor:
                         )
 
                         # If this is a delegation tool, start streaming the subagent response
-                        logger.info(
+                        logger.debug(
                             f"[process_tool_call_node] Checking delegation: tool_name={tool_name}, "
                             f"is_delegation_tool={is_delegation}, tool_call_id={tool_call_id[:8] if tool_call_id else 'None'}..., "
                             f"has_current_context={current_context is not None}"
@@ -854,7 +854,7 @@ class StreamProcessor:
                                 agent_type_str = (
                                     extract_agent_type_from_delegation_tool(tool_name)
                                 )
-                                logger.info(
+                                logger.debug(
                                     f"[process_tool_call_node] Delegation tool detected: tool_name={tool_name}, "
                                     f"agent_type={agent_type_str}, tool_call_id={tool_call_id[:8]}..."
                                 )
@@ -901,7 +901,7 @@ class StreamProcessor:
                                 self.delegation_manager._active_streaming_tasks[
                                     cache_key
                                 ] = streaming_task
-                                logger.info(
+                                logger.debug(
                                     f"[process_tool_call_node] Registered streaming task for cache_key={cache_key}, "
                                     f"tool_call_id={tool_call_id[:8]}..."
                                 )
@@ -918,7 +918,7 @@ class StreamProcessor:
                                     )
                                 )
                                 queue_consumer_tasks[tool_call_id] = consumer_task
-                                logger.info(
+                                logger.debug(
                                     f"[process_tool_call_node] Started queue consumer task for "
                                     f"tool_call_id={tool_call_id[:8]}..."
                                 )
@@ -974,7 +974,7 @@ class StreamProcessor:
                         # Log context: supervisor or subagent
                         context_type = "SUPERVISOR" if current_context else "SUBAGENT"
 
-                        logger.info(
+                        logger.debug(
                             f"[process_tool_call_node] FunctionToolResultEvent #{tool_result_event_count} ({context_type}): "
                             f"tool_name={tool_name}, tool_call_id={tool_call_id[:8]}..., "
                             f"is_delegation={is_delegation}, content_length={len(str(event.result.content)) if event.result.content else 0}"
@@ -982,7 +982,7 @@ class StreamProcessor:
 
                         # CRITICAL: Log when we see a delegation tool result from supervisor
                         if is_delegation and current_context:
-                            logger.info(
+                            logger.debug(
                                 f"[process_tool_call_node] ⚠️ CRITICAL: Supervisor delegation tool result detected! "
                                 f"tool_name={tool_name}, call_id={tool_call_id[:8]}..., "
                                 f"content_preview={str(event.result.content)[:200] if event.result.content else 'None'}..."
@@ -995,7 +995,7 @@ class StreamProcessor:
                             and tool_call_id
                             and tool_call_id not in drained_streams
                         ):
-                            logger.info(
+                            logger.debug(
                                 f"[process_tool_call_node] Draining delegation stream for tool_call_id={tool_call_id[:8]}... "
                                 f"(tool_name={tool_name}, context_type={context_type})"
                             )
@@ -1022,7 +1022,7 @@ class StreamProcessor:
                                             asyncio.get_running_loop().time()
                                             - drain_start_time
                                         )
-                                        logger.info(
+                                        logger.debug(
                                             f"[process_tool_call_node] Stream drained successfully: "
                                             f"tool_call_id={tool_call_id[:8]}..., chunks={total_drained_chunks}, "
                                             f"attempts={attempt + 1}, elapsed={drain_elapsed:.2f}s"
@@ -1094,7 +1094,7 @@ class StreamProcessor:
                             is_complete = (
                                 tool_result.is_complete if tool_result else False
                             )
-                            logger.info(
+                            logger.debug(
                                 f"[process_tool_call_node] Yielding tool result for {tool_name} "
                                 f"(call_id={tool_call_id[:8]}...), is_delegation={is_delegation}, "
                                 f"is_complete={is_complete}, event_type={tool_result.event_type if tool_result else 'N/A'}"
@@ -1109,7 +1109,7 @@ class StreamProcessor:
                 # After all events are processed, drain any remaining chunks from output queues
                 # Use output_queues (not active_streams) since that's where chunks are actually stored
                 # Only drain streams that haven't been fully drained yet
-                logger.info(
+                logger.debug(
                     f"[process_tool_call_node] Starting final drain of {len(output_queues)} output queues "
                     f"(context_type={context_type}, drained_streams={len(drained_streams)})"
                 )
@@ -1126,7 +1126,7 @@ class StreamProcessor:
                             self.delegation_manager.remove_active_stream(queue_key)
                         continue
 
-                    logger.info(
+                    logger.debug(
                         f"[process_tool_call_node] Draining final chunks from queue: {queue_key}"
                     )
                     output_queue = output_queues[queue_key]
@@ -1144,7 +1144,7 @@ class StreamProcessor:
                             final_drain_elapsed = (
                                 asyncio.get_running_loop().time() - final_drain_start
                             )
-                            logger.info(
+                            logger.debug(
                                 f"[process_tool_call_node] Final drain completed for {queue_key}: "
                                 f"chunks={total_final_chunks}, attempts={attempt + 1}, "
                                 f"elapsed={final_drain_elapsed:.2f}s"
@@ -1199,7 +1199,7 @@ class StreamProcessor:
                             delegation_cache_keys.append((tool_call_id, cache_key))
 
                     if delegation_cache_keys:
-                        logger.info(
+                        logger.debug(
                             f"[process_tool_call_node] Waiting for {len(delegation_cache_keys)} delegation cached results "
                             f"before closing stream (SUPERVISOR context)"
                         )
@@ -1225,7 +1225,7 @@ class StreamProcessor:
                                     )
                                     if result:
                                         pending_keys.discard(cache_key)
-                                        logger.info(
+                                        logger.debug(
                                             f"[process_tool_call_node] Cache result found for tool_call_id={tool_call_id[:8]}..., "
                                             f"cache_key={cache_key}, result_length={len(result)} chars"
                                         )
@@ -1234,7 +1234,7 @@ class StreamProcessor:
                                 wait_elapsed = (
                                     asyncio.get_running_loop().time() - wait_start_time
                                 )
-                                logger.info(
+                                logger.debug(
                                     f"[process_tool_call_node] All delegation cached results available, "
                                     f"stream can close safely (waited {int(waited)}s, elapsed={wait_elapsed:.2f}s)"
                                 )
@@ -1276,7 +1276,7 @@ class StreamProcessor:
 
                 # Log summary of tool call processing
                 context_type = "SUPERVISOR" if current_context else "SUBAGENT"
-                logger.info(
+                logger.debug(
                     f"[process_tool_call_node] Stream exhausted - Completed ({context_type}): "
                     f"tool_calls={tool_call_event_count}, tool_results={tool_result_event_count}, "
                     f"drained_streams={len(drained_streams)}, remaining_streaming_tasks={len(streaming_tasks)}"
