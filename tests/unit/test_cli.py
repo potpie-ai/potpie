@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import shutil
+from importlib.metadata import entry_points
 from pathlib import Path
 
 import pytest
@@ -44,7 +45,11 @@ def _make_git_repo(path: Path) -> Path:
 
 
 def test_cli_command_registration() -> None:
-    assert 'potpie = "potpie.cli:main"' in Path("pyproject.toml").read_text()
+    scripts = entry_points(group="console_scripts")
+    assert any(
+        script.name == "potpie" and script.value == "potpie.cli:main"
+        for script in scripts
+    )
 
     result = runner.invoke(cli.app, ["--help"])
 
@@ -117,6 +122,33 @@ def test_parse_failure_exits_non_zero(
     assert "Parsing failed" in result.output
 
 
+@pytest.mark.parametrize(
+    ("call", "message"),
+    [
+        (
+            lambda client: client.submit_parse(Path("/tmp/repo"), "main"),
+            "POST /api/v2/parse response was not an object.",
+        ),
+        (
+            lambda client: client.get_parsing_status("project-1"),
+            "GET /api/v2/parsing-status/project-1 response was not an object.",
+        ),
+        (
+            lambda client: client.create_conversation("project-1", "agent"),
+            "POST /api/v2/conversations/ response was not an object.",
+        ),
+    ],
+)
+def test_api_object_methods_reject_non_object(
+    monkeypatch: pytest.MonkeyPatch, call: object, message: str
+) -> None:
+    client = cli.PotpieApiClient.__new__(cli.PotpieApiClient)
+    monkeypatch.setattr(client, "_request", lambda *args, **kwargs: [])
+
+    with pytest.raises(cli.CLIError, match=message):
+        call(client)
+
+
 def test_chat_rejects_not_ready_project(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
 
@@ -137,6 +169,35 @@ def test_chat_rejects_not_ready_project(monkeypatch: pytest.MonkeyPatch) -> None
 
     assert result.exit_code == 1
     assert "not ready" in result.output
+    assert calls == []
+
+
+def test_chat_branch_rejects_missing_project(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    class FakeClient:
+        def __init__(self, base_url: str | None = None):
+            pass
+
+        def get_parsing_status(self, project_id: str) -> dict[str, str]:
+            return {"status": "ready"}
+
+        def list_projects(self) -> list[dict[str, str]]:
+            return []
+
+        def create_conversation(self, project_id: str, agent_name: str) -> str:
+            calls.append("create")
+            return "conversation-1"
+
+    monkeypatch.setattr(cli, "PotpieApiClient", FakeClient)
+
+    result = runner.invoke(
+        cli.app,
+        ["chat", "project-1", "--agent", "agent", "--branch", "main"],
+    )
+
+    assert result.exit_code == 1
+    assert "was not found in the project list" in result.output
     assert calls == []
 
 

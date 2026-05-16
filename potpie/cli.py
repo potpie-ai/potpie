@@ -39,7 +39,7 @@ class CLIError(Exception):
 
 
 def _load_env() -> None:
-    load_dotenv(REPO_ROOT / ".env", override=False)
+    load_dotenv(_repo_root() / ".env", override=False)
 
 
 def _echo_error(message: str) -> None:
@@ -72,17 +72,34 @@ def _process_running(pid: int) -> bool:
     return True
 
 
-def _read_pid() -> int | None:
+def _read_pid_metadata() -> dict[str, Any] | None:
     try:
-        return int(_pid_file().read_text().strip())
-    except (OSError, ValueError):
+        data = json.loads(_pid_file().read_text())
+    except (OSError, json.JSONDecodeError):
         return None
+    if not isinstance(data, dict):
+        return None
+    return data
 
 
-def _write_pid(pid: int) -> None:
+def _metadata_pid(metadata: dict[str, Any] | None) -> int | None:
+    if not metadata:
+        return None
+    pid = metadata.get("pid")
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return None
+    return pid
+
+
+def _write_pid(pid: int, command: list[str]) -> None:
     state_dir = _state_dir()
     state_dir.mkdir(parents=True, exist_ok=True)
-    _pid_file().write_text(f"{pid}\n")
+    metadata = {
+        "pid": pid,
+        "command": command,
+        "started_at": datetime.now().isoformat(),
+    }
+    _pid_file().write_text(json.dumps(metadata, indent=2) + "\n")
 
 
 def _clear_pid() -> None:
@@ -191,15 +208,21 @@ class PotpieApiClient:
         except ValueError as exc:
             raise CLIError(f"{method} {path} returned non-JSON response") from exc
 
+    def _request_object(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        data = self._request(method, path, **kwargs)
+        if not isinstance(data, dict):
+            raise CLIError(f"{method} {path} response was not an object.")
+        return data
+
     def submit_parse(self, repo_path: Path, branch: str) -> dict[str, Any]:
-        return self._request(
+        return self._request_object(
             "POST",
             "/api/v2/parse",
             json={"repo_path": str(repo_path), "branch_name": branch},
         )
 
     def get_parsing_status(self, project_id: str) -> dict[str, Any]:
-        return self._request("GET", f"/api/v2/parsing-status/{project_id}")
+        return self._request_object("GET", f"/api/v2/parsing-status/{project_id}")
 
     def list_projects(self) -> list[dict[str, Any]]:
         data = self._request("GET", "/api/v2/projects/list")
@@ -208,7 +231,7 @@ class PotpieApiClient:
         return data
 
     def create_conversation(self, project_id: str, agent_name: str) -> str:
-        data = self._request(
+        data = self._request_object(
             "POST",
             "/api/v2/conversations/",
             json={"project_ids": [project_id], "agent_ids": [agent_name]},
@@ -322,26 +345,30 @@ def start_cmd() -> None:
         _echo_error(f"Missing {env_file}. Copy .env.template to .env and configure it.")
         raise typer.Exit(code=1)
 
-    pid = _read_pid()
+    pid_metadata = _read_pid_metadata()
+    pid = _metadata_pid(pid_metadata)
     if pid and _process_running(pid):
         typer.echo(f"Potpie appears to be running already (pid {pid}).")
         typer.echo(f"Log file: {_log_file()}")
         return
+    if _pid_file().exists():
+        _clear_pid()
 
     _state_dir().mkdir(parents=True, exist_ok=True)
     log_handle = _log_file().open("a")
     log_handle.write(f"\n--- potpie start {datetime.now().isoformat()} ---\n")
     log_handle.flush()
 
+    command = ["bash", str(script)]
     process = subprocess.Popen(
-        ["bash", str(script)],
+        command,
         cwd=root,
         stdout=log_handle,
         stderr=subprocess.STDOUT,
         start_new_session=True,
     )
     log_handle.close()
-    _write_pid(process.pid)
+    _write_pid(process.pid, command)
 
     time.sleep(1)
     if process.poll() is not None:
@@ -363,7 +390,8 @@ def stop_cmd() -> None:
     root = _repo_root()
     script = root / "scripts" / "stop.sh"
 
-    pid = _read_pid()
+    pid_metadata = _read_pid_metadata()
+    pid = _metadata_pid(pid_metadata)
     if pid and _process_running(pid):
         try:
             os.killpg(pid, signal.SIGTERM)
@@ -376,6 +404,10 @@ def stop_cmd() -> None:
                 typer.echo(f"Sent SIGTERM to Potpie process {pid}.")
             except OSError:
                 pass
+    elif pid:
+        typer.echo(f"No running Potpie process found for recorded pid {pid}.")
+    elif _pid_file().exists():
+        typer.echo("PID metadata missing or invalid.")
     _clear_pid()
 
     if script.is_file():
@@ -495,7 +527,12 @@ def chat_cmd(
         if branch:
             projects = client.list_projects()
             match = next((p for p in projects if str(p.get("id")) == project_id), None)
-            if match and str(match.get("branch_name")) != branch:
+            if not match:
+                raise CLIError(
+                    f"Project {project_id} was not found in the project list; "
+                    f"cannot verify branch {branch}."
+                )
+            if str(match.get("branch_name")) != branch:
                 raise CLIError(
                     f"Project {project_id} is for branch {match.get('branch_name')}, not {branch}."
                 )
