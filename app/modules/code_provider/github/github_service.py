@@ -43,6 +43,7 @@ from app.modules.code_provider.github.github_provider import GitHubProvider
 from app.modules.code_provider.provider_factory import CodeProviderFactory
 from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_service import ProjectService
+from app.modules.code_provider.github.repo_name_validator import validate_repo_name
 from app.modules.users.user_model import User
 
 try:
@@ -1190,6 +1191,7 @@ class GithubService:
         return {"repositories": combined_repos}
 
     async def get_branch_list(self, repo_name: str):
+        validate_repo_name(repo_name)
         try:
             # Check if repo_name is a path to a local repository
             if os.path.exists(repo_name) and os.path.isdir(repo_name):
@@ -1558,6 +1560,7 @@ class GithubService:
         return "\n".join(_format_node(structure))
 
     async def check_public_repo(self, repo_name: str) -> bool:
+        validate_repo_name(repo_name)
         try:
             github = self.get_public_github_instance()
             github.get_repo(repo_name)
