@@ -28,6 +28,8 @@ Ensure `~/.local/bin` is in your PATH.
 
    This will automatically create a `.venv` directory and install all dependencies from `pyproject.toml`.
 
+   For local validation hooks, see [Pre-commit](PRECOMMIT.md).
+
 3. You can use the following env config to run potpie with local models:
 
    ```bash
