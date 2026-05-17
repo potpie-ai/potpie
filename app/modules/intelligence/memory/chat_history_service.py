@@ -1,7 +1,7 @@
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +18,12 @@ from app.modules.utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 
+@dataclass(frozen=True)
+class ChatHistoryMessage:
+    type: Literal["human", "ai"]
+    content: str
+
+
 class ChatHistoryServiceError(Exception):
     """Base exception class for ChatHistoryService errors."""
 
@@ -29,7 +35,7 @@ class ChatHistoryService:
 
     def get_session_history(
         self, user_id: str, conversation_id: str
-    ) -> List[BaseMessage]:
+    ) -> List[ChatHistoryMessage]:
         try:
             messages = (
                 self.db.query(Message)
@@ -41,9 +47,11 @@ class ChatHistoryService:
             history = []
             for msg in messages:
                 if msg.type == MessageType.HUMAN:
-                    history.append(HumanMessage(content=msg.content))
+                    history.append(
+                        ChatHistoryMessage(type="human", content=msg.content)
+                    )
                 else:
-                    history.append(AIMessage(content=msg.content))
+                    history.append(ChatHistoryMessage(type="ai", content=msg.content))
             logger.info(
                 f"Retrieved session history for conversation: {conversation_id}"
             )
@@ -255,7 +263,7 @@ class AsyncChatHistoryService:
 
     async def get_session_history(
         self, user_id: str, conversation_id: str
-    ) -> List[BaseMessage]:
+    ) -> List[ChatHistoryMessage]:
         try:
             stmt = (
                 select(Message)
@@ -268,9 +276,11 @@ class AsyncChatHistoryService:
             history = []
             for msg in messages:
                 if msg.type == MessageType.HUMAN:
-                    history.append(HumanMessage(content=msg.content))
+                    history.append(
+                        ChatHistoryMessage(type="human", content=msg.content)
+                    )
                 else:
-                    history.append(AIMessage(content=msg.content))
+                    history.append(ChatHistoryMessage(type="ai", content=msg.content))
             logger.info(
                 "Retrieved session history for conversation: %s",
                 conversation_id,
