@@ -20,6 +20,8 @@ logger = setup_logger(__name__)
 
 @dataclass(frozen=True)
 class ChatHistoryMessage:
+    """Lightweight chat history entry used by prompt formatting."""
+
     type: Literal["human", "ai"]
     content: str
 
@@ -36,6 +38,8 @@ class ChatHistoryService:
     def get_session_history(
         self, user_id: str, conversation_id: str
     ) -> List[ChatHistoryMessage]:
+        """Return active conversation messages in chronological prompt order."""
+
         try:
             messages = (
                 self.db.query(Message)
@@ -264,6 +268,8 @@ class AsyncChatHistoryService:
     async def get_session_history(
         self, user_id: str, conversation_id: str
     ) -> List[ChatHistoryMessage]:
+        """Return active conversation messages in chronological prompt order."""
+
         try:
             stmt = (
                 select(Message)
