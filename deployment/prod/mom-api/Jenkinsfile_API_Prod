@@ -23,14 +23,32 @@ pipeline {
                     if (branch == "origin/dir-restruct") {
                         env.ENVIRONMENT = 'dir-restruct'
                     } else if (branch == "origin/main"){
-                        env.ENVIORNMENT = 'main'
+                        env.ENVIRONMENT = 'main'
                     } else {
-                        error("Unknown branch: ${branch}. This pipeline only supports main and staging branches.")
+                        error("Unknown branch: ${branch}. This pipeline only supports origin/main and origin/dir-restruct.")
                     }
 
                     checkout scm
                     // Capture the short Git commit hash to use as the image tag
                     env.GIT_COMMIT_HASH = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
+                }
+            }
+        }
+
+        stage('Quality Gates') {
+            steps {
+                script {
+                    sh '''#!/usr/bin/env bash
+set -euo pipefail
+if ! command -v uv >/dev/null 2>&1; then
+  echo "uv is required to run quality gates" >&2
+  exit 1
+fi
+uv sync --frozen --dev
+uv run ruff check app tests --exit-zero
+SKIP_REAL_PARSE=1 uv run python scripts/run_tests.py --unit-only
+SKIP_REAL_PARSE=1 uv run python scripts/run_tests.py --integration-only
+'''
                 }
             }
         }
@@ -47,6 +65,17 @@ pipeline {
             }
         }
 
+        stage('Preflight Checks') {
+            steps {
+                script {
+                    sh """
+                    test -d "${env.WORKSPACE}"
+                    test -f "${env.WORKSPACE}/deployment/prod/mom-api/api.Dockerfile"
+                    """
+                }
+            }
+        }
+
         stage('Build Docker Image') {
             steps {
                 script {
@@ -55,7 +84,7 @@ pipeline {
                     def dockerRegistry = env.DOCKER_REGISTRY
                     echo "Printing the saved docker registry from env:"
                     echo "${dockerRegistry}"
-                    sh "sudo docker build -f deployment/prod/mom-api/api.Dockerfile -t ${DOCKER_REGISTRY}/mom-api:${imageTag} /var/lib/jenkins/workspace/mom_api-pipeline"
+                    sh "sudo docker build -f deployment/prod/mom-api/api.Dockerfile -t ${DOCKER_REGISTRY}/mom-api:${imageTag} \"${env.WORKSPACE}\""
                 }
             }
         }
@@ -123,7 +152,7 @@ pipeline {
 
                     if (!imageDeploySucceeded) {
                         echo 'Rolling back to previous revision...'
-                        sh 'kubectl rollout undo deployment/mom-api-deployment -n ${params.namespace}'
+                        sh "kubectl rollout undo deployment/mom-api-deployment -n ${params.namespace}"
                     }
                 }
             }
