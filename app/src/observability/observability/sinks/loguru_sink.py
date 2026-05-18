@@ -20,20 +20,23 @@ _HINT = "loguru sink requires loguru — install observability[loguru]"
 
 class _LoguruHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
-        from loguru import logger as L
-
         try:
-            level = L.level(record.levelname).name
-        except ValueError:
-            level = record.levelno
-        fields: dict = {}
-        for attr in ("obs_context", "obs_fields"):
-            data = getattr(record, attr, None)
-            if isinstance(data, dict):
-                fields.update(data)
-        L.bind(**fields).opt(depth=6, exception=record.exc_info).log(
-            level, record.getMessage()
-        )
+            from loguru import logger as L
+
+            try:
+                level = L.level(record.levelname).name
+            except ValueError:
+                level = record.levelno
+            fields: dict = {}
+            for attr in ("obs_context", "obs_fields"):
+                data = getattr(record, attr, None)
+                if isinstance(data, dict):
+                    fields.update(data)
+            L.bind(**fields).opt(depth=6, exception=record.exc_info).log(
+                level, record.getMessage()
+            )
+        except Exception:
+            self.handleError(record)
 
 
 class LoguruSink:
