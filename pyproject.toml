@@ -105,6 +105,7 @@ potpie-sandbox = { path = "app/src/sandbox", editable = true }
 
 [project.scripts]
 potpie-seed = "seed.cli:main"
+potpie = "potpie_cli:main"
 
 [dependency-groups]
 dev = [
@@ -118,6 +119,9 @@ dev = [
     "pytest-cov>=6.0.0",
     "ruff>=0.14.3",
 ]
+
+[tool.setuptools]
+py-modules = ["potpie_cli"]
 
 [tool.setuptools.packages.find]
 include = ["potpie*", "app*", "seed*"]
