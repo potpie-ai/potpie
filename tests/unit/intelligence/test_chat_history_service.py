@@ -25,12 +25,19 @@ class _Query:
 
         self._messages = messages
         self.filters = []
+        self.predicates = []
         self.order_by_column = None
 
     def filter_by(self, **kwargs):
         """Record a filter_by call and keep the query chainable."""
 
         self.filters.append(kwargs)
+        return self
+
+    def filter(self, *predicates):
+        """Record SQLAlchemy filter predicates and keep the query chainable."""
+
+        self.predicates.extend(predicates)
         return self
 
     def order_by(self, column):
@@ -132,13 +139,13 @@ def test_sync_session_history_uses_lightweight_messages():
     assert history == [
         ChatHistoryMessage(type="human", content="hello"),
         ChatHistoryMessage(type="ai", content="answer"),
-        ChatHistoryMessage(type="ai", content="system note"),
     ]
     assert session.query_model is Message
     assert session.last_query.filters == [
         {"conversation_id": "conversation-1"},
         {"status": MessageStatus.ACTIVE},
     ]
+    assert len(session.last_query.predicates) == 1
 
 
 @pytest.mark.asyncio
@@ -149,6 +156,7 @@ async def test_async_session_history_uses_lightweight_messages():
         [
             _message(MessageType.HUMAN, "question"),
             _message(MessageType.AI_GENERATED, "response"),
+            _message(MessageType.SYSTEM_GENERATED, "system note"),
         ]
     )
 

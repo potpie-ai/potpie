@@ -45,6 +45,7 @@ class ChatHistoryService:
                 self.db.query(Message)
                 .filter_by(conversation_id=conversation_id)
                 .filter_by(status=MessageStatus.ACTIVE)  # Only fetch active messages
+                .filter(Message.type != MessageType.SYSTEM_GENERATED)
                 .order_by(Message.created_at)
                 .all()
             )
@@ -54,7 +55,7 @@ class ChatHistoryService:
                     history.append(
                         ChatHistoryMessage(type="human", content=msg.content)
                     )
-                else:
+                elif msg.type == MessageType.AI_GENERATED:
                     history.append(ChatHistoryMessage(type="ai", content=msg.content))
             logger.info(
                 f"Retrieved session history for conversation: {conversation_id}"
@@ -275,6 +276,7 @@ class AsyncChatHistoryService:
                 select(Message)
                 .where(Message.conversation_id == conversation_id)
                 .where(Message.status == MessageStatus.ACTIVE)
+                .where(Message.type != MessageType.SYSTEM_GENERATED)
                 .order_by(Message.created_at)
             )
             result = await self.session.execute(stmt)
@@ -285,7 +287,7 @@ class AsyncChatHistoryService:
                     history.append(
                         ChatHistoryMessage(type="human", content=msg.content)
                     )
-                else:
+                elif msg.type == MessageType.AI_GENERATED:
                     history.append(ChatHistoryMessage(type="ai", content=msg.content))
             logger.info(
                 "Retrieved session history for conversation: %s",
