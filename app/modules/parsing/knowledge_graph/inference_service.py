@@ -312,7 +312,9 @@ class InferenceService:
             while True:
                 result = session.run(
                     "MATCH (n:NODE {repoId: $repo_id}) "
-                    "RETURN n.node_id AS node_id, n.text AS text, n.file_path AS file_path, n.start_line AS start_line, n.end_line AS end_line, n.name AS name "
+                    "RETURN n.node_id AS node_id, n.text AS text, n.file_path AS file_path, "
+                    "n.start_line AS start_line, n.end_line AS end_line, n.name AS name, "
+                    "n.type AS node_type, n.content_hash AS content_hash "
                     "SKIP $offset LIMIT $limit",
                     repo_id=repo_id,
                     offset=offset,
@@ -563,8 +565,9 @@ class InferenceService:
         """
         Create LLM batches from nodes that need inference (cache misses).
 
-        Only processes nodes that don't have cached_inference set.
-        Uses normalized_text if available, otherwise normalizes on the fly.
+        Cacheability controls whether results are stored, not whether a node is
+        inferred. This keeps inference coverage unchanged for small or otherwise
+        uncacheable nodes.
         """
         batch_start_time = time.time()
         node_dict = {node["node_id"]: node for node in nodes}
@@ -572,22 +575,17 @@ class InferenceService:
         # Filter to nodes that need LLM inference:
         # - No cache hit (cached_inference not set)
         # - Has text content
-        # - Is cacheable (skip small/trivial nodes that aren't worth processing)
         nodes_with_cached = sum(1 for n in nodes if n.get("cached_inference"))
         nodes_with_text = sum(1 for n in nodes if n.get("text"))
 
-        # Skip uncacheable nodes - they're typically too small or have unresolved references
-        # Only process nodes that have should_cache=True (cacheable but cache miss)
-        # OR have content_hash set (cacheable)
         nodes_needing_inference = [
             n
             for n in nodes
             if not n.get("cached_inference")
             and n.get("text")
-            and (n.get("should_cache") or n.get("content_hash"))  # Only cacheable nodes
         ]
 
-        nodes_skipped_uncacheable = sum(
+        nodes_not_cacheable = sum(
             1
             for n in nodes
             if not n.get("cached_inference")
@@ -599,13 +597,13 @@ class InferenceService:
         logger.info(
             f"[BATCHING] Creating batches for {len(nodes_needing_inference)} nodes "
             f"(total: {len(nodes)}, cached: {nodes_with_cached}, with text: {nodes_with_text}, "
-            f"skipped uncacheable: {nodes_skipped_uncacheable})",
+            f"not cacheable: {nodes_not_cacheable})",
             project_id=project_id,
             nodes_total=len(nodes),
             nodes_with_cached=nodes_with_cached,
             nodes_with_text=nodes_with_text,
             nodes_needing_inference=len(nodes_needing_inference),
-            nodes_skipped_uncacheable=nodes_skipped_uncacheable,
+            nodes_not_cacheable=nodes_not_cacheable,
         )
 
         batches = []
@@ -1057,6 +1055,21 @@ class InferenceService:
                         # Store results in cache and Neo4j
                         cache_store_start = time.time()
                         batch_cache_stored = 0
+                        request_by_node_id = {
+                            request.node_id: request for request in batch
+                        }
+                        content_hash_by_node_id = {}
+                        for request in batch:
+                            metadata = request.metadata or {}
+                            if not metadata.get("should_cache"):
+                                continue
+                            content_hash = metadata.get("content_hash")
+                            if not content_hash:
+                                continue
+                            content_hash_by_node_id[request.node_id] = content_hash
+                            parent_node_id = metadata.get("parent_node_id")
+                            if parent_node_id:
+                                content_hash_by_node_id[parent_node_id] = content_hash
 
                         # Pre-generate embeddings for all docstrings in batch
                         # This allows us to cache embeddings and reuse them in Neo4j update
@@ -1067,9 +1080,13 @@ class InferenceService:
                             )
                             docstring_embeddings[docstring_result.node_id] = embedding
 
-                        for request, docstring_result in zip(
-                            batch, response.docstrings
-                        ):
+                        for docstring_result in response.docstrings:
+                            request = request_by_node_id.get(docstring_result.node_id)
+                            if request is None:
+                                logger.debug(
+                                    f"[INFERENCE] Skipping cache store for unexpected node {docstring_result.node_id}"
+                                )
+                                continue
                             metadata = request.metadata or {}
                             embedding = docstring_embeddings.get(
                                 docstring_result.node_id
@@ -1120,7 +1137,10 @@ class InferenceService:
                         if processed_response:
                             # Pass pre-generated embeddings to avoid regenerating
                             self.update_neo4j_with_docstrings(
-                                repo_id, processed_response, docstring_embeddings
+                                repo_id,
+                                processed_response,
+                                docstring_embeddings,
+                                content_hash_by_node_id,
                             )
                         neo4j_update_time = time.time() - neo4j_update_start
 
@@ -1406,6 +1426,7 @@ class InferenceService:
                     "docstring": docstring,
                     "embedding": embedding,
                     "tags": tags,
+                    "content_hash": node.get("content_hash"),
                 }
             )
 
@@ -1429,11 +1450,14 @@ class InferenceService:
                     MATCH (n:NODE {repoId: $repo_id, node_id: item.node_id})
                     SET n.docstring = item.docstring,
                         n.embedding = item.embedding,
-                        n.tags = item.tags
-                    """
-                    + ("" if is_local_repo else ", n.text = null, n.signature = null"),
+                        n.tags = item.tags,
+                        n.content_hash = item.content_hash,
+                        n.text = CASE WHEN $clear_source THEN null ELSE n.text END,
+                        n.signature = CASE WHEN $clear_source THEN null ELSE n.signature END
+                    """,
                     batch=batch,
                     repo_id=repo_id,
+                    clear_source=not is_local_repo,
                 )
 
         logger.info(
@@ -1493,6 +1517,7 @@ class InferenceService:
         repo_id: str,
         docstrings: DocstringResponse,
         precomputed_embeddings: Optional[Dict[str, List[float]]] = None,
+        content_hash_by_node_id: Optional[Dict[str, str]] = None,
     ):
         """
         Update Neo4j with docstrings and embeddings.
@@ -1501,10 +1526,15 @@ class InferenceService:
             repo_id: Project/repo ID
             docstrings: DocstringResponse with results
             precomputed_embeddings: Optional dict of node_id -> embedding to avoid regenerating
+            content_hash_by_node_id: Optional dict of node_id -> normalized content hash
         """
         with self.driver.session() as session:
             batch_size = 300
             precomputed = precomputed_embeddings or {}
+            should_update_content_hash = content_hash_by_node_id is not None
+            content_hashes = (
+                content_hash_by_node_id if should_update_content_hash else {}
+            )
             docstring_list = [
                 {
                     "node_id": n.node_id,
@@ -1516,22 +1546,34 @@ class InferenceService:
                 }
                 for n in docstrings.docstrings
             ]
+            if should_update_content_hash:
+                for item in docstring_list:
+                    item["content_hash"] = content_hashes.get(item["node_id"])
+
             project = self.project_manager.get_project_from_db_by_id_sync(repo_id)
             repo_path = project.get("repo_path")
             is_local_repo = True if repo_path else False
             for i in range(0, len(docstring_list), batch_size):
                 batch = docstring_list[i : i + batch_size]
+                content_hash_set_clause = (
+                    "n.content_hash = item.content_hash,\n                        "
+                    if should_update_content_hash
+                    else ""
+                )
                 session.run(
-                    """
+                    f"""
                     UNWIND $batch AS item
-                    MATCH (n:NODE {repoId: $repo_id, node_id: item.node_id})
+                    MATCH (n:NODE {{repoId: $repo_id, node_id: item.node_id}})
                     SET n.docstring = item.docstring,
                         n.embedding = item.embedding,
-                        n.tags = item.tags
-                    """
-                    + ("" if is_local_repo else "REMOVE n.text, n.signature"),
+                        n.tags = item.tags,
+                        {content_hash_set_clause}\
+                        n.text = CASE WHEN $clear_source THEN null ELSE n.text END,
+                        n.signature = CASE WHEN $clear_source THEN null ELSE n.signature END
+                    """,
                     batch=batch,
                     repo_id=repo_id,
+                    clear_source=not is_local_repo,
                 )
 
     def create_vector_index(self):
