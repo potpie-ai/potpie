@@ -10,6 +10,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+_TRUTHY = {"1", "true", "yes", "y"}
+_FALSY = {"0", "false", "no", "n"}
+
+
+def parse_bool(value: str | None, default: bool) -> bool:
+    if value is None:
+        return default
+    normalized = value.lower().strip()
+    if normalized in _TRUTHY:
+        return True
+    if normalized in _FALSY:
+        return False
+    return default
+
 
 @dataclass(slots=True)
 class SentryConfig:
@@ -91,8 +105,10 @@ class ObservabilityConfig:
             logfire=LogfireConfig(
                 enabled=bool(logfire_token),
                 token=logfire_token,
-                send_to_cloud=os.getenv("LOGFIRE_SEND_TO_CLOUD", "true").lower()
-                != "false",
+                send_to_cloud=parse_bool(
+                    os.getenv("LOGFIRE_SEND_TO_CLOUD"),
+                    default=True,
+                ),
                 project_name=os.getenv("LOGFIRE_PROJECT_NAME", "potpie"),
                 # OTel prefork bug: never instrument pydantic-ai in a worker.
                 instrument_pydantic_ai=os.getenv("CELERY_WORKER") != "1",

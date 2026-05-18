@@ -15,20 +15,22 @@ from __future__ import annotations
 import logging
 import re
 
+REDACTION = r"\1=***REDACTED***"
+
 # (compiled pattern, replacement) — verbatim port.
 SENSITIVE_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r'(password|passwd|pwd)=["\']?([^"\'\s&]+)', re.IGNORECASE),
-     r"\1=***REDACTED***"),
+     REDACTION),
     (re.compile(r'(token|access_token|refresh_token|id_token)=["\']?([^"\'\s&]+)',
                 re.IGNORECASE),
-     r"\1=***REDACTED***"),
+     REDACTION),
     (re.compile(r'(secret|client_secret|api_secret)=["\']?([^"\'\s&]+)',
                 re.IGNORECASE),
-     r"\1=***REDACTED***"),
+     REDACTION),
     (re.compile(r'(api[_-]?key|apikey)=["\']?([^"\'\s&]+)', re.IGNORECASE),
-     r"\1=***REDACTED***"),
+     REDACTION),
     (re.compile(r'(auth|authorization)=["\']?([^"\'\s&]+)', re.IGNORECASE),
-     r"\1=***REDACTED***"),
+     REDACTION),
     (re.compile(r"Bearer\s+([A-Za-z0-9\-._~+/]+=*)", re.IGNORECASE),
      r"Bearer ***REDACTED***"),
     (re.compile(r"Basic\s+([A-Za-z0-9+/]+=*)", re.IGNORECASE),

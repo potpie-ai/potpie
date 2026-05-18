@@ -132,6 +132,10 @@ def configure(config: "ObservabilityConfig | None" = None) -> None:
     root = logging.getLogger()
 
     for h in _iter_managed(root):
+        try:
+            h.close()
+        except Exception:
+            pass
         root.removeHandler(h)
 
     ctx_filter = ContextFilter()
