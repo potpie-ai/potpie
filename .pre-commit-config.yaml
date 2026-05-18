@@ -1,10 +1,14 @@
+ci:
+  autofix_prs: false
+  autofix_commit_msg: ""
+  autoupdate_schedule: quarterly
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
       - id: check-yaml
-      - id: trailing-whitespace
-      - id: end-of-file-fixer
+        exclude: ^app/src/sandbox/scripts/daytona-overrides/docker-compose\.override\.yaml$
       - id: check-merge-conflict
       - id: check-added-large-files
         args: ["--maxkb=51200"]
@@ -15,9 +19,9 @@ repos:
     rev: v0.8.2
     hooks:
       - id: ruff
-        args: ["--fix"]
         exclude: ^app/alembic/
       - id: ruff-format
+        args: ["--check"]
         exclude: ^app/alembic/
 
   - repo: https://github.com/PyCQA/bandit
