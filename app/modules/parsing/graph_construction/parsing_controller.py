@@ -57,27 +57,12 @@ class ParsingController:
         parse_helper = ParseHelper(db)
         parsing_service = ParsingService(db, user_id)
 
-        # Auto-detect if repo_name is actually a filesystem path
-        if repo_details.repo_name and not repo_details.repo_path:
-            is_path = (
-                os.path.isabs(repo_details.repo_name)
-                or repo_details.repo_name.startswith(("~", "./", "../"))
-                or os.path.isdir(os.path.expanduser(repo_details.repo_name))
-            )
-            if is_path:
-                # Move from repo_name to repo_path
-                repo_details.repo_path = repo_details.repo_name
-                repo_details.repo_name = repo_details.repo_path.split("/")[-1]
-                logger.info(
-                    f"Auto-detected filesystem path: repo_path={repo_details.repo_path}, repo_name={repo_details.repo_name}"
-                )
+        # Repository identifier resolution (local vs remote) is handled
+        # in ParsingRequest.__init__ via RepositoryResolver. At this point
+        # repo_details.repo_name is always populated, and repo_details.repo_path
+        # is set only for local repositories.
 
-        if config_provider.get_is_development_mode():
-            # In dev mode: if both repo_path and repo_name are provided, prioritize repo_path (local)
-            if repo_details.repo_path and repo_details.repo_name:
-                repo_details.repo_name = None
-            # Otherwise keep whichever one is provided as-is
-        else:
+        if not config_provider.get_is_development_mode():
             # In non-dev mode: if repo_name is None but repo_path exists, extract repo_name from repo_path
             if not repo_details.repo_name and repo_details.repo_path:
                 repo_details.repo_name = repo_details.repo_path.split("/")[-1]
@@ -367,7 +352,9 @@ class ParsingController:
         }
 
         logger.info(f"Submitting parsing task for new project {new_project_id}")
-        repo_name = repo_details.repo_name or repo_details.repo_path.split("/")[-1]
+        repo_name = repo_details.repo_name or (
+            repo_details.repo_path.split("/")[-1] if repo_details.repo_path else "unknown"
+        )
         await project_manager.register_project(
             repo_name,
             repo_details.branch_name,
