@@ -42,7 +42,9 @@ class JsonFormatter(logging.Formatter):
         for attr in ("obs_context", "obs_fields"):
             extra = getattr(record, attr, None)
             if isinstance(extra, dict):
-                data.update(extra)
+                for key, value in extra.items():
+                    target_key = f"extra_{key}" if key in data else key
+                    data[target_key] = value
         if record.exc_info:
             etype, eval_, _ = record.exc_info
             tb = "".join(traceback.format_exception(*record.exc_info))
