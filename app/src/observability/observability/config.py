@@ -62,8 +62,39 @@ class ObservabilityConfig:
     @classmethod
     def from_env(cls) -> "ObservabilityConfig":
         """Build from env vars: ENV, LOG_LEVEL, LOG_STACK_TRACES, SENTRY_DSN,
-        LOGFIRE_TOKEN, LOGFIRE_SEND_TO_CLOUD, LOGFIRE_PROJECT_NAME, CELERY_WORKER.
+        SENTRY_ENVIRONMENT, LOGFIRE_TOKEN, LOGFIRE_SEND_TO_CLOUD,
+        LOGFIRE_PROJECT_NAME, CELERY_WORKER.
 
-        STUB (Phase 1): contract only.
+        Enablement is DERIVED, not silent: Sentry/logfire are only enabled when
+        their credential is actually present (the audit's silent-no-op fix).
         """
-        raise NotImplementedError("Phase 1 scaffold — implemented in Phase 2")
+        import os
+
+        env = (os.getenv("ENV") or "development").lower().strip()
+        is_dev = env == "development"
+        sentry_dsn = os.getenv("SENTRY_DSN") or None
+        logfire_token = os.getenv("LOGFIRE_TOKEN") or None
+
+        return cls(
+            service_name=os.getenv("SERVICE_NAME", "potpie"),
+            env=env,
+            level=os.getenv("LOG_LEVEL", "INFO").upper(),
+            redact=True,
+            show_stack_traces=os.getenv("LOG_STACK_TRACES", "true").lower()
+            in ("true", "1", "yes"),
+            sinks=["console"] if is_dev else ["json_stdout"],
+            sentry=SentryConfig(
+                enabled=bool(sentry_dsn),
+                dsn=sentry_dsn,
+                environment=os.getenv("SENTRY_ENVIRONMENT", env),
+            ),
+            logfire=LogfireConfig(
+                enabled=bool(logfire_token),
+                token=logfire_token,
+                send_to_cloud=os.getenv("LOGFIRE_SEND_TO_CLOUD", "true").lower()
+                != "false",
+                project_name=os.getenv("LOGFIRE_PROJECT_NAME", "potpie"),
+                # OTel prefork bug: never instrument pydantic-ai in a worker.
+                instrument_pydantic_ai=os.getenv("CELERY_WORKER") != "1",
+            ),
+        )

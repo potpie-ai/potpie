@@ -1,15 +1,12 @@
 """loguru as an OPTIONAL sink (extra: observability[loguru]).
 
-Note the filename is loguru_sink.py, NOT loguru.py — a module named loguru.py
-would shadow the real `loguru` package on import. (Same reason the package is
-'observability', not 'logging'.)
+Filename is loguru_sink.py, NOT loguru.py — a module named loguru.py would
+shadow the real `loguru` package (same reason the package is 'observability',
+not 'logging').
 
-Edge cases:
- - Import loguru lazily inside methods; importing this package must not
-   require loguru to be installed.
- - loguru<->stdlib bridging: this sink adapts stdlib records INTO loguru's
-   sink. Do not also install the InterceptHandler pointing back at loguru, or
-   records loop.
+loguru is imported lazily inside methods: importing this package never
+requires loguru. If a host configures the 'loguru' sink without loguru
+installed, resolution fails with a clear, actionable error (not at import).
 """
 
 from __future__ import annotations
@@ -18,15 +15,38 @@ import logging
 
 from ..config import ObservabilityConfig
 
+_HINT = "loguru sink requires loguru — install observability[loguru]"
+
+
+class _LoguruHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        from loguru import logger as L
+
+        try:
+            level = L.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
+        fields: dict = {}
+        for attr in ("obs_context", "obs_fields"):
+            data = getattr(record, attr, None)
+            if isinstance(data, dict):
+                fields.update(data)
+        L.bind(**fields).opt(depth=6, exception=record.exc_info).log(
+            level, record.getMessage()
+        )
+
 
 class LoguruSink:
     name = "loguru"
 
     def setup(self, config: ObservabilityConfig) -> None:
-        raise NotImplementedError("Phase 1 scaffold — ported in Phase 2")
+        try:
+            import loguru  # noqa: F401
+        except ModuleNotFoundError as exc:  # pragma: no cover
+            raise ModuleNotFoundError(_HINT) from exc
 
     def build_handler(self, config: ObservabilityConfig) -> logging.Handler | None:
-        raise NotImplementedError("Phase 1 scaffold — ported in Phase 2")
+        return _LoguruHandler()
 
     def instrument(self, config: ObservabilityConfig) -> None:
         return None

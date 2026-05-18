@@ -1,28 +1,55 @@
 """FastAPI/Starlette request-context middleware (extra: observability[fastapi]).
 
-Ported from current app/modules/utils/logging_middleware.py. Binds request_id
-(from X-Request-ID or generated), path, and user_id (if auth set it on
-request.state) into log_context for the request scope; echoes X-Request-ID on
-the response.
+Ports app/modules/utils/logging_middleware.py: binds request_id (X-Request-ID
+or generated), path, method, and user_id (if auth set request.state.user)
+into log_context for the request; echoes X-Request-ID on the response.
 
-EDGE CASES:
- - request.state.user may be absent/typed differently — guard, never raise
-   from middleware.
- - Streaming/SSE responses: context must stay bound for the whole stream, not
-   just until headers flush (the codebase streams chat responses).
- - This only covers HTTP. Background/Celery work needs integrations/celery.py
-   (EC3) — a request-only middleware is exactly why the audit found weak
-   correlation on queued runs.
+starlette is imported lazily via module __getattr__ so importing the package
+never requires starlette; `from ...fastapi import LoggingContextMiddleware`
+still works and triggers the import only then.
+
+KNOWN LIMITATION (port-parity, EC3): with BaseHTTPMiddleware the context is
+bound in the dispatch task; for streaming/SSE responses the body is produced
+in a different task, so logs emitted *during* streaming may not carry the
+context. This matches the original implementation; a streaming-safe rebind is
+tracked for later, not changed in this port.
 """
 
 from __future__ import annotations
 
 
-class LoggingContextMiddleware:
-    """STUB (Phase 1): contract only. Ported in Phase 2."""
+def _build_middleware():
+    import uuid
 
-    def __init__(self, app) -> None:
-        self.app = app
+    from starlette.middleware.base import BaseHTTPMiddleware
 
-    async def __call__(self, scope, receive, send):
-        raise NotImplementedError("Phase 1 scaffold — ported in Phase 2")
+    from .. import log_context
+
+    class LoggingContextMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+            user_id = None
+            state_user = getattr(request.state, "user", None)
+            if state_user:
+                user_id = state_user.get("user_id")
+            ctx = {
+                "request_id": request_id,
+                "path": request.url.path,
+                "method": request.method,
+            }
+            if user_id:
+                ctx["user_id"] = user_id
+            with log_context(**ctx):
+                response = await call_next(request)
+                response.headers["X-Request-ID"] = request_id
+                return response
+
+    return LoggingContextMiddleware
+
+
+def __getattr__(name: str):
+    if name == "LoggingContextMiddleware":
+        cls = _build_middleware()
+        globals()[name] = cls
+        return cls
+    raise AttributeError(name)
