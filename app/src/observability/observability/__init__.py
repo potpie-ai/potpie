@@ -1,6 +1,7 @@
 """Observability package — FROZEN PUBLIC CONTRACT.
 
-Only these three symbols are public. Everything else is internal and may change.
+Only the three functions below are the behavioral public API. The config and
+sink protocol are also re-exported as data/typing contracts.
 
     get_logger(name)        -> StructuredLogger   (ambient; thin stdlib wrapper)
     configure(config)       -> None               (idempotent composition root)
@@ -35,8 +36,8 @@ EC3  `log_context()` uses contextvars (async-safe). contextvars do NOT cross
      background-task correlation; integrations/* must re-bind at each hop.
 
 EC4  Logs emitted before `configure()` go to the default root handler. Every
-     entrypoint MUST call `configure()` first. The package installs a minimal
-     safety handler at import so pre-configure logs are not silently dropped.
+     entrypoint MUST call `configure()` first. Phase 2 must install a minimal
+     safety handler so pre-configure logs are not silently dropped.
 """
 
 from __future__ import annotations
@@ -56,8 +57,8 @@ class StructuredLogger(logging.LoggerAdapter):
     into `record.extra` so structured sinks can emit it as a field instead of
     interpolating it into the message (fixes the audit's 748 f-string blobs).
 
-    STUB: kwarg->extra mapping is the contract and is implemented (behaviour-
-    free w.r.t. sinks). Sink-side field emission lands in Phase 2.
+    STUB: kwarg->extra mapping is the contract. Implementation and sink-side
+    field emission land in Phase 2.
     """
 
     def process(self, msg, kwargs):  # noqa: D401

@@ -362,8 +362,8 @@ cost smell).
 - **EC3 contextvars don't cross hops.** Correlation IDs lost across
   threadpool/process/Celery boundaries unless re-bound per integration —
   this is the *root cause* of the audit's weak queued-run correlation.
-- **EC4 pre-configure logs.** Install a minimal safety handler at import so
-  logs before configure() aren't dropped.
+- **EC4 pre-configure logs.** Phase 2 must install a minimal safety handler
+  so logs before configure() aren't dropped; Phase 1 remains contract-only.
 - **Module shadowing** (caught during impl): `loguru.py`/`sentry.py`/
   `logfire.py` would shadow the real packages → renamed `*_sink.py`.
 - **Sentry double-capture**: our Sentry sink + Sentry's LoggingIntegration →
@@ -392,3 +392,66 @@ cost smell).
 **Status:** Phase 1 complete & verified on `feat/observability-package`. No
 existing code touched. Ready for Phase 2 (port current components) — pending
 go-ahead + the ticket fixes flagged previously.
+
+## 2026-05-15 — Phase 1 PR opened
+
+Committed 18 files (17 scaffold + history.md, +964) as
+`feat(observability): scaffold liftable observability package (Phase 1)`,
+pushed `feat/observability-package`, opened **PR #785** (base `main`):
+https://github.com/potpie-ai/potpie/pull/785
+
+Pre-existing unrelated untracked files (.tmp-*, DATA_STORAGE_INVENTORY.md,
+mermaid_sanitizer.py, vulnerability-assessment-report.md, docs/, tests/unit/)
+deliberately excluded — staged only `app/src/observability` + `history.md`.
+
+**Status:** PR #785 open for review. Phase 2 pending go-ahead + ticket fixes.
+
+## 2026-05-18 — PR #785 review + critical cleanup
+
+Fetched PR #785 locally as `pr-785-review`; it points at the same commit as
+`feat/observability-package` (`15588d2e`).
+
+### Review findings
+
+- **Critical: PR scope drift.** The PR diff included unrelated root
+  `pyproject.toml`, `uv.lock`, and `scripts/run_tests.sh` changes despite the
+  recorded Phase 1 intent being contract-only observability scaffold +
+  `history.md`. The lockfile change pulled in unrelated dependency metadata
+  (`coverage`, `pytest-cov`, extra `torch` wheels), widening review and merge
+  risk for no observability value.
+- **Contract doc mismatch.** `observability/__init__.py` claimed the package
+  installed a pre-configure safety handler at import, but Phase 1 is explicitly
+  stub/contract-only. Fixed the contract wording so Phase 2 owns that behavior
+  instead of implying existing runtime behavior.
+- **False local Python failure.** macOS `python3` is 3.9.6 and fails on
+  `dataclass(slots=True)`, but the repo-managed interpreter is Python 3.13.9
+  via `uv run`; root project requires `>=3.10,<3.14`, so no package change was
+  needed.
+
+### Fixes made
+
+- Restored `pyproject.toml` and `uv.lock` to the PR merge-base
+  (`4cc4dfdd...`) to remove the accidental root dependency/coverage churn from
+  PR #785.
+- Deleted unrelated `scripts/run_tests.sh`.
+- Updated `app/src/observability/observability/__init__.py` docs:
+  behavioral public API vs data/typing re-exports is now explicit, EC4 no
+  longer falsely says a handler is installed in Phase 1, and
+  `StructuredLogger.process` no longer says the kwarg mapping is already
+  implemented.
+
+### Verification
+
+- `PYTHONPATH=app/src/observability uv run python -m compileall -q app/src/observability/observability`
+  passed.
+- Imported public API + all sink/integration modules successfully under
+  `uv run python`.
+- Verified lazy optional deps: importing the scaffold did **not** import
+  `loguru`, `sentry_sdk`, `logfire`, `starlette`, or `celery`.
+- `rg -n "app\\." app/src/observability/observability app/src/observability/pyproject.toml`
+  found only documentation text, no `app.*` imports.
+
+**Status:** Critical PR-scope issue fixed locally; scaffold contract review
+passes. Remaining known gaps are still Phase 2+ / separate tickets:
+aggregation backend decision, audit remediation (PII, DEBUG-at-INFO,
+log-and-raise, f-string blobs), and actual implementation of the contract.
