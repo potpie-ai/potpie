@@ -39,7 +39,7 @@ potpie -v search "query here"
 
 Install the packaged agent bundle into the current repository. This writes a top-level `AGENTS.md` plus the repo-local `.agents/skills/potpie-*` files used by Codex-style agent workflows.
 
-The bundle includes a dedicated `potpie-agent-context` skill for MCP workflows. That skill keeps the public agent surface to `context_resolve`, `context_search`, `context_record`, and `context_status`, and encodes feature, debugging, review, operations, docs, and onboarding workflows as `context_resolve` parameter recipes.
+The bundle includes a dedicated `potpie-agent-context` skill for MCP workflows. That skill keeps the public agent surface to `context_resolve`, `context_search`, `context_record`, `context_status`, and `context_ingest`, and encodes feature, debugging, review, operations, docs, and onboarding workflows as `context_resolve` parameter recipes.
 
 | Command | Description |
 |---------|-------------|
@@ -253,18 +253,56 @@ uv run potpie event list --status done -n 10
 
 - Full service and env tables: repository root `app/src/context-engine/README.md`.
 - CLI targets **`/api/v2/context/`** with **`X-API-Key`**. **`/api/v1/context/`** remains for Firebase-authenticated clients.
-- MCP entrypoint: `potpie-mcp` (stdio server).
+- MCP entrypoints:
+  - **`potpie-mcp`** — local stdio server (CLI / editor spawn); calls **`/api/v2/context`** over HTTP. May require env **`CONTEXT_ENGINE_MCP_ALLOWED_POTS`** for the stdio allowlist.
+  - **`GET/POST /mcp`** on the Potpie FastAPI app — embedded Streamable HTTP MCP (same deploy as API). Pot access uses the same policy as **`/api/v2/context`** (no **`CONTEXT_ENGINE_MCP_ALLOWED_POTS`** required).
+
+### MCP setup (Cursor and other HTTP clients)
+
+1. **Run Potpie** with the context graph stack (API on port **8001** by default, Postgres, Neo4j, Redis/Celery for async ingest).
+2. **API key** — must be issued for **that** environment (local UI → API keys, or dev **`INTERNAL_ADMIN_SECRET`** in server `.env` used as `X-API-Key`). Staging keys do not work against localhost.
+3. **Client config** (project `.cursor/mcp.json` or global MCP settings):
+
+```json
+{
+  "mcpServers": {
+    "potpie": {
+      "url": "http://localhost:8001/mcp",
+      "headers": {
+        "X-API-Key": "your-key-for-this-environment",
+        "X-Potpie-Client-Name": "cursor"
+      }
+    }
+  }
+}
+```
+
+4. **`pot_id`** — not stored in MCP JSON. List or create pots via the API, then pass **`pot_id`** on every tool call (or put the UUID in project rules):
+
+```bash
+curl -sS "http://localhost:8001/api/v2/context/pots" -H "X-API-Key: YOUR_KEY"
+curl -sS -X POST "http://localhost:8001/api/v2/context/pots" \
+  -H "X-API-Key: YOUR_KEY" -H "Content-Type: application/json" \
+  -d '{"name": "my-pot", "slug": "my-pot"}'
+```
+
+5. **Smoke test** — `GET /health`, then MCP `initialize` against `POST http://localhost:8001/mcp/` with the same headers (expect `serverInfo.name` **`potpie`**).
+
+Recommended agent flow: **`context_status`** → **`context_ingest`** (optional raw episodes) → **`context_resolve`** → **`context_search`** (follow-ups) → **`context_record`** (durable memory).
 
 ### MCP agent context port
 
-MCP exposes the minimal context port:
+Embedded HTTP MCP exposes five tools:
 
 | Tool | Use |
 |------|-----|
-| `context_resolve` | Primary bounded context wrap for a task. |
-| `context_status` | Cheap pot/scope readiness, freshness gaps, and recommended recipe. |
-| `context_search` | Narrow follow-up lookup after `context_resolve`. |
-| `context_record` | Durable learnings: decisions, fixes, preferences, workflows, feature notes, doc refs, and incident summaries. |
+| `context_status` | Cheap pot/scope readiness, freshness gaps, and recommended `context_resolve` recipe. Call before broad work. |
+| `context_resolve` | Primary bounded context wrap for a task (hybrid graph query + envelope). |
+| `context_search` | Narrow semantic follow-up lookup after `context_resolve`. |
+| `context_record` | Structured durable learnings: decisions, fixes, preferences, workflows, feature notes, doc refs, incident summaries. |
+| `context_ingest` | Raw episodic ingest (release notes, meeting notes, CI text) into the graph. Default **async** (`sync=false`, queued); use **`sync=true`** for inline apply. Supports **`idempotency_key`**; duplicate submissions return **`ok: true`**, **`status: duplicate`**. |
+
+**`context_ingest` parameters:** `pot_id`, `name`, `episode_body`, `source_description` (required); optional `reference_time` (ISO 8601, default UTC now), `idempotency_key`, `sync` (default `false`).
 
 Use `context_resolve` recipes instead of adding separate tools per context type:
 

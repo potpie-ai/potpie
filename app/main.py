@@ -56,6 +56,7 @@ from app.modules.context_graph.context_engine_http import (
     potpie_context_engine_router,
     potpie_context_pot_v1_router,
 )
+from app.modules.context_graph.mcp_mount import get_embedded_mcp_asgi_app
 from app.modules.users.user_service import UserService
 from app.modules.utils.firebase_setup import FirebaseSetup
 from app.modules.utils.logger import configure_logging, setup_logger
@@ -83,7 +84,10 @@ class MainApp:
         async def lifespan(_app: FastAPI):
             _app.state.main_app = self
             await self.startup_event()
-            yield
+            from adapters.inbound.mcp.http_server import mcp_http_lifespan
+
+            async with mcp_http_lifespan():
+                yield
             await self.shutdown_event()
 
         self.app = FastAPI(lifespan=lifespan)
@@ -218,6 +222,7 @@ class MainApp:
             prefix="/api/v1/context",
             tags=["Context Graph API"],
         )
+        self.app.mount("/mcp", get_embedded_mcp_asgi_app())
 
     def add_health_check(self):
         @self.app.get("/health", tags=["Health"])

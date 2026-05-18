@@ -5,12 +5,12 @@ re-introduce per-context-family public tools or drift the recipe shape.
 
 Covers:
 
-- MCP exposes exactly four tools: ``context_resolve``, ``context_search``,
-  ``context_record``, ``context_status``.
+- MCP exposes exactly five tools: ``context_resolve``, ``context_search``,
+  ``context_record``, ``context_status``, ``context_ingest``.
 - Every CONTEXT_RESOLVE_RECIPES entry is a valid ``context_resolve`` recipe
   (no one-off tool per intent), with an ``include`` list, a supported
   ``mode``, and a supported ``source_policy``.
-- ``context_port_manifest`` advertises exactly those four tools and its
+- ``context_port_manifest`` advertises exactly those five tools and its
   ``recipes`` payload stays consistent with ``CONTEXT_RESOLVE_RECIPES``.
 - ``context_recipe_for_intent`` falls back to a generic ``context_resolve``
   shape for unknown intents (no hidden escape hatch to another tool).
@@ -22,7 +22,7 @@ import asyncio
 
 import pytest
 
-from adapters.inbound.mcp.server import mcp
+from adapters.inbound.mcp.http_server import mcp_http
 from domain.agent_context_port import (
     CONTEXT_INCLUDE_VALUES,
     CONTEXT_RESOLVE_RECIPES,
@@ -33,13 +33,19 @@ from domain.agent_context_port import (
 pytestmark = pytest.mark.unit
 
 
-EXPECTED_TOOLS = {"context_resolve", "context_search", "context_record", "context_status"}
+EXPECTED_TOOLS = {
+    "context_resolve",
+    "context_search",
+    "context_record",
+    "context_status",
+    "context_ingest",
+}
 VALID_MODES = {"fast", "balanced", "deep"}
 VALID_SOURCE_POLICIES = {"references_only", "summary", "verify", "snippets"}
 
 
-def test_mcp_exposes_exactly_the_four_agent_tools() -> None:
-    tools = asyncio.run(mcp.list_tools())
+def test_mcp_exposes_exactly_the_agent_tools() -> None:
+    tools = asyncio.run(mcp_http.list_tools())
     names = {t.name for t in tools}
     assert names == EXPECTED_TOOLS, (
         f"MCP tool surface drift: expected {EXPECTED_TOOLS}, got {names}"

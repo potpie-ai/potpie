@@ -395,6 +395,13 @@ def context_port_manifest() -> dict[str, Any]:
                 "role": "cheap_status",
                 "description": "Check pot readiness, source coverage, freshness gaps, and recommended next context action.",
             },
+            "context_ingest": {
+                "role": "write",
+                "description": (
+                    "Ingest a raw episodic episode into the graph for a pot. "
+                    "Async by default; use sync for inline apply."
+                ),
+            },
         },
         "recipes": CONTEXT_RESOLVE_RECIPES,
         "rules": [
@@ -405,6 +412,7 @@ def context_port_manifest() -> dict[str, Any]:
             "If quality.status is watch or degraded, verify relevant facts against source truth before high-impact work.",
             "Use context_search only for specific follow-up lookup when the needed entity or phrase is already known.",
             "Use context_record when a durable decision, fix, workflow, preference, feature note, document reference, or incident summary should become reusable project memory.",
+            "Use context_ingest for raw episodic text (release notes, meeting notes, CI summaries) that should enter the graph as episodes.",
         ],
     }
 
