@@ -122,6 +122,39 @@ To stop all services:
 ./scripts/stop.sh
 ```
 
+### Local CLI
+
+After installing the project, the `potpie` command is available for local development:
+
+```bash
+potpie start
+potpie stop
+```
+
+Use an API key from the app, or set `POTPIE_API_KEY` once:
+
+```bash
+export POTPIE_API_KEY=your-api-key
+```
+
+Parse a local repository and wait until it is ready:
+
+```bash
+potpie parse /path/to/repo --branch main
+```
+
+Start a chat session with an agent:
+
+```bash
+potpie chat <project-id> --agent codebase_qna_agent
+```
+
+For one-off automation, pass a single message:
+
+```bash
+potpie chat <project-id> --agent codebase_qna_agent --message "Where is authentication handled?"
+```
+
 #### Now set up Potpie Frontend
 
 ```bash
