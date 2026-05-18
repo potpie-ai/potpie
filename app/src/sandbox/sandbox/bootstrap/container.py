@@ -165,7 +165,7 @@ def _runtime_provider(
     if settings.runtime == "local_subprocess":
         return LocalSubprocessRuntimeProvider(allow_write=settings.local_allow_write)
     if settings.runtime == "docker":
-        return DockerRuntimeProvider()
+        return DockerRuntimeProvider(default_image=settings.docker_image)
     if settings.runtime == "daytona":
         _require_daytona_sdk()
         from sandbox.adapters.outbound.daytona.provider import (

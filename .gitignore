@@ -23,6 +23,12 @@ cli/momentum_cli/.momentum
 /projects/
 # Ignore PyCharm config
 .idea
+# Celery beat schedule (created by `celery worker -B` for the dispatcher tick)
+.celerybeat-schedule
+.celerybeat-schedule.db
+.celerybeat-schedule-*
+celerybeat-schedule
+celerybeat.pid
 
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 

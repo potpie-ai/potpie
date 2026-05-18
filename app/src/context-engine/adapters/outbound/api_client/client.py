@@ -1,2 +1,0 @@
-class ApiClient:
-    pass

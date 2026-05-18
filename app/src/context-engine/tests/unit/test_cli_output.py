@@ -28,7 +28,6 @@ def test_print_doctor_json_mode(capsys) -> None:
     snap = DoctorSnapshot(
         context_graph_enabled=True,
         neo4j_effective_set=True,
-        neo4j_source="legacy",
         pot_maps_set=False,
         active_pot_id=None,
         potpie_api_key_env=False,
@@ -42,7 +41,7 @@ def test_print_doctor_json_mode(capsys) -> None:
     print_doctor_report(snap, as_json=True)
     out = capsys.readouterr().out
     assert '"context_graph_enabled": true' in out
-    assert '"neo4j_source": "legacy"' in out
+    assert '"neo4j_effective_set": true' in out
     assert '"potpie_auth_ok": null' in out
 
 

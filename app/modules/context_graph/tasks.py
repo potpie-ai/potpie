@@ -6,10 +6,8 @@ from app.celery.celery_app import celery_app
 from app.core.database import SessionLocal
 from app.modules.context_graph.wiring import build_container_for_session
 from application.use_cases.context_graph_jobs import (
-    handle_apply_episode,
     handle_backfill_pot,
-    handle_ingest_pr,
-    handle_ingestion_agent_run,
+    handle_process_batch,
 )
 
 
@@ -50,61 +48,39 @@ def context_graph_backfill_pot(
 @celery_app.task(
     bind=True,
     base=ContextGraphTask,
-    name="app.modules.context_graph.tasks.context_graph_ingest_pr",
+    name="app.modules.context_graph.tasks.context_graph_sync_linear_pot_source",
     queue="context-graph-etl",
 )
-def context_graph_ingest_pr(
-    self,
-    pot_id: str,
-    pr_number: int,
-    is_live_bridge: bool = True,
-    repo_name: str | None = None,
-) -> dict:
-    return handle_ingest_pr(
+def context_graph_sync_linear_pot_source(self, pot_source_id: str) -> dict:
+    """Backfill a Linear ``context_graph_pot_sources`` row into the graph.
+
+    Invoked when a Linear team is attached to a pot via the context-engine
+    sources API; enumerates issues for that team and feeds each through
+    ``LinearConnector.normalize_webhook`` → ``IngestionSubmissionService``
+    so backfill and live webhooks share the same admission path.
+    """
+    from integrations.application.backfill_linear_source import (
+        backfill_linear_source,
+    )
+
+    return backfill_linear_source(self.db, pot_source_id)
+
+
+@celery_app.task(
+    bind=True,
+    base=ContextGraphTask,
+    name="app.modules.context_graph.tasks.context_graph_process_batch",
+    queue="context-graph-etl",
+)
+def context_graph_process_batch(self, batch_id: str) -> dict:
+    """Event-triggered: claim one batch by id and run the reconciliation agent.
+
+    Enqueued by ``CeleryContextGraphJobQueue.enqueue_batch`` from inside
+    ``admit_event``. Redundant enqueues for an already-claimed batch are
+    no-ops on the worker side.
+    """
+    return handle_process_batch(
         self.db,
-        pot_id,
-        pr_number,
-        is_live_bridge=is_live_bridge,
-        repo_name=repo_name,
+        batch_id,
         build_container=build_container_for_session,
     )
-
-
-@celery_app.task(
-    bind=True,
-    base=ContextGraphTask,
-    name="app.modules.context_graph.tasks.context_graph_ingestion_agent_run",
-    queue="context-graph-etl",
-)
-def context_graph_ingestion_agent_run(self, event_id: str) -> dict:
-    return handle_ingestion_agent_run(
-        self.db, event_id, build_container=build_container_for_session
-    )
-
-
-@celery_app.task(
-    bind=True,
-    base=ContextGraphTask,
-    name="app.modules.context_graph.tasks.context_graph_apply_episode",
-    queue="context-graph-etl",
-)
-def context_graph_apply_episode(self, pot_id: str, event_id: str, sequence: int) -> dict:
-    return handle_apply_episode(
-        self.db,
-        pot_id,
-        event_id,
-        sequence,
-        build_container=build_container_for_session,
-    )
-
-
-@celery_app.task(
-    bind=True,
-    base=ContextGraphTask,
-    name="app.modules.context_graph.tasks.context_graph_sync_linear_project_source",
-    queue="context-graph-etl",
-)
-def context_graph_sync_linear_project_source(self, project_source_id: str) -> dict:
-    from integrations.adapters.outbound.linear.linear_sync import sync_linear_project_source
-
-    return sync_linear_project_source(self.db, project_source_id)

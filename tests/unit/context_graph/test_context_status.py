@@ -189,19 +189,15 @@ class TestPayloadConversion:
         ts = datetime(2026, 4, 27, tzinfo=timezone.utc)
         health = ReconciliationLedgerHealth(
             run_counts={"succeeded": 5},
-            step_counts={"applied": 10},
             last_run_success_at=ts,
             last_run_failure_at=None,
             recent_failed_runs=[{"id": 1}],
-            stuck_step_samples=[{"step": "x"}],
         )
         payload = reconciliation_ledger_health_to_payload(health)
         assert payload["run_counts"] == {"succeeded": 5}
-        assert payload["step_counts"] == {"applied": 10}
         assert "2026-04-27" in payload["last_run_success_at"]
         assert payload["last_run_failure_at"] is None
         assert payload["recent_failed_runs"] == [{"id": 1}]
-        assert payload["stuck_step_samples"] == [{"step": "x"}]
 
 
 # --- Maintenance jobs ------------------------------------------------------
@@ -231,13 +227,6 @@ class TestDeriveMaintenanceJobs:
             reconciliation=ReconciliationLedgerHealth(run_counts={"failed": 2}),
         )
         assert any(j.action == "reconciliation.retry_failed_runs" for j in jobs)
-
-    def test_stuck_steps_yield_retry_job(self) -> None:
-        jobs = derive_maintenance_jobs(
-            event_ledger=EventLedgerHealth(),
-            reconciliation=ReconciliationLedgerHealth(stuck_step_samples=[{"a": 1}]),
-        )
-        assert any(j.action == "reconciliation.retry_stuck_steps" for j in jobs)
 
     def test_hard_conflicts_yield_resolve_job(self) -> None:
         jobs = derive_maintenance_jobs(

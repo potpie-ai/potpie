@@ -222,7 +222,11 @@ class ResourceHints:
 
 @dataclass(frozen=True, slots=True)
 class RuntimeSpec:
-    image: str
+    # ``image`` is ``None`` when the caller wants the runtime provider to
+    # use its configured default (e.g. DockerRuntimeProvider's
+    # ``default_image``). Providers that don't honour images at all
+    # (local subprocess, Daytona) ignore the field.
+    image: str | None
     workdir: str
     mounts: tuple[Mount, ...] = ()
     env: Mapping[str, str] = field(default_factory=dict)
@@ -235,7 +239,9 @@ class RuntimeSpec:
 @dataclass(frozen=True, slots=True)
 class RuntimeRequest:
     workspace_id: str
-    image: str = "python:3.12-slim"
+    # ``None`` ⇒ defer to the runtime provider's default. Explicit string
+    # values still win, so callers that need a specific image can pin it.
+    image: str | None = None
     env: Mapping[str, str] = field(default_factory=dict)
     writable: bool = True
     network: NetworkMode = NetworkMode.LIMITED

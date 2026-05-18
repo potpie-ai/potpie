@@ -33,7 +33,7 @@ import shlex
 import threading
 import time
 from pathlib import Path, PurePosixPath
-from typing import Any, AsyncIterator, Callable
+from typing import Any, AsyncIterator, Callable, Optional
 from urllib.parse import quote, urlparse
 
 logger = logging.getLogger(__name__)
@@ -148,7 +148,16 @@ class DaytonaWorkspaceProvider:
         self._sandboxes: dict[str, Any] = {}                          # sandbox_id -> SDK object
         self._project_sandbox_ids: dict[tuple[str, str], str] = {}    # (user, project) -> sandbox_id
         self._bare_repos: set[tuple[str, str]] = set()                # (sandbox_id, repo_name)
-        self._project_locks: dict[tuple[str, str], asyncio.Lock] = {}
+        # Cross-thread lock so an agent tool call serialises against a
+        # background prewarm that's still cloning the bare repo. An
+        # ``asyncio.Lock`` would only synchronise within one event loop;
+        # the prewarm thread runs its own ``asyncio.run`` loop, and the
+        # FastAPI request runs on a different loop, so they each grab
+        # their own asyncio lock instance and the second caller dives
+        # straight into a half-cloned bare repo. ``threading.Lock`` is
+        # process-wide and works regardless of which loop owns the call.
+        self._project_locks: dict[tuple[str, str], threading.Lock] = {}
+        self._project_locks_meta = threading.Lock()
         self._by_id: dict[str, Workspace] = {}
         self._by_key: dict[str, str] = {}
         self._snapshot_ensured = False
@@ -177,14 +186,38 @@ class DaytonaWorkspaceProvider:
             return existing
 
         project_key = (request.user_id, request.project_id)
-        lock = self._project_locks.setdefault(project_key, asyncio.Lock())
-        async with lock:
+        # Move the whole locked critical section into a worker thread. The
+        # lock is a ``threading.Lock`` so it serialises across the prewarm
+        # daemon thread (its own asyncio loop) and the request thread —
+        # the second caller blocks here until the first finishes the clone
+        # and worktree setup, then picks up the cached workspace via
+        # ``_lookup_existing``. Without this, the agent races the prewarm
+        # straight into a half-cloned bare repo and ``worktree add`` fails.
+        return await asyncio.to_thread(
+            self._get_or_create_workspace_locked, request, project_key, key
+        )
+
+    def _get_or_create_workspace_locked(
+        self,
+        request: WorkspaceRequest,
+        project_key: tuple[str, str],
+        key: str,
+    ) -> Workspace:
+        # ``setdefault`` is atomic in CPython, but the default arg is
+        # evaluated before the call so racing threads each build a Lock —
+        # only one is stored, the other is discarded. The meta-lock around
+        # the lookup avoids that wasted construction and gives us a single
+        # point to extend later (e.g., per-project ref-counts for eviction).
+        with self._project_locks_meta:
+            lock = self._project_locks.get(project_key)
+            if lock is None:
+                lock = threading.Lock()
+                self._project_locks[project_key] = lock
+        with lock:
             existing = self._lookup_existing(key)
             if existing is not None:
                 return existing
-            workspace = await asyncio.to_thread(
-                self._create_workspace_sync, request, project_key
-            )
+            workspace = self._create_workspace_sync(request, project_key)
             self._by_id[workspace.id] = workspace
             self._by_key[workspace.key] = workspace.id
             return workspace
@@ -230,6 +263,75 @@ class DaytonaWorkspaceProvider:
             target=workspace.location.remote_path,
             writable=writable,
         )
+
+    async def destroy_project_sandbox(
+        self, *, user_id: str, project_id: str
+    ) -> bool:
+        """Delete the shared sandbox for ``(user_id, project_id)`` if any.
+
+        Drops in-memory caches first so a subsequent ``ensure_sandbox`` for
+        the same project doesn't reuse the dead handle. Best-effort against
+        the SDK: a missing sandbox is treated as success. Returns ``True``
+        when something was deleted, ``False`` when there was nothing to do.
+        """
+        project_key = (user_id, project_id)
+        sandbox_id = self._project_sandbox_ids.pop(project_key, None)
+        self._project_locks.pop(project_key, None)
+        if sandbox_id is None:
+            sandbox = self._recover_project_sandbox(project_key)
+            if sandbox is None:
+                return False
+            sandbox_id = str(getattr(sandbox, "id", "") or "")
+        sandbox = self._sandboxes.pop(sandbox_id, None)
+        # Forget any bare-repo keys scoped to this sandbox so a fresh
+        # sandbox doesn't think it inherited the clone.
+        self._bare_repos = {
+            key for key in self._bare_repos if key[0] != sandbox_id
+        }
+        # Forget cached workspaces still pointing at the dead sandbox.
+        for ws_id, ws in list(self._by_id.items()):
+            if ws.location.backend_workspace_id == sandbox_id:
+                self._by_id.pop(ws_id, None)
+                self._by_key.pop(ws.key, None)
+        if not sandbox_id:
+            return False
+        delete_attrs = ("delete", "destroy", "remove")
+        for attr in delete_attrs:
+            delete_method = getattr(self.client, attr, None)
+            if callable(delete_method):
+                try:
+                    await asyncio.to_thread(delete_method, sandbox_id)
+                    return True
+                except Exception as exc:  # noqa: BLE001
+                    if _is_not_found(exc):
+                        return True
+                    logger.warning(
+                        "daytona: %s(%s) failed: %s",
+                        attr,
+                        sandbox_id,
+                        exc,
+                    )
+                    return False
+        # SDK exposes neither method — fall through to a per-sandbox call
+        # if the cached SDK object supports it.
+        if sandbox is not None:
+            for attr in delete_attrs:
+                method = getattr(sandbox, attr, None)
+                if callable(method):
+                    try:
+                        await asyncio.to_thread(method)
+                        return True
+                    except Exception as exc:  # noqa: BLE001
+                        if _is_not_found(exc):
+                            return True
+                        logger.warning(
+                            "daytona: sandbox.%s() failed for %s: %s",
+                            attr,
+                            sandbox_id,
+                            exc,
+                        )
+                        return False
+        return False
 
     async def is_alive(self, workspace: Workspace) -> bool:
         """Probe the Daytona SDK to see whether the backing sandbox still exists.
@@ -348,6 +450,37 @@ class DaytonaWorkspaceProvider:
         self._sandboxes[sandbox_id] = sandbox
         self._project_sandbox_ids[project_key] = sandbox_id
         return sandbox
+
+    def ensure_started(self, sandbox: Any) -> None:
+        """Block until ``sandbox`` is in the ``started`` state.
+
+        The hot path on Daytona Cloud is: a cached SDK handle from
+        ``self._sandboxes`` whose underlying container was auto-stopped
+        between requests. ``refresh_data`` pulls the authoritative state;
+        if it's stopped/stopping we call ``sandbox.start()``, which the
+        Daytona SDK implements as a synchronous wait-until-started, so
+        the call returns only once the container is back up. A handle
+        that's already ``started`` (or in a transient state ``start()``
+        won't accept) is a no-op.
+        """
+        refresh = getattr(sandbox, "refresh_data", None)
+        if callable(refresh):
+            try:
+                refresh()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("daytona: refresh_data before start failed: %s", exc)
+        state = _state_value(sandbox)
+        if state == "started":
+            return
+        start = getattr(sandbox, "start", None)
+        if not callable(start):
+            return
+        logger.info(
+            "daytona: sandbox %s is %s — calling start() and waiting",
+            getattr(sandbox, "id", "?"),
+            state or "unknown",
+        )
+        start()
 
     def _recover_project_sandbox(self, project_key: tuple[str, str]) -> Any | None:
         """Find an existing potpie-managed sandbox for ``(user, project)``.
@@ -845,9 +978,90 @@ class DaytonaWorkspaceProvider:
         # Best-effort refresh of the requested ref. Transient network failures
         # don't fail the request — what's already in the bare repo is usually
         # enough for the worktree step.
+        #
+        # The ``<ref>:refs/heads/<ref>`` refspec lands the fetched tip as a
+        # local branch in the bare repo. Without it, a bare ``git fetch
+        # origin <ref>`` only updates ``FETCH_HEAD`` and ``git worktree add
+        # <ref>`` downstream fails with "fatal: invalid reference".
+        quoted = shlex.quote(base_ref)
         sandbox.process.exec(
             f"git -C {shlex.quote(bare_path)} fetch origin -- "
-            f"{shlex.quote(base_ref)} 2>/dev/null || true"
+            f"+{quoted}:refs/heads/{quoted} 2>/dev/null || true"
+        )
+        # If the requested ref still doesn't resolve (repo's default branch
+        # isn't actually ``base_ref`` — e.g. attached without a default_branch
+        # so we defaulted to "main" but the repo uses "master"), alias it to
+        # the remote's actual default so ``worktree add`` doesn't fail with
+        # "not a valid object name".
+        self._ensure_local_ref(sandbox, bare_path, base_ref)
+
+    def _detect_remote_default_branch(
+        self, sandbox: Any, bare_path: str
+    ) -> Optional[str]:
+        """Read the remote's default branch via ``ls-remote --symref``.
+
+        Output shape::
+
+            ref: refs/heads/master\\tHEAD
+            <sha>\\tHEAD
+
+        Returns ``None`` if the call fails or the output doesn't carry a
+        symref line (older ``git``, no remote, transient network issue).
+        """
+        result = sandbox.process.exec(
+            f"git -C {shlex.quote(bare_path)} ls-remote --symref origin HEAD"
+        )
+        if int(getattr(result, "exit_code", 0)) != 0:
+            return None
+        payload = _payload(result) or ""
+        prefix = "ref: refs/heads/"
+        for line in payload.splitlines():
+            line = line.strip()
+            if not line.startswith(prefix):
+                continue
+            head, _, _ = line[len(prefix):].partition("\t")
+            head = head.strip()
+            if head:
+                return head
+        return None
+
+    def _ensure_local_ref(
+        self, sandbox: Any, bare_path: str, base_ref: str
+    ) -> None:
+        """Make ``refs/heads/<base_ref>`` resolve in the bare repo.
+
+        Called after clone/fetch. If the fetch couldn't bring the requested
+        ref down (because the repo's default branch isn't ``base_ref``), we
+        detect the remote's actual default and alias ``refs/heads/<base_ref>``
+        to it via ``update-ref``. The bare clone already copied every
+        ``refs/heads/*`` from origin, so the actual default's ref is local.
+
+        Silently no-ops on success or when we can't resolve a default — the
+        downstream ``worktree add`` will surface the original error.
+        """
+        quoted = shlex.quote(base_ref)
+        check = sandbox.process.exec(
+            f"git -C {shlex.quote(bare_path)} show-ref --verify --quiet "
+            f"refs/heads/{quoted}"
+        )
+        if int(getattr(check, "exit_code", 0)) == 0:
+            return
+        default = self._detect_remote_default_branch(sandbox, bare_path)
+        if not default or default == base_ref:
+            return
+        logger.warning(
+            "daytona: requested base_ref %r not present on origin for %s; "
+            "aliasing refs/heads/%s to remote default %r so worktree add can "
+            "resolve it. Attach the repo with the correct default_branch to "
+            "silence this.",
+            base_ref,
+            bare_path,
+            base_ref,
+            default,
+        )
+        sandbox.process.exec(
+            f"git -C {shlex.quote(bare_path)} update-ref "
+            f"refs/heads/{quoted} refs/heads/{shlex.quote(default)}"
         )
 
     def _clone_bare(
@@ -878,13 +1092,38 @@ class DaytonaWorkspaceProvider:
             raise RepoCacheUnavailable(f"git clone --bare failed: {message}")
         # `--filter=blob:none` defers blob downloads; an explicit fetch primes
         # the requested ref so `worktree add` can resolve it without surprise.
+        # Use ``<ref>:refs/heads/<ref>`` so the fetched tip becomes a real
+        # local branch — a plain ``fetch origin <ref>`` only writes
+        # ``FETCH_HEAD``, leaving ``worktree add <ref>`` to fail with
+        # "fatal: invalid reference" when the bare clone didn't already
+        # populate ``refs/heads/<ref>`` (seen on partial bare clones in the
+        # slim Daytona snapshot).
+        quoted = shlex.quote(base_ref)
         fetch = sandbox.process.exec(
-            f"git -C {shlex.quote(bare_path)} fetch origin -- {shlex.quote(base_ref)}"
+            f"git -C {shlex.quote(bare_path)} fetch origin -- "
+            f"+{quoted}:refs/heads/{quoted}"
         )
         if int(getattr(fetch, "exit_code", 0)) != 0:
-            raise RepoCacheUnavailable(
-                f"git fetch failed: {_sanitize_git_error(_payload(fetch))}"
+            # The fetch fails when the repo's default branch isn't
+            # ``base_ref`` (common when the repo was attached without an
+            # explicit default_branch and we defaulted to "main" but the
+            # repo uses "master"). Fall back to the remote's actual default
+            # — the bare clone above already populated every refs/heads/*
+            # so the fallback is a cheap update-ref. Only raise if we
+            # genuinely can't get a usable local ref.
+            payload = _sanitize_git_error(_payload(fetch))
+            self._ensure_local_ref(sandbox, bare_path, base_ref)
+            verify = sandbox.process.exec(
+                f"git -C {shlex.quote(bare_path)} show-ref --verify --quiet "
+                f"refs/heads/{quoted}"
             )
+            if int(getattr(verify, "exit_code", 0)) != 0:
+                raise RepoCacheUnavailable(f"git fetch failed: {payload}")
+        else:
+            # Fetch succeeded — make absolutely sure the local ref landed
+            # (some git versions silently exit 0 even if the partial-clone
+            # promisor-side rejected the refspec).
+            self._ensure_local_ref(sandbox, bare_path, base_ref)
         # Verify — the slim Daytona snapshot's toolbox can return success on
         # a 204 body that is hard to introspect, so prove the repo materialised.
         status = sandbox.process.exec(
@@ -1170,30 +1409,42 @@ class DaytonaRuntimeProvider:
         sandbox = self._sandbox_with_recovery(runtime)
         command = _command_string(request)
         cwd = request.cwd or runtime.spec.workdir
+
+        def _do_exec(sb: Any) -> Any:
+            return sb.process.exec(
+                command,
+                cwd=cwd,
+                env=dict(request.env) or None,
+                timeout=request.timeout_s,
+            )
+
         try:
-            response = sandbox.process.exec(
-                command,
-                cwd=cwd,
-                env=dict(request.env) or None,
-                timeout=request.timeout_s,
-            )
+            response = _do_exec(sandbox)
         except Exception as exc:
-            # The SDK can return a stale handle from `client.get(id)` even
-            # after Daytona destroyed the sandbox — we only learn about it
-            # when we actually try to exec. Recover via labels and retry
-            # exactly once so the agent's tool call doesn't bubble a
-            # confusing "Sandbox with ID … not found" error.
-            if not _is_not_found(exc):
+            # Two lifecycle failure modes recover here, both with a single
+            # retry: (a) the SDK returned a stale handle for a sandbox
+            # Daytona has since destroyed (404), and (b) Daytona Cloud
+            # auto-stopped the container between requests so the cached
+            # handle still resolves but exec hits "Is the Sandbox
+            # started?". The second case is the common one in
+            # long-running workers — see [[ensure_started]].
+            if _is_not_found(exc):
+                recovered = self._recover_runtime(
+                    runtime,
+                    dead_sandbox_id=str(
+                        getattr(sandbox, "id", runtime.backend_runtime_id)
+                    ),
+                )
+                if recovered is None:
+                    raise
+                response = _do_exec(recovered)
+            elif _is_not_started(exc):
+                await asyncio.to_thread(
+                    self._workspace_provider.ensure_started, sandbox
+                )
+                response = _do_exec(sandbox)
+            else:
                 raise
-            recovered = self._recover_runtime(runtime, dead_sandbox_id=str(getattr(sandbox, "id", runtime.backend_runtime_id)))
-            if recovered is None:
-                raise
-            response = recovered.process.exec(
-                command,
-                cwd=cwd,
-                env=dict(request.env) or None,
-                timeout=request.timeout_s,
-            )
         stdout = _response_stdout(response)
         exit_code = int(getattr(response, "exit_code", 0))
         if request.max_output_bytes and len(stdout) > request.max_output_bytes:
@@ -1225,20 +1476,22 @@ class DaytonaRuntimeProvider:
     # for symmetry: typed responses, no shell-injection surface.
     # ------------------------------------------------------------------
     async def read_bytes(self, runtime: Runtime, path: str) -> bytes:
-        sandbox = self._sandbox_with_recovery(runtime)
-        return await asyncio.to_thread(sandbox.fs.download_file, path)
+        return await self._fs_call(runtime, lambda sb: sb.fs.download_file(path))
 
     async def write_bytes(
         self, runtime: Runtime, path: str, content: bytes
     ) -> None:
-        sandbox = self._sandbox_with_recovery(runtime)
         # `upload_file` overwrites by default; parent must exist. Mkdir is
         # cheap on Daytona (toolbox-side `mkdir -p`) and keeps the call
         # site free of race-y "create then write" branches.
         parent = str(PurePosixPath(path).parent)
-        if parent and parent not in (".", "/"):
-            await asyncio.to_thread(sandbox.fs.create_folder, parent, "755")
-        await asyncio.to_thread(sandbox.fs.upload_file, content, path)
+
+        def _do(sb: Any) -> None:
+            if parent and parent not in (".", "/"):
+                sb.fs.create_folder(parent, "755")
+            sb.fs.upload_file(content, path)
+
+        await self._fs_call(runtime, _do)
 
     async def list_dir_native(
         self, runtime: Runtime, path: str
@@ -1251,9 +1504,8 @@ class DaytonaRuntimeProvider:
         directories; we surface that as an empty list to mirror the
         ``ls -1Ap`` exec path's "no listing on missing dir" semantics.
         """
-        sandbox = self._sandbox_with_recovery(runtime)
         try:
-            entries = await asyncio.to_thread(sandbox.fs.list_files, path)
+            entries = await self._fs_call(runtime, lambda sb: sb.fs.list_files(path))
         except Exception as exc:
             if _is_not_found(exc):
                 return []
@@ -1280,6 +1532,30 @@ class DaytonaRuntimeProvider:
                 f"Daytona sandbox not found: {runtime.backend_runtime_id}"
             )
         return sandbox
+
+    async def _fs_call(
+        self, runtime: Runtime, fn: Callable[[Any], Any]
+    ) -> Any:
+        """Run ``fn(sandbox)`` against the runtime's sandbox on a worker thread.
+
+        Recovers from the auto-stop lifecycle: if Daytona Cloud stopped
+        the container between calls, ``fn`` raises with a "Sandbox not
+        started" signature; we block on ``ensure_started`` (synchronous
+        SDK ``start()``) and retry once. We deliberately do **not**
+        recover on ``_is_not_found`` here — ``fs.*`` calls also raise
+        404-shaped errors for missing *paths*, and minting a fresh
+        sandbox in response would corrupt ``backend_runtime_id``.
+        """
+        sandbox = self._sandbox_with_recovery(runtime)
+        try:
+            return await asyncio.to_thread(fn, sandbox)
+        except Exception as exc:
+            if not _is_not_started(exc):
+                raise
+            await asyncio.to_thread(
+                self._workspace_provider.ensure_started, sandbox
+            )
+            return await asyncio.to_thread(fn, sandbox)
 
     def _sandbox_with_recovery(self, runtime: Runtime) -> Any:
         """Resolve the runtime's sandbox, recovering once if it's gone.
@@ -1448,6 +1724,23 @@ def _is_not_found(exc: Exception) -> bool:
         pass
     message = str(exc).lower()
     return "not found" in message or "404" in message
+
+
+def _is_not_started(exc: Exception) -> bool:
+    """Match a Daytona "sandbox is stopped" error surfaced from exec/fs.
+
+    Daytona Cloud auto-stops idle sandboxes. The next exec on a cached
+    SDK handle then fails with ``"failed to resolve container IP ...
+    Is the Sandbox started?"`` — the sandbox exists (so ``_is_not_found``
+    doesn't trip) but its container is down. No typed error class covers
+    this; we match on the message.
+    """
+    message = str(exc).lower()
+    return (
+        "is the sandbox started" in message
+        or "failed to resolve container ip" in message
+        or "no ip address found" in message
+    )
 
 
 def _is_timeout(exc: Exception) -> bool:

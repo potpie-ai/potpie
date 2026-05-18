@@ -7,6 +7,7 @@ import hmac
 import hashlib
 import base64
 import json
+import os
 import time
 from app.modules.utils.logger import setup_logger
 from integrations import hash_user_id
@@ -129,6 +130,55 @@ def get_integrations_service(db: Session = Depends(get_db)) -> IntegrationsServi
     return IntegrationsService(db)
 
 
+_DEV_ENV_VALUES = frozenset({"development", "dev", "local", "test", "testing"})
+_oauth_state_secret_warning_emitted = False
+
+
+class OAuthStateSecretMissingError(RuntimeError):
+    """Raised when OAUTH_STATE_SECRET is required but missing.
+
+    OAuth state carries the authenticated user_id from initiation through
+    Linear's redirect back to the callback. Without an HMAC secret the
+    state value is trusted as-is — an attacker could craft an OAuth flow
+    that attributes the resulting integration to any user_id of their
+    choosing. Non-development environments must therefore have a secret
+    configured; we refuse to sign rather than ship an open identity gate.
+    """
+
+
+def _is_dev_environment() -> bool:
+    """Best-effort check that we're in a development-class environment.
+
+    Used to gate the unsigned-state fallback. ``ENV`` is the project's
+    own convention (.env, .env.template) — fall back to ``ENVIRONMENT``
+    for parity with common dotenv conventions.
+    """
+    config = Config()
+    env = str(config("ENV", default="") or config("ENVIRONMENT", default="")).lower()
+    return env in _DEV_ENV_VALUES or env == ""
+
+
+def _resolve_oauth_state_secret() -> str | None:
+    """Return the secret, or None in dev. Raise outside dev when unset."""
+    global _oauth_state_secret_warning_emitted
+    config = Config()
+    secret = config("OAUTH_STATE_SECRET", default="")
+    if secret:
+        return secret
+    if not _is_dev_environment():
+        raise OAuthStateSecretMissingError(
+            "OAUTH_STATE_SECRET is required outside development; refusing to "
+            "issue or verify unsigned OAuth state."
+        )
+    if not _oauth_state_secret_warning_emitted:
+        logger.warning(
+            "OAUTH_STATE_SECRET is empty; falling back to unsigned state. "
+            "This is acceptable in dev only — set a secret before deploying."
+        )
+        _oauth_state_secret_warning_emitted = True
+    return None
+
+
 def _sign_oauth_state(raw_state: str | None, expires: int = 600) -> str | None:
     """Sign a state string with HMAC to protect against tampering.
 
@@ -139,10 +189,9 @@ def _sign_oauth_state(raw_state: str | None, expires: int = 600) -> str | None:
     if not raw_state:
         return None
 
-    config = Config()
-    secret = config("OAUTH_STATE_SECRET", default="")
-    if not secret:
-        # If no secret configured, avoid signing (dev fallback)
+    secret = _resolve_oauth_state_secret()
+    if secret is None:
+        # Dev only — see _resolve_oauth_state_secret.
         return raw_state
 
     expiry = int(time.time()) + int(expires)
@@ -163,10 +212,9 @@ def _verify_oauth_state(token: str | None) -> Optional[str]:
     if not token:
         return None
 
-    config = Config()
-    secret = config("OAUTH_STATE_SECRET", default="")
-    if not secret:
-        # No secret configured – assume token is raw state
+    secret = _resolve_oauth_state_secret()
+    if secret is None:
+        # Dev fallback: token is treated as raw state.
         return token
 
     try:
@@ -395,48 +443,116 @@ async def sentry_redirect_webhook(request: Request) -> Dict[str, Any]:
         )
 
 
-@router.get("/linear/redirect")
-async def linear_oauth_redirect(
-    request: Request, linear_oauth: LinearOAuth = Depends(get_linear_oauth)
-) -> RedirectResponse:
-    """Direct authorization endpoint that redirects to Linear OAuth"""
-    try:
-        # Check if this is actually a callback request (has code parameter)
-        if request.query_params.get("code"):
-            raise HTTPException(
-                status_code=400,
-                detail="This endpoint is for OAuth initiation, not callback. Linear should redirect to /api/v1/integrations/linear/callback with the authorization code.",
-            )
-        # Always anchor OAuth redirect URI to callback route.
-        # Frontend-supplied redirect_uri values are treated as optional hints and only accepted
-        # when they exactly match the callback path expected by backend.
-        callback_redirect_uri = _linear_oauth_callback_redirect_uri(request)
-        requested_redirect_uri = request.query_params.get("redirect_uri")
-        redirect_uri = callback_redirect_uri
-        if requested_redirect_uri:
-            parsed = urllib.parse.urlparse(requested_redirect_uri)
-            if parsed.path == "/api/v1/integrations/linear/callback":
-                redirect_uri = requested_redirect_uri
+class LinearInitiateRequest(OAuthInitiateRequest):
+    """Body for ``POST /linear/initiate``.
 
-        # Get state parameter if provided
-        state = request.query_params.get("state")
-        signed_state = _sign_oauth_state(state) if state else None
+    Inherits ``redirect_uri`` from :class:`OAuthInitiateRequest`. The
+    optional ``state`` field on the parent is intentionally ignored
+    here — identity comes from ``AuthService.check_auth``, never the
+    body, so a caller cannot attribute the integration to a different
+    user_id. ``scope`` overrides the default ``read``.
+    """
 
-        # Get scope parameter if provided (default to read)
-        scope = request.query_params.get("scope", "read")
+    scope: str | None = None
 
-        # Generate authorization URL
-        auth_url = linear_oauth.get_authorization_url(
-            redirect_uri=redirect_uri, state=signed_state, scope=scope
-        )
 
-        # Redirect to Linear OAuth
-        return RedirectResponse(url=auth_url)
+@router.post("/linear/initiate")
+async def initiate_linear_oauth(
+    body: LinearInitiateRequest,
+    request: Request,
+    user: dict = Depends(AuthService.check_auth),
+    linear_oauth: LinearOAuth = Depends(get_linear_oauth),
+) -> Dict[str, Any]:
+    """Server-side initiation for Linear OAuth.
 
-    except Exception as e:
+    Returns the Linear ``authorization_url`` with the authenticated
+    user's id signed into ``state``. The frontend then performs the
+    browser redirect itself (``window.location.href = authorization_url``).
+
+    Why this exists: a previous GET-based redirect endpoint accepted
+    ``state`` from the query string and signed whatever was passed in.
+    The browser flow can't easily carry a Bearer token, so callers were
+    trusted to put the real user_id in ``state``. They didn't — the
+    Linear page in the frontend put a CSRF-shaped nonce there, which
+    became the saved integration's ``created_by`` and severed the
+    integration from any real account. This endpoint closes the gap by
+    making the server the only source of identity truth.
+    """
+    user_id = user["user_id"]
+
+    # Validate the requested redirect_uri exactly matches our callback
+    # path. Linear must see the same value at initiation and exchange,
+    # and we never want to be a confused deputy for an arbitrary URL.
+    callback_redirect_uri = _linear_oauth_callback_redirect_uri(request)
+    requested_redirect_uri = body.redirect_uri or callback_redirect_uri
+    parsed = urllib.parse.urlparse(requested_redirect_uri)
+    if parsed.path != "/api/v1/integrations/linear/callback":
         raise HTTPException(
-            status_code=500, detail=f"Failed to redirect to Linear OAuth: {str(e)}"
+            status_code=400,
+            detail=(
+                "redirect_uri must point at /api/v1/integrations/linear/callback "
+                "on this deployment"
+            ),
         )
+
+    try:
+        signed_state = _sign_oauth_state(user_id)
+    except OAuthStateSecretMissingError as exc:
+        logger.error("Linear OAuth initiate refused: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="OAuth state signing is not configured on this server.",
+        ) from exc
+    if not signed_state:
+        # ``_sign_oauth_state`` only returns None when raw_state is empty.
+        # We just passed a non-empty user_id, so reaching here would mean
+        # auth surfaced an empty user id — refuse rather than silently
+        # sign an empty principal.
+        raise HTTPException(status_code=401, detail="Empty authenticated user_id")
+
+    scope = body.scope or "read"
+    auth_url = linear_oauth.get_authorization_url(
+        redirect_uri=requested_redirect_uri,
+        state=signed_state,
+        scope=scope,
+    )
+    logger.info(
+        "Linear OAuth initiated for user=%s redirect_uri=%s scope=%s",
+        hash_user_id(user_id),
+        requested_redirect_uri,
+        scope,
+    )
+    return {
+        "status": "success",
+        "authorization_url": auth_url,
+    }
+
+
+def _frontend_url() -> str:
+    config = Config()
+    url = config("FRONTEND_URL", default="http://localhost:3000")
+    if url and not url.startswith(("http://", "https://")):
+        url = f"https://{url}"
+    return url
+
+
+def _linear_oauth_user_message(exc: BaseException) -> str:
+    """Translate exceptions into user-friendly messages safe to surface in the URL.
+
+    We never expose raw exception strings to the browser — DB drivers and
+    SQLAlchemy in particular emit messages that include SQL fragments,
+    constraint names, and table internals. The full traceback is already
+    logged via ``logger.exception`` at the call site.
+    """
+    text = str(exc).lower()
+    if "invalid_grant" in text or "expired" in text:
+        return (
+            "Linear authorization code expired or was already used. "
+            "Please try connecting again."
+        )
+    if "redirect" in text and "uri" in text:
+        return "Linear OAuth redirect URI mismatch. Please retry the connection."
+    return "We couldn't complete the Linear connection. Please try again."
 
 
 @router.get("/linear/callback")
@@ -461,11 +577,10 @@ async def linear_oauth_callback(
 
         # If we have an authorization code, exchange it for tokens and save to database
         if code:
-            try:
-                # Get the integrations service to save the integration
-                from app.core.database import SessionLocal
+            from app.core.database import SessionLocal
 
-                db = SessionLocal()
+            db = SessionLocal()
+            try:
                 integrations_service = IntegrationsService(db)
 
                 # Create a LinearSaveRequest with the authorization code
@@ -486,30 +601,16 @@ async def linear_oauth_callback(
                     user_id,
                 )
 
-                db.close()
-
-                # Redirect to frontend with success
-                config = Config()
-                frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
-
-                # Ensure frontend_url has protocol
-                if frontend_url and not frontend_url.startswith(
-                    ("http://", "https://")
-                ):
-                    frontend_url = f"https://{frontend_url}"
-
-                redirect_url = f"{frontend_url}/integrations/linear/redirect?success=true&integration_id={save_result.get('integration_id')}&user_name={save_result.get('user_name', '')}"
-
+                frontend_url = _frontend_url()
+                redirect_url = (
+                    f"{frontend_url}/integrations/linear/redirect?"
+                    f"success=true&integration_id={save_result.get('integration_id')}"
+                    f"&user_name={urllib.parse.quote(str(save_result.get('user_name') or ''), safe='')}"
+                )
                 return RedirectResponse(url=redirect_url)
 
             except LinearOrganizationAlreadyIntegratedError as dup:
-                db.close()
-                config = Config()
-                frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
-                if frontend_url and not frontend_url.startswith(
-                    ("http://", "https://")
-                ):
-                    frontend_url = f"https://{frontend_url}"
+                frontend_url = _frontend_url()
                 logger.info(
                     "Linear OAuth callback: organization already integrated, "
                     "redirecting (integration_id=%s)",
@@ -522,63 +623,42 @@ async def linear_oauth_callback(
                 return RedirectResponse(url=redirect_url)
 
             except Exception as e:
+                logger.exception("Failed to save Linear integration")
+                frontend_url = _frontend_url()
+                error_message = urllib.parse.quote(
+                    _linear_oauth_user_message(e), safe=""
+                )
+                redirect_url = (
+                    f"{frontend_url}/integrations/linear/redirect?"
+                    f"error={error_message}"
+                )
+                return RedirectResponse(url=redirect_url)
+            finally:
                 try:
                     db.close()
                 except Exception:
-                    pass
-                logger.exception("Failed to save Linear integration")
-
-                # Redirect to frontend with error
-                config = Config()
-                frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
-
-                # Ensure frontend_url has protocol
-                if frontend_url and not frontend_url.startswith(
-                    ("http://", "https://")
-                ):
-                    frontend_url = f"https://{frontend_url}"
-
-                error_message = urllib.parse.quote(str(e), safe="")
-                redirect_url = f"{frontend_url}/integrations/linear/redirect?error={error_message}&user_id={user_id}"
-
-                return RedirectResponse(url=redirect_url)
+                    logger.debug(
+                        "Linear OAuth callback: db.close() raised", exc_info=True
+                    )
         else:
-            # No code provided, redirect to frontend with error
-            config = Config()
-            frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
-
-            # Ensure frontend_url has protocol
-            if frontend_url and not frontend_url.startswith(("http://", "https://")):
-                frontend_url = f"https://{frontend_url}"
-
+            frontend_url = _frontend_url()
             error_msg = "No authorization code received from Linear"
             if error:
                 error_msg = f"OAuth error: {error}"
             elif error_description:
                 error_msg = f"OAuth error: {error_description}"
-
             error_message = urllib.parse.quote(error_msg, safe="")
-            redirect_url = f"{frontend_url}/integrations/linear/redirect?error={error_message}&user_id={user_id}"
-
+            redirect_url = (
+                f"{frontend_url}/integrations/linear/redirect?error={error_message}"
+            )
             return RedirectResponse(url=redirect_url)
     except Exception as e:
         logger.exception("Linear OAuth callback failed")
-
-        # Redirect to frontend with error
-        config = Config()
-        frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
-
-        # Ensure frontend_url has protocol
-        if frontend_url and not frontend_url.startswith(("http://", "https://")):
-            frontend_url = f"https://{frontend_url}"
-
-        error_message = urllib.parse.quote(
-            f"Linear OAuth callback failed: {str(e)}", safe=""
-        )
+        frontend_url = _frontend_url()
+        error_message = urllib.parse.quote(_linear_oauth_user_message(e), safe="")
         redirect_url = (
             f"{frontend_url}/integrations/linear/redirect?error={error_message}"
         )
-
         return RedirectResponse(url=redirect_url)
 
 
@@ -1401,159 +1481,96 @@ async def sentry_webhook(request: Request) -> Dict[str, Any]:
 
 
 @router.post("/linear/webhook")
-async def linear_webhook(
-    request: Request,
-    integrations_service: IntegrationsService = Depends(get_integrations_service),
-) -> Dict[str, Any]:
-    """Handle Linear webhook requests"""
-    import json
+async def linear_webhook(request: Request) -> Dict[str, Any]:
+    """Receive a Linear webhook and hand it to the async worker.
+
+    The HTTP layer is intentionally thin:
+
+    1. Verify ``Linear-Signature`` against ``LINEAR_WEBHOOK_SECRET``
+       (dev-friendly: missing secret logs a warning, doesn't reject).
+    2. Parse JSON body.
+    3. Publish to the event bus; the worker runs
+       :func:`integrations.application.process_linear_webhook.process_linear_webhook`
+       which does the multi-tenant routing and ingestion submission.
+
+    Returns 202 with the queued event id when accepted. Any actual
+    routing detail (matched pots, etc.) is logged by the worker and
+    available through the standard ingestion observability surface —
+    we don't echo it on the webhook response because Linear's only
+    interested in the 2xx.
+    """
+    raw_body = await request.body()
+
+    secret = (os.getenv("LINEAR_WEBHOOK_SECRET") or "").strip()
+    signature = request.headers.get("Linear-Signature") or request.headers.get(
+        "linear-signature"
+    )
+    if not secret:
+        logger.warning(
+            "Linear webhook accepted without signature verification: "
+            "LINEAR_WEBHOOK_SECRET not configured"
+        )
+    elif not verify_linear_webhook_signature(signature, raw_body, secret):
+        logger.warning(
+            "Linear webhook signature verification failed",
+            signature_present=bool(signature),
+        )
+        raise HTTPException(
+            status_code=401, detail="Invalid Linear webhook signature"
+        )
 
     try:
-        # Log the incoming webhook request details
-        logger.info("Linear webhook received")
-        logger.info("Request details", method=request.method, url=str(request.url))
-        sanitized_headers = sanitize_headers(dict(request.headers))
-        logger.debug("Request headers", headers=sanitized_headers)
-
-        # Get query parameters
-        query_params = dict(request.query_params)
-        params_summary = get_params_summary(query_params)
-        logger.info(
-            "Query parameters",
-            params_keys=params_summary["keys"],
-            params_count=params_summary["count"],
-        )
-        logger.debug("Query parameters", params_summary=params_summary)
-
-        # Try to get request body if it exists
-        webhook_data = {}
-        try:
-            body = await request.body()
-            if body:
-                body_text = body.decode("utf-8")
-                body_summary = get_body_summary(body_text)
-                logger.info("Request body received", body_length=body_summary["length"])
-                logger.debug(
-                    "Request body preview", body_preview=body_summary["preview"]
-                )
-                # Try to parse as JSON
-                try:
-                    webhook_data = json.loads(body_text)
-                except json.JSONDecodeError:
-                    webhook_data = {"raw_body": body_text}
-            else:
-                logger.info("Request body: (empty)")
-        except Exception as e:
-            logger.warning("Could not read request body", error=str(e))
-
-        # Log form data if present
-        try:
-            form_data = await request.form()
-            if form_data:
-                form_dict = {k: str(v) for k, v in form_data.items()}
-                form_summary = get_params_summary(form_dict)
-                logger.info(
-                    "Form data received",
-                    form_fields=form_summary["keys"],
-                    form_count=form_summary["count"],
-                )
-                logger.debug("Form data summary", form_summary=form_summary)
-                webhook_data.update(form_dict)
-        except Exception:
-            pass
-
-        # Use the service to log the webhook data
-        result = await integrations_service.log_linear_webhook(webhook_data)
-
-        # Extract event type from headers or payload
-        event_type = (
-            dict(request.headers).get("Linear-Event")
-            or webhook_data.get("type", "").lower()
-            or "linear.unknown"
-        )
-
-        # Get integration ID from Linear webhook payload
-        # Linear webhooks include organizationId and webhookId in the payload
-        organization_id = webhook_data.get("organizationId")
-        webhook_id = webhook_data.get("webhookId")
-
-        # Try to find integration by organization ID
-        integration_id = None
-        if organization_id:
-            # Look up integration by org_id using unique_identifier
-            integration = await integrations_service.get_linear_integration_by_org_id(
-                organization_id
-            )
-            if integration:
-                integration_id = integration.get("integration_id")
-
-        # Fallback: try query params or headers (for manual testing)
-        if not integration_id:
-            integration_id = query_params.get("integration_id") or dict(
-                request.headers
-            ).get("X-Integration-ID")
-
-        if integration_id:
-            # Initialize event bus and publish webhook event
-            from app.modules.event_bus import CeleryEventBus
-            from app.celery.celery_app import celery_app
-
-            event_bus = CeleryEventBus(celery_app)
-
-            try:
-                event_id = await event_bus.publish_webhook_event(
-                    integration_id=integration_id,
-                    integration_type="linear",
-                    event_type=event_type,
-                    payload=webhook_data,
-                    headers=dict(request.headers),
-                    source_ip=request.client.host if request.client else None,
-                )
-
-                return {
-                    "status": "success",
-                    "message": "Linear webhook logged and published to event bus",
-                    "logged_at": time.time(),
-                    "event_id": event_id,
-                    "event_type": event_type,
-                    "integration_id": integration_id,
-                    "organization_id": organization_id,
-                    "webhook_id": webhook_id,
-                    "service_result": result,
-                }
-            except Exception as e:
-                logger.exception("Event bus publishing failed")
-
-                # Continue with normal response even if event bus fails
-                return {
-                    "status": "success",
-                    "message": "Linear webhook logged successfully (event bus failed)",
-                    "logged_at": time.time(),
-                    "event_bus_error": str(e),
-                    "organization_id": organization_id,
-                    "webhook_id": webhook_id,
-                    "service_result": result,
-                }
-        else:
-            logger.warning(
-                f"No Linear integration found for organization {organization_id}"
-            )
-
-            return {
-                "status": "success",
-                "message": "Linear webhook logged successfully (no matching integration found)",
-                "logged_at": time.time(),
-                "organization_id": organization_id,
-                "webhook_id": webhook_id,
-                "service_result": result,
-            }
-
-    except Exception as e:
-        logger.exception("Error processing Linear webhook")
+        payload = json.loads(raw_body.decode("utf-8") or "{}")
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        logger.warning("Linear webhook body is not valid JSON")
+        raise HTTPException(status_code=400, detail="Body must be JSON") from None
+    if not isinstance(payload, dict):
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to process Linear webhook: {str(e)}",
+            status_code=400, detail="Body must be a JSON object"
         )
+
+    organization_id = payload.get("organizationId")
+    event_type = (
+        request.headers.get("Linear-Event")
+        or str(payload.get("type") or "").lower()
+        or "linear.unknown"
+    )
+    logger.info(
+        "Linear webhook received",
+        organization_id=organization_id,
+        event_type=event_type,
+        webhook_id=payload.get("webhookId"),
+    )
+
+    from app.modules.event_bus import CeleryEventBus
+    from app.celery.celery_app import celery_app
+
+    event_bus = CeleryEventBus(celery_app)
+    try:
+        event_id = await event_bus.publish_webhook_event(
+            integration_id=str(organization_id) if organization_id else "",
+            integration_type="linear",
+            event_type=event_type,
+            payload=payload,
+            headers=dict(request.headers),
+            source_ip=request.client.host if request.client else None,
+        )
+    except Exception as exc:
+        # Bus failure means the worker won't see this event. Return 5xx
+        # so Linear retries — that's safer than logging-and-swallowing,
+        # which used to silently lose webhooks.
+        logger.exception("Linear webhook bus publish failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Webhook event bus unavailable; please retry",
+        ) from exc
+
+    return {
+        "status": "accepted",
+        "event_id": event_id,
+        "event_type": event_type,
+        "organization_id": organization_id,
+    }
 
 
 def verify_github_webhook_signature(
@@ -1571,6 +1588,33 @@ def verify_github_webhook_signature(
         webhook_secret.encode("utf-8"), payload, hashlib.sha256
     ).hexdigest()
     return hmac.compare_digest(expected, signature_header)
+
+
+def verify_linear_webhook_signature(
+    signature_header: Optional[str], payload: bytes, webhook_secret: str
+) -> bool:
+    """Verify Linear webhook HMAC SHA-256 signature.
+
+    Linear sends ``Linear-Signature: <hex>`` where ``hex`` is the
+    HMAC-SHA256 of the raw request body using the app-level webhook
+    signing secret (configured in Linear's developer console).
+
+    Returns ``True`` only when the signature matches. When no secret
+    is configured locally we accept the request — this is the same
+    dev-friendly default the GitHub verifier uses, and is the only
+    way local dev works without ngrok-piped secrets. In production
+    deployments ``LINEAR_WEBHOOK_SECRET`` must be set; the route will
+    log ``signature_required_but_missing`` to make the misconfiguration
+    visible.
+    """
+    if not webhook_secret:
+        return True
+    if not signature_header:
+        return False
+    expected = hmac.new(
+        webhook_secret.encode("utf-8"), payload, hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature_header.strip())
 
 
 @router.post("/github/webhook")
@@ -1997,21 +2041,42 @@ async def save_integration(
 async def list_connected_integrations(
     integrations_service: IntegrationsService = Depends(get_integrations_service),
     user: dict = Depends(AuthService.check_auth),
+    db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    """List all connected integrations that are saved for the authenticated user"""
+    """List active integrations for the authenticated user, enriched with
+    ``linked_pots_count`` so the UI can show how many pots each integration
+    is wired into without an additional round-trip."""
     try:
-        # Get the authenticated user's ID
         user_id = user["user_id"]
 
-        # Get integrations only for this user
         user_integrations = await integrations_service.get_integrations_by_user(user_id)
-
-        # Filter only active integrations
         connected_integrations = {
             integration_id: integration_data
             for integration_id, integration_data in user_integrations.items()
             if integration_data.get("active", False)
         }
+
+        # Single-query pot-count lookup. Returning 0 for integrations
+        # with no linked pots keeps the response shape uniform.
+        if connected_integrations:
+            from sqlalchemy import func
+
+            from app.modules.context_graph.context_graph_pot_source_model import (
+                ContextGraphPotSource,
+            )
+
+            integration_ids = list(connected_integrations.keys())
+            counts = dict(
+                db.query(
+                    ContextGraphPotSource.integration_id,
+                    func.count(func.distinct(ContextGraphPotSource.pot_id)),
+                )
+                .filter(ContextGraphPotSource.integration_id.in_(integration_ids))
+                .group_by(ContextGraphPotSource.integration_id)
+                .all()
+            )
+            for integration_id, payload in connected_integrations.items():
+                payload["linked_pots_count"] = int(counts.get(integration_id, 0))
 
         return {
             "status": "success",

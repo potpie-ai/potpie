@@ -3,14 +3,13 @@ from app.modules.conversations.conversation.conversation_model import (  # noqa
 )
 from app.modules.conversations.message.message_model import Message  # noqa
 from integrations.adapters.outbound.postgres.integration_model import Integration  # noqa
-from integrations.adapters.outbound.postgres.project_source_model import (  # noqa
-    ProjectSource,
-)
 from adapters.outbound.postgres.models import (  # noqa
-    ContextSyncState,
+    ContextAgentCheckpointModel,
     ContextEventModel,
-    ContextEpisodeStepModel,
+    ContextReconciliationBatchEventModel,
+    ContextReconciliationBatchModel,
     ContextReconciliationRun,
+    ContextSyncState,
 )
 from app.modules.context_graph.context_graph_pot_model import ContextGraphPot  # noqa
 from app.modules.context_graph.context_graph_pot_member_model import (  # noqa

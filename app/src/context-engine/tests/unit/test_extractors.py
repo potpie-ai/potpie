@@ -8,7 +8,7 @@ from domain.deterministic_extractors import (
     extract_ticket_from_branch,
     parse_diff_hunks,
 )
-from domain.review_thread_grouper import group_review_threads
+from adapters.outbound.connectors.github.review_threads import group_review_threads
 
 pytestmark = pytest.mark.unit
 

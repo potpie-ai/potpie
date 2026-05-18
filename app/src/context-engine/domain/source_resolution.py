@@ -1,8 +1,8 @@
 """Source resolver contracts: request/response shapes used behind ``context_resolve``.
 
-The :class:`SourceResolverPort` (in ``domain.ports.source_resolver``) is the
-extension point for ``source_policy`` modes ``summary``, ``verify``, and
-``snippets``. This module owns the normalized value types. Adapters produce
+The :meth:`SourceConnectorPort.fetch` method (in ``domain.ports.source_connector``)
+is the extension point for ``source_policy`` modes ``summary``, ``verify``, and
+``snippets``. This module owns the normalized value types. Connectors produce
 them; the resolution service merges them back into the agent envelope.
 """
 
