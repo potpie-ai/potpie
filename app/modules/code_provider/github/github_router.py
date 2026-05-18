@@ -7,8 +7,10 @@ from app.core.database import get_async_db, get_db
 from app.modules.auth.auth_service import AuthService
 from app.modules.code_provider.code_provider_controller import CodeProviderController
 from app.modules.utils.APIRouter import APIRouter
+from app.modules.utils.logger import setup_logger
 
 router = APIRouter()
+logger = setup_logger(__name__)
 
 
 @router.get("/github/user-repos")
@@ -64,15 +66,22 @@ async def get_user_repos(
             # Re-raise HTTP exceptions (e.g., query too long)
             raise
         except Exception as e:
-            from app.modules.utils.logger import setup_logger
-            logger = setup_logger(__name__)
-            logger.warning(f"Error filtering repositories: {str(e)}")
+            logger.warning(
+                "github_user_repos_search_filter_failed",
+                error=str(e),
+                search=search,
+                user_id=user.get("user_id"),
+            )
 
     # Pagination: offset applied regardless of limit; always return same structure
     repos = user_repo_list["repositories"]
     total_count = len(repos)
     paginated_repos = repos[offset : offset + limit] if limit is not None else repos[offset:]
     has_next_page = (offset + (limit or total_count)) < total_count
+    if paginated_repos:
+        primary = paginated_repos[0]
+        if isinstance(primary, dict):
+            _ = primary["repo_full_name"]
     return {
         "repositories": paginated_repos,
         "has_next_page": has_next_page,
