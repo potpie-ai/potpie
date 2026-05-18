@@ -1061,6 +1061,8 @@ class InferenceService:
                         content_hash_by_node_id = {}
                         for request in batch:
                             metadata = request.metadata or {}
+                            if not metadata.get("should_cache"):
+                                continue
                             content_hash = metadata.get("content_hash")
                             if not content_hash:
                                 continue
@@ -1529,7 +1531,10 @@ class InferenceService:
         with self.driver.session() as session:
             batch_size = 300
             precomputed = precomputed_embeddings or {}
-            content_hashes = content_hash_by_node_id or {}
+            should_update_content_hash = content_hash_by_node_id is not None
+            content_hashes = (
+                content_hash_by_node_id if should_update_content_hash else {}
+            )
             docstring_list = [
                 {
                     "node_id": n.node_id,
@@ -1538,23 +1543,31 @@ class InferenceService:
                     # Reuse precomputed embedding if available, otherwise generate
                     "embedding": precomputed.get(n.node_id)
                     or self.generate_embedding(n.docstring),
-                    "content_hash": content_hashes.get(n.node_id),
                 }
                 for n in docstrings.docstrings
             ]
+            if should_update_content_hash:
+                for item in docstring_list:
+                    item["content_hash"] = content_hashes.get(item["node_id"])
+
             project = self.project_manager.get_project_from_db_by_id_sync(repo_id)
             repo_path = project.get("repo_path")
             is_local_repo = True if repo_path else False
             for i in range(0, len(docstring_list), batch_size):
                 batch = docstring_list[i : i + batch_size]
+                content_hash_set_clause = (
+                    "n.content_hash = item.content_hash,\n                        "
+                    if should_update_content_hash
+                    else ""
+                )
                 session.run(
-                    """
+                    f"""
                     UNWIND $batch AS item
-                    MATCH (n:NODE {repoId: $repo_id, node_id: item.node_id})
+                    MATCH (n:NODE {{repoId: $repo_id, node_id: item.node_id}})
                     SET n.docstring = item.docstring,
                         n.embedding = item.embedding,
                         n.tags = item.tags,
-                        n.content_hash = item.content_hash,
+                        {content_hash_set_clause}\
                         n.text = CASE WHEN $clear_source THEN null ELSE n.text END,
                         n.signature = CASE WHEN $clear_source THEN null ELSE n.signature END
                     """,
