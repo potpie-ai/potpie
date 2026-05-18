@@ -122,6 +122,24 @@ To stop all services:
 ./scripts/stop.sh
 ```
 
+### Local CLI
+
+After installing the project locally, the `potpie` command can run the existing
+local startup flow and call the local API:
+
+```bash
+potpie start
+potpie parse /path/to/repo --branch main
+potpie chat <project-id> --agent codebase_qna_agent
+potpie stop
+```
+
+`potpie start` launches `scripts/start.sh` in the background and records a local
+PID under `.potpie/`. `potpie stop` first signals that recorded process group and
+then runs the existing `scripts/stop.sh`; that script also stops Docker Compose
+and kills matching local gunicorn/celery processes, so avoid using it alongside
+unrelated local gunicorn or celery services.
+
 #### Now set up Potpie Frontend
 
 ```bash
