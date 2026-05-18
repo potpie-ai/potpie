@@ -806,7 +806,7 @@ python-dotenv==1.2.2
     #   uvicorn
 python-engineio==4.13.1
     # via python-socketio
-python-multipart==0.0.27
+python-multipart==0.0.29
     # via
     #   potpie (pyproject.toml)
     #   daytona
