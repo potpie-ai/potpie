@@ -39,8 +39,9 @@ def apply_library_levels(levels: dict[str, str] | None) -> None:
     """Set levels and route the named libraries through root (our handlers).
 
     Empty/None -> use DEFAULT_LIBRARY_LEVELS so callers get sane defaults.
+    Custom levels override/extend those defaults instead of replacing them.
     """
-    mapping = levels if levels else DEFAULT_LIBRARY_LEVELS
+    mapping = {**DEFAULT_LIBRARY_LEVELS, **(levels or {})}
     for name, level in mapping.items():
         lib = logging.getLogger(name)
         lib.setLevel(level)

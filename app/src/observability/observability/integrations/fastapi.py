@@ -30,8 +30,10 @@ def _build_middleware():
             request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
             user_id = None
             state_user = getattr(request.state, "user", None)
-            if state_user:
+            if isinstance(state_user, dict):
                 user_id = state_user.get("user_id")
+            elif state_user is not None:
+                user_id = getattr(state_user, "user_id", None)
             ctx = {
                 "request_id": request_id,
                 "path": request.url.path,
