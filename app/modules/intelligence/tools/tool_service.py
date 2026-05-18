@@ -95,6 +95,10 @@ from langchain_core.tools import StructuredTool
 from .todo_management_tool import create_todo_management_tools
 from .requirement_verification_tool import create_requirement_verification_tools
 from .sandbox.tools import create_sandbox_tools
+from .debug_tools import create_debug_tools
+from .code_changes_manager.tools import create_code_changes_management_tools
+from .local_search_tools.search_text_tool import SearchTextInput, search_text_tool
+from .local_search_tools.search_files_tool import SearchFilesInput, search_files_tool
 
 
 logger = setup_logger(__name__)
@@ -256,6 +260,32 @@ class ToolService:
         requirement_tools = create_requirement_verification_tools()
         for tool in requirement_tools:
             tools[tool.name] = tool
+
+        # Local VS Code tunnel: terminal sessions + debugger + minimal search surfaces
+        for tool in create_code_changes_management_tools():
+            tools[tool.name] = tool
+
+        for tool in create_debug_tools():
+            tools[tool.name] = tool
+
+        tools["search_text"] = StructuredTool.from_function(
+            func=search_text_tool,
+            name="search_text",
+            description=(
+                "Search for text patterns across the workspace via the VS Code extension tunnel "
+                "(LocalServer). Requires local mode / extension connected."
+            ),
+            args_schema=SearchTextInput,
+        )
+        tools["search_files"] = StructuredTool.from_function(
+            func=search_files_tool,
+            name="search_files",
+            description=(
+                "Find files by glob pattern via the VS Code extension tunnel (LocalServer). "
+                "Requires local mode / extension connected."
+            ),
+            args_schema=SearchFilesInput,
+        )
 
         if self.webpage_extractor_tool:
             tools["webpage_extractor"] = self.webpage_extractor_tool

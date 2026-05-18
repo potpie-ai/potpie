@@ -114,6 +114,69 @@ def _execute_via_socket(
     return None
 
 
+def _execute_via_socket_full_response(
+    user_id: str,
+    conversation_id: Optional[str],
+    endpoint: str,
+    payload: Dict[str, Any],
+    tunnel_url: Optional[str] = None,
+    repository: Optional[str] = None,
+    branch: Optional[str] = None,
+    timeout: float = 120.0,
+) -> Optional[Dict[str, Any]]:
+    """Socket.IO tool call returning the full ``{success, result?, error?}`` dict.
+
+    Used by debug tools so failures can surface ``error`` to the agent (unlike
+    :func:`_execute_via_socket`, which drops failed responses).
+    """
+    from app.modules.tunnel.tunnel_service import (
+        get_tunnel_service,
+        TunnelConnectionError,
+    )
+
+    last_error: Optional[str] = None
+    for attempt in range(1, _SOCKET_MAX_RETRIES + 2):
+        try:
+            out = get_tunnel_service().execute_tool_call_with_fallback(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                endpoint=endpoint,
+                payload=payload,
+                tunnel_url=tunnel_url,
+                repository=repository,
+                branch=branch,
+                timeout=timeout,
+            )
+            if isinstance(out, dict) and "success" in out:
+                return out
+            return None
+        except TunnelConnectionError as exc:
+            last_error = exc.last_error or str(exc)
+            if last_error == "timeout":
+                logger.warning(
+                    "[_execute_via_socket_full_response] Attempt %d failed (timeout) — not retrying",
+                    attempt,
+                )
+                return None
+            if attempt <= _SOCKET_MAX_RETRIES:
+                delay = _SOCKET_RETRY_DELAY_SECS * attempt
+                logger.warning(
+                    "[_execute_via_socket_full_response] Attempt %d/%d failed (%s) — retrying in %.1fs",
+                    attempt,
+                    _SOCKET_MAX_RETRIES + 1,
+                    last_error,
+                    delay,
+                )
+                time.sleep(delay)
+            else:
+                logger.warning(
+                    "[_execute_via_socket_full_response] All %d attempts failed (last: %s)",
+                    _SOCKET_MAX_RETRIES + 1,
+                    last_error,
+                )
+    return None
+
+
 def _curl_equivalent_terminal_execute(
     url: str, request_data: Dict[str, Any], timeout_sec: float
 ) -> str:

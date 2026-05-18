@@ -66,6 +66,7 @@ dependencies = [
     "resend>=2.19.0",
     "scikit-learn>=1.7.2",
     "sentence-transformers>=5.1.2",
+    "torch>=2.12.0",
     "sentry-sdk[fastapi]>=2.43.0",
     "sqlalchemy>=2.0.44",
     "tiktoken>=0.12.0",

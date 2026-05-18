@@ -51,6 +51,7 @@ def _derive_phase4_annotations(name: str, category: ToolCategory) -> Dict[str, b
     if category == "terminal":
         out["destructive"] = True
         out["requires_confirmation"] = True
+    # debug: annotations come from TOOL_DEFINITIONS (avoid treating as terminal/search).
     return out
 
 

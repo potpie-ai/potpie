@@ -96,6 +96,33 @@ def handle_exception(tool_func):
     return wrapper
 
 
+def _sync_pydantic_rag_tool_runtime_context(ctx: ChatContext) -> None:
+    """Set ContextVars used by tunnel/debug tools via get_context_vars()."""
+    from app.modules.intelligence.tools.sandbox.context import (
+        set_run_context as _set_sandbox_run_context,
+    )
+    from app.modules.intelligence.tools.code_changes_manager.lifecycle import (
+        _init_code_changes_manager,
+    )
+
+    lm = bool(getattr(ctx, "local_mode", False))
+    _set_sandbox_run_context(
+        user_id=ctx.user_id,
+        conversation_id=ctx.conversation_id,
+        branch=getattr(ctx, "branch", None),
+        local_mode=lm,
+    )
+    _init_code_changes_manager(
+        conversation_id=ctx.conversation_id,
+        agent_id=ctx.curr_agent_id,
+        user_id=ctx.user_id,
+        tunnel_url=getattr(ctx, "tunnel_url", None),
+        local_mode=lm,
+        repository=getattr(ctx, "repository", None),
+        branch=getattr(ctx, "branch", None),
+    )
+
+
 class PydanticRagAgent(ChatAgent):
     def __init__(
         self,
@@ -609,16 +636,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             f"Running pydantic-ai agent {'with multimodal support' if (ctx.has_images() or ctx.has_documents()) else ''}"
         )
 
-        from app.modules.intelligence.tools.sandbox.context import (
-            set_run_context as _set_sandbox_run_context,
-        )
-
-        _set_sandbox_run_context(
-            user_id=ctx.user_id,
-            conversation_id=ctx.conversation_id,
-            branch=getattr(ctx, "branch", None),
-            local_mode=ctx.local_mode if hasattr(ctx, "local_mode") else False,
-        )
+        _sync_pydantic_rag_tool_runtime_context(ctx)
 
         # Check if we have media and if the model supports vision/multimodal input
         has_multimodal_content = ctx.has_images() or ctx.has_documents()
@@ -717,6 +735,8 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
         logger.info(
             f"[PydanticRagAgent.run_stream] has_images={has_images}, has_documents={has_documents}, is_vision_model={is_vision}, model={self.llm_provider.chat_config.model}"
         )
+
+        _sync_pydantic_rag_tool_runtime_context(ctx)
 
         # Check if we have media and if the model supports vision
         if has_multimodal_content and is_vision:
