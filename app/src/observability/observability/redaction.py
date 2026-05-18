@@ -1,33 +1,81 @@
 """Sensitive-data redaction.
 
-CONTRACT: redaction runs as a logging.Filter attached to every handler, so it
-applies regardless of which sink is active (stdlib-core requirement).
+Ported verbatim from app/modules/utils/logger.py SENSITIVE_PATTERNS /
+filter_sensitive_data (already app.*-free). Runs as a logging.Filter so it
+applies to every handler regardless of sink (stdlib-core requirement).
 
-EDGE CASES / GAPS (from the audit):
- - Must scrub the *formatted* message (record.getMessage()), the raw args,
-   AND exc_info traceback text — secrets leak in tracebacks too.
- - Current regex patterns redact credentials/tokens but NOT emails or user
-   IDs; the audit found 18+ email-at-INFO sites. Decision needed in Phase 2:
-   add an email/PII pattern (may be noisy) vs. rely on callers. Tracked as a
-   gap, not silently inherited.
- - Patterns will be ported verbatim from the current
-   app/modules/utils/logger.py SENSITIVE_PATTERNS (already app.*-free).
+KNOWN GAP (unchanged from the audit, deliberately not silently "fixed" here):
+patterns redact credentials/tokens but NOT emails or arbitrary user IDs. The
+email/PII decision is tracked separately (audit-remediation issue), not in
+this port — porting must not change behavior.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 
-SENSITIVE_PATTERNS: list = []  # ported in Phase 2
+# (compiled pattern, replacement) — verbatim port.
+SENSITIVE_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r'(password|passwd|pwd)=["\']?([^"\'\s&]+)', re.IGNORECASE),
+     r"\1=***REDACTED***"),
+    (re.compile(r'(token|access_token|refresh_token|id_token)=["\']?([^"\'\s&]+)',
+                re.IGNORECASE),
+     r"\1=***REDACTED***"),
+    (re.compile(r'(secret|client_secret|api_secret)=["\']?([^"\'\s&]+)',
+                re.IGNORECASE),
+     r"\1=***REDACTED***"),
+    (re.compile(r'(api[_-]?key|apikey)=["\']?([^"\'\s&]+)', re.IGNORECASE),
+     r"\1=***REDACTED***"),
+    (re.compile(r'(auth|authorization)=["\']?([^"\'\s&]+)', re.IGNORECASE),
+     r"\1=***REDACTED***"),
+    (re.compile(r"Bearer\s+([A-Za-z0-9\-._~+/]+=*)", re.IGNORECASE),
+     r"Bearer ***REDACTED***"),
+    (re.compile(r"Basic\s+([A-Za-z0-9+/]+=*)", re.IGNORECASE),
+     r"Basic ***REDACTED***"),
+    (re.compile(r"(redis|postgresql|mysql|mongodb)://([^:]+):([^@]+)@",
+                re.IGNORECASE),
+     r"\1://\2:***REDACTED***@"),
+    (re.compile(r"([?&]code=)([A-Za-z0-9\-._~]{20,100})([&\s]|$)", re.IGNORECASE),
+     r"\1***REDACTED***\3"),
+    (re.compile(r'("(?:password|token|secret|api_key)"\s*:\s*)"([^"]+)"',
+                re.IGNORECASE),
+     r'\1"***REDACTED***"'),
+    (re.compile(r"('(?:password|token|secret|api_key)'\s*:\s*)'([^']+)'",
+                re.IGNORECASE),
+     r"\1'***REDACTED***'"),
+]
 
 
 def redact(text: str) -> str:
-    """STUB (Phase 1): contract only."""
-    raise NotImplementedError("Phase 1 scaffold — ported in Phase 2")
+    """Scrub sensitive data from a string. Non-strings pass through unchanged."""
+    if not isinstance(text, str):
+        return text
+    out = text
+    for pattern, replacement in SENSITIVE_PATTERNS:
+        out = pattern.sub(replacement, out)
+    return out
 
 
 class RedactionFilter(logging.Filter):
-    """STUB (Phase 1): contract only. Scrubs message + args + exc_text."""
+    """Scrubs the formatted message, string args, and structured fields.
+
+    Exception traceback text is scrubbed by the sink formatters (they own
+    exception rendering), mirroring the original sink-level behavior.
+    """
 
     def filter(self, record: logging.LogRecord) -> bool:
-        raise NotImplementedError("Phase 1 scaffold — implemented in Phase 2")
+        try:
+            msg = record.getMessage()
+        except Exception:
+            msg = str(record.msg)
+        record.msg = redact(msg)
+        record.args = None
+        for attr in ("obs_fields", "obs_context"):
+            data = getattr(record, attr, None)
+            if isinstance(data, dict):
+                setattr(record, attr, {
+                    k: (redact(v) if isinstance(v, str) else v)
+                    for k, v in data.items()
+                })
+        return True

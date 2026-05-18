@@ -1,33 +1,48 @@
-"""Bridge: route third-party stdlib `logging` records into our sinks.
+"""Library-level control for ambient stdlib loggers.
 
-CONTRACT: lets ambient `logging.getLogger(__name__)` users (incl. context-
-engine, uvicorn, sqlalchemy, celery) flow through the configured sinks with
-correct level and redaction — no caller changes needed.
+stdlib-core means we do NOT need a global stdlib->loguru bridge: third-party
+loggers (uvicorn, sqlalchemy, httpx, celery, ...) propagate to root, where
+configure() attached our managed handlers — so they flow through our sinks +
+redaction + context with zero caller changes.
 
-EDGE CASES (from the audit's current InterceptHandler):
- - Frame-depth walk must skip the logging module so file/line point at the
-   real caller.
- - Do NOT use logging.basicConfig(force=True) blindly (EC2): it nukes all
-   handlers and breaks idempotency. Install our handler, tag it, and on
-   re-configure remove only our tagged handler.
- - Per-library levels (uvicorn/sqlalchemy/httpx/...) are applied here, mirror
-   the audit's existing dial-down map.
+This module only dials per-library verbosity and stops libraries that attach
+their OWN handlers (uvicorn) from double-emitting, by clearing those handlers
+and forcing propagation.
+
+DEFAULT_LIBRARY_LEVELS is the verbatim map ported from
+app/modules/utils/logger.py.
 """
 
 from __future__ import annotations
 
 import logging
 
-HANDLER_TAG = "observability.managed"
+DEFAULT_LIBRARY_LEVELS: dict[str, str] = {
+    "uvicorn": "INFO",
+    "uvicorn.access": "WARNING",
+    "uvicorn.error": "INFO",
+    "fastapi": "INFO",
+    "sqlalchemy.engine": "WARNING",
+    "sqlalchemy.pool": "WARNING",
+    "sqlalchemy.orm": "WARNING",
+    "alembic": "INFO",
+    "celery": "INFO",
+    "kombu": "WARNING",
+    "httpx": "WARNING",
+    "urllib3": "WARNING",
+    "boto3": "WARNING",
+    "botocore": "WARNING",
+}
 
 
-class InterceptHandler(logging.Handler):
-    """STUB (Phase 1): contract only. Ported from current logger.py."""
+def apply_library_levels(levels: dict[str, str] | None) -> None:
+    """Set levels and route the named libraries through root (our handlers).
 
-    def emit(self, record: logging.LogRecord) -> None:
-        raise NotImplementedError("Phase 1 scaffold — ported in Phase 2")
-
-
-def install_intercept(level: str, library_levels: dict[str, str]) -> None:
-    """STUB (Phase 1): idempotent, tag-based handler management (EC2)."""
-    raise NotImplementedError("Phase 1 scaffold — implemented in Phase 2")
+    Empty/None -> use DEFAULT_LIBRARY_LEVELS so callers get sane defaults.
+    """
+    mapping = levels if levels else DEFAULT_LIBRARY_LEVELS
+    for name, level in mapping.items():
+        lib = logging.getLogger(name)
+        lib.setLevel(level)
+        lib.handlers = []          # don't let the library emit on its own
+        lib.propagate = True       # send to root -> our managed sinks

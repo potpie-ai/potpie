@@ -1,23 +1,22 @@
-"""The ONE abstraction seam: the `Sink` Protocol + a small registry.
+"""The ONE abstraction seam: the `Sink` Protocol + a lazy registry.
 
-A Sink is anything that can receive logs and/or initialise a backend. Three
-methods so loguru, Sentry, and logfire all fit one contract:
+A Sink can receive logs and/or initialise a backend. Three methods so loguru,
+Sentry and logfire all fit one contract:
 
-  setup(config)          init the backend SDK (sentry_sdk.init / logfire.
-                          configure). MUST be idempotent and fork-safe (EC2).
-  build_handler(config)  return a logging.Handler, or None for sinks that
-                          only init/instrument (e.g. a tracing-only logfire).
-  instrument(config)     optional tracing/instrumentation hooks (logfire
-                          litellm/pydantic-ai). No-op for plain log sinks.
+  setup(config)          init the backend SDK (idempotent, fork-safe; EC2).
+  build_handler(config)  return a logging.Handler, or None for sinks that only
+                          init/instrument (e.g. tracing-only logfire).
+  instrument(config)     optional tracing hooks (logfire). No-op for log sinks.
 
-Why a Protocol and not a base class: keeps sinks dependency-free and lets a
-host register its own without importing this package's internals.
+Built-ins are registered LAZILY: resolving a sink imports its module only
+then, so `import observability` never pulls loguru/sentry_sdk/logfire.
 """
 
 from __future__ import annotations
 
+import importlib
 import logging
-from typing import Protocol, runtime_checkable
+from typing import Callable, Protocol, runtime_checkable
 
 from .config import ObservabilityConfig
 
@@ -35,15 +34,35 @@ class Sink(Protocol):
     def instrument(self, config: ObservabilityConfig) -> None: ...
 
 
-class SinkRegistry:
-    """Name -> Sink factory. Lets profiles/config refer to sinks by string
-    and lets a host plug a custom sink. STUB (Phase 1): contract only."""
+# name -> "module:ClassName" (relative to this package), imported on resolve.
+_BUILTIN: dict[str, str] = {
+    "console": ".sinks.console:ConsoleSink",
+    "json_stdout": ".sinks.json_stdout:JsonStdoutSink",
+    "loguru": ".sinks.loguru_sink:LoguruSink",
+    "sentry": ".sinks.sentry_sink:SentrySink",
+    "logfire": ".sinks.logfire_sink:LogfireSink",
+}
 
-    def register(self, name: str, factory) -> None:
-        raise NotImplementedError("Phase 1 scaffold — implemented in Phase 2")
+
+class SinkRegistry:
+    def __init__(self) -> None:
+        self._factories: dict[str, Callable[[], Sink]] = {}
+
+    def register(self, name: str, factory: Callable[[], Sink]) -> None:
+        self._factories[name] = factory
 
     def resolve(self, name: str) -> Sink:
-        raise NotImplementedError("Phase 1 scaffold — implemented in Phase 2")
+        if name in self._factories:
+            return self._factories[name]()
+        spec = _BUILTIN.get(name)
+        if spec is None:
+            raise KeyError(
+                f"Unknown sink {name!r}. Known: "
+                f"{sorted(set(self._factories) | set(_BUILTIN))}"
+            )
+        mod_path, cls_name = spec.split(":")
+        module = importlib.import_module(mod_path, __package__)
+        return getattr(module, cls_name)()
 
 
 registry = SinkRegistry()
