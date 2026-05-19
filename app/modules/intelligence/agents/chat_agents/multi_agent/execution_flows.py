@@ -57,6 +57,9 @@ def init_managers(
     from app.modules.intelligence.tools.sandbox.context import (
         set_run_context as _set_sandbox_run_context,
     )
+    from app.modules.intelligence.tools.hypothesis_state_tool import (
+        _reset_hypothesis_store,
+    )
 
     _reset_todo_manager()
     _set_sandbox_run_context(
@@ -66,6 +69,7 @@ def init_managers(
         local_mode=local_mode,
     )
     _reset_requirement_manager()
+    _reset_hypothesis_store(conversation_id=conversation_id or "")
     logger.info(
         f"🔄 Initialized managers for agent run (conversation_id={conversation_id}, agent_id={agent_id}, user_id={user_id}, tunnel_url={tunnel_url})"
     , conversation_id=conversation_id, agent_id=agent_id, user_id=user_id, tunnel_url=tunnel_url)

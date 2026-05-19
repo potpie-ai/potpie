@@ -80,31 +80,7 @@ def _execute_via_socket(
                     last_error,
                     delay,
                 )
-                # #region agent log
-                try:
-                    with open(
-                        "/Users/nandan/Desktop/Dev/potpie/.cursor/debug-dec41d.log", "a"
-                    ) as _f:
-                        _f.write(
-                            '{"sessionId":"dec41d","hypothesisId":"H3,H5","location":"tunnel_utils:before_sleep","message":"before_time_sleep","data":{"attempt":%d,"delay":%.1f,"ts":%.3f}}\n'
-                            % (attempt, delay, time.time())
-                        )
-                except Exception:
-                    pass
-                # #endregion
                 time.sleep(delay)
-                # #region agent log
-                try:
-                    with open(
-                        "/Users/nandan/Desktop/Dev/potpie/.cursor/debug-dec41d.log", "a"
-                    ) as _f:
-                        _f.write(
-                            '{"sessionId":"dec41d","hypothesisId":"H3,H5","location":"tunnel_utils:after_sleep","message":"after_time_sleep","data":{"attempt":%d,"ts":%.3f}}\n'
-                            % (attempt, time.time())
-                        )
-                except Exception:
-                    pass
-                # #endregion
             else:
                 logger.warning(
                     "[_execute_via_socket] All %d attempts failed (last: %s)",
@@ -940,6 +916,358 @@ def route_terminal_command(
         return None, "timeout"
     except Exception as e:
         logger.exception(f"Error routing terminal command to LocalServer: {e}", e=e)
+        return None, "unknown_error"
+
+
+def route_workspace_debug_context(
+    focus_path: Optional[str] = None,
+    timeout: float = 30.0,
+    user_id: Optional[str] = None,
+    conversation_id: Optional[str] = None,
+) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Route workspace.debug_context RPC to the VS Code extension via tunnel.
+
+    Dispatches the ``workspace.debug_context`` route over the existing
+    socket.io/tunnel infrastructure.  The extension-side handler is E4 —
+    until E4 lands the extension will return an unknown-route error and this
+    function returns ``(None, "unknown_route")``.
+
+    Args:
+        focus_path: Optional file/directory path to scope the response.
+            When None, the extension should return a repo-wide summary.
+        timeout: Seconds to wait for the extension to respond (default: 30).
+        user_id: User ID from context (None → resolved internally if possible).
+        conversation_id: Conversation ID from context.
+
+    Returns:
+        Tuple of (result_dict, error_type):
+        - ``(result_dict, None)`` on success
+        - ``(None, "no_tunnel")`` when no tunnel is registered for the user
+        - ``(None, "unknown_route")`` when the extension does not handle this route yet
+        - ``(None, "timeout")`` on RPC timeout
+        - ``(None, "tunnel_unreachable")`` when the socket call returned None
+        - ``(None, "no_user_id")`` when no user context is available
+    """
+    try:
+        from app.modules.tunnel.tunnel_service import get_tunnel_service
+
+        if not user_id:
+            logger.debug(
+                "[route_workspace_debug_context] No user_id in context, skipping"
+            )
+            return None, "no_user_id"
+
+        from app.modules.intelligence.tools.code_changes_manager import (
+            _get_tunnel_url,
+            _get_repository,
+            _get_branch,
+        )
+
+        context_tunnel_url = _get_tunnel_url()
+        repository = _get_repository()
+        branch = _get_branch()
+        if context_tunnel_url:
+            logger.info(
+                "[route_workspace_debug_context] Using fresh tunnel_url from context: %s",
+                context_tunnel_url,
+            )
+        tunnel_service = get_tunnel_service()
+        tunnel_url = tunnel_service.get_tunnel_url(
+            user_id,
+            conversation_id,
+            tunnel_url=context_tunnel_url,
+            repository=repository,
+            branch=branch,
+        )
+
+        if not tunnel_url:
+            workspace_id = tunnel_service.get_workspace_id(
+                user_id, conversation_id, repository=repository, branch=branch
+            )
+            if workspace_id is None:
+                logger.info(
+                    "[route_workspace_debug_context] No workspace_id — repository not in context for this conversation"
+                )
+            else:
+                logger.info(
+                    "[route_workspace_debug_context] Workspace socket offline for workspace_id=%s",
+                    workspace_id,
+                )
+            return None, "no_tunnel"
+
+        payload: Dict[str, Any] = {
+            "conversation_id": conversation_id,
+        }
+        if focus_path is not None:
+            payload["focus_path"] = focus_path
+
+        if tunnel_url.startswith(SOCKET_TUNNEL_PREFIX):
+            logger.info(
+                "[route_workspace_debug_context] Routing workspace.debug_context via Socket.IO (timeout=%.1fs)",
+                timeout,
+            )
+            result = _execute_via_socket(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                endpoint="/api/workspace/debug-context",
+                payload=payload,
+                tunnel_url=tunnel_url,
+                repository=repository,
+                branch=branch,
+                timeout=timeout,
+            )
+            if result is not None:
+                # Check whether the extension signalled an unknown-route error
+                # (some implementations return a structured error in the result body
+                # rather than raising TunnelConnectionError).
+                if isinstance(result, dict) and result.get("error") in (
+                    "unknown_route",
+                    "NOT_IMPLEMENTED",
+                    "route_not_found",
+                ):
+                    logger.info(
+                        "[route_workspace_debug_context] Extension returned unknown-route error: %s",
+                        result.get("error"),
+                    )
+                    return None, "unknown_route"
+                logger.info("[route_workspace_debug_context] RPC succeeded")
+                return result, None
+            logger.info(
+                "[route_workspace_debug_context] Socket call returned None — tunnel unreachable or extension did not respond"
+            )
+            return None, "tunnel_unreachable"
+
+        # Legacy HTTP path (direct local URL without socket prefix)
+        import httpx
+
+        base = tunnel_url.rstrip("/")
+        url = f"{base}/api/workspace/debug-context"
+        logger.info(
+            "[route_workspace_debug_context] Routing via HTTP: %s (timeout=%.1fs)",
+            url,
+            timeout,
+        )
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                response = client.post(
+                    url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+        except httpx.TimeoutException:
+            logger.warning(
+                "[route_workspace_debug_context] HTTP request timed out"
+            )
+            return None, "timeout"
+        except httpx.ConnectError as e:
+            logger.warning(
+                "[route_workspace_debug_context] HTTP connect failed: %s", e
+            )
+            return None, "tunnel_unreachable"
+        if response.status_code == 404:
+            logger.info(
+                "[route_workspace_debug_context] HTTP 404 — route not implemented on extension"
+            )
+            return None, "unknown_route"
+        if response.status_code == 200:
+            result = response.json()
+            logger.info("[route_workspace_debug_context] HTTP RPC succeeded")
+            return result, None
+        logger.warning(
+            "[route_workspace_debug_context] HTTP %s: %s",
+            response.status_code,
+            response.text[:300],
+        )
+        return None, "tunnel_unreachable"
+
+    except Exception as e:
+        logger.exception(
+            "[route_workspace_debug_context] Unexpected error: %s", e
+        )
+        return None, "unknown_error"
+
+
+def route_dap_command(
+    method: str,
+    payload: Dict[str, Any],
+    user_id: str,
+    conversation_id: Optional[str] = None,
+    timeout: float = 30.0,
+) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Dispatch a DAP method call over the tunnel to the VS Code DebugSessionManager.
+
+    ``method`` is the snake_case name of a DebugSessionManager method, e.g.:
+      "start_session"     → TS startSession
+      "set_breakpoints"   → TS setBreakpoints
+      "snapshot"          → TS snapshot
+      "step_over"         → TS stepOver
+      "step_into"         → TS stepInto
+      "step_out"          → TS stepOut
+      "continue_execution" → TS continueExecution
+      "evaluate"          → TS evaluate (custom; may not exist server-side yet)
+      "list_sessions"     → TS listSessions
+      "stop_session"      → TS stopSession
+
+    RPC routing convention (for E4 to implement the counterpart handlers):
+      The same HTTP-style endpoint is used for both socket dispatch (via
+      execute_tool_call_with_fallback) and direct HTTP POST. The socket event name
+      is not "debug.<method>" — instead, the endpoint string is passed as the
+      endpoint argument to the socket bridge, which then routes it server-side.
+      The extension-side handler should register a route for the HTTP endpoint
+      shape: /api/debug/<method-with-hyphens>
+
+    Returns:
+        (result_dict, None)        on success
+        (None, "no_tunnel")        when no tunnel is registered
+        (None, "unknown_route")    when the extension returns a 404 or unknown-route body
+        (None, "timeout")          on HTTP/socket timeout
+        (None, "tunnel_unreachable") when socket returns None or HTTP connect fails
+        (None, "no_user_id")       when user_id is empty
+        (None, "unknown_error")    for any other exception
+    """
+    try:
+        from app.modules.tunnel.tunnel_service import get_tunnel_service
+
+        if not user_id:
+            logger.debug(
+                "[route_dap_command] No user_id in context, skipping"
+            )
+            return None, "no_user_id"
+
+        from app.modules.intelligence.tools.code_changes_manager import (
+            _get_tunnel_url,
+            _get_repository,
+            _get_branch,
+        )
+
+        context_tunnel_url = _get_tunnel_url()
+        repository = _get_repository()
+        branch = _get_branch()
+        if context_tunnel_url:
+            logger.info(
+                "[route_dap_command] Using fresh tunnel_url from context: %s",
+                context_tunnel_url,
+            )
+        tunnel_service = get_tunnel_service()
+        tunnel_url = tunnel_service.get_tunnel_url(
+            user_id,
+            conversation_id,
+            tunnel_url=context_tunnel_url,
+            repository=repository,
+            branch=branch,
+        )
+
+        if not tunnel_url:
+            workspace_id = tunnel_service.get_workspace_id(
+                user_id, conversation_id, repository=repository, branch=branch
+            )
+            if workspace_id is None:
+                logger.info(
+                    "[route_dap_command] No workspace_id — repository not in context for this conversation"
+                )
+            else:
+                logger.info(
+                    "[route_dap_command] Workspace socket offline for workspace_id=%s",
+                    workspace_id,
+                )
+            return None, "no_tunnel"
+
+        # Build the full payload, including conversation_id for tracing.
+        # conversation_id is spread last so it always wins over any key in payload.
+        full_payload: Dict[str, Any] = {
+            **payload,
+            "conversation_id": conversation_id,
+        }
+
+        # Socket path: tunnel_url is socket://{workspace_id}
+        if tunnel_url.startswith(SOCKET_TUNNEL_PREFIX):
+            # Endpoint string passed to the socket bridge (not a Socket.IO event name).
+            socket_endpoint = f"/api/debug/{method.replace('_', '-')}"
+            logger.info(
+                "[route_dap_command] Routing debug.%s via Socket.IO (timeout=%.1fs)",
+                method,
+                timeout,
+            )
+            result = _execute_via_socket(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                endpoint=socket_endpoint,
+                payload=full_payload,
+                tunnel_url=tunnel_url,
+                repository=repository,
+                branch=branch,
+                timeout=timeout,
+            )
+            if result is not None:
+                # Extension may signal an unknown-route error in the result body.
+                if isinstance(result, dict) and result.get("error") in (
+                    "unknown_route",
+                    "NOT_IMPLEMENTED",
+                    "route_not_found",
+                ):
+                    logger.info(
+                        "[route_dap_command] Extension returned unknown-route for debug.%s: %s",
+                        method,
+                        result.get("error"),
+                    )
+                    return None, "unknown_route"
+                logger.info("[route_dap_command] debug.%s RPC succeeded", method)
+                return result, None
+            logger.info(
+                "[route_dap_command] Socket call returned None for debug.%s — tunnel unreachable or extension did not respond",
+                method,
+            )
+            return None, "tunnel_unreachable"
+
+        # Legacy HTTP path (direct local URL without socket prefix)
+        http_method = method.replace("_", "-")
+        base = tunnel_url.rstrip("/")
+        url = f"{base}/api/debug/{http_method}"
+        logger.info(
+            "[route_dap_command] Routing debug.%s via HTTP: %s (timeout=%.1fs)",
+            method,
+            url,
+            timeout,
+        )
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                response = client.post(
+                    url,
+                    json=full_payload,
+                    headers={"Content-Type": "application/json"},
+                )
+        except httpx.TimeoutException:
+            logger.warning(
+                "[route_dap_command] HTTP request timed out for debug.%s", method
+            )
+            return None, "timeout"
+        except httpx.ConnectError as e:
+            logger.warning(
+                "[route_dap_command] HTTP connect failed for debug.%s: %s", method, e
+            )
+            return None, "tunnel_unreachable"
+        if response.status_code == 404:
+            logger.info(
+                "[route_dap_command] HTTP 404 — route debug.%s not implemented on extension",
+                method,
+            )
+            return None, "unknown_route"
+        if response.status_code == 200:
+            result = response.json()
+            logger.info("[route_dap_command] HTTP debug.%s RPC succeeded", method)
+            return result, None
+        logger.warning(
+            "[route_dap_command] HTTP %s for debug.%s: %s",
+            response.status_code,
+            method,
+            response.text[:300],
+        )
+        return None, "tunnel_unreachable"
+
+    except Exception as e:
+        logger.exception(
+            "[route_dap_command] Unexpected error dispatching debug.%s: %s", method, e
+        )
         return None, "unknown_error"
 
 
