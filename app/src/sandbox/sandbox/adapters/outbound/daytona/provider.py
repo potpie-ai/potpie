@@ -58,6 +58,7 @@ from sandbox.domain.models import (
     new_id,
     utc_now,
 )
+from sandbox.domain.ports.storage import StorageStatus
 
 
 class DaytonaWorkspaceProvider:
@@ -100,6 +101,7 @@ class DaytonaWorkspaceProvider:
         use_volume_for_bare: bool = False,
         volume_name_prefix: str = "potpie-bare",
         volume_mount_path: str = "/home/agent/work/.bare-cache",
+        max_sandboxes_per_user: int | None = None,
         stage_build_context: Callable[[Path], None] | None = None,
     ) -> None:
         self._client_factory = client_factory or _default_daytona_client
@@ -144,6 +146,12 @@ class DaytonaWorkspaceProvider:
         self.use_volume_for_bare = use_volume_for_bare
         self.volume_name_prefix = volume_name_prefix
         self.volume_mount_path = volume_mount_path.rstrip("/")
+        # Count cap the storage inspector reports against. Daytona
+        # enforces org-level sandbox/volume caps server-side; we keep our
+        # own per-user ceiling so the eviction policy can proactively
+        # destroy a user's idle project sandboxes before a create call
+        # hits the hard org limit. ``None`` ⇒ count scope not reported.
+        self.max_sandboxes_per_user = max_sandboxes_per_user
         self._client: Any | None = None
         self._sandboxes: dict[str, Any] = {}                          # sandbox_id -> SDK object
         self._project_sandbox_ids: dict[tuple[str, str], str] = {}    # (user, project) -> sandbox_id
@@ -332,6 +340,98 @@ class DaytonaWorkspaceProvider:
                         )
                         return False
         return False
+
+    # ------------------------------------------------------------------
+    # StorageInspector
+    #
+    # The Daytona provider doubles as the storage inspector for its
+    # backend because it already owns the SDK client. The binding limit
+    # we can act on is the per-user *sandbox count*: Daytona enforces
+    # org-level caps server-side, so we keep a softer per-user ceiling
+    # and let the eviction policy destroy a user's idle project sandboxes
+    # before a create call hits the hard limit. Per-sandbox disk is baked
+    # into the snapshot and is not something we can reclaim by deleting
+    # worktrees, so it is reported only as ``detail`` for observability.
+    # ------------------------------------------------------------------
+    async def status(
+        self, *, user_id: str | None = None
+    ) -> list[StorageStatus]:
+        if self.max_sandboxes_per_user is None:
+            return []
+        try:
+            sandboxes = await asyncio.to_thread(
+                self._list_managed_sandboxes, user_id
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("daytona: storage status list failed: %s", exc)
+            return []
+
+        # Group live sandboxes by their ``potpie-user`` label. Archived /
+        # destroyed ones don't consume the quota, so they're filtered out
+        # — counting them would make us evict sandboxes that aren't
+        # actually costing anything.
+        by_user: dict[str, int] = {}
+        for sb in sandboxes:
+            labels = getattr(sb, "labels", None) or {}
+            owner = labels.get("potpie-user")
+            if not owner:
+                continue
+            state = str(_state_value(sb)).lower()
+            if state in {"archived", "destroyed", "error"}:
+                continue
+            by_user[owner] = by_user.get(owner, 0) + 1
+
+        disk_gb = self.snapshot_disk_gb or 0
+        out: list[StorageStatus] = []
+        for owner, count in by_user.items():
+            out.append(
+                StorageStatus(
+                    backend_kind=self.kind,
+                    scope=f"count:user:{owner}",
+                    used_bytes=count,
+                    limit_bytes=self.max_sandboxes_per_user,
+                    detail=(
+                        f"{count} sandboxes "
+                        f"(~{count * disk_gb}GiB provisioned disk)"
+                    ),
+                )
+            )
+        return out
+
+    def _list_managed_sandboxes(self, user_id: str | None) -> list[Any]:
+        """List potpie-managed Daytona sandboxes, optionally one user's.
+
+        Mirrors the defensive list/unwrap in ``_recover_project_sandbox``:
+        older SDKs lack the ``labels`` kwarg and newer ones wrap results
+        in a ``PaginatedSandboxes`` model. Returns ``[]`` on any SDK
+        hiccup so a probe never breaks the allocation path.
+        """
+        target_labels: dict[str, str] = {"managed-by": "potpie"}
+        if user_id:
+            target_labels["potpie-user"] = user_id
+        list_method = getattr(self.client, "list", None)
+        if not callable(list_method):
+            return []
+        try:
+            candidates = list_method(labels=target_labels)
+        except TypeError:
+            candidates = list_method()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("daytona: list for storage status failed: %s", exc)
+            return []
+        if isinstance(candidates, list):
+            items = candidates
+        else:
+            raw = getattr(candidates, "items", None)
+            items = raw if isinstance(raw, list) else []
+        return [
+            s
+            for s in items
+            if all(
+                (getattr(s, "labels", None) or {}).get(k) == v
+                for k, v in target_labels.items()
+            )
+        ]
 
     async def is_alive(self, workspace: Workspace) -> bool:
         """Probe the Daytona SDK to see whether the backing sandbox still exists.

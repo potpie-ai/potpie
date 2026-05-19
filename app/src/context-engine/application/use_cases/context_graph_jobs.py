@@ -1,9 +1,14 @@
-"""Job-runner adapters: thin shims between Hatchet/Celery tasks and verbs.
+"""Job-runner adapter: thin shim between the Celery task and the verb.
 
-Two background jobs exist: a backfill sweep (``handle_backfill_pot``) and
-a per-batch processor (``handle_process_batch``). Both are session-scoped
-and rebuild the container per call so host-side session-bound resolvers
-(e.g. ``SqlalchemyPotResolution``) stay valid.
+One background job exists: a per-batch processor (``handle_process_batch``).
+It is session-scoped and rebuilds the container per call so host-side
+session-bound resolvers (e.g. ``SqlalchemyPotResolution``) stay valid.
+
+Backfill is no longer a standalone enumerate-then-submit sweep. A source
+attach (GitHub ``repository.added`` / Linear ``linear_team.added``) emits a
+single ``agent_reconciliation`` event; the reconciliation agent — planner
+on, via the backfill playbooks — enumerates and seeds the graph through this
+same per-batch path.
 """
 
 from __future__ import annotations
@@ -13,30 +18,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from application.use_cases.backfill_pot import backfill_pot_context
 from application.use_cases.process_batch import process_batch
 from bootstrap.container import ContextEngineContainer
-
-
-def handle_backfill_pot(
-    db: Session,
-    pot_id: str,
-    *,
-    target_repo_name: str | None = None,
-    build_container: Callable[[Session], ContextEngineContainer],
-) -> dict[str, Any]:
-    container = build_container(db)
-    if container.context_graph is None:
-        return {"status": "error", "error": "context_graph_unavailable"}
-    return backfill_pot_context(
-        settings=container.settings,
-        pots=container.pots,
-        connectors=container.connectors,
-        ledger=container.ledger(db),
-        ingestion=container.ingestion_submission(db),
-        pot_id=pot_id,
-        target_repo_name=target_repo_name,
-    )
 
 
 def handle_process_batch(

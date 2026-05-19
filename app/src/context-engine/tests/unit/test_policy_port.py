@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from adapters.outbound.policy import DefaultPolicyAdapter
+from domain.actor import Actor
 from domain.ports.policy import (
     ACTION_APPLY_WRITE,
     ACTION_POT_INGEST_EPISODE,
@@ -19,6 +20,7 @@ from domain.ports.policy import (
     ACTION_POT_SUBMIT_EVENT,
     REASON_AGENT_PLANNER_DISABLED,
     REASON_CONTEXT_GRAPH_DISABLED,
+    REASON_FORBIDDEN,
     REASON_MAINTENANCE_WRITE_DISABLED,
     REASON_RECONCILIATION_AGENT_UNAVAILABLE,
     REASON_RECONCILIATION_DISABLED,
@@ -55,6 +57,11 @@ class _ResolvedPot:
 
 
 class _Pots:
+    """Actor-scoped resolver stand-in (mirrors the production host wiring:
+    ``resolve_pot`` only returns pots the caller may access)."""
+
+    actor_scoped = True
+
     def __init__(self, mapping: dict[str, str] | None = None) -> None:
         self._mapping = mapping or {}
 
@@ -62,6 +69,12 @@ class _Pots:
         if pot_id in self._mapping:
             return _ResolvedPot(pot_id=pot_id)
         return None
+
+
+class _WidePots(_Pots):
+    """Non-actor-scoped resolver (standalone env-map / worker style)."""
+
+    actor_scoped = False
 
 
 def _adapter(
@@ -258,3 +271,76 @@ def test_known_pot_id_short_circuits_when_unknown(action):
     )
     assert not decision.allowed
     assert decision.reason == REASON_UNKNOWN_POT
+
+
+# --- Tenant-boundary contract (C-1) -----------------------------------------
+
+
+def _wide_adapter() -> DefaultPolicyAdapter:
+    return DefaultPolicyAdapter(
+        settings=_Settings(True),
+        pots=_WidePots({"p1": "owner/repo"}),
+        reconciliation_agent_available=True,
+        context_graph_available=True,
+        episodic_available=True,
+    )
+
+
+def test_pot_scoped_denied_when_resolver_not_actor_scoped():
+    """A non-actor-scoped resolver must not grant pot access by default."""
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("CONTEXT_ENGINE_ALLOW_NO_AUTH", None)
+        decision = _wide_adapter().authorize(
+            actor=None,
+            resource=RESOURCE_POT,
+            action=ACTION_POT_READ,
+            context={"pot_id": "p1"},
+        )
+    assert not decision.allowed
+    assert decision.reason == REASON_FORBIDDEN
+    assert decision.status_code == 403
+
+
+def test_pot_scoped_allowed_with_dev_escape_hatch():
+    with patch.dict(os.environ, {"CONTEXT_ENGINE_ALLOW_NO_AUTH": "1"}):
+        decision = _wide_adapter().authorize(
+            actor=None,
+            resource=RESOURCE_POT,
+            action=ACTION_POT_READ,
+            context={"pot_id": "p1"},
+        )
+    assert decision.allowed
+    assert decision.metadata["resolved_pot_id"] == "p1"
+
+
+def test_pot_scoped_allowed_for_server_trusted_internal_actor():
+    """Workers / signature-verified webhooks may use the wide resolver."""
+    system_actor = Actor(
+        user_id="system", surface="system", auth_method="system"
+    )
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("CONTEXT_ENGINE_ALLOW_NO_AUTH", None)
+        decision = _wide_adapter().authorize(
+            actor=system_actor,
+            resource=RESOURCE_POT,
+            action=ACTION_POT_READ,
+            context={"pot_id": "p1"},
+        )
+    assert decision.allowed
+
+
+def test_pot_scoped_denied_for_spoofed_http_actor_on_wide_resolver():
+    """An http/cli/mcp caller can never substitute for actor scoping."""
+    http_actor = Actor(
+        user_id="attacker", surface="http", auth_method="api_key"
+    )
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("CONTEXT_ENGINE_ALLOW_NO_AUTH", None)
+        decision = _wide_adapter().authorize(
+            actor=http_actor,
+            resource=RESOURCE_POT,
+            action=ACTION_POT_READ,
+            context={"pot_id": "p1"},
+        )
+    assert not decision.allowed
+    assert decision.reason == REASON_FORBIDDEN

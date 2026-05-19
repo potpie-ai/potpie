@@ -7,6 +7,7 @@ behind a single ``authorize`` call. Keeps the route layer thin and turns
 
 from __future__ import annotations
 
+import os
 from typing import Any, Mapping
 
 from domain.actor import Actor
@@ -25,6 +26,7 @@ from domain.ports.policy import (
     REASON_CONTEXT_GRAPH_DISABLED,
     REASON_CONTEXT_GRAPH_UNAVAILABLE,
     REASON_EPISODIC_UNAVAILABLE,
+    REASON_FORBIDDEN,
     REASON_MAINTENANCE_WRITE_DISABLED,
     REASON_RECONCILIATION_AGENT_UNAVAILABLE,
     REASON_RECONCILIATION_DISABLED,
@@ -42,6 +44,22 @@ from domain.reconciliation_flags import (
 )
 
 
+# Same dev-only switch the standalone HTTP auth dependency reads (kept as a
+# string literal rather than importing the inbound layer to avoid an
+# import cycle: container -> policy, deps -> container).
+_ALLOW_NO_AUTH_ENV = "CONTEXT_ENGINE_ALLOW_NO_AUTH"
+
+# Surfaces that are stamped server-side only and never settable from a
+# client header (see ``_resolve_actor``). A non-actor-scoped resolver is
+# acceptable for these because the principal is trusted internal code.
+_SERVER_TRUSTED_SURFACES: frozenset[str] = frozenset({"system", "webhook"})
+_SERVER_TRUSTED_AUTH: frozenset[str] = frozenset({"system", "webhook_signature"})
+
+
+def _dev_no_auth() -> bool:
+    return os.getenv(_ALLOW_NO_AUTH_ENV, "").strip().lower() in {"1", "true", "yes"}
+
+
 class DefaultPolicyAdapter:
     """In-process :class:`PolicyPort` over settings + pot resolution.
 
@@ -53,9 +71,21 @@ class DefaultPolicyAdapter:
     3. ``pot_resolution.resolve_pot(pot_id)`` — short-circuit ``unknown_pot``.
     4. For maintenance writes: classify-modified-edges flags.
 
-    The actor argument is forwarded but currently unused — the adapter does
-    not yet enforce per-user authorization; hosts that need that compose a
-    second adapter in front of this one.
+    Tenant boundary (hard security contract). This adapter does **not**
+    itself know which pots an actor owns — that ownership lives in the
+    injected :class:`PotResolutionPort`. The contract is therefore:
+
+    * A host serving a network/multi-tenant surface MUST wire an
+      actor-scoped resolver (one whose ``resolve_pot`` returns ``None`` for
+      pots the caller cannot access) and mark it ``actor_scoped = True``.
+      Potpie does this via ``UserScopedContextGraphPotResolution``.
+    * When the wired resolver is **not** actor-scoped, every pot-scoped
+      action is denied (403) unless the caller is a server-stamped internal
+      principal (``system``/``webhook`` surface — never client-assertable)
+      or the operator set the loud, dev-only
+      ``CONTEXT_ENGINE_ALLOW_NO_AUTH`` escape hatch (single-tenant
+      standalone). This makes the module safe-by-default instead of
+      relying on an undocumented host wrapper.
     """
 
     def __init__(
@@ -81,10 +111,9 @@ class DefaultPolicyAdapter:
         action: str,
         context: Mapping[str, Any] | None = None,
     ) -> PolicyDecision:
-        del actor  # reserved for future per-actor enforcement
         ctx = dict(context or {})
         if resource == "pot":
-            return self._authorize_pot(action, ctx)
+            return self._authorize_pot(action, ctx, actor)
         if resource == "connector":
             return self._authorize_connector(action, ctx)
         if resource == "apply":
@@ -98,8 +127,27 @@ class DefaultPolicyAdapter:
     # ------------------------------------------------------------------
     # pot.*
     # ------------------------------------------------------------------
+    def _tenant_boundary_ok(self, actor: Actor | None) -> bool:
+        """Whether a pot-scoped action may proceed for ``actor``.
+
+        Allowed when the wired resolver enforces per-actor scope, or the
+        caller is a server-stamped internal principal, or the dev-only
+        no-auth escape hatch is set. Otherwise denied — see the class
+        docstring's hard security contract.
+        """
+        if getattr(self._pots, "actor_scoped", False):
+            return True
+        if _dev_no_auth():
+            return True
+        surface = getattr(actor, "surface", None)
+        auth_method = getattr(actor, "auth_method", None)
+        return (
+            surface in _SERVER_TRUSTED_SURFACES
+            and auth_method in _SERVER_TRUSTED_AUTH
+        )
+
     def _authorize_pot(
-        self, action: str, ctx: dict[str, Any]
+        self, action: str, ctx: dict[str, Any], actor: Actor | None = None
     ) -> PolicyDecision:
         pot_id = ctx.get("pot_id")
         require_reco = action in {
@@ -164,6 +212,19 @@ class DefaultPolicyAdapter:
             )
 
         if pot_id is not None:
+            if not self._tenant_boundary_ok(actor):
+                return PolicyDecision.deny(
+                    REASON_FORBIDDEN,
+                    detail=(
+                        "Per-actor pot authorization is not configured for "
+                        "this deployment: the host must wire an actor-scoped "
+                        "pot resolver (see DefaultPolicyAdapter contract). "
+                        "Refusing pot-scoped access. Set "
+                        "CONTEXT_ENGINE_ALLOW_NO_AUTH=1 for single-tenant "
+                        "local dev only."
+                    ),
+                    status_code=403,
+                )
             resolved = self._pots.resolve_pot(str(pot_id))
             if resolved is None:
                 return PolicyDecision.deny(

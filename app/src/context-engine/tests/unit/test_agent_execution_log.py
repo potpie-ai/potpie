@@ -370,7 +370,8 @@ class TestResumeContract:
         assert seqs == sorted(seqs)
         assert seqs[0] > 12
         kinds = [r[1] for r in log.records]
-        assert kinds[0] == "run_started"
+        assert kinds[:2] == ["status", "status"]
+        assert "run_started" in kinds
         assert kinds[-1] == "run_finished"
         assert log.cleared is True
 

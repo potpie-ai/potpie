@@ -20,6 +20,7 @@ from adapters.outbound.postgres.models import (
 )
 from adapters.outbound.postgres.session import database_url, make_session_factory
 from domain.ports.telemetry import CostEvent, DriftSnapshot
+from domain.error_redaction import safe_error
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ class SqlAlchemyTelemetry:
         try:
             self._factory = make_session_factory(url)
         except Exception as exc:
-            logger.warning("telemetry: failed to build session factory: %s", exc)
+            logger.warning("telemetry: failed to build session factory: %s", safe_error(exc))
             self._factory = None
         self._initialized = True
         return self._factory is not None
@@ -60,7 +61,7 @@ class SqlAlchemyTelemetry:
         try:
             session = self._factory()
         except Exception as exc:
-            logger.warning("telemetry: cost session open failed: %s", exc)
+            logger.warning("telemetry: cost session open failed: %s", safe_error(exc))
             return
         try:
             row = ContextEngineCostEvent(
@@ -80,7 +81,7 @@ class SqlAlchemyTelemetry:
             session.add(row)
             session.commit()
         except Exception as exc:
-            logger.warning("telemetry: cost insert failed: %s", exc)
+            logger.warning("telemetry: cost insert failed: %s", safe_error(exc))
             try:
                 session.rollback()
             except Exception:
@@ -99,7 +100,7 @@ class SqlAlchemyTelemetry:
         try:
             session = self._factory()
         except Exception as exc:
-            logger.warning("telemetry: drift session open failed: %s", exc)
+            logger.warning("telemetry: drift session open failed: %s", safe_error(exc))
             return
         try:
             row = ContextEngineDriftSnapshot(
@@ -120,7 +121,7 @@ class SqlAlchemyTelemetry:
             session.add(row)
             session.commit()
         except Exception as exc:
-            logger.warning("telemetry: drift insert failed: %s", exc)
+            logger.warning("telemetry: drift insert failed: %s", safe_error(exc))
             try:
                 session.rollback()
             except Exception:

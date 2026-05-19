@@ -62,6 +62,27 @@ class BatchRepositoryPort(Protocol):
 
     def get_batch(self, batch_id: str) -> ReconciliationBatch | None: ...
 
+    def list_stale_in_flight_batches(
+        self, older_than_seconds: float
+    ) -> list[ReconciliationBatch]:
+        """Batches stuck ``claimed``/``running`` longer than the lease.
+
+        A batch is in-flight from ``claim_batch_by_id`` (which stamps
+        ``claimed_at``) until it reaches ``done``/``failed``. If the worker
+        dies mid-run (OOM, pod restart, hard time-limit) the message is not
+        redelivered (``task_reject_on_worker_lost=False``) and the row is
+        never re-claimable (claim only takes ``pending``) — so it would sit
+        in-flight forever. This surfaces those rows for the reaper.
+
+        ``older_than_seconds`` is compared against ``claimed_at`` using the
+        **database** clock so the cutoff is consistent regardless of worker
+        wall-clock skew. The caller must pass a lease that exceeds Celery's
+        ``task_time_limit`` so a merely-slow but still-alive run is never
+        mistaken for a dead one (Celery hard-kills a live task at the time
+        limit, so anything older than that lease is definitively dead).
+        """
+        ...
+
     def list_events_for_batch(self, batch_id: str) -> list[BatchEventRef]: ...
 
     def mark_batch_running(self, batch_id: str) -> None:

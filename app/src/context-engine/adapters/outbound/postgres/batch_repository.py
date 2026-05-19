@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from sqlalchemy import select, text, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -155,6 +155,29 @@ class SqlAlchemyBatchRepository(BatchRepositoryPort):
             )
         )
         return self._to_batch(row) if row else None
+
+    def list_stale_in_flight_batches(
+        self, older_than_seconds: float
+    ) -> list[ReconciliationBatch]:
+        # ``claimed_at`` is stamped by ``claim_batch_by_id`` and left intact
+        # by ``mark_batch_running``, so it marks the start of the current
+        # in-flight attempt. Compare it against the *database* clock
+        # (``now()``) so the lease cutoff doesn't depend on worker wall-clock
+        # skew. The ``timedelta`` is bound as an ``interval`` parameter, so
+        # the cutoff stays parameterized without PG-specific function syntax.
+        rows = self._db.execute(
+            select(ContextReconciliationBatchModel)
+            .where(
+                ContextReconciliationBatchModel.status.in_(
+                    (BATCH_STATUS_CLAIMED, BATCH_STATUS_RUNNING)
+                ),
+                ContextReconciliationBatchModel.claimed_at.is_not(None),
+                ContextReconciliationBatchModel.claimed_at
+                < func.now() - timedelta(seconds=older_than_seconds),
+            )
+            .order_by(ContextReconciliationBatchModel.claimed_at.asc())
+        ).scalars().all()
+        return [self._to_batch(r) for r in rows]
 
     def list_events_for_batch(self, batch_id: str) -> list[BatchEventRef]:
         rows = self._db.execute(

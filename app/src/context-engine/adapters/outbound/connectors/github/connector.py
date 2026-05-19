@@ -64,10 +64,13 @@ class GitHubConnector(SourceConnectorPort):
         source_for_repo: SourceControlFactory,
         repo_resolver: Callable[[str, SourceReferenceRecord], str | None] | None = None,
         webhook_secret: str | None = None,
+        allow_unsigned: bool = False,
     ) -> None:
         self._source_for_repo = source_for_repo
         self._repo_resolver = repo_resolver or _default_repo_resolver
         self._webhook_secret = (webhook_secret or "").strip() or None
+        self._allow_unsigned = allow_unsigned
+        self._unsigned_warned = False
         self._resolver = GitHubPullRequestResolver(
             source_for_repo=source_for_repo,
             repo_resolver=repo_resolver,
@@ -152,9 +155,26 @@ class GitHubConnector(SourceConnectorPort):
         signature = headers.get("X-Hub-Signature-256") or headers.get(
             "x-hub-signature-256"
         )
-        if self._webhook_secret and not _verify_signature(
-            payload, signature, self._webhook_secret
-        ):
+        if self._webhook_secret is None:
+            # Fail closed: an unsigned webhook is an unauthenticated graph
+            # write + a free trigger for expensive agent work. Only a loud,
+            # explicit dev opt-in may bypass the signature requirement.
+            if not self._allow_unsigned:
+                raise PermissionError(
+                    "github webhook signature required: GITHUB_WEBHOOK_SECRET "
+                    "is not configured (set it, or set "
+                    "CONTEXT_ENGINE_ALLOW_UNSIGNED_WEBHOOKS=1 for local dev "
+                    "only)"
+                )
+            if not self._unsigned_warned:
+                logger.warning(
+                    "SECURITY: GITHUB_WEBHOOK_SECRET is unset and "
+                    "CONTEXT_ENGINE_ALLOW_UNSIGNED_WEBHOOKS is enabled — "
+                    "github webhooks are being accepted UNAUTHENTICATED. "
+                    "Never use this in a network-reachable deployment."
+                )
+                self._unsigned_warned = True
+        elif not _verify_signature(payload, signature, self._webhook_secret):
             raise PermissionError("github webhook signature mismatch")
 
         event_name = headers.get("X-GitHub-Event") or headers.get("x-github-event") or ""

@@ -94,6 +94,29 @@ def _wiring_for(event_ids: list[str]) -> tuple[MagicMock, MagicMock, MagicMock]:
     return batches, ledger, checkpoints
 
 
+class _RecordingExecutionLog:
+    def __init__(self) -> None:
+        self.records: list[dict] = []
+
+    def load_resume_state(self, batch_id):
+        del batch_id
+        return None
+
+    def append(self, *, batch_id, seq, record_type, payload, event_id=None):
+        self.records.append(
+            {
+                "batch_id": batch_id,
+                "seq": seq,
+                "record_type": record_type,
+                "payload": payload,
+                "event_id": event_id,
+            }
+        )
+
+    def clear(self, batch_id):
+        del batch_id
+
+
 class TestStatusPublishing:
     def test_success_publishes_processing_then_done(self) -> None:
         batches, ledger, checkpoints = _wiring_for(["e1", "e2"])
@@ -117,6 +140,27 @@ class TestStatusPublishing:
         # Both events get a terminal end marker.
         end_ids = {e["event_id"] for e in pub.end_events}
         assert end_ids == {"e1", "e2"}
+
+    def test_processing_status_is_persisted_and_durable(self) -> None:
+        batches, ledger, checkpoints = _wiring_for(["e1", "e2"])
+        log = _RecordingExecutionLog()
+        process_batch(
+            batch=_batch(),
+            agent=NoOpReconciliationAgent(),
+            batches=batches,
+            reco_ledger=ledger,
+            checkpoints=checkpoints,
+            pots=_pots(),
+            execution_log=log,
+        )
+
+        claimed_ids = {c.args[0] for c in ledger.claim_event_for_processing.call_args_list}
+        assert claimed_ids == {"e1", "e2"}
+        status_records = [
+            r for r in log.records if r["record_type"] == "status"
+        ]
+        assert {r["event_id"] for r in status_records} == {"e1", "e2"}
+        assert all(r["payload"]["status"] == "processing" for r in status_records)
 
     def test_agent_crash_publishes_failed_status_and_end(self) -> None:
         batches, ledger, checkpoints = _wiring_for(["e1"])

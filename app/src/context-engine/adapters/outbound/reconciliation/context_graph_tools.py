@@ -256,7 +256,15 @@ def build_initial_context_snapshot(
     return out
 
 
+# Public, port-agnostic view of the read-tool catalog. The reconciliation
+# agent reaches these via ``ReconciliationToolsPort``; the read-side query
+# agent consumes the same descriptors directly so both agents stay on one
+# tool surface.
+READ_TOOL_DESCRIPTORS: tuple[ToolDescriptor, ...] = _TOOLS
+
+
 __all__ = [
     "ContextGraphReconciliationTools",
     "build_initial_context_snapshot",
+    "READ_TOOL_DESCRIPTORS",
 ]

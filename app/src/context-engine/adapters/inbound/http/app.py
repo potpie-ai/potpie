@@ -6,6 +6,7 @@ import logging
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from adapters.inbound.http._hardening import install_hardening
 from adapters.inbound.http.api.router import api_router
 from adapters.inbound.http.webhooks.router import webhooks_router
 
@@ -51,6 +52,7 @@ def create_app() -> FastAPI:
             },
         )
 
+    install_hardening(app)
     app.include_router(api_router, prefix="/api/v1")
     app.include_router(webhooks_router, prefix="/webhooks")
     return app

@@ -14,6 +14,8 @@ The application layer no longer imports anything in this module.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
 from typing import Any, Iterable, Mapping, Sequence
@@ -40,6 +42,20 @@ from domain.source_resolution import (
 logger = logging.getLogger(__name__)
 
 
+def _verify_linear_signature(
+    body: bytes, signature: str | None, secret: str
+) -> bool:
+    """Constant-time check of Linear's ``Linear-Signature`` header.
+
+    Linear signs the **raw** request body with HMAC-SHA256 and sends the
+    hex digest (no scheme prefix). A missing/empty signature is rejected.
+    """
+    if not signature:
+        return False
+    expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(signature.strip(), expected)
+
+
 class LinearConnector(SourceConnectorPort):
     """The unified Linear connector.
 
@@ -49,9 +65,18 @@ class LinearConnector(SourceConnectorPort):
 
     KIND = "linear"
 
-    def __init__(self, *, fetcher: LinearIssueFetcher) -> None:
+    def __init__(
+        self,
+        *,
+        fetcher: LinearIssueFetcher,
+        webhook_secret: str | None = None,
+        allow_unsigned: bool = False,
+    ) -> None:
         self._fetcher = fetcher
         self._resolver = LinearIssueResolver(fetcher=fetcher)
+        self._webhook_secret = (webhook_secret or "").strip() or None
+        self._allow_unsigned = allow_unsigned
+        self._unsigned_warned = False
 
     # ------------------------------------------------------------------
     # SourceConnectorPort
@@ -89,7 +114,32 @@ class LinearConnector(SourceConnectorPort):
         payload: bytes,
         headers: Mapping[str, str],
     ) -> ContextEvent | None:
-        del headers  # Linear does not require signature checks today.
+        signature = headers.get("Linear-Signature") or headers.get(
+            "linear-signature"
+        )
+        if self._webhook_secret is None:
+            # Fail closed, same posture as the GitHub connector: an unsigned
+            # webhook is an unauthenticated graph write + a free trigger for
+            # expensive agent work.
+            if not self._allow_unsigned:
+                raise PermissionError(
+                    "linear webhook signature required: LINEAR_WEBHOOK_SECRET "
+                    "is not configured (set it, or set "
+                    "CONTEXT_ENGINE_ALLOW_UNSIGNED_WEBHOOKS=1 for local dev "
+                    "only)"
+                )
+            if not self._unsigned_warned:
+                logger.warning(
+                    "SECURITY: LINEAR_WEBHOOK_SECRET is unset and "
+                    "CONTEXT_ENGINE_ALLOW_UNSIGNED_WEBHOOKS is enabled — "
+                    "linear webhooks are being accepted UNAUTHENTICATED. "
+                    "Never use this in a network-reachable deployment."
+                )
+                self._unsigned_warned = True
+        elif not _verify_linear_signature(
+            payload, signature, self._webhook_secret
+        ):
+            raise PermissionError("linear webhook signature mismatch")
         try:
             body = json.loads(payload.decode("utf-8") or "{}")
         except json.JSONDecodeError:

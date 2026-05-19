@@ -62,6 +62,35 @@ def _swallow_event_loop_closed(loop: asyncio.AbstractEventLoop, context: dict) -
     loop.default_exception_handler(context)
 
 
+async def _ensure_graphiti_entity_defaults_async(driver: Any, pot_id: str) -> None:
+    """Repair legacy/null Entity fields before Graphiti hydrates candidates."""
+    if not hasattr(driver, "session"):
+        return
+    try:
+        async with driver.session() as session:
+            result = await session.run(
+                """
+                MATCH (n:Entity {group_id: $pot_id})
+                WHERE n.uuid IS NULL
+                   OR n.created_at IS NULL
+                   OR n.name IS NULL
+                   OR n.summary IS NULL
+                SET n.uuid = coalesce(n.uuid, randomUUID()),
+                    n.created_at = coalesce(n.created_at, timestamp()),
+                    n.name = coalesce(n.name, n.entity_key, n.uuid, ''),
+                    n.summary = coalesce(n.summary, '')
+                """,
+                pot_id=pot_id,
+            )
+            await result.consume()
+    except Exception:
+        logger.warning(
+            "Graphiti entity default repair failed for pot %s",
+            pot_id,
+            exc_info=True,
+        )
+
+
 class GraphitiEpisodicAdapter(EpisodicGraphPort):
     """
     Thread-local Graphiti client so Celery sync code and FastAPI async code
@@ -279,6 +308,14 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
         if g is None:
             return None
 
+        logger.info(
+            "graph-ingest episode: pot=%s event=%s name=%s",
+            pot_id,
+            provenance.source_event_id if provenance else "-",
+            name,
+        )
+
+        await _ensure_graphiti_entity_defaults_async(g.driver, pot_id)
         install_extract_edges_normalize_patch()
         result = await g.add_episode(
             name=name,
@@ -818,7 +855,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
 
         try:
             from graphiti_core.search.search import search as graphiti_search
-            from graphiti_core.search.search_config import SearchFilters
+            from graphiti_core.search.search_filters import SearchFilters
             from graphiti_core.search.search_config_recipes import EDGE_HYBRID_SEARCH_RRF
         except Exception as exc:
             logger.warning("graphiti search helpers unavailable: %s", exc)

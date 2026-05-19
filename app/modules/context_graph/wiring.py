@@ -190,6 +190,12 @@ class SqlalchemyPotResolution(PotResolutionPort):
 class UserScopedContextGraphPotResolution(PotResolutionPort):
     """Resolve context-graph pots the caller may access (member or legacy pot owner row)."""
 
+    # Read by DefaultPolicyAdapter's tenant-boundary contract: this resolver
+    # returns None for pots the caller cannot access, so per-actor pot
+    # authorization is enforced here. Do NOT set this on the wide
+    # (worker/system) resolvers.
+    actor_scoped = True
+
     def __init__(self, db: Session, user_id: str) -> None:
         self._db = db
         self._user_id = user_id
@@ -393,14 +399,32 @@ def _build_connector_registry(db: Session, source_for_repo) -> SourceConnectorRe
 
     registry = SourceConnectorRegistry()
     registry.register(
+        # Same rationale as the LinearConnector below: in the host the
+        # GitHub signature is verified at the HTTP ingress
+        # (`integrations_router.py /github/webhook`, fail-closed) and the
+        # repo→pot routing path does not invoke the connector's
+        # ``normalize_webhook``. Connector-level enforcement is reserved
+        # for the standalone container path (``bootstrap/container.py``),
+        # where the connector itself is the ingress.
         GitHubConnector(
             source_for_repo=source_for_repo,
             repo_resolver=_resolve_repo_for_pot(db),
-            webhook_secret=(os.getenv("GITHUB_WEBHOOK_SECRET") or "").strip() or None,
+            allow_unsigned=True,
         )
     )
     registry.register(
-        LinearConnector(fetcher=ContextEngineLinearFetcher(db))
+        # The host verifies the Linear signature at the HTTP ingress
+        # (`integrations_router.py /linear/webhook`, fail-closed over the
+        # raw body). By the time the connector runs it is post-verification
+        # and behind the async event bus — it has neither the raw body nor
+        # the `Linear-Signature` header, so it must NOT re-enforce here
+        # (doing so would falsely reject every event). Signature
+        # enforcement at the connector is only for the standalone path,
+        # where the connector itself is the ingress.
+        LinearConnector(
+            fetcher=ContextEngineLinearFetcher(db),
+            allow_unsigned=True,
+        )
     )
     return registry
 
@@ -585,7 +609,29 @@ def _attach_agent_tools(agent, db: Session, *, source_for_repo) -> None:
             build_github_tools,
         )
 
-        builders.append(build_github_tools(source_for_repo))
+        def _allowed_repos_for_pot(pot_id: str) -> set[str]:
+            """``owner/repo`` (lowercased) attached to the pot — the only
+            repos a reconciliation agent may read via the GitHub tools.
+            Binds agent-supplied ``repo_name`` to the pot's tenancy so a
+            prompt-injected agent cannot pull a foreign private repo
+            through the shared org credential (security review C-5)."""
+            rows = (
+                db.query(ContextGraphPotRepository)
+                .filter(ContextGraphPotRepository.pot_id == pot_id)
+                .all()
+            )
+            return {
+                f"{r.owner}/{r.repo}".strip().lower()
+                for r in rows
+                if r.owner and r.repo
+            }
+
+        builders.append(
+            build_github_tools(
+                source_for_repo,
+                allowed_repos_for_pot=_allowed_repos_for_pot,
+            )
+        )
     except Exception:
         logger.exception("failed to build github tool surface")
 

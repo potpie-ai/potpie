@@ -14,27 +14,23 @@ class ContextGraphJobQueuePort(Protocol):
     ``bootstrap.queue_factory.get_context_graph_job_queue`` and ``CONTEXT_GRAPH_JOB_QUEUE_BACKEND``.
     """
 
-    def enqueue_backfill(
-        self, pot_id: str, *, target_repo_name: str | None = None
-    ) -> None:
-        """Enqueue full pot backfill (connector enumerate-then-submit sweep)."""
-
     def enqueue_batch(self, batch_id: str) -> None:
         """Enqueue processing of a single reconciliation batch by id.
 
         Fired from ``admit_event`` on every successful event admission.
         Redundant calls for an already-claimed batch are a no-op on the
         worker side (``claim_batch_by_id`` returns ``None``).
+
+        This is the sole enqueue path. Backfill is not a separate job: a
+        source attach emits a single ``agent_reconciliation`` event that
+        flows through ``admit_event`` → a batch → here, like any other
+        event. The reconciliation agent (planner on, backfill playbooks)
+        does the enumerate-and-seed work inside that batch.
         """
 
 
 class NoOpContextGraphJobQueue:
     """CLI / tests: accept enqueue calls but perform no broker I/O."""
-
-    def enqueue_backfill(
-        self, pot_id: str, *, target_repo_name: str | None = None
-    ) -> None:
-        return None
 
     def enqueue_batch(self, batch_id: str) -> None:
         return None

@@ -7,15 +7,20 @@ Wraps three side effects in one idempotent verb so every caller stays in sync:
   3. Submit the ``repository.added`` ingestion event so the reconciliation
      agent walks the repo and seeds the graph.
 
-Idempotent on ``(pot_id, provider, provider_host, owner, repo)`` — repeat
-calls keep the row, re-mirror the source (cheap), and do **not** re-emit the
-bootstrap event. Callers that want a strict "already attached" 409 can check
-``AttachRepoResult.already_attached`` and raise their own error.
+Idempotent on ``(pot_id, provider, provider_host, owner, repo)`` for a
+*live* attachment — repeat calls keep the row, re-mirror the source (cheap),
+and do **not** re-emit the bootstrap event. The one exception is a repo that
+was **deleted** (its source mirror gone but the repo row orphaned): re-adding
+it is treated as a fresh attach so ingestion re-queues — idempotency must not
+suppress re-queue for deleted repos. Callers that want a strict "already
+attached" 409 can check ``AttachRepoResult.already_attached`` and raise their
+own error (deleted-then-re-added repos report ``already_attached=False``).
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from dataclasses import dataclass
 
@@ -30,6 +35,7 @@ from app.modules.context_graph.context_graph_pot_source_model import (
 )
 from app.modules.context_graph.pot_sources_service import (
     mirror_repository_into_sources,
+    repository_source_exists,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,6 +53,16 @@ class AttachRepoResult:
     bootstrap_event_id: str | None
     repository: ContextGraphPotRepository
     source: ContextGraphPotSource
+
+
+def _allowed_provider_hosts() -> set[str]:
+    """Hosts a repo may be attached under. ``github.com`` plus any
+    GitHub-Enterprise hosts the operator configured via
+    ``CONTEXT_ENGINE_ALLOWED_PROVIDER_HOSTS`` (comma-separated)."""
+    extra = os.getenv("CONTEXT_ENGINE_ALLOWED_PROVIDER_HOSTS", "")
+    hosts = {"github.com"}
+    hosts.update(h.strip().lower() for h in extra.split(",") if h.strip())
+    return hosts
 
 
 def attach_repo_to_pot(
@@ -74,6 +90,15 @@ def attach_repo_to_pot(
     provider_host = provider_host.strip()
     if not owner or not repo:
         raise ValueError("owner and repo required")
+    # SSRF / token-exfil guard: a pot owner could otherwise register an
+    # internal ``provider_host`` and make the sandbox clone/fetch target it
+    # carrying the injected auth token (security review M-2).
+    if provider_host.lower() not in _allowed_provider_hosts():
+        raise ValueError(
+            f"provider_host not allowed: {provider_host!r} "
+            "(set CONTEXT_ENGINE_ALLOWED_PROVIDER_HOSTS to permit a "
+            "GitHub Enterprise host)"
+        )
 
     existing = (
         db.query(ContextGraphPotRepository)
@@ -87,16 +112,45 @@ def attach_repo_to_pot(
         .first()
     )
     if existing is not None:
+        # A surviving repo row with no mirrored source means the repo was
+        # deleted via the Sources tab: ``delete_pot_source`` always drops
+        # the source row but only best-effort drops the repo row (it
+        # orphans it when it can't re-derive owner/repo from scope_json).
+        # Re-adding a *deleted* repo must re-queue ingestion — idempotency
+        # applies to live attachments, not to deleted repos.
+        was_deleted = not repository_source_exists(db, existing)
         source = mirror_repository_into_sources(
             db, existing, added_by_user_id=submitted_by_user_id
         )
         db.commit()
         db.refresh(source)
+        if not was_deleted:
+            return AttachRepoResult(
+                repository_id=existing.id,
+                source_id=source.id,
+                already_attached=True,
+                bootstrap_event_id=None,
+                repository=existing,
+                source=source,
+            )
+        # Deleted-then-re-added: behave like a fresh attach. Re-warm the
+        # sandbox clone and re-emit ``repository.added`` so the
+        # reconciliation agent re-walks the repo. Stable entity keys make
+        # this converge against existing Graphiti data, so no graph
+        # teardown is needed. ``already_attached=False`` so the strict-409
+        # callers (``add_pot_repository``) let the re-add through.
+        _dispatch_prewarm(existing, submitted_by_user_id=submitted_by_user_id)
+        bootstrap_event_id = _emit_bootstrap_event(
+            db,
+            pot_id=pot_id,
+            repo_row=existing,
+            submitted_by_user_id=submitted_by_user_id,
+        )
         return AttachRepoResult(
             repository_id=existing.id,
             source_id=source.id,
-            already_attached=True,
-            bootstrap_event_id=None,
+            already_attached=False,
+            bootstrap_event_id=bootstrap_event_id,
             repository=existing,
             source=source,
         )

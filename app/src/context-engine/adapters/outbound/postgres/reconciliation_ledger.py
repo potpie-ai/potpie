@@ -264,6 +264,36 @@ class SqlAlchemyReconciliationLedger(ReconciliationLedgerPort):
         self._bulk_set_status(event_ids, "failed")
         self._db.commit()
 
+    def fail_inflight_events(self, event_ids: list[str], error: str) -> int:
+        if not event_ids:
+            return 0
+        window = self._STATUS_UPDATE_WINDOW
+        affected = 0
+        for i in range(0, len(event_ids), window):
+            result = self._db.execute(
+                update(ContextEventModel)
+                .where(
+                    ContextEventModel.id.in_(event_ids[i : i + window]),
+                    # Preserve terminal states: a reaped batch may have
+                    # partially completed before the worker died, and those
+                    # events are legitimately ``reconciled``. Only the
+                    # leftovers still in flight become ``failed``.
+                    ContextEventModel.status.in_(
+                        ("received", "queued", "processing")
+                    ),
+                )
+                .values(status="failed")
+            )
+            affected += result.rowcount or 0
+        if affected:
+            logger.warning(
+                "reaped %d stuck in-flight event(s) → failed: %s",
+                affected,
+                error[:2000],
+            )
+        self._db.commit()
+        return affected
+
     # Postgres caps bind parameters (~32767) and a multi-thousand-element IN
     # list bloats the planner; window the UPDATE so a single huge batch still
     # commits as one transaction (all-or-nothing) without blowing the limit.

@@ -9,16 +9,34 @@ module is now read-only and Phase 3 will collapse it into a per-family
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from neo4j import Driver, GraphDatabase
+from neo4j import Driver, GraphDatabase, Query
 
 from domain.ontology import ENTITY_TYPES, INCLUDE_KEY_LABELS
 from domain.ports.settings import ContextEngineSettingsPort
 from adapters.outbound.neo4j.port import StructuralReadPort
 
 logger = logging.getLogger(__name__)
+
+# Bound the unindexed full-partition aggregations in get_graph_overview so a
+# large / bulk-poisoned pot can't turn it into an expensive blocking scan
+# (security review M-4). Server-side tx timeout + an entity-count
+# short-circuit; both env-overridable.
+try:
+    _OVERVIEW_TX_TIMEOUT_S = float(
+        os.getenv("CONTEXT_ENGINE_GRAPH_OVERVIEW_TIMEOUT_SECS", "8")
+    )
+except ValueError:
+    _OVERVIEW_TX_TIMEOUT_S = 8.0
+try:
+    _OVERVIEW_MAX_ENTITIES = int(
+        os.getenv("CONTEXT_ENGINE_GRAPH_OVERVIEW_MAX_ENTITIES", "50000")
+    )
+except ValueError:
+    _OVERVIEW_MAX_ENTITIES = 50000
 
 # Include-key → labels resolution is fully spec-driven. To add a new include
 # key, set ``project_map_family`` / ``debugging_family`` / ``include_keys`` on
@@ -904,25 +922,49 @@ class Neo4jStructuralAdapter(StructuralReadPort):
             empty["message"] = "neo4j_unavailable"
             return empty
         canonical_labels = list(ENTITY_TYPES.keys())
+        _t = _OVERVIEW_TX_TIMEOUT_S
         try:
             with drv.session() as session:
                 totals_row = session.run(
-                    "MATCH (n:Entity {group_id: $pid}) RETURN count(n) AS cnt",
+                    Query(
+                        "MATCH (n:Entity {group_id: $pid}) "
+                        "RETURN count(n) AS cnt",
+                        timeout=_t,
+                    ),
                     pid=pot_id,
                 ).single()
                 entity_total = int(totals_row["cnt"]) if totals_row else 0
 
                 edge_total_row = session.run(
-                    "MATCH (:Entity {group_id: $pid})-[r]->(:Entity {group_id: $pid}) "
-                    "RETURN count(r) AS cnt",
+                    Query(
+                        "MATCH (:Entity {group_id: $pid})-[r]->"
+                        "(:Entity {group_id: $pid}) RETURN count(r) AS cnt",
+                        timeout=_t,
+                    ),
                     pid=pot_id,
                 ).single()
                 edge_total = int(edge_total_row["cnt"]) if edge_total_row else 0
 
+                # Short-circuit: skip the unindexed per-label / per-edge /
+                # lifecycle aggregations on a very large (or bulk-poisoned)
+                # pot — return the cheap totals only (security review M-4).
+                if entity_total > _OVERVIEW_MAX_ENTITIES:
+                    out = dict(empty)
+                    out["totals"] = {
+                        "entities": entity_total,
+                        "edges": edge_total,
+                        "entities_without_canonical_label": 0,
+                    }
+                    out["message"] = "overview_truncated_large_pot"
+                    return out
+
                 label_rows = session.run(
-                    "MATCH (n:Entity {group_id: $pid}) "
-                    "UNWIND labels(n) AS lbl "
-                    "RETURN lbl AS label, count(*) AS cnt",
+                    Query(
+                        "MATCH (n:Entity {group_id: $pid}) "
+                        "UNWIND labels(n) AS lbl "
+                        "RETURN lbl AS label, count(*) AS cnt",
+                        timeout=_t,
+                    ),
                     pid=pot_id,
                 ).data()
                 label_counts: dict[str, int] = {}
@@ -932,9 +974,12 @@ class Neo4jStructuralAdapter(StructuralReadPort):
                         label_counts[str(lbl)] = int(row.get("cnt") or 0)
 
                 no_canonical_row = session.run(
-                    "MATCH (n:Entity {group_id: $pid}) "
-                    "WHERE NONE(l IN labels(n) WHERE l IN $canon) "
-                    "RETURN count(n) AS cnt",
+                    Query(
+                        "MATCH (n:Entity {group_id: $pid}) "
+                        "WHERE NONE(l IN labels(n) WHERE l IN $canon) "
+                        "RETURN count(n) AS cnt",
+                        timeout=_t,
+                    ),
                     pid=pot_id,
                     canon=canonical_labels,
                 ).single()
@@ -943,8 +988,12 @@ class Neo4jStructuralAdapter(StructuralReadPort):
                 )
 
                 edge_rows = session.run(
-                    "MATCH (:Entity {group_id: $pid})-[r]->(:Entity {group_id: $pid}) "
-                    "RETURN type(r) AS etype, count(*) AS cnt",
+                    Query(
+                        "MATCH (:Entity {group_id: $pid})-[r]->"
+                        "(:Entity {group_id: $pid}) "
+                        "RETURN type(r) AS etype, count(*) AS cnt",
+                        timeout=_t,
+                    ),
                     pid=pot_id,
                 ).data()
                 edge_counts: dict[str, int] = {}
@@ -954,9 +1003,13 @@ class Neo4jStructuralAdapter(StructuralReadPort):
                         edge_counts[str(et)] = int(row.get("cnt") or 0)
 
                 lifecycle_rows = session.run(
-                    "MATCH (:Entity {group_id: $pid})-[r]->(:Entity {group_id: $pid}) "
-                    "WHERE r.lifecycle_status IS NOT NULL "
-                    "RETURN r.lifecycle_status AS status, count(*) AS cnt",
+                    Query(
+                        "MATCH (:Entity {group_id: $pid})-[r]->"
+                        "(:Entity {group_id: $pid}) "
+                        "WHERE r.lifecycle_status IS NOT NULL "
+                        "RETURN r.lifecycle_status AS status, count(*) AS cnt",
+                        timeout=_t,
+                    ),
                     pid=pot_id,
                 ).data()
                 lifecycle: dict[str, int] = {}

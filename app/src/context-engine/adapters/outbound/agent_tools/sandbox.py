@@ -27,6 +27,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
+from adapters.outbound.agent_tools._path_safety import is_safe_relpath
+from domain.error_redaction import safe_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -328,14 +331,14 @@ def build_sandbox_tools(
         def _ambiguous_error(exc: _AmbiguousRepoError) -> dict[str, Any]:
             return {
                 "error": "ambiguous_repo",
-                "message": str(exc),
+                "message": safe_error(exc),
                 "available": [r.full_name for r in cfg.repos],
             }
 
         def _unknown_error(exc: _UnknownRepoError) -> dict[str, Any]:
             return {
                 "error": "unknown_repo",
-                "message": str(exc),
+                "message": safe_error(exc),
                 "available": [r.full_name for r in cfg.repos],
             }
 
@@ -347,7 +350,7 @@ def build_sandbox_tools(
             # Contained at the tool boundary so one transient blip doesn't
             # kill the whole batch — the agent can retry or fall back.
             return {
-                "error": str(exc),
+                "error": safe_error(exc),
                 "kind": "sandbox_unavailable",
                 "transient": True,
                 **extra,
@@ -379,6 +382,13 @@ def build_sandbox_tools(
             path: str, repo: str | None = None
         ) -> dict[str, Any]:
             """Read a UTF-8 file from a pot repo's worktree (capped to ~256KB)."""
+            if not is_safe_relpath(path):
+                _tool_call("sandbox_read_file", False)
+                return {
+                    "error": "invalid path",
+                    "kind": "invalid_argument",
+                    "path": path,
+                }
             try:
                 facade = await _ensure_facade()
                 attachment, handle = await facade.acquire(repo)
@@ -402,7 +412,7 @@ def build_sandbox_tools(
                 )
             except Exception as exc:
                 return {
-                    "error": str(exc),
+                    "error": safe_error(exc),
                     "path": path,
                     "repo": attachment.full_name,
                 }
@@ -427,6 +437,13 @@ def build_sandbox_tools(
             path: str = ".", repo: str | None = None
         ) -> dict[str, Any]:
             """List one directory level in a pot repo's worktree."""
+            if not is_safe_relpath(path):
+                _tool_call("sandbox_list_dir", False)
+                return {
+                    "error": "invalid path",
+                    "kind": "invalid_argument",
+                    "path": path,
+                }
             try:
                 facade = await _ensure_facade()
                 attachment, handle = await facade.acquire(repo)
@@ -448,7 +465,7 @@ def build_sandbox_tools(
                 entries = await facade_box["client"].list_dir(handle, path)
             except Exception as exc:
                 return {
-                    "error": str(exc),
+                    "error": safe_error(exc),
                     "path": path,
                     "repo": attachment.full_name,
                 }
@@ -499,7 +516,7 @@ def build_sandbox_tools(
                 )
             except Exception as exc:
                 return {
-                    "error": str(exc),
+                    "error": safe_error(exc),
                     "pattern": pattern,
                     "repo": attachment.full_name,
                 }

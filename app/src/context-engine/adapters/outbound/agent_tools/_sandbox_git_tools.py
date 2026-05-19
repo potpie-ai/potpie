@@ -20,7 +20,36 @@ from __future__ import annotations
 import logging
 from typing import Any, Awaitable, Callable
 
+from adapters.outbound.agent_tools._path_safety import (
+    is_safe_date_expr,
+    is_safe_git_ref,
+    is_safe_relpath,
+)
+from domain.error_redaction import safe_error
+
 logger = logging.getLogger(__name__)
+
+# Hardening flags prepended to every git invocation: kill the ``ext::`` /
+# ``file::`` / fd transports and any per-invocation config override so a
+# crafted ref/remote can't escape the sandbox (security review H-4).
+_GIT_HARDENING = [
+    "-c",
+    "protocol.ext.allow=never",
+    "-c",
+    "protocol.file.allow=never",
+    "-c",
+    "protocol.fd.allow=never",
+]
+
+
+def _invalid_arg_error(field: str, value: Any) -> dict[str, Any]:
+    """Structured rejection for an unsafe agent-supplied git arg/path."""
+    return {
+        "error": f"invalid {field}",
+        "kind": "invalid_argument",
+        "field": field,
+        "value": value,
+    }
 
 
 _LOG_BYTES = 200_000
@@ -119,6 +148,8 @@ def build_git_history_tools(
 
         from sandbox.domain.models import CommandKind  # type: ignore[import-not-found]
 
+        if cmd and cmd[0] == "git":
+            cmd = ["git", *_GIT_HARDENING, *cmd[1:]]
         try:
             result = await facade_box["client"].exec(
                 handle,
@@ -128,7 +159,7 @@ def build_git_history_tools(
             )
         except Exception as exc:
             return attachment, None, {
-                "error": str(exc),
+                "error": safe_error(exc),
                 "kind": "exec_failed",
                 "repo": attachment.full_name,
             }
@@ -144,6 +175,8 @@ def build_git_history_tools(
         worktree. Errors return ``{"error": ..., "kind": "unknown_ref" |
         "conflict" | "network" | "auth" | "git_error"}``.
         """
+        if not is_safe_git_ref(ref):
+            return _invalid_arg_error("ref", ref)
         try:
             facade = await ensure_facade()
             attachment = facade.resolve_repo(repo)
@@ -173,7 +206,7 @@ def build_git_history_tools(
             client = facade_box["client"]
             fetch = await client.exec(
                 handle,
-                ["git", "fetch", "origin", ref],
+                ["git", *_GIT_HARDENING, "fetch", "origin", ref],
                 command_kind=CommandKind.WRITE,
             )
             if fetch.exit_code != 0:
@@ -184,10 +217,12 @@ def build_git_history_tools(
                     "ref": ref,
                     "repo": attachment.full_name,
                 }
-            checkout_cmd = ["git", "checkout", "--detach"]
+            checkout_cmd = ["git", *_GIT_HARDENING, "checkout", "--detach"]
             if force:
                 checkout_cmd.append("--force")
-            checkout_cmd.append(ref)
+            # Trailing ``--`` forces ``ref`` to be parsed as a revision,
+            # never an option or pathspec.
+            checkout_cmd.extend([ref, "--"])
             co = await client.exec(
                 handle, checkout_cmd, command_kind=CommandKind.WRITE
             )
@@ -227,6 +262,10 @@ def build_git_history_tools(
         date expression (``"2026-01-01"``, ``"2 weeks ago"``). ``limit`` is
         capped at 500 entries.
         """
+        if since is not None and not is_safe_date_expr(since):
+            return _invalid_arg_error("since", since)
+        if path is not None and not is_safe_relpath(path):
+            return _invalid_arg_error("path", path)
         capped = max(1, min(int(limit), _MAX_LOG_LIMIT))
         sep = "\x1f"  # ASCII unit separator — safe inside commit messages
         cmd = [
@@ -281,9 +320,13 @@ def build_git_history_tools(
         Returns either a commit (with diff) or a single file's contents at
         the given ref. Capped at ~1 MB; truncation is flagged.
         """
-        cmd = ["git", "show", "--no-color", ref]
+        if not is_safe_git_ref(ref):
+            return _invalid_arg_error("ref", ref)
+        if path is not None and not is_safe_relpath(path):
+            return _invalid_arg_error("path", path)
+        cmd = ["git", "show", "--no-color", ref, "--"]
         if path:
-            cmd.extend(["--", path])
+            cmd.append(path)
         attachment, result, err = await _run_git(
             repo, cmd, max_output_bytes=_SHOW_BYTES
         )
@@ -317,6 +360,8 @@ def build_git_history_tools(
         Optional ``line_start``/``line_end`` narrow the range (inclusive).
         Output is parsed into ``[{commit, author, line, text}]``.
         """
+        if not is_safe_relpath(path):
+            return _invalid_arg_error("path", path)
         cmd = ["git", "blame", "--line-porcelain"]
         if line_start is not None:
             end = line_end if line_end is not None else line_start
@@ -388,9 +433,16 @@ def build_git_history_tools(
         the path list or use ``sandbox_git_log`` to walk commits one at a
         time.
         """
-        cmd = ["git", "diff", "--no-color", f"{base}..{head}"]
+        if not is_safe_git_ref(base):
+            return _invalid_arg_error("base", base)
+        if not is_safe_git_ref(head):
+            return _invalid_arg_error("head", head)
         if paths:
-            cmd.append("--")
+            for p in paths:
+                if not is_safe_relpath(p):
+                    return _invalid_arg_error("paths", p)
+        cmd = ["git", "diff", "--no-color", f"{base}..{head}", "--"]
+        if paths:
             cmd.extend(paths)
         attachment, result, err = await _run_git(
             repo, cmd, max_output_bytes=_DIFF_BYTES

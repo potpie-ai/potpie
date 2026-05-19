@@ -286,6 +286,15 @@ def configure_logging(level: Optional[str] = None):
         "sqlalchemy.pool": "WARNING",
         "sqlalchemy.orm": "WARNING",
         "alembic": "INFO",
+        # Graph DB driver (Neo4j / Graphiti). The driver emits an INFO
+        # "Received notification from DBMS server" line for every
+        # `CREATE INDEX/CONSTRAINT IF NOT EXISTS` (Graphiti rebuilds these
+        # on every driver init) — pure noise that buries ingestion logs.
+        # WARNING keeps genuine problem notifications visible.
+        "neo4j": "WARNING",
+        "neo4j.io": "WARNING",
+        "neo4j.pool": "WARNING",
+        "neo4j.notifications": "WARNING",
         # Task queue
         "celery": "INFO",
         "kombu": "WARNING",

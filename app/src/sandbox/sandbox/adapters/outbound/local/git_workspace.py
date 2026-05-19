@@ -21,6 +21,7 @@ from sandbox.adapters.outbound.local._git_ops import (
     validate_repo_name,
 )
 from sandbox.adapters.outbound.local.repo_cache import LocalRepoCacheProvider
+from sandbox.adapters.outbound.local.storage import dir_size_bytes
 from sandbox.adapters.outbound.memory.eviction import NoOpEvictionPolicy
 from sandbox.domain.errors import (
     InvalidWorkspacePath,
@@ -236,6 +237,11 @@ class LocalGitWorkspaceProvider:
             ),
             backend_kind=self.kind,
             state=WorkspaceState.READY,
+            # Measured once at checkout. The eviction policy needs a size
+            # to rank LRU candidates and to account ``freed_bytes``; the
+            # periodic sweeper refreshes this so we don't pay a recursive
+            # walk on every mutating exec on the hot path.
+            size_bytes=dir_size_bytes(worktree_path),
             metadata={"branch": branch},
             capabilities=Capabilities.from_mode(request.mode),
         )

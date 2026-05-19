@@ -32,6 +32,7 @@ from sandbox.domain.models import (
     WorkspaceState,
     utc_now,
 )
+from sandbox.domain.ports.eviction import EvictionPolicy, EvictionResult
 from sandbox.domain.ports.git_platform import GitPlatformProvider
 from sandbox.domain.ports.identity import BotIdentityProvider, RemoteAuthProvider
 from sandbox.domain.ports.locks import LockManager
@@ -61,12 +62,14 @@ class SandboxService:
         git_platform_provider: GitPlatformProvider | None = None,
         bot_identity_provider: BotIdentityProvider | None = None,
         remote_auth_provider: RemoteAuthProvider | None = None,
+        eviction: EvictionPolicy | None = None,
         runtime_workdir: str = "/work",
     ) -> None:
         self._workspace_provider = workspace_provider
         self._runtime_provider = runtime_provider
         self._store = store
         self._locks = locks
+        self._eviction = eviction
         self._repo_cache_provider = repo_cache_provider
         self._git_platform_provider = git_platform_provider
         self._bot_identity_provider = bot_identity_provider
@@ -152,6 +155,21 @@ class SandboxService:
                 if stale_runtime is not None:
                     await self._store.delete_runtime(stale_runtime.id)
                 await self._store.delete_workspace(existing.id)
+
+            # Create path only (cache hits returned above). This is the
+            # single eviction chokepoint: it covers every backend, not
+            # just local, and runs *before* the provider clones/forks so
+            # space is reclaimed first. ``exclude_key`` guarantees the
+            # policy never evicts the workspace we're about to make room
+            # for. Best-effort: a policy failure must never block a
+            # workspace the caller actually needs.
+            if self._eviction is not None:
+                try:
+                    await self._eviction.evict_if_needed(
+                        user_id=request.user_id, exclude_key=key
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
 
             workspace = await self._workspace_provider.get_or_create_workspace(request)
             await self._store.save_workspace(workspace)
@@ -467,6 +485,91 @@ class SandboxService:
             "workspaces": removed_workspaces,
             "repo_caches": removed_caches,
         }
+
+    # ------------------------------------------------------------------
+    # WorkspaceReaper — the deletion mechanism the eviction policy drives.
+    # ``destroy_workspace`` / ``destroy_pot_container`` above already
+    # satisfy the protocol; this adds the orphan-guarded cache delete.
+    # ------------------------------------------------------------------
+    async def delete_repo_cache_if_unreferenced(self, cache_id: str) -> bool:
+        """Drop a bare repo iff no live workspace still forks off it.
+
+        The guard is the whole point of routing cache eviction through
+        the service: a ``RepoCache`` is shared, and deleting it while a
+        worktree still points at it orphans that worktree. Locks on the
+        cache *key* (not id) so this serialises against
+        ``ensure_repo_cache``, which locks the same key. Best-effort on
+        the backend delete — even if the on-disk bare can't be removed we
+        still drop the store row so the next request cleanly re-clones.
+        """
+        cache = await self._store.get_repo_cache(cache_id)
+        if cache is None:
+            return False
+        async with self._locks.lock(f"repo_cache:{cache.key}"):
+            cache = await self._store.get_repo_cache(cache_id)
+            if cache is None:
+                return False
+            for ws in await self._store.list_workspaces():
+                if (
+                    ws.repo_cache_id == cache_id
+                    and ws.state is not WorkspaceState.DELETED
+                ):
+                    return False
+            if (
+                self._repo_cache_provider is not None
+                and cache.backend_kind == self._repo_cache_provider.kind
+            ):
+                try:
+                    await self._repo_cache_provider.delete_cache(cache)
+                except Exception:  # noqa: BLE001
+                    pass
+            await self._store.delete_repo_cache(cache_id)
+            return True
+
+    # ------------------------------------------------------------------
+    # Periodic-sweep entrypoints (called by the Celery beat task).
+    # ------------------------------------------------------------------
+    async def evict_storage(
+        self, *, user_id: str | None = None
+    ) -> EvictionResult:
+        """Run the eviction policy proactively (no allocation in flight).
+
+        Thin passthrough so the sweeper has one service-level entrypoint
+        and doesn't reach into the container's policy object directly.
+        """
+        if self._eviction is None:
+            return EvictionResult()
+        return await self._eviction.evict_if_needed(user_id=user_id)
+
+    async def prune_idle_runtimes(
+        self, *, idle_stop_seconds: float, idle_destroy_seconds: float
+    ) -> dict[str, int]:
+        """Hibernate long-idle runtimes; destroy ones long-stopped.
+
+        Runtimes are the most expensive tier (live compute) and the
+        cheapest to rebuild (``get_or_create_runtime`` re-creates on
+        next exec), so the sweeper reclaims them first. Workspace state
+        is untouched — only the disposable runtime is wound down.
+        """
+        now = utc_now()
+        hibernated = destroyed = 0
+        for runtime in await self._store.list_runtimes():
+            if runtime.state is RuntimeState.DELETED:
+                continue
+            idle = (now - runtime.last_used_at).total_seconds()
+            try:
+                if runtime.state is RuntimeState.STOPPED:
+                    if idle >= idle_destroy_seconds:
+                        await self.destroy_runtime(runtime.id)
+                        destroyed += 1
+                elif idle >= idle_stop_seconds:
+                    await self.hibernate_runtime(runtime.id)
+                    hibernated += 1
+            except Exception:  # noqa: BLE001
+                # Best-effort: a backend hiccup on one runtime must not
+                # stop the sweep from winding down the rest.
+                continue
+        return {"hibernated": hibernated, "destroyed": destroyed}
 
     async def _exec_unlocked(
         self, workspace_id: str, request: ExecRequest

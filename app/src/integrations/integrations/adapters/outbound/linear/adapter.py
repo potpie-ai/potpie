@@ -16,6 +16,20 @@ class _IssueRef:
     updated_at: datetime | None
 
 
+@dataclass
+class _ProjectRef:
+    id: str
+    name: str
+    updated_at: datetime | None
+
+
+@dataclass
+class _DocumentRef:
+    id: str
+    title: str
+    updated_at: datetime | None
+
+
 _ISSUES_PAGE = """
 query TeamIssues($teamId: ID!, $after: String) {
   issues(
@@ -69,6 +83,100 @@ query IssueDetail($id: String!) {
   }
 }
 """
+
+
+# Projects/documents scope to a team via Linear's project filter idiom
+# (mirrors the proven ``team: { id: { eq } }`` issue filter). Documents in
+# Linear hang off projects, so they're reached through the project's
+# accessible-teams edge; standalone/initiative docs are out of team scope by
+# design (project docs are the bulk and the context-relevant set).
+_PROJECTS_PAGE = """
+query TeamProjects($teamId: ID!, $after: String) {
+  projects(
+    filter: { accessibleTeams: { some: { id: { eq: $teamId } } } }
+    first: 50
+    after: $after
+  ) {
+    pageInfo { hasNextPage endCursor }
+    nodes { id name updatedAt }
+  }
+}
+"""
+
+_DOCUMENTS_PAGE = """
+query TeamDocuments($teamId: ID!, $after: String) {
+  documents(
+    filter: { project: { accessibleTeams: { some: { id: { eq: $teamId } } } } }
+    first: 50
+    after: $after
+  ) {
+    pageInfo { hasNextPage endCursor }
+    nodes { id title updatedAt }
+  }
+}
+"""
+
+_PROJECT_DETAIL = """
+query ProjectDetail($id: String!) {
+  project(id: $id) {
+    id
+    name
+    description
+    url
+    state
+    createdAt
+    updatedAt
+    startDate
+    targetDate
+    completedAt
+    canceledAt
+    lead { id name email }
+    teams(first: 20) { nodes { id name } }
+  }
+}
+"""
+
+_DOCUMENT_DETAIL = """
+query DocumentDetail($id: String!) {
+  document(id: $id) {
+    id
+    title
+    content
+    url
+    createdAt
+    updatedAt
+    creator { id name email }
+    project { id name }
+  }
+}
+"""
+
+
+def _parse_iso(raw: object) -> datetime | None:
+    if not isinstance(raw, str):
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _after_cutoff(
+    updated: datetime | None, updated_after: datetime | None
+) -> bool:
+    """True when ``updated`` is strictly newer than the ``updated_after`` cutoff.
+
+    Mirrors ``iter_issues``' tz-reconciliation: a naive cutoff is read in the
+    node's tz so aware/naive never collide.
+    """
+    if not updated_after or not updated:
+        return True
+    ua = (
+        updated_after
+        if updated_after.tzinfo
+        else updated_after.replace(tzinfo=updated.tzinfo)
+    )
+    return updated > ua
 
 
 class LinearIssueTrackerAdapter:
@@ -144,3 +252,93 @@ class LinearIssueTrackerAdapter:
         if isinstance(nodes, list):
             return [n for n in nodes if isinstance(n, dict)]
         return []
+
+    def iter_projects(
+        self,
+        *,
+        scope: dict[str, Any],
+        updated_after: datetime | None = None,
+    ) -> Iterator[Any]:
+        """Enumerate the team's projects (cursor-paginated, same idiom as issues)."""
+        team_id = scope.get("team_id")
+        if not team_id:
+            return
+        after: str | None = None
+        while True:
+            data = linear_graphql(
+                self._token, _PROJECTS_PAGE, {"teamId": team_id, "after": after}
+            )
+            conn = (data or {}).get("projects") or {}
+            for n in conn.get("nodes") or []:
+                if not isinstance(n, dict):
+                    continue
+                node_id = n.get("id")
+                if not node_id:
+                    continue
+                updated = _parse_iso(n.get("updatedAt"))
+                if not _after_cutoff(updated, updated_after):
+                    continue
+                yield _ProjectRef(
+                    id=node_id,
+                    name=n.get("name") or node_id,
+                    updated_at=updated,
+                )
+            page = conn.get("pageInfo") or {}
+            if not page.get("hasNextPage"):
+                break
+            after = page.get("endCursor")
+            if not after:
+                break
+
+    def get_project(self, *, scope: dict[str, Any], project_id: str) -> dict[str, Any]:
+        _ = scope
+        data = linear_graphql(self._token, _PROJECT_DETAIL, {"id": project_id})
+        project = (data or {}).get("project")
+        if not isinstance(project, dict):
+            raise LookupError(f"Linear project not found: {project_id}")
+        return project
+
+    def iter_documents(
+        self,
+        *,
+        scope: dict[str, Any],
+        updated_after: datetime | None = None,
+    ) -> Iterator[Any]:
+        """Enumerate the team's project documents (cursor-paginated)."""
+        team_id = scope.get("team_id")
+        if not team_id:
+            return
+        after: str | None = None
+        while True:
+            data = linear_graphql(
+                self._token, _DOCUMENTS_PAGE, {"teamId": team_id, "after": after}
+            )
+            conn = (data or {}).get("documents") or {}
+            for n in conn.get("nodes") or []:
+                if not isinstance(n, dict):
+                    continue
+                node_id = n.get("id")
+                if not node_id:
+                    continue
+                updated = _parse_iso(n.get("updatedAt"))
+                if not _after_cutoff(updated, updated_after):
+                    continue
+                yield _DocumentRef(
+                    id=node_id,
+                    title=n.get("title") or node_id,
+                    updated_at=updated,
+                )
+            page = conn.get("pageInfo") or {}
+            if not page.get("hasNextPage"):
+                break
+            after = page.get("endCursor")
+            if not after:
+                break
+
+    def get_document(self, *, scope: dict[str, Any], document_id: str) -> dict[str, Any]:
+        _ = scope
+        data = linear_graphql(self._token, _DOCUMENT_DETAIL, {"id": document_id})
+        document = (data or {}).get("document")
+        if not isinstance(document, dict):
+            raise LookupError(f"Linear document not found: {document_id}")
+        return document

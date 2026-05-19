@@ -40,17 +40,29 @@ def _load_env_file(path: Path) -> None:
             os.environ[k] = v
 
 
+_PROJECT_ROOT_MARKERS = ("pyproject.toml", ".git")
+
+
 def load_cli_env() -> None:
-    """Walk upward from ``cwd`` and merge the first ``.env`` found (do not override existing env)."""
+    """Merge the project root's ``.env`` (never an arbitrary ancestor's).
+
+    The previous behavior walked up to 24 parents and loaded the *first*
+    ``.env`` it saw — running the CLI inside an untrusted repo loaded that
+    repo's ``.env`` (arbitrary POTPIE_*/token injection). Anchor instead to
+    the nearest ancestor that is a real project root (has ``pyproject.toml``
+    or ``.git``) and load only that directory's ``.env`` (security review
+    L-3). Existing env is never overridden.
+    """
     global _loaded
     if _loaded:
         return
     _loaded = True
     cur = Path.cwd().resolve()
     for _ in range(24):
-        candidate = cur / ".env"
-        if candidate.is_file():
-            _load_env_file(candidate)
+        if any((cur / m).exists() for m in _PROJECT_ROOT_MARKERS):
+            candidate = cur / ".env"
+            if candidate.is_file():
+                _load_env_file(candidate)
             return
         if cur.parent == cur:
             break

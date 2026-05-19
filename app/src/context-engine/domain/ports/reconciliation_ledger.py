@@ -136,6 +136,18 @@ class ReconciliationLedgerPort(Protocol):
         ``record_events_reconciled``.
         """
 
+    def fail_inflight_events(self, event_ids: list[str], error: str) -> int:
+        """``→ failed`` for ids still in a non-terminal state, return the count.
+
+        Unlike ``record_events_failed`` (an unconditional bulk set), this is
+        status-guarded: it only flips events currently ``received`` /
+        ``queued`` / ``processing``. Events a partially-completed batch
+        already drove to ``reconciled`` are left untouched, so the reaper
+        can fail a stuck batch's leftovers without clobbering work that
+        actually finished. No-op on an empty list.
+        """
+        ...
+
     def list_runs_for_event(self, event_id: str) -> list[ReconciliationRunRow]: ...
 
     def list_work_events_for_run(
