@@ -8,13 +8,18 @@ from sandbox.adapters.outbound.docker.runtime import DockerRuntimeProvider
 from sandbox.adapters.outbound.file.json_store import JsonSandboxStore
 from sandbox.adapters.outbound.local.git_workspace import LocalGitWorkspaceProvider
 from sandbox.adapters.outbound.local.repo_cache import LocalRepoCacheProvider
+from sandbox.adapters.outbound.local.storage import LocalStorageInspector
 from sandbox.adapters.outbound.local.subprocess_runtime import LocalSubprocessRuntimeProvider
-from sandbox.adapters.outbound.memory.eviction import NoOpEvictionPolicy
+from sandbox.adapters.outbound.memory.eviction import (
+    NoOpEvictionPolicy,
+    TieredVolumeEvictionPolicy,
+)
 from sandbox.adapters.outbound.memory.locks import InMemoryLockManager
 from sandbox.adapters.outbound.memory.store import InMemorySandboxStore
 from sandbox.application.services.sandbox_service import SandboxService
 from sandbox.bootstrap.settings import SandboxSettings, settings_from_env
 from sandbox.domain.ports.eviction import EvictionPolicy
+from sandbox.domain.ports.storage import StorageInspector
 from sandbox.domain.ports.git_platform import GitPlatformProvider
 from sandbox.domain.ports.identity import BotIdentityProvider, RemoteAuthProvider
 from sandbox.domain.ports.locks import LockManager
@@ -52,10 +57,16 @@ def build_sandbox_container(
     remote_auth_provider: RemoteAuthProvider | None = None,
 ) -> SandboxContainer:
     s = settings or settings_from_env()
-    eviction_policy: EvictionPolicy = eviction or NoOpEvictionPolicy()
     cache_provider = repo_cache_provider or _repo_cache_provider(s)
+    # The workspace provider keeps its own (dormant) eviction hook for
+    # standalone/direct use; in the composed container the real policy
+    # lives at the service level — a single chokepoint that covers every
+    # backend — so we hand the provider a NoOp here to avoid a double
+    # eviction pass on the local create path.
     if workspace_provider is None:
-        workspace_provider = _workspace_provider(s, eviction_policy, cache_provider)
+        workspace_provider = _workspace_provider(
+            s, NoOpEvictionPolicy(), cache_provider
+        )
     if runtime_provider is None:
         runtime_provider = _runtime_provider(s, workspace_provider)
     metadata_store: SandboxStore
@@ -66,6 +77,14 @@ def build_sandbox_container(
     else:
         metadata_store = InMemorySandboxStore()
     lock_manager = locks or InMemoryLockManager()
+
+    # Store + providers exist; the policy can now be built against them.
+    # Reaper (the service) is bound *after* the service is constructed —
+    # the service depends on the policy, so the cycle is broken by late
+    # binding rather than construction order.
+    eviction_policy: EvictionPolicy = eviction or _eviction_policy(
+        s, metadata_store, workspace_provider
+    )
     service = SandboxService(
         workspace_provider=workspace_provider,
         runtime_provider=runtime_provider,
@@ -75,7 +94,11 @@ def build_sandbox_container(
         git_platform_provider=git_platform_provider,
         bot_identity_provider=bot_identity_provider,
         remote_auth_provider=remote_auth_provider,
+        eviction=eviction_policy,
     )
+    bind_reaper = getattr(eviction_policy, "bind_reaper", None)
+    if callable(bind_reaper):
+        bind_reaper(service)
     return SandboxContainer(
         workspace_provider=workspace_provider,
         runtime_provider=runtime_provider,
@@ -155,8 +178,58 @@ def _workspace_provider(
             use_volume_for_bare=settings.daytona_use_volume_for_bare,
             volume_name_prefix=settings.daytona_volume_name_prefix,
             volume_mount_path=settings.daytona_volume_mount_path,
+            max_sandboxes_per_user=settings.daytona_max_sandboxes_per_user,
         )
     raise ValueError(f"Unsupported SANDBOX_WORKSPACE_PROVIDER={settings.provider!r}")
+
+
+def _storage_inspector(
+    settings: SandboxSettings, workspace_provider: WorkspaceProvider
+) -> StorageInspector | None:
+    """Resolve the inspector the eviction policy reads pressure from.
+
+    Local: a standalone, settings-only inspector over ``.repos`` (no
+    provider dependency — keeps wiring acyclic). Daytona: the workspace
+    provider itself, which owns the SDK client and implements the
+    ``StorageInspector`` protocol (``status`` + ``kind``). Returns
+    ``None`` for backends with no inspectable limit, which downgrades the
+    policy to a no-op rather than guessing.
+    """
+    if settings.provider == "local":
+        return LocalStorageInspector(
+            settings.repos_base_path,
+            limit_gb=settings.storage_limit_gb,
+            disk_fraction=settings.storage_disk_fraction,
+        )
+    if settings.provider == "daytona":
+        # DaytonaWorkspaceProvider structurally satisfies StorageInspector.
+        return workspace_provider  # type: ignore[return-value]
+    return None
+
+
+def _eviction_policy(
+    settings: SandboxSettings,
+    store: SandboxStore,
+    workspace_provider: WorkspaceProvider,
+) -> EvictionPolicy:
+    """Build the policy from settings (default: tiered).
+
+    Falls back to NoOp when explicitly configured ``noop`` or when no
+    inspector is available for the backend — never silently leaves a
+    backend unbounded without a clear reason.
+    """
+    if settings.eviction_policy == "noop":
+        return NoOpEvictionPolicy()
+    inspector = _storage_inspector(settings, workspace_provider)
+    if inspector is None:
+        return NoOpEvictionPolicy()
+    return TieredVolumeEvictionPolicy(
+        store=store,
+        inspector=inspector,
+        high_water=settings.storage_high_water,
+        low_water=settings.storage_low_water,
+        evict_dirty=settings.evict_dirty,
+    )
 
 
 def _runtime_provider(

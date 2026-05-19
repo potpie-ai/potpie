@@ -13,11 +13,6 @@ def _register_stub_celery_queue() -> type:
     """Minimal stand-in for the host Celery adapter (no ``app`` import)."""
 
     class StubCeleryQueue:
-        def enqueue_backfill(
-            self, pot_id: str, *, target_repo_name: str | None = None
-        ) -> None:
-            return None
-
         def enqueue_batch(self, batch_id: str) -> None:
             return None
 

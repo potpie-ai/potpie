@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
+from adapters.outbound.graphiti.canonical_writer import upsert_entities_async
 from adapters.outbound.graphiti.context_graph import GraphitiContextGraphAdapter
+from adapters.outbound.graphiti.episodic import _ensure_graphiti_entity_defaults_async
 from application.services.context_reader_registry import ContextReaderRegistry
-from domain.reconciliation import MutationSummary, ReconciliationPlan, ReconciliationResult
 from domain.context_events import EventRef
+from domain.graph_mutations import EntityUpsert, ProvenanceRef
+from domain.reconciliation import MutationSummary, ReconciliationPlan, ReconciliationResult
 
 
 def test_context_graph_apply_plan_delegates_to_use_case() -> None:
@@ -108,3 +112,64 @@ def test_context_graph_reset_pot_stops_on_episodic_failure() -> None:
         "error": "bad",
     }
     structural.reset_pot.assert_not_called()
+
+
+class _FakeResult:
+    async def consume(self) -> None:
+        return None
+
+
+class _FakeSession:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc):
+        return None
+
+    async def run(self, query: str, **kwargs):
+        self.calls.append((query, kwargs))
+        return _FakeResult()
+
+
+class _FakeDriver:
+    def __init__(self) -> None:
+        self.session_obj = _FakeSession()
+
+    def session(self) -> _FakeSession:
+        return self.session_obj
+
+
+def test_canonical_entity_upsert_sets_graphiti_required_string_defaults() -> None:
+    driver = _FakeDriver()
+    count = asyncio.run(
+        upsert_entities_async(
+            driver,
+            "pot1",
+            [
+                EntityUpsert(
+                    "component:cli",
+                    ("Entity",),
+                    {"name": 123, "summary": None},
+                )
+            ],
+            ProvenanceRef(pot_id="pot1", source_event_id="event1"),
+        )
+    )
+
+    assert count == 1
+    props = driver.session_obj.calls[0][1]["props"]
+    assert props["name"] == "123"
+    assert props["summary"] == ""
+
+
+def test_graphiti_entity_default_repair_covers_existing_null_fields() -> None:
+    driver = _FakeDriver()
+    asyncio.run(_ensure_graphiti_entity_defaults_async(driver, "pot1"))
+
+    query, kwargs = driver.session_obj.calls[0]
+    assert kwargs == {"pot_id": "pot1"}
+    assert "n.summary = coalesce(n.summary, '')" in query
+    assert "n.name = coalesce(n.name, n.entity_key, n.uuid, '')" in query

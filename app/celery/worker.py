@@ -19,8 +19,12 @@ from app.modules.event_bus.tasks.event_tasks import (
     process_custom_event,
 )
 from app.modules.context_graph.tasks import (
-    context_graph_backfill_pot,
-    context_graph_sync_linear_pot_source,
+    context_graph_flush_windowed_batches,
+    context_graph_process_batch,
+    context_graph_reap_stale_batches,
+)
+from app.modules.intelligence.tools.sandbox.tasks import (
+    sandbox_storage_sweep,
 )
 
 
@@ -39,9 +43,15 @@ def register_tasks():
     celery_app.tasks.register(process_webhook_event)
     celery_app.tasks.register(process_custom_event)
 
-    # Register context graph tasks
-    celery_app.tasks.register(context_graph_backfill_pot)
-    celery_app.tasks.register(context_graph_sync_linear_pot_source)
+    # Register context graph tasks. Backfill is no longer a task — a source
+    # attach emits one agent_reconciliation event that flows through
+    # context_graph_process_batch like any other event.
+    celery_app.tasks.register(context_graph_process_batch)
+    celery_app.tasks.register(context_graph_flush_windowed_batches)
+    celery_app.tasks.register(context_graph_reap_stale_batches)
+
+    # Register sandbox maintenance tasks (beat-scheduled storage sweep)
+    celery_app.tasks.register(sandbox_storage_sweep)
     logger.info("Tasks registered successfully")
 
 

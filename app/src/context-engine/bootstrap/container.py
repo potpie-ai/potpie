@@ -51,6 +51,8 @@ from adapters.outbound.postgres.ledger import SqlAlchemyIngestionLedger
 from adapters.outbound.postgres.reconciliation_ledger import (
     SqlAlchemyReconciliationLedger,
 )
+from adapters.outbound.query_agent.null_agent import NullQueryAgent
+from adapters.outbound.query_agent.pydantic_query_agent import PydanticQueryAgent
 from adapters.outbound.settings_env import EnvContextEngineSettings
 from adapters.outbound.synthesis.null import NullAnswerSynthesizer
 from adapters.outbound.synthesis.pydantic_ai_answer import (
@@ -203,6 +205,22 @@ def _build_answer_synthesizer(*, telemetry: TelemetryPort | None = None):
     return NullAnswerSynthesizer()
 
 
+def _build_query_agent(*, telemetry: TelemetryPort | None = None):
+    """Return the agentic read-side query loop when an LLM model is configured.
+
+    Enabled by CONTEXT_ENGINE_QUERY_AGENT_MODEL, or it reuses the synthesis
+    model (CONTEXT_ENGINE_ANSWER_SYNTHESIS_MODEL) so one env var lights up the
+    whole read-side LLM surface. Falls back to Null (deterministic resolve).
+    """
+    import os
+
+    if os.getenv("CONTEXT_ENGINE_QUERY_AGENT_MODEL") or os.getenv(
+        "CONTEXT_ENGINE_ANSWER_SYNTHESIS_MODEL"
+    ):
+        return PydanticQueryAgent(telemetry=telemetry)
+    return NullQueryAgent()
+
+
 def _default_reader_registry(
     *, episodic: EpisodicGraphPort, structural: StructuralReadPort
 ) -> ContextReaderRegistry:
@@ -265,6 +283,7 @@ def build_container(
         readers=reader_registry,
         resolution_service=resolution_service,
         answer_synthesizer=_build_answer_synthesizer(telemetry=telemetry_sink),
+        query_agent=_build_query_agent(telemetry=telemetry_sink),
     )
     _attach_reconciliation_context(reconciliation_agent, context_graph)
     _attach_reconciliation_telemetry(reconciliation_agent, telemetry_sink)
@@ -401,6 +420,10 @@ def build_container_with_github_token(
             source_for_repo=source_for_repo,
             repo_resolver=_default_repo_resolver(pots),
             webhook_secret=(os.getenv("GITHUB_WEBHOOK_SECRET") or "").strip() or None,
+            allow_unsigned=os.getenv(
+                "CONTEXT_ENGINE_ALLOW_UNSIGNED_WEBHOOKS", ""
+            ).strip().lower()
+            in ("1", "true", "yes"),
         )
     )
     # Notion is registered with no fetcher — capabilities advertise as

@@ -52,7 +52,9 @@ from app.modules.context_graph.pot_access import (
 from app.modules.context_graph.pot_member_roles import POT_ROLE_OWNER
 from app.modules.context_graph.pot_sources_service import (
     attach_linear_team_source,
+    emit_linear_backfill_event,
     mirror_repository_into_sources,
+    repository_for_source,
     serialize_source,
     unmirror_repository_from_sources,
 )
@@ -1418,10 +1420,20 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
             raise HTTPException(status_code=400, detail=str(e)) from e
         db.commit()
         db.refresh(row)
+        # Mirror attach_repo_to_pot: a fresh attach seeds the graph via one
+        # backfill event through the standard admission path. Idempotent on
+        # source_id, so re-attach (already_attached) deliberately re-emits
+        # nothing. Best-effort — attach already committed.
+        backfill_event_id: str | None = None
+        if not already_attached:
+            backfill_event_id = emit_linear_backfill_event(
+                db, row=row, submitted_by_user_id=uid
+            )
         return {
             "id": row.id,
             "source": serialize_source(row),
             "already_attached": already_attached,
+            "backfill_event_id": backfill_event_id,
         }
 
     @r.patch("/pots/{pot_id}/sources/{source_id}")
@@ -1472,34 +1484,14 @@ def make_pot_router(auth_dep: Callable) -> APIRouter:
         if row is None:
             raise HTTPException(status_code=404, detail="Source not found")
 
-        # For GitHub repository sources, also remove the matching repository
-        # row so the pot no longer routes webhooks there.
+        # For a GitHub repository source, also remove the repo row it
+        # mirrors so the pot no longer routes webhooks there. Resolve it
+        # via the stable scope_hash join key (not scope_json re-parsing)
+        # so a corrupt/legacy scope_json can't orphan the repo row.
         if row.source_kind == "repository" and row.provider == "github":
-            import json as _json
-
-            try:
-                scope = _json.loads(row.scope_json) if row.scope_json else {}
-            except (TypeError, ValueError):
-                scope = {}
-            owner = (scope.get("owner") or "").strip()
-            repo = (scope.get("repo") or "").strip()
-            provider_host = (
-                scope.get("provider_host") or "github.com"
-            ).strip() or "github.com"
-            if owner and repo:
-                repo_row = (
-                    db.query(ContextGraphPotRepository)
-                    .filter(
-                        ContextGraphPotRepository.pot_id == pot_id,
-                        ContextGraphPotRepository.provider == "github",
-                        ContextGraphPotRepository.provider_host == provider_host,
-                        ContextGraphPotRepository.owner == owner,
-                        ContextGraphPotRepository.repo == repo,
-                    )
-                    .first()
-                )
-                if repo_row is not None:
-                    db.delete(repo_row)
+            repo_row = repository_for_source(db, row)
+            if repo_row is not None:
+                db.delete(repo_row)
         db.delete(row)
         db.flush()
         _recompute_pot_primary_repo_name(db, pot_id)

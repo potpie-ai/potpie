@@ -27,6 +27,7 @@ from sandbox.adapters.outbound.local._git_ops import (
     validate_repo_name,
 )
 from sandbox.adapters.outbound.local.auth import resolve_token
+from sandbox.adapters.outbound.local.storage import dir_size_bytes
 from sandbox.domain.models import (
     RepoCache,
     RepoCacheRequest,
@@ -121,6 +122,7 @@ class LocalRepoCacheProvider:
         # above still ran (it's the only way to materialize the
         # requested ref into the bare); the in-memory id stays stable.
         key = request.key()
+        size = dir_size_bytes(bare_path)
         existing_id = self._by_key.get(key)
         if existing_id is not None:
             existing = self._by_id.get(existing_id)
@@ -128,6 +130,9 @@ class LocalRepoCacheProvider:
                 existing.last_fetched_at = utc_now()
                 existing.last_used_at = utc_now()
                 existing.updated_at = utc_now()
+                # Re-fetch may have grown the bare (new ref); keep the
+                # size the eviction policy ranks on roughly current.
+                existing.size_bytes = size
                 return existing
 
         cache = RepoCache(
@@ -141,6 +146,7 @@ class LocalRepoCacheProvider:
             backend_kind=self.kind,
             state=WorkspaceState.READY,
             last_fetched_at=utc_now(),
+            size_bytes=size,
         )
         self._by_id[cache.id] = cache
         self._by_key[key] = cache.id

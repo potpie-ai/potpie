@@ -10,6 +10,7 @@ import pytest
 from app.modules.context_graph.pot_sources_service import (
     github_repo_scope_hash,
     github_repo_scope_json,
+    repository_for_source,
 )
 from app.modules.context_graph.wiring import pot_source_row_to_status_source
 
@@ -107,3 +108,58 @@ class TestPotSourceRowToStatusSource:
             )
         )
         assert out.scope_summary == "team:Core"
+
+
+class _AllQuery:
+    def __init__(self, rows: list[object]) -> None:
+        self._rows = rows
+
+    def filter(self, *_a: object, **_k: object) -> "_AllQuery":
+        return self
+
+    def all(self) -> list[object]:
+        return self._rows
+
+
+class _AllDB:
+    def __init__(self, rows: list[object]) -> None:
+        self._rows = rows
+
+    def query(self, _model: object) -> _AllQuery:
+        return _AllQuery(self._rows)
+
+
+class TestRepositoryForSource:
+    """Inverse-of-mirror resolution must key on scope_hash, not scope_json."""
+
+    def _source(self, **overrides: object) -> object:
+        base: dict[str, object] = {
+            "pot_id": "pot_1",
+            "provider": "github",
+            "source_kind": "repository",
+            "scope_hash": github_repo_scope_hash(
+                "github", "github.com", "acme", "widget"
+            ),
+        }
+        base.update(overrides)
+        return SimpleNamespace(**base)
+
+    def test_matches_repo_row_by_scope_hash_case_insensitively(self) -> None:
+        # Repo row stored with different casing than the source's scope —
+        # resolution must still match because scope_hash is normalized.
+        repo = _fake_repo(owner="Acme", repo="Widget")
+        db = _AllDB([_fake_repo(owner="other", repo="thing"), repo])
+        out = repository_for_source(db, self._source())  # type: ignore[arg-type]
+        assert out is repo
+
+    def test_non_repository_source_returns_none(self) -> None:
+        db = _AllDB([_fake_repo()])
+        out = repository_for_source(  # type: ignore[arg-type]
+            db, self._source(source_kind="issue_tracker_team")
+        )
+        assert out is None
+
+    def test_no_matching_repo_returns_none(self) -> None:
+        db = _AllDB([_fake_repo(owner="someone", repo="else")])
+        out = repository_for_source(db, self._source())  # type: ignore[arg-type]
+        assert out is None

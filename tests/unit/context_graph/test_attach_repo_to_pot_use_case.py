@@ -156,12 +156,15 @@ class TestAttachRepoToPot:
         # Bootstrap event called exactly once.
         assert emit.call_count == 1
 
-    def test_existing_repo_is_idempotent_and_skips_event(self) -> None:
+    def test_existing_live_repo_is_idempotent_and_skips_event(self) -> None:
         pot = _fake_pot(primary_repo_name="acme/widgets")
         existing = _fake_repo_row()
         db = _make_db(query_results=[pot, existing])
         source = _fake_source("src-DUP")
         with patch(
+            "app.modules.context_graph.attach_repo_to_pot.repository_source_exists",
+            return_value=True,
+        ), patch(
             "app.modules.context_graph.attach_repo_to_pot.mirror_repository_into_sources",
             return_value=source,
         ), patch(
@@ -185,8 +188,56 @@ class TestAttachRepoToPot:
         assert result.source_id == "src-DUP"
         # No new row added on re-attach.
         assert not db.add.called
-        # Bootstrap event NOT re-emitted on idempotent re-attach.
+        # Bootstrap event NOT re-emitted on idempotent re-attach of a
+        # live repo (its source mirror is still present).
         assert emit.call_count == 0
+
+    def test_re_add_of_deleted_repo_re_emits_event(self) -> None:
+        """Re-adding a repo deleted via the Sources tab must re-queue.
+
+        The Sources-tab delete drops the source mirror but can orphan the
+        repo row. On re-add the repo row is still found, but its source is
+        gone — that signals "deleted", so idempotency must NOT suppress the
+        ``repository.added`` re-queue.
+        """
+        pot = _fake_pot(primary_repo_name="acme/widgets")
+        existing = _fake_repo_row()
+        db = _make_db(query_results=[pot, existing])
+        source = _fake_source("src-REMIRRORED")
+        with patch(
+            "app.modules.context_graph.attach_repo_to_pot.repository_source_exists",
+            return_value=False,
+        ), patch(
+            "app.modules.context_graph.attach_repo_to_pot.mirror_repository_into_sources",
+            return_value=source,
+        ), patch(
+            "app.modules.context_graph.attach_repo_to_pot._dispatch_prewarm"
+        ) as prewarm, patch(
+            "app.modules.context_graph.attach_repo_to_pot._emit_bootstrap_event",
+            return_value="evt-readd-1",
+        ) as emit:
+            result = attach_repo_to_pot(
+                db,
+                pot_id="pot-1",
+                provider="github",
+                provider_host="github.com",
+                owner="acme",
+                repo="widgets",
+                external_repo_id="42",
+                remote_url="https://github.com/acme/widgets",
+                default_branch="main",
+                submitted_by_user_id="user-7",
+            )
+        # Treated as a fresh attach so strict-409 callers let it through.
+        assert result.already_attached is False
+        assert result.bootstrap_event_id == "evt-readd-1"
+        # Reuses the surviving repo row — no new row inserted.
+        assert result.repository_id == existing.id
+        assert not db.add.called
+        # Source mirror re-created and the bootstrap event re-emitted once.
+        assert result.source_id == "src-REMIRRORED"
+        assert emit.call_count == 1
+        assert prewarm.call_count == 1
 
     def test_first_attach_preserves_existing_primary_repo_name(self) -> None:
         pot = _fake_pot(primary_repo_name="other/repo")

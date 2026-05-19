@@ -32,7 +32,8 @@ from application.use_cases.record_durable_context import (
 from application.use_cases.report_status import report_status
 from application.use_cases.submit_raw_episode import submit_raw_episode
 from bootstrap.container import ContextEngineContainer
-from domain.actor import Actor, normalize_surface
+from domain.actor import Actor, ActorSurface, normalize_surface
+from domain.error_redaction import safe_error
 from domain.graph_query import ContextGraphQuery
 from domain.ingestion_event_models import (
     EventListFilters,
@@ -52,6 +53,12 @@ from domain.ports.policy import (
     REASON_UNKNOWN_POT,
     PolicyDecision,
 )
+
+# Surfaces a client may self-declare via the untrusted ``X-Potpie-Client``
+# header. ``system``/``webhook`` are deliberately excluded — those are
+# server-stamped (internal jobs, signature-verified webhooks) and must never
+# be assertable by a request.
+_CLIENT_DECLARABLE_SURFACES: frozenset[str] = frozenset({"cli", "mcp", "http"})
 
 UNKNOWN_POT_DETAIL = (
     "Unknown pot_id for this user (create with POST /api/v2/context/pots "
@@ -395,7 +402,17 @@ def create_context_router(
     router = APIRouter()
 
     def _resolve_actor(auth_user: Any, request: Request) -> Actor:
-        """Derive Actor from auth principal + self-declared client headers."""
+        """Derive Actor from the authenticated principal only.
+
+        ``user_id`` comes solely from what ``require_auth`` resolved — never
+        from request headers. ``X-Potpie-Client`` is an untrusted hint that
+        may only select a non-privileged client surface (``cli``/``mcp``/
+        ``http``); a caller can never assert the server-trusted ``system`` or
+        ``webhook`` surfaces (those are stamped by internal jobs / the
+        signature-verified webhook handler, which build :class:`Actor`
+        directly). ``auth_method`` reflects the transport that actually
+        authenticated this request, not a client claim.
+        """
         user_id: str
         if isinstance(auth_user, dict):
             user_id = str(auth_user.get("user_id") or auth_user.get("id") or "unknown")
@@ -406,11 +423,20 @@ def create_context_router(
         else:
             user_id = "unknown"
         declared = request.headers.get("x-potpie-client") if request else None
-        surface = normalize_surface(declared) or "http"
+        norm = normalize_surface(declared)
+        # Privileged surfaces are server-stamped only — a client header may
+        # never escalate to "system"/"webhook".
+        surface: ActorSurface = "http"
+        if norm is not None and norm in _CLIENT_DECLARABLE_SURFACES:
+            surface = norm
         client_name = (
             request.headers.get("x-potpie-client-name") if request else None
         )
         client_name = client_name.strip() if client_name and client_name.strip() else None
+        if client_name:
+            # Free-form, client-asserted metadata — clamp so a hostile value
+            # cannot bloat audit logs / graph actor properties.
+            client_name = client_name[:64]
         return Actor(
             user_id=user_id,
             surface=surface,
@@ -1451,7 +1477,10 @@ def create_context_router(
         try:
             items = container.episodic.list_open_conflicts(resolved_pot_id)
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            _logger.exception("list_open_conflicts failed for pot=%s", body.pot_id)
+            raise HTTPException(
+                status_code=500, detail=safe_error(exc)
+            ) from exc
         return {"ok": True, "items": items}
 
     @router.post(
@@ -1492,10 +1521,12 @@ def create_context_router(
                     "issue_uuid": body.issue_uuid,
                     "conflict_action": body.action,
                     "outcome": "error",
-                    "error": str(exc),
+                    "error": safe_error(exc),
                 },
             )
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=500, detail=safe_error(exc)
+            ) from exc
         _audit_operator_action(
             action="resolve_conflict",
             pot_id=body.pot_id,

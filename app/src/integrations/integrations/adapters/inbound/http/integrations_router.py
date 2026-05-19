@@ -55,6 +55,22 @@ logger = setup_logger(__name__)
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
 
+def _allow_unsigned_webhooks() -> bool:
+    """Dev-only opt-in to accept webhooks with no signing secret.
+
+    Fail-closed by default: webhook routes reject when their signing
+    secret is unset unless this is explicitly enabled. Never set this in
+    a network-reachable deployment — an unsigned webhook is an
+    unauthenticated graph write plus a free trigger for expensive agent
+    work.
+    """
+    return os.getenv("CONTEXT_ENGINE_ALLOW_UNSIGNED_WEBHOOKS", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
 def _linear_oauth_callback_redirect_uri(request: Request) -> str:
     """URL registered in Linear OAuth app; must match authorize + token exchange."""
     scheme = (
@@ -1506,9 +1522,21 @@ async def linear_webhook(request: Request) -> Dict[str, Any]:
         "linear-signature"
     )
     if not secret:
+        if not _allow_unsigned_webhooks():
+            logger.warning(
+                "Linear webhook rejected: LINEAR_WEBHOOK_SECRET not "
+                "configured (set it, or CONTEXT_ENGINE_ALLOW_UNSIGNED_WEBHOOKS"
+                "=1 for local dev only)"
+            )
+            raise HTTPException(
+                status_code=401,
+                detail="Webhook signature verification not configured",
+            )
         logger.warning(
-            "Linear webhook accepted without signature verification: "
-            "LINEAR_WEBHOOK_SECRET not configured"
+            "SECURITY: Linear webhook accepted UNAUTHENTICATED — "
+            "LINEAR_WEBHOOK_SECRET unset and CONTEXT_ENGINE_ALLOW_UNSIGNED_"
+            "WEBHOOKS enabled. Never use this in a network-reachable "
+            "deployment."
         )
     elif not verify_linear_webhook_signature(signature, raw_body, secret):
         logger.warning(
@@ -1654,7 +1682,24 @@ async def github_webhook(request: Request) -> Dict[str, Any]:
         config = Config(".env")
         github_webhook_secret = config("GITHUB_WEBHOOK_SECRET", default="")
         signature_header = request.headers.get("X-Hub-Signature-256")
-        if github_webhook_secret and not verify_github_webhook_signature(
+        if not github_webhook_secret:
+            if not _allow_unsigned_webhooks():
+                logger.warning(
+                    "GitHub webhook rejected: GITHUB_WEBHOOK_SECRET not "
+                    "configured (set it, or CONTEXT_ENGINE_ALLOW_UNSIGNED_"
+                    "WEBHOOKS=1 for local dev only)"
+                )
+                raise HTTPException(
+                    status_code=401,
+                    detail="Webhook signature verification not configured",
+                )
+            logger.warning(
+                "SECURITY: GitHub webhook accepted UNAUTHENTICATED — "
+                "GITHUB_WEBHOOK_SECRET unset and CONTEXT_ENGINE_ALLOW_"
+                "UNSIGNED_WEBHOOKS enabled. Never use this in a "
+                "network-reachable deployment."
+            )
+        elif not verify_github_webhook_signature(
             signature_header, raw_body, github_webhook_secret
         ):
             logger.warning("GitHub webhook signature verification failed")
@@ -1706,7 +1751,7 @@ async def github_webhook(request: Request) -> Dict[str, Any]:
         logger.exception("Error processing GitHub webhook")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to process GitHub webhook: {str(e)}",
+            detail="Failed to process GitHub webhook",
         )
 
 

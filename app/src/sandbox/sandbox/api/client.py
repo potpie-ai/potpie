@@ -313,6 +313,67 @@ class SandboxClient:
             delete_repo_caches=delete_repo_caches,
         )
 
+    async def sweep_storage(
+        self,
+        *,
+        idle_stop_seconds: float = 30 * 60,
+        idle_destroy_seconds: float = 6 * 60 * 60,
+    ) -> dict[str, object]:
+        """Periodic maintenance pass — the Celery beat task's entrypoint.
+
+        Three steps, cheapest-to-rebuild first:
+
+        1. **Refresh sizes.** Workspaces/caches measure ``size_bytes``
+           once at creation; mutating execs grow them without re-walking
+           (the hot path stays cheap). Here, off the hot path, we
+           re-measure local-backed rows so the eviction policy ranks LRU
+           on current sizes. Daytona rows have no local path and use the
+           count scope, so they're skipped.
+        2. **Prune idle runtimes.** Live compute, trivially rebuilt on
+           next exec — reclaimed first.
+        3. **Evict to low-water.** Run the policy globally
+           (``user_id=None``) so disk pressure is relieved even when no
+           new work is arriving to trigger the reactive path.
+
+        Idempotent and best-effort: safe to run on any interval; running
+        it more often than needed only costs the size-walk.
+        """
+        from sandbox.adapters.outbound.local.storage import dir_size_bytes
+
+        store = self._container.store
+        resized = 0
+        for ws in await store.list_workspaces():
+            path = ws.location.local_path
+            if not path or not Path(path).exists():
+                continue
+            new_size = await asyncio.to_thread(dir_size_bytes, Path(path))
+            if new_size != ws.size_bytes:
+                ws.size_bytes = new_size
+                await store.save_workspace(ws)
+                resized += 1
+        for cache in await store.list_repo_caches():
+            path = cache.location.local_path
+            if not path or not Path(path).exists():
+                continue
+            new_size = await asyncio.to_thread(dir_size_bytes, Path(path))
+            if new_size != cache.size_bytes:
+                cache.size_bytes = new_size
+                await store.save_repo_cache(cache)
+                resized += 1
+
+        runtimes = await self._service.prune_idle_runtimes(
+            idle_stop_seconds=idle_stop_seconds,
+            idle_destroy_seconds=idle_destroy_seconds,
+        )
+        eviction = await self._service.evict_storage(user_id=None)
+        return {
+            "rows_resized": resized,
+            "runtimes": runtimes,
+            "evicted_workspaces": len(eviction.evicted_workspace_ids),
+            "evicted_repo_caches": len(eviction.evicted_repo_cache_ids),
+            "freed_bytes": eviction.freed_bytes,
+        }
+
     async def is_alive(self, handle: WorkspaceHandle) -> bool:
         """Cheap liveness probe — does the backing workspace still exist?
 

@@ -6,7 +6,6 @@ from typing import Any
 
 from adapters.outbound.hatchet.env_bootstrap import prepare_hatchet_client_env
 from domain.hatchet_events import (
-    EVENT_BACKFILL,
     EVENT_MAINTENANCE,
     EVENT_PROCESS_BATCH,
 )
@@ -35,14 +34,6 @@ class HatchetContextGraphJobQueue:
             ) from e
         prepare_hatchet_client_env()
         return cls(Hatchet())
-
-    def enqueue_backfill(
-        self, pot_id: str, *, target_repo_name: str | None = None
-    ) -> None:
-        payload: dict = {"pot_id": pot_id}
-        if target_repo_name is not None:
-            payload["target_repo_name"] = target_repo_name
-        self._hatchet.event.push(EVENT_BACKFILL, payload)
 
     def enqueue_batch(self, batch_id: str) -> None:
         self._hatchet.event.push(EVENT_PROCESS_BATCH, {"batch_id": batch_id})

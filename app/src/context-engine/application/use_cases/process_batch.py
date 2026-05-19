@@ -257,16 +257,24 @@ def process_batch(
     repo_name = _primary_repo_name_for_pot(pots, batch.pot_id)
 
     batches.mark_batch_running(batch.id)
+    _claim_events_for_processing(reco_ledger, pending_event_ids)
 
     # Tell live subscribers each event is now in flight. Best-effort —
     # publish failures must not abort ingestion.
+    processing_status = {
+        "status": "processing",
+        "stage": "executing",
+        "message": f"batch {batch.id} running",
+    }
+    for eid in pending_event_ids:
+        _emit("status", processing_status, event_id=eid)
     _safe_publish_status(
         stream,
         pot_id=batch.pot_id,
         event_ids=pending_event_ids,
-        status="processing",
-        stage="executing",
-        message=f"batch {batch.id} running",
+        status=processing_status["status"],
+        stage=processing_status["stage"],
+        message=processing_status["message"],
     )
 
     capabilities = _capability_metadata(agent)
@@ -285,6 +293,16 @@ def process_batch(
     chunk_size = _chunk_size_default()
     event_chunks = _chunk_events(events, chunk_size)
     chunks_total = len(event_chunks)
+
+    logger.info(
+        "context-ingest start: pot=%s batch=%s repo=%s events=%d chunks=%d ids=[%s]",
+        batch.pot_id,
+        batch.id,
+        repo_name or "-",
+        len(pending_event_ids),
+        chunks_total,
+        _fmt_event_ids(pending_event_ids),
+    )
 
     _emit(
         "run_started",
@@ -399,6 +417,14 @@ def process_batch(
 
     if failure_outcome is None:
         completed = aggregated_completed
+        logger.info(
+            "context-ingest done: pot=%s batch=%s reconciled=%d tool_calls=%d chunks=%d",
+            batch.pot_id,
+            batch.id,
+            len(completed),
+            aggregated_tool_calls,
+            chunks_total,
+        )
         batches.mark_batch_done(batch.id, completed_event_ids=completed)
         reco_ledger.record_events_reconciled(completed)
         _emit(
@@ -444,6 +470,15 @@ def process_batch(
     failed_event_ids = [
         eid for eid in pending_event_ids if eid not in aggregated_completed
     ]
+    logger.warning(
+        "context-ingest failed: pot=%s batch=%s error=%s reconciled=%d failed=%d ids=[%s]",
+        batch.pot_id,
+        batch.id,
+        err,
+        len(aggregated_completed),
+        len(failed_event_ids),
+        _fmt_event_ids(failed_event_ids),
+    )
     reco_ledger.record_events_failed(failed_event_ids, err)
     _safe_publish_status(
         stream,
@@ -537,6 +572,18 @@ def _start_runs_for_pending(
     return run_ids
 
 
+def _claim_events_for_processing(
+    reco_ledger: ReconciliationLedgerPort,
+    event_ids: list[str],
+) -> None:
+    """Persist queued -> processing so DB refetches agree with live streams."""
+    for eid in event_ids:
+        try:
+            reco_ledger.claim_event_for_processing(eid)
+        except Exception:
+            logger.exception("failed to mark event %s processing", eid)
+
+
 def _flush_outcome_trace(
     reco_ledger: ReconciliationLedgerPort,
     *,
@@ -616,6 +663,13 @@ def _append_records(
                 rec.event_kind,
                 run_id,
             )
+
+
+def _fmt_event_ids(event_ids: list[str], *, head: int = 10) -> str:
+    """Compact id list for one log line: ``a,b,c (+N more)``."""
+    if len(event_ids) <= head:
+        return ",".join(event_ids)
+    return f"{','.join(event_ids[:head])} (+{len(event_ids) - head} more)"
 
 
 def _str_or_none(value: object) -> str | None:
@@ -736,5 +790,4 @@ def _primary_repo_name_for_pot(
         return None
     primary = resolved.primary_repo()
     return primary.repo_name if primary else None
-
 

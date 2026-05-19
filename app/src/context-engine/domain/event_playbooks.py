@@ -38,6 +38,13 @@ class EventPlaybook:
     """Names (or prefixes) of tools that are typically useful for this kind."""
     max_tool_calls: int = 30
     """Soft per-event tool-call budget; the per-batch budget is the max across events."""
+    enables_planner: bool = False
+    """Turn on the agent's built-in todo/plan tools for batches containing this
+    event-kind. Backfill-style seeds (a single ``*.added`` event whose handling
+    fans out into many artifacts) need the planner so the agent can durably
+    track an enumerate-then-drain todo list across checkpoint resumes. Normal
+    live event-kinds leave this ``False`` — they're small and the planning
+    overhead isn't worth the tokens."""
 
 
 _DEFAULT_PLAYBOOK = EventPlaybook(
@@ -90,8 +97,14 @@ _register(
             "every tool. Start at the repo root and walk down."
         ),
         extract=(
-            "Seed a Repository entity (entity_key ``github:repo:<owner>/<repo>``). "
-            "A concrete walk that keeps you under the tool budget:\n"
+            "This single event fans out into TWO phases. Your todo/plan tools "
+            "are ON for this batch — use them: enumerate, write one todo per "
+            "unit of work, then drain the list. The todo list rides in your "
+            "message history, which is checkpointed after every tool call, so "
+            "a resumed run CONTINUES the list instead of re-enumerating — "
+            "never restart the walk from scratch if todos already exist.\n\n"
+            "PHASE 1 — structural map (seed Repository "
+            "``github:repo:<owner>/<repo>`` + the project's shape):\n"
             "  1. sandbox_list_repos to confirm what's attached.\n"
             "  2. sandbox_list_dir('.', repo) to see top-level layout.\n"
             "  3. sandbox_read_file('README.md', repo) — or README.rst / docs/\n"
@@ -102,24 +115,45 @@ _register(
             "     level deep to identify Modules and entry points.\n"
             "  6. sandbox_search('ADR', glob='*.md') and sandbox_list_dir('docs')\n"
             "     for architecture decisions / runbooks (record as Documents).\n"
-            "  7. sandbox_git_log(repo, limit=20) for project age + recent\n"
-            "     activity signal — seeds the first Activity entries.\n"
-            "Then capture, where the walk produces evidence:\n"
-            "  - the project's purpose and audience (from README / about);\n"
-            "  - top-level Modules / packages / services and their roles;\n"
-            "  - notable Features (canonical label ``Feature``) — user-visible "
-            "    capabilities the repo exposes;\n"
-            "  - entry points (CLI commands, HTTP routes, public APIs, jobs);\n"
-            "  - language(s), build system, runtime, and notable dependencies;\n"
-            "  - any documented architecture / ADRs / runbooks (link as Documents).\n"
-            "Use stable entity_keys (e.g. ``module:<repo>:<dotted.path>``, "
-            "``feature:<repo>:<slug>``) so re-runs upsert idempotently."
+            "Capture, where the walk produces evidence: the project's purpose "
+            "and audience; top-level Modules / packages / services; notable "
+            "``Feature``s; entry points; language/build/runtime + notable "
+            "dependencies; documented architecture / ADRs / runbooks "
+            "(Documents). Stable keys: ``module:<repo>:<dotted.path>``, "
+            "``feature:<repo>:<slug>``.\n\n"
+            "PHASE 2 — historical backfill (seed the timeline of completed "
+            "work):\n"
+            "  a. github_list_pull_requests(repo) and github_list_issues(repo) "
+            "     — these are bounded server-side to a trailing window and a "
+            "     hard item cap and come back newest-first. ONE call each "
+            "     returns compact refs; do NOT page beyond what they return.\n"
+            "  b. Write one todo per returned PR / issue ref.\n"
+            "  c. Drain the list newest-first: for each, hydrate with "
+            "     github_get_pull_request / github_get_issue (+ commits / "
+            "     review / issue comments where the per-kind playbooks below "
+            "     say it's worth it), then apply_graph_mutations. Follow the "
+            "     `pull_request / merged` and `issue / opened` playbooks for "
+            "     WHAT to extract per item. Mark the todo done; move on.\n"
+            "Idempotent stable keys per artifact: ``github:pr:<owner>/<repo>:"
+            "<n>``, ``github:issue:<owner>/<repo>:<n>`` — so a backfilled PR "
+            "and a later live webhook for it converge instead of duplicating.\n\n"
+            "SINGLE-EVENT CONTRACT: this batch contains exactly ONE event — "
+            "the repository.added seed. Pass ITS event_id to EVERY "
+            "apply_graph_mutations call and to the final mark_event_processed; "
+            "per-artifact identity lives in the entity_keys above, not in "
+            "event ids. When the todo list is drained (or you reach your "
+            "budget with a coherent subset), mark_event_processed(seed) then "
+            "finish_batch."
         ),
         skip=(
             "Do NOT enumerate every file or function — that's structural-graph "
-            "territory, not the context graph. Stay at the level of features, "
-            "modules, and entry points. Do NOT fabricate features that aren't "
-            "evidenced by the README or code surface; add a warning instead."
+            "territory. Stay at features / modules / entry points for Phase 1. "
+            "Do NOT page or scrape beyond what the list tools return — the "
+            "window/cap is deliberate; the tail resolves via live webhooks and "
+            "future backfill. Breadth of a coherent recent seed beats "
+            "exhaustive depth: if you approach the budget, ingest what you "
+            "have cleanly and finish_batch. NEVER fabricate a PR/issue/feature "
+            "you did not actually read — add a warning instead."
         ),
         tool_hints=(
             "sandbox_list_repos",
@@ -127,11 +161,92 @@ _register(
             "sandbox_read_file",
             "sandbox_search",
             "sandbox_git_log",
-            "sandbox_git_show",
-            "context_search",
+            "github_list_pull_requests",
+            "github_list_issues",
+            "github_get_pull_request",
+            "github_get_issue",
             "context_graph_overview",
         ),
-        max_tool_calls=120,
+        max_tool_calls=400,
+        enables_planner=True,
+    )
+)
+
+
+# --- linear / linear_team / added (team backfill seed) ---------------------
+_register(
+    EventPlaybook(
+        source_system="linear",
+        event_type="linear_team",
+        action="added",
+        summary=(
+            "A Linear team was just connected to this pot. This is the "
+            "initial-backfill seed for that team: the graph has no Linear "
+            "history yet, so your job is to enumerate the team's existing "
+            "issues and seed them into the timeline."
+        ),
+        available_data=(
+            "Payload carries the Linear team id/name and the integration "
+            "binding. Three enumerators (each bounded to a trailing window + "
+            "item cap, newest-first) cover the team's history: "
+            "linear_list_issues / linear_list_projects / linear_list_documents; "
+            "linear_get_issue / linear_get_project / linear_get_document "
+            "hydrate one ref each."
+        ),
+        extract=(
+            "Your todo/plan tools are ON — use them as a durable worklist "
+            "(it survives checkpoint resume; continue an existing list, do "
+            "not re-enumerate). Enumerate ALL THREE kinds, then drain:\n"
+            "  a. linear_list_projects(), linear_list_documents(), "
+            "     linear_list_issues() — ONE call each returns the bounded "
+            "     set of compact refs. Do not page beyond them.\n"
+            "  b. Write one todo per returned ref across all three kinds. "
+            "     Prefer draining projects and documents first (they frame "
+            "     what the issues are about), then issues newest-first.\n"
+            "  c. PROJECTS: linear_get_project(id) → seed a Feature (a "
+            "     project is a unit of planned work) keyed "
+            "     ``linear:project:<id>``; edge it to the issues/Decisions it "
+            "     contains where evidenced; an Activity for its creation.\n"
+            "  d. DOCUMENTS: linear_get_document(id) → seed a Document keyed "
+            "     ``linear:document:<id>`` (title + content summary; link to "
+            "     its project via RELATED_TO when present). Specs/PRDs/RFCs "
+            "     may also justify a Decision.\n"
+            "  e. ISSUES: linear_get_issue(ref.identifier) → an Activity "
+            "     (PERFORMED + TOUCHED + IN_PERIOD); where evidenced a "
+            "     Fix / Feature / Decision and edges to the work it touches; "
+            "     comments are discussion context, not standalone facts. "
+            "     Key ``linear:issue:<identifier>`` (e.g. "
+            "     ``linear:issue:ENG-123``).\n"
+            "Stable keys make a backfilled artifact and a later live Linear "
+            "webhook converge instead of duplicating.\n"
+            "SINGLE-EVENT CONTRACT: this batch has exactly ONE event — the "
+            "linear_team.added seed. Use ITS event_id for every "
+            "apply_graph_mutations and the final mark_event_processed; "
+            "per-artifact identity is the entity_key, not the event id. Drain "
+            "the lists (or a coherent recent subset within budget), then "
+            "mark_event_processed(seed) and finish_batch."
+        ),
+        skip=(
+            "Do NOT page past the bounded list results — the window/cap is "
+            "deliberate and the tail arrives via live webhooks / future "
+            "backfill. Recent coherent breadth beats exhaustive depth. NEVER "
+            "invent an issue, project, document, comment, or state you did "
+            "not fetch — warn instead. Do not auto-resolve open issues. If a "
+            "list tool errors (e.g. the workspace has no documents API "
+            "access), record a warning and continue with the kinds that did "
+            "return — do not fabricate the missing kind."
+        ),
+        tool_hints=(
+            "linear_list_projects",
+            "linear_get_project",
+            "linear_list_documents",
+            "linear_get_document",
+            "linear_list_issues",
+            "linear_get_issue",
+            "context_graph_overview",
+        ),
+        max_tool_calls=400,
+        enables_planner=True,
     )
 )
 
@@ -256,9 +371,28 @@ def find_playbook(
     return _DEFAULT_PLAYBOOK
 
 
+def is_default_playbook(pb: EventPlaybook) -> bool:
+    """True when ``pb`` is the generic catch-all fallback.
+
+    Its ``tool_hints`` are advisory guidance for unclassified events, not
+    an authorization boundary — callers enforcing a server-side tool
+    allowlist must exclude it so a fallback event-kind is not crippled.
+    """
+    return pb is _DEFAULT_PLAYBOOK
+
+
 def all_registered_playbooks() -> list[EventPlaybook]:
     """Return every registered playbook (introspection / docs / tests)."""
     return list(_REGISTRY.values())
+
+
+def playbooks_enable_planner(playbooks: list[EventPlaybook]) -> bool:
+    """True when any playbook in the batch wants the agent's planner on.
+
+    The single declarative signal the reconciliation agent reads to decide
+    whether to construct the deep agent with its todo/plan tools enabled.
+    """
+    return any(pb.enables_planner for pb in playbooks)
 
 
 def render_playbooks_section(playbooks: list[EventPlaybook]) -> str:
@@ -288,5 +422,6 @@ __all__ = [
     "EventPlaybook",
     "find_playbook",
     "all_registered_playbooks",
+    "playbooks_enable_planner",
     "render_playbooks_section",
 ]

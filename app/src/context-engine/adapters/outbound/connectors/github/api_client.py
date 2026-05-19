@@ -9,9 +9,12 @@ behind the connector boundary).
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any, Iterator, List, Protocol
 
 from github import Github
+
+from domain.backfill_window import backfill_window_since, clamp_backfill_limit
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +50,22 @@ class GitHubReadPort(Protocol):
     def get_issue(self, repo_name: str, issue_number: int) -> dict[str, Any]: ...
 
     def iter_closed_pulls(self, repo_name: str) -> Iterator[Any]: ...
+
+    def list_pull_requests(
+        self,
+        repo_name: str,
+        *,
+        state: str = "all",
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def list_issues(
+        self,
+        repo_name: str,
+        *,
+        state: str = "all",
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]: ...
 
 
 class PyGithubSourceControl(GitHubReadPort):
@@ -194,3 +213,100 @@ class PyGithubSourceControl(GitHubReadPort):
         repo = self._client.get_repo(repo_name)
         # Newest-first so each backfill run fills recent context first; older PRs in later runs.
         return iter(repo.get_pulls(state="closed", sort="updated", direction="desc"))
+
+    def list_pull_requests(
+        self,
+        repo_name: str,
+        *,
+        state: str = "all",
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Compact PR refs, newest-first, bounded by the backfill window/cap.
+
+        Cheap enumeration for the agent's backfill todo list: identity +
+        title + state only. The agent hydrates each via
+        ``github_get_pull_request`` when it needs the body/diff/comments.
+        Iteration is updated-desc so the window check can short-circuit the
+        moment it walks past the cutoff.
+        """
+        repo = self._client.get_repo(repo_name)
+        since = backfill_window_since()
+        cap = clamp_backfill_limit(limit)
+        out: list[dict[str, Any]] = []
+        pulls = repo.get_pulls(
+            state=state if state in ("open", "closed", "all") else "all",
+            sort="updated",
+            direction="desc",
+        )
+        for pr in pulls:
+            updated = getattr(pr, "updated_at", None)
+            if since is not None and updated is not None and _aware(updated) < since:
+                break
+            out.append(
+                {
+                    "number": pr.number,
+                    "title": pr.title,
+                    "state": pr.state,
+                    "merged": bool(getattr(pr, "merged_at", None)),
+                    "created_at": pr.created_at.isoformat() if pr.created_at else None,
+                    "updated_at": updated.isoformat() if updated else None,
+                    "url": pr.html_url,
+                    "author": pr.user.login if pr.user else None,
+                }
+            )
+            if len(out) >= cap:
+                break
+        return out
+
+    def list_issues(
+        self,
+        repo_name: str,
+        *,
+        state: str = "all",
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Compact issue refs, newest-first, bounded by the backfill window/cap.
+
+        Excludes pull requests (GitHub's REST API folds PRs into issues; PRs
+        come from :meth:`list_pull_requests`). The agent hydrates each via
+        ``github_get_issue``.
+        """
+        repo = self._client.get_repo(repo_name)
+        since = backfill_window_since()
+        cap = clamp_backfill_limit(limit)
+        out: list[dict[str, Any]] = []
+        kwargs: dict[str, Any] = {
+            "state": state if state in ("open", "closed", "all") else "all",
+            "sort": "updated",
+            "direction": "desc",
+        }
+        if since is not None:
+            kwargs["since"] = since
+        for issue in repo.get_issues(**kwargs):
+            if getattr(issue, "pull_request", None) is not None:
+                continue  # a PR masquerading as an issue
+            updated = getattr(issue, "updated_at", None)
+            out.append(
+                {
+                    "number": issue.number,
+                    "title": issue.title,
+                    "state": issue.state,
+                    "created_at": issue.created_at.isoformat()
+                    if issue.created_at
+                    else None,
+                    "updated_at": updated.isoformat() if updated else None,
+                    "url": issue.html_url,
+                    "author": issue.user.login if issue.user else None,
+                    "comments": getattr(issue, "comments", None),
+                }
+            )
+            if len(out) >= cap:
+                break
+        return out
+
+
+def _aware(dt: datetime) -> datetime:
+    """PyGithub historically returned naive UTC datetimes; normalize to aware."""
+    from datetime import timezone
+
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)

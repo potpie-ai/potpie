@@ -74,7 +74,9 @@ def build_timeline_mutations(
     entities: list[EntityUpsert] = []
     edges: list[EdgeUpsert] = []
 
-    activity_key = _activity_key(verb, source_ref_key, activity_suffix)
+    activity_key = _activity_key(
+        pot_id, verb, source_ref_key, activity_suffix
+    )
     iso_when = _normalize_iso(occurred_at)
     day_bucket = iso_when[:10]
     period_key = _period_key(pot_id, day_bucket)
@@ -169,8 +171,13 @@ def build_timeline_mutations(
     return entities, edges
 
 
-def _activity_key(verb: str, source_ref_key: str, suffix: str | None) -> str:
-    raw = f"{verb}|{source_ref_key}|{suffix or ''}"
+def _activity_key(
+    pot_id: str, verb: str, source_ref_key: str, suffix: str | None
+) -> str:
+    # pot_id is folded into the digest so the entity key is pot-scoped and
+    # not guessable across pots (security review L-5). The canonical writer
+    # still scopes every MERGE by group_id=$pot_id — this is defensive.
+    raw = f"{pot_id}|{verb}|{source_ref_key}|{suffix or ''}"
     digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
     return f"timeline:activity:{verb}:{digest}"
 

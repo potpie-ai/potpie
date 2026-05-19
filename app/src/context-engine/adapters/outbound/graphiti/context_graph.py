@@ -24,6 +24,7 @@ from adapters.outbound.graphiti.apply_plan import (
 from adapters.outbound.graphiti.ingest_episode import ingest_episode as ingest_episode_uc
 from adapters.outbound.graphiti.port import EpisodicGraphPort
 from adapters.outbound.neo4j.port import StructuralReadPort
+from adapters.outbound.reconciliation.context_graph_tools import READ_TOOL_DESCRIPTORS
 from application.services.context_reader_registry import ContextReaderRegistry
 from application.use_cases.resolve_context import resolve_context
 from domain.actor import Actor
@@ -34,6 +35,10 @@ from domain.graph_query import (
     ContextGraphQuery,
     ContextGraphResult,
     ContextGraphStrategy,
+    preset_change_history,
+    preset_file_owners,
+    preset_graph_overview,
+    preset_semantic_search,
 )
 from domain.intelligence_models import (
     ArtifactRef,
@@ -43,7 +48,10 @@ from domain.intelligence_models import (
 )
 from domain.ports.answer_synthesizer import AnswerSynthesizerPort
 from domain.ports.context_graph import ContextGraphPort
+from domain.ports.query_agent import QueryAgentPort, QueryAgentResult
 from domain.reconciliation import ReconciliationPlan, ReconciliationResult
+
+_AGENTIC_GOALS = (ContextGraphGoal.ANSWER, ContextGraphGoal.INVESTIGATE)
 
 
 class GraphitiContextGraphAdapter(ContextGraphPort):
@@ -57,12 +65,14 @@ class GraphitiContextGraphAdapter(ContextGraphPort):
         readers: ContextReaderRegistry,
         resolution_service: Any | None = None,
         answer_synthesizer: AnswerSynthesizerPort | None = None,
+        query_agent: QueryAgentPort | None = None,
     ) -> None:
         self._episodic = episodic
         self._structural = structural
         self._readers = readers
         self._resolution_service = resolution_service
         self._answer_synthesizer = answer_synthesizer
+        self._query_agent = query_agent
 
     @property
     def enabled(self) -> bool:
@@ -73,21 +83,23 @@ class GraphitiContextGraphAdapter(ContextGraphPort):
         return self._readers
 
     def query(self, request: ContextGraphQuery) -> ContextGraphResult:
-        if request.goal == ContextGraphGoal.ANSWER:
+        if request.goal in _AGENTIC_GOALS:
             try:
                 asyncio.get_running_loop()
             except RuntimeError:
                 return asyncio.run(self.query_async(request))
             raise RuntimeError(
-                "GraphitiContextGraphAdapter.query() cannot execute answer "
-                "queries while an event loop is already running; use "
-                "query_async()."
+                "GraphitiContextGraphAdapter.query() cannot execute answer or "
+                "investigate queries while an event loop is already running; "
+                "use query_async()."
             )
         return self._readers.execute(request)
 
     async def query_async(self, request: ContextGraphQuery) -> ContextGraphResult:
         if request.goal == ContextGraphGoal.ANSWER:
             return await self._answer_async(request)
+        if request.goal == ContextGraphGoal.INVESTIGATE:
+            return await self._investigate_async(request)
         return self._readers.execute(request)
 
     def apply_plan(
@@ -228,6 +240,148 @@ class GraphitiContextGraphAdapter(ContextGraphPort):
             ),
             meta=meta,
         )
+
+
+    # ------------------------------------------------------------------
+    # Investigate path (agentic read loop) — not a reader.
+    # Reuses the same 4 read tools as the reconciliation agent; falls back
+    # to the deterministic answer path when the agent is unavailable.
+    # ------------------------------------------------------------------
+    async def _investigate_async(
+        self, request: ContextGraphQuery
+    ) -> ContextGraphResult:
+        if self._query_agent is None:
+            return await self._answer_fallback(request, "query_agent_not_configured")
+
+        repo_name = request.scope.repo_name
+
+        def _build_preset(name: str, args: dict[str, Any]) -> ContextGraphQuery | dict:
+            if name == "context_search":
+                q = str(args.get("query") or "").strip()
+                if not q:
+                    return {"error": "query_required", "kind": "error"}
+                labels = args.get("node_labels") or []
+                return preset_semantic_search(
+                    pot_id=request.pot_id,
+                    query=q,
+                    limit=max(1, min(int(args.get("limit") or 8), 25)),
+                    repo_name=repo_name,
+                    node_labels=[str(x) for x in labels] if isinstance(labels, list) else None,
+                )
+            if name == "context_recent_changes":
+                file_path = args.get("file_path")
+                function_name = args.get("function_name")
+                pr_number = args.get("pr_number")
+                if not any([file_path, function_name, pr_number]):
+                    return {
+                        "error": "one_of_file_path_function_name_pr_number_required",
+                        "kind": "error",
+                    }
+                return preset_change_history(
+                    pot_id=request.pot_id,
+                    file_path=file_path,
+                    function_name=function_name,
+                    pr_number=int(pr_number) if pr_number else None,
+                    repo_name=repo_name,
+                    limit=max(1, min(int(args.get("limit") or 10), 25)),
+                )
+            if name == "context_file_owners":
+                file_path = args.get("file_path")
+                if not file_path:
+                    return {"error": "file_path_required", "kind": "error"}
+                return preset_file_owners(
+                    pot_id=request.pot_id,
+                    file_path=str(file_path),
+                    repo_name=repo_name,
+                    limit=max(1, min(int(args.get("limit") or 5), 10)),
+                )
+            if name == "context_graph_overview":
+                return preset_graph_overview(
+                    pot_id=request.pot_id,
+                    limit=max(1, min(int(args.get("limit") or 20), 50)),
+                )
+            return {"error": f"unknown_tool:{name}", "kind": "error"}
+
+        async def _run_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
+            preset = _build_preset(name, args)
+            if isinstance(preset, dict):
+                return preset
+            result = await asyncio.to_thread(self._readers.execute, preset)
+            return result.model_dump()
+
+        try:
+            res = await self._query_agent.investigate(
+                request,
+                tools=list(READ_TOOL_DESCRIPTORS),
+                run_tool=_run_tool,
+            )
+        except Exception:  # noqa: BLE001 - any agent failure degrades gracefully
+            return await self._answer_fallback(request, "query_agent_error")
+
+        if res is None:
+            return await self._answer_fallback(request, "query_agent_unavailable")
+
+        return ContextGraphResult(
+            kind="query_agent",
+            goal=request.goal.value,
+            strategy=request.strategy.value,
+            result=_investigate_envelope(res),
+            meta={
+                "path": "investigate",
+                "iterations": res.iterations,
+                "cost": {"query_agent": res.usage} if res.usage else {},
+            },
+        )
+
+    async def _answer_fallback(
+        self, request: ContextGraphQuery, reason: str
+    ) -> ContextGraphResult:
+        """Degrade an ``investigate`` request onto the deterministic answer path."""
+        result = await self._answer_async(request)
+        meta = dict(result.meta or {})
+        meta["path"] = "investigate_fallback"
+        meta["fallback"] = reason
+        return result.model_copy(update={"meta": meta})
+
+
+def _investigate_envelope(res: QueryAgentResult) -> dict[str, Any]:
+    """Answer-envelope-shaped superset so existing clients render it, plus
+    an ``agent`` block carrying the tool trace.
+    """
+    has_evidence = bool(res.evidence)
+    confidence = (
+        res.confidence
+        if res.confidence is not None
+        else (0.7 if has_evidence else 0.2)
+    )
+    return {
+        "ok": True,
+        "answer": {"summary": res.answer},
+        "evidence": res.evidence,
+        "source_refs": res.source_refs,
+        "confidence": confidence,
+        "coverage": {
+            "status": "complete" if has_evidence else "empty",
+            "available": sorted({s.tool for s in res.steps}),
+            "missing": [],
+        },
+        "quality": {"status": "ok" if has_evidence else "watch"},
+        "fallbacks": [],
+        "agent": {
+            "iterations": res.iterations,
+            "steps": [
+                {
+                    "tool": s.tool,
+                    "arguments": s.arguments,
+                    "result_kind": s.result_kind,
+                    "result_count": s.result_count,
+                }
+                for s in res.steps
+            ],
+            "usage": res.usage,
+        },
+        "meta": {"cost": {"query_agent": res.usage} if res.usage else {}},
+    }
 
 
 def _mode_for_strategy(strategy: ContextGraphStrategy) -> str:

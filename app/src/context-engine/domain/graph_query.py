@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 class ContextGraphGoal(StrEnum):
     RETRIEVE = "retrieve"
     ANSWER = "answer"
+    INVESTIGATE = "investigate"
     NEIGHBORHOOD = "neighborhood"
     TIMELINE = "timeline"
     AGGREGATE = "aggregate"
