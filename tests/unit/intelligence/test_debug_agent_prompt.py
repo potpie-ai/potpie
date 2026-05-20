@@ -190,3 +190,99 @@ def test_prompt_requires_card_terminator() -> None:
     assert "terminator" in phase4_section.lower(), (
         "Phase 4 must explicitly call the '---' line a card terminator."
     )
+
+
+# ---------------------------------------------------------------------------
+# 6. Multi-turn flow — pauses + missing-command UX
+# ---------------------------------------------------------------------------
+
+def test_prompt_has_multi_turn_flow_section() -> None:
+    """The OUTPUT CONTRACT must explain that the loop is multi-turn with explicit pauses."""
+    assert "MULTI-TURN FLOW" in debug_task_prompt, (
+        "Expected a MULTI-TURN FLOW section in the OUTPUT CONTRACT."
+    )
+
+
+def test_phase_4_pauses_before_dap_tools() -> None:
+    """Phase 4 must end with a pause for user input before any DAP tool runs."""
+    phase4_idx = debug_task_prompt.find("### Phase 4")
+    phase5_idx = debug_task_prompt.find("### Phase 5")
+    phase4_section = debug_task_prompt[phase4_idx:phase5_idx]
+    # Must instruct the model to NOT call DAP tools in the Phase 4 turn.
+    assert "STOP" in phase4_section, (
+        "Phase 4 must contain a STOP instruction at the end."
+    )
+    assert "set_breakpoints" in phase4_section and "Do NOT call" in phase4_section, (
+        "Phase 4 must explicitly forbid DAP tool calls in the same turn."
+    )
+
+
+def test_phase_4_allows_one_to_four_hypotheses() -> None:
+    """The mandatory count is now 1-4 (not 2-4); a single confident hypothesis is fine."""
+    phase4_idx = debug_task_prompt.find("### Phase 4")
+    phase5_idx = debug_task_prompt.find("### Phase 5")
+    phase4_section = debug_task_prompt[phase4_idx:phase5_idx]
+    assert "1 to 4" in phase4_section, (
+        "Phase 4 count should be '1 to 4 hypotheses' — single hypothesis allowed."
+    )
+
+
+def test_phase_5_entry_requires_list_hypotheses() -> None:
+    """Phase 5 runs in a new turn after the user picks; first action must be
+    list_hypotheses() to recover persisted state."""
+    phase5_idx = debug_task_prompt.find("### Phase 5")
+    phase6_idx = debug_task_prompt.find("### Phase 6")
+    assert phase5_idx != -1 and phase6_idx > phase5_idx
+    phase5_section = debug_task_prompt[phase5_idx:phase6_idx]
+    assert "list_hypotheses()" in phase5_section, (
+        "Phase 5 must require a list_hypotheses() call at entry to recover state."
+    )
+
+
+def test_phase_5c_has_three_cases() -> None:
+    """Phase 5c must enumerate three sub-cases: config available, missing command, no tunnel.
+
+    The 'missing command' case is the new one requested: when the workspace has no
+    launch.json and no inferred commands, agent asks user with two clearly framed options.
+    """
+    phase5_idx = debug_task_prompt.find("### Phase 5")
+    phase6_idx = debug_task_prompt.find("### Phase 6")
+    phase5_section = debug_task_prompt[phase5_idx:phase6_idx]
+    # Three case markers
+    assert "Case A" in phase5_section
+    assert "Case B" in phase5_section
+    assert "Case C" in phase5_section
+    # Missing-command path mentions the two options the user described
+    assert "Tell me a command to run" in phase5_section, (
+        "Case B must offer the 'user supplies command' option."
+    )
+    assert "propose a debug command" in phase5_section, (
+        "Case B must offer the 'agent proposes a command' option."
+    )
+
+
+def test_rejected_verdict_pauses_for_user() -> None:
+    """After a 'rejected' verdict, agent must pause and ask user, not auto-move."""
+    phase5_idx = debug_task_prompt.find("### Phase 5")
+    phase6_idx = debug_task_prompt.find("### Phase 6")
+    phase5_section = debug_task_prompt[phase5_idx:phase6_idx]
+    # Find the 'rejected' sub-section
+    rejected_idx = phase5_section.find('status="rejected"')
+    assert rejected_idx != -1
+    after_rejected = phase5_section[rejected_idx:]
+    # Must contain a pause + question
+    assert "STOP" in after_rejected, (
+        "Rejected verdict must STOP the response, not auto-move to next hypothesis."
+    )
+    assert ("revise hypotheses" in after_rejected.lower()
+            or "try h" in after_rejected.lower()), (
+        "Rejected verdict must offer the user options to revise or move on."
+    )
+
+
+def test_prompt_has_all_of_them_escape_hatch() -> None:
+    """User can override pauses by saying 'all of them' at Phase 4 exit."""
+    assert "all of them" in debug_task_prompt, (
+        "Prompt must support an 'all of them' escape hatch so users can run "
+        "through hypotheses without pausing if they prefer."
+    )

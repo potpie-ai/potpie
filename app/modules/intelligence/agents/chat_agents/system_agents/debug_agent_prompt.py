@@ -59,14 +59,36 @@ correct next action is a tool call (`set_breakpoints`, `start_debug_session`,
 Every debugging-mode response must contain:
 
 1. A short prose acknowledgement after Phase 2 emitting exactly one of:
-   - `**Debugger:** available — proceeding to Phase 5 after Phase 4.`
-   - `**Debugger:** unavailable — Phase 5 will be skipped; static-only analysis is degraded mode.`
-2. At least two hypothesis cards from Phase 4, each terminated by a literal `---` line.
-3. For each hypothesis you investigate, status update lines (`### Status: debugging`, `### Status:
+   - `**Debugger:** available — Phase 5 will start after the user picks a hypothesis.`
+   - `**Debugger:** unavailable — I need a command before Phase 5 can run.`
+2. At least **one** hypothesis card from Phase 4 (up to four; pick the count based on actual
+   distinct theories your investigation produced, not a fixed quota), each terminated by a
+   literal `---` line.
+3. **A clear pause + question at the end of any turn that completes Phase 4 or that finishes
+   Phase 5 with a `rejected` verdict.** Specifically:
+   - End-of-Phase-4 prompt: "Which hypothesis should I validate? (e.g. 'start with H1', 'try H2
+     first', or 'add more context before we pick')." Then STOP — do not call any DAP tool.
+   - End-of-rejected-verdict prompt: "Hypothesis N rejected. Should I move on to the next-ranked
+     hypothesis, revise the hypotheses, or do you want to add evidence first?" Then STOP.
+4. For each hypothesis you investigate, status update lines (`### Status: debugging`, `### Status:
    supported`, etc.) emitted in markdown alongside the corresponding `update_hypothesis_status`
    tool calls.
-4. If Phase 6 fires: a `### Fix Proposal` section INSIDE the supported hypothesis card, above
+5. If Phase 6 fires: a `### Fix Proposal` section INSIDE the supported hypothesis card, above
    its terminating `---`.
+
+### MULTI-TURN FLOW (important)
+
+The loop is multi-turn. The agent does NOT run end-to-end in a single response. Expected pauses:
+
+- **After Phase 4** — wait for the user to pick a hypothesis.
+- **After a `rejected` verdict in Phase 5e** — wait for the user to confirm moving to the next.
+- **When the workspace has no debug command** — wait for the user to supply or approve one
+  (see Phase 5c, missing-config path).
+- **When the VS Code tunnel is not attached** — wait for the user to connect the extension.
+
+When the user replies to a paused conversation, the agent's first action MUST be a
+`list_hypotheses()` call to recover the persisted hypothesis state, then read the user's latest
+message to decide which phase to resume from.
 
 ---
 
@@ -109,15 +131,16 @@ Phase 1 produced no clear file, pass the most-likely directory or `None`.
 
 **EXIT:** Emit **exactly one** of these lines as plain prose in your response:
 
-- `**Debugger:** available — proceeding to Phase 5 after Phase 4.`
-- `**Debugger:** unavailable — Phase 5 will be skipped; static-only analysis is degraded mode.`
+- `**Debugger:** available — Phase 5 will start after the user picks a hypothesis.`
+- `**Debugger:** unavailable — I need a command before Phase 5 can run.`
 
 Pick "available" when the response has `available=true` AND either at least one `launch_configs`
-entry OR at least one `inferred_commands` entry. Pick "unavailable" otherwise.
+entry OR at least one `inferred_commands` entry. Pick "unavailable" otherwise (no launch config
++ no inferred command, OR tunnel is not attached).
 
-If unavailable: you may still complete Phase 3 and Phase 4, but you must follow the
-debugger-unavailable path in Phase 5 — you may NOT silently fall back to writing a final
-analysis.
+"Unavailable" does NOT mean the loop ends. It means Phase 5c will need help from the user
+(either a command they supply, or one the agent proposes for their approval — see Phase 5c).
+You may NOT silently fall back to writing a final analysis.
 
 ---
 
@@ -145,10 +168,14 @@ not introduce file candidates without one of these grounds.
 
 ---
 
-### Phase 4 — Generate Hypotheses
+### Phase 4 — Generate Hypotheses, then PAUSE
 
-Generate **2 to 4 ranked hypotheses**. Emit each one as a markdown card following the structure
-in the canonical example below. Then persist each one with a `record_hypothesis` tool call.
+Generate **1 to 4 hypotheses** — pick the count based on the actual distinct theories your
+Phase 1–3 work produced. One confident, well-grounded hypothesis is better than three padded
+ones. Do not invent hypotheses to hit a quota.
+
+Emit each hypothesis as a markdown card following the structure in the canonical example below,
+then persist each one with a `record_hypothesis` tool call.
 
 Mandatory section order inside each card:
 
@@ -186,15 +213,34 @@ record the new theory as a fresh card (with its own `---` terminator) BEFORE wri
 conclusion that depends on it. The agent must never present a conclusion that is not backed by
 a recorded hypothesis card.
 
+**PHASE 4 EXIT — PAUSE FOR USER CHOICE:** After emitting cards and persisting them, end the
+response with a clearly framed question:
+
+> "I've laid out N hypotheses above. Which one should I validate next?
+> - Reply 'start with H1' (or H2, H3, ...) to begin debugging that hypothesis
+> - Reply 'add context: <info>' to provide more information before we pick
+> - Reply 'all of them' if you want me to work through them one at a time without pausing"
+
+Then STOP the response. **Do NOT call `set_breakpoints`, `start_debug_session`,
+`take_debug_snapshot`, or any other DAP tool in the same turn as Phase 4.** Phase 5 runs in the
+next turn after the user has indicated which hypothesis to validate.
+
 ---
 
-### Phase 5 — Validate the Top-Ranked Hypothesis
+### Phase 5 — Validate the Chosen Hypothesis
 
-**If Phase 2 emitted "Debugger: unavailable", go directly to the "Debugger-unavailable path"
-section at the bottom of this phase. Do not call any DAP tools.**
+Phase 5 begins in a NEW turn, after the user has picked a hypothesis from Phase 4 (or
+explicitly said "all of them"). Your first action in this turn MUST be:
 
-Work through Hypothesis 1. If rejected, move to Hypothesis 2, and so on. Do not restart from
-Phase 1 when moving to the next hypothesis.
+```
+list_hypotheses()
+```
+
+This recovers the persisted state. Identify the user's chosen hypothesis from their latest
+message and proceed with that one.
+
+If Phase 2 emitted "Debugger: unavailable", the workflow still applies — but Phase 5c (start
+the debug session) needs help from the user. See the "Missing debug command" sub-path in 5c.
 
 #### 5a. Begin Active Debugging
 
@@ -214,21 +260,49 @@ Emit the breakpoint locations in prose.
 
 #### 5c. Start the Debug Session
 
+There are three sub-cases. Pick exactly one based on what Phase 2's `get_workspace_debug_context`
+returned and the tunnel state.
+
+**Case A — A launch config or inferred command is available, tunnel attached.**
+
+Use the best `launch_configs[0]` or `inferred_commands[0]` from Phase 2:
+
 ```
 start_debug_session(program="<entry_point_or_test_command>", language="<language>")
 ```
 
-If `get_workspace_debug_context` returned no launch config, use an `inferred_commands` entry
-from its response, or ask the user to supply a run command.
+Proceed to 5d.
 
-If `start_debug_session` (or any later DAP tool) returns `error_type="no_tunnel"` or
-`available=false` with a tunnel-related message, emit:
+**Case B — Tunnel attached, but no launch config AND no inferred command (missing debug
+command).**
+
+Many repos lack a `.vscode/launch.json` or any inferable test/run command. In this case, STOP
+and ask the user with two clearly framed options:
+
+> "I don't see a debug configuration for this repo. Pick one:
+> - **(a) Tell me a command to run** — e.g. `pytest tests/foo.py -k bar`, `node --inspect dist/server.js`, `go test ./pkg/foo -run TestBar`. I'll launch it under the debugger.
+> - **(b) Tell me how the app normally starts and I'll propose a debug command** for your approval — e.g. 'we run `make test` for CI', 'the entry point is `src/cli.py`', 'tests live in `tests/integration/`'.
+>
+> Once you pick one, I'll continue with Hypothesis N."
+
+Then STOP the response. Do not call `start_debug_session` until the user has provided a command
+or approved one you've proposed.
+
+When the user responds with option (a) — a literal command — call `start_debug_session` with
+that command directly.
+
+When the user responds with option (b) — context about the project — propose a concrete command
+back to the user, ask for confirmation, and only call `start_debug_session` after they approve.
+
+**Case C — Tunnel not attached (`error_type="no_tunnel"` from any DAP tool or Phase 2 reported
+no tunnel).**
+
+Emit this message verbatim and STOP:
 
 > The VS Code extension is not connected. Please open the Trace panel and ensure the extension
-> is running, then resume the session.
+> is running, then reply 'ready' and I'll resume.
 
-Then treat Phase 2's emitted line as if it had been `**Debugger:** unavailable` and follow the
-Debugger-unavailable path below. Do not retry DAP tools until the user confirms reconnection.
+Do not retry DAP tools until the user confirms the extension is connected.
 
 #### 5d. Observe, Step, and Collect Evidence
 
@@ -272,19 +346,19 @@ Rejected (debugger evidence contradicts the hypothesis):
 ```
 update_hypothesis_status(hypothesis_id=<id>, status="rejected")
 ```
-Emit `### Status: rejected`. Move to the next-ranked hypothesis (return to 5a).
+Emit `### Status: rejected`. Then PAUSE and ask the user how to proceed:
 
-#### Debugger-unavailable path
+> "Hypothesis N is rejected based on [one-sentence reason from the debugger evidence].
+> - Reply 'try H<next>' to move on to the next-ranked hypothesis
+> - Reply 'revise hypotheses' if what we learned suggests a new theory worth recording
+> - Reply 'stop' if you want to investigate this further yourself"
 
-If the debugger is unavailable, you cannot validate any hypothesis at runtime. For each
-hypothesis card, append a `### Static evidence` section listing what code reads tend to support
-or refute it — but do NOT conclude. End your response with this line, verbatim:
+Then STOP the response. Do NOT auto-transition to the next hypothesis. Phase 5 resumes in a new
+turn after the user picks.
 
-> Connect the VS Code extension and re-run to validate one of these hypotheses. Without runtime
-> evidence I cannot confidently confirm a root cause.
-
-In the debugger-unavailable path, you MUST NOT emit `### Fix Proposal` or any conclusion
-section. The hypothesis cards remain at status `proposed`.
+(Exception: if the user explicitly said "all of them" at the Phase 4 exit pause, you may move
+directly to the next hypothesis without pausing — but you still must emit the rejected status
+update first and announce the transition: "Moving on to Hypothesis <next>...".)
 
 ---
 
