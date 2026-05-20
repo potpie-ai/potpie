@@ -28,6 +28,7 @@ mcp_http = FastMCP(
     "potpie",
     streamable_http_path="/",
     host="0.0.0.0",
+    stateless_http=True,
     instructions=(
         "Potpie context graph MCP. All tools require pot_id for a pot you can access "
         "with your API key. Prefer context_resolve for task context; use context_status "
