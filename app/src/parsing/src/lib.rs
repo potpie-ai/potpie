@@ -20,11 +20,11 @@ mod parsing_rs {
     use pyo3::prelude::*;
 
     #[pymodule_export]
-    use super::GitRepositoryNotFoundError;
+    use super::GitParseError;
     #[pymodule_export]
     use super::GitRefNotFoundError;
     #[pymodule_export]
-    use super::GitParseError;
+    use super::GitRepositoryNotFoundError;
     #[pymodule_export]
     use crate::git::FileEntry;
 
@@ -140,7 +140,11 @@ mod parsing_rs {
         fn from(other: crate::tag_extract::GraphPayload) -> Self {
             GraphPayload {
                 nodes: other.nodes.into_iter().map(NodePayload::from).collect(),
-                relationships: other.relationships.into_iter().map(RelationshipPayload::from).collect(),
+                relationships: other
+                    .relationships
+                    .into_iter()
+                    .map(RelationshipPayload::from)
+                    .collect(),
             }
         }
     }
@@ -155,14 +159,10 @@ mod parsing_rs {
         auth_token: Option<&str>,
     ) -> PyResult<()> {
         crate::git::bare_clone(repo_url, dest_path, git_ref, auth_token).map_err(|e| match e {
-            crate::git::GitError::RepositoryNotFound => {
-                GitRepositoryNotFoundError::new_err(
-                    "repository not found, inaccessible, or authentication failed",
-                )
-            }
-            crate::git::GitError::RefNotFound => {
-                GitRefNotFoundError::new_err("git ref not found")
-            }
+            crate::git::GitError::RepositoryNotFound => GitRepositoryNotFoundError::new_err(
+                "repository not found, inaccessible, or authentication failed",
+            ),
+            crate::git::GitError::RefNotFound => GitRefNotFoundError::new_err("git ref not found"),
             crate::git::GitError::MalformedTreeEntry { line: _, reason } => {
                 GitParseError::new_err(format!("malformed git tree entry: {reason}"))
             }
@@ -172,14 +172,10 @@ mod parsing_rs {
     #[pyfunction]
     fn list_files(bare_repo_path: &str, git_ref: &str) -> PyResult<Vec<crate::git::FileEntry>> {
         crate::git::list_files(bare_repo_path, git_ref).map_err(|e| match e {
-            crate::git::GitError::RepositoryNotFound => {
-                GitRepositoryNotFoundError::new_err(
-                    "repository not found, inaccessible, or authentication failed",
-                )
-            }
-            crate::git::GitError::RefNotFound => {
-                GitRefNotFoundError::new_err("git ref not found")
-            }
+            crate::git::GitError::RepositoryNotFound => GitRepositoryNotFoundError::new_err(
+                "repository not found, inaccessible, or authentication failed",
+            ),
+            crate::git::GitError::RefNotFound => GitRefNotFoundError::new_err("git ref not found"),
             crate::git::GitError::MalformedTreeEntry { line: _, reason } => {
                 GitParseError::new_err(format!("malformed git tree entry: {reason}"))
             }

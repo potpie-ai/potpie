@@ -2,6 +2,7 @@
 
 import subprocess
 import tempfile
+from shutil import which
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,8 @@ pytestmark = pytest.mark.unit
 def local_git_repo(tmp_path_factory):
     """Creates a local git repo with known structure for testing."""
     _ = tempfile.gettempdir()
+    git_executable = which("git")
+    assert git_executable is not None
     repo_dir = tmp_path_factory.mktemp("source_repo")
 
     (repo_dir / "README.md").write_text("# Test Project\n")
@@ -36,22 +39,22 @@ def local_git_repo(tmp_path_factory):
     lib.mkdir()
     (lib / "utils.py").write_text("def helper(): pass\n")
 
-    _ = subprocess.run(["git", "init"], cwd=repo_dir, check=True, capture_output=True)
+    _ = subprocess.run([git_executable, "init"], cwd=repo_dir, check=True, capture_output=True)
     _ = subprocess.run(
-        ["git", "config", "user.email", "test@example.com"],
+        [git_executable, "config", "user.email", "test@example.com"],
         cwd=repo_dir,
         check=True,
         capture_output=True,
     )
     _ = subprocess.run(
-        ["git", "config", "user.name", "Test User"],
+        [git_executable, "config", "user.name", "Test User"],
         cwd=repo_dir,
         check=True,
         capture_output=True,
     )
-    _ = subprocess.run(["git", "add", "."], cwd=repo_dir, check=True, capture_output=True)
+    _ = subprocess.run([git_executable, "add", "."], cwd=repo_dir, check=True, capture_output=True)
     _ = subprocess.run(
-        ["git", "commit", "-m", "initial"],
+        [git_executable, "commit", "-m", "initial"],
         cwd=repo_dir,
         check=True,
         capture_output=True,

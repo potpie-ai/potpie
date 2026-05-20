@@ -4,13 +4,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const KNOWN_BINARY_EXTENSIONS: &[&str] = &[
-    "png", "jpg", "jpeg", "gif", "bmp", "tiff", "tif", "webp", "ico", "svg", "eps",
-    "mp4", "avi", "mov", "wmv", "flv", "mkv", "webm", "mpeg", "mpg", "m4v",
-    "mp3", "wav", "ogg", "flac", "aac", "wma", "m4a",
-    "zip", "tar", "gz", "bz2", "xz", "rar", "7z", "deb", "rpm", "dmg",
-    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp",
-    "exe", "dll", "so", "dylib", "a", "o", "obj", "bin",
-    "ttf", "otf", "woff", "woff2", "eot", "db", "sqlite", "sqlite3", "mdb",
+    "png", "jpg", "jpeg", "gif", "bmp", "tiff", "tif", "webp", "ico", "svg", "eps", "mp4", "avi",
+    "mov", "wmv", "flv", "mkv", "webm", "mpeg", "mpg", "m4v", "mp3", "wav", "ogg", "flac", "aac",
+    "wma", "m4a", "zip", "tar", "gz", "bz2", "xz", "rar", "7z", "deb", "rpm", "dmg", "pdf", "doc",
+    "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "exe", "dll", "so", "dylib", "a",
+    "o", "obj", "bin", "ttf", "otf", "woff", "woff2", "eot", "db", "sqlite", "sqlite3", "mdb",
     "class", "pyc", "pyo", "pyd", "swp", "swo", "lock", "psd", "ai",
 ];
 
@@ -109,8 +107,14 @@ pub fn create_code_indexes(repo_dir: &str) -> Vec<CodeFile> {
         .into_iter()
         .filter_map(Result::ok)
         .filter(|entry| {
-            entry.file_type().map(|file_type| file_type.is_file()).unwrap_or(false)
-                && !entry.path().components().any(|component| component.as_os_str() == ".git")
+            entry
+                .file_type()
+                .map(|file_type| file_type.is_file())
+                .unwrap_or(false)
+                && !entry
+                    .path()
+                    .components()
+                    .any(|component| component.as_os_str() == ".git")
         })
         .map(|entry| entry.into_path())
         .collect();
