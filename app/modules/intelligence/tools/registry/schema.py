@@ -25,6 +25,7 @@ ToolCategory = Literal[
     "file_fetch",
     "analysis",
     "sandbox",
+    "debug",
     "other",
 ]
 

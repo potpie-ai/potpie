@@ -182,6 +182,56 @@ def get_tool_run_message(tool_name: str, args: Dict[str, Any] | None = None):
                     mode_text = f" ({mode} mode)" if mode == "async" else ""
                     return f"run: {display_cmd}{mode_text}"
             return "running command"
+        case "debug_start":
+            return "Starting debug session"
+        case "debug_stop":
+            return "Stopping debug session"
+        case "debug_set_breakpoints":
+            fp = args.get("file") if args else None
+            return f"Setting breakpoints in {fp}" if fp else "Setting breakpoints"
+        case "debug_snapshot":
+            return "Capturing debug snapshot"
+        case "debug_step_into":
+            return "Stepping into function"
+        case "debug_step_out":
+            return "Stepping out"
+        case "debug_step_over":
+            return "Stepping over line"
+        case "debug_continue":
+            return "Continuing debug session"
+        case "debug_select_frame":
+            idx = args.get("frame_index") if args else None
+            return (
+                f"Inspecting stack frame #{idx}"
+                if idx is not None
+                else "Inspecting stack frame"
+            )
+        case "debug_list_sessions":
+            return "Listing debug sessions"
+        case "debug_list_launch_configs":
+            return "Listing launch configurations"
+        case "debug_list_adapters":
+            return "Detecting debug adapters"
+        case "parse_debug_signal":
+            return "Parsing debug signal"
+        case "build_debug_context":
+            return "Building debug context"
+        case "find_related_tests":
+            fp = args.get("file_path") if args else None
+            sym = args.get("symbol") if args else None
+            if fp:
+                return f"Finding tests for {fp}"
+            if sym:
+                return f"Finding tests for {sym}"
+            return "Finding related tests"
+        case "add_watch":
+            expr = args.get("expression") if args else None
+            return f"Adding watch: {expr}" if expr else "Adding watch expression"
+        case "remove_watch":
+            expr = args.get("expression") if args else None
+            return f"Removing watch: {expr}" if expr else "Removing watch expression"
+        case "list_watches":
+            return "Listing active watches"
         case "read_todos":
             return "Reading todo list"
         case "write_todos":
@@ -857,6 +907,30 @@ def get_tool_response_message(
                 )
                 return f"Terminal command executed successfully: {display_cmd}{mode_text}{result_suffix}"
             return "Terminal command executed successfully"
+        case (
+            "debug_start"
+            | "debug_stop"
+            | "debug_set_breakpoints"
+            | "debug_snapshot"
+            | "debug_step_into"
+            | "debug_step_out"
+            | "debug_step_over"
+            | "debug_continue"
+            | "debug_select_frame"
+            | "debug_list_sessions"
+            | "debug_list_launch_configs"
+            | "debug_list_adapters"
+            | "parse_debug_signal"
+            | "build_debug_context"
+            | "find_related_tests"
+            | "add_watch"
+            | "remove_watch"
+            | "list_watches"
+        ):
+            if isinstance(result, str):
+                preview = result[:200] + ("..." if len(result) > 200 else "")
+                return f"Debug tool finished ({preview})"
+            return "Debug tool finished"
         case "add_todo":
             content = args.get("content") if args else None
             if content:

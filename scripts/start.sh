@@ -1,7 +1,12 @@
 #!/bin/bash
 set -e
 
+# Export every variable assigned while sourcing .env so gunicorn/celery children inherit them
+# (lines like KEY=value without `export` are otherwise not passed to subprocesses).
+set -a
+# shellcheck source=/dev/null
 source .env
+set +a
 
 # Set up Google ADC-style Service Account Credentials when available.
 # Firebase startup uses firebase_service_account.json/txt separately; this file is

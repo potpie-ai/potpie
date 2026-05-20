@@ -255,7 +255,148 @@ TOOL_DEFINITIONS: Dict[str, dict] = {
         "short_description": "Post a top-level or inline comment on a PR via the sandbox.",
         "aliases": ["github_add_pr_comments_sandbox"],
     },
+    # Debugger (VS Code extension / LocalServer; local_mode_only)
+    "debug_start": {
+        "tier": "low",
+        "category": "debug",
+        "short_description": "Launch or attach a debug session.",
+        "local_mode_only": True,
+    },
+    "debug_stop": {
+        "tier": "low",
+        "category": "debug",
+        "short_description": "Stop a debug session.",
+        "local_mode_only": True,
+    },
+    "debug_set_breakpoints": {
+        "tier": "low",
+        "category": "debug",
+        "short_description": "Set breakpoints in a source file.",
+        "local_mode_only": True,
+    },
+    "debug_snapshot": {
+        "tier": "low",
+        "category": "debug",
+        "short_description": "Capture call stack, locals, and expression values.",
+        "local_mode_only": True,
+    },
+    "debug_step_into": {
+        "tier": "low",
+        "category": "debug",
+        "short_description": "Step into function call.",
+        "local_mode_only": True,
+    },
+    "debug_step_out": {
+        "tier": "low",
+        "category": "debug",
+        "short_description": "Step out to caller.",
+        "local_mode_only": True,
+    },
+    "debug_step_over": {
+        "tier": "low",
+        "category": "debug",
+        "short_description": "Step over current line.",
+        "local_mode_only": True,
+    },
+    "debug_continue": {
+        "tier": "low",
+        "category": "debug",
+        "short_description": "Resume execution to next breakpoint.",
+        "local_mode_only": True,
+    },
+    "debug_select_frame": {
+        "tier": "low",
+        "category": "debug",
+        "short_description": "Select a stack frame for inspection.",
+        "local_mode_only": True,
+    },
+    "debug_list_sessions": {
+        "tier": "low",
+        "category": "debug",
+        "short_description": "List active debug sessions.",
+        "read_only": True,
+        "idempotent": True,
+        "local_mode_only": True,
+    },
+    "debug_list_launch_configs": {
+        "tier": "low",
+        "category": "debug",
+        "short_description": "List VS Code launch.json debug configurations.",
+        "read_only": True,
+        "idempotent": True,
+        "local_mode_only": True,
+    },
+    "debug_list_adapters": {
+        "tier": "low",
+        "category": "debug",
+        "short_description": "List available debug adapters (python/node/go).",
+        "read_only": True,
+        "idempotent": True,
+        "local_mode_only": True,
+    },
+    # Hypothesis workflow tools — no extension dependency
+    "parse_debug_signal": {
+        "tier": "low",
+        "category": "debug",
+        "short_description": "Parse pasted log/stack trace into a structured signal.",
+        "read_only": True,
+        "idempotent": True,
+    },
+    "build_debug_context": {
+        "tier": "medium",
+        "category": "debug",
+        "short_description": "Build a debug context packet from a parsed signal.",
+        "read_only": True,
+        "idempotent": True,
+    },
+    "find_related_tests": {
+        "tier": "medium",
+        "category": "debug",
+        "short_description": "Find test files related to a source file or symbol.",
+        "read_only": True,
+        "idempotent": True,
+    },
+    "add_watch": {
+        "tier": "low",
+        "category": "debug",
+        "short_description": "Register a persistent watch expression for this debug session.",
+    },
+    "remove_watch": {
+        "tier": "low",
+        "category": "debug",
+        "short_description": "Remove a persistent watch expression from this debug session.",
+    },
+    "list_watches": {
+        "tier": "low",
+        "category": "debug",
+        "short_description": "List all active watch expressions for this debug session.",
+        "read_only": True,
+        "idempotent": True,
+    },
 }
+
+DEBUG_TOOLS: List[str] = [
+    # DAP / extension tunnel
+    "debug_start",
+    "debug_stop",
+    "debug_set_breakpoints",
+    "debug_snapshot",
+    "debug_step_into",
+    "debug_step_out",
+    "debug_step_over",
+    "debug_continue",
+    "debug_select_frame",
+    "debug_list_sessions",
+    "debug_list_launch_configs",
+    "debug_list_adapters",
+    # Hypothesis workflow (backend-only)
+    "parse_debug_signal",
+    "build_debug_context",
+    "find_related_tests",
+    "add_watch",
+    "remove_watch",
+    "list_watches",
+]
 
 # --- Allow-lists ---
 
