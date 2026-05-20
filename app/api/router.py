@@ -276,9 +276,10 @@ async def search_codebase(
     user=Depends(get_api_key_user),
 ):
     """Search codebase using API key authentication"""
+    user_id = user.get("user_id") or user.get("uid")
     search_service = SearchService(db)
     results = await search_service.search_codebase(
-        search_request.project_id, search_request.query
+        search_request.project_id, search_request.query, user_id=user_id
     )
     return SearchResponse(results=results)
 

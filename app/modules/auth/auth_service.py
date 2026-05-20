@@ -101,13 +101,18 @@ class AuthService:
             return None, {"error": f"An unexpected error occurred: {str(e)}"}
 
     @staticmethod
-    def create_custom_token(uid: str) -> str | None:
+    def create_custom_token(
+        uid: str, additional_claims: dict | None = None
+    ) -> str | None:
         """
         Create a Firebase custom token for the given uid (e.g. for VS Code extension).
-        Returns the token string or None on error.
+
+        F-14: callers should pass `additional_claims={"surface": "vscode-ext"}`
+        so the token is scoped — if it leaks, downstream code can refuse it on
+        non-extension surfaces. Returns the token string or None on error.
         """
         try:
-            token = auth.create_custom_token(uid)
+            token = auth.create_custom_token(uid, additional_claims)
             return token.decode("utf-8") if isinstance(token, bytes) else token
         except Exception as e:
             logging.warning("create_custom_token failed for uid=%s: %s", uid, e)
@@ -134,11 +139,13 @@ class AuthService:
                 credential = None
 
         logging.info("DEBUG: AuthService.check_auth called")
-        logging.info("DEBUG: Development mode: %s", os.getenv("isDevelopmentMode"))
         logging.info("DEBUG: Credential provided: %s", credential is not None)
 
-        # Check if the application is in debug mode
-        if os.getenv("isDevelopmentMode") == "enabled" and credential is None:
+        # F-11: dev-mode bypass requires BOTH isDevelopmentMode=enabled and
+        # POTPIE_ALLOW_DEV_AUTH=1 (fail-closed second gate).
+        from app.modules.auth.api_key_deps import dev_auth_enabled
+
+        if dev_auth_enabled() and credential is None:
             request.state.user = {"user_id": os.getenv("defaultUsername")}
             logging.info("DEBUG: Development mode enabled. Using Mock Authentication.")
             return {
@@ -160,7 +167,14 @@ class AuthService:
                     "DEBUG: Verifying Firebase token: %s...",
                     credential.credentials[:20],
                 )
-                decoded_token = auth.verify_id_token(credential.credentials)
+                # F-13: honor Firebase token revocation (logout-all, password
+                # change, account disabled). Cost is one extra RPC per request
+                # against Firebase's revocation list; acceptable for the
+                # security benefit since this dependency gates every auth'd
+                # API route.
+                decoded_token = auth.verify_id_token(
+                    credential.credentials, check_revoked=True
+                )
                 # Normalize token to always include "user_id" for consistency across environments
                 # Firebase tokens use "uid", but our codebase expects "user_id"
                 if "uid" in decoded_token and "user_id" not in decoded_token:
@@ -175,10 +189,16 @@ class AuthService:
                 )
                 request.state.user = decoded_token
             except Exception as err:
-                logging.error("DEBUG: Firebase token verification failed: %s", str(err))
+                # F-12: do not leak Firebase exception text to unauthenticated
+                # callers (aud/iss mismatches, project IDs etc.). Log full
+                # context server-side and return a static detail.
+                logging.warning(
+                    "AuthService.check_auth: Firebase token verification failed: %s",
+                    err,
+                )
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail=f"Invalid authentication from Firebase. {err}",
+                    detail="Invalid token",
                     headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
                 )
             if res is not None:

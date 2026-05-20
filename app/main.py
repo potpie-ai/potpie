@@ -68,14 +68,24 @@ load_providers()
 
 class MainApp:
     def __init__(self):
-        if (
-            os.getenv("isDevelopmentMode") == "enabled"
-            and os.getenv("ENV") != "development"
-        ):
+        is_dev_mode = os.getenv("isDevelopmentMode") == "enabled"
+        if is_dev_mode and os.getenv("ENV") != "development":
             logger.error(
                 "Development mode enabled but ENV is not set to development. Exiting."
             )
             exit(1)
+        # F-11: dev-mode auth bypass requires explicit second-gate. If the user
+        # turned on isDevelopmentMode but forgot POTPIE_ALLOW_DEV_AUTH=1, calls
+        # without an Authorization header will still 401 (the boot still
+        # succeeds — this is a notice).
+        if is_dev_mode and (
+            os.getenv("POTPIE_ALLOW_DEV_AUTH", "").strip().lower() not in {"1", "true"}
+        ):
+            logger.warning(
+                "isDevelopmentMode=enabled but POTPIE_ALLOW_DEV_AUTH is not set. "
+                "Auth-bypass paths will refuse anonymous traffic; this is intentional. "
+                "Set POTPIE_ALLOW_DEV_AUTH=1 to enable the legacy dev bypass."
+            )
         self.setup_sentry()
         self.setup_tracing()
 

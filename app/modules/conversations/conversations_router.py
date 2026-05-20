@@ -536,9 +536,18 @@ class ConversationAPI:
         controller = ConversationController(db, async_db, user_id, user_email)
         try:
             await controller.get_conversation_info(conversation_id)
-        except Exception as e:
-            logger.error(f"Access denied for conversation {conversation_id}: {str(e)}")
-            raise HTTPException(status_code=403, detail="Access denied to conversation")
+        except HTTPException:
+            # F-19: preserve the controller's status code (401/403/404) instead
+            # of collapsing every failure into 403.
+            raise
+        except Exception:
+            logger.exception(
+                "Internal error checking conversation access",
+                conversation_id=conversation_id,
+            )
+            raise HTTPException(
+                status_code=500, detail="Internal error"
+            )
 
         result = await async_session_service.get_active_session(conversation_id)
 
@@ -564,9 +573,15 @@ class ConversationAPI:
         controller = ConversationController(db, async_db, user_id, user_email)
         try:
             await controller.get_conversation_info(conversation_id)
-        except Exception as e:
-            logger.error(f"Access denied for conversation {conversation_id}: {str(e)}")
-            raise HTTPException(status_code=403, detail="Access denied to conversation")
+        except HTTPException:
+            # F-19: preserve controller status code (401/403/404).
+            raise
+        except Exception:
+            logger.exception(
+                "Internal error checking conversation access",
+                conversation_id=conversation_id,
+            )
+            raise HTTPException(status_code=500, detail="Internal error")
 
         result = await async_session_service.get_task_status(conversation_id)
 
@@ -597,9 +612,15 @@ class ConversationAPI:
         controller = ConversationController(db, async_db, user_id, user_email)
         try:
             await controller.get_conversation_info(conversation_id)
-        except Exception as e:
-            logger.error(f"Access denied for conversation {conversation_id}: {str(e)}")
-            raise HTTPException(status_code=403, detail="Access denied to conversation")
+        except HTTPException:
+            # F-19: preserve controller status code (401/403/404).
+            raise
+        except Exception:
+            logger.exception(
+                "Internal error checking conversation access",
+                conversation_id=conversation_id,
+            )
+            raise HTTPException(status_code=500, detail="Internal error")
 
         stream_key = async_redis.stream_key(conversation_id, session_id)
         exists = await async_redis.redis_client.exists(stream_key)
@@ -680,6 +701,7 @@ async def sync_code_change_from_local(
     change: dict,
     user: AuthenticatedUser,
     db: DbSession,
+    async_db: AsyncDbSession,
 ) -> dict:
     """Receive code changes that were applied locally and sync to CodeChangesManager.
 
@@ -700,6 +722,25 @@ async def sync_code_change_from_local(
     )
 
     user_id = user["user_id"]
+    user_email = user.get("email")
+
+    # F-10: prove the caller owns (or has WRITE on) the conversation before
+    # mutating its code-changes context. Without this, any authenticated user
+    # could inject add/update/delete payloads into another user's session and
+    # poison the agent's read of "authoritative context".
+    controller = ConversationController(db, async_db, user_id, user_email)
+    try:
+        await controller.get_conversation_info(conversation_id)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "Access check failed for code-changes/sync",
+            conversation_id=conversation_id,
+        )
+        raise HTTPException(
+            status_code=403, detail="Access denied to conversation"
+        )
 
     try:
         # Set conversation_id in context for CodeChangesManager

@@ -480,33 +480,48 @@ class UnifiedAuthService:
                             )
                             firebase_user_exists = False
                         except Exception as e:
-                            # Handle case where Firebase is not properly initialized
-                            if "does not exist" in str(e) or "initialize_app" in str(e):
+                            # F-5: fail-closed. The orphan check is a defence against
+                            # an attacker logging in as an email-matched local user
+                            # whose Firebase identity has been disabled. If we cannot
+                            # talk to Firebase, we have no proof either way — refuse
+                            # to authenticate rather than fabricate an "exists" answer.
+                            err_str = str(e)
+                            if "initialize_app" in err_str or "does not exist" in err_str:
                                 logger.warning(
                                     f"Firebase not initialized when verifying user {existing_user.uid}. "
-                                    "Assuming user exists (development mode)."
+                                    "Treating as dev mode and assuming user exists."
                                 )
                                 firebase_user_exists = True
                             else:
                                 logger.error(
-                                    f"Error verifying Firebase user {existing_user.uid}: {str(e)}"
+                                    f"Firebase verification failed for user {existing_user.uid}: {err_str}. "
+                                    "Failing closed (rejecting login)."
                                 )
-                                # On error, assume Firebase user exists to avoid breaking existing users
-                                firebase_user_exists = True
+                                raise RuntimeError(
+                                    "Firebase identity provider is unavailable; "
+                                    "refusing to authenticate to avoid an orphan-check bypass."
+                                ) from e
                     # If firebase_initialized is False, firebase_user_exists is already set to True above
+                except RuntimeError:
+                    # Surfaced from the fail-closed branch above. Propagate so the
+                    # caller can return a 503 instead of accepting the login.
+                    raise
                 except Exception as e:
-                    # Catch any unexpected errors
-                    if "does not exist" in str(e) or "initialize_app" in str(e):
+                    err_str = str(e)
+                    if "initialize_app" in err_str or "does not exist" in err_str:
                         logger.warning(
                             f"Firebase not initialized. Assuming user {existing_user.uid} exists (development mode)."
                         )
                         firebase_user_exists = True
                     else:
                         logger.error(
-                            f"Unexpected error verifying Firebase user {existing_user.uid}: {str(e)}"
+                            f"Unexpected error verifying Firebase user {existing_user.uid}: {err_str}. "
+                            "Failing closed (rejecting login)."
                         )
-                        # On error, assume Firebase user exists to avoid breaking existing users
-                        firebase_user_exists = True
+                        raise RuntimeError(
+                            "Firebase identity provider is unavailable; "
+                            "refusing to authenticate to avoid an orphan-check bypass."
+                        ) from e
 
                 if not firebase_user_exists:
                     # Orphaned record - delete from local DB and treat as new user

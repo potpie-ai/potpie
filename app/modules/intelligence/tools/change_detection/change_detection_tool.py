@@ -711,7 +711,7 @@ class ChangeDetectionTool:
                     for identifier in identifiers:
                         node_id_query = " ".join(identifier.split(":"))
                         relevance_search = await self.search_service.search_codebase(
-                            project_id, node_id_query
+                            project_id, node_id_query, user_id=self.user_id
                         )
                         if relevance_search:
                             node_id = relevance_search[0].get("node_id")

@@ -1,12 +1,18 @@
+import base64
+import hashlib
+import hmac
 import json
 import logging
 import os
+import time
+from typing import Optional
 
 import httpx
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import HTTPException
+from firebase_admin import auth as firebase_auth
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,13 +49,228 @@ auth_router = APIRouter()
 load_dotenv(override=True)
 
 
+LINK_TOKEN_TTL_SECONDS = 15 * 60  # 15 minutes
+
+
+def _link_token_secret() -> str:
+    """Resolve secret for HMAC-signed SSO link tokens.
+
+    Falls back to OAUTH_STATE_SECRET to avoid yet another env var when none is
+    explicitly set; if both are unset, returns "" and signing is a no-op (we
+    refuse to verify in that case — see _verify_link_token).
+    """
+    return (
+        os.getenv("SSO_LINK_TOKEN_SECRET")
+        or os.getenv("OAUTH_STATE_SECRET")
+        or ""
+    ).strip()
+
+
+def _sign_link_token(user_id: str, ttl_seconds: int = LINK_TOKEN_TTL_SECONDS) -> Optional[str]:
+    """Mint a short-lived HMAC-signed proof of SSO ownership.
+
+    Returns None if no secret is configured (caller treats absence as "feature
+    disabled" rather than minting an unsigned token).
+    """
+    if not user_id:
+        return None
+    secret = _link_token_secret()
+    if not secret:
+        return None
+    payload = {"u": user_id, "e": int(time.time()) + int(ttl_seconds)}
+    payload_b64 = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    ).decode("utf-8")
+    sig = hmac.new(
+        secret.encode("utf-8"), payload_b64.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    return f"{payload_b64}.{sig}"
+
+
+def _verify_link_token(token: Optional[str]) -> Optional[str]:
+    """Verify a link token and return the embedded SSO user_id, else None.
+
+    Fail-closed: if no secret is configured, verification fails (returns None)
+    even if a token-shaped string is supplied. Callers must handle None.
+    """
+    if not token:
+        return None
+    secret = _link_token_secret()
+    if not secret:
+        # No secret → cannot verify → must fail closed
+        return None
+    try:
+        if "." not in token:
+            return None
+        payload_b64, sig = token.rsplit(".", 1)
+        expected = hmac.new(
+            secret.encode("utf-8"), payload_b64.encode("utf-8"), hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return None
+        payload = json.loads(
+            base64.urlsafe_b64decode(payload_b64.encode("utf-8")).decode("utf-8")
+        )
+        if int(time.time()) > int(payload.get("e", 0)):
+            return None
+        return payload.get("u") or None
+    except Exception:
+        return None
+
+
+def _require_signup_auth_enabled() -> bool:
+    """Hard-require an Authorization header on /signup unless explicitly disabled.
+
+    Fail-closed default. Set POTPIE_ALLOW_UNAUTHENTICATED_SIGNUP=1 to permit the
+    legacy unsafe behavior during frontend migration.
+    """
+    return (
+        os.getenv("POTPIE_ALLOW_UNAUTHENTICATED_SIGNUP", "").strip() not in {"1", "true", "True"}
+    )
+
+
+def _require_link_token_enabled() -> bool:
+    """Hard-require a verified linkToken when linkToUserId is set on /signup.
+
+    Fail-closed default after the frontend has been updated. Until then ops can
+    set POTPIE_ALLOW_UNVERIFIED_LINK=1 to allow the legacy unsafe behavior.
+    """
+    return (
+        os.getenv("POTPIE_ALLOW_UNVERIFIED_LINK", "").strip() not in {"1", "true", "True"}
+    )
+
+
+def _verify_signup_id_token(
+    request: Request, expected_uid: str, *, require_github_provider: bool
+) -> Optional[dict]:
+    """Verify Authorization Bearer Firebase ID token on /signup.
+
+    Returns the decoded token on success. Raises HTTPException on failure
+    unless POTPIE_ALLOW_UNAUTHENTICATED_SIGNUP=1 (legacy compat) — in which
+    case returns None.
+    """
+    auth_header = request.headers.get("Authorization") or ""
+    bearer = (
+        auth_header[7:].strip()
+        if auth_header.lower().startswith("bearer ")
+        else None
+    )
+
+    if not bearer:
+        if _require_signup_auth_enabled():
+            raise HTTPException(
+                status_code=401,
+                detail="Signup requires an Authorization Bearer Firebase ID token.",
+                headers={"WWW-Authenticate": 'Bearer realm="auth_required"'},
+            )
+        logger.warning(
+            "Signup called without Authorization header; legacy compat allowed via "
+            "POTPIE_ALLOW_UNAUTHENTICATED_SIGNUP. uid=%s",
+            expected_uid,
+        )
+        return None
+
+    try:
+        decoded = firebase_auth.verify_id_token(bearer, check_revoked=True)
+    except Exception as err:
+        logger.warning("Signup: Firebase ID token verification failed: %s", err)
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Firebase ID token",
+            headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
+        )
+
+    token_uid = decoded.get("uid") or decoded.get("user_id")
+    if not token_uid or token_uid != expected_uid:
+        logger.warning(
+            "Signup: token uid (%s) does not match body uid (%s)",
+            token_uid,
+            expected_uid,
+        )
+        raise HTTPException(
+            status_code=401, detail="Token does not match supplied uid"
+        )
+
+    if require_github_provider:
+        sign_in_provider = (
+            (decoded.get("firebase") or {}).get("sign_in_provider") or ""
+        )
+        if sign_in_provider != "github.com":
+            logger.warning(
+                "Signup GitHub flow: sign_in_provider=%s (expected github.com) uid=%s",
+                sign_in_provider,
+                expected_uid,
+            )
+            raise HTTPException(
+                status_code=401,
+                detail="GitHub signup flow requires a token from github.com sign-in",
+            )
+
+    return decoded
+
+
+def _resolve_link_target(
+    request_body: dict, *, body_link_to_user_id: Optional[str]
+) -> Optional[str]:
+    """Resolve the SSO user to link a new provider to, with ownership proof.
+
+    Prefers a signed linkToken from /sso/login. Falls back to body.linkToUserId
+    only when POTPIE_ALLOW_UNVERIFIED_LINK=1 (fail-closed default off).
+
+    Returns the verified user_id, or None when no link is requested.
+    Raises HTTPException(403) when verification fails.
+    """
+    link_token = request_body.get("linkToken") or request_body.get("link_token")
+    if link_token:
+        verified_uid = _verify_link_token(link_token)
+        if not verified_uid:
+            raise HTTPException(
+                status_code=403, detail="Invalid or expired linkToken"
+            )
+        if (
+            body_link_to_user_id
+            and body_link_to_user_id != verified_uid
+        ):
+            logger.warning(
+                "Signup link: body.linkToUserId (%s) does not match verified token uid (%s)",
+                body_link_to_user_id,
+                verified_uid,
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="linkToken does not match linkToUserId",
+            )
+        return verified_uid
+
+    if not body_link_to_user_id:
+        return None
+
+    if _require_link_token_enabled():
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "linkToUserId requires a verified linkToken from /sso/login. "
+                "Legacy unverified linking is disabled."
+            ),
+        )
+
+    logger.warning(
+        "Signup link: using unverified linkToUserId=%s (legacy compat via "
+        "POTPIE_ALLOW_UNVERIFIED_LINK; vulnerable to F-3 account takeover)",
+        body_link_to_user_id,
+    )
+    return body_link_to_user_id
+
+
 def _signup_response_with_custom_token(payload: dict) -> dict:
-    """Add customToken to signup payload when applicable (e.g. for VS Code extension)."""
-    uid = payload.get("uid")
-    if uid:
-        custom_token = AuthService.create_custom_token(uid)
-        if custom_token:
-            payload["customToken"] = custom_token
+    """No-op shim retained for compatibility.
+
+    F-14: previously embedded a Firebase customToken in the signup response
+    body. That credential is unscoped and broadens the blast radius of any
+    response-body leak. Callers that genuinely need a custom token must now
+    authenticate (Authorization Bearer) and call POST /auth/custom-token,
+    which mints a scoped (`surface=vscode-ext`) token.
+    """
     return payload
 
 
@@ -86,15 +307,27 @@ class AuthAPI:
             id_token = res.get("idToken")
             return JSONResponse(content={"token": id_token}, status_code=200)
         except ValueError:
+            # F-20: do not differentiate "user not found" from "wrong password";
+            # both must return the same generic error to avoid email enumeration.
             return JSONResponse(
                 content={"error": "Invalid email or password"}, status_code=401
             )
         except HTTPException as he:
-            return JSONResponse(
-                content={"error": f"HTTP Error: {str(he)}"}, status_code=he.status_code
+            # F-20: static body; upstream details remain server-side only.
+            logger.warning(
+                "Login HTTPException upstream: status=%s", he.status_code
             )
-        except Exception as e:
-            return JSONResponse(content={"error": f"ERROR: {str(e)}"}, status_code=400)
+            return JSONResponse(
+                content={"error": "Invalid email or password"},
+                status_code=(
+                    he.status_code if 400 <= he.status_code < 500 else 401
+                ),
+            )
+        except Exception:
+            logger.exception("Login failed with unexpected error")
+            return JSONResponse(
+                content={"error": "Login failed"}, status_code=500
+            )
 
     @auth_router.post("/signup")
     async def signup(
@@ -173,6 +406,28 @@ class AuthAPI:
         # For GitHub: provider_uid is the GitHub Firebase UID
         # This is what we store in user_auth_providers.provider_uid
         provider_uid = github_firebase_uid or uid
+
+        # F-3: verify Firebase ID token. For GitHub flows the body's
+        # `uid` is the GitHub Firebase UID, so require decoded.uid == uid
+        # AND sign_in_provider == github.com. For email/password the same uid
+        # match suffices.
+        # NOTE: this does NOT, on its own, close F-3 — the linkToUserId path
+        # still needs ownership proof. See _resolve_link_target below.
+        _verify_signup_id_token(
+            request, expected_uid=uid, require_github_provider=is_github_flow
+        )
+
+        # F-3: resolve the link target via signed linkToken when available;
+        # body.linkToUserId is rejected unless POTPIE_ALLOW_UNVERIFIED_LINK=1.
+        try:
+            link_to_user_id = _resolve_link_target(
+                body, body_link_to_user_id=link_to_user_id
+            )
+        except HTTPException as he:
+            return Response(
+                content=json.dumps({"error": he.detail}),
+                status_code=he.status_code,
+            )
 
         # ============================================================
         # FLOW 1: GITHUB LINKING (linkToUserId provided)
@@ -272,21 +527,21 @@ class AuthAPI:
                 db.commit()
             except IntegrityError as e:
                 db.rollback()
-                # Check if it's a unique constraint violation for provider_uid
+                # F-17: don't echo SQLAlchemy/constraint text to the client.
                 error_str = str(e).lower()
                 if "unique_provider_uid" in error_str or "uniqueviolation" in error_str:
-                    error_message = (
-                        "GitHub account is already linked to another account. "
-                        "Please use a different GitHub account or contact support if you believe this is an error."
-                    )
-                    logger.error(
-                        f"GitHub account {provider_uid} is already linked to another user: {e}"
+                    logger.warning(
+                        "GitHub account %s already linked to another user",
+                        provider_uid,
                     )
                     return Response(
                         content=json.dumps(
                             {
-                                "error": error_message,
-                                "details": f"GitHub account {provider_uid} is already linked to another user. Database constraint violation: {str(e)}",
+                                "error": (
+                                    "GitHub account is already linked to another account. "
+                                    "Please use a different GitHub account or contact support "
+                                    "if you believe this is an error."
+                                ),
                             }
                         ),
                         status_code=409,  # Conflict
@@ -421,11 +676,21 @@ class AuthAPI:
                     ),
                     status_code=201,
                 )
-            except Exception as e:
+            except RuntimeError as ue:
+                # F-5 fail-closed: Firebase identity provider unavailable
                 db.rollback()
-                logger.error(f"Failed to create user: {e}", exc_info=True)
+                logger.error("Signup blocked: %s", ue)
                 return Response(
-                    content=json.dumps({"error": f"Signup failed: {str(e)}"}),
+                    content=json.dumps(
+                        {"error": "Identity provider unavailable"}
+                    ),
+                    status_code=503,
+                )
+            except Exception:
+                db.rollback()
+                logger.exception("Failed to create GitHub user")
+                return Response(
+                    content=json.dumps({"error": "Signup failed"}),
                     status_code=500,
                 )
 
@@ -484,20 +749,32 @@ class AuthAPI:
                     ),
                     status_code=201,
                 )
-            except Exception as e:
+            except RuntimeError as ue:
+                # F-5 fail-closed: Firebase identity provider unavailable
                 db.rollback()
-                logger.error(f"Email/password signup failed: {e}", exc_info=True)
+                logger.error("Signup blocked: %s", ue)
                 return Response(
-                    content=json.dumps({"error": str(e)}),
+                    content=json.dumps(
+                        {"error": "Identity provider unavailable"}
+                    ),
+                    status_code=503,
+                )
+            except Exception:
+                db.rollback()
+                logger.exception("Email/password signup failed")
+                return Response(
+                    content=json.dumps({"error": "Signup failed"}),
                     status_code=500,
                 )
 
     @auth_router.post("/auth/custom-token")
     async def custom_token(user=Depends(AuthService.check_auth)):
         """
-        Create a Firebase custom token for the authenticated user (e.g. for VS Code extension).
-        Requires Authorization: Bearer <firebase_id_token>.
-        Returns { "customToken": "..." }.
+        Create a scoped Firebase custom token for the authenticated user
+        (e.g. for VS Code extension). Requires Authorization Bearer.
+
+        F-14: token carries `surface=vscode-ext` so a leaked custom token
+        doesn't grant general API access.
         """
         uid = user.get("uid") or user.get("user_id")
         if not uid:
@@ -505,7 +782,9 @@ class AuthAPI:
                 content=json.dumps({"error": "Missing uid in token"}),
                 status_code=401,
             )
-        custom_token = AuthService.create_custom_token(uid)
+        custom_token = AuthService.create_custom_token(
+            uid, additional_claims={"surface": "vscode-ext"}
+        )
         if not custom_token:
             return Response(
                 content=json.dumps({"error": "Failed to create custom token"}),
@@ -632,21 +911,34 @@ class AuthAPI:
                     f"GitHub linking required: {response.needs_github_linking}"
                 )
 
+            # F-3: mint server-signed proof of SSO ownership so the frontend
+            # can forward it to /signup as `linkToken` instead of relying on
+            # body-trusted linkToUserId.
+            if user and user.uid:
+                response.link_token = _sign_link_token(user.uid)
+
             return JSONResponse(
                 content=response.model_dump(),
                 status_code=200 if response.status == "success" else 202,
             )
 
-        except ValueError as ve:
-            logger.error(f"SSO login validation error: {str(ve)}", exc_info=True)
+        except ValueError:
+            logger.exception("SSO login validation error")
             return JSONResponse(
-                content={"error": f"Invalid request: {str(ve)}"},
+                content={"error": "Invalid request"},
                 status_code=400,
             )
-        except Exception as e:
-            logger.error(f"SSO login error: {str(e)}", exc_info=True)
+        except RuntimeError as ue:
+            # F-5 fail-closed: Firebase identity provider unavailable
+            logger.error("SSO login blocked: %s", ue)
             return JSONResponse(
-                content={"error": f"SSO login failed: {str(e)}"},
+                content={"error": "Identity provider unavailable"},
+                status_code=503,
+            )
+        except Exception:
+            logger.exception("SSO login error")
+            return JSONResponse(
+                content={"error": "SSO login failed"},
                 status_code=500,
             )
 
@@ -684,16 +976,16 @@ class AuthAPI:
                 status_code=200,
             )
 
-        except ValueError as ve:
-            logger.error(f"Provider linking validation error: {str(ve)}", exc_info=True)
+        except ValueError:
+            logger.exception("Provider linking validation error")
             return JSONResponse(
-                content={"error": f"Invalid request: {str(ve)}"},
+                content={"error": "Invalid request"},
                 status_code=400,
             )
-        except Exception as e:
-            logger.error(f"Provider linking error: {str(e)}", exc_info=True)
+        except Exception:
+            logger.exception("Provider linking error")
             return JSONResponse(
-                content={"error": f"Failed to link provider: {str(e)}"},
+                content={"error": "Failed to link provider"},
                 status_code=500,
             )
 
@@ -718,9 +1010,10 @@ class AuthAPI:
                     status_code=404,
                 )
 
-        except Exception as e:
+        except Exception:
+            logger.exception("Failed to cancel linking")
             return JSONResponse(
-                content={"error": f"Failed to cancel linking: {str(e)}"},
+                content={"error": "Failed to cancel linking"},
                 status_code=400,
             )
 
@@ -764,9 +1057,10 @@ class AuthAPI:
                 status_code=200,
             )
 
-        except Exception as e:
+        except Exception:
+            logger.exception("Failed to get providers")
             return JSONResponse(
-                content={"error": f"Failed to get providers: {str(e)}"},
+                content={"error": "Failed to get providers"},
                 status_code=400,
             )
 
@@ -803,9 +1097,10 @@ class AuthAPI:
                     status_code=404,
                 )
 
-        except Exception as e:
+        except Exception:
+            logger.exception("Failed to set primary provider")
             return JSONResponse(
-                content={"error": f"Failed to set primary provider: {str(e)}"},
+                content={"error": "Failed to set primary provider"},
                 status_code=400,
             )
 
@@ -851,9 +1146,10 @@ class AuthAPI:
                     status_code=400,
                 )
 
-        except Exception as e:
+        except Exception:
+            logger.exception("Failed to unlink provider")
             return JSONResponse(
-                content={"error": f"Failed to unlink provider: {str(e)}"},
+                content={"error": "Failed to unlink provider"},
                 status_code=400,
             )
 
@@ -906,8 +1202,9 @@ class AuthAPI:
                 status_code=200,
             )
 
-        except Exception as e:
+        except Exception:
+            logger.exception("Failed to get account")
             return JSONResponse(
-                content={"error": f"Failed to get account: {str(e)}"},
+                content={"error": "Failed to get account"},
                 status_code=400,
             )

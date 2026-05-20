@@ -102,10 +102,12 @@ class SecretStorageHandler:
             )
         try:
             return Fernet(secret_key.encode("utf-8"))
-        except Exception as e:
+        except Exception:
+            # F-24: don't echo Fernet exception text to the client.
+            logger.exception("Invalid SECRET_ENCRYPTION_KEY")
             raise HTTPException(
                 status_code=500,
-                detail=f"Invalid SECRET_ENCRYPTION_KEY: {str(e)}",
+                detail="Secret storage misconfigured",
             )
 
     @staticmethod

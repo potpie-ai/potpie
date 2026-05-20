@@ -47,7 +47,12 @@ class LinearAttachBody(BaseModel):
 
 
 @router.get("/providers")
-async def list_providers() -> dict[str, Any]:
+async def list_providers(
+    user: dict = Depends(AuthService.check_auth),
+) -> dict[str, Any]:
+    # F-22: require auth even though provider names aren't secret. This is the
+    # only `/api/v1/*` route besides auth flows that was previously anonymous,
+    # so locking it down removes a reconnaissance primitive.
     load_providers()
     reg = get_provider_registry()
     items = []

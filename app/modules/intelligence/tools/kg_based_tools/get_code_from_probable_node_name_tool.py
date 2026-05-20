@@ -96,7 +96,7 @@ class GetCodeFromProbableNodeNameTool:
                 probable_node_name.replace("/", " ").replace(":", " ").split()
             )
             relevance_search = await self.search_service.search_codebase(
-                project_id, node_id_query
+                project_id, node_id_query, user_id=self.user_id
             )
             node_id = None
             if relevance_search:

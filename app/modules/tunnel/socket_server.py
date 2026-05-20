@@ -212,7 +212,10 @@ async def _verify_token(token: Optional[str]) -> Optional[dict]:
     """Verify Firebase ID token; return decoded claims or None."""
     if not token or not isinstance(token, str):
         return None
-    if os.getenv("isDevelopmentMode") == "enabled":
+    # F-11: dev-mode bypass requires the second gate POTPIE_ALLOW_DEV_AUTH=1
+    from app.modules.auth.api_key_deps import dev_auth_enabled
+
+    if dev_auth_enabled():
         return {"user_id": os.getenv("defaultUsername", "dev-user"), "email": "dev@potpie.ai"}
     try:
         decoded = firebase_auth.verify_id_token(token)
@@ -285,7 +288,10 @@ async def auth(sid: str, data: dict):
     _cancel_auth_timeout(sid)
     token = (data or {}).get("token") if isinstance(data, dict) else None
 
-    if os.getenv("isDevelopmentMode") == "enabled":
+    # F-11: dev-mode bypass requires the second gate POTPIE_ALLOW_DEV_AUTH=1
+    from app.modules.auth.api_key_deps import dev_auth_enabled
+
+    if dev_auth_enabled():
         user_id = os.getenv("defaultUsername", "dev-user")
         if token:
             user = await _verify_token(token)

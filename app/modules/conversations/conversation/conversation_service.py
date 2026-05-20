@@ -279,15 +279,21 @@ class ConversationService:
     async def check_conversation_access(
         self, conversation_id: str, user_email: str, firebase_user_id: str = None
     ) -> str:
-        if not user_email:
-            return ConversationAccessType.WRITE
-
-        # Use Firebase user ID directly if available, otherwise fall back to email lookup
+        # F-6: never grant WRITE solely because an email is missing. Resolve a
+        # user_id from whichever credential is present; if neither is, treat as
+        # NOT_FOUND so callers return 404 rather than fall through to a write.
         if firebase_user_id:
             user_id = firebase_user_id
-        else:
+        elif user_email:
             user_service = UserService(self.sql_db)
             user_id = user_service.get_user_id_by_email(user_email)
+        else:
+            logger.warning(
+                "check_conversation_access called without user_email or firebase_user_id; "
+                "treating as NOT_FOUND (conversation_id=%s)",
+                conversation_id,
+            )
+            return ConversationAccessType.NOT_FOUND
 
         # Retrieve the conversation
         conversation = await self.conversation_store.get_by_id(conversation_id)

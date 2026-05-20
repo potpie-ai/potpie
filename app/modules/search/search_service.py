@@ -1,11 +1,16 @@
+import logging
 import os
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
+from fastapi import HTTPException
 from sqlalchemy import delete, or_
 from sqlalchemy.orm import Session
 
+from app.modules.projects.projects_model import Project
 from app.modules.search.search_models import SearchIndex
+
+logger = logging.getLogger(__name__)
 
 
 class SearchService:
@@ -16,7 +21,34 @@ class SearchService:
     async def commit_indices(self):
         self.db.commit()
 
-    async def search_codebase(self, project_id: str, query: str) -> List[Dict]:
+    async def search_codebase(
+        self, project_id: str, query: str, user_id: Optional[str] = None
+    ) -> List[Dict]:
+        # F-7: IDOR — only the project owner may search its index. When a user_id
+        # is supplied, verify ownership before running the query; otherwise (e.g.
+        # internal callers without an auth context) deny by default.
+        if not user_id:
+            logger.warning(
+                "search_codebase called without user_id (project_id=%s); refusing",
+                project_id,
+            )
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        owner = (
+            self.db.query(Project.user_id)
+            .filter(Project.id == project_id)
+            .scalar()
+        )
+        if owner is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        if owner != user_id:
+            logger.warning(
+                "search_codebase: user_id=%s attempted to search project owned by %s",
+                user_id,
+                owner,
+            )
+            raise HTTPException(status_code=403, detail="Forbidden")
+
         # Split the query into words
         query_words = query.lower().split()
 

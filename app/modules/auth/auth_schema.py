@@ -85,6 +85,14 @@ class SSOLoginResponse(BaseModel):
     needs_github_linking: Optional[bool] = Field(
         default=False, description="True if user needs to link GitHub account"
     )
+    link_token: Optional[str] = Field(
+        default=None,
+        description=(
+            "Server-signed proof of SSO ownership, valid ~15min. Frontend should "
+            "forward this to /signup as `linkToken` instead of (or in addition to) "
+            "`linkToUserId`. Closes F-3 once POTPIE_REQUIRE_LINK_TOKEN=1 is set."
+        ),
+    )
 
 
 # ===== Provider Linking Flow =====

@@ -7,6 +7,7 @@ import hmac
 import hashlib
 import base64
 import json
+import os
 import time
 from app.modules.utils.logger import setup_logger
 from integrations import hash_user_id
@@ -194,42 +195,35 @@ def _verify_oauth_state(token: str | None) -> Optional[str]:
 async def initiate_sentry_oauth(
     request: OAuthInitiateRequest,
     sentry_oauth: SentryOAuthV2 = Depends(get_sentry_oauth),
+    user: dict = Depends(AuthService.check_auth),
 ) -> Dict[str, Any]:
-    """Initiate Sentry OAuth flow"""
-    try:
-        # Log the OAuth initiation details
-        logger.info("=== OAuth Initiation Debug ===")
-        logger.info(
-            "OAuth parameters", redirect_uri=request.redirect_uri, state=request.state
-        )
+    """Initiate Sentry OAuth flow.
 
-        # Generate authorization URL. Sign the state to prevent tampering.
-        signed_state = (
-            _sign_oauth_state(request.state)
-            if getattr(request, "state", None)
-            else None
-        )
+    F-8: state is derived from the authenticated user, not from the body.
+    Body-supplied state is ignored to prevent an attacker from binding their
+    OAuth completion to another user_id (same incident class as the Linear
+    initiate fix at :475).
+    """
+    try:
+        user_id = user["user_id"]
+        # Always sign state with the authenticated user_id; ignore body.state.
+        signed_state = _sign_oauth_state(user_id)
         auth_url = sentry_oauth.get_authorization_url(
             redirect_uri=request.redirect_uri, state=signed_state
         )
 
-        logger.info("Generated authorization URL for Sentry OAuth")
+        logger.info("Generated Sentry OAuth authorization URL for user_id=%s", user_id)
 
         return {
             "status": "success",
             "authorization_url": auth_url,
             "message": "OAuth flow initiated successfully",
-            "debug_info": {
-                "redirect_uri": request.redirect_uri,
-                "state": request.state,
-                "auth_url": auth_url,
-            },
         }
-    except Exception as e:
+    except HTTPException:
+        raise
+    except Exception:
         logger.exception("OAuth initiation failed")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to initiate OAuth flow: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail="Failed to initiate OAuth flow")
 
 
 @router.get("/sentry/callback")
@@ -310,89 +304,82 @@ async def revoke_sentry_access(
 async def sentry_authorize(
     request: Request, sentry_oauth: SentryOAuthV2 = Depends(get_sentry_oauth)
 ) -> RedirectResponse:
-    """Direct authorization endpoint that redirects to Sentry OAuth"""
+    """Direct authorization endpoint that redirects to Sentry OAuth.
+
+    F-15: redirect_uri is restricted to a configured allowlist. Sentry's own
+    OAuth would also reject mismatched URIs but the validation here prevents
+    this endpoint from being used as a phish-helper (the URL appears to come
+    from potpie.ai).
+    """
     try:
-        # Get redirect URI from query params or use default
+        config = Config()
+        configured_uri = config("SENTRY_REDIRECT_URI", default="")
+        allowed = {u.strip() for u in configured_uri.split(",") if u.strip()}
+        # Always permit the standard local-dev callback path so local setups work.
+        allowed.add("http://localhost:3000/integrations/sentry/callback")
+
         redirect_uri = request.query_params.get(
             "redirect_uri", "http://localhost:3000/integrations/sentry/callback"
         )
+        if redirect_uri not in allowed:
+            logger.warning(
+                "Rejected /sentry/authorize redirect_uri=%s (not in allowlist)",
+                redirect_uri,
+            )
+            raise HTTPException(
+                status_code=400, detail="redirect_uri is not allowed"
+            )
 
-        # Generate authorization URL
         auth_url = sentry_oauth.get_authorization_url(redirect_uri=redirect_uri)
-
-        # Redirect to Sentry OAuth
         return RedirectResponse(url=auth_url)
 
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to redirect to OAuth: {str(e)}"
-        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Failed to build /sentry/authorize redirect")
+        raise HTTPException(status_code=500, detail="Failed to redirect to OAuth")
+
+
+def _is_dev_environment() -> bool:
+    """True only in local/dev environments (ENV in {local, dev, development})."""
+    env = os.getenv("ENV", "").strip().lower()
+    return env in {"local", "dev", "development"}
 
 
 @router.get("/sentry/redirect")
-async def sentry_redirect_webhook(request: Request) -> Dict[str, Any]:
-    """Handle Sentry webhook redirect requests"""
-    try:
-        # Log the incoming request details
-        logger.info("Sentry webhook redirect received")
-        logger.info("Request details", method=request.method, url=str(request.url))
-        sanitized_headers = sanitize_headers(dict(request.headers))
-        logger.debug("Request headers", headers=sanitized_headers)
+async def sentry_redirect_webhook(
+    request: Request,
+    user: dict = Depends(AuthService.check_auth),
+) -> Dict[str, Any]:
+    """Debug-only echo endpoint for Sentry webhook redirect requests.
 
-        # Get query parameters
-        query_params = dict(request.query_params)
-        params_summary = get_params_summary(query_params)
-        logger.info(
-            "Query parameters",
-            params_keys=params_summary["keys"],
-            params_count=params_summary["count"],
-        )
-        logger.debug("Query parameters", params_summary=params_summary)
+    F-16: previously unauthenticated and logged full bodies/forms (PII / OAuth
+    `code` leakage risk). Now requires auth AND ENV in {local,dev}; in any
+    other environment returns 404 to avoid disclosing the surface.
+    """
+    if not _is_dev_environment():
+        raise HTTPException(status_code=404, detail="Not found")
 
-        # Try to get request body if it exists
-        try:
-            body = await request.body()
-            if body:
-                body_text = (
-                    body.decode("utf-8") if isinstance(body, bytes) else str(body)
-                )
-                body_summary = get_body_summary(body_text)
-                logger.info("Request body received", body_length=body_summary["length"])
-                logger.debug(
-                    "Request body preview", body_preview=body_summary["preview"]
-                )
-            else:
-                logger.info("Request body: (empty)")
-        except Exception as e:
-            logger.warning("Could not read request body", error=str(e))
+    # Light-touch logging: counts/keys only, never body contents.
+    logger.info(
+        "Sentry webhook redirect received (debug)",
+        method=request.method,
+        path=request.url.path,
+        user_id=user.get("user_id"),
+    )
+    query_params = dict(request.query_params)
+    params_summary = get_params_summary(query_params)
+    logger.info(
+        "Query parameters",
+        params_keys=params_summary["keys"],
+        params_count=params_summary["count"],
+    )
 
-        # Log form data if present
-        try:
-            form_data = await request.form()
-            if form_data:
-                form_dict = {k: str(v) for k, v in form_data.items()}
-                form_summary = get_params_summary(form_dict)
-                logger.info(
-                    "Form data received",
-                    form_fields=form_summary["keys"],
-                    form_count=form_summary["count"],
-                )
-                logger.debug("Form data summary", form_summary=form_summary)
-        except Exception as e:
-            logger.debug("No form data present", error=str(e))
-
-        return {
-            "status": "success",
-            "message": "Sentry webhook redirect logged successfully",
-            "logged_at": time.time(),
-        }
-
-    except Exception as e:
-        logger.exception("Error processing Sentry webhook redirect")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to process Sentry webhook redirect: {str(e)}",
-        )
+    return {
+        "status": "success",
+        "message": "Sentry webhook redirect acknowledged (dev mode)",
+        "logged_at": time.time(),
+    }
 
 
 @router.get("/linear/redirect")
@@ -648,20 +635,16 @@ async def save_linear_integration(
 async def initiate_jira_oauth(
     request: OAuthInitiateRequest,
     jira_oauth: JiraOAuth = Depends(get_jira_oauth),
+    user: dict = Depends(AuthService.check_auth),
 ) -> Dict[str, Any]:
-    """Initiate Jira OAuth flow."""
-    try:
-        logger.info(
-            "Initiating Jira OAuth flow with redirect_uri=%s state=%s",
-            request.redirect_uri,
-            request.state,
-        )
+    """Initiate Jira OAuth flow.
 
-        signed_state = (
-            _sign_oauth_state(request.state)
-            if getattr(request, "state", None)
-            else None
-        )
+    F-8: state is derived from the authenticated user (see Linear initiate
+    pattern at :475). Body-supplied state is ignored.
+    """
+    try:
+        user_id = user["user_id"]
+        signed_state = _sign_oauth_state(user_id)
         auth_url = jira_oauth.get_authorization_url(
             redirect_uri=request.redirect_uri, state=signed_state
         )
@@ -670,17 +653,14 @@ async def initiate_jira_oauth(
             "status": "success",
             "authorization_url": auth_url,
             "message": "Jira OAuth flow initiated successfully",
-            "debug_info": {
-                "redirect_uri": request.redirect_uri,
-                "state": request.state,
-                "auth_url": auth_url,
-            },
         }
-    except Exception as exc:
+    except HTTPException:
+        raise
+    except Exception:
         logger.exception("Jira OAuth initiation failed")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to initiate Jira OAuth flow: {str(exc)}",
+            detail="Failed to initiate Jira OAuth flow",
         )
 
 
@@ -991,19 +971,16 @@ async def save_jira_integration(
 async def initiate_confluence_oauth(
     request: OAuthInitiateRequest,
     confluence_oauth: ConfluenceOAuth = Depends(get_confluence_oauth),
+    user: dict = Depends(AuthService.check_auth),
 ) -> Dict[str, Any]:
-    """Initiate Confluence OAuth flow."""
+    """Initiate Confluence OAuth flow.
+
+    F-8: state is derived from the authenticated user (see Linear initiate
+    pattern at :475). Body-supplied state is ignored.
+    """
     try:
-        logger.info(
-            "Initiating Confluence OAuth flow with redirect_uri=%s state=%s",
-            request.redirect_uri,
-            request.state,
-        )
-        signed_state = (
-            _sign_oauth_state(request.state)
-            if getattr(request, "state", None)
-            else None
-        )
+        user_id = user["user_id"]
+        signed_state = _sign_oauth_state(user_id)
         auth_url = confluence_oauth.get_authorization_url(
             redirect_uri=request.redirect_uri, state=signed_state
         )
@@ -1011,17 +988,14 @@ async def initiate_confluence_oauth(
             "status": "success",
             "authorization_url": auth_url,
             "message": "Confluence OAuth flow initiated successfully",
-            "debug_info": {
-                "redirect_uri": request.redirect_uri,
-                "state": request.state,
-                "auth_url": auth_url,
-            },
         }
-    except Exception as exc:
+    except HTTPException:
+        raise
+    except Exception:
         logger.exception("Confluence OAuth initiation failed")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to initiate Confluence OAuth flow: {str(exc)}",
+            detail="Failed to initiate Confluence OAuth flow",
         )
 
 
@@ -1272,12 +1246,74 @@ async def save_confluence_integration(
         )
 
 
+def verify_sentry_webhook_signature(
+    signature_header: Optional[str], payload: bytes, webhook_secret: str
+) -> bool:
+    """Verify Sentry webhook HMAC SHA-256 signature.
+
+    Sentry sends `Sentry-Hook-Signature` as a lowercase hex digest of the body
+    keyed by the webhook (client) secret.
+    """
+    if not webhook_secret or not signature_header:
+        return False
+    expected = hmac.new(
+        webhook_secret.encode("utf-8"), payload, hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature_header.strip())
+
+
 @router.post("/sentry/webhook")
 async def sentry_webhook(request: Request) -> Dict[str, Any]:
-    """Handle Sentry webhook requests"""
+    """Handle Sentry webhook requests.
+
+    F-9: signed-payload verification. Mirrors the Linear/GitHub webhook
+    pattern: requires `Sentry-Hook-Signature` (HMAC-SHA256 of the body keyed
+    by `SENTRY_WEBHOOK_SECRET`, falling back to `SENTRY_CLIENT_SECRET`).
+    Refuses to accept payloads unless `CONTEXT_ENGINE_ALLOW_UNSIGNED_WEBHOOKS=1`.
+    """
     import json
 
     try:
+        # Read body up front so we can verify the signature over the raw bytes.
+        raw_body = await request.body()
+        if not raw_body:
+            raise HTTPException(status_code=400, detail="Empty webhook payload")
+
+        config = Config(".env")
+        sentry_secret = (
+            config("SENTRY_WEBHOOK_SECRET", default="")
+            or config("SENTRY_CLIENT_SECRET", default="")
+        )
+        allow_unsigned = (
+            os.getenv("CONTEXT_ENGINE_ALLOW_UNSIGNED_WEBHOOKS", "").strip()
+            in {"1", "true", "True"}
+        )
+        signature_header = request.headers.get(
+            "Sentry-Hook-Signature"
+        ) or request.headers.get("sentry-hook-signature")
+        if sentry_secret:
+            if not verify_sentry_webhook_signature(
+                signature_header, raw_body, sentry_secret
+            ):
+                logger.warning("Sentry webhook signature verification failed")
+                raise HTTPException(
+                    status_code=403, detail="Invalid webhook signature"
+                )
+        else:
+            if not allow_unsigned:
+                logger.error(
+                    "Sentry webhook rejected: SENTRY_WEBHOOK_SECRET not configured and "
+                    "CONTEXT_ENGINE_ALLOW_UNSIGNED_WEBHOOKS not set"
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail="Sentry webhook secret not configured",
+                )
+            logger.warning(
+                "Sentry webhook accepted without signature verification "
+                "(CONTEXT_ENGINE_ALLOW_UNSIGNED_WEBHOOKS=1)"
+            )
+
         # Log the incoming webhook request details
         logger.info("Sentry webhook received")
         logger.info("Request details", method=request.method, url=str(request.url))
@@ -1294,44 +1330,20 @@ async def sentry_webhook(request: Request) -> Dict[str, Any]:
         )
         logger.debug("Query parameters", params_summary=params_summary)
 
-        # Try to get request body if it exists
-        webhook_data = {}
+        webhook_data: Dict[str, Any] = {}
+        body_text = raw_body.decode("utf-8")
+        body_summary = get_body_summary(body_text)
+        logger.info("Request body received", body_length=body_summary["length"])
+        logger.debug("Request body preview", body_preview=body_summary["preview"])
         try:
-            body = await request.body()
-            if body:
-                body_text = body.decode("utf-8")
-                body_summary = get_body_summary(body_text)
-                logger.info("Request body received", body_length=body_summary["length"])
-                logger.debug(
-                    "Request body preview", body_preview=body_summary["preview"]
-                )
+            webhook_data = json.loads(body_text)
+        except json.JSONDecodeError:
+            logger.warning("Request body is not valid JSON")
+            webhook_data = {"raw_body": body_text}
 
-                # Try to parse as JSON
-                try:
-                    webhook_data = json.loads(body_text)
-                except json.JSONDecodeError:
-                    logger.warning("Request body is not valid JSON")
-                    webhook_data = {"raw_body": body_text}
-            else:
-                logger.info("Request body: (empty)")
-        except Exception as e:
-            logger.warning("Could not read request body", error=str(e))
-
-        # Log form data if present
-        try:
-            form_data = await request.form()
-            if form_data:
-                form_dict = {k: str(v) for k, v in form_data.items()}
-                form_summary = get_params_summary(form_dict)
-                logger.info(
-                    "Form data received",
-                    form_fields=form_summary["keys"],
-                    form_count=form_summary["count"],
-                )
-                logger.debug("Form data summary", form_summary=form_summary)
-                webhook_data.update(form_dict)
-        except Exception as e:
-            logger.debug("No form data present", error=str(e))
+        # NB: any form-data branch removed — the raw bytes have been verified
+        # by signature; reading request.form() afterwards would either fail
+        # (body already consumed) or open a second-payload bypass channel.
 
         # Extract event type from headers or payload
         event_type = (
@@ -1392,11 +1404,14 @@ async def sentry_webhook(request: Request) -> Dict[str, Any]:
                 "logged_at": time.time(),
             }
 
-    except Exception as e:
+    except HTTPException:
+        # Preserve 4xx/5xx HTTPExceptions (signature failures, bad payloads).
+        raise
+    except Exception:
         logger.exception("Error processing Sentry webhook")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to process Sentry webhook: {str(e)}",
+            detail="Failed to process Sentry webhook",
         )
 
 
@@ -2580,105 +2595,6 @@ async def get_sentry_token_status(
             "has_token": False,
             "error": str(e),
         }
-
-
-@router.get("/debug/oauth-config")
-async def debug_oauth_config(
-    integrations_service: IntegrationsService = Depends(get_integrations_service),
-) -> Dict[str, Any]:
-    """Debug endpoint to check OAuth configuration"""
-    try:
-        validation_result = await integrations_service.validate_oauth_configuration()
-
-        # Additional debugging information
-        from starlette.config import Config
-
-        config = Config()
-
-        client_id = config("SENTRY_CLIENT_ID", default="")
-        client_secret = config("SENTRY_CLIENT_SECRET", default="")
-        redirect_uri = config("SENTRY_REDIRECT_URI", default="")
-
-        debug_info = {
-            "status": "success",
-            "validation": validation_result,
-            "raw_config": {
-                "client_id": {
-                    "value": client_id,
-                    "length": len(client_id),
-                    "preview": (
-                        client_id[:8] + "..." if len(client_id) > 8 else client_id
-                    ),
-                    "is_hex": (
-                        all(c in "0123456789abcdef" for c in client_id.lower())
-                        if client_id
-                        else False
-                    ),
-                },
-                "client_secret": {
-                    "value": client_secret,
-                    "length": len(client_secret),
-                    "preview": (
-                        client_secret[:8] + "..."
-                        if len(client_secret) > 8
-                        else client_secret
-                    ),
-                    "is_hex": (
-                        all(c in "0123456789abcdef" for c in client_secret.lower())
-                        if client_secret
-                        else False
-                    ),
-                },
-                "redirect_uri": {
-                    "value": redirect_uri,
-                    "length": len(redirect_uri),
-                    "is_url": (
-                        redirect_uri.startswith(("http://", "https://"))
-                        if redirect_uri
-                        else False
-                    ),
-                },
-            },
-            "environment_check": {
-                "python_version": __import__("sys").version,
-                "httpx_available": True,
-                "starlette_config_available": True,
-            },
-        }
-
-        return debug_info
-    except Exception as e:
-        logger.exception("Error checking OAuth config")
-        return {
-            "status": "error",
-            "error": str(e),
-        }
-
-
-@router.post("/debug/test-token-exchange")
-async def debug_test_token_exchange(
-    code: str,
-    redirect_uri: str,
-    integrations_service: IntegrationsService = Depends(get_integrations_service),
-) -> Dict[str, Any]:
-    """Debug endpoint to test OAuth token exchange with detailed logging"""
-    try:
-        logger.info("=== DEBUG TOKEN EXCHANGE TEST ===")
-        logger.info("Test redirect URI", redirect_uri=redirect_uri)
-
-        # Call the token exchange method directly
-        result = await integrations_service._exchange_code_for_tokens(
-            code, redirect_uri
-        )
-
-        return {
-            "status": "success",
-            "message": "Token exchange test completed",
-            "result": result,
-        }
-    except Exception as e:
-        logger.exception("Debug token exchange failed")
-        return {"status": "error", "error": str(e), "error_type": type(e).__name__}
 
 
 @router.get("/debug/sentry-app-info")
