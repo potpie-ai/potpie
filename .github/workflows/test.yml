@@ -50,6 +50,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --no-cache
 
+      - name: Run parsing_rs Rust tests
+        run: cargo test --manifest-path app/src/parsing/Cargo.toml
+
       - name: Run test suite with coverage
         env:
           SKIP_REAL_PARSE: "1"

@@ -25,7 +25,11 @@ pub fn process_file(path: &Path) -> std::io::Result<usize> {
     }
 
     let capacity: usize = len.try_into().unwrap_or_else(|_| {
-        debug_assert!(false, "File size {} exceeds usize::MAX, truncating capacity", len);
+        debug_assert!(
+            false,
+            "File size {} exceeds usize::MAX, truncating capacity",
+            len
+        );
         usize::MAX
     });
     let mut buf = Vec::with_capacity(capacity);
