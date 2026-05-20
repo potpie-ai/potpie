@@ -161,6 +161,58 @@ def _activate_collection_alias(
     return previous_collection
 
 
+def delete_points_by_node_ids(
+    client: Any,
+    collection_name: str,
+    *,
+    node_ids: Optional[List[str]] = None,
+    file_paths: Optional[List[str]] = None,
+) -> int:
+    """Delete points from a hybrid collection by node_id or file_path.
+
+    Used by the incremental update path to drop vector points that
+    correspond to graph nodes which were just removed (deleted/modified
+    files). At least one of ``node_ids`` or ``file_paths`` must be given.
+
+    Returns 0 silently if the collection doesn't exist — keeps the
+    incremental orchestrator's error path simple.
+    """
+    from qdrant_client import models  # type: ignore
+
+    if not node_ids and not file_paths:
+        return 0
+    if not client.collection_exists(collection_name):
+        return 0
+
+    # Conditions are OR'ed: a point matches if its node_id is in
+    # ``node_ids`` *or* its file_path is in ``file_paths``. Using
+    # ``must`` here would only delete points satisfying both
+    # predicates simultaneously, leaving stale points behind when
+    # callers pass both arguments.
+    should = []
+    if node_ids:
+        should.append(
+            models.FieldCondition(
+                key="node_id",
+                match=models.MatchAny(any=list(node_ids)),
+            )
+        )
+    if file_paths:
+        should.append(
+            models.FieldCondition(
+                key="file_path",
+                match=models.MatchAny(any=list(file_paths)),
+            )
+        )
+
+    # ``Filter(should=[...])`` matches when at least one ``should``
+    # clause is satisfied (Qdrant's default for ``should`` is OR
+    # semantics with an implicit minimum-match of 1).
+    selector = models.FilterSelector(filter=models.Filter(should=should))
+    client.delete(collection_name=collection_name, points_selector=selector)
+    return 1
+
+
 def delete_hybrid_collection(
     client: Any,
     collection_name: str,
@@ -709,6 +761,7 @@ def index_nodes_to_qdrant(
     nodes: List[Dict[str, Any]],
     recreate_collection: bool = False,
     alias_name: Optional[str] = None,
+    preserve_bm25_vocabulary: bool = False,
 ) -> Tuple[int, int, int]:
     """
     Full pipeline: build all three embedding types and upsert to Qdrant.
@@ -719,6 +772,11 @@ def index_nodes_to_qdrant(
         nodes: list of node dicts from create_graph()
         recreate_collection: whether to recreate the collection schema
         alias_name: optional stable alias name for staged rebuilds
+        preserve_bm25_vocabulary: when True, keep the persisted BM25
+            token vocabulary as the authoritative term-index mapping
+            and only extend it with new tokens from ``nodes``. Used by
+            the incremental update path so sparse term indices remain
+            stable across previously-indexed points.
 
     Returns:
         Tuple of (num_nodes_indexed, num_bm25_tokens, num_colbert_dims)
@@ -745,7 +803,27 @@ def index_nodes_to_qdrant(
         bm25_vecs = build_bm25_vectors(nodes)
         colbert_vecs = build_colbert_embeddings(nodes)
 
-        if "__token_vocabulary__" in bm25_vecs:
+        # When preserving the existing vocabulary (incremental path),
+        # resolve the underlying collection name behind the alias so
+        # we read/write the right on-disk vocab file, then merge any
+        # new tokens at the end (preserving prior token→index slots).
+        if preserve_bm25_vocabulary and "__token_vocabulary__" in bm25_vecs:
+            vocab_collection_name = target_collection_name
+            if alias_name:
+                resolved = _get_alias_target(client, alias_name)
+                if resolved is not None:
+                    vocab_collection_name = resolved
+            existing_vocab = _load_token_vocabulary(vocab_collection_name) or []
+            existing_set = set(existing_vocab)
+            new_tokens = [
+                t
+                for t in bm25_vecs["__token_vocabulary__"]
+                if t not in existing_set
+            ]
+            merged_vocab = existing_vocab + sorted(new_tokens)
+            bm25_vecs["__token_vocabulary__"] = merged_vocab
+            _save_token_vocabulary(vocab_collection_name, merged_vocab)
+        elif "__token_vocabulary__" in bm25_vecs:
             _save_token_vocabulary(
                 target_collection_name, bm25_vecs["__token_vocabulary__"]
             )

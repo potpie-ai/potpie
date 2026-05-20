@@ -8,6 +8,14 @@ class ParsingRequest(BaseModel):
     repo_path: Optional[str] = Field(default=None)
     branch_name: Optional[str] = Field(default=None)
     commit_id: Optional[str] = Field(default=None)
+    full_rebuild: bool = Field(
+        default=False,
+        description=(
+            "Force a full graph rebuild instead of the default incremental "
+            "update. Set to True when the previously-persisted graph is "
+            "known to be inconsistent (e.g. after a schema change)."
+        ),
+    )
 
     def __init__(self, **data):
         super().__init__(**data)
