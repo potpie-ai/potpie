@@ -95,7 +95,7 @@ dependencies = [
 # litellm>=1.83.10 clears CVE-2026-40217 (<1.83.10) but pins openai==2.24.0, which conflicts with
 # pydantic-ai + context-engine; override to the root stack. litellm still declares python-dotenv==1.0.1.
 # Root uses pydantic-ai-slim without the mistral extra so mistralai is not pulled (fixes universal lock on 3.13).
-override-dependencies = ["python-dotenv>=1.2.2", "openai>=2.7.1"]
+override-dependencies = ["python-dotenv>=1.2.2", "openai>=2.7.1", "idna>=3.15"]
 
 [tool.uv.sources]
 parsing = { path = "app/src/parsing" }
