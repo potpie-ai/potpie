@@ -111,8 +111,6 @@ def test_discovery_priority_order_contains_all_expected_tools():
 
 def test_example_contains_hypothesis_title_pattern():
     assert "## Hypothesis" in HYPOTHESIS_MARKDOWN_EXAMPLE
-    # The worked example title
-    assert "Payment timeout" in HYPOTHESIS_MARKDOWN_EXAMPLE
 
 
 def test_example_status_line_value_is_a_valid_enum_member():
@@ -134,3 +132,32 @@ def test_example_contains_evidence_section():
 
 def test_example_contains_validation_plan_section():
     assert "### Validation Plan" in HYPOTHESIS_MARKDOWN_EXAMPLE
+
+
+def test_example_ends_with_card_terminator():
+    """Every hypothesis card must end with a literal '---' on its own line so the
+    VS Code webview parser can identify card boundaries reliably."""
+    assert HYPOTHESIS_MARKDOWN_EXAMPLE.rstrip().endswith("---"), (
+        "Example must end with '---' as the card terminator the webview parser keys on."
+    )
+
+
+def test_example_is_structural_skeleton_not_domain_specific():
+    """The canonical example must be a generic skeleton with placeholders, not a
+    concrete domain scenario the model could pattern-match against.
+
+    A previous version of this example embedded an e-commerce payment timeout
+    narrative; models on real codebases (e.g. C, systems code) borrowed its
+    vocabulary inappropriately. The skeleton uses angle-bracket placeholders to
+    make borrowing impossible.
+    """
+    # Must contain placeholder syntax — at least one <placeholder> in evidence/plan
+    assert "<" in HYPOTHESIS_MARKDOWN_EXAMPLE and ">" in HYPOTHESIS_MARKDOWN_EXAMPLE, (
+        "Example should use <placeholder> syntax to signal structural-only intent."
+    )
+    # Must NOT contain the old e-commerce vocabulary
+    forbidden_terms = ["Payment timeout", "chargeCard", "createOrder", "Sentry", "PaymentTimeoutError"]
+    for term in forbidden_terms:
+        assert term not in HYPOTHESIS_MARKDOWN_EXAMPLE, (
+            f"Example contains domain-specific term {term!r}; should be generic skeleton."
+        )

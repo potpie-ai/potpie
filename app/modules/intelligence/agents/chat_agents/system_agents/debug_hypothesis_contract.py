@@ -74,33 +74,26 @@ DISCOVERY_PRIORITY_ORDER: list[str] = [
 # This is the reference for prompt writers and webview parser implementers.
 # ---------------------------------------------------------------------------
 
-# The worked example below shows the mandatory sections only (Evidence + Validation Plan).
-# Optional sections (Debugger Evidence, Fix Proposal) are referenced in
-# HYPOTHESIS_SECTION_HEADERS and are populated by the agent during the debugging and
-# fix_proposed phases respectively.
+# Generic structural skeleton — STRUCTURE ONLY.
+# Every concrete word is a placeholder in angle brackets so the model cannot accidentally
+# borrow domain vocabulary from this example. The trailing `---` is the card terminator the
+# VS Code parser keys on; every emitted hypothesis card must end with it.
 HYPOTHESIS_MARKDOWN_EXAMPLE = """\
-## Hypothesis 1: Payment timeout is thrown but not converted into a controlled checkout response
+## Hypothesis 1: <one-line statement of the suspected root cause>
 
-### Status: debugging
+### Status: proposed
 
 ### Evidence
 
-- Stack trace captured from Sentry includes `paymentAdapter.chargeCard` at the top of the call
-  chain, indicating the timeout originates inside the payment adapter layer.
-- `createOrder` surfaces the exception directly as an HTTP 500 rather than mapping it to a
-  controlled checkout failure response (e.g. `PaymentDeclinedError`).
-- The related integration test `should return payment_failed on timeout` asserts a controlled
-  `payment_failed` response body — this test is currently red, confirming the gap.
+- <observation tied to a specific file:line, symbol, or quoted fragment of the failure signal>
+- <observation that connects the observed failure to the suspected origin>
+- <observation showing the gap between expected and actual behavior at that location>
 
 ### Validation Plan
 
-- Set a breakpoint in `chargeCard` at the point where the timeout exception is raised or caught
-  to confirm whether any local handling occurs before the exception propagates.
-- Set a breakpoint in `createOrder`'s error-handling block to verify whether a timeout error
-  is caught and mapped, or escapes uncaught.
-- Run the checkout reproduction script with a mocked slow payment gateway to trigger the timeout
-  path deterministically.
-- Inspect the exception object at each breakpoint: confirm it is a raw timeout error rather than
-  a domain-typed `PaymentTimeoutError`, then trace whether any conversion to a controlled
-  response ever takes place.
+- <breakpoint or instrumentation step naming a concrete file:line and what to inspect>
+- <command, test, or repro step that exercises the suspected path>
+- <what observation at the breakpoint will confirm or refute this hypothesis>
+
+---
 """
