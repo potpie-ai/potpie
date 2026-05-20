@@ -360,7 +360,7 @@ humanize==4.15.0
     # via flower
 hyperframe==6.1.0
     # via h2
-idna==3.11
+idna==3.15
     # via
     #   anyio
     #   email-validator
