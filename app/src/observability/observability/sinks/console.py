@@ -71,3 +71,6 @@ class ConsoleSink:
 
     def instrument(self, config: ObservabilityConfig) -> None:
         return None
+
+    def shutdown(self, config: ObservabilityConfig) -> None:
+        return None

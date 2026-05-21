@@ -33,6 +33,12 @@ class Sink(Protocol):
 
     def instrument(self, config: ObservabilityConfig) -> None: ...
 
+    def shutdown(self, config: ObservabilityConfig) -> None:
+        """Flush + release resources. Called on reconfigure and at process
+        exit (atexit). Must be best-effort and never raise — backends may
+        already be torn down during interpreter shutdown."""
+        ...
+
 
 # name -> "module:ClassName" (relative to this package), imported on resolve.
 _BUILTIN: dict[str, str] = {

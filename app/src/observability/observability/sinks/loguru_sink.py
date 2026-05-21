@@ -53,3 +53,16 @@ class LoguruSink:
 
     def instrument(self, config: ObservabilityConfig) -> None:
         return None
+
+    def shutdown(self, config: ObservabilityConfig) -> None:
+        try:
+            from loguru import logger as L
+            # complete() awaits enqueued async sinks; safe no-op if none.
+            complete = getattr(L, "complete", None)
+            if complete is not None:
+                try:
+                    complete()
+                except Exception:
+                    pass
+        except Exception:
+            pass

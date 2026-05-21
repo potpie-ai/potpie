@@ -132,3 +132,15 @@ class SentrySink:
 
     def instrument(self, config: ObservabilityConfig) -> None:
         return None
+
+    def shutdown(self, config: ObservabilityConfig) -> None:
+        # Flush pending events on reconfigure / process exit. Bounded timeout
+        # so a slow Sentry endpoint can't hang shutdown.
+        try:
+            import sentry_sdk
+            try:
+                sentry_sdk.flush(timeout=2.0)
+            except Exception:
+                pass
+        except Exception:
+            pass

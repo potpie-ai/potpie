@@ -34,6 +34,7 @@ EC4  Logs emitted before `configure()` would otherwise hit the default root
 
 from __future__ import annotations
 
+import atexit
 import contextvars
 import logging
 import os
@@ -52,7 +53,7 @@ SAFETY_TAG = "safety"
 _context_var: contextvars.ContextVar[dict] = contextvars.ContextVar(
     "observability_context", default={}
 )
-_state: dict = {"configured_pid": None}
+_state: dict = {"configured_pid": None, "sinks": [], "config": None}
 
 _RESERVED = ("exc_info", "stack_info", "stacklevel")
 
@@ -191,6 +192,17 @@ def configure(config: "ObservabilityConfig | None" = None) -> None:
     cfg = config or ObservabilityConfig()
     root = logging.getLogger()
 
+    # Shutdown previously-active sinks (best-effort) before tearing down
+    # their handlers — gives batch backends (Sentry, logfire) a chance to
+    # flush. Never raise out of shutdown.
+    prev_sinks = list(_state.get("sinks") or ())
+    prev_cfg = _state.get("config") or cfg
+    for s in prev_sinks:
+        try:
+            getattr(s, "shutdown", lambda *_: None)(prev_cfg)
+        except Exception:
+            pass
+
     for h in _iter_managed(root):
         try:
             h.close()
@@ -200,10 +212,12 @@ def configure(config: "ObservabilityConfig | None" = None) -> None:
 
     ctx_filter = ContextFilter()
     red_filter = RedactionFilter() if cfg.redact else None
+    new_sinks: list = []
 
     for name in cfg.sinks:
         sink = registry.resolve(name)
         sink.setup(cfg)
+        new_sinks.append(sink)
         handler = sink.build_handler(cfg)
         if handler is not None:
             handler.addFilter(ctx_filter)  # inject context first
@@ -220,6 +234,21 @@ def configure(config: "ObservabilityConfig | None" = None) -> None:
     root.setLevel(cfg.level)
     apply_library_levels(cfg.library_levels)
     _state["configured_pid"] = os.getpid()
+    _state["sinks"] = new_sinks
+    _state["config"] = cfg
+
+
+def _shutdown_all_sinks() -> None:
+    """atexit hook: flush every active sink so batched events (Sentry,
+    logfire) aren't lost on process exit. Never raise."""
+    sinks = list(_state.get("sinks") or ())
+    cfg = _state.get("config") or ObservabilityConfig()
+    for s in sinks:
+        try:
+            getattr(s, "shutdown", lambda *_: None)(cfg)
+        except Exception:
+            pass
 
 
 _install_safety_handler()
+atexit.register(_shutdown_all_sinks)

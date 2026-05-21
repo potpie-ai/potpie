@@ -68,3 +68,19 @@ class LogfireSink:
 
     def instrument(self, config: ObservabilityConfig) -> None:
         return None
+
+    def shutdown(self, config: ObservabilityConfig) -> None:
+        # logfire batches spans/logs; flush before the process / sink dies.
+        # API surface varies across versions; try the common spellings.
+        try:
+            import logfire
+        except Exception:
+            return
+        for name in ("force_flush", "shutdown"):
+            fn = getattr(logfire, name, None)
+            if callable(fn):
+                try:
+                    fn()
+                    return
+                except Exception:
+                    continue
