@@ -44,15 +44,21 @@ def test_canonical_writer_rejects_bad_pot_id():
             _require_valid_pot_id(bad)
 
 
-def test_edge_type_allowlist_blocks_injected_relations():
+def test_predicate_allowlist_blocks_injected_relations():
+    """Rebuild plan P0: edge writes are :RELATES_TO {name: <predicate>}.
+
+    The MERGE template fixes the relationship type to ``:RELATES_TO``;
+    the only injected value is the predicate ``name``, which the writer
+    requires to be a canonical-vocab entry.
+    """
     from adapters.outbound.graphiti.canonical_writer import (
-        _is_allowed_edge_type,
+        _is_valid_predicate,
     )
 
-    assert _is_allowed_edge_type("OWNS") is True
-    assert _is_allowed_edge_type("Totally_Made_Up_Edge") is False
-    assert _is_allowed_edge_type("bad-char") is False
-    assert _is_allowed_edge_type("") is False
+    assert _is_valid_predicate("OWNS") is True
+    assert _is_valid_predicate("Totally_Made_Up_Edge") is False
+    assert _is_valid_predicate("bad-char") is False
+    assert _is_valid_predicate("") is False
 
 
 # NOTE: the provider_host allowlist (M-2) lives in the host module

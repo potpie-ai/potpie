@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Iterable, Mapping, Sequence
-
-import pytest
+from typing import Iterable, Mapping, Sequence
 
 from application.services.source_connector_registry import SourceConnectorRegistry
 from domain.context_events import ContextEvent
@@ -32,7 +30,6 @@ class _FakeConnector:
                 fetch_capable=fetch,
                 list_capable=False,
                 webhook_capable=webhook,
-                plan_capable=True,
                 sync_capable=False,
             )
         ]
@@ -74,11 +71,6 @@ class _FakeConnector:
                 )
             )
         return out
-
-    def propose_plan(self, event: ContextEvent, context_graph: object) -> Any:
-        del event, context_graph
-        return None
-
 
 def test_register_and_lookup_by_kind() -> None:
     reg = SourceConnectorRegistry()
@@ -212,4 +204,3 @@ def test_third_source_smoke_test_notion_connector_loads() -> None:
     assert "notion" in manifest
     notion_caps = manifest["notion"].capabilities
     assert notion_caps and notion_caps[0].provider == "notion"
-    assert notion_caps[0].plan_capable is True

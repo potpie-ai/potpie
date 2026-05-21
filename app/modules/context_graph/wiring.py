@@ -24,8 +24,15 @@ from app.modules.context_graph.context_graph_pot_repository_model import (
 from app.modules.context_graph.context_graph_pot_source_model import (
     ContextGraphPotSource,
 )
+from adapters.outbound.connectors._bench_stubs import (
+    AlertingStubConnector,
+    DeployStubConnector,
+    RepoDocsStubConnector,
+    SlackStubConnector,
+)
 from adapters.outbound.connectors.github import GitHubConnector
 from adapters.outbound.connectors.linear.connector import LinearConnector
+from adapters.outbound.connectors.notion import NotionConnector
 from application.services.source_connector_registry import SourceConnectorRegistry
 from bootstrap.container import ContextEngineContainer, build_container
 from domain.context_status import StatusSource
@@ -426,6 +433,16 @@ def _build_connector_registry(db: Session, source_for_repo) -> SourceConnectorRe
             allow_unsigned=True,
         )
     )
+    # Passive bench-stub connectors — register them in the host registry
+    # too so the benchmark probe sees the full set of source kinds
+    # (notion/slack/repo_docs/alerting/deploy). They advertise no fetch
+    # capability so production traffic without a real reader still fails
+    # closed; they exist solely as ``source_system`` markers.
+    registry.register(NotionConnector())
+    registry.register(SlackStubConnector())
+    registry.register(RepoDocsStubConnector())
+    registry.register(AlertingStubConnector())
+    registry.register(DeployStubConnector())
     return registry
 
 

@@ -159,9 +159,15 @@ returned.
   actually names, not for open-ended research):
   - web_search(query) — cited answer for vendor changelogs, dependency
     advisories, SDK/API behaviour, incident status. Pass a full question.
-  - web_extract_page(url) — markdown of one page the event links to (a
-    doc, RFC, or postmortem). Cite it; treat an unreachable page as
-    unknown, not as fact.
+  - web_fetch(url) — SSRF-protected fetch of one URL; returns the page as
+    markdown (or binary content as-is). The zero-config primitive: use
+    this when you only need the page text, including when web_extract_page
+    is unavailable. Private/loopback addresses are blocked.
+  - web_extract_page(url) — Firecrawl-backed extraction of one page (when
+    configured); higher-fidelity markdown for JS-rendered or paywalled
+    pages. Prefer over ``web_fetch`` when both are present and the page is
+    known to need JS rendering. Cite the URL; treat an unreachable page
+    as unknown, not as fact.
 
 Sandbox tools (when present):
 The pot may have one or more repositories cloned into a shared sandbox. Sandbox
@@ -940,6 +946,16 @@ class PydanticDeepReconciliationAgent:
             )
         except (asyncio.TimeoutError, TimeoutError):
             await _run_cleanup_callbacks(state)
+            try:
+                from bootstrap.observability_runtime import get_observability
+
+                get_observability().counter(
+                    "ce.agent.timeout_total",
+                    1,
+                    attributes={"pot_id": ctx.pot_id},
+                )
+            except Exception:  # noqa: BLE001 — never break failure handling
+                pass
             logger.error(
                 "agent.run() timed out after %.0fs for batch %s",
                 run_timeout,

@@ -1,16 +1,20 @@
 """GitHub source connector — single point of contact for everything GitHub.
 
-Bundles five GitHub-shaped surfaces behind one class:
+Bundles four GitHub-shaped surfaces behind one class:
 
 - Read access to PRs/issues → :attr:`api_client`
 - Reference resolution → :meth:`fetch`
-- Deterministic PR-merge plan compilation → :meth:`propose_plan`
 - Webhook signature + parsing (called from
   ``adapters/inbound/http/webhooks/integrations/github.py``) →
   :meth:`normalize_webhook`
 - Agent tool bindings → :func:`build_github_agent_tools`
 
 The application layer never imports anything in this module.
+
+Rebuild plan P0: removed ``propose_plan`` (deterministic PR-merge plan
+compilation). Webhooks now produce raw :class:`ContextEvent`\\s; the P5
+deterministic activity layer + LLM reconciliation agent turn them into
+:RELATES_TO claims.
 """
 
 from __future__ import annotations
@@ -27,13 +31,9 @@ from adapters.outbound.connectors.github.api_client import (
     GitHubReadPort,
     PyGithubSourceControl,
 )
-from adapters.outbound.connectors.github.plan import build_github_pr_merged_plan
 from adapters.outbound.connectors.github.resolver import GitHubPullRequestResolver
-from adapters.outbound.connectors.github.review_threads import group_review_threads
-from domain.context_events import ContextEvent, EventRef
-from domain.deterministic_extractors import extract_issue_refs
+from domain.context_events import ContextEvent
 from domain.ports.source_connector import SourceConnectorPort
-from domain.reconciliation import ReconciliationPlan
 from domain.source_connector import ConnectorScope, SourceCapability
 from domain.source_references import SourceReferenceRecord
 from domain.source_resolution import (
@@ -95,7 +95,6 @@ class GitHubConnector(SourceConnectorPort):
                     fetch_capable=True,
                     list_capable=cap.source_kind in {"pull_request", "issue"},
                     webhook_capable=True,
-                    plan_capable=cap.source_kind == "pull_request",
                     sync_capable=cap.source_kind == "pull_request",
                 )
             )
@@ -109,7 +108,6 @@ class GitHubConnector(SourceConnectorPort):
                     fetch_capable=False,
                     list_capable=False,
                     webhook_capable=bool(self._webhook_secret),
-                    plan_capable=True,
                     sync_capable=True,
                     notes="github_token unavailable",
                 )
@@ -237,46 +235,6 @@ class GitHubConnector(SourceConnectorPort):
             auth=auth,
         )
 
-    def propose_plan(
-        self,
-        event: ContextEvent,
-        context_graph: object,
-    ) -> ReconciliationPlan | None:
-        del context_graph  # GitHub PR plan compiler does not need graph reads.
-        if event.event_type != "pull_request" or event.action != "merged":
-            return None
-        repo_name = (event.repo_name or "").strip()
-        pr_number_raw = event.payload.get("pr_number")
-        if not repo_name or pr_number_raw is None:
-            return None
-        try:
-            pr_number = int(pr_number_raw)
-        except (TypeError, ValueError):
-            return None
-
-        try:
-            client = self._source_for_repo(repo_name)
-        except Exception as exc:
-            logger.warning("github propose_plan: source_for_repo failed: %s", exc)
-            return None
-
-        bundle = _fetch_full_pr(client, repo_name, pr_number)
-        event_ref = EventRef(
-            event_id=event.event_id,
-            source_system="github",
-            pot_id=event.pot_id,
-        )
-        return build_github_pr_merged_plan(
-            event_ref=event_ref,
-            repo_name=repo_name,
-            pr_data=bundle["pr_data"],
-            commits=bundle["commits"],
-            review_threads=bundle["review_threads"],
-            linked_issues=bundle["linked_issues"],
-            issue_comments=bundle["issue_comments"],
-        )
-
-
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------
@@ -309,41 +267,6 @@ def _default_repo_resolver(_pot_id: str, ref: SourceReferenceRecord) -> str | No
     if isinstance(hint, dict) and hint.get("repo_name"):
         return str(hint["repo_name"])
     return None
-
-
-def _fetch_full_pr(
-    client: GitHubReadPort,
-    repo_name: str,
-    pr_number: int,
-) -> dict[str, Any]:
-    pr_data = client.get_pull_request(repo_name, pr_number, include_diff=True)
-    commits = client.get_pull_request_commits(repo_name, pr_number)
-    review_comments = client.get_pull_request_review_comments(repo_name, pr_number)
-    review_threads = group_review_threads(review_comments)
-    issue_comments = client.get_pull_request_issue_comments(repo_name, pr_number)
-
-    issue_refs: set[int] = set(extract_issue_refs(pr_data.get("body")))
-    for commit in commits:
-        issue_refs.update(extract_issue_refs(commit.get("message")))
-
-    linked_issues: list[dict[str, Any]] = []
-    for issue_number in sorted(issue_refs):
-        try:
-            linked_issues.append(client.get_issue(repo_name, issue_number))
-        except Exception as exc:
-            logger.warning(
-                "Failed fetching linked issue #%s for %s: %s",
-                issue_number,
-                repo_name,
-                exc,
-            )
-    return {
-        "pr_data": pr_data,
-        "commits": commits,
-        "review_threads": review_threads,
-        "issue_comments": issue_comments,
-        "linked_issues": linked_issues,
-    }
 
 
 __all__ = [

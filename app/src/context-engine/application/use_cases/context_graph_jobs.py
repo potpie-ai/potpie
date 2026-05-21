@@ -20,6 +20,28 @@ from sqlalchemy.orm import Session
 
 from application.use_cases.process_batch import process_batch
 from bootstrap.container import ContextEngineContainer
+from bootstrap.observability_context import correlation_scope
+from bootstrap.observability_runtime import get_observability
+from domain.ports.observability import SPAN_KIND_CONSUMER
+
+
+def _ingress_links(reco_ledger, batches_repo, batch_id: str) -> list[str]:
+    """W3C traceparents of the batch's events' (long-gone) ingress traces.
+
+    The batch span links back to each so an operator can pivot from the
+    async run to the request that produced an event, across the windowed
+    delay that makes live context propagation impossible.
+    """
+    links: list[str] = []
+    try:
+        for ref in batches_repo.list_events_for_batch(batch_id):
+            row = reco_ledger.get_event_by_id(ref.event_id)
+            tp = getattr(row, "correlation_id", None)
+            if tp:
+                links.append(tp)
+    except Exception:  # noqa: BLE001 — links are best-effort
+        return links
+    return links
 
 
 def handle_process_batch(
@@ -41,17 +63,62 @@ def handle_process_batch(
     batch = batches_repo.claim_batch_by_id(batch_id)
     if batch is None:
         return {"status": "skipped", "reason": "not_pending", "batch_id": batch_id}
-    outcome = process_batch(
-        batch=batch,
-        agent=container.reconciliation_agent,
-        batches=batches_repo,
-        reco_ledger=container.reconciliation_ledger(db),
-        checkpoints=container.agent_checkpoint_store(db),
-        pots=container.pots,
-        policy=container.policy(),
-        stream_publisher=container.event_stream_publisher,
-        execution_log=container.agent_execution_log(db),
-    )
+
+    reco_ledger = container.reconciliation_ledger(db)
+    obs = get_observability()
+    links = _ingress_links(reco_ledger, batches_repo, batch.id)
+    # The batch is the primary async trace (fan-in: N events → 1 run → M
+    # mutations). It links back to each event's ingress trace.
+    with correlation_scope(batch_id=batch.id, pot_id=batch.pot_id):
+        with obs.span(
+            "batch.process",
+            kind=SPAN_KIND_CONSUMER,
+            attributes={"batch_id": batch.id, "pot_id": batch.pot_id},
+            links=links,
+        ) as span:
+            obs.counter(
+                "ce.batch.started_total", 1, attributes={"pot_id": batch.pot_id}
+            )
+            # Time-in-pending: the windowed-5min canary. If the flusher
+            # wedges, this is what screams before anything else.
+            try:
+                if batch.created_at and batch.claimed_at:
+                    wait_ms = (
+                        batch.claimed_at - batch.created_at
+                    ).total_seconds() * 1000.0
+                    obs.histogram(
+                        "ce.batch.time_in_pending_ms",
+                        wait_ms,
+                        attributes={"pot_id": batch.pot_id},
+                    )
+            except Exception:  # noqa: BLE001 — best-effort metric
+                pass
+            outcome = process_batch(
+                batch=batch,
+                agent=container.reconciliation_agent,
+                batches=batches_repo,
+                reco_ledger=reco_ledger,
+                checkpoints=container.agent_checkpoint_store(db),
+                pots=container.pots,
+                policy=container.policy(),
+                stream_publisher=container.event_stream_publisher,
+                execution_log=container.agent_execution_log(db),
+            )
+            span.set_attribute("batch.ok", bool(outcome.ok))
+            span.set_attribute(
+                "batch.completed_events", len(outcome.completed_event_ids)
+            )
+            span.set_attribute("batch.tool_calls", outcome.tool_call_count)
+            if not outcome.ok:
+                span.set_error(outcome.error or "batch failed")
+            obs.counter(
+                "ce.batch.finished_total",
+                1,
+                attributes={
+                    "pot_id": batch.pot_id,
+                    "result": "ok" if outcome.ok else "failed",
+                },
+            )
     return {
         "status": "ok" if outcome.ok else "failed",
         "batch_id": outcome.batch_id,

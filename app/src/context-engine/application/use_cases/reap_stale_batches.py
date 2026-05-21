@@ -80,6 +80,18 @@ def reap_stale_batches(
             events_failed += reco_ledger.fail_inflight_events(event_ids, reason)
             batches.mark_batch_failed(batch.id, reason)
             reaped_ids.append(batch.id)
+            # The only true dead-letter in the system — every firing is a
+            # lost/stuck batch. High-signal: alert on rate(ce.batch.reaped_total).
+            try:
+                from bootstrap.observability_runtime import get_observability
+
+                get_observability().counter(
+                    "ce.batch.reaped_total",
+                    1,
+                    attributes={"pot_id": batch.pot_id},
+                )
+            except Exception:  # noqa: BLE001 — never break the reaper
+                pass
             logger.warning(
                 "reaped stale batch %s (pot %s, status=%s, attempt=%d, "
                 "claimed_at=%s)",

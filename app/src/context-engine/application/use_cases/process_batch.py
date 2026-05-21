@@ -24,8 +24,11 @@ from application.services.agent_work_events import (
     WorkEventRecord,
     build_work_events,
 )
+from bootstrap.observability_context import correlation_scope
+from bootstrap.observability_runtime import get_observability
 from domain.actor import SYSTEM_ACTOR
 from domain.context_events import ContextEvent
+from domain.ports.observability import SPAN_KIND_INTERNAL
 from domain.ports.agent_checkpoint_store import AgentCheckpointStorePort
 from domain.ports.agent_execution_log import (
     AgentExecutionLogPort,
@@ -365,9 +368,43 @@ def process_batch(
             start_seq=_seq[0],
         )
 
+        _obs = get_observability()
+        _chunk_label = f"{idx}/{chunks_total}"
+        _event_ids_csv = ",".join(chunk_pending_ids)
         try:
-            chunk_outcome = agent.run_batch(
-                chunk_ctx, execution_log=exec_log
+            # Baggage so pydantic-ai's own (child) spans inherit the ids and
+            # are traceable back to this agent run; the span itself carries
+            # them as attributes for the deterministic case.
+            with correlation_scope(chunk=_chunk_label), _obs.baggage(
+                pot_id=batch.pot_id,
+                batch_id=batch.id,
+                chunk=_chunk_label,
+                event_ids=_event_ids_csv,
+            ), _obs.span(
+                "agent.run_batch",
+                kind=SPAN_KIND_INTERNAL,
+                attributes={
+                    "pot_id": batch.pot_id,
+                    "batch_id": batch.id,
+                    "agent.chunk": _chunk_label,
+                    "agent.attempt": batch.attempt_count,
+                    "agent.event_count": len(chunk_pending_ids),
+                    "agent.event_ids": _event_ids_csv,
+                },
+            ) as _span:
+                chunk_outcome = agent.run_batch(
+                    chunk_ctx, execution_log=exec_log
+                )
+                _span.set_attribute("agent.ok", bool(chunk_outcome.ok))
+                _span.set_attribute(
+                    "agent.tool_calls", chunk_outcome.tool_call_count
+                )
+                if not chunk_outcome.ok:
+                    _span.set_error(chunk_outcome.error or "agent run not ok")
+            _obs.histogram(
+                "ce.agent.tool_calls",
+                float(chunk_outcome.tool_call_count),
+                attributes={"pot_id": batch.pot_id},
             )
         except Exception as exc:
             logger.exception(
@@ -450,6 +487,11 @@ def process_batch(
             _safe_publish_end(
                 stream, pot_id=batch.pot_id, event_id=eid, status="done",
             )
+        get_observability().counter(
+            "ce.events.reconciled_total",
+            len(completed),
+            attributes={"pot_id": batch.pot_id},
+        )
         return ProcessBatchOutcome(
             batch_id=batch.id,
             ok=True,
@@ -480,6 +522,18 @@ def process_batch(
         _fmt_event_ids(failed_event_ids),
     )
     reco_ledger.record_events_failed(failed_event_ids, err)
+    _obs_fin = get_observability()
+    if aggregated_completed:
+        _obs_fin.counter(
+            "ce.events.reconciled_total",
+            len(aggregated_completed),
+            attributes={"pot_id": batch.pot_id},
+        )
+    _obs_fin.counter(
+        "ce.events.failed_total",
+        len(failed_event_ids),
+        attributes={"pot_id": batch.pot_id},
+    )
     _safe_publish_status(
         stream,
         pot_id=batch.pot_id,

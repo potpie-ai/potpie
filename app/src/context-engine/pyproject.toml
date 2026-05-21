@@ -39,6 +39,11 @@ reconciliation-agent = [
 hatchet = [
     "hatchet-sdk>=1.29.0",
 ]
+observability = [
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp>=1.27.0",
+    "opentelemetry-instrumentation-openai>=0.40b0",
+]
 all = [
     "sqlalchemy>=2.0",
     "psycopg[binary]>=3.2",
@@ -47,6 +52,9 @@ all = [
     "pygithub>=2.8.0",
     "pydantic-deep>=0.3.0",
     "hatchet-sdk>=1.29.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp>=1.27.0",
+    "opentelemetry-instrumentation-openai>=0.40b0",
 ]
 dev = [
     "pytest>=9.0.3",

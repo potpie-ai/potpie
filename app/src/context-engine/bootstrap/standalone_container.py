@@ -4,6 +4,12 @@ from __future__ import annotations
 
 import os
 
+from adapters.outbound.connectors._bench_stubs import (
+    AlertingStubConnector,
+    DeployStubConnector,
+    RepoDocsStubConnector,
+    SlackStubConnector,
+)
 from adapters.outbound.connectors.notion import NotionConnector
 from adapters.outbound.reconciliation.factory import try_pydantic_deep_reconciliation_agent
 from application.services.source_connector_registry import SourceConnectorRegistry
@@ -44,6 +50,11 @@ def build_standalone_context_engine_container() -> ContextEngineContainer:
     # ``context_status`` returns a non-empty connector manifest.
     registry = SourceConnectorRegistry()
     registry.register(NotionConnector())
+    # Bench-time stubs — same rationale as in build_container_with_github_token.
+    registry.register(SlackStubConnector())
+    registry.register(RepoDocsStubConnector())
+    registry.register(AlertingStubConnector())
+    registry.register(DeployStubConnector())
     return build_container(
         pots=pots,
         connectors=registry,

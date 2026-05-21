@@ -5,6 +5,9 @@ Wraps Potpie's existing user-scoped web tooling — ``WebSearchTool``
 ``WebpageExtractorTool`` (Firecrawl) — as pydantic-deep tool callables so
 the ingestion agent can ground external references (changelogs, vendor
 docs, status pages, RFC links) instead of guessing from a webhook summary.
+A third tool, ``web_fetch`` (pydantic-ai's SSRF-protected built-in), is the
+zero-config fallback that works without any provider key — so a pot with
+no OpenRouter/Firecrawl wiring still gets a way to read a linked URL.
 
 This module is host-coupled by design: it lives on the Potpie side rather
 than inside the context-engine hexagon because it depends on
@@ -12,10 +15,11 @@ than inside the context-engine hexagon because it depends on
 ``PydanticDeepReconciliationAgent.add_extra_tools`` in
 :mod:`app.modules.context_graph.wiring`.
 
-Both tools resolve the *pot owner's* account so web search bills/keys and
-provider routing match "the account configured for that user". Each tool
-soft-skips (the whole builder returns ``[]``) when its API key is absent,
-mirroring the standalone factory functions.
+The two provider-backed tools resolve the *pot owner's* account so web
+search bills/keys and provider routing match "the account configured for
+that user". Each tool soft-skips (omitted from the returned list) when its
+backing API key / dependency is absent, mirroring the standalone factory
+functions; ``web_fetch`` only soft-skips if ``markdownify`` is missing.
 """
 
 from __future__ import annotations
@@ -59,6 +63,33 @@ def build_web_tools(
                 )
                 return []
 
+        tools: list[Any] = []
+
+        # ``web_fetch`` is independent of pot-owner identity: it does not
+        # bill against any provider, only requires ``markdownify`` for the
+        # HTML→markdown conversion. Register it before the resolver-gated
+        # tools so a pot without an owning user / provider keys still has a
+        # working web reader.
+        try:
+            from pydantic_ai.common_tools.web_fetch import (  # type: ignore[import-not-found]
+                web_fetch_tool,
+            )
+
+            tools.append(
+                web_fetch_tool(
+                    max_content_length=50_000,
+                    timeout=30,
+                    # allow_local_urls defaults to False — SSRF-safe.
+                )
+            )
+        except ImportError:
+            logger.info(
+                "web_fetch tool disabled (markdownify not installed; "
+                "`pip install \"pydantic-ai-slim[web-fetch]\"`)"
+            )
+        except Exception:
+            logger.exception("failed to construct web_fetch tool")
+
         pot_id = getattr(state, "pot_id", None)
         try:
             user_id = user_resolver(pot_id)
@@ -67,11 +98,11 @@ def build_web_tools(
             user_id = None
         if not user_id:
             logger.info(
-                "web tools disabled for pot %s (no owning user resolved)", pot_id
+                "provider-backed web tools disabled for pot %s "
+                "(no owning user resolved); web_fetch may still be available",
+                pot_id,
             )
-            return []
-
-        tools: list[Any] = []
+            return tools
 
         if (os.getenv("OPENROUTER_API_KEY") or "").strip():
             from app.modules.intelligence.tools.web_tools.web_search_tool import (

@@ -14,6 +14,7 @@ from typing import Any, Callable, Optional, TypeVar
 from adapters.outbound.graphiti.canonical_writer import (
     apply_invalidations_async as _writer_apply_invalidations_async,
     delete_edges_async,
+    ensure_canonical_indexes,
     upsert_edges_async,
     upsert_entities_async,
 )
@@ -317,19 +318,45 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
 
         await _ensure_graphiti_entity_defaults_async(g.driver, pot_id)
         install_extract_edges_normalize_patch()
-        result = await g.add_episode(
-            name=name,
-            episode_body=episode_body,
-            source_description=source_description,
-            reference_time=reference_time,
-            group_id=pot_id,
-            entity_types=ENTITY_TYPES,
-            edge_types=EDGE_TYPES,
-            edge_type_map=EDGE_TYPE_MAP,
-            custom_extraction_instructions=GRAPHITI_CUSTOM_EXTRACTION_INSTRUCTIONS,
+
+        # The single most expensive LLM step in the pipeline (Graphiti's
+        # internal entity/edge extraction + embeddings). It was invisible
+        # to both cost telemetry and OTel; the span here + OpenAI-SDK
+        # auto-instrumentation make those internal calls nested, attributed
+        # child spans, and stamp the event→episode link as an attribute.
+        import time as _time
+
+        from bootstrap.observability_runtime import get_observability
+        from domain.ports.observability import SPAN_KIND_CLIENT
+
+        _obs = get_observability()
+        _ev = provenance.source_event_id if provenance else None
+        _t0 = _time.perf_counter()
+        with _obs.span(
+            "graph.add_episode",
+            kind=SPAN_KIND_CLIENT,
+            attributes={"pot_id": pot_id, "event_id": _ev, "graph.episode": name},
+        ) as _gspan:
+            result = await g.add_episode(
+                name=name,
+                episode_body=episode_body,
+                source_description=source_description,
+                reference_time=reference_time,
+                group_id=pot_id,
+                entity_types=ENTITY_TYPES,
+                edge_types=EDGE_TYPES,
+                edge_type_map=EDGE_TYPE_MAP,
+                custom_extraction_instructions=GRAPHITI_CUSTOM_EXTRACTION_INSTRUCTIONS,
+            )
+            episode = getattr(result, "episode", None)
+            episode_uuid = getattr(episode, "uuid", None)
+            # The durable event→graph backlink, recorded in-trace.
+            _gspan.set_attribute("graph.episode_uuid", episode_uuid)
+        _obs.histogram(
+            "ce.graph.add_episode_ms",
+            (_time.perf_counter() - _t0) * 1000.0,
+            attributes={"pot_id": pot_id},
         )
-        episode = getattr(result, "episode", None)
-        episode_uuid = getattr(episode, "uuid", None)
         if episode_uuid and provenance is not None:
             try:
                 from adapters.outbound.graphiti.apply_episode_provenance import (
@@ -510,6 +537,23 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
                 )
             )
         return out
+
+    async def ensure_indexes_async(self) -> bool:
+        """Idempotently create the Position B indexes on the live Neo4j.
+
+        Safe to call at boot and on every health check; ``CREATE INDEX
+        IF NOT EXISTS`` makes subsequent calls no-ops. Returns ``True``
+        when indexes are confirmed present, ``False`` when Graphiti is
+        disabled / unavailable (the caller usually treats that as a
+        warning rather than a hard failure).
+        """
+        if not self.enabled:
+            return False
+        g = self._get_graphiti()
+        if g is None:
+            return False
+        await ensure_canonical_indexes(g.driver)
+        return True
 
     async def apply_entity_upserts_async(
         self,

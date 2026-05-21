@@ -18,9 +18,11 @@ class SourceCapability:
     """One ``(provider, source_kind)`` pairing the connector advertises.
 
     Mirrors :class:`domain.source_resolution.ResolverCapabilityEntry` but
-    extended with the additional verbs a connector may expose
-    (webhooks, listing, plan proposal) so ``context_status`` can render
-    a single manifest instead of three independent ones.
+    extended with the additional verbs a connector may expose (webhooks,
+    listing) so ``context_status`` can render a single manifest instead
+    of three independent ones.
+
+    Rebuild plan P0: dropped ``plan_capable`` along with ``propose_plan``.
     """
 
     provider: str
@@ -29,7 +31,6 @@ class SourceCapability:
     fetch_capable: bool = False
     list_capable: bool = False
     webhook_capable: bool = False
-    plan_capable: bool = False
     sync_capable: bool = False
     notes: str | None = None
 
@@ -80,7 +81,6 @@ def merge_capability_policies(
             fetch_capable=existing.fetch_capable or cap.fetch_capable,
             list_capable=existing.list_capable or cap.list_capable,
             webhook_capable=existing.webhook_capable or cap.webhook_capable,
-            plan_capable=existing.plan_capable or cap.plan_capable,
             sync_capable=existing.sync_capable or cap.sync_capable,
             notes=existing.notes or cap.notes,
         )

@@ -12,6 +12,12 @@ from adapters.outbound.connectors.github import (
     GitHubReadPort,
     PyGithubSourceControl,
 )
+from adapters.outbound.connectors._bench_stubs import (
+    AlertingStubConnector,
+    DeployStubConnector,
+    RepoDocsStubConnector,
+    SlackStubConnector,
+)
 from adapters.outbound.connectors.notion import NotionConnector
 from adapters.outbound.graphiti.context_graph import GraphitiContextGraphAdapter
 from adapters.outbound.reconciliation.context_graph_tools import (
@@ -78,6 +84,7 @@ from domain.ports.context_graph_job_queue import (
 from domain.ports.policy import PolicyPort
 from domain.ports.pot_resolution import PotResolutionPort
 from domain.ports.pot_source_listing import PotSourceListingPort
+from domain.ports.observability import NoOpObservability, ObservabilityPort
 from domain.ports.reconciliation_agent import ReconciliationAgentPort
 from domain.ports.settings import ContextEngineSettingsPort
 from domain.ports.telemetry import TelemetryPort
@@ -113,6 +120,10 @@ class ContextEngineContainer:
     Both are surfaced by ``context_status``."""
     telemetry: TelemetryPort | None = None
     """Cost + drift sink. ``None`` is treated as ``NoOpTelemetry``."""
+    observability: ObservabilityPort = field(default_factory=NoOpObservability)
+    """Tracing + metrics sink. NoOp by default (ships dark); the OTel
+    adapter is wired only when an OTLP endpoint is configured. Distinct
+    from ``telemetry`` (business cost/drift) — bridged, not merged."""
     event_stream_publisher: EventStreamPublisherPort = field(
         default_factory=NoOpEventStreamPublisher
     )
@@ -255,13 +266,38 @@ def build_container(
     reconciliation_agent: ReconciliationAgentPort | None = None,
     jobs: ContextGraphJobQueuePort | None = None,
     telemetry: TelemetryPort | None = None,
+    observability: ObservabilityPort | None = None,
     event_stream_publisher: EventStreamPublisherPort | None = None,
 ) -> ContextEngineContainer:
     s = settings or EnvContextEngineSettings()
     telemetry_sink = telemetry or _default_telemetry()
+    observability_sink = observability or _default_observability()
+    # Publish to the process-global accessor so middleware / the Celery
+    # worker / infra wrappers see the same sink the container holds.
+    from bootstrap.observability_runtime import set_observability
+
+    set_observability(observability_sink)
+    # Bridge (not merge) cost/drift into OTel metrics when observability is
+    # live, so the same numbers reach Prometheus without touching the
+    # record_cost / record_drift call sites.
+    if not isinstance(observability_sink, NoOpObservability):
+        from adapters.outbound.observability.telemetry_bridge import (
+            ObservabilityTelemetryBridge,
+        )
+
+        telemetry_sink = ObservabilityTelemetryBridge(
+            telemetry_sink, observability_sink
+        )
     stream_publisher = event_stream_publisher or _default_event_stream_publisher()
     episodic = GraphitiEpisodicAdapter(s)
     structural = Neo4jStructuralAdapter(s)
+    # Composition-root infra instrumentation: wrap the Neo4j read adapter
+    # so every structural query is a span + latency/error metric, without
+    # editing the adapter. Only when observability is live (zero NoOp cost).
+    if not isinstance(observability_sink, NoOpObservability):
+        from bootstrap.observability_proxy import instrument_adapter
+
+        structural = instrument_adapter(structural, "neo4j", observability_sink)
     intelligence_provider = HybridGraphIntelligenceProvider(
         episodic=episodic,
         structural=structural,
@@ -287,6 +323,7 @@ def build_container(
     )
     _attach_reconciliation_context(reconciliation_agent, context_graph)
     _attach_reconciliation_telemetry(reconciliation_agent, telemetry_sink)
+    _attach_reconciliation_observability(reconciliation_agent, observability_sink)
     _attach_reconciliation_event_stream(reconciliation_agent, stream_publisher)
     return ContextEngineContainer(
         settings=s,
@@ -301,6 +338,7 @@ def build_container(
         reconciliation_agent=reconciliation_agent,
         jobs=jobs or NoOpContextGraphJobQueue(),
         telemetry=telemetry_sink,
+        observability=observability_sink,
         event_stream_publisher=stream_publisher,
     )
 
@@ -323,6 +361,46 @@ def _default_telemetry() -> TelemetryPort:
         return NoOpTelemetry()
 
 
+def _observability_enabled() -> bool:
+    import os
+
+    raw = os.getenv("CONTEXT_ENGINE_OBSERVABILITY", "").strip().lower()
+    return raw not in ("", "0", "false", "no", "off")
+
+
+def _default_observability() -> ObservabilityPort:
+    """Default observability sink. NoOp unless explicitly enabled.
+
+    ``CONTEXT_ENGINE_OBSERVABILITY=console`` selects the dependency-free
+    console adapter (local dev). Any other truthy value selects the OTel
+    adapter, but only when an OTLP endpoint is actually configured — so the
+    feature ships dark and never tries to export into the void.
+    """
+    import os
+
+    if not _observability_enabled():
+        return NoOpObservability()
+    mode = os.getenv("CONTEXT_ENGINE_OBSERVABILITY", "").strip().lower()
+    if mode == "console":
+        try:
+            from adapters.outbound.observability.console import ConsoleObservability
+
+            return ConsoleObservability()
+        except Exception:  # noqa: BLE001
+            return NoOpObservability()
+    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT") or os.getenv(
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+    )
+    if not endpoint:
+        return NoOpObservability()
+    try:
+        from adapters.outbound.observability.otel import OtelObservability
+
+        return OtelObservability()
+    except Exception:  # noqa: BLE001 — missing extra / setup failure → dark
+        return NoOpObservability()
+
+
 def _attach_reconciliation_telemetry(
     agent: ReconciliationAgentPort | None,
     telemetry: TelemetryPort,
@@ -332,6 +410,22 @@ def _attach_reconciliation_telemetry(
     setter = getattr(agent, "set_telemetry", None)
     if setter is not None:
         setter(telemetry)
+
+
+def _attach_reconciliation_observability(
+    agent: ReconciliationAgentPort | None,
+    observability: ObservabilityPort,
+) -> None:
+    """Wire the observability sink into the agent if it accepts one.
+
+    Duck-typed like ``_attach_reconciliation_telemetry`` — old agents that
+    don't expose ``set_observability`` simply don't get spans/metrics.
+    """
+    if agent is None:
+        return
+    setter = getattr(agent, "set_observability", None)
+    if setter is not None:
+        setter(observability)
 
 
 def _attach_reconciliation_event_stream(
@@ -430,6 +524,15 @@ def build_container_with_github_token(
     # "available connector, no live read access" so the registry can still
     # surface it in ``context_status`` and prove the contract is wired.
     registry.register(NotionConnector())
+    # Bench-time passive stubs for sources without production readers
+    # yet (see adapters/outbound/connectors/_bench_stubs.py). They route
+    # envelopes through reconciliation but advertise no fetch capability,
+    # so production traffic that lacks a real reader will still fail
+    # closed instead of silently grading against a stub.
+    registry.register(SlackStubConnector())
+    registry.register(RepoDocsStubConnector())
+    registry.register(AlertingStubConnector())
+    registry.register(DeployStubConnector())
 
     return build_container(
         settings=settings,

@@ -2,20 +2,24 @@
 
 A ``SourceConnector`` is the single extension point the engine exposes for
 adding a new source — GitHub, Linear, Notion, Slack, Sentry, PagerDuty, a
-documentation site, a CI pipeline. It bundles five concerns behind one
+documentation site, a CI pipeline. It bundles four concerns behind one
 contract:
 
 - Read access to artifacts → :meth:`fetch` / :meth:`list_artifacts`
 - Reference-to-live-data resolution → :meth:`fetch`
 - Webhook normalization → :meth:`normalize_webhook`
-- Deterministic plan compilation → :meth:`propose_plan`
 - Status manifest contribution → :meth:`capabilities` aggregated by the registry
 
-All five verbs are optional. A passive connector (e.g. a documentation
-URL resolver) implements only :meth:`fetch` and :meth:`capabilities`; a
-deterministic event-driven connector implements all five. Connectors
-declare exactly what they support via :class:`SourceCapability` so the
-registry can route requests cleanly.
+All verbs are optional. A passive connector (e.g. a documentation URL
+resolver) implements only :meth:`fetch` and :meth:`capabilities`; an
+event-driven connector also implements :meth:`normalize_webhook` and
+:meth:`list_artifacts`. Connectors declare exactly what they support via
+:class:`SourceCapability` so the registry can route requests cleanly.
+
+Rebuild plan P0: removed ``propose_plan`` (deterministic event-driven plan
+compilation). Webhooks now produce raw :class:`ContextEvent`\\s that the
+P5 deterministic activity layer + LLM reconciliation agent turn into
+claims; no per-connector plan compiler.
 """
 
 from __future__ import annotations
@@ -23,7 +27,6 @@ from __future__ import annotations
 from typing import Iterable, Mapping, Protocol, Sequence
 
 from domain.context_events import ContextEvent
-from domain.reconciliation import ReconciliationPlan
 from domain.source_connector import ConnectorScope, SourceCapability
 from domain.source_references import SourceReferenceRecord
 from domain.source_resolution import (
@@ -77,18 +80,4 @@ class SourceConnectorPort(Protocol):
         auth: ResolverAuthContext,
     ) -> SourceResolutionResult:
         """Resolve refs into summaries / snippets / verifications under ``source_policy``."""
-        ...
-
-    def propose_plan(
-        self,
-        event: ContextEvent,
-        context_graph: object,  # ContextGraphPort — typed dynamically to avoid cycles
-    ) -> ReconciliationPlan | None:
-        """Propose a deterministic :class:`ReconciliationPlan` for an event.
-
-        Connectors with deterministic mappings (e.g. GitHub PR merged →
-        canonical entities + edges) return a plan. Connectors that only
-        contribute resolution return ``None``; the reconciliation agent
-        plans from the raw event.
-        """
         ...

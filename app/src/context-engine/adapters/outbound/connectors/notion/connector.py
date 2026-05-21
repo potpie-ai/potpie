@@ -1,29 +1,23 @@
-"""Notion docs connector — Phase 2 smoke test for the connector contract.
+"""Notion docs connector — smoke test for the connector contract.
 
-This is the third-source smoke test mandated by ``plan.md`` Phase 2. Its
-job is to prove the :class:`SourceConnectorPort` interface is right by
-implementing it from scratch for a source the engine has not seen before.
-
-The connector is intentionally minimal:
+Implements :class:`SourceConnectorPort` for Notion to prove the interface is
+right by adding a source the engine has not seen before. The connector is
+intentionally minimal:
 
 - :meth:`capabilities` advertises ``("notion", "page")`` with policies
   ``summary`` and ``snippets``.
 - :meth:`fetch` resolves Notion page refs to summaries / snippets via an
   injected :class:`NotionPageFetcher` (the host wires up the actual
   Notion HTTP client; tests pass a fake).
-- :meth:`propose_plan` emits a tiny :class:`ReconciliationPlan` for a
-  ``notion_page`` event: a ``Document`` entity carrying the page title +
-  source ref. Heavier ontology mapping (sections, blocks) is intentionally
-  out of scope for the smoke test — the contract is what we are validating.
 - :meth:`normalize_webhook` returns ``None`` because Notion's webhooks
   are still in beta and we have not committed to a payload shape; the
   capability flag advertises ``webhook_capable=False``.
 - :meth:`list_artifacts` is supported when the host's fetcher exposes a
   list operation; otherwise empty.
 
-If extending the engine to add Notion in production requires editing
-anything in ``application/`` or ``domain/``, the connector contract is
-wrong and Phase 2 should not have closed.
+Rebuild plan P0: removed ``propose_plan`` (deterministic page-event plan
+compilation). The LLM reconciliation agent + the eventual P4 doc-source
+scanner produce :RELATES_TO claims from the fetched page body.
 """
 
 from __future__ import annotations
@@ -31,12 +25,9 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, Protocol, Sequence
-from uuid import uuid4
 
-from domain.context_events import ContextEvent, EventRef
-from domain.graph_mutations import EntityUpsert
+from domain.context_events import ContextEvent
 from domain.ports.source_connector import SourceConnectorPort
-from domain.reconciliation import ReconciliationPlan
 from domain.source_connector import ConnectorScope, SourceCapability
 from domain.source_references import SourceReferenceRecord
 from domain.source_resolution import (
@@ -94,7 +85,6 @@ class NotionConnector(SourceConnectorPort):
                     fetch_capable=False,
                     list_capable=False,
                     webhook_capable=False,
-                    plan_capable=True,
                     sync_capable=False,
                     notes="notion fetcher not configured",
                 ),
@@ -107,7 +97,6 @@ class NotionConnector(SourceConnectorPort):
                 fetch_capable=True,
                 list_capable=True,
                 webhook_capable=False,
-                plan_capable=True,
                 sync_capable=False,
             ),
         )
@@ -247,60 +236,6 @@ class NotionConnector(SourceConnectorPort):
                     )
                 )
         return result
-
-    def propose_plan(
-        self,
-        event: ContextEvent,
-        context_graph: object,
-    ) -> ReconciliationPlan | None:
-        del context_graph
-        if event.event_type != "notion_page":
-            return None
-        page = event.payload.get("page")
-        if not isinstance(page, dict):
-            return None
-        page_id = str(page.get("id") or "").strip()
-        if not page_id:
-            return None
-        title = str(page.get("title") or "").strip()
-        url = str(page.get("url") or "").strip() or None
-        entity_key = f"notion:page:{page_id}"
-        observed_at = (
-            event.occurred_at or datetime.now(timezone.utc)
-        ).isoformat()
-
-        return ReconciliationPlan(
-            event_ref=EventRef(
-                event_id=event.event_id,
-                source_system="notion",
-                pot_id=event.pot_id,
-            ),
-            summary=f"Notion page {title or page_id}",
-            episodes=[],
-            entity_upserts=[
-                EntityUpsert(
-                    entity_key=entity_key,
-                    labels=("Entity", "Document"),
-                    properties={
-                        "name": title or page_id,
-                        "title": title,
-                        "source_type": "page",
-                        "source_system": "notion",
-                        "external_id": page_id,
-                        "uri": url,
-                        "retrieval_uri": url,
-                        "last_seen_at": observed_at,
-                        "access": "allowed",
-                        "fetchable": True,
-                    },
-                )
-            ],
-            edge_upserts=[],
-            edge_deletes=[],
-            invalidations=[],
-            confidence=0.9,
-        )
-
 
 def _page_id_from_ref(ref: SourceReferenceRecord) -> str | None:
     if ref.external_id:

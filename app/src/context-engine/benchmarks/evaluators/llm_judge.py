@@ -47,6 +47,7 @@ class CriterionGrade:
     passed: bool
     justification: str
     raw: str
+    dimensions: tuple[str, ...] = ()
 
 
 def _build_user_prompt(
@@ -149,6 +150,7 @@ def _grade_one(
         passed=passed,
         justification=justification,
         raw=text,
+        dimensions=criterion.dimensions,
     )
 
 
@@ -201,6 +203,7 @@ def evaluate_synthesis(
                 passed=False,
                 justification=f"(judge error: {exc})",
                 raw="",
+                dimensions=criterion.dimensions,
             )
         grades.append(grade)
 
@@ -228,8 +231,39 @@ def evaluate_synthesis(
                 "score": g.score,
                 "passed": g.passed,
                 "justification": g.justification,
+                "dimensions": list(g.dimensions),
             }
             for g in grades
         ],
     }
     return EvaluationResult(score=score, passed=passed, details=details, errors=errors)
+
+
+def synthesis_by_dimension(judge_details: dict[str, Any]) -> dict[str, float]:
+    """Bucket the weighted-criterion score by declared dimension.
+
+    A criterion with ``dimensions: [TIME, BUG]`` contributes its
+    weight×score to *each* of TIME and BUG. Criteria with no dimensions
+    are attributed to ``"_default"`` so the runner can fold them into
+    the scenario's primary dimension(s).
+
+    Returns a dimension → score(0..100) map.
+    """
+    buckets: dict[str, list[tuple[int, int]]] = {}
+    for c in judge_details.get("criteria") or []:
+        score_pt = int(c.get("score") or 0)
+        weight = int(c.get("weight") or 0)
+        dims = tuple(c.get("dimensions") or ()) or ("_default",)
+        for d in dims:
+            buckets.setdefault(d, []).append((weight, score_pt))
+    out: dict[str, float] = {}
+    for dim, items in buckets.items():
+        weight_sum = sum(w for w, _ in items)
+        if weight_sum <= 0:
+            out[dim] = 0.0
+            continue
+        # Each grade is 1..5; convert to 0..100 weighted mean.
+        weighted = sum(w * s for w, s in items)
+        # Max for this bucket is weight_sum * 5; project to 0..100.
+        out[dim] = round(100.0 * weighted / (5.0 * weight_sum), 1)
+    return out

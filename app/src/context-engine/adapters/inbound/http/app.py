@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from adapters.inbound.http._hardening import install_hardening
 from adapters.inbound.http.api.router import api_router
 from adapters.inbound.http.webhooks.router import webhooks_router
+from bootstrap.logging_setup import configure_logging
 
 try:
     __version__ = importlib.metadata.version("context-engine")
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
+    configure_logging()
     app = FastAPI(title="context-engine", version=__version__)
 
     @app.exception_handler(HTTPException)

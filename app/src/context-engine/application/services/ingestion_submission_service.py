@@ -14,6 +14,9 @@ from uuid import uuid4
 
 from application.services.event_admission import admit_event
 from application.services.ingestion_wait import wait_for_terminal_ingestion_event
+from bootstrap.observability_context import bind_correlation, correlation_scope
+from bootstrap.observability_runtime import get_observability
+from domain.ports.observability import SPAN_KIND_SERVER
 from domain.context_events import (
     ContextEvent,
     EventScope,
@@ -77,7 +80,43 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
         ``sync=True`` and ``wait=True`` both block until the event reaches a
         terminal state (``done`` / ``error``); they're aliases for ergonomic
         use by callers that want a synchronous response.
+
+        Thin observability wrapper: opens the ``ingest.submit`` span and
+        binds the pot to the correlation context so the (sync) ingress
+        trace and every log line on this path carry the pot. The event id
+        and the persisted trace correlation are bound inside ``_do_submit``
+        once the id is known.
         """
+        obs = get_observability()
+        with correlation_scope(pot_id=request.pot_id):
+            with obs.span(
+                "ingest.submit",
+                kind=SPAN_KIND_SERVER,
+                attributes={
+                    "pot_id": request.pot_id,
+                    "ingest.source_system": request.source_system,
+                    "ingest.event_type": request.event_type,
+                },
+            ) as span:
+                receipt = self._do_submit(
+                    request,
+                    sync=sync,
+                    wait=wait,
+                    timeout_seconds=timeout_seconds,
+                )
+                span.set_attribute("ingest.event_id", receipt.event_id)
+                span.set_attribute("ingest.duplicate", bool(receipt.duplicate))
+                span.set_attribute("ingest.status", receipt.status)
+                return receipt
+
+    def _do_submit(
+        self,
+        request: IngestionSubmissionRequest,
+        *,
+        sync: bool = False,
+        wait: bool = False,
+        timeout_seconds: float | None = None,
+    ) -> EventReceipt:
         if not self._settings.is_enabled():
             raise ValueError("context_graph_disabled")
         if self._reconciliation_agent is None:
@@ -105,6 +144,9 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
             raise ValueError("source_id is required for ingestion submissions")
 
         eid = request.event_id or str(uuid4())
+        # Bind the event id for the rest of this (sync) ingress path; the
+        # enclosing correlation_scope in submit() resets it on exit.
+        bind_correlation(event_id=eid, source=request.source_system)
         kind = request.ingestion_kind or INGESTION_KIND_AGENT_RECONCILIATION
         event = ContextEvent(
             event_id=eid,
@@ -141,6 +183,29 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
             event,
             ingestion_config=self._ingestion_config,
         )
+
+        obs = get_observability()
+        metric_attrs = {"source": request.source_system}
+        if outcome.inserted:
+            # Resurrect the long-dead correlation_id column: persist the
+            # ingress trace so the async batch run can span-link back to it
+            # across the windowed delay.
+            try:
+                tp = obs.current_traceparent()
+                if tp:
+                    self._reco.set_event_job_metadata(
+                        outcome.event_id, correlation_id=tp
+                    )
+            except Exception:  # noqa: BLE001 — observability never fails ingest
+                logger.debug(
+                    "observability: persist trace correlation failed",
+                    exc_info=True,
+                )
+            obs.counter("ce.ingest.events_total", 1, attributes=metric_attrs)
+            if outcome.batch_id:
+                bind_correlation(batch_id=outcome.batch_id)
+        else:
+            obs.counter("ce.ingest.dedup_total", 1, attributes=metric_attrs)
 
         if not outcome.inserted:
             ev = self._events.get_event(outcome.event_id)

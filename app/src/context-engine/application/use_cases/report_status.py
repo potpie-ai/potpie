@@ -281,7 +281,6 @@ def report_status(
                         "fetch_capable": c.fetch_capable,
                         "list_capable": c.list_capable,
                         "webhook_capable": c.webhook_capable,
-                        "plan_capable": c.plan_capable,
                         "sync_capable": c.sync_capable,
                         "notes": c.notes,
                     }

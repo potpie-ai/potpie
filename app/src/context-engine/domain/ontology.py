@@ -187,6 +187,16 @@ class EdgeTypeSpec:
     predicate_family: str | None = None
     """Membership in a predicate family for auto-supersession and conflict detection."""
 
+    # --- Edge cardinality (rebuild plan P2 / F3) ---------------------------
+    singleton: bool = False
+    """When True, ``(subject, predicate)`` admits one live object at a time.
+
+    The canonical writer auto-stamps ``invalid_at`` on any prior live
+    claim with the same subject + predicate but a different object when
+    a new deterministic claim lands. Multi-source corroboration on the
+    same object is preserved (singleton applies to objects, not sources).
+    """
+
     # --- Endpoint disambiguation -------------------------------------------
     source_inferred_labels: tuple[str, ...] = ()
     target_inferred_labels: tuple[str, ...] = ()
@@ -1089,6 +1099,7 @@ def _x(
     public: bool = True,
     lifecycle_carrier: bool = False,
     predicate_family: str | None = None,
+    singleton: bool = False,
     source_inferred: Iterable[str] = (),
     target_inferred: Iterable[str] = (),
 ) -> EdgeTypeSpec:
@@ -1101,6 +1112,7 @@ def _x(
         category=category,
         lifecycle_carrier=lifecycle_carrier,
         predicate_family=predicate_family,
+        singleton=singleton,
         source_inferred_labels=tuple(source_inferred),
         target_inferred_labels=tuple(target_inferred),
     )
@@ -1174,6 +1186,47 @@ EDGE_TYPES: dict[str, EdgeTypeSpec] = {
         [("Service", "Environment"), ("Deployment", "Environment")],
         category="structural",
         predicate_family="deployment_target",
+        singleton=True,
+    ),
+    "OF_SERVICE": _x(
+        "OF_SERVICE",
+        # Rebuild plan P3 (F1): Service ↔ Deployment join.
+        #
+        # The proper POC found that LLM extractors over k8s manifests
+        # commonly classify the manifest entity as ``Deployment`` (key
+        # ``deploy:auth-svc``) and emit topology claims (USES,
+        # DEPLOYED_TO) from the Deployment, not the Service. Without an
+        # OF_SERVICE edge back to the named Service, the InfraTopology
+        # reader's "what does auth-svc depend on?" query returns 0%.
+        # Marking OF_SERVICE singleton lets the canonical writer keep
+        # exactly one live binding per Deployment.
+        "Deployment belongs to a named Service (per-Service deployment "
+        "manifest, k8s namespace annotation, etc.).",
+        [("Deployment", "Service")],
+        category="structural",
+        singleton=True,
+    ),
+    "OWNED_BY": _x(
+        "OWNED_BY",
+        # Rebuild plan P2 (F3) + Position B: services / components have
+        # exactly one *current* owner. Multi-source corroboration on the
+        # same owner is fine; a new owner supersedes the old one
+        # deterministically. Inverse of OWNS (kept for back-compat with
+        # the LLM extraction pipeline).
+        "Service / component / feature is owned by one person or team.",
+        [
+            ("Service", "Person"),
+            ("Service", "Team"),
+            ("Component", "Person"),
+            ("Component", "Team"),
+            ("Feature", "Person"),
+            ("Feature", "Team"),
+            ("Repository", "Person"),
+            ("Repository", "Team"),
+        ],
+        category="ownership",
+        predicate_family="owner_binding",
+        singleton=True,
     ),
     "GATED_BY": _x(
         "GATED_BY",
@@ -1669,6 +1722,33 @@ EDGE_TYPES: dict[str, EdgeTypeSpec] = {
         [("Activity", "Period")],
         category="timeline",
     ),
+    "MENTIONS": _x(
+        "MENTIONS",
+        # Rebuild plan P5 (F4): episode → entity provenance.
+        #
+        # The proper POC found that PR-merged Activity events emit
+        # ``(person:alice) -[MERGED_BY]-> (pr:1042)`` but never link to
+        # the affected service. The TIME reader's "activities about
+        # service X" query missed PR events entirely. MENTIONS closes
+        # this: every entity surfaced in an enriched episode body gets
+        # a MENTIONS claim back from the source Activity, so readers
+        # can traverse ``(Activity)-[:MENTIONS]->(Entity)`` to find
+        # scope-relevant activities.
+        "Activity / episode body references an entity (provenance link).",
+        [("Activity", WILDCARD_ENDPOINT)],
+        category="timeline",
+    ),
+    "ALIAS_OF": _x(
+        "ALIAS_OF",
+        # Rebuild plan P1: alias-as-claim. A surface form like
+        # "Auth Service" resolves to ``service:auth-svc`` by writing
+        # an ALIAS_OF claim from the variant entity to the canonical;
+        # the canonicalization pass + identity resolver follow the
+        # chain to find the canonical key.
+        "Surface-form entity is the same logical thing as the canonical entity.",
+        [(WILDCARD_ENDPOINT, WILDCARD_ENDPOINT)],
+        category="identity",
+    ),
 }
 
 
@@ -1682,6 +1762,29 @@ SCOPE_LABELS: frozenset[str] = frozenset(
 ACTIVITY_LABELS: frozenset[str] = frozenset(
     label for label, spec in ENTITY_TYPES.items() if spec.is_activity
 ) | {"Activity"}
+# Rebuild plan P2 (F3) + P3: ontology is the single source of truth
+# for which predicates are singleton; the registry rebuilds itself from
+# this set so any new ``singleton=True`` flag on an edge spec auto-
+# propagates to the canonical writer's supersession path.
+SINGLETON_EDGE_TYPES: frozenset[str] = frozenset(
+    edge_type for edge_type, spec in EDGE_TYPES.items() if spec.singleton
+)
+
+
+def _sync_singleton_registry() -> None:
+    """Reset the singleton-predicate registry to match the ontology.
+
+    Called at module import so adding a ``singleton=True`` flag in
+    ``EDGE_TYPES`` automatically applies to the canonical writer's
+    supersession path. Tests that need a custom set should use
+    :func:`domain.singleton_predicates.replace_singletons` then restore.
+    """
+    from domain.singleton_predicates import replace_singletons
+
+    replace_singletons(SINGLETON_EDGE_TYPES)
+
+
+_sync_singleton_registry()
 
 
 def _build_entity_family_map(attr: str) -> dict[str, str]:

@@ -4,6 +4,8 @@ import sys
 
 import uvicorn
 
+from bootstrap.logging_setup import configure_logging
+
 logger = logging.getLogger(__name__)
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
@@ -36,6 +38,7 @@ def _assert_safe_to_bind(host: str) -> None:
 
 
 def main() -> None:
+    configure_logging()
     host = os.environ.get("CONTEXT_ENGINE_HOST", "127.0.0.1")
     port = int(os.environ.get("CONTEXT_ENGINE_PORT", "8000"))
     reload = os.environ.get("CONTEXT_ENGINE_RELOAD", "").lower() in (

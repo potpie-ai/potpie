@@ -103,6 +103,27 @@ def create_ephemeral_pot(
     pot_id = created.get("id") or created.get("pot_id")
     if not pot_id:
         raise RuntimeError(f"create_context_pot returned no id: {created!r}")
+    # The server-side default is ``windowed/5min`` (waits for the 60s
+    # periodic flush). Bench scenarios complete in seconds, so flip the
+    # ephemeral pot to ``immediate`` so each submitted event is picked up
+    # by the worker right away — otherwise every drain times out.
+    try:
+        import httpx
+        with httpx.Client(timeout=20.0) as http:
+            r = http.put(
+                f"{client._base}/api/v2/context/pots/{pot_id}/ingestion-config",
+                json={"mode": "immediate"},
+                headers={"X-API-Key": client._api_key, "Content-Type": "application/json"},
+            )
+            if r.status_code >= 300:
+                logger.warning(
+                    "could not set ephemeral pot %s to immediate mode (HTTP %d): %s",
+                    pot_id,
+                    r.status_code,
+                    r.text[:200],
+                )
+    except Exception as exc:  # pragma: no cover - best-effort
+        logger.warning("ingestion-config set failed for pot %s: %s", pot_id, exc)
     logger.info("created ephemeral pot %s slug=%s repo=%s", pot_id, slug, primary_repo)
     return EphemeralPot(pot_id=str(pot_id), slug=slug, repo_name=primary_repo)
 

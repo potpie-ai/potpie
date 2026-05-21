@@ -21,7 +21,6 @@ from typing import Iterable, Mapping, Sequence
 
 from domain.context_events import ContextEvent
 from domain.ports.source_connector import SourceConnectorPort
-from domain.reconciliation import ReconciliationPlan
 from domain.source_connector import (
     ConnectorManifest,
     SourceCapability,
@@ -256,7 +255,7 @@ class SourceConnectorRegistry:
         return out
 
     # ------------------------------------------------------------------
-    # Webhook + plan dispatch
+    # Webhook dispatch
     # ------------------------------------------------------------------
     def normalize_webhook(
         self,
@@ -268,16 +267,6 @@ class SourceConnectorRegistry:
         if connector is None:
             return None
         return connector.normalize_webhook(payload, headers)
-
-    def propose_plan(
-        self,
-        event: ContextEvent,
-        context_graph: object,
-    ) -> ReconciliationPlan | None:
-        connector = self.find_for_event(event)
-        if connector is None:
-            return None
-        return connector.propose_plan(event, context_graph)
 
     def list_artifacts(
         self,

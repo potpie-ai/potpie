@@ -272,6 +272,9 @@ def _split_csv(value: str | None) -> list[str]:
 
 
 def main() -> None:
+    from bootstrap.logging_setup import configure_logging
+
+    configure_logging()
     mcp.run()
 
 

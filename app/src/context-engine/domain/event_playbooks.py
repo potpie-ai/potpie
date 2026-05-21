@@ -166,6 +166,7 @@ _register(
             "github_get_pull_request",
             "github_get_issue",
             "context_graph_overview",
+            "web_fetch",
         ),
         max_tool_calls=400,
         enables_planner=True,
@@ -244,6 +245,7 @@ _register(
             "linear_list_issues",
             "linear_get_issue",
             "context_graph_overview",
+            "web_fetch",
         ),
         max_tool_calls=400,
         enables_planner=True,
@@ -284,6 +286,7 @@ _register(
             "github_get_pull_request_review_comments",
             "github_get_pull_request_issue_comments",
             "context_recent_changes",
+            "web_fetch",
         ),
         max_tool_calls=20,
     )
@@ -315,7 +318,7 @@ _register(
             "Don't auto-resolve issues — the open event is a signal of intent, "
             "not a confirmed bug. Use warnings for ambiguous reports."
         ),
-        tool_hints=("github_get_issue", "context_search"),
+        tool_hints=("github_get_issue", "context_search", "web_fetch"),
         max_tool_calls=15,
     )
 )
@@ -343,11 +346,14 @@ _register(
             "the submission to the user."
         ),
         skip=(
-            "Don't try to resolve URLs or fetch external content — only the "
-            "supplied text is in scope. Don't infer a code area unless the "
-            "note explicitly names one."
+            "The supplied text is the source of truth. If the note links to "
+            "a specific URL and reading it would materially ground the "
+            "Document/Decision, fetch THAT url with web_fetch — never browse "
+            "open-endedly, follow chained links, or invent content the page "
+            "did not contain. Don't infer a code area unless the note "
+            "explicitly names one."
         ),
-        tool_hints=("context_search",),
+        tool_hints=("context_search", "web_fetch"),
         max_tool_calls=10,
     )
 )

@@ -1,0 +1,83 @@
+id: infra_topology_basic
+use_case: INFRA
+tier: quick
+difficulty: easy
+source_mix: single
+universe: acme
+
+description: |
+  An agent is debugging an inventory-svc 5xx and needs the service's
+  dependency topology to know what else to check. The engine should
+  return the upstream + downstream edges grounded in the canonical
+  Acme architecture (architecture.md + the checkout-api README),
+  including:
+
+    - inventory-svc → postgres(inventory-prod-db)
+    - inventory-svc → kafka(orders-topic)
+    - checkout-api → inventory-svc
+
+  Owners (`@platform-data` / bench-user-2) must be named. Environments
+  (dev/staging/prod) should be acknowledged as distinct.
+
+ingest:
+  - { event: repo_docs/checkout_api_readme_update.json, at: "-10d", tags: [signal] }
+
+post_ingest_assertions:
+  graph_must_contain_entities:
+    - { label: Document, key_pattern: "checkout-api-readme" }
+    - { label: Document, key_pattern: "platform-architecture" }
+  reconciliation:
+    soft_downgrades_max: 3
+    failed_events_max: 0
+
+query:
+  intent: debugging
+  scope: { service: inventory-svc }
+  include: [service_map, repo_map, owners, docs]
+  mode: balanced
+  source_policy: summary
+
+retrieval_assertions:
+  required_includes_used: [owners]
+  source_refs_min: 2
+  must_cite_event_id:
+    - universe/acme/00-architecture.json
+
+judge:
+  pass_score: 65
+  criteria:
+    - name: topology_correct
+      weight: 35
+      pass_threshold: 3
+      dimensions: [INFRA]
+      prompt: |
+        Does the answer name the correct dependencies for inventory-svc
+        — specifically postgres(inventory-prod-db), kafka(orders-topic),
+        and the fact that checkout-api is its primary upstream caller?
+        Missing one of these three reduces the score; inventing
+        dependencies that are not in the architecture doc fails this.
+    - name: environment_distinction
+      weight: 25
+      pass_threshold: 3
+      dimensions: [INFRA]
+      prompt: |
+        Does the answer acknowledge that inventory-svc runs in three
+        environments (dev/staging/prod) and that ArgoCD is the deploy
+        path? Collapsing them all into "production" fails this.
+    - name: owner_attribution
+      weight: 20
+      pass_threshold: 4
+      dimensions: [INFRA]
+      prompt: |
+        Does the answer name the correct owner team (`@platform-data`)
+        and lead (bench-user-2) for inventory-svc? Vague ownership
+        ("the platform team") does not pass.
+    - name: no_invented_services
+      weight: 20
+      pass_threshold: 5
+      dimensions: [INFRA]
+      prompt: |
+        Are all services named in the answer drawn from the canonical
+        Acme service list (checkout-api, inventory-svc, payments-svc,
+        notifications-svc, auth-svc, web-app, analytics-pipeline)?
+        Inventing a service name fails this criterion.

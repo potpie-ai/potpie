@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from adapters.outbound.http.potpie_context_api_client import (
@@ -49,6 +49,11 @@ class IngestionOutcome:
     duration_s: float
     error: str | None = None
     soft_downgrades: int = 0
+    # Engine lifecycle snapshot at terminal-state time — populated on
+    # failure / timeout so the ingestion evaluator can include
+    # `stage`, `job_id`, `step_error`, and `lifecycle_status` in the
+    # error message. Empty on success.
+    lifecycle: dict[str, Any] = field(default_factory=dict)
 
 
 def submit_event(
@@ -60,12 +65,24 @@ def submit_event(
 ) -> dict[str, Any]:
     """Submit a single replay event via /events/reconcile.
 
-    ``repo_name`` is required by the engine. Linear events typically
-    carry ``repo_name=None`` in the envelope (they're not repo-scoped),
-    but the bench's ephemeral pot has a primary repo attached, so we
-    fall back to that.
+    ``repo_name`` is required by the engine and validated against the
+    pot's repo binding (``repo_not_in_pot`` if mismatched). Linear
+    events typically carry ``repo_name=None`` in the envelope (not
+    repo-scoped), and so do universe seed events — they describe the
+    canonical org, not a specific repo of the bench's runtime pot. In
+    both cases we substitute the pot's primary repo so the submission
+    passes the binding check.
+
+    Seed events with an explicit envelope-level repo (e.g.
+    ``acme/platform``) are also rewritten to the pot's repo — the
+    bench has no way to bind an arbitrary pot to the universe's
+    intended monorepo, and the agent extracts org/repo references
+    from the payload content regardless.
     """
-    repo_name = event.repo_name or fallback_repo_name
+    if event.role == "seed":
+        repo_name = fallback_repo_name
+    else:
+        repo_name = event.repo_name or fallback_repo_name
     body: dict[str, Any] = {
         "pot_id": pot_id,
         "ingestion_kind": "agent_reconciliation",
@@ -83,6 +100,49 @@ def submit_event(
     return payload if isinstance(payload, dict) else {}
 
 
+_LIFECYCLE_FIELDS = (
+    "status",
+    "lifecycle_status",
+    "stage",
+    "step_done",
+    "step_total",
+    "step_error",
+    "job_id",
+    "reconciliation_runs",
+    "error",
+    "error_message",
+)
+
+
+def _lifecycle_snapshot(event_row: dict[str, Any]) -> dict[str, Any]:
+    """Pull the diagnostic fields a failed ingest should surface."""
+    out: dict[str, Any] = {}
+    for k in _LIFECYCLE_FIELDS:
+        v = event_row.get(k)
+        if v is not None and v != "":
+            out[k] = v
+    return out
+
+
+def _format_lifecycle(snapshot: dict[str, Any]) -> str:
+    """One-line, log-friendly representation. Empty if snapshot is empty."""
+    if not snapshot:
+        return ""
+    parts = []
+    for k in _LIFECYCLE_FIELDS:
+        if k in snapshot:
+            parts.append(f"{k}={snapshot[k]!r}")
+    return " ".join(parts)
+
+
+class _IngestTimeout(TimeoutError):
+    """Carries the last poll response so the caller can record a snapshot."""
+
+    def __init__(self, message: str, last: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.last = last
+
+
 def wait_for_event_terminal(
     client: PotpieContextApiClient,
     event_id: str,
@@ -90,15 +150,17 @@ def wait_for_event_terminal(
     timeout_s: float = DEFAULT_TIMEOUT_S,
     poll_interval_s: float = DEFAULT_POLL_INTERVAL_S,
 ) -> dict[str, Any]:
-    """Poll /events/{event_id} until terminal or timeout."""
+    """Poll /events/{event_id} until terminal or timeout.
+
+    On timeout, the raised ``_IngestTimeout`` carries the last poll
+    response so callers can record the engine-side lifecycle snapshot.
+    """
     started = time.monotonic()
     last: dict[str, Any] = {}
     while time.monotonic() - started < timeout_s:
         try:
             last = client.get_event(event_id)
         except PotpieContextApiError as exc:
-            # 404 right after submission is normal — the row may not be
-            # readable yet on a slow DB. Treat any non-200 as transient.
             logger.debug("get_event %s transient: %s", event_id, exc)
             time.sleep(poll_interval_s)
             continue
@@ -106,9 +168,10 @@ def wait_for_event_terminal(
         if status in TERMINAL_STATUSES:
             return last
         time.sleep(poll_interval_s)
-    raise TimeoutError(
+    raise _IngestTimeout(
         f"event {event_id} did not reach terminal state in {timeout_s}s "
-        f"(last status: {last.get('status')!r})"
+        f"(last status: {last.get('status')!r})",
+        last=last,
     )
 
 
@@ -144,19 +207,19 @@ def submit_and_wait(
 
     try:
         terminal = wait_for_event_terminal(client, str(event_id), timeout_s=timeout_s)
-    except TimeoutError as exc:
+    except _IngestTimeout as exc:
+        snapshot = _lifecycle_snapshot(exc.last)
+        suffix = f" [{_format_lifecycle(snapshot)}]" if snapshot else ""
         return IngestionOutcome(
             fixture_path=event.fixture_path,
             event_id=str(event_id),
             terminal_status="timeout",
             duration_s=time.monotonic() - started,
-            error=str(exc),
+            error=f"{exc}{suffix}",
+            lifecycle=snapshot,
         )
 
     status = str(terminal.get("status") or "").lower()
-    # Both the canonical "done" (from get_event) and the raw DB "reconciled"
-    # mean the event was fully reconciled. Anything else carrying an
-    # explicit error field is a failure.
     success_statuses = {"done", "reconciled"}
     error = (
         terminal.get("error") or terminal.get("error_message")
@@ -164,6 +227,11 @@ def submit_and_wait(
         else None
     )
     soft_downgrades = len(terminal.get("downgrades") or [])
+    snapshot: dict[str, Any] = {}
+    if status not in success_statuses:
+        snapshot = _lifecycle_snapshot(terminal)
+        if snapshot:
+            error = (error or "non-success terminal status") + f" [{_format_lifecycle(snapshot)}]"
     return IngestionOutcome(
         fixture_path=event.fixture_path,
         event_id=str(event_id),
@@ -171,6 +239,7 @@ def submit_and_wait(
         duration_s=time.monotonic() - started,
         error=str(error) if error else None,
         soft_downgrades=soft_downgrades,
+        lifecycle=snapshot,
     )
 
 
@@ -181,17 +250,58 @@ def replay_all(
     *,
     timeout_s: float = DEFAULT_TIMEOUT_S,
     fallback_repo_name: str | None = None,
+    parallel_roles: tuple[str, ...] = ("seed", "distractor"),
+    max_concurrency: int = 6,
 ) -> list[IngestionOutcome]:
-    """Submit events sequentially, blocking on reconciliation each time."""
-    outcomes: list[IngestionOutcome] = []
-    for event in events:
+    """Run an ingestion timeline against the engine.
+
+    Signal events run sequentially (most scenarios encode order in their
+    ``ingest:`` list, and out-of-order arrival is itself a graded
+    behaviour on adversarial scenarios). Seed and distractor events run
+    in parallel up to ``max_concurrency`` since they have no implied
+    arrival order — this is the difference between an 8-seed warmup
+    taking 8 × T seconds and ~T seconds.
+
+    Returns outcomes in the same order as ``events`` so the evaluator
+    can correlate by index.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    # Phase 1: run parallel-eligible events (seeds + distractors) concurrently.
+    parallel_indices = [i for i, e in enumerate(events) if e.role in parallel_roles]
+    sequential_indices = [i for i, e in enumerate(events) if e.role not in parallel_roles]
+    outcomes: dict[int, IngestionOutcome] = {}
+
+    def _one(idx_event: tuple[int, ReplayEvent]) -> tuple[int, IngestionOutcome]:
+        idx, ev = idx_event
+        return idx, submit_and_wait(
+            client, pot_id, ev, timeout_s=timeout_s, fallback_repo_name=fallback_repo_name
+        )
+
+    if parallel_indices:
+        n_workers = max(1, min(max_concurrency, len(parallel_indices)))
+        with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="bench-ingest") as pool:
+            for idx, outcome in pool.map(_one, ((i, events[i]) for i in parallel_indices)):
+                outcomes[idx] = outcome
+                if outcome.error:
+                    logger.warning(
+                        "ingest failed: %s status=%s error=%s",
+                        events[idx].fixture_path, outcome.terminal_status, outcome.error,
+                    )
+
+    # Phase 2: signals in declared order. They may depend on prior signals
+    # having reached the graph (e.g. an issue_state_change after an
+    # issue_create), so we don't run these concurrently.
+    for idx in sequential_indices:
+        event = events[idx]
         outcome = submit_and_wait(
             client, pot_id, event, timeout_s=timeout_s, fallback_repo_name=fallback_repo_name
         )
-        outcomes.append(outcome)
+        outcomes[idx] = outcome
         if outcome.error:
             logger.warning(
                 "ingest failed: %s status=%s error=%s",
                 event.fixture_path, outcome.terminal_status, outcome.error,
             )
-    return outcomes
+
+    return [outcomes[i] for i in range(len(events))]

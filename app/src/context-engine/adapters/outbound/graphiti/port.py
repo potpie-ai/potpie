@@ -35,6 +35,16 @@ class EpisodicGraphPort(Protocol):
     def enabled(self) -> bool:
         ...
 
+    async def ensure_indexes_async(self) -> bool:
+        """Idempotently create canonical-graph indexes (entity / claim / vector).
+
+        Position B requires composite indexes for predicate-filtered
+        traversal and a relationship vector index for semantic search.
+        ``CREATE INDEX IF NOT EXISTS`` makes this safe to call every
+        boot. Returns ``True`` on success, ``False`` when disabled.
+        """
+        ...
+
     def add_episode(
         self,
         pot_id: str,

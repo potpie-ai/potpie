@@ -70,6 +70,52 @@ class BodySizeLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class TracingMiddleware(BaseHTTPMiddleware):
+    """Open a SERVER span per request and bind the trace to the
+    correlation context so every downstream log line / span carries it.
+
+    Outermost middleware (added last) so the span covers rate-limit and
+    body-size rejections too. Best-effort: any observability failure must
+    not affect the response.
+    """
+
+    async def dispatch(self, request, call_next):
+        from bootstrap.observability_context import bind_correlation
+        from bootstrap.observability_runtime import get_observability
+        from domain.ports.observability import SPAN_KIND_SERVER
+
+        obs = get_observability()
+        route = request.url.path
+        try:
+            cm = obs.span(
+                f"HTTP {request.method} {route}",
+                kind=SPAN_KIND_SERVER,
+                attributes={
+                    "http.method": request.method,
+                    "http.route": route,
+                },
+            )
+        except Exception:  # noqa: BLE001 — never break the request
+            return await call_next(request)
+        with cm as span:
+            tp = obs.current_traceparent()
+            if tp:
+                # W3C: 00-<32 hex trace_id>-<16 hex span_id>-<flags>
+                parts = tp.split("-")
+                if len(parts) >= 2:
+                    bind_correlation(trace_id=parts[1])
+            try:
+                response = await call_next(request)
+            except Exception as exc:  # noqa: BLE001 — annotate + re-raise
+                span.record_exception(exc)
+                span.set_error(repr(exc))
+                raise
+            span.set_attribute("http.status_code", response.status_code)
+            if response.status_code >= 500:
+                span.set_error(f"status {response.status_code}")
+            return response
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         resp = await call_next(request)
@@ -148,3 +194,6 @@ def install_hardening(app: FastAPI) -> None:
             "CONTEXT_ENGINE_MAX_BODY_BYTES", _DEFAULT_MAX_BODY
         ),
     )
+    # Added last → outermost: the request span wraps rate-limit / body-size
+    # rejections too. NoOp by default, so this is free until enabled.
+    app.add_middleware(TracingMiddleware)

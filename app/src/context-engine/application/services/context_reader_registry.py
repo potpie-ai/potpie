@@ -24,7 +24,9 @@ from domain.graph_query import (
     ContextGraphResult,
     ContextGraphStrategy,
 )
+from bootstrap.observability_runtime import get_observability
 from domain.ports.context_reader import ContextReaderPort
+from domain.ports.observability import SPAN_KIND_INTERNAL
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +83,7 @@ class ContextReaderRegistry:
     # -- routing ---------------------------------------------------------
     def execute(self, request: ContextGraphQuery) -> ContextGraphResult:
         families, fallbacks = self._resolve_families(request)
+        obs = get_observability()
 
         results: list[ReaderResult] = []
         for family in families:
@@ -88,6 +91,11 @@ class ContextReaderRegistry:
             cap = reader.capability()
             missing = self._missing_scope(cap, request)
             if missing:
+                obs.counter(
+                    "ce.resolve.reader_fallback_total",
+                    1,
+                    attributes={"family": family, "reason": "missing_scope"},
+                )
                 fallbacks.append(
                     RouterFallback(
                         family=family,
@@ -97,9 +105,24 @@ class ContextReaderRegistry:
                 )
                 continue
             try:
-                outcome = reader.read(request)
+                with obs.span(
+                    f"reader.{family}",
+                    kind=SPAN_KIND_INTERNAL,
+                    attributes={"reader.family": family},
+                ) as _rspan:
+                    outcome = reader.read(request)
+                    _rspan.set_attribute("reader.count", outcome.count)
+                    if outcome.fallback_reason:
+                        _rspan.set_attribute(
+                            "reader.fallback", outcome.fallback_reason
+                        )
             except Exception as exc:  # noqa: BLE001
                 logger.exception("reader %s failed", family)
+                obs.counter(
+                    "ce.resolve.reader_fallback_total",
+                    1,
+                    attributes={"family": family, "reason": "executor_error"},
+                )
                 results.append(
                     ReaderResult(
                         family=family,
@@ -109,6 +132,15 @@ class ContextReaderRegistry:
                     )
                 )
                 continue
+            if outcome.fallback_reason:
+                obs.counter(
+                    "ce.resolve.reader_fallback_total",
+                    1,
+                    attributes={
+                        "family": family,
+                        "reason": outcome.fallback_reason,
+                    },
+                )
             results.append(
                 ReaderResult(
                     family=outcome.family or family,

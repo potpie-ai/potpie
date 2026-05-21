@@ -16,6 +16,11 @@ from domain.agent_context_port import (
     build_context_record_source_id,
     normalize_record_type,
 )
+from domain.context_records import (
+    has_structured_schema,
+    record_to_dict,
+    validate_record_payload,
+)
 from domain.ingestion_event_models import EventReceipt, IngestionSubmissionRequest
 from domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
 from domain.ports.ingestion_submission import IngestionSubmissionService
@@ -54,6 +59,17 @@ def record_durable_context(
         scope_payload.get("source_refs") or []
     )
     source_refs = list(dict.fromkeys(source_refs_in))
+
+    # P6: validate the per-record_type structured payload. Unknown types
+    # fall through to the FreeForm shape so legacy callers keep working;
+    # structured types get a strict schema check that fails fast with a
+    # specific message rather than letting bad data ride into the graph.
+    structured = validate_record_payload(
+        record_type=record_type,
+        summary=record.summary,
+        details=dict(record.details),
+    )
+    structured_payload = record_to_dict(structured)
     source_id = build_context_record_source_id(
         record_type=record_type,
         summary=record.summary,
@@ -79,6 +95,10 @@ def record_durable_context(
                 "type": record_type,
                 "summary": record.summary,
                 "details": dict(record.details),
+                "structured": structured_payload,
+                "structured_schema": (
+                    record_type if has_structured_schema(record_type) else None
+                ),
                 "source_refs": source_refs,
                 "confidence": record.confidence,
                 "visibility": record.visibility,
