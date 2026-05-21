@@ -36,6 +36,7 @@ _LEVEL_TO_SENTRY = {
 }
 _logger = logging.getLogger(__name__)
 _state = {"initialised_pid": None}
+_disabled_notices: set[tuple[int, str]] = set()
 
 
 class _SentryHandler(logging.Handler):
@@ -73,10 +74,11 @@ class SentrySink:
     def setup(self, config: ObservabilityConfig) -> None:
         sc = config.sentry
         if not sc.enabled or not sc.dsn:
-            _logger.warning(
-                "sentry disabled: %s",
-                "enabled=False" if not sc.enabled else "no SENTRY_DSN",
-            )
+            reason = "enabled=False" if not sc.enabled else "no SENTRY_DSN"
+            notice_key = (os.getpid(), reason)
+            if notice_key not in _disabled_notices:
+                _logger.warning("sentry disabled: %s", reason)
+                _disabled_notices.add(notice_key)
             return
         try:
             import sentry_sdk

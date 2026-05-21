@@ -57,21 +57,63 @@ _state: dict = {"configured_pid": None}
 _RESERVED = ("exc_info", "stack_info", "stacklevel")
 
 
-class StructuredLogger(logging.LoggerAdapter):
-    """stdlib LoggerAdapter accepting loguru-style **fields (EC1).
+class StructuredLogger:
+    """Thin stdlib wrapper accepting loguru-style **fields (EC1).
 
     `logger.info("msg", conversation_id=cid)` -> record.obs_fields, so sinks
     emit it as a queryable field instead of interpolating into the message.
     """
 
-    def process(self, msg, kwargs):
+    def __init__(
+        self,
+        logger: logging.Logger,
+        extra: dict | None = None,
+    ) -> None:
+        self._logger = logger
+        self._extra = extra or {}
+
+    def _prepare(self, kwargs: dict) -> dict:
         passthru = {k: kwargs.pop(k) for k in _RESERVED if k in kwargs}
         extra = kwargs.pop("extra", None) or {}
-        fields = {**(self.extra or {}), **extra, **kwargs}
-        kwargs.clear()
-        kwargs.update(passthru)
-        kwargs["extra"] = {"obs_fields": fields}
-        return msg, kwargs
+        fields = {**self._extra, **extra, **kwargs}
+        passthru["extra"] = {"obs_fields": fields}
+        passthru["stacklevel"] = int(passthru.get("stacklevel", 1)) + 1
+        return passthru
+
+    def debug(self, message, *args, **kwargs) -> None:
+        self.log(logging.DEBUG, message, *args, **kwargs)
+
+    def info(self, message, *args, **kwargs) -> None:
+        self.log(logging.INFO, message, *args, **kwargs)
+
+    def warning(self, message, *args, **kwargs) -> None:
+        self.log(logging.WARNING, message, *args, **kwargs)
+
+    warn = warning
+
+    def error(self, message, *args, **kwargs) -> None:
+        self.log(logging.ERROR, message, *args, **kwargs)
+
+    def exception(self, message, *args, **kwargs) -> None:
+        kwargs.setdefault("exc_info", True)
+        self.error(message, *args, **kwargs)
+
+    def critical(self, message, *args, **kwargs) -> None:
+        self.log(logging.CRITICAL, message, *args, **kwargs)
+
+    fatal = critical
+
+    def log(self, log_level, message, *args, **kwargs) -> None:
+        self._logger.log(log_level, message, *args, **self._prepare(kwargs))
+
+    def isEnabledFor(self, level: int) -> bool:  # noqa: N802 - stdlib API name
+        return self._logger.isEnabledFor(level)
+
+    def getChild(self, suffix: str) -> "StructuredLogger":  # noqa: N802
+        return StructuredLogger(self._logger.getChild(suffix), self._extra)
+
+    def __getattr__(self, name: str):
+        return getattr(self._logger, name)
 
 
 class ContextFilter(logging.Filter):
