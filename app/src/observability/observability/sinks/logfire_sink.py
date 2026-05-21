@@ -1,15 +1,16 @@
 """logfire log sink (extra: observability[logfire]) — NEW.
 
-logfire serves double duty: tracing (observability/tracing.py) AND structured
-log export (this sink). Both MUST share a single logfire.configure() call —
-setup() here delegates to tracing.configure_tracing() if not already done,
-never configures logfire twice (EC2).
+logfire does double duty: tracing (tracing.configure_tracing) AND structured
+log export (this sink). Both share a single logfire.configure() call —
+setup() here delegates to tracing.configure_tracing so logfire is configured
+ONCE per process (EC2).
 
 Edge cases:
  - Import logfire lazily.
- - When this sink is active, log records should carry the active trace/span
-   id so logs and traces correlate in one backend (the unification goal).
- - No token -> local-only, single visible notice (no silent no-op).
+ - No token / disabled -> setup() returns; build_handler returns None.
+   tracing.configure_tracing already emits the one visible 'local-only' notice.
+ - instrument() is no-op here: instrument_litellm/pydantic_ai already happen
+   inside configure_tracing, so they aren't repeated.
 """
 
 from __future__ import annotations
@@ -17,16 +18,53 @@ from __future__ import annotations
 import logging
 
 from ..config import ObservabilityConfig
+from ..tracing import configure_tracing
+
+_HINT = "logfire sink requires logfire — install observability[logfire]"
 
 
 class LogfireSink:
     name = "logfire"
 
     def setup(self, config: ObservabilityConfig) -> None:
-        raise NotImplementedError("Phase 1 scaffold — implemented in Phase 3")
+        if not config.logfire.enabled and not config.logfire.token:
+            return
+        try:
+            import logfire  # noqa: F401
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(_HINT) from exc
+        configure_tracing(config)
 
-    def build_handler(self, config: ObservabilityConfig) -> logging.Handler | None:
-        raise NotImplementedError("Phase 1 scaffold — implemented in Phase 3")
+    def build_handler(
+        self, config: ObservabilityConfig
+    ) -> logging.Handler | None:
+        if not config.logfire.enabled and not config.logfire.token:
+            return None
+        try:
+            import logfire
+        except ModuleNotFoundError:
+            return None
+        Handler = getattr(logfire, "LogfireLoggingHandler", None)
+        if Handler is None:  # pragma: no cover — older logfire fallback
+            class _MinimalHandler(logging.Handler):
+                def emit(self, record: logging.LogRecord) -> None:
+                    try:
+                        import logfire as lf
+                        fields: dict = {}
+                        for attr in ("obs_context", "obs_fields"):
+                            data = getattr(record, attr, None)
+                            if isinstance(data, dict):
+                                fields.update(data)
+                        lf.log(
+                            record.levelname.lower(),
+                            record.getMessage(),
+                            **fields,
+                        )
+                    except Exception:
+                        self.handleError(record)
+
+            return _MinimalHandler()
+        return Handler()
 
     def instrument(self, config: ObservabilityConfig) -> None:
-        raise NotImplementedError("Phase 1 scaffold — implemented in Phase 3")
+        return None

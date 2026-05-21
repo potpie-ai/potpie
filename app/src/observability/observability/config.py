@@ -41,6 +41,13 @@ class SentryConfig:
     # EC: if a Sentry log-sink is registered, Sentry's own LoggingIntegration
     # must be set event_level=None to avoid double-capture.
     own_logging_integration: bool = True
+    # Which integrations to add. Audit-faithful: default_integrations=False +
+    # explicit list (preserves Strawberry-not-installed safety from the
+    # original setup_sentry).
+    with_fastapi: bool = False
+    with_celery: bool = False
+    # Sink handler emits events at this level and above.
+    event_level: str = "ERROR"
 
 
 @dataclass(slots=True)

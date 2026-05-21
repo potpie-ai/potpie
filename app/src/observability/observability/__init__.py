@@ -101,6 +101,24 @@ def log_context(**fields):
         _context_var.reset(token)
 
 
+# --- internal helpers for cross-hop rebind (EC3) — used by integrations.* ---
+# Not part of the frozen public API; the Celery integration uses these to
+# bracket a task with prerun/postrun signals where a contextmanager doesn't fit.
+
+def _push_context(**fields) -> object:
+    cur = _context_var.get()
+    return _context_var.set({**cur, **fields})
+
+
+def _pop_context(token: object) -> None:
+    try:
+        _context_var.reset(token)  # type: ignore[arg-type]
+    except (ValueError, LookupError):
+        # Token from another context (e.g. task crashed before postrun) —
+        # swallow rather than mask the real error.
+        pass
+
+
 def _iter_managed(root: logging.Logger):
     return [h for h in root.handlers if getattr(h, _TAG, None) is not None]
 
@@ -145,14 +163,17 @@ def configure(config: "ObservabilityConfig | None" = None) -> None:
         sink = registry.resolve(name)
         sink.setup(cfg)
         handler = sink.build_handler(cfg)
-        if handler is None:
-            continue
-        handler.addFilter(ctx_filter)  # inject context first
-        if red_filter is not None:
-            handler.addFilter(red_filter)  # then scrub message + context
-        handler.setLevel(cfg.level)
-        setattr(handler, _TAG, HANDLER_TAG)
-        root.addHandler(handler)
+        if handler is not None:
+            handler.addFilter(ctx_filter)  # inject context first
+            if red_filter is not None:
+                handler.addFilter(red_filter)  # then scrub message + context
+            # Respect sink-provided level (e.g. Sentry's event_level=ERROR);
+            # only default to cfg.level when the sink did not set one.
+            if handler.level == logging.NOTSET:
+                handler.setLevel(cfg.level)
+            setattr(handler, _TAG, HANDLER_TAG)
+            root.addHandler(handler)
+        sink.instrument(cfg)  # tracing-only sinks (logfire) still run this
 
     root.setLevel(cfg.level)
     apply_library_levels(cfg.library_levels)

@@ -20,7 +20,9 @@ from .config import LogfireConfig, ObservabilityConfig, SentryConfig
 
 
 def monolith() -> ObservabilityConfig:
-    return ObservabilityConfig.from_env()
+    cfg = ObservabilityConfig.from_env()
+    cfg.sentry.with_fastapi = True
+    return cfg
 
 
 def standalone() -> ObservabilityConfig:
@@ -35,4 +37,13 @@ def standalone() -> ObservabilityConfig:
 
 
 def celery() -> ObservabilityConfig:
-    raise NotImplementedError("Phase 3 — Celery profile (Sentry/worker init)")
+    """Workers: JSONL out, Sentry with CeleryIntegration, logfire WITHOUT
+    pydantic-ai instrumentation (OTel prefork contextvar bug). Backend init
+    happens inside the worker process via integrations.celery (EC2).
+    """
+    cfg = ObservabilityConfig.from_env()
+    cfg.sinks = ["json_stdout"]
+    if cfg.sentry.enabled:
+        cfg.sentry.with_celery = True
+    cfg.logfire.instrument_pydantic_ai = False
+    return cfg
