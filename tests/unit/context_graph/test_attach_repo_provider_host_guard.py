@@ -144,6 +144,32 @@ class TestAttachRepoProviderHostGuard:
                 submitted_by_user_id="u",
             )
 
+    @pytest.mark.parametrize(
+        "remote_url",
+        [
+            "http://github.com/acme/widgets.git",
+            "ftp://github.com/acme/widgets.git",
+            "file:///etc/passwd",
+            "https://github.com./acme/widgets.git",
+            "https://githu\u0432.com/acme/widgets.git",
+        ],
+    )
+    def test_rejects_unsafe_or_confusable_remote_urls(self, remote_url: str) -> None:
+        db = _make_db(query_results=[_fake_pot()])
+        with pytest.raises(ValueError, match="remote_url not allowed"):
+            attach_repo_to_pot(
+                db,
+                pot_id="pot-1",
+                provider="github",
+                provider_host="github.com",
+                owner="acme",
+                repo="widgets",
+                external_repo_id=None,
+                remote_url=remote_url,
+                default_branch=None,
+                submitted_by_user_id="u",
+            )
+
     def test_allows_github_remote_url(self) -> None:
         db = _make_db(query_results=[_fake_pot(), None])
         source = SimpleNamespace(id="src-github")

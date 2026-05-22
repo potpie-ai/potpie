@@ -1505,6 +1505,69 @@ in `test_repository_added_allowlist_keeps_backfill_hydration_tools`.
 
 **Status:** review captured. No code changes from this pass.
 
+## 2026-05-22 — PR #792 full audit (CI wiring + runner contract)
+
+Reviewed the updated pushed PR head after CGT-4/8/9/10/11 and the independent
+CI job landed.
+
+**Critical CI finding fixed:** PR #792 targets `staging`, but
+`.github/workflows/test.yml` only ran on pull requests targeting `main` or
+`master`. That meant the new independent `context-graph` job existed in the
+file but did **not** run on this PR. Updated the workflow branch filters to
+include `staging` for both `pull_request` and `push`.
+
+**Runner findings fixed:**
+
+- `scripts/run_tests.py` allowed invalid mixed modes such as
+  `--unit-only --context-graph-only`; the first branch silently won. Moved all
+  run modes into one mutually exclusive argparse group.
+- The script documented forwarding pytest args (`-x`, `-k`, `-q`) but rejected
+  option-looking extras. Switched to `parse_known_args()` and forwards unknown
+  args to pytest.
+
+**Test coverage finding fixed:** the `remote_url` SSRF tests pinned internal
+and arbitrary hosts, but not scheme/local-file/confusable-host rejection. Added
+adversarial cases for:
+
+- `http://github.com/...`
+- `ftp://github.com/...`
+- `file:///etc/passwd`
+- `https://github.com./...`
+- Cyrillic lookalike host (`githuв.com`)
+
+**Verification:**
+
+```bash
+uv run python scripts/run_tests.py --unit-only --context-graph-only --collect-only -q
+# -> exits 2; argparse rejects mixed modes
+
+uv run python scripts/run_tests.py --context-graph-engine-only --collect-only -q
+# -> 873 tests collected
+
+uv run python scripts/run_tests.py --context-graph-host-only --collect-only -q
+# -> 555 tests collected
+
+uv run python scripts/run_tests.py --context-graph-engine-only -q
+# -> 873 passed, 2 warnings
+
+uv run python scripts/run_tests.py --context-graph-host-only -q
+# -> 555 passed, 7 warnings
+
+uv run pytest tests/unit/context_graph/test_attach_repo_provider_host_guard.py -q
+# -> 16 passed
+
+uv run python scripts/run_tests.py --context-graph-only -q
+# -> 1433 passed, 8 warnings
+```
+
+**Current PR status from GitHub CLI before this fix:** PR #792 is open,
+base branch `staging`, head `test/context-graph-ci-wiring`, merge state
+`UNSTABLE`; only CodeRabbit and SonarCloud were reported, with SonarCloud
+failing. The GitHub Actions context-graph job was absent because of the
+branch filter mismatch above.
+
+**Status:** ready to commit/push CI + runner + adversarial URL-test fixes.
+
 ## 2026-05-22 — PR #792 full review (intended state: CGT-5/6/7 included)
 
 User asked for a fresh PR review against the history's claim that

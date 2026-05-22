@@ -106,29 +106,28 @@ def main() -> int:
         description="Run test suite (unit → integration → real_parse → stress). "
         "Uses markers and testpaths; new tests are discovered automatically.",
     )
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
         "--unit-only",
         action="store_true",
         help="Run only unit tests (tests/unit/, marker: unit).",
     )
-    group.add_argument(
+    mode_group.add_argument(
         "--integration-only",
         action="store_true",
         help="Run only integration tests, excluding stress and real_parse.",
     )
-    group.add_argument(
+    mode_group.add_argument(
         "--real-parse-only",
         action="store_true",
         help="Run only real_parse tests (Postgres + Neo4j required).",
     )
-    group.add_argument(
+    mode_group.add_argument(
         "--stress-only",
         action="store_true",
         help="Run only stress tests.",
     )
-    cg_group = parser.add_mutually_exclusive_group()
-    cg_group.add_argument(
+    mode_group.add_argument(
         "--context-graph-only",
         action="store_true",
         help=(
@@ -138,7 +137,7 @@ def main() -> int:
             "GitHub/Linear/Graphiti/Neo4j/Redis/Celery/LLM."
         ),
     )
-    cg_group.add_argument(
+    mode_group.add_argument(
         "--context-graph-engine-only",
         action="store_true",
         help=(
@@ -146,7 +145,7 @@ def main() -> int:
             "(unit + integration). Fakes-only."
         ),
     )
-    cg_group.add_argument(
+    mode_group.add_argument(
         "--context-graph-host-only",
         action="store_true",
         help=(
@@ -166,7 +165,8 @@ def main() -> int:
         nargs="*",
         help="Extra arguments passed to pytest (e.g. -x, -k 'test_foo').",
     )
-    args = parser.parse_args()
+    args, unknown_pytest_extra = parser.parse_known_args()
+    args.pytest_extra.extend(unknown_pytest_extra)
 
     skip_real_parse = os.environ.get("SKIP_REAL_PARSE", "").strip().lower() in ("1", "true", "yes")
     run_stress = os.environ.get("RUN_STRESS", "").strip().lower() in ("1", "true", "yes")

@@ -2,9 +2,9 @@ name: Regression tests
 
 on:
   pull_request:
-    branches: [main, master]
+    branches: [main, master, staging]
   push:
-    branches: [main, master]
+    branches: [main, master, staging]
 
 jobs:
   context-graph:
