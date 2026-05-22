@@ -628,6 +628,8 @@ async def client(app, db_session: Session, async_db_session: AsyncSession):
     # Set dummy values so /integrations/connected and /integrations/list can run in tests.
     os.environ.setdefault("SENTRY_CLIENT_ID", "test-sentry-client-id")
     os.environ.setdefault("SENTRY_CLIENT_SECRET", "test-sentry-client-secret")
+    os.environ.setdefault("LINEAR_CLIENT_ID", "test-linear-client-id")
+    os.environ.setdefault("LINEAR_CLIENT_SECRET", "test-linear-client-secret")
 
     def override_get_db():
         yield db_session
