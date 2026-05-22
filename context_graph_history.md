@@ -1576,6 +1576,35 @@ to `test/context-graph-ci-wiring`.
 Actions scheduled. `Regression tests / context-graph` is now present in the
 check rollup (queued) and `Regression tests / regression` is in progress.
 
+## 2026-05-22 — CI fix for context-graph job services/env
+
+CI failure from `Regression tests / context-graph`:
+
+- Redis connection refused on `localhost:6379` during Celery/import setup.
+- `app.core.database` import failed with
+  `sqlalchemy.exc.ArgumentError: Expected string or URL object, got None`
+  because `POSTGRES_SERVER` was not set.
+
+Root cause: the independent context-graph GitHub Actions job had no Postgres /
+Redis services and no DB/Redis env, while the host-bridge context-graph tests
+collect modules that import the monolith database and Celery wiring.
+
+**Fix:**
+
+- Added Postgres 15 and Redis 7 services to the `context-graph` job.
+- Added the same minimal env used by the regression job:
+  `POSTGRES_SERVER`, `ENV`, `REDISHOST`, `REDISPORT`,
+  `SENTRY_CLIENT_ID`, `SENTRY_CLIENT_SECRET`.
+
+**Verification:**
+
+```bash
+uv run python scripts/run_tests.py --context-graph-only -q
+# -> 1433 passed, 8 warnings
+```
+
+**Status:** ready to commit/push CI env fix.
+
 ## 2026-05-22 — PR #792 full review (intended state: CGT-5/6/7 included)
 
 User asked for a fresh PR review against the history's claim that
