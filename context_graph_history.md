@@ -971,7 +971,7 @@ the policy adapter).
 | Area | File | What it pins |
 |------|------|----------------|
 | SSRF / provider host | `tests/unit/context_graph/test_attach_repo_provider_host_guard.py` | Default `github.com`; rejects internal/localhost hosts; `CONTEXT_ENGINE_ALLOWED_PROVIDER_HOSTS` permits GHE |
-| Pot tenancy | `tests/unit/context_graph/test_user_scoped_pot_resolution.py` | `actor_scoped`; member + legacy owner access; archived hidden; stranger denied; `find_pots_for_repo` merges member/owner queries |
+| Pot tenancy | `tests/unit/context_graph/test_user_scoped_pot_resolution.py` | `actor_scoped`; member/legacy/archived/stranger; `find_pots_for_repo` + `known_pot_ids` assert SQL filters include resolver `user_id`, empty when no rows |
 
 **Verification:**
 
@@ -979,13 +979,23 @@ the policy adapter).
 uv run pytest \
   tests/unit/context_graph/test_attach_repo_provider_host_guard.py \
   tests/unit/context_graph/test_user_scoped_pot_resolution.py -q
-# -> 12 passed
+# -> 15 passed (after stronger tenancy + evil host SSRF tests)
 
 uv run python scripts/run_tests.py --context-graph-only
-# -> 1373 passed, exit 0
+# -> 1378 passed, exit 0
 ```
 
-**Status:** CGT-3 acceptance criteria met. **Next recommended: CGT-5** (mutation
+**2026-05-22 follow-up — stronger CGT-3 tenancy tests:**
+
+- `test_find_pots_for_repo_scopes_both_queries_to_resolver_user` — records
+  `.filter(...)` on member + owner SQL paths; asserts `user_id` in clauses.
+- `test_find_pots_for_repo_returns_empty_when_user_has_no_access` — stranger
+  gets `[]` when both queries return no rows.
+- `test_known_pot_ids_scopes_both_queries_to_resolver_user` — same filter
+  assertion for `known_pot_ids()`.
+- `test_rejects_arbitrary_external_provider_host` — `evil.example.com` blocked.
+
+**Status:** CGT-3 acceptance criteria met (strong). **Next recommended: CGT-5** (mutation
 tool contract) or **CGT-4** (container/queue wiring).
 
 ## Current task backlog (CGT plan)

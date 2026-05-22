@@ -52,18 +52,35 @@ class _FirstQuery:
         return self.result
 
 
-class _ListQuery:
+class _RecordingListQuery:
+    """Captures ``.filter(...)`` clauses so tenancy can be asserted."""
+
     def __init__(self, *, rows: list[tuple[str, ...]]) -> None:
         self._rows = rows
+        self.filter_calls: list[tuple[object, ...]] = []
 
-    def join(self, *_args, **_kwargs) -> "_ListQuery":
+    def join(self, *_args, **_kwargs) -> "_RecordingListQuery":
         return self
 
-    def filter(self, *_args, **_kwargs) -> "_ListQuery":
+    def filter(self, *args, **_kwargs) -> "_RecordingListQuery":
+        self.filter_calls.append(args)
         return self
 
     def all(self) -> list[tuple[str, ...]]:
         return self._rows
+
+
+def _filter_clauses_target_user(
+    filter_calls: list[tuple[object, ...]], user_id: str
+) -> bool:
+    for call in filter_calls:
+        for clause in call:
+            if user_id in str(clause):
+                return True
+            right = getattr(clause, "right", None)
+            if right is not None and getattr(right, "value", None) == user_id:
+                return True
+    return False
 
 
 def _make_db_for_resolve(results: list[object | None]) -> MagicMock:
@@ -77,15 +94,24 @@ def _make_db_for_resolve(results: list[object | None]) -> MagicMock:
     return db
 
 
-def _make_db_for_find_pots(*, member_rows: list, owner_rows: list) -> MagicMock:
+def _make_db_for_find_pots(
+    *, member_rows: list[tuple[str, ...]], owner_rows: list[tuple[str, ...]]
+) -> tuple[MagicMock, _RecordingListQuery, _RecordingListQuery]:
+    member_q = _RecordingListQuery(rows=member_rows)
+    owner_q = _RecordingListQuery(rows=owner_rows)
     db = MagicMock()
-    calls = iter([member_rows, owner_rows])
+    db.query.side_effect = [member_q, owner_q]
+    return db, member_q, owner_q
 
-    def _query(_model) -> _ListQuery:
-        return _ListQuery(rows=next(calls))
 
-    db.query.side_effect = _query
-    return db
+def _make_db_for_known_pot_ids(
+    *, member_rows: list[tuple[str, ...]], owner_rows: list[tuple[str, ...]]
+) -> tuple[MagicMock, _RecordingListQuery, _RecordingListQuery]:
+    member_q = _RecordingListQuery(rows=member_rows)
+    owner_q = _RecordingListQuery(rows=owner_rows)
+    db = MagicMock()
+    db.query.side_effect = [member_q, owner_q]
+    return db, member_q, owner_q
 
 
 class TestUserScopedPotResolution:
@@ -146,7 +172,7 @@ class TestUserScopedPotResolution:
         build.assert_not_called()
 
     def test_find_pots_for_repo_merges_member_and_owner_queries(self) -> None:
-        db = _make_db_for_find_pots(
+        db, _member_q, _owner_q = _make_db_for_find_pots(
             member_rows=[("pot-member",)],
             owner_rows=[("pot-owner",)],
         )
@@ -156,7 +182,7 @@ class TestUserScopedPotResolution:
         assert out == ["pot-member", "pot-owner"]
 
     def test_find_pots_for_repo_deduplicates(self) -> None:
-        db = _make_db_for_find_pots(
+        db, _, _ = _make_db_for_find_pots(
             member_rows=[("pot-1",)],
             owner_rows=[("pot-1",)],
         )
@@ -164,3 +190,28 @@ class TestUserScopedPotResolution:
             _repo_ref()
         )
         assert out == ["pot-1"]
+
+    def test_find_pots_for_repo_scopes_both_queries_to_resolver_user(self) -> None:
+        db, member_q, owner_q = _make_db_for_find_pots(member_rows=[], owner_rows=[])
+        UserScopedContextGraphPotResolution(db, "user-42").find_pots_for_repo(
+            _repo_ref()
+        )
+        assert _filter_clauses_target_user(member_q.filter_calls, "user-42")
+        assert _filter_clauses_target_user(owner_q.filter_calls, "user-42")
+
+    def test_find_pots_for_repo_returns_empty_when_user_has_no_access(self) -> None:
+        db, _, _ = _make_db_for_find_pots(member_rows=[], owner_rows=[])
+        out = UserScopedContextGraphPotResolution(db, "stranger").find_pots_for_repo(
+            _repo_ref()
+        )
+        assert out == []
+
+    def test_known_pot_ids_scopes_both_queries_to_resolver_user(self) -> None:
+        db, member_q, owner_q = _make_db_for_known_pot_ids(
+            member_rows=[("pot-m",)],
+            owner_rows=[("pot-o",)],
+        )
+        out = UserScopedContextGraphPotResolution(db, "user-99").known_pot_ids()
+        assert out == ["pot-m", "pot-o"]
+        assert _filter_clauses_target_user(member_q.filter_calls, "user-99")
+        assert _filter_clauses_target_user(owner_q.filter_calls, "user-99")
