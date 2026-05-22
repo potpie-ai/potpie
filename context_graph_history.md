@@ -14,6 +14,20 @@ current implementation. Before/after each ticket, run
 count — a drop means behaviour broke or a test needs updating for an intentional
 change.
 
+## 2026-05-22 - PR #792 testing understanding doc
+
+- Added `docs/context-graph/testing-pr-792.md` as a plain-English reviewer
+  guide for PR #792.
+- The doc explains what behaviour the context-graph tests are meant to
+  protect, where the tests live, how to run the dedicated suite, how CI runs
+  it, and what each CGT group covers.
+- Updated `docs/context-graph/README.md` so the new test overview is part of
+  the maintained context-graph doc set.
+- This was a docs-only change; no test run required for the edit itself. The
+  latest full local context-graph verification before this doc change was
+  `uv run python scripts/run_tests.py --context-graph-only -q` with
+  `1433 passed, 8 warnings`.
+
 ## 2026-05-22
 
 - Created this file at the start of the repo walkthrough.

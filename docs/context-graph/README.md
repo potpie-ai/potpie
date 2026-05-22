@@ -2,7 +2,7 @@
 
 **Architecture version:** Phase 9 (extensibility-first ontology). Last reviewed 2026-05-12.
 
-Five docs, one job each. Read in order if you're new.
+Seven docs, one job each. Read in order if you're new.
 
 | Doc | What it answers |
 |---|---|
@@ -10,7 +10,9 @@ Five docs, one job each. Read in order if you're new.
 | [`architecture.md`](./architecture.md) | How the system is built today, with file paths into the code. |
 | [`agent-contract.md`](./agent-contract.md) | The four-tool agent port — request and response contracts. The single source of truth for any agent or skill that consumes the engine. |
 | [`extending.md`](./extending.md) | How to add a source, a reader, a record type, an intent, **or an ontology entity / edge** — without touching the application layer. |
+| [`security-review.md`](./security-review.md) | Security notes for the context graph boundary: tenancy, tool containment, SSRF, and graph mutation risks. |
 | [`plan.md`](./plan.md) | The rebuild plan. Phased, sequential, with discovery first in every phase. |
+| [`testing-pr-792.md`](./testing-pr-792.md) | Plain-English context for the PR #792 test suite: what each test group protects and how CI runs it. |
 
 Code lives at [`app/src/context-engine/`](../../app/src/context-engine/).
 
@@ -44,4 +46,5 @@ from domain.ontology import (
 )
 ```
 
-These five files plus `plan.md` are the entire doc set. Anything else that appears here without a phase landing it is doc rot.
+These docs are the intentional doc set. Anything else that appears here without
+a phase landing it is doc rot.
