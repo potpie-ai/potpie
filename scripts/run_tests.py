@@ -43,9 +43,6 @@ CONTEXT_ENGINE_INTEGRATION_TESTS_DIR = CONTEXT_ENGINE_TESTS_DIR / "integration"
 #  - ``test_linear_issue_plan.py``, ``test_linear_issue_resolver.py``, and
 #    ``test_linear_webhook_normalize.py``: load missing
 #    ``tests/data/linear/*.json`` fixtures.
-#  - ``test_wiring_sandbox_tools.py``: imports ``_attach_sandbox_tools`` from
-#    ``app.modules.context_graph.wiring``; the wiring refactor merged it into
-#    ``_attach_agent_tools`` and the test was not updated.
 _CONTEXT_ENGINE_PYTEST_IGNORES: tuple[str, ...] = (
     f"--ignore={CONTEXT_ENGINE_UNIT_TESTS_DIR / 'benchmarks' / 'test_benchmark_dataset.py'}",
     f"--ignore={CONTEXT_ENGINE_UNIT_TESTS_DIR / 'benchmarks' / 'test_benchmark_evaluator.py'}",
@@ -54,20 +51,9 @@ _CONTEXT_ENGINE_PYTEST_IGNORES: tuple[str, ...] = (
     f"--ignore={CONTEXT_ENGINE_UNIT_TESTS_DIR / 'test_linear_issue_resolver.py'}",
     f"--ignore={CONTEXT_ENGINE_UNIT_TESTS_DIR / 'test_linear_webhook_normalize.py'}",
 )
-_CONTEXT_ENGINE_PYTEST_DESELECTS: tuple[str, ...] = (
-    # Legacy expectations that predate the current generated agent bundle,
-    # reader-registry routing, and ontology version. Keep these visible while
-    # allowing this PR to wire the green subset into CI.
-    "--deselect=app/src/context-engine/tests/unit/test_agent_installer.py::test_install_agent_bundle_claude_creates_claude_files",
-    "--deselect=app/src/context-engine/tests/unit/test_graph_query_planner.py::test_planner_unknown_include_token_becomes_fallback",
-    "--deselect=app/src/context-engine/tests/unit/test_ontology.py::test_phase_one_catalog_contains_project_context_domains",
-)
 CONTEXT_GRAPH_HOST_UNIT_TESTS_DIR = TESTS_DIR / "unit" / "context_graph"
 CONTEXT_GRAPH_HOST_INTEGRATION_TESTS_DIR = (
     TESTS_DIR / "integration-tests" / "context_graph"
-)
-_CONTEXT_GRAPH_HOST_PYTEST_IGNORES: tuple[str, ...] = (
-    f"--ignore={CONTEXT_GRAPH_HOST_UNIT_TESTS_DIR / 'test_wiring_sandbox_tools.py'}",
 )
 
 
@@ -179,8 +165,6 @@ def main() -> int:
             str(SANDBOX_UNIT_TESTS_DIR),
             str(CONTEXT_ENGINE_UNIT_TESTS_DIR),
             *_CONTEXT_ENGINE_PYTEST_IGNORES,
-            *_CONTEXT_ENGINE_PYTEST_DESELECTS,
-            *_CONTEXT_GRAPH_HOST_PYTEST_IGNORES,
             "-m", "unit",
             *args.pytest_extra,
             phase_name="Unit",
@@ -219,8 +203,6 @@ def main() -> int:
             str(CONTEXT_GRAPH_HOST_UNIT_TESTS_DIR),
             str(CONTEXT_GRAPH_HOST_INTEGRATION_TESTS_DIR),
             *_CONTEXT_ENGINE_PYTEST_IGNORES,
-            *_CONTEXT_ENGINE_PYTEST_DESELECTS,
-            *_CONTEXT_GRAPH_HOST_PYTEST_IGNORES,
             "-m", "not stress and not real_parse and not github_live",
             *args.pytest_extra,
             phase_name="Context Graph",
@@ -266,8 +248,6 @@ def main() -> int:
                 str(SANDBOX_UNIT_TESTS_DIR),
                 str(CONTEXT_ENGINE_UNIT_TESTS_DIR),
                 *_CONTEXT_ENGINE_PYTEST_IGNORES,
-                *_CONTEXT_ENGINE_PYTEST_DESELECTS,
-                *_CONTEXT_GRAPH_HOST_PYTEST_IGNORES,
                 "-m", "unit",
             ],
         ),

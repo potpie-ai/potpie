@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
 from app.modules.context_graph.wiring import (
-    _attach_sandbox_tools,
+    _attach_agent_tools,
     _build_pot_sandbox_resolver,
 )
 
@@ -133,25 +134,66 @@ class _RecordingAgent:
         self.calls.append(list(builders))
 
 
+def _noop_source_for_repo(_repo_name: str) -> SimpleNamespace:
+    return SimpleNamespace()
+
+
+@contextmanager
+def _isolate_sandbox_surface():
+    """GitHub/Linear/web surfaces are tested elsewhere; isolate sandbox wiring."""
+    with (
+        patch(
+            "adapters.outbound.connectors.github.agent_tools.build_github_tools",
+            side_effect=RuntimeError("patched for test"),
+        ),
+        patch(
+            "adapters.outbound.connectors.linear.agent_tools.build_linear_tools",
+            side_effect=RuntimeError("patched for test"),
+        ),
+        patch(
+            "app.modules.context_graph.agent_web_tools.build_web_tools",
+            side_effect=RuntimeError("patched for test"),
+        ),
+    ):
+        yield
+
+
 class TestAttachSandboxTools:
     def test_attaches_one_builder_to_agent(self) -> None:
-        pytest.importorskip("pydantic_deep")
         agent = _RecordingAgent()
         db = _StubDb(rows=[_fake_repo_row()])
-        _attach_sandbox_tools(agent, db)  # type: ignore[arg-type]
+        with _isolate_sandbox_surface():
+            _attach_agent_tools(
+                agent,
+                db,  # type: ignore[arg-type]
+                source_for_repo=_noop_source_for_repo,
+            )
         assert len(agent.calls) == 1
         assert len(agent.calls[0]) == 1
         assert callable(agent.calls[0][0])
 
     def test_noop_when_agent_is_none(self) -> None:
-        _attach_sandbox_tools(None, _StubDb(rows=[]))  # type: ignore[arg-type]
+        _attach_agent_tools(
+            None,
+            _StubDb(rows=[]),  # type: ignore[arg-type]
+            source_for_repo=_noop_source_for_repo,
+        )
 
     def test_env_flag_disables_attachment(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("CONTEXT_ENGINE_DISABLE_SANDBOX_TOOLS", "1")
         agent = _RecordingAgent()
-        _attach_sandbox_tools(agent, _StubDb(rows=[]))  # type: ignore[arg-type]
+        with _isolate_sandbox_surface():
+            _attach_agent_tools(
+                agent,
+                _StubDb(rows=[]),  # type: ignore[arg-type]
+                source_for_repo=_noop_source_for_repo,
+            )
         assert agent.calls == []
 
     def test_agent_without_add_extra_tools_is_silent(self) -> None:
         sentinel = SimpleNamespace()
-        _attach_sandbox_tools(sentinel, _StubDb(rows=[]))  # type: ignore[arg-type]
+        _attach_agent_tools(
+            sentinel,
+            _StubDb(rows=[]),  # type: ignore[arg-type]
+            source_for_repo=_noop_source_for_repo,
+        )
