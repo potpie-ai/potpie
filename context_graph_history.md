@@ -1031,6 +1031,60 @@ runaway apply calls must hit `apply_call_cap_exceeded`.
 
 **Status:** CGT-5 done. **Next: CGT-6** (fake E2E ingestion) or **CGT-4** (container/queue).
 
+## 2026-05-22 — CGT-6 landed (fake E2E ingestion contract)
+
+**Scope:** Pin the canonical ingestion pipeline in-process with fake ports —
+no FastAPI, Celery worker, or Neo4j. Drive
+``DefaultIngestionSubmissionService.submit`` → ``admit_event`` → job enqueue
+→ ``handle_process_batch`` → fake agent → ``apply_plan_async``.
+
+**File:** `app/src/context-engine/tests/unit/test_fake_ingestion_e2e.py`
+
+| Test | Behaviour invariant |
+|------|---------------------|
+| `test_submit_through_process_applies_graph` | Immediate mode: one enqueue, batch `done`, graph `apply` with `expected_pot_id=pot-1` |
+| `test_duplicate_submit_does_not_reenqueue_or_reapply` | Second submit `duplicate=True`, single enqueue, redundant `handle_process_batch` → `skipped`, one graph apply |
+| `test_windowed_mode_defers_enqueue_until_force_flush` | Windowed admit does not enqueue; `force_flush_pot` enqueues; process applies graph once |
+| `test_immediate_mode_enqueues_on_admit` | Immediate config enqueues on first submit |
+
+**Harness:** `InMemoryIngestionHarness` implements ledger + batches + event store +
+job queue; `PlanApplyingFakeAgent` + `RecordingGraphPort` record durable apply
+calls (not private wiring helpers or error strings).
+
+**Regression check:**
+
+| When | `--context-graph-only` |
+|------|-------------------------|
+| After CGT-5 | 1389 passed |
+| After CGT-6 | **1393 passed** (+4, no regressions) |
+
+**Status:** CGT-6 done. **Next:** CGT-7 (resume/reaper) or CGT-4 (container/queue).
+
+## 2026-05-22 — CGT-7 landed (failure/resume + reaper lease)
+
+**Scope:** Pin crash/retry behaviour on ``process_batch`` and the host reaper
+lease so a slow live worker cannot be failed ahead of Celery's hard kill.
+
+**Files:**
+
+- `app/src/context-engine/tests/unit/test_process_batch_failure_resume.py`
+- `tests/unit/context_graph/test_stale_batch_reaper_lease.py`
+
+| Test area | Behaviour invariant |
+|-----------|---------------------|
+| Failure + resume log | Agent exception / ``ok=False`` → execution log **not** cleared; ``run_failed`` seq > resume watermark |
+| Retry after partial chunk failure | Chunk 1 credits ``e1,e2``; chunk 2 fails; retry hands agent only ``e3,e4``; full batch completes |
+| Reaper lease | Default ``CELERY_TASK_TIME_LIMIT + 900``; tracks custom limit; explicit override; lease **>** time limit |
+
+**Regression check:**
+
+| When | `--context-graph-only` |
+|------|-------------------------|
+| After CGT-6 | 1393 passed |
+| After CGT-7 | **1401 passed** (+8, no regressions) |
+
+**Status:** CGT-7 done. **Next:** CGT-4 (container/queue) or CGT-8 (read async contract).
+
 ## Current task backlog (CGT plan)
 
 | Ticket | Priority | Status |
@@ -1040,8 +1094,8 @@ runaway apply calls must hit `apply_call_cap_exceeded`.
 | CGT-3 | P0 | **Done** |
 | CGT-4 | P1 | Partial — `test_wiring_sandbox_tools` only |
 | CGT-5 | P0 | **Done** |
-| CGT-6 | P0 | Not started — fake E2E ingestion (gap #1) |
-| CGT-7 | P1 | Not started — `process_batch` resume + reaper lease |
+| CGT-6 | P0 | **Done** — fake E2E ingestion (`test_fake_ingestion_e2e.py`) |
+| CGT-7 | P1 | **Done** — resume/failure + reaper lease |
 | CGT-8 | P1 | Not started — `query` / `query_async` ANSWER/INVESTIGATE |
 | CGT-9 | P1 | Not started — `/record` + ingestion-config routes |
 | CGT-10 | P2 | Not started — event stream NDJSON consumer |
@@ -1170,3 +1224,266 @@ uv run python scripts/run_tests.py --context-graph-only
 ```
 
 **Status:** committed on PR #792 branch (`8b9c5552` clone-host match, `957d6cef` remote_url SSRF).
+
+## 2026-05-22 — Group C re-checked + PR #792 behaviour-first review
+
+User directive: tests should encode required behaviour, not mirror current
+implementation — a test that just locks in current call shape is wallpaper;
+one that pins a contract drives improvement when the code is wrong.
+
+### Group C (`test_archive_pot_cleanup`) — actually fixed, not by accident
+
+Earlier note (during the wiring phase) speculated the two `test_gc_caches_*`
+tests passed because Group A deletes removed the polluter. Re-checked the
+diff: the failing tests themselves were hardened. In
+`tests/unit/context_graph/test_archive_pot_cleanup.py`, both runner side
+effects changed:
+
+```diff
+-fake_async.run.side_effect = (
+-    lambda coro: __import__("asyncio").get_event_loop().run_until_complete(coro)
+-)
++fake_async.run.side_effect = asyncio.run
+```
+
+`asyncio.run` allocates a fresh event loop per call, eliminating the
+pytest-asyncio loop-pollution dependency. Group C is solved at the test, not
+masked. (The patched-mock-and-drive-the-runner shape underneath is still
+implementation-coupled — pre-existing, not added in #792.)
+
+### PR #792 behaviour-first audit (9 files reviewed)
+
+Score 1–5 (1 = pure implementation-mirror, 5 = pure behaviour contract).
+
+| File | Score | Note |
+|---|---|---|
+| `test_deep_agent_containment.py` (modified) | 4.5 | Exact-set equality on allowlist (catches silent additions). Default-playbook-is-not-an-auth-boundary invariant. Uses `_enforce_playbook_tool_allowlist` private — justified, this IS the security seam. |
+| `test_apply_graph_mutations_contract.py` (new) | 4 | Strong negative paths: bad input → `apply_plan_async` never called. Success path pins `expected_pot_id` + provenance at the call site. Smells: literal `"pydantic-deep"` agent-name lock; whole-string assertion on cap detail message; uses `agent._build_mutation_tools` private. |
+| `test_wiring_github_repo_binding.py` (new) | 4 (assertion) / 2 (setup) | Core C-5 contract is perfect: foreign-repo call → `unknown_repo`, `source_for_repo` never called for foreign. Setup patches 4 module builders with `RuntimeError` to isolate GitHub surface — brittle to any builder rename. |
+| `test_user_scoped_pot_resolution.py` (new) | 3.5 | Stranger/archived → `None`, `find_pots_for_repo` returns `[]`, dedupes — behaviour-first. `_filter_clauses_target_user` SQLAlchemy clause inspection is implementation-adjacent (defense-in-depth, audit-acknowledged). |
+| `test_attach_repo_provider_host_guard.py` (new) | 3 | SSRF rejection paths (internal IP, localhost, mismatched `remote_url`) pin the boundary. The audit-driven `test_rejects_remote_url_that_does_not_match_provider_host` is the strongest. Allowed-path tests patch 3 module internals (`mirror_repository_into_sources`, `_dispatch_prewarm`, `_emit_bootstrap_event`) at once → brittle. |
+| `test_archive_pot_cleanup.py` (modified) | n/a | Loop-pollution fix only (good). Underlying pattern (`thr.call_args.kwargs["target"]`) pre-existing. |
+| `test_agent_installer.py` (modified) | n/a — concern | "Delete to make green" — removed two `.exists()` assertions for files the installer no longer creates. No replacement encoding what the installer **does** produce. Lost coverage rather than redirected. |
+| `test_context_resolution.py` (modified) | n/a — concern | Added `"context_ingest"` to the manifest set assertion. The original intent ("surface stays small") is now reduced to a moving whitelist. Stronger form: cap the count, assert role distribution. |
+| `test_wiring_sandbox_tools.py` (modified) | n/a — same | Same 4-builder `RuntimeError` isolation pattern as `test_wiring_github_repo_binding`. |
+| `conftest.py` (new) | n/a | Infra, not a test. |
+
+### Recurring implementation-mirror patterns (worth a dedicated dedupe/refactor ticket)
+
+1. **Heavy patching of 3–4 module internals at once** to isolate a single
+   surface (`_capture_github_allowlist`, `_isolate_sandbox_surface`).
+   Survives a security regression; breaks on any rename or reorg. Each
+   added builder is one more brittleness point.
+2. **SQLAlchemy `.filter(...)` clause inspection** for tenancy. Already
+   audit-acknowledged as defense-in-depth; first to swap when a real
+   test-DB fixture exists.
+3. **Whole-string error message assertions** (`match="exact phrase"`,
+   `error == "..."`). Couples tests to wording, not contract.
+4. **Literal version / identifier locks** (`created_by_agent ==
+   "pydantic-deep"`). Cosmetic version bumps break tests.
+5. **Mock private functions, assert call shape.** `_attach_agent_tools`,
+   `_resolved_pot_from_context_graph_row`, `_build_mutation_tools` — used
+   because they are current seam points. Strong assertions on what flowed
+   *through* them (allowlist sets, `expected_pot_id`, etc.) are
+   behaviour-first; assertions on *that they were called with shape X*
+   are implementation-mirror.
+6. **"Delete to make green" instead of "update to encode behaviour"** —
+   `test_agent_installer`, `test_context_resolution`. Each one loses
+   coverage rather than redirecting it to the new contract.
+
+### Strong behaviour-first wins in #792
+
+- Allowlist exact-set equality in `test_deep_agent_containment` — catches
+  silent additions.
+- "Graph never reached on bad input" pattern in `test_apply_graph_mutations_contract`.
+- Foreign-repo block (C-5) in `test_wiring_github_repo_binding` — the
+  resolver never sees `victim/private`.
+- `remote_url` host-match check in `test_attach_repo_provider_host_guard`
+  — would have failed the first SSRF fix; audit-driven.
+- Stranger-gets-empty in `test_user_scoped_pot_resolution`.
+
+### What this means for the next ticket
+
+Audit guidance (already in `«Behaviour-first audit»` section above):
+"future CGT-4 / CGT-6 work should prefer route/use-case level tests over
+helper-call shape." Concretely, for CGT-6 (fake E2E ingestion):
+
+- Don't drive `_attach_agent_tools` + assert on the recorded builders.
+  Drive `container.ingestion_submission(db).submit(...)` and assert on
+  the durable rows + the events that came back through fake adapters.
+- Don't patch `_emit_bootstrap_event`. Inject a fake submission service
+  that records what was submitted, and assert on it.
+- Don't assert error message strings; assert the structured fields
+  (`error.code`, `out["ok"]`, `out["status"]`).
+
+**Status:** review captured. No code changes from this audit pass; the
+recurring patterns above are tracked for the dedupe/refactor follow-up.
+Next ticket per the plan is CGT-7 (resume/reaper) or CGT-4 (P1, partial).
+CGT-6 is done — see «CGT-6 landed» above.
+
+## 2026-05-22 — PR #792 production-code review (SSRF + playbook hydration)
+
+The earlier behaviour-first audit covered tests only. Re-checked the PR
+against its remote state and reviewed the two production-code diffs:
+
+- `app/modules/context_graph/attach_repo_to_pot.py` (SSRF guard, M-2 +
+  audit-driven clone-host match)
+- `app/src/context-engine/domain/event_playbooks.py` (bootstrap hydration
+  allowlist)
+
+**State at review:** remote PR head `8b9c5552`. CGT-5 (`f4480237`) and
+CGT-6 are **local-only**, not on the PR yet. The PR currently carries
+CGT-1/2/3 + the SSRF fixes only. `context_graph_history.md` is now part of
+the PR (convention shift from observability PRs).
+
+### `_validate_remote_url` — strong contract, narrow test coverage
+
+Contract enforced (in order):
+
+1. Empty / None → return None (preserves the legacy contract).
+2. scp-like SSH (`git@host:owner/repo.git`) parsed before scheme check.
+3. Scheme ∈ {`https`, `ssh`}.
+4. Host in `_allowed_provider_hosts()`.
+5. **Host == provider_host** (audit-driven clone-host match — closes the
+   bypass where a `provider_host=github.com` repo could clone from another
+   allowed host like `github.enterprise.corp`).
+
+Three independent gates; mutating `provider_host = provider_host.lower()`
+in-place is consistent with the validator usage.
+
+**Test coverage gaps in `test_attach_repo_provider_host_guard.py`**
+(real holes — the validator surface is wider than the tests pin):
+
+| Untested input | Should | Why it matters |
+|---|---|---|
+| `http://github.com/...` | reject (scheme gate) | Plaintext MITM; the scheme gate exists to prevent this |
+| `ftp://github.com/...` | reject | Same scheme-gate boundary |
+| `file:///etc/passwd` | reject | Local FS read via clone |
+| `https://github.com./...` (trailing dot) | reject (exact host) | DNS confusable |
+| IDN / Cyrillic lookalike host | reject | Phishing / DNS confusable |
+| `https://github.com:8080/...` | **policy call** | `urlparse` strips port → currently accepted; could dial internal service |
+
+"Should" describes what the current code does; the tests just don't
+prove it. Each is a one-line addition.
+
+**Minor inconsistency** (not security): the validator returns the
+original-case `value` while comparing on lowercase, so
+`https://GITHUB.COM/...` is persisted uppercase while `provider_host` is
+persisted lowercase. UI/log normalization mismatch potential.
+
+### `event_playbooks.py` — `repository.added` hydration allowlist
+
+Adds three tools to the playbook allowlist:
+
+- `github_get_pull_request_commits`
+- `github_get_pull_request_review_comments`
+- `github_get_pull_request_issue_comments`
+
+Correct change: the playbook prompt instructed the agent to hydrate
+backfilled PRs with these endpoints, but the allowlist excluded them —
+silent capability gap. No new resource boundary (same auth path as
+already-allowed `github_get_pull_request`). Pinned by exact-set equality
+in `test_repository_added_allowlist_keeps_backfill_hydration_tools`.
+
+### Recommendations
+
+1. **Push CGT-5 and CGT-6** to the PR if they should ship — both are
+   already documented as "done" in the history, but the PR head doesn't
+   include them yet. Without those commits the PR ships the security
+   regressions (CGT-2/3) and SSRF fixes but loses the mutation-tool
+   contract pinning (CGT-5) and the fake E2E ingestion (CGT-6).
+2. **Add the 6 validator edge tests** above (http/ftp/file/trailing-dot/
+   IDN/port). Each is a one-liner using `pytest.raises(ValueError)`.
+3. **Decide port policy explicitly** — `https://github.com:8080/...` is
+   currently accepted; might want to reject ports outside {22, 443} (or
+   accept silently and rely on git/network layer).
+4. **Don't block the PR on brittle-setup tests** (`_isolate_*_surface`
+   patterns) — they pin the right contracts. Refactor is CGT-11 work.
+
+**Status:** review captured. No code changes from this pass.
+
+## 2026-05-22 — PR #792 full review (intended state: CGT-5/6/7 included)
+
+User asked for a fresh PR review against the history's claim that
+CGT-5/6/7 are done. Critical state mismatch found:
+
+- **CGT-5** (`f4480237`): committed locally, **not pushed** to remote PR.
+- **CGT-6** (`test_fake_ingestion_e2e.py`): **uncommitted file** in working tree.
+- **CGT-7** (`test_process_batch_failure_resume.py`, `test_stale_batch_reaper_lease.py`):
+  **uncommitted files** in working tree.
+
+Remote PR head is still `8b9c5552`. None of CGT-5/6/7 are visible to
+reviewers. The history says "done"; the PR shows CGT-1/2/3 + SSRF only.
+
+### Behaviour-first scores (1–5) for the intended PR state
+
+| Ticket | File | Score | One-line verdict |
+|---|---|---|---|
+| CGT-2 | `test_deep_agent_containment.py` | 4.5 | Exact-set allowlist equality |
+| CGT-2 | `test_wiring_github_repo_binding.py` | 4 / 2 | C-5 contract pinned; 4-builder isolation brittle |
+| CGT-3 | `test_attach_repo_provider_host_guard.py` | 3 | `remote_url` test strongest; 3-helper patch brittle |
+| CGT-3 | `test_user_scoped_pot_resolution.py` | 3.5 | Behaviour tests good; SQL-clause inspection brittle |
+| CGT-5 | `test_apply_graph_mutations_contract.py` | 4 | Negative paths excellent; literal `"pydantic-deep"` lock |
+| **CGT-6** | **`test_fake_ingestion_e2e.py`** | **5** | **Best file — real fakes, public seams, durable state** |
+| CGT-7 | `test_process_batch_failure_resume.py` | 4 | Retry test is gold; MagicMock for ledger weakens others |
+| CGT-7 | `test_stale_batch_reaper_lease.py` | 4.5 | `lease > limit` invariant is exact |
+
+### Why CGT-6 is the highlight
+
+`InMemoryIngestionHarness` is a **real fake adapter**, not MagicMock —
+it implements ledger + batches + event store + job queue with state.
+`RecordingGraphPort.apply_plan_async` is an actual coroutine returning
+real `ReconciliationResult`. `PlanApplyingFakeAgent` constructs real
+`ReconciliationPlan`s and dispatches them. Drives through public seams
+only (`service.submit`, `handle_process_batch`, `force_flush_pot`).
+
+Invariants pinned:
+
+- Immediate-mode E2E applies graph once for the right pot
+- Duplicate submit returns same event_id, single enqueue, redundant
+  worker dispatch returns `skipped`, single graph apply (dedupe durable
+  across both submit and worker race)
+- Windowed mode does NOT enqueue on submit; `force_flush_pot` bridges
+- Immediate config enqueues on first submit
+
+Cost: ~500 lines of port emulation with `del x, y, z` stub boilerplate.
+
+### CGT-7 retry test is the other gold-standard
+
+`test_retry_skips_events_already_credited_before_failure`:
+
+1. First batch (4 events, chunk_size=2): chunk 1 completes [e1, e2],
+   chunk 2 fails [e3, e4]. Batch marked failed with
+   `completed_event_ids == [e1, e2]`.
+2. Retry with `ResumeState(completed_event_ids=["e1","e2"], ...)`: agent
+   **only sees [e3, e4]**, all 4 events complete, log cleared.
+
+Pins the entire crash-safe-retry contract from the durable side.
+
+### Critical PR mechanics (must fix before reviewers look)
+
+| Issue | Action |
+|---|---|
+| CGT-5 committed local, not pushed | `git push` |
+| CGT-6 file uncommitted | stage + commit |
+| CGT-7 files (×2) uncommitted | stage + commit |
+| history.md edits uncommitted | stage + commit (or split per-ticket) |
+
+Without these, the PR ships only CGT-1/2/3 + SSRF — missing **CGT-6's
+fake E2E** (the strongest test in the effort) and **CGT-7's retry
+contract**.
+
+### Recurring brittleness debt — no new patterns in CGT-5/6/7
+
+Same six from prior audit (3-4 module patches, SQL clause inspection,
+whole-string asserts, literal locks, mock-private + assert-call-shape,
+delete-to-make-green). All tracked for CGT-11.
+
+### Recommendation order
+
+1. Commit + push CGT-5/6/7 — PR currently invisible
+2. Add 6 SSRF validator edge tests (http/ftp/file/trailing-dot/IDN/port)
+3. Decide port policy for `https://github.com:8080/...`
+4. Defer brittle-setup refactor to CGT-11
+
+**Status:** review captured. No code changes from this pass.
