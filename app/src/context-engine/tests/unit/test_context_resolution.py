@@ -167,6 +167,7 @@ def test_context_port_manifest_keeps_recipe_surface_small() -> None:
         "context_search",
         "context_record",
         "context_status",
+        "context_ingest",
     }
     assert manifest["tools"]["context_resolve"]["role"] == "primary"
     assert context_recipe_for_intent("debugging") == {
