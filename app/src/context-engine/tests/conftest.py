@@ -6,7 +6,9 @@ and ``-m integration``. Most engine test files do not carry an explicit
 ``tests/integration/``). This conftest applies the matching marker at
 collection time so the root runner discovers them with no per-file edits.
 
-Files that already declare ``pytestmark`` are left alone.
+Files that already declare ``pytestmark`` may receive the same phase marker
+again; pytest treats duplicate markers as harmless, and this keeps the hook
+simple.
 """
 
 from __future__ import annotations
