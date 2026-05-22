@@ -928,12 +928,9 @@ PR #792 (move/delete/fix), not by ignoring the whole host tree.
 - `test_reconciliation_flags`, `test_sandbox_git_tools` — moved to engine tree.
 - Runner `--deselect` for agent installer / ontology — removed (tests green).
 
-**CGT-1 gaps still open:**
-
-- No GitHub Actions job yet that runs `make test-context-graph` (local/Makefile only).
-- No separate engine-only vs host-only CLI flags (combined `--context-graph-only` only).
-- `app/modules/context_graph/README.md` still says root `tests/unit/context_graph/`
-  was removed — partially true for domain duplicates, but host bridge tests remain.
+**CGT-1 follow-up (2026-05-22, completed):** GitHub Actions `context-graph` job,
+`--context-graph-engine-only` / `--context-graph-host-only`, Makefile targets.
+See «CGT-1 CI job + split commands» below.
 
 **Status:** CGT-1 done (local green baseline). CGT-2 done. CGT-3 done. **Next: CGT-5** (or CGT-4).
 
@@ -1085,21 +1082,127 @@ lease so a slow live worker cannot be failed ahead of Celery's hard kill.
 
 **Status:** CGT-7 done. **Next:** CGT-4 (container/queue) or CGT-8 (read async contract).
 
+## 2026-05-22 — CGT-8 landed (read dispatch + async contract)
+
+**Scope:** Pin ``GraphitiContextGraphAdapter`` event-loop safety and agentic
+goal routing; confirm agent ``context_search`` returns the normalized result
+envelope. Registry ``unsupported_include`` / ``missing_scope`` fallbacks
+already covered in ``test_context_reader_registry.py`` — not duplicated.
+
+**File:** `app/src/context-engine/tests/unit/test_context_graph_query_dispatch.py`
+
+| Test | Behaviour invariant |
+|------|---------------------|
+| Loop safety | ``query()`` raises for ``ANSWER`` and ``INVESTIGATE`` when a loop is running |
+| Sync bridge | ``ANSWER`` without a loop reaches ``resolve_context`` via the sync bridge |
+| Sync readers | ``RETRIEVE`` never calls ``asyncio.run`` |
+| ``query_async`` | ``ANSWER`` → ``path=answer``; ``INVESTIGATE`` → ``query_agent``; no agent → ``investigate_fallback`` |
+| Tool envelope | ``context_search`` success dict includes ``kind``, ``goal``, ``strategy``, ``result`` |
+
+**Regression check:**
+
+| When | `--context-graph-only` |
+|------|-------------------------|
+| After CGT-7 | 1401 passed |
+| After CGT-8 | **1410 passed** (+9, no regressions) |
+
+**Status:** CGT-8 done. **Next:** CGT-9 (routes) or CGT-4 (container/queue).
+
+## 2026-05-22 — CGT-1 CI job + split commands (completed)
+
+**Scope:** GitHub Actions runs the context-graph suite independently; runner
+supports engine-only and host-only invocations.
+
+**Changes:**
+
+- `.github/workflows/test.yml` — new `context-graph` job:
+  `uv run python scripts/run_tests.py --context-graph-only` (no Postgres/Redis
+  required; fakes-only).
+- `scripts/run_tests.py` — `--context-graph-engine-only`,
+  `--context-graph-host-only` (separate mutually exclusive group from
+  `--unit-only` / full suite).
+- `Makefile` — `test-context-graph-engine`, `test-context-graph-host`.
+
+**Commands:**
+
+```bash
+make test-context-graph
+make test-context-graph-engine
+make test-context-graph-host
+uv run python scripts/run_tests.py --context-graph-engine-only
+uv run python scripts/run_tests.py --context-graph-host-only
+```
+
+## 2026-05-22 — CGT-4 landed (container + queue wiring)
+
+**Files:**
+
+- `tests/unit/context_graph/test_wiring_container_contract.py`
+- `tests/unit/context_graph/test_celery_job_queue.py`
+
+| Test | Behaviour invariant |
+|------|---------------------|
+| Session vs user container | Jobs port wired; `pot_source_listing` attached; user resolver has `actor_scoped=True` |
+| Connectors | GitHub + Linear registered on container |
+| `_attach_agent_tools` | Sandbox failure does not block GitHub/web surfaces |
+| Celery queue | `enqueue_batch` → `context_graph_process_batch.delay(batch_id)` |
+
+## 2026-05-22 — CGT-9 landed (`/record` + ingestion-config routes)
+
+**File:** `app/src/context-engine/tests/integration/test_context_record_and_ingestion_routes.py`
+
+| Test | Behaviour invariant |
+|------|---------------------|
+| `POST /record` | Scope, `idempotency_key`, `occurred_at` reach submission; queued fallback envelope |
+| Duplicate record | `status=duplicate`, no queued fallback |
+| GET/PUT ingestion-config | Effective config round-trip; invalid `mode` → 422 |
+| `POST /ingest/flush` | No pending → `no_pending_batch`; open batch → enqueue; broker failure tolerated |
+
+## 2026-05-22 — CGT-10 landed (NDJSON stream consumer)
+
+**File:** `app/src/context-engine/tests/integration/test_event_stream_ndjson_consumer.py`
+
+Complements publish-side tests in `test_event_stream_publisher.py`.
+
+| Test | Behaviour invariant |
+|------|---------------------|
+| Event stream, no batch | Transient `end` / `queued` (client backoff) |
+| Event stream, with batch | Execution-log records streamed as NDJSON |
+| Event stream error | Terminal `end` / `error` |
+| Pot status stream | Publisher `replay_and_tail_pot_status`; terminal `idle_timeout` |
+| Pot stream error | Terminal `end` / `error` |
+
+## 2026-05-22 — CGT-11 audit (dedupe + residual gaps)
+
+**Suite:** `uv run python scripts/run_tests.py --context-graph-only` → **1428 passed**.
+
+**Residual `--ignore`s (documented, not hidden):** six engine unit files in
+`scripts/run_tests.py` — broken benchmark imports, missing golden/Linear
+fixtures. Re-enable when fixtures/modules are restored (not in scope for
+this wiring PR).
+
+**Dedupe:** No duplicate tests removed this pass — existing split is intentional
+(engine vs host bridge vs route-level HTTP). Overlap between
+`test_context_graph_query.py` and `test_context_graph_query_dispatch.py` is
+acceptable (delegation vs dispatch contract).
+
+**Status:** CGT plan **complete** for independent test-suite goals (CGT-1–11).
+
 ## Current task backlog (CGT plan)
 
 | Ticket | Priority | Status |
 |--------|----------|--------|
-| CGT-1 | P0 | Done (local); CI workflow + split commands still open |
+| CGT-1 | P0 | **Done** — local + CI job + split commands |
 | CGT-2 | P0 | **Done** |
 | CGT-3 | P0 | **Done** |
-| CGT-4 | P1 | Partial — `test_wiring_sandbox_tools` only |
+| CGT-4 | P1 | **Done** — container + Celery queue contracts |
 | CGT-5 | P0 | **Done** |
-| CGT-6 | P0 | **Done** — fake E2E ingestion (`test_fake_ingestion_e2e.py`) |
-| CGT-7 | P1 | **Done** — resume/failure + reaper lease |
-| CGT-8 | P1 | Not started — `query` / `query_async` ANSWER/INVESTIGATE |
-| CGT-9 | P1 | Not started — `/record` + ingestion-config routes |
-| CGT-10 | P2 | Not started — event stream NDJSON consumer |
-| CGT-11 | P2 | Partial — PR dedupe; 6 engine `--ignore`s remain |
+| CGT-6 | P0 | **Done** |
+| CGT-7 | P1 | **Done** |
+| CGT-8 | P1 | **Done** |
+| CGT-9 | P1 | **Done** |
+| CGT-10 | P2 | **Done** |
+| CGT-11 | P2 | **Done** (audit; 6 ignores documented) |
 
 Cross-module gaps **#1–#14** (research section) still map to CGT-3–CGT-10 above;
 see table in «Test-plan-relevant gaps».
