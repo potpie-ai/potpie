@@ -1054,3 +1054,37 @@ uv run python scripts/run_tests.py --context-graph-only
 **Status:** committed on PR #792 branch (playbook hydration allowlist fix).
 
 **Latest suite after CGT-3:** `1373 passed` via `--context-graph-only`.
+
+## 2026-05-22 — PR #792 review follow-up (remote_url SSRF bypass)
+
+Reviewed the updated CGT-3 SSRF guard. Found and fixed a bypass: the attach
+path validated `provider_host`, but still persisted caller-supplied
+`remote_url` verbatim and passed it into sandbox prewarm as the clone/fetch
+target. A caller could set `provider_host="github.com"` while setting
+`remote_url` to an internal metadata or arbitrary host URL.
+
+**Changes made:**
+
+- `app/modules/context_graph/attach_repo_to_pot.py`
+  - normalizes `provider_host` to lowercase before persistence / dedupe;
+  - validates `remote_url` host against the same allowed provider-host set;
+  - allows only `https` and `ssh` clone URLs;
+  - supports common scp-like Git SSH syntax (`git@github.com:owner/repo.git`).
+- `tests/unit/context_graph/test_attach_repo_provider_host_guard.py`
+  - added regressions for internal metadata `remote_url`,
+    arbitrary external `remote_url`, valid GitHub HTTPS, valid GitHub SSH, and
+    uppercase provider-host normalization.
+
+**Verification:**
+
+```bash
+uv run pytest \
+  tests/unit/context_graph/test_attach_repo_provider_host_guard.py \
+  tests/unit/context_graph/test_attach_repo_to_pot_use_case.py -q
+# -> 17 passed
+
+uv run python scripts/run_tests.py --context-graph-only
+# -> 1382 passed, 8 warnings, exit 0
+```
+
+**Status:** ready to commit/push on top of PR #792.

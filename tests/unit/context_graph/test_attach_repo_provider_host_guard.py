@@ -112,6 +112,91 @@ class TestAttachRepoProviderHostGuard:
                 submitted_by_user_id="u",
             )
 
+    def test_rejects_internal_remote_url_even_when_provider_host_allowed(self) -> None:
+        db = _make_db(query_results=[_fake_pot()])
+        with pytest.raises(ValueError, match="remote_url not allowed"):
+            attach_repo_to_pot(
+                db,
+                pot_id="pot-1",
+                provider="github",
+                provider_host="github.com",
+                owner="acme",
+                repo="widgets",
+                external_repo_id=None,
+                remote_url="http://169.254.169.254/latest/meta-data",
+                default_branch=None,
+                submitted_by_user_id="u",
+            )
+
+    def test_rejects_arbitrary_remote_url_host(self) -> None:
+        db = _make_db(query_results=[_fake_pot()])
+        with pytest.raises(ValueError, match="remote_url not allowed"):
+            attach_repo_to_pot(
+                db,
+                pot_id="pot-1",
+                provider="github",
+                provider_host="github.com",
+                owner="acme",
+                repo="widgets",
+                external_repo_id=None,
+                remote_url="https://evil.example.com/acme/widgets.git",
+                default_branch=None,
+                submitted_by_user_id="u",
+            )
+
+    def test_allows_github_remote_url(self) -> None:
+        db = _make_db(query_results=[_fake_pot(), None])
+        source = SimpleNamespace(id="src-github")
+        with patch(
+            "app.modules.context_graph.attach_repo_to_pot.mirror_repository_into_sources",
+            return_value=source,
+        ), patch(
+            "app.modules.context_graph.attach_repo_to_pot._dispatch_prewarm"
+        ), patch(
+            "app.modules.context_graph.attach_repo_to_pot._emit_bootstrap_event",
+            return_value="evt-1",
+        ):
+            result = attach_repo_to_pot(
+                db,
+                pot_id="pot-1",
+                provider="github",
+                provider_host="GITHUB.COM",
+                owner="acme",
+                repo="widgets",
+                external_repo_id=None,
+                remote_url="https://github.com/acme/widgets.git",
+                default_branch=None,
+                submitted_by_user_id="u",
+            )
+        assert result.repository.provider_host == "github.com"
+        assert result.repository.remote_url == "https://github.com/acme/widgets.git"
+
+    def test_allows_scp_like_github_ssh_remote_url(self) -> None:
+        db = _make_db(query_results=[_fake_pot(), None])
+        source = SimpleNamespace(id="src-ssh")
+        with patch(
+            "app.modules.context_graph.attach_repo_to_pot.mirror_repository_into_sources",
+            return_value=source,
+        ), patch(
+            "app.modules.context_graph.attach_repo_to_pot._dispatch_prewarm"
+        ), patch(
+            "app.modules.context_graph.attach_repo_to_pot._emit_bootstrap_event",
+            return_value="evt-1",
+        ):
+            result = attach_repo_to_pot(
+                db,
+                pot_id="pot-1",
+                provider="github",
+                provider_host="github.com",
+                owner="acme",
+                repo="widgets",
+                external_repo_id=None,
+                remote_url="git@github.com:acme/widgets.git",
+                default_branch=None,
+                submitted_by_user_id="u",
+            )
+        assert result.repository.remote_url == "git@github.com:acme/widgets.git"
+
     def test_allows_github_enterprise_host_from_env(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
