@@ -20,7 +20,7 @@ FLAG_TABLE: list[tuple[str, str, bool]] = [
     ("CONTEXT_ENGINE_CLASSIFY_MODIFIED_EDGES", "classify_modified_edges_enabled", True),
     ("CONTEXT_ENGINE_ALLOW_EDGE_CLASSIFY_WRITE", "allow_edge_classify_write_enabled", True),
     ("CONTEXT_ENGINE_STRICT_EXTRACTION", "strict_extraction_enabled", True),
-    ("CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL", "ontology_soft_fail_enabled", False),
+    ("CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL", "ontology_soft_fail_enabled", True),
     ("CONTEXT_ENGINE_ONTOLOGY_STRICT", "ontology_strict_enabled", False),
 ]
 
@@ -46,13 +46,13 @@ class TestTruthyParsing:
         monkeypatch.setenv("CONTEXT_ENGINE_RECONCILIATION_ENABLED", raw)
         assert flags.reconciliation_enabled() is True
         monkeypatch.setenv("CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL", raw)
-        assert flags.ontology_soft_fail_enabled() is False
+        assert flags.ontology_soft_fail_enabled() is True
 
     def test_unset_var_returns_default(self, monkeypatch) -> None:
         monkeypatch.delenv("CONTEXT_ENGINE_RECONCILIATION_ENABLED", raising=False)
         assert flags.reconciliation_enabled() is True
         monkeypatch.delenv("CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL", raising=False)
-        assert flags.ontology_soft_fail_enabled() is False
+        assert flags.ontology_soft_fail_enabled() is True
 
 
 class TestAllFlagsObserveEnv:

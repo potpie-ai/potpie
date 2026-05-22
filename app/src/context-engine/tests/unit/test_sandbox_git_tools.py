@@ -146,7 +146,9 @@ class TestSandboxGitLog:
             since="2 weeks ago", limit=10
         )
         cmd = client.exec_log[0]
-        assert cmd[0:3] == ["git", "log", "--max-count=10"]
+        assert cmd[0] == "git"
+        assert "log" in cmd
+        assert "--max-count=10" in cmd
         assert any(arg.startswith("--pretty=format:") for arg in cmd)
         assert "--since=2 weeks ago" in cmd
         assert out["count"] == 2
@@ -187,9 +189,12 @@ class TestSandboxCheckout:
         tools = _build_tools(repos=[("a", "x")], client=client)
         out = await _get_func(tools["sandbox_checkout"])(ref="main")
         assert out == {"repo": "a/x", "ref": "main", "head_sha": "deadbeef"}
-        assert client.exec_log[0][:3] == ["git", "fetch", "origin"]
-        assert client.exec_log[1][:3] == ["git", "checkout", "--detach"]
-        assert client.exec_log[2] == ["git", "rev-parse", "HEAD"]
+        assert client.exec_log[0][0] == "git"
+        assert "fetch" in client.exec_log[0] and "origin" in client.exec_log[0]
+        assert client.exec_log[1][0] == "git"
+        assert "checkout" in client.exec_log[1] and "--detach" in client.exec_log[1]
+        assert client.exec_log[2][0] == "git"
+        assert "rev-parse" in client.exec_log[2] and "HEAD" in client.exec_log[2]
 
     async def test_force_flag_passed_to_checkout(self) -> None:
         client = _FakeClient()
@@ -227,19 +232,21 @@ class TestSandboxCheckout:
         )
         # Both completed successfully.
         assert all("head_sha" in r for r in results)
-        # Each three-call block stays contiguous.
-        cmds = [c[2] if len(c) > 2 else "" for c in client.exec_log]
-        # The two blocks: ['alpha', '--detach' or 'alpha', 'HEAD'] +
-        # ['beta', '--detach' or 'beta', 'HEAD'] OR the reverse order.
-        # Verify no interleaving: refs in fetch positions (indices 0, 3) are
-        # different, and same ref appears in the checkout positions (1, 4).
-        fetch_refs = {client.exec_log[0][3], client.exec_log[3][3]}
+        # Each three-call block stays contiguous. Verify no interleaving by
+        # scanning each cmd for which ref it carries — robust to the
+        # hardening flag prefix the engine prepends to every git invocation.
+        def _ref_of(cmd: list[str]) -> str | None:
+            for token in ("alpha", "beta"):
+                if token in cmd:
+                    return token
+            return None
+
+        fetch_refs = {_ref_of(client.exec_log[0]), _ref_of(client.exec_log[3])}
         assert fetch_refs == {"alpha", "beta"}
-        # The ref on index 1 (first checkout) matches the ref on index 0
-        # (first fetch).
-        assert client.exec_log[0][3] == client.exec_log[1][3]
-        # Similarly for the second block.
-        assert client.exec_log[3][3] == client.exec_log[4][3]
+        # First block: fetch (0) and checkout (1) carry the same ref.
+        assert _ref_of(client.exec_log[0]) == _ref_of(client.exec_log[1])
+        # Second block: same invariant.
+        assert _ref_of(client.exec_log[3]) == _ref_of(client.exec_log[4])
 
 
 @pytest.mark.asyncio
