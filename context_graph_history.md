@@ -526,10 +526,9 @@ the cross-module wiring is uncovered.
    `test_deep_agent_containment.py` (union, default playbook excluded).
 6. **`_allowed_repos_for_pot`** — ~~no existing test~~ **CGT-2 done:**
    `test_github_agent_tools_repo_binding.py` + `test_wiring_github_repo_binding.py`.
-7. **`attach_repo_to_pot` SSRF guard** — `provider_host` outside
-   `CONTEXT_ENGINE_ALLOWED_PROVIDER_HOSTS` raises; valid GHE host
-   passes; deleted-then-re-added repo re-emits bootstrap event with
-   `already_attached=False`. No existing test.
+7. **`attach_repo_to_pot` SSRF guard** — ~~no SSRF tests~~ **CGT-3 done:**
+   `test_attach_repo_provider_host_guard.py`. Deleted-then-re-added re-emit
+   already in `test_attach_repo_to_pot_use_case.py::test_re_add_of_deleted_repo_re_emits_event`.
 8. **Failure-path resume invariant in `process_batch`** — checkpoint
    is preserved on agent exception / `ok=False`, partially-completed
    chunks credited as reconciled, retry resumes mid-batch. Existing
@@ -541,10 +540,9 @@ the cross-module wiring is uncovered.
 10. **Reaper lease invariant regression** — lease must exceed
     `CELERY_TASK_TIME_LIMIT`. A small env-mocked test would prevent a
     config drift from creating a reaper-vs-live-worker race.
-11. **`UserScopedContextGraphPotResolution` access checks** —
-    member vs legacy owner row, archived pot returns None,
-    `find_pots_for_repo` honors the per-user filter. Test plan
-    should include the row-level access path, not just the policy gate.
+11. **`UserScopedContextGraphPotResolution` access checks** — **CGT-3 done:**
+    `test_user_scoped_pot_resolution.py` (member, legacy owner, archived hidden,
+    stranger denied, `find_pots_for_repo` merge/dedupe).
 12. **Per-pot ingestion config endpoints (`/pots/{id}/ingestion-config`,
     `/ingest/flush`)** — bridge from policy + ingestion_config port to
     route response. Integration shape tests already exist for the
@@ -929,7 +927,7 @@ PR #792 (move/delete/fix), not by ignoring the whole host tree.
 - `app/modules/context_graph/README.md` still says root `tests/unit/context_graph/`
   was removed — partially true for domain duplicates, but host bridge tests remain.
 
-**Status:** CGT-1 done (local green baseline). CGT-2 done (see below). **Next: CGT-3.**
+**Status:** CGT-1 done (local green baseline). CGT-2 done. CGT-3 done. **Next: CGT-5** (or CGT-4).
 
 ## 2026-05-22 — CGT-2 landed (security regression: tool + repo guards)
 
@@ -960,8 +958,35 @@ uv run python scripts/run_tests.py --context-graph-only
 
 **Commit:** `cec32230` on `test/context-graph-ci-wiring`.
 
-**Status:** CGT-2 acceptance criteria met. **Next recommended: CGT-3** (SSRF on
-`attach_repo_to_pot`, `UserScopedContextGraphPotResolution` row-level access).
+**Status:** CGT-2 acceptance criteria met.
+
+## 2026-05-22 — CGT-3 landed (SSRF + user-scoped pot resolution)
+
+**Scope (Linear CGT-3):** Pin `provider_host` allowlist on repo attach (review
+M-2) and row-level tenancy on `UserScopedContextGraphPotResolution` (not only
+the policy adapter).
+
+**Tests added:**
+
+| Area | File | What it pins |
+|------|------|----------------|
+| SSRF / provider host | `tests/unit/context_graph/test_attach_repo_provider_host_guard.py` | Default `github.com`; rejects internal/localhost hosts; `CONTEXT_ENGINE_ALLOWED_PROVIDER_HOSTS` permits GHE |
+| Pot tenancy | `tests/unit/context_graph/test_user_scoped_pot_resolution.py` | `actor_scoped`; member + legacy owner access; archived hidden; stranger denied; `find_pots_for_repo` merges member/owner queries |
+
+**Verification:**
+
+```bash
+uv run pytest \
+  tests/unit/context_graph/test_attach_repo_provider_host_guard.py \
+  tests/unit/context_graph/test_user_scoped_pot_resolution.py -q
+# -> 12 passed
+
+uv run python scripts/run_tests.py --context-graph-only
+# -> 1373 passed, exit 0
+```
+
+**Status:** CGT-3 acceptance criteria met. **Next recommended: CGT-5** (mutation
+tool contract) or **CGT-4** (container/queue wiring).
 
 ## Current task backlog (CGT plan)
 
@@ -969,7 +994,7 @@ uv run python scripts/run_tests.py --context-graph-only
 |--------|----------|--------|
 | CGT-1 | P0 | Done (local); CI workflow + split commands still open |
 | CGT-2 | P0 | **Done** |
-| CGT-3 | P0 | Not started — SSRF + `UserScopedContextGraphPotResolution` |
+| CGT-3 | P0 | **Done** |
 | CGT-4 | P1 | Partial — `test_wiring_sandbox_tools` only |
 | CGT-5 | P0 | Not started — `apply_graph_mutations` contract |
 | CGT-6 | P0 | Not started — fake E2E ingestion (gap #1) |
@@ -1013,4 +1038,6 @@ uv run python scripts/run_tests.py --context-graph-only
 # -> 1362 passed, 8 warnings, exit 0
 ```
 
-**Status:** ready to commit/push on top of PR #792.
+**Status:** committed on PR #792 branch (playbook hydration allowlist fix).
+
+**Latest suite after CGT-3:** `1373 passed` via `--context-graph-only`.
