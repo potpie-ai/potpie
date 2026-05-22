@@ -1568,6 +1568,14 @@ branch filter mismatch above.
 
 **Status:** ready to commit/push CI + runner + adversarial URL-test fixes.
 
+**Commit/push:** `ee5e5120` (`ci(context-graph): run PR suite on staging`) pushed
+to `test/context-graph-ci-wiring`.
+
+**Post-push GitHub status:** PR #792 base `staging`, head
+`test/context-graph-ci-wiring`; merge state moved from no Actions context to
+Actions scheduled. `Regression tests / context-graph` is now present in the
+check rollup (queued) and `Regression tests / regression` is in progress.
+
 ## 2026-05-22 — PR #792 full review (intended state: CGT-5/6/7 included)
 
 User asked for a fresh PR review against the history's claim that
