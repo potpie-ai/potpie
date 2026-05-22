@@ -1088,3 +1088,55 @@ uv run python scripts/run_tests.py --context-graph-only
 ```
 
 **Status:** ready to commit/push on top of PR #792.
+
+## 2026-05-22 — Behaviour-first audit of existing context-graph tests
+
+Re-audited the already-added PR #792 tests using the rule: tests should encode
+required behaviour/invariants, not just mirror the current implementation.
+
+**Audit result:**
+
+- CGT-2 GitHub repo guards are behaviour-first: foreign repo calls must return
+  `unknown_repo` and must not reach the shared-credential resolver.
+- CGT-2 playbook allowlist tests are behaviour-first where they model the
+  security boundary ("declared event-kind tools only") and the bootstrap
+  hydration contract.
+- CGT-3 provider-host tests were improved by the `remote_url` SSRF bypass fix,
+  but the first fix still had one behaviour gap: if multiple provider hosts
+  were allowed, a repo declared as `provider_host="github.com"` could still
+  carry a clone `remote_url` for another allowed host. That is not the desired
+  attach contract; the clone target must match the declared provider host.
+- Some host wiring tests still use private helpers (`_attach_agent_tools`,
+  `_build_pot_sandbox_resolver`, `_emit_bootstrap_event`) because those are the
+  current host/engine seam points. They are acceptable short-term when the
+  assertion is a boundary invariant (foreign repo blocked before credentials,
+  sandbox disabled flag means no tool surface, bootstrap event is submitted
+  async), but future CGT-4/CGT-6 work should prefer route/use-case level tests
+  over helper-call shape.
+- User-scoped tenancy tests include some SQL-filter assertions. Those are
+  implementation-adjacent, but they supplement the behaviour tests that a
+  stranger gets no pot IDs and inaccessible pots resolve to `None`; keep them
+  as defense-in-depth until a real DB-backed tenant fixture exists.
+
+**Fix from audit:**
+
+- `app/modules/context_graph/attach_repo_to_pot.py` — remote clone URL host now
+  must equal the normalized `provider_host`, not merely be somewhere in the
+  global allowlist.
+- `tests/unit/context_graph/test_attach_repo_provider_host_guard.py` — added
+  `test_rejects_remote_url_that_does_not_match_provider_host`, which would
+  have failed the prior implementation.
+
+**Verification:**
+
+```bash
+uv run pytest \
+  tests/unit/context_graph/test_attach_repo_provider_host_guard.py \
+  tests/unit/context_graph/test_attach_repo_to_pot_use_case.py -q
+# -> 18 passed
+
+uv run python scripts/run_tests.py --context-graph-only
+# -> 1383 passed, 8 warnings, exit 0
+```
+
+**Status:** ready to commit/push audit fix.

@@ -171,6 +171,28 @@ class TestAttachRepoProviderHostGuard:
         assert result.repository.provider_host == "github.com"
         assert result.repository.remote_url == "https://github.com/acme/widgets.git"
 
+    def test_rejects_remote_url_that_does_not_match_provider_host(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(
+            "CONTEXT_ENGINE_ALLOWED_PROVIDER_HOSTS",
+            "github.com, github.enterprise.corp",
+        )
+        db = _make_db(query_results=[_fake_pot()])
+        with pytest.raises(ValueError, match="remote_url not allowed"):
+            attach_repo_to_pot(
+                db,
+                pot_id="pot-1",
+                provider="github",
+                provider_host="github.com",
+                owner="acme",
+                repo="widgets",
+                external_repo_id=None,
+                remote_url="https://github.enterprise.corp/acme/widgets.git",
+                default_branch=None,
+                submitted_by_user_id="u",
+            )
+
     def test_allows_scp_like_github_ssh_remote_url(self) -> None:
         db = _make_db(query_results=[_fake_pot(), None])
         source = SimpleNamespace(id="src-ssh")

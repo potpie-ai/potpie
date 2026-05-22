@@ -66,7 +66,12 @@ def _allowed_provider_hosts() -> set[str]:
     return hosts
 
 
-def _validate_remote_url(remote_url: str | None, *, allowed_hosts: set[str]) -> str | None:
+def _validate_remote_url(
+    remote_url: str | None,
+    *,
+    provider_host: str,
+    allowed_hosts: set[str],
+) -> str | None:
     """Return a trimmed clone URL after enforcing host/scheme boundaries."""
     value = (remote_url or "").strip()
     if not value:
@@ -82,10 +87,14 @@ def _validate_remote_url(remote_url: str | None, *, allowed_hosts: set[str]) -> 
         host = after_at.split(":", 1)[0].strip().lower()
         scheme = "ssh"
 
-    if scheme not in {"https", "ssh"} or host not in allowed_hosts:
+    if (
+        scheme not in {"https", "ssh"}
+        or host not in allowed_hosts
+        or host != provider_host
+    ):
         raise ValueError(
             f"remote_url not allowed: {value!r} "
-            "(must be https/ssh and match an allowed provider host)"
+            "(must be https/ssh and match the provider host)"
         )
     return value
 
@@ -126,7 +135,11 @@ def attach_repo_to_pot(
             "(set CONTEXT_ENGINE_ALLOWED_PROVIDER_HOSTS to permit a "
             "GitHub Enterprise host)"
         )
-    remote_url = _validate_remote_url(remote_url, allowed_hosts=allowed_hosts)
+    remote_url = _validate_remote_url(
+        remote_url,
+        provider_host=provider_host,
+        allowed_hosts=allowed_hosts,
+    )
 
     existing = (
         db.query(ContextGraphPotRepository)
