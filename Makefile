@@ -59,7 +59,8 @@ SET_CELERY_Q := CELERY_Q="$${CELERY_QUEUE_NAME}_process_repository,$${CELERY_QUE
         migrate migration downgrade migration-history \
         api worker stop \
         daytona-up daytona-down sandbox-status \
-        test test-unit test-integration test-real-parse test-stress test-cov test-context-graph \
+        test test-unit test-integration test-real-parse test-stress test-cov \
+        test-context-graph test-context-graph-engine test-context-graph-host \
         lint format fix precommit \
         clean
 
@@ -207,6 +208,12 @@ test-cov: ## Run full suite with coverage report (htmlcov/)
 
 test-context-graph: ## Run only context-graph tests (engine + host bridge; fakes only)
 	@uv run python scripts/run_tests.py --context-graph-only
+
+test-context-graph-engine: ## Run only app/src/context-engine/tests (fakes only)
+	@uv run python scripts/run_tests.py --context-graph-engine-only
+
+test-context-graph-host: ## Run only tests/*/context_graph host-bridge tests (fakes only)
+	@uv run python scripts/run_tests.py --context-graph-host-only
 
 ##@ Code quality
 

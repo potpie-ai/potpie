@@ -7,6 +7,28 @@ on:
     branches: [main, master]
 
 jobs:
+  context-graph:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.10.7"
+
+      - name: Install dependencies
+        run: uv sync --frozen --no-cache
+
+      - name: Run context-graph test suite
+        run: uv run python scripts/run_tests.py --context-graph-only
+
   regression:
     runs-on: ubuntu-latest
     services:

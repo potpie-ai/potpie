@@ -12,6 +12,9 @@ Single entry point to run the full test suite. Used by developers and CI.
 Usage:
   uv run python scripts/run_tests.py
   uv run python scripts/run_tests.py --unit-only
+  uv run python scripts/run_tests.py --context-graph-only
+  uv run python scripts/run_tests.py --context-graph-engine-only
+  uv run python scripts/run_tests.py --context-graph-host-only
   uv run python scripts/run_tests.py --coverage   # or -c (term + htmlcov/)
   SKIP_REAL_PARSE=1 uv run python scripts/run_tests.py
 """
@@ -124,7 +127,8 @@ def main() -> int:
         action="store_true",
         help="Run only stress tests.",
     )
-    group.add_argument(
+    cg_group = parser.add_mutually_exclusive_group()
+    cg_group.add_argument(
         "--context-graph-only",
         action="store_true",
         help=(
@@ -132,6 +136,23 @@ def main() -> int:
             "(app/src/context-engine/tests/) plus host-bridge unit + "
             "integration (tests/.../context_graph/). Fakes-only; no live "
             "GitHub/Linear/Graphiti/Neo4j/Redis/Celery/LLM."
+        ),
+    )
+    cg_group.add_argument(
+        "--context-graph-engine-only",
+        action="store_true",
+        help=(
+            "Run only context-engine tests under app/src/context-engine/tests/ "
+            "(unit + integration). Fakes-only."
+        ),
+    )
+    cg_group.add_argument(
+        "--context-graph-host-only",
+        action="store_true",
+        help=(
+            "Run only Potpie host-bridge context-graph tests under "
+            "tests/unit/context_graph/ and tests/integration-tests/context_graph/. "
+            "Fakes-only."
         ),
     )
     parser.add_argument(
@@ -190,22 +211,54 @@ def main() -> int:
             print(f"HTML report: file://{PROJECT_ROOT / 'htmlcov' / 'index.html'}")
         return code
 
-    if args.context_graph_only:
-        # One pytest invocation — engine + host-bridge paths together. Fakes
-        # only; no external services. Markers stay permissive because the
+    if (
+        args.context_graph_only
+        or args.context_graph_engine_only
+        or args.context_graph_host_only
+    ):
+        # Fakes only; no external services. Markers stay permissive because the
         # auto-marking conftest under app/src/context-engine/tests/ applies
         # ``unit`` / ``integration`` by directory, and host-bridge tests
         # already mark themselves.
-        print_phase_banner("Context Graph")
+        paths: list[str] = []
+        phase = "Context Graph"
+        if args.context_graph_engine_only:
+            phase = "Context Graph (engine)"
+            paths.extend(
+                [
+                    str(CONTEXT_ENGINE_UNIT_TESTS_DIR),
+                    str(CONTEXT_ENGINE_INTEGRATION_TESTS_DIR),
+                ]
+            )
+        elif args.context_graph_host_only:
+            phase = "Context Graph (host bridge)"
+            paths.extend(
+                [
+                    str(CONTEXT_GRAPH_HOST_UNIT_TESTS_DIR),
+                    str(CONTEXT_GRAPH_HOST_INTEGRATION_TESTS_DIR),
+                ]
+            )
+        else:
+            paths.extend(
+                [
+                    str(CONTEXT_ENGINE_UNIT_TESTS_DIR),
+                    str(CONTEXT_ENGINE_INTEGRATION_TESTS_DIR),
+                    str(CONTEXT_GRAPH_HOST_UNIT_TESTS_DIR),
+                    str(CONTEXT_GRAPH_HOST_INTEGRATION_TESTS_DIR),
+                ]
+            )
+        print_phase_banner(phase)
+        ignores = (
+            _CONTEXT_ENGINE_PYTEST_IGNORES
+            if args.context_graph_host_only is False
+            else ()
+        )
         code = run_pytest(
-            str(CONTEXT_ENGINE_UNIT_TESTS_DIR),
-            str(CONTEXT_ENGINE_INTEGRATION_TESTS_DIR),
-            str(CONTEXT_GRAPH_HOST_UNIT_TESTS_DIR),
-            str(CONTEXT_GRAPH_HOST_INTEGRATION_TESTS_DIR),
-            *_CONTEXT_ENGINE_PYTEST_IGNORES,
+            *paths,
+            *ignores,
             "-m", "not stress and not real_parse and not github_live",
             *args.pytest_extra,
-            phase_name="Context Graph",
+            phase_name=phase,
             coverage=args.coverage,
             coverage_final=True,
         )
