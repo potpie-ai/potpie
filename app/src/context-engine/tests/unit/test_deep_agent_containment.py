@@ -94,6 +94,32 @@ def test_playbook_allowlist_drops_undeclared_external_tools():
     assert "evil_tool" not in kept
 
 
+def test_repository_added_allowlist_keeps_backfill_hydration_tools():
+    agent = PydanticDeepReconciliationAgent()
+    ctx = _ctx([_event("e1", system="github", etype="repository", action="added")])
+    tools = [
+        _NamedTool("github_list_pull_requests"),
+        _NamedTool("github_get_pull_request"),
+        _NamedTool("github_get_pull_request_commits"),
+        _NamedTool("github_get_pull_request_review_comments"),
+        _NamedTool("github_get_pull_request_issue_comments"),
+        _NamedTool("github_get_issue"),
+        _NamedTool("linear_get_issue"),
+    ]
+    kept = {
+        t.name for t in agent._enforce_playbook_tool_allowlist(tools, ctx)
+    }
+    assert kept == {
+        "github_list_pull_requests",
+        "github_get_pull_request",
+        "github_get_pull_request_commits",
+        "github_get_pull_request_review_comments",
+        "github_get_pull_request_issue_comments",
+        "github_get_issue",
+    }
+    assert "linear_get_issue" not in kept
+
+
 def test_playbook_allowlist_unions_hints_across_batch_events():
     agent = PydanticDeepReconciliationAgent()
     ctx = _ctx(

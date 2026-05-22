@@ -981,3 +981,36 @@ uv run python scripts/run_tests.py --context-graph-only
 
 Cross-module gaps **#1–#14** (research section) still map to CGT-3–CGT-10 above;
 see table in «Test-plan-relevant gaps».
+
+## 2026-05-22 — PR #792 review follow-up (repository bootstrap allowlist)
+
+Reviewed the updated PR #792 branch (`test/context-graph-ci-wiring` at
+`ff464a03`) against the context-graph history and recent CGT-2 changes.
+
+**Finding fixed:** `github/repository/added` playbook text tells the agent to
+hydrate backfilled PRs with PR details plus commits/review/issue comments where
+useful, but the new hard `tool_hints` allowlist only kept the basic list/get
+tools. That meant bootstrap backfill could silently lose
+`github_get_pull_request_commits`,
+`github_get_pull_request_review_comments`, and
+`github_get_pull_request_issue_comments`.
+
+**Changes made:**
+
+- `app/src/context-engine/domain/event_playbooks.py` — added the three PR
+  hydration tools to the repository bootstrap playbook allowlist.
+- `app/src/context-engine/tests/unit/test_deep_agent_containment.py` — added a
+  regression test proving `repository.added` keeps the expected GitHub
+  hydration tools while still dropping unrelated Linear tools.
+
+**Verification:**
+
+```bash
+uv run pytest app/src/context-engine/tests/unit/test_deep_agent_containment.py -q
+# -> 8 passed
+
+uv run python scripts/run_tests.py --context-graph-only
+# -> 1362 passed, 8 warnings, exit 0
+```
+
+**Status:** ready to commit/push on top of PR #792.
