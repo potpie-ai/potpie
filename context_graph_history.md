@@ -7,6 +7,13 @@ or change the context graph system.
 append or revise this file with what changed, verification commands, and what
 is still open. Do not leave status only in chat.
 
+**Behaviour-first rule (2026-05-22):** New tests must encode required
+invariants (what must stay true for users/security), not only mirror the
+current implementation. Before/after each ticket, run
+`uv run python scripts/run_tests.py --context-graph-only` and record the pass
+count — a drop means behaviour broke or a test needs updating for an intentional
+change.
+
 ## 2026-05-22
 
 - Created this file at the start of the repo walkthrough.
@@ -517,11 +524,9 @@ the cross-module wiring is uncovered.
    container shape** — `actor_scoped` flag on `pots`, `pot_source_listing`
    set, connectors registered, no `app.*` import cycles. The two builders
    are the seam between monolith and engine.
-4. **Agent `apply_graph_mutations` tool routing** —
-   `unknown_event_id`, `invalid_plan`, `plan_conversion_failed`,
-   `apply_failed`, plus the `apply_call_cap_exceeded` cap. Direct test
-   on the tool's input → port dispatch contract (mocked
-   `ContextGraphPort.apply_plan_async`).
+4. **Agent `apply_graph_mutations` tool routing** — **CGT-5 done:**
+   `test_apply_graph_mutations_contract.py` (unknown event, invalid plan,
+   conversion failure, apply failure, success pot/provenance, apply cap).
 5. **`_enforce_playbook_tool_allowlist`** — ~~no existing test~~ **CGT-2 done:**
    `test_deep_agent_containment.py` (union, default playbook excluded).
 6. **`_allowed_repos_for_pot`** — ~~no existing test~~ **CGT-2 done:**
@@ -998,8 +1003,33 @@ uv run python scripts/run_tests.py --context-graph-only
   assertion for `known_pot_ids()`.
 - `test_rejects_arbitrary_external_provider_host` — `evil.example.com` blocked.
 
-**Status:** CGT-3 acceptance criteria met (strong). **Next recommended: CGT-5** (mutation
-tool contract) or **CGT-4** (container/queue wiring).
+**Status:** CGT-3 acceptance criteria met (strong).
+
+## 2026-05-22 — CGT-5 landed (`apply_graph_mutations` contract)
+
+**Scope:** Pin the mutation tool boundary — wrong inputs must not reach
+`apply_plan_async`; success must pass `expected_pot_id` and event provenance;
+runaway apply calls must hit `apply_call_cap_exceeded`.
+
+**File:** `app/src/context-engine/tests/unit/test_apply_graph_mutations_contract.py`
+
+| Test | Behaviour invariant |
+|------|---------------------|
+| `test_unknown_event_id_does_not_call_graph_apply` | Foreign `event_id` → error, graph never called |
+| `test_invalid_plan_does_not_call_graph_apply` | Schema reject → `invalid_plan`, no apply |
+| `test_plan_conversion_failed_does_not_call_graph_apply` | Domain conversion reject → no apply |
+| `test_apply_failed_surfaces_graph_error` | Graph exception → `apply_failed`, not success |
+| `test_success_passes_expected_pot_and_provenance` | `expected_pot_id=pot-1`, provenance from event |
+| `test_apply_call_cap_blocks_runaway_mutations` | Second apply over cap → `apply_call_cap_exceeded`, one apply only |
+
+**Regression check:**
+
+| When | `--context-graph-only` |
+|------|-------------------------|
+| Before CGT-5 | 1383 passed |
+| After CGT-5 | **1389 passed** (+6, no regressions) |
+
+**Status:** CGT-5 done. **Next: CGT-6** (fake E2E ingestion) or **CGT-4** (container/queue).
 
 ## Current task backlog (CGT plan)
 
@@ -1009,7 +1039,7 @@ tool contract) or **CGT-4** (container/queue wiring).
 | CGT-2 | P0 | **Done** |
 | CGT-3 | P0 | **Done** |
 | CGT-4 | P1 | Partial — `test_wiring_sandbox_tools` only |
-| CGT-5 | P0 | Not started — `apply_graph_mutations` contract |
+| CGT-5 | P0 | **Done** |
 | CGT-6 | P0 | Not started — fake E2E ingestion (gap #1) |
 | CGT-7 | P1 | Not started — `process_batch` resume + reaper lease |
 | CGT-8 | P1 | Not started — `query` / `query_async` ANSWER/INVESTIGATE |
@@ -1139,4 +1169,4 @@ uv run python scripts/run_tests.py --context-graph-only
 # -> 1383 passed, 8 warnings, exit 0
 ```
 
-**Status:** ready to commit/push audit fix.
+**Status:** committed on PR #792 branch (`8b9c5552` clone-host match, `957d6cef` remote_url SSRF).
