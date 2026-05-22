@@ -854,12 +854,15 @@ Pushed commits (branch `test/context-graph-ci-wiring`):
 - `424fc15e` test(context-graph): move engine tests out of host suite
 - `25a9382a` test(context-graph): fix stale tests and drop runner workarounds
 - `cec32230` test(context-graph): complete CGT-2 security regression coverage
+- `ff464a03` docs(context-graph): update history for CGT-2 and PR #792 status
+- `b6970de0` test(context-graph): complete CGT-3 SSRF and pot tenancy guards
+- `2dbcfe07` test(context-graph): strengthen CGT-3 tenancy and SSRF assertions
 
-**Latest verification (2026-05-22, after post-review fixes + CGT-2):**
+**Latest verification (2026-05-22, branch tip):**
 
 ```bash
 uv run python scripts/run_tests.py --context-graph-only
-# -> 1361 passed, 0 deselected, exit 0
+# -> 1378 passed, exit 0
 ```
 
 Post-review fixes on the same branch:
@@ -979,7 +982,7 @@ the policy adapter).
 uv run pytest \
   tests/unit/context_graph/test_attach_repo_provider_host_guard.py \
   tests/unit/context_graph/test_user_scoped_pot_resolution.py -q
-# -> 15 passed (after stronger tenancy + evil host SSRF tests)
+# -> 16 passed (CGT-3 SSRF + tenancy, including stronger filter assertions)
 
 uv run python scripts/run_tests.py --context-graph-only
 # -> 1378 passed, exit 0
