@@ -12,6 +12,10 @@ from sqlalchemy.orm import Session
 from app.celery.celery_app import celery_app
 from app.celery.tasks.base_task import BaseTask
 from app.modules.conversations.utils.redis_streaming import RedisStreamManager
+from app.modules.intelligence.agents.runtime.agent_execution_service import (
+    run_agent_turn,
+)
+from app.modules.intelligence.agents.runtime.redis_sink import RedisStreamSink
 from app.modules.users.user_model import User
 from app.modules.users.user_service import UserService
 from app.modules.utils.logger import setup_logger, log_context
@@ -183,7 +187,6 @@ def execute_agent_background(
                     from app.modules.conversations.conversation.conversation_service import (
                         ConversationService,
                     )
-                    from app.modules.conversations.exceptions import GenerationCancelled
                     from app.modules.conversations.message.message_model import (
                         MessageType,
                     )
@@ -219,24 +222,30 @@ def execute_agent_background(
                             tunnel_url=tunnel_url,
                         )
 
-                        # Publish start event when actual processing begins
-                        redis_manager.publish_event(
-                            conversation_id,
-                            run_id,
-                            "start",
-                            {
+                        # Cooperative cancellation check passed into the agent so it
+                        # can stop mid-run; run_agent_turn also checks per chunk.
+                        def check_cancelled() -> bool:
+                            return redis_manager.check_cancellation(
+                                conversation_id, run_id
+                            )
+
+                        def _flush_partial():
+                            message_id = service.history_manager.flush_message_buffer(
+                                conversation_id, MessageType.AI_GENERATED
+                            )
+                            if message_id:
+                                logger.debug(
+                                    "Flushed partial AI response for cancelled task",
+                                    message_id=message_id,
+                                )
+
+                        return await run_agent_turn(
+                            start_payload={
                                 "agent_id": agent_id or "default",
                                 "status": "processing",
                                 "message": "Starting message processing",
                             },
-                        )
-
-                        # Store the user message and generate AI response (pass cancellation check so agent can stop cooperatively)
-                        check_cancelled = lambda: redis_manager.check_cancellation(
-                            conversation_id, run_id
-                        )
-                        try:
-                            async for chunk in service.store_message(
+                            chunk_stream=service.store_message(
                                 conversation_id,
                                 message_request,
                                 MessageType.HUMAN,
@@ -245,96 +254,11 @@ def execute_agent_background(
                                 local_mode=local_mode,
                                 run_id=run_id,
                                 check_cancelled=check_cancelled,
-                            ):
-                                # Check for cancellation (redundant with cooperative check in agent, but keeps early exit)
-                                if redis_manager.check_cancellation(
-                                    conversation_id, run_id
-                                ):
-                                    logger.info("Agent execution cancelled")
-                                    try:
-                                        message_id = service.history_manager.flush_message_buffer(
-                                            conversation_id, MessageType.AI_GENERATED
-                                        )
-                                        if message_id:
-                                            logger.debug(
-                                                "Flushed partial AI response for cancelled task",
-                                                message_id=message_id,
-                                            )
-                                    except Exception as e:
-                                        logger.warning(
-                                            "Failed to flush message buffer on cancellation",
-                                            error=str(e),
-                                        )
-                                    redis_manager.publish_event(
-                                        conversation_id,
-                                        run_id,
-                                        "end",
-                                        {
-                                            "status": "cancelled",
-                                            "message": "Generation cancelled by user",
-                                        },
-                                    )
-                                    return False  # Indicate cancellation
-
-                                # Publish chunk event
-                                serialized_tool_calls = []
-                                if chunk.tool_calls:
-                                    for tool_call in chunk.tool_calls:
-                                        if hasattr(tool_call, "model_dump"):
-                                            serialized_tool_calls.append(
-                                                tool_call.model_dump()
-                                            )
-                                        elif hasattr(tool_call, "dict"):
-                                            serialized_tool_calls.append(
-                                                tool_call.dict()
-                                            )
-                                        else:
-                                            serialized_tool_calls.append(str(tool_call))
-
-                                redis_manager.publish_event(
-                                    conversation_id,
-                                    run_id,
-                                    "chunk",
-                                    {
-                                        "content": chunk.message or "",
-                                        "citations_json": chunk.citations or [],
-                                        "tool_calls_json": serialized_tool_calls,
-                                    },
-                                )
-
-                            return (
-                                True  # Indicate successful completion (loop finished)
-                            )
-                        except GenerationCancelled:
-                            logger.info(
-                                "Agent execution cancelled (GenerationCancelled)"
-                            )
-                            try:
-                                message_id = (
-                                    service.history_manager.flush_message_buffer(
-                                        conversation_id, MessageType.AI_GENERATED
-                                    )
-                                )
-                                if message_id:
-                                    logger.debug(
-                                        "Flushed partial AI response for cancelled task",
-                                        message_id=message_id,
-                                    )
-                            except Exception as e:
-                                logger.warning(
-                                    "Failed to flush message buffer on cancellation",
-                                    error=str(e),
-                                )
-                            redis_manager.publish_event(
-                                conversation_id,
-                                run_id,
-                                "end",
-                                {
-                                    "status": "cancelled",
-                                    "message": "Generation cancelled by user",
-                                },
-                            )
-                            return False  # Indicate cancellation
+                            ),
+                            sink=RedisStreamSink(redis_manager, conversation_id, run_id),
+                            flush_partial=_flush_partial,
+                            cancel_message="Generation cancelled by user",
+                        )
 
                 # Run the async agent execution on the worker's long-lived loop.
                 # Convert asyncio.CancelledError to RuntimeError so Celery's result callback
@@ -559,7 +483,6 @@ def execute_regenerate_background(
                     from app.modules.conversations.conversation.conversation_service import (
                         ConversationService,
                     )
-                    from app.modules.conversations.exceptions import GenerationCancelled
                     from app.modules.conversations.conversation.conversation_store import (
                         ConversationStore,
                     )
@@ -583,136 +506,43 @@ def execute_regenerate_background(
                             user_id=user_id,
                             user_email=user_email,
                         )
-                        # Publish start event when actual processing begins
-                        redis_manager.publish_event(
-                            conversation_id,
-                            run_id,
-                            "start",
-                            {
+                        # Cooperative cancellation check passed into the agent so it
+                        # can stop mid-run; run_agent_turn also checks per chunk.
+                        def check_cancelled() -> bool:
+                            return redis_manager.check_cancellation(
+                                conversation_id, run_id
+                            )
+
+                        def _flush_partial():
+                            message_id = service.history_manager.flush_message_buffer(
+                                conversation_id, MessageType.AI_GENERATED
+                            )
+                            if message_id:
+                                logger.debug(
+                                    "Flushed partial AI response for cancelled regenerate",
+                                    message_id=message_id,
+                                )
+
+                        return await run_agent_turn(
+                            start_payload={
                                 "agent_id": "regenerate",
                                 "status": "processing",
                                 "message": "Starting regeneration processing",
                             },
-                        )
-
-                        # Track if we've received any chunks
-                        has_chunks = False
-                        check_cancelled = lambda: redis_manager.check_cancellation(
-                            conversation_id, run_id
-                        )
-                        try:
-                            async for (
-                                chunk
-                            ) in service.regenerate_last_message_background(
+                            chunk_stream=service.regenerate_last_message_background(
                                 conversation_id,
                                 node_ids,
                                 attachment_ids,
                                 local_mode=local_mode,
                                 run_id=run_id,
                                 check_cancelled=check_cancelled,
-                            ):
-                                has_chunks = True
+                            ),
+                            sink=RedisStreamSink(redis_manager, conversation_id, run_id),
+                            flush_partial=_flush_partial,
+                            cancel_message="Regeneration cancelled by user",
+                        )
 
-                                # Check for cancellation
-                                if redis_manager.check_cancellation(
-                                    conversation_id, run_id
-                                ):
-                                    logger.info("Regenerate execution cancelled")
-
-                                    # Flush any buffered AI response chunks before cancelling
-                                    try:
-                                        message_id = service.history_manager.flush_message_buffer(
-                                            conversation_id,
-                                            MessageType.AI_GENERATED,
-                                        )
-                                        if message_id:
-                                            logger.debug(
-                                                "Flushed partial AI response for cancelled regenerate",
-                                                message_id=message_id,
-                                            )
-                                    except Exception as e:
-                                        logger.warning(
-                                            "Failed to flush message buffer on cancellation",
-                                            error=str(e),
-                                        )
-                                    redis_manager.publish_event(
-                                        conversation_id,
-                                        run_id,
-                                        "end",
-                                        {
-                                            "status": "cancelled",
-                                            "message": "Regeneration cancelled by user",
-                                        },
-                                    )
-                                    return False  # Indicate cancellation
-
-                                # Publish chunk event
-                                # Properly serialize tool calls before sending through Redis
-                                serialized_tool_calls = []
-                                if chunk.tool_calls:
-                                    for tool_call in chunk.tool_calls:
-                                        if hasattr(tool_call, "model_dump"):
-                                            serialized_tool_calls.append(
-                                                tool_call.model_dump()
-                                            )
-                                        elif hasattr(tool_call, "dict"):
-                                            serialized_tool_calls.append(
-                                                tool_call.dict()
-                                            )
-                                        else:
-                                            serialized_tool_calls.append(str(tool_call))
-
-                                redis_manager.publish_event(
-                                    conversation_id,
-                                    run_id,
-                                    "chunk",
-                                    {
-                                        "content": chunk.message or "",
-                                        "citations_json": chunk.citations or [],
-                                        "tool_calls_json": serialized_tool_calls,
-                                    },
-                                )
-
-                            # Log completion of regeneration
-                            if has_chunks:
-                                logger.info("Regeneration completed successfully")
-                            else:
-                                logger.warning("No chunks received during regeneration")
-
-                            return True  # Indicate successful completion
-                        except GenerationCancelled:
-                            logger.info(
-                                "Regenerate execution cancelled (GenerationCancelled)"
-                            )
-                            try:
-                                message_id = (
-                                    service.history_manager.flush_message_buffer(
-                                        conversation_id, MessageType.AI_GENERATED
-                                    )
-                                )
-                                if message_id:
-                                    logger.debug(
-                                        "Flushed partial AI response for cancelled regenerate",
-                                        message_id=message_id,
-                                    )
-                            except Exception as e:
-                                logger.warning(
-                                    "Failed to flush message buffer on cancellation",
-                                    error=str(e),
-                                )
-                            redis_manager.publish_event(
-                                conversation_id,
-                                run_id,
-                                "end",
-                                {
-                                    "status": "cancelled",
-                                    "message": "Regeneration cancelled by user",
-                                },
-                            )
-                            return False  # Indicate cancellation
-
-                # Run the async regeneration on the worker's long-lived loop
-                # Run the async regeneration on the worker's long-lived loop
+                # Run the async regeneration on the worker's long-lived loop.
                 # Convert asyncio.CancelledError to RuntimeError for Celery callback stability.
                 try:
                     completed = self.run_async(run_regeneration())
