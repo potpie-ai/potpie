@@ -21,6 +21,9 @@ from app.modules.conversations.utils.redis_streaming import (
 )
 from app.modules.intelligence.agents.runtime.backend_selection import select_backend
 from app.modules.intelligence.agents.runtime.hatchet_backend import (
+    AGENT_RUN_OPERATION_MESSAGE,
+    AGENT_RUN_OPERATION_REGENERATE,
+    AgentRunOperation,
     AgentRunInput,
     enqueue_agent_run,
 )
@@ -60,8 +63,9 @@ async def _dispatch_agent_run(
     async_redis_manager: AsyncRedisStreamManager,
     local_mode: bool,
     tunnel_url: Optional[str],
+    operation: AgentRunOperation = AGENT_RUN_OPERATION_MESSAGE,
 ) -> Optional[str]:
-    """Route an agent run to the selected backend.
+    """Route an agent run operation to the selected backend.
 
     Celery by default; Hatchet for allowlisted agents when hatchet-mode is on. Returns
     the Celery task id (None for Hatchet). Fails closed with HTTP 503 if Hatchet is
@@ -77,6 +81,7 @@ async def _dispatch_agent_run(
                     user_id=user_id,
                     query=query,
                     agent_id=agent_id or "",
+                    operation=operation,
                     node_ids=node_ids,
                     attachment_ids=attachment_ids or [],
                     local_mode=local_mode,
@@ -103,6 +108,23 @@ async def _dispatch_agent_run(
             f"Routed agent run {conversation_id}:{run_id} to Hatchet (agent_id={agent_id})"
         )
         return None
+
+    if operation == AGENT_RUN_OPERATION_REGENERATE:
+        from app.celery.tasks.agent_tasks import execute_regenerate_background
+
+        task_result = execute_regenerate_background.delay(
+            conversation_id=conversation_id,
+            run_id=run_id,
+            user_id=user_id,
+            node_ids=node_ids or [],
+            attachment_ids=attachment_ids or [],
+            local_mode=local_mode,
+        )
+        await async_redis_manager.set_task_id(conversation_id, run_id, task_result.id)
+        logger.info(
+            f"Started regenerate task {task_result.id} for {conversation_id}:{run_id}"
+        )
+        return task_result.id
 
     from app.celery.tasks.agent_tasks import execute_agent_background
 
@@ -261,7 +283,7 @@ async def start_celery_task_and_stream(
     tunnel_url: Optional[str] = None,
 ) -> StreamingResponse:
     """
-    Start a Celery background task and return a streaming response.
+    Start a background agent task on the selected backend and return a stream.
     Uses async Redis so the event loop is not blocked.
     """
     # Set initial "queued" status before starting the task
@@ -311,6 +333,62 @@ async def start_celery_task_and_stream(
         )
 
     # Return Redis stream response (sync generator runs in Starlette thread pool)
+    return StreamingResponse(
+        redis_stream_generator(conversation_id, run_id, cursor),
+        media_type="text/event-stream",
+    )
+
+
+async def start_regenerate_task_and_stream(
+    conversation_id: str,
+    run_id: str,
+    user_id: str,
+    agent_id: Optional[str],
+    node_ids: list,
+    attachment_ids: list,
+    async_redis_manager: AsyncRedisStreamManager,
+    cursor: Optional[str] = None,
+    local_mode: bool = False,
+) -> StreamingResponse:
+    """Start regenerate on the same backend selected for this conversation's agent."""
+    await async_redis_manager.set_task_status(conversation_id, run_id, "queued")
+    await async_redis_manager.publish_event(
+        conversation_id,
+        run_id,
+        "queued",
+        {
+            "status": "queued",
+            "message": "Regeneration task queued for processing",
+        },
+    )
+
+    await _dispatch_agent_run(
+        conversation_id=conversation_id,
+        run_id=run_id,
+        user_id=user_id,
+        query="",
+        agent_id=agent_id,
+        node_ids=node_ids,
+        attachment_ids=attachment_ids,
+        async_redis_manager=async_redis_manager,
+        local_mode=local_mode,
+        tunnel_url=None,
+        operation=AGENT_RUN_OPERATION_REGENERATE,
+    )
+
+    task_started = await async_redis_manager.wait_for_task_start(
+        conversation_id, run_id, timeout=30, require_running=False
+    )
+    logger.info(
+        f"Regenerate task start check done for {conversation_id}:{run_id} "
+        f"(started={task_started})"
+    )
+    if not task_started:
+        logger.warning(
+            f"Background regenerate task failed to start within 30s for "
+            f"{conversation_id}:{run_id} - may still be queued"
+        )
+
     return StreamingResponse(
         redis_stream_generator(conversation_id, run_id, cursor),
         media_type="text/event-stream",

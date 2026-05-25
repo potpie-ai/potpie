@@ -16,6 +16,7 @@ def test_agent_run_input_round_trips_core_fields():
     assert payload["conversation_id"] == "c1"
     assert payload["query"] == "hello"
     assert payload["agent_id"] == "debugging_agent"
+    assert payload["operation"] == hb.AGENT_RUN_OPERATION_MESSAGE
     # optional fields default sanely
     assert payload["node_ids"] is None
     assert payload["attachment_ids"] == []
@@ -47,6 +48,24 @@ def test_enqueue_agent_run_pushes_event_with_payload():
     assert key == hb.EVENT_AGENT_RUN
     assert payload["conversation_id"] == "c1"
     assert payload["agent_id"] == "debugging_agent"
+
+
+def test_enqueue_regenerate_run_pushes_same_agent_event_with_operation():
+    client = _FakeClient()
+    inp = hb.AgentRunInput(
+        conversation_id="c1",
+        run_id="r1",
+        user_id="u1",
+        agent_id="debugging_agent",
+        operation=hb.AGENT_RUN_OPERATION_REGENERATE,
+        node_ids=[{"node_id": "n1", "name": "Node"}],
+    )
+    hb.enqueue_agent_run(inp, client=client)
+    key, payload = client.event.pushed[0]
+    assert key == hb.EVENT_AGENT_RUN
+    assert payload["operation"] == hb.AGENT_RUN_OPERATION_REGENERATE
+    assert payload["query"] == ""
+    assert payload["node_ids"] == [{"node_id": "n1", "name": "Node"}]
 
 
 def test_enqueue_agent_run_raises_when_push_fails():

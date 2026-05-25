@@ -1141,10 +1141,25 @@ class ConversationService:
                 {"conversation_id": conversation_id},
             )
 
-            # Convert string node_ids to NodeContext objects for compatibility
+            # Convert queued payload node_ids back to NodeContext objects. Celery
+            # may receive Pydantic objects in tests, while Hatchet receives JSON.
             node_contexts = []
             if node_ids:
-                node_contexts = [NodeContext(node_id=node_id) for node_id in node_ids]
+                for node in node_ids:
+                    if isinstance(node, NodeContext):
+                        node_contexts.append(node)
+                    elif isinstance(node, dict):
+                        node_id = str(node.get("node_id") or node.get("id") or "")
+                        if node_id:
+                            node_contexts.append(
+                                NodeContext(
+                                    node_id=node_id,
+                                    name=str(node.get("name") or node_id),
+                                )
+                            )
+                    else:
+                        node_id = str(node)
+                        node_contexts.append(NodeContext(node_id=node_id, name=node_id))
 
             # Execute AI response generation with existing logic
             async for chunk in self._generate_and_stream_ai_response(

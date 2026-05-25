@@ -50,7 +50,38 @@ async def test_dispatch_routes_allowlisted_agent_to_hatchet(monkeypatch):
     assert result is None  # hatchet runs have no celery task id
     assert captured["inp"].conversation_id == "c1"
     assert captured["inp"].agent_id == "debugging_agent"
+    assert captured["inp"].operation == cr.AGENT_RUN_OPERATION_MESSAGE
     assert redis.task_ids == []  # no celery task id stored for hatchet
+
+
+async def test_dispatch_routes_regenerate_to_hatchet_for_selected_agent(monkeypatch):
+    monkeypatch.setattr(cr, "select_backend", lambda agent_id: "hatchet")
+    captured = {}
+    monkeypatch.setattr(
+        cr, "enqueue_agent_run", lambda inp, **kw: captured.update(inp=inp)
+    )
+    redis = _FakeAsyncRedis()
+
+    result = await cr._dispatch_agent_run(
+        conversation_id="c1",
+        run_id="r1",
+        user_id="u1",
+        query="",
+        agent_id="debugging_agent",
+        node_ids=[{"node_id": "n1", "name": "Node"}],
+        attachment_ids=["a1"],
+        async_redis_manager=redis,
+        local_mode=False,
+        tunnel_url=None,
+        operation=cr.AGENT_RUN_OPERATION_REGENERATE,
+    )
+
+    assert result is None
+    assert captured["inp"].operation == cr.AGENT_RUN_OPERATION_REGENERATE
+    assert captured["inp"].query == ""
+    assert captured["inp"].node_ids == [{"node_id": "n1", "name": "Node"}]
+    assert captured["inp"].attachment_ids == ["a1"]
+    assert redis.task_ids == []
 
 
 async def test_dispatch_fails_closed_with_503_when_hatchet_enqueue_fails(monkeypatch):
