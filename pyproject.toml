@@ -89,6 +89,9 @@ dependencies = [
     "parsing",
     "potpie-sandbox",
     "daytona>=0.134.0",
+    "tree-sitter-c-sharp==0.23.1",
+    "tree-sitter-embedded-template==0.25.0",
+    "tree-sitter-yaml==0.7.2",
 ]
 
 [tool.uv]
