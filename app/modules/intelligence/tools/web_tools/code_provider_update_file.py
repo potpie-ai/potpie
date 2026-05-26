@@ -70,9 +70,6 @@ class CodeProviderUpdateFileTool:
         try:
             provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
         except ValueError as e:
-            logger.exception(
-                f"Failed to create provider for repository '{repo_name}': {str(e)}"
-            )
             raise ValueError(
                 f"Repository {repo_name} not found or inaccessible on GitHub"
             ) from e
@@ -82,7 +79,6 @@ class CodeProviderUpdateFileTool:
                 f"Provider factory returned None for repository '{repo_name}'. "
                 "Unable to obtain client."
             )
-            logger.error(message)
             raise ValueError(message)
 
         client = getattr(provider, "client", None)
@@ -91,7 +87,6 @@ class CodeProviderUpdateFileTool:
                 f"Provider '{type(provider).__name__}' does not expose a client for "
                 f"repository '{repo_name}'."
             )
-            logger.error(message)
             raise ValueError(message)
 
         if not hasattr(client, "get_repo"):
@@ -99,7 +94,6 @@ class CodeProviderUpdateFileTool:
                 f"Client of type '{type(client).__name__}' for repository "
                 f"'{repo_name}' does not support required operations."
             )
-            logger.error(message)
             raise ValueError(message)
 
         return client
@@ -176,9 +170,6 @@ class CodeProviderUpdateFileTool:
                         "[UPDATE_FILE] File does not exist (404), will create new file"
                     )
                 else:
-                    logger.error(
-                        f"[UPDATE_FILE] Error checking file existence: status={e.status}, data={e.data}"
-                    )
                     raise e
 
             # Create commit with author info if provided

@@ -225,8 +225,7 @@ class CodeProviderController:
             if is_404_error or is_401_error or (hasattr(e, "status") and getattr(e, "status", None) == 403):
                 logger.info(f"Authentication failed for {repo_name}: {str(e)}")
             else:
-                logger.error(f"Error fetching branches for {repo_name}: {str(e)}", exc_info=True)
-            raise
+                raise
 
     async def get_branch_list(
         self, repo_name: str, limit: Optional[int] = None, offset: int = 0, search: Optional[str] = None

@@ -152,10 +152,6 @@ class ConversationAPI:
             result = await controller.get_conversation_info(conversation_id)
             return result
         except Exception as e:
-            logger.error(
-                f"Error in get_conversation_info for {conversation_id}: {str(e)}",
-                exc_info=True,
-            )
             raise
 
     @staticmethod
@@ -182,10 +178,6 @@ class ConversationAPI:
             )
             return result
         except Exception as e:
-            logger.error(
-                f"Error in get_conversation_messages for {conversation_id}: {str(e)}",
-                exc_info=True,
-            )
             raise
 
     @staticmethod
@@ -514,10 +506,6 @@ class ConversationAPI:
         try:
             return await controller.update_agent(conversation_id, request.agent_id)
         except Exception as e:
-            logger.error(
-                f"Error in update_agent for {conversation_id}: {str(e)}",
-                exc_info=True,
-            )
             raise
 
     @staticmethod
@@ -537,7 +525,6 @@ class ConversationAPI:
         try:
             await controller.get_conversation_info(conversation_id)
         except Exception as e:
-            logger.error(f"Access denied for conversation {conversation_id}: {str(e)}")
             raise HTTPException(status_code=403, detail="Access denied to conversation")
 
         result = await async_session_service.get_active_session(conversation_id)
@@ -565,7 +552,6 @@ class ConversationAPI:
         try:
             await controller.get_conversation_info(conversation_id)
         except Exception as e:
-            logger.error(f"Access denied for conversation {conversation_id}: {str(e)}")
             raise HTTPException(status_code=403, detail="Access denied to conversation")
 
         result = await async_session_service.get_task_status(conversation_id)
@@ -598,7 +584,6 @@ class ConversationAPI:
         try:
             await controller.get_conversation_info(conversation_id)
         except Exception as e:
-            logger.error(f"Access denied for conversation {conversation_id}: {str(e)}")
             raise HTTPException(status_code=403, detail="Access denied to conversation")
 
         stream_key = async_redis.stream_key(conversation_id, session_id)
@@ -764,9 +749,4 @@ async def sync_code_change_from_local(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(
-            f"Error syncing code change from local: {e}",
-            conversation_id=conversation_id,
-            file_path=change.get("file_path"),
-        )
         raise HTTPException(status_code=500, detail=f"Error syncing change: {str(e)}")

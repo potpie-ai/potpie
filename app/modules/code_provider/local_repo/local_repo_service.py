@@ -98,10 +98,6 @@ class LocalRepoService:
                 selected_lines = lines[start:end_line]
                 return "".join(selected_lines)
         except Exception as e:
-            logger.error(
-                f"Error processing file content for project ID {project_id}, file {file_path}: {e}",
-                exc_info=True,
-            )
             raise HTTPException(
                 status_code=500,
                 detail=f"Error processing file content: {str(e)}",
@@ -134,10 +130,6 @@ class LocalRepoService:
             formatted_structure = self._format_tree_structure(structure)
             return formatted_structure
         except Exception as e:
-            logger.error(
-                f"Error fetching project structure for {repo_path}: {str(e)}",
-                exc_info=True,
-            )
             raise HTTPException(
                 status_code=500, detail=f"Failed to fetch project structure: {str(e)}"
             )
@@ -337,9 +329,6 @@ class LocalRepoService:
             patches_dict = self._parse_diff(diff)
             return patches_dict
         except Exception as e:
-            logger.error(
-                f"Error computing diff for local repo: {str(e)}", exc_info=True
-            )
             raise HTTPException(
                 status_code=500, detail=f"Error computing diff for local repo: {str(e)}"
             )

@@ -375,10 +375,6 @@ async def start_celery_task_and_wait(
         # Re-raise HTTP exceptions
         raise
     except Exception as e:
-        logger.error(
-            f"Error collecting response from Redis stream for {conversation_id}:{run_id}: {str(e)}",
-            exc_info=True,
-        )
         raise HTTPException(
             status_code=500, detail=f"Failed to collect response: {str(e)}"
         )

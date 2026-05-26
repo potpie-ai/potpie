@@ -85,10 +85,6 @@ class CodeProviderCreatePullRequestTool:
             logger.info(f"[CREATE_PR] Client object: {type(provider.client).__name__}")
             return provider.client
         except Exception as e:
-            logger.error(
-                f"[CREATE_PR] Failed to get client: {type(e).__name__}: {str(e)}",
-                exc_info=True,
-            )
             raise Exception(
                 f"Repository {repo_name} not found or inaccessible: {str(e)}"
             )
@@ -239,10 +235,6 @@ class CodeProviderCreatePullRequestTool:
                     logger.info(f"[CREATE_PR] Returning success result: {result}")
                     return result
                 except Exception as e:
-                    logger.error(
-                        f"[CREATE_PR] Raw API call failed: {type(e).__name__}: {str(e)}",
-                        exc_info=True,
-                    )
                     raise
 
             # For GitHub, use standard PyGithub method

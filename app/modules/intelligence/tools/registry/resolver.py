@@ -56,11 +56,6 @@ class ToolResolver:
                 exclude_embedding_tools=exclude_embedding_tools,
             )
         except RegistryError as e:
-            logger.error(
-                "ToolResolver: failed to resolve allow_list_id=%s: %s",
-                allow_list_id,
-                e,
-            )
             raise
         if not include_deferred_tools:
             names = [

@@ -366,11 +366,6 @@ class CodeProviderFactory:
         # For GitHub, validate that repo_name looks like a valid GitHub repo name
         # GitHub repos must be in "owner/repo" format
         if provider_type == "github" and "/" not in repo_name:
-            logger.error(
-                f"Invalid GitHub repository name: '{repo_name}'. "
-                f"GitHub repos must be in 'owner/repo' format. "
-                f"If this is a local repository, ensure repo_path is set in the database."
-            )
             raise ValueError(
                 f"Invalid repository name '{repo_name}'. "
                 f"GitHub repos must be in 'owner/repo' format (e.g., 'facebook/react'). "

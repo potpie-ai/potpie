@@ -347,11 +347,6 @@ class UnifiedAuthService:
         # Check if this is the only provider
         all_providers = self.get_user_providers(user_id)
         if len(all_providers) <= 1:
-            logger.error(
-                "Cannot unlink last provider %s for user %s",
-                provider_type,
-                user_id,
-            )
             raise ValueError("Cannot unlink the only authentication provider")
 
         was_primary = provider.is_primary
@@ -849,17 +844,9 @@ class UnifiedAuthService:
             return token
         except (IntegrityError, InternalError) as e:
             self.db.rollback()
-            logger.error(
-                f"Database error creating pending link for user_id={user_id}, provider_type={provider_type}, provider_uid={provider_uid}: {e}",
-                exc_info=True,
-            )
             raise
         except Exception as e:
             self.db.rollback()
-            logger.error(
-                f"Unexpected error creating pending link for user_id={user_id}, provider_type={provider_type}, provider_uid={provider_uid}: {e}",
-                exc_info=True,
-            )
             raise
 
     def confirm_provider_link(self, linking_token: str) -> Optional[UserAuthProvider]:
@@ -1206,18 +1193,10 @@ class UnifiedAuthService:
         except (IntegrityError, InternalError) as e:
             # Rollback the transaction on database errors
             self.db.rollback()
-            logger.error(
-                f"Database error creating user with provider {provider_type}, email={email}, provider_uid={provider_uid}: {e}",
-                exc_info=True,
-            )
             raise
         except Exception as e:
             # Rollback on any other error
             self.db.rollback()
-            logger.error(
-                f"Unexpected error creating user with provider {provider_type}, email={email}, provider_uid={provider_uid}: {e}",
-                exc_info=True,
-            )
             raise
 
     def _log_auth_event(

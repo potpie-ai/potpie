@@ -21,7 +21,6 @@ def cleanup_expired_cache_entries(self: Task):
         return {"deleted_count": deleted_count, "status": "success"}
 
     except Exception as e:
-        logger.exception("Cache cleanup failed")
         raise self.retry(exc=e, countdown=60, max_retries=3) from e
     finally:
         if db is not None:
@@ -46,7 +45,6 @@ def cleanup_least_accessed_cache_entries(self: Task, max_entries: int = 100000):
         return {"deleted_count": deleted_count, "status": "success"}
 
     except Exception as e:
-        logger.exception("Cache size cleanup failed")
         raise self.retry(exc=e, countdown=60, max_retries=3) from e
     finally:
         if db is not None:
@@ -67,7 +65,6 @@ def get_cache_cleanup_stats(self: Task):
         return {"stats": stats, "status": "success"}
 
     except Exception as e:
-        logger.exception("Failed to get cache stats")
         raise self.retry(exc=e, countdown=60, max_retries=3) from e
     finally:
         if db is not None:

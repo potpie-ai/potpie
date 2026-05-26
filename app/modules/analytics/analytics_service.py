@@ -209,7 +209,6 @@ class AnalyticsService:
                     min_timestamp=start_dt,
                 )
             except Exception:
-                logger.exception("Error querying tokens by day")
                 raise
 
         rows = self._extract_rows(raw)
@@ -333,7 +332,6 @@ class AnalyticsService:
             logger.info("Retrieved %s LLM usage records", len(result))
             return result
         except Exception:
-            logger.exception("Error querying cost data")
             raise
 
     def _get_agent_data(
@@ -390,7 +388,6 @@ class AnalyticsService:
             logger.info("Retrieved %s execution records", len(result))
             return result
         except Exception:
-            logger.exception("Error querying agent data")
             raise
 
     def _get_conversation_data(
@@ -439,7 +436,6 @@ class AnalyticsService:
             logger.info("Retrieved %s conversation records", len(result))
             return result
         except Exception:
-            logger.exception("Error querying conversation data")
             raise
 
     def _aggregate_analytics(
@@ -625,5 +621,4 @@ class AnalyticsService:
                 rows = self._extract_rows(raw)
                 return [RawSpan(**row) for row in rows]
             except Exception:
-                logger.exception("Error querying raw spans")
                 raise

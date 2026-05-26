@@ -295,9 +295,6 @@ class AuthAPI:
                 raise
             except Exception as e:
                 db.rollback()
-                logger.error(
-                    f"Unexpected error linking GitHub provider: {e}", exc_info=True
-                )
                 raise
 
             logger.info(f"Successfully linked GitHub to user {user.uid}")

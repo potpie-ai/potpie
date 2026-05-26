@@ -84,9 +84,6 @@ class ToolCallStreamManager:
             self._sync_publish_stream_part(key, event_data)
             logger.debug(f"Published stream part to tool call stream {key}")
         except Exception as e:
-            logger.error(
-                f"Failed to publish stream part to Redis stream {key}: {str(e)}"
-            )
             raise
 
     async def publish_stream_part_async(

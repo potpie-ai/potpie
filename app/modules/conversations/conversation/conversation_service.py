@@ -437,12 +437,10 @@ class ConversationService:
 
             return conversation_id, "Conversation created successfully."
         except IntegrityError as e:
-            logger.exception("IntegrityError in create_conversation", user_id=user_id)
             raise ConversationServiceError(
                 "Failed to create conversation due to a database integrity error."
             ) from e
         except Exception as e:
-            logger.exception("Unexpected error in create_conversation", user_id=user_id)
             raise ConversationServiceError(
                 "An unexpected error occurred while creating the conversation."
             ) from e
@@ -708,11 +706,6 @@ class ConversationService:
                 f"Added system message to conversation {conversation_id} for user {user_id}"
             )
         except Exception as e:
-            logger.exception(
-                f"Failed to add system message to conversation {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise ConversationServiceError(
                 "Failed to add system message to the conversation."
             ) from e
@@ -953,11 +946,6 @@ class ConversationService:
         except GenerationCancelled:
             raise
         except Exception as e:
-            logger.exception(
-                f"Error in store_message for conversation {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise ConversationServiceError(
                 "Failed to store message or generate AI response."
             ) from e
@@ -1097,11 +1085,6 @@ class ConversationService:
             )
             raise
         except Exception as e:
-            logger.exception(
-                f"Error in regenerate_last_message for conversation {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise ConversationServiceError("Failed to regenerate last message.") from e
 
     async def regenerate_last_message_background(
@@ -1163,18 +1146,8 @@ class ConversationService:
         except GenerationCancelled:
             raise
         except (AccessTypeReadError, MessageNotFoundError):
-            logger.exception(
-                f"Background regeneration error for {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=self.user_id,
-            )
             raise
         except Exception as e:
-            logger.exception(
-                f"Background regeneration failed for {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=self.user_id,
-            )
             raise ConversationServiceError(f"Failed to regenerate message: {str(e)}")
 
     async def _get_last_human_message(self, conversation_id: str):
@@ -1194,11 +1167,6 @@ class ConversationService:
                 f"Archived subsequent messages in conversation {conversation_id}"
             )
         except Exception as e:
-            logger.exception(
-                f"Failed to archive messages in conversation {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=self.user_id,
-            )
             raise ConversationServiceError(
                 "Failed to archive subsequent messages."
             ) from e
@@ -1207,7 +1175,6 @@ class ConversationService:
         try:
             data = json.loads(chunk)
         except json.JSONDecodeError as e:
-            logger.exception("Failed to parse chunk as JSON")
             raise ConversationServiceError("Failed to parse AI response") from e
 
         # Extract the 'message' and 'citations'
@@ -1470,11 +1437,6 @@ class ConversationService:
         except GenerationCancelled:
             raise
         except Exception as e:
-            logger.exception(
-                f"Failed to generate and stream AI response for conversation {conversation.id}",
-                conversation_id=conversation.id,
-                user_id=user_id,
-            )
             raise ConversationServiceError(
                 "Failed to generate and stream AI response."
             ) from e
@@ -1748,20 +1710,10 @@ class ConversationService:
         except AccessTypeReadError:
             raise
         except SQLAlchemyError as e:
-            logger.exception(
-                f"Database error in delete_conversation for {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise ConversationServiceError(
                 f"Failed to delete conversation {conversation_id} due to a database error"
             ) from e
         except Exception as e:
-            logger.exception(
-                f"Unexpected error in delete_conversation for {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise ConversationServiceError(
                 f"Failed to delete conversation {conversation_id} due to an unexpected error"
             ) from e
@@ -1831,18 +1783,8 @@ class ConversationService:
             logger.warning(f"ConversationNotFoundError: {str(e)}")
             raise
         except AccessTypeNotFoundError:
-            logger.exception(
-                f"AccessTypeNotFoundError in get_conversation_info for {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise
         except Exception as e:
-            logger.exception(
-                f"Error in get_conversation_info for {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise ConversationServiceError(
                 f"Failed to get conversation info for {conversation_id}"
             ) from e
@@ -1912,18 +1854,8 @@ class ConversationService:
             logger.warning(f"ConversationNotFoundError: {str(e)}")
             raise
         except AccessTypeNotFoundError:
-            logger.exception(
-                f"AccessTypeNotFoundError in get_conversation_messages for {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise
         except Exception as e:
-            logger.exception(
-                f"Error in get_conversation_messages for {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise ConversationServiceError(
                 f"Failed to get messages for conversation {conversation_id}"
             ) from e
@@ -2141,22 +2073,12 @@ class ConversationService:
             }
 
         except SQLAlchemyError as e:
-            logger.exception(
-                f"Database error in rename_conversation for {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise ConversationServiceError(
                 "Failed to rename conversation due to a database error"
             ) from e
         except AccessTypeReadError:
             raise
         except Exception as e:
-            logger.exception(
-                f"Unexpected error in rename_conversation for {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise ConversationServiceError(
                 "Failed to rename conversation due to an unexpected error"
             ) from e
@@ -2206,20 +2128,10 @@ class ConversationService:
             logger.warning(f"ConversationNotFoundError: {str(e)}")
             raise
         except AccessTypeNotFoundError:
-            logger.exception(
-                f"AccessTypeNotFoundError in update_conversation_agent for {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise
         except ConversationServiceError:
             raise
         except Exception as e:
-            logger.exception(
-                f"Error in update_conversation_agent for {conversation_id}",
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
             raise ConversationServiceError(
                 f"Failed to update conversation agent for {conversation_id}"
             ) from e
@@ -2248,18 +2160,10 @@ class ConversationService:
         except StoreError as e:
             # Catch the specific error from the store and wrap it in a
             # service-level exception, which is a good practice.
-            logger.exception(
-                f"Store layer failed to get conversations for user {user_id}",
-                user_id=user_id,
-            )
             raise ConversationServiceError(
                 f"Failed to retrieve conversations for user {user_id}"
             ) from e
         except Exception as e:
-            logger.exception(
-                f"Unexpected error while getting conversations for user {user_id}",
-                user_id=user_id,
-            )
             raise ConversationServiceError(
                 f"An unexpected error occurred while retrieving conversations for user {user_id}"
             ) from e

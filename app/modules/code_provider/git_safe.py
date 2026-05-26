@@ -189,10 +189,6 @@ def safe_git_operation(
                 ) from e
 
             # For other exceptions, log and re-raise immediately
-            logger.error(
-                f"Git operation '{operation_name}' failed on attempt {attempt + 1}: {e}",
-                exc_info=True,
-            )
             raise
 
     # Should not reach here, but just in case

@@ -432,7 +432,6 @@ class PydanticDeepReconciliationAgent:
             llm_plan = asyncio.run(_run())
         except Exception:
             self._record_work_event("error", title="agent run failed")
-            logger.exception("pydantic-deep reconciliation run failed")
             raise
 
         ref = _event_ref(request)

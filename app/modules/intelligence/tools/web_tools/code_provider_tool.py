@@ -115,7 +115,6 @@ class CodeProviderTool:
             provider = CodeProviderFactory.create_provider()
             return provider.client
         except Exception as e:
-            logger.error(f"Failed to get GitHub client: {str(e)}")
             raise Exception(f"Repository {repo_name} not found or inaccessible")
 
     def _fetch_github_content(

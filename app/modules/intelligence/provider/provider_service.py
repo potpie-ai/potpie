@@ -243,12 +243,6 @@ def robust_llm_call(settings: Optional[RetrySettings] = None):
                     provider = identify_provider_from_error(e)
 
                     if retries >= settings.max_retries:
-                        logger.exception(
-                            "Max retries exceeded for API call",
-                            provider=provider,
-                            retries=retries,
-                            max_retries=settings.max_retries,
-                        )
                         raise
 
                     delay = calculate_backoff_time(retries, settings)
@@ -829,7 +823,6 @@ class ProviderService:
                 ),
             )
         except Exception as e:
-            logger.exception("Error getting global AI provider")
             raise e
 
     def supports_pydantic(self, config_type: str = "chat") -> bool:
@@ -950,11 +943,6 @@ class ProviderService:
                         _log_openrouter_usage(params.get("model", ""), response)
                         return response.choices[0].message.content
         except Exception as e:
-            logger.exception(
-                "Error calling LLM",
-                model_identifier=model_identifier,
-                provider=routing_provider,
-            )
             raise e
 
     @robust_llm_call()  # Apply the robust_llm_call decorator
@@ -1010,7 +998,6 @@ class ProviderService:
                     _log_openrouter_usage(params.get("model", ""), response)
                     return response.choices[0].message.content
         except Exception as e:
-            logger.exception("Error calling LLM", provider=routing_provider)
             raise e
 
     @robust_llm_call()
@@ -1088,7 +1075,6 @@ class ProviderService:
                     _log_openrouter_usage(params.get("model", ""), completion)
                     return parsed_response
         except Exception as e:
-            logger.exception("LLM call with structured output failed")
             raise e
 
     @robust_llm_call()
@@ -1173,7 +1159,6 @@ class ProviderService:
                     _log_openrouter_usage(params.get("model", ""), response)
                     return response.choices[0].message.content
         except Exception as e:
-            logger.exception("Error calling multimodal LLM", provider=routing_provider)
             raise e
 
     def _format_multimodal_messages(

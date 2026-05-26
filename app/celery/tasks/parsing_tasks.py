@@ -63,7 +63,6 @@ def process_parsing(
                     pot_id=project_id,
                 )
         except Exception:
-            logger.exception("Error during parsing")
             raise
         finally:
             if parsing_service is not None:

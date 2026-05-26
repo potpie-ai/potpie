@@ -231,14 +231,10 @@ class JiraClient:
             issue = response.json()
             return self._issue_to_dict(issue)
         except httpx.HTTPStatusError as e:
-            logger.error(
-                f"Failed to get issue {issue_key}: {e.response.status_code} - {e.response.text}"
-            )
             raise Exception(
                 f"Failed to get issue {issue_key}: {e.response.status_code} {e.response.text}"
             )
         except Exception as e:
-            logger.error(f"Failed to get issue {issue_key}: {str(e)}")
             raise Exception(f"Failed to get issue {issue_key}: {str(e)}")
 
     async def search_issues(
@@ -372,14 +368,10 @@ class JiraClient:
 
             return result
         except httpx.HTTPStatusError as e:
-            logger.error(
-                f"Failed to search issues with JQL '{jql}': {e.response.status_code} - {e.response.text}"
-            )
             raise Exception(
                 f"Failed to search issues: {e.response.status_code} {e.response.text}"
             )
         except Exception as e:
-            logger.error(f"Failed to search issues with JQL '{jql}': {str(e)}")
             raise Exception(f"Failed to search issues: {str(e)}")
 
     async def create_issue(
@@ -443,14 +435,10 @@ class JiraClient:
             # Fetch the created issue to return full details
             return await self.get_issue(issue_key)
         except httpx.HTTPStatusError as e:
-            logger.error(
-                f"Failed to create issue: {e.response.status_code} - {e.response.text}"
-            )
             raise Exception(
                 f"Failed to create issue: {e.response.status_code} {e.response.text}"
             )
         except Exception as e:
-            logger.error(f"Failed to create issue: {str(e)}")
             raise Exception(f"Failed to create issue: {str(e)}")
 
     async def update_issue(
@@ -485,14 +473,10 @@ class JiraClient:
             # Fetch fresh data after update
             return await self.get_issue(issue_key)
         except httpx.HTTPStatusError as e:
-            logger.error(
-                f"Failed to update issue {issue_key}: {e.response.status_code} - {e.response.text}"
-            )
             raise Exception(
                 f"Failed to update issue {issue_key}: {e.response.status_code} {e.response.text}"
             )
         except Exception as e:
-            logger.error(f"Failed to update issue {issue_key}: {str(e)}")
             raise Exception(f"Failed to update issue {issue_key}: {str(e)}")
 
     async def add_comment(self, issue_key: str, comment_body: str) -> Dict[str, Any]:
@@ -522,14 +506,10 @@ class JiraClient:
                 "created": comment.get("created"),
             }
         except httpx.HTTPStatusError as e:
-            logger.error(
-                f"Failed to add comment to {issue_key}: {e.response.status_code} - {e.response.text}"
-            )
             raise Exception(
                 f"Failed to add comment: {e.response.status_code} {e.response.text}"
             )
         except Exception as e:
-            logger.error(f"Failed to add comment to {issue_key}: {str(e)}")
             raise Exception(f"Failed to add comment: {str(e)}")
 
     async def transition_issue(
@@ -571,14 +551,10 @@ class JiraClient:
             # Fetch fresh data after transition
             return await self.get_issue(issue_key)
         except httpx.HTTPStatusError as e:
-            logger.error(
-                f"Failed to transition issue {issue_key}: {e.response.status_code} - {e.response.text}"
-            )
             raise Exception(
                 f"Failed to transition issue: {e.response.status_code} {e.response.text}"
             )
         except Exception as e:
-            logger.error(f"Failed to transition issue {issue_key}: {str(e)}")
             raise Exception(f"Failed to transition issue: {str(e)}")
 
     async def get_transitions(self, issue_key: str) -> List[Dict[str, str]]:
@@ -600,14 +576,10 @@ class JiraClient:
             transitions = data.get("transitions", [])
             return [{"id": t.get("id"), "name": t.get("name")} for t in transitions]
         except httpx.HTTPStatusError as e:
-            logger.error(
-                f"Failed to get transitions for {issue_key}: {e.response.status_code} - {e.response.text}"
-            )
             raise Exception(
                 f"Failed to get transitions: {e.response.status_code} {e.response.text}"
             )
         except Exception as e:
-            logger.error(f"Failed to get transitions for {issue_key}: {str(e)}")
             raise Exception(f"Failed to get transitions: {str(e)}")
 
     async def assign_issue(self, issue_key: str, assignee_id: str) -> Dict[str, Any]:
@@ -632,14 +604,10 @@ class JiraClient:
             # Fetch fresh data after assignment
             return await self.get_issue(issue_key)
         except httpx.HTTPStatusError as e:
-            logger.error(
-                f"Failed to assign issue {issue_key}: {e.response.status_code} - {e.response.text}"
-            )
             raise Exception(
                 f"Failed to assign issue: {e.response.status_code} {e.response.text}"
             )
         except Exception as e:
-            logger.error(f"Failed to assign issue {issue_key}: {str(e)}")
             raise Exception(f"Failed to assign issue: {str(e)}")
 
     async def get_project_details(self, project_key: str) -> Dict[str, Any]:
@@ -786,14 +754,10 @@ class JiraClient:
             return result
 
         except httpx.HTTPStatusError as e:
-            logger.error(
-                f"Failed to fetch project details for {project_key}: {e.response.status_code} - {e.response.text}"
-            )
             raise Exception(
                 f"Failed to fetch project details: {e.response.status_code} {e.response.text}"
             )
         except Exception as e:
-            logger.error(f"Failed to fetch project details for {project_key}: {str(e)}")
             raise Exception(f"Failed to fetch project details: {str(e)}")
 
     async def get_project_users(
@@ -846,14 +810,10 @@ class JiraClient:
             }
 
         except httpx.HTTPStatusError as e:
-            logger.error(
-                f"Failed to fetch project users for {project_key}: {e.response.status_code} - {e.response.text}"
-            )
             raise Exception(
                 f"Failed to fetch project users: {e.response.status_code} {e.response.text}"
             )
         except Exception as e:
-            logger.error(f"Failed to fetch project users for {project_key}: {str(e)}")
             raise Exception(f"Failed to fetch project users: {str(e)}")
 
     async def link_issues(
@@ -891,16 +851,10 @@ class JiraClient:
 
         except httpx.HTTPStatusError as e:
             error_msg = e.response.text
-            logger.error(
-                f"Failed to link issues {issue_key} -> {linked_issue_key}: {e.response.status_code} - {error_msg}"
-            )
             raise Exception(
                 f"Failed to link issues: {e.response.status_code} {error_msg}"
             )
         except Exception as e:
-            logger.error(
-                f"Failed to link issues {issue_key} -> {linked_issue_key}: {str(e)}"
-            )
             raise Exception(f"Failed to link issues: {str(e)}")
 
     async def get_projects(
@@ -961,14 +915,10 @@ class JiraClient:
                 "projects": projects,
             }
         except httpx.HTTPStatusError as e:
-            logger.error(
-                f"Failed to fetch projects: {e.response.status_code} - {e.response.text}"
-            )
             raise Exception(
                 f"Failed to fetch projects: {e.response.status_code} {e.response.text}"
             )
         except Exception as e:
-            logger.error(f"Failed to fetch projects: {str(e)}")
             raise Exception(f"Failed to fetch projects: {str(e)}")
 
     def _issue_to_dict(self, issue: Dict[str, Any]) -> Dict[str, Any]:
@@ -1066,7 +1016,6 @@ async def get_jira_client_for_user(user_id: str, db: Session) -> JiraClient:
         access_token = decrypt_token(encrypted_token)
         logger.debug(f"Successfully decrypted access token for user {user_id}")
     except Exception as e:
-        logger.error(f"Failed to decrypt access token: {str(e)}")
         raise Exception(
             "Failed to decrypt Jira access token. Please reconnect your Jira account."
         )
@@ -1112,9 +1061,6 @@ async def get_jira_client_for_user(user_id: str, db: Session) -> JiraClient:
 
     if token_needs_refresh:
         if not encrypted_refresh_token:
-            logger.error(
-                f"Token expired but no refresh token available for user {user_id}"
-            )
             raise Exception("Access token expired. Please reconnect your Jira account.")
 
         # Refresh the token
@@ -1146,9 +1092,6 @@ async def get_jira_client_for_user(user_id: str, db: Session) -> JiraClient:
         )
 
     if not site_url:
-        logger.error(
-            f"No site_url found in metadata for integration {integration.integration_id}"
-        )
         raise Exception(
             "Jira site URL not found in integration. Please reconnect your Jira account."
         )
@@ -1159,5 +1102,4 @@ async def get_jira_client_for_user(user_id: str, db: Session) -> JiraClient:
     try:
         return JiraClient(server=site_url, access_token=access_token, cloud_id=site_id)
     except Exception as e:
-        logger.error(f"Failed to create Jira client: {str(e)}")
         raise Exception(f"Failed to initialize Jira client: {str(e)}")

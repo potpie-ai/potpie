@@ -63,11 +63,6 @@ class CustomAgentService:
                 logger.info(f"Agent {agent_id} not found for user {user_id}")
             return agent
         except SQLAlchemyError:
-            logger.exception(
-                "Database error while fetching agent",
-                agent_id=agent_id,
-                user_id=user_id,
-            )
             raise
 
     async def get_agent_model(self, agent_id: str) -> Optional[CustomAgentModel]:
@@ -86,9 +81,6 @@ class CustomAgentService:
                 logger.info(f"Agent model {agent_id} not found")
             return agent
         except SQLAlchemyError:
-            logger.exception(
-                "Database error while fetching agent model", agent_id=agent_id
-            )
             raise
 
     async def create_share(
@@ -137,11 +129,6 @@ class CustomAgentService:
             return share
         except SQLAlchemyError:
             self.db.rollback()
-            logger.exception(
-                "Database error while creating share",
-                agent_id=agent_id,
-                shared_with_user_id=shared_with_user_id,
-            )
             raise
 
     async def revoke_share(self, agent_id: str, shared_with_user_id: str) -> bool:
@@ -193,11 +180,6 @@ class CustomAgentService:
             return True
         except SQLAlchemyError:
             self.db.rollback()
-            logger.exception(
-                "Database error while revoking share",
-                agent_id=agent_id,
-                shared_with_user_id=shared_with_user_id,
-            )
             raise
 
     async def list_agent_shares(self, agent_id: str) -> list[str]:
@@ -227,9 +209,6 @@ class CustomAgentService:
 
             return emails
         except SQLAlchemyError:
-            logger.exception(
-                "Database error while listing agent shares", agent_id=agent_id
-            )
             raise
 
     async def make_agent_private(self, agent_id: str, user_id: str) -> Optional[Agent]:
@@ -256,11 +235,6 @@ class CustomAgentService:
             return self._convert_to_agent_schema(agent)
         except SQLAlchemyError:
             self.db.rollback()
-            logger.exception(
-                "Database error while making agent private",
-                agent_id=agent_id,
-                user_id=user_id,
-            )
             raise
 
     async def list_agents(
@@ -292,7 +266,6 @@ class CustomAgentService:
             agents = query.all()
             return [self._convert_to_agent_schema(agent) for agent in agents]
         except SQLAlchemyError:
-            logger.exception("Database error while listing agents", user_id=user_id)
             raise
 
     def _convert_to_agent_schema(self, custom_agent: CustomAgentModel) -> Agent:
@@ -395,17 +368,12 @@ class CustomAgentService:
             raise
         except SQLAlchemyError as err:
             self.db.rollback()
-            logger.exception(
-                "Database error while creating agent",
-                user_id=user_id,
-            )
             raise HTTPException(
                 status_code=500,
                 detail="Failed to create agent",
             ) from err
         except Exception as err:
             self.db.rollback()
-            logger.exception("Unexpected error while creating agent", user_id=user_id)
             raise HTTPException(
                 status_code=500,
                 detail="Failed to create agent",
@@ -482,21 +450,11 @@ class CustomAgentService:
             return result
         except SQLAlchemyError:
             self.db.rollback()
-            logger.exception(
-                "Database error while updating agent",
-                agent_id=agent_id,
-                user_id=user_id,
-            )
             raise
         except HTTPException:
             raise
         except Exception as e:
             self.db.rollback()
-            logger.exception(
-                "Unexpected error while updating agent",
-                agent_id=agent_id,
-                user_id=user_id,
-            )
             raise HTTPException(status_code=500, detail="Failed to update agent") from e
 
     async def delete_agent(self, agent_id: str, user_id: str) -> Dict[str, Any]:
@@ -514,11 +472,6 @@ class CustomAgentService:
             }
         except SQLAlchemyError:
             self.db.rollback()
-            logger.exception(
-                "Database error while deleting agent",
-                agent_id=agent_id,
-                user_id=user_id,
-            )
             raise
 
     async def get_agent(self, agent_id: str, user_id: str = None) -> Optional[Agent]:
@@ -686,9 +639,6 @@ class CustomAgentService:
             # Preserve intentionally raised HTTP errors from downstream code.
             raise
         except Exception as err:
-            logger.exception(
-                "Error executing agent", agent_id=ctx.curr_agent_id, user_id=user_id
-            )
             raise HTTPException(
                 status_code=500, detail="Failed to execute agent"
             ) from err
@@ -729,7 +679,6 @@ class CustomAgentService:
             available_tools = ToolService(self.db, user_id).list_tools()
             tool_ids = [tool.id for tool in available_tools]
         except Exception:
-            logger.exception("Error fetching available tools", user_id=user_id)
             raise HTTPException(
                 status_code=500, detail="Failed to fetch available tools"
             )
@@ -787,13 +736,10 @@ class CustomAgentService:
             return self.persist_agent(user_id, agent_data, agent_data.tasks)
 
         except json.JSONDecodeError as err:
-            logger.exception("JSON parsing error", user_id=user_id)
             raise ValueError("Failed to parse agent plan") from err
         except ValueError:
-            logger.exception("Validation error", user_id=user_id)
             raise
         except Exception as err:
-            logger.exception("Error creating agent from prompt", user_id=user_id)
             raise ValueError("Failed to create agent from prompt") from err
 
     async def enhance_task_descriptions(
@@ -827,7 +773,6 @@ class CustomAgentService:
             tools = ToolService(self.db, user_id).list_tools()
             return [tool.id for tool in tools]
         except Exception:
-            logger.exception("Error fetching available tools", user_id=user_id)
             raise HTTPException(
                 status_code=500, detail="Failed to fetch available tools"
             )
@@ -890,9 +835,6 @@ class CustomAgentService:
                 )
                 return None  # Private agent and user is not the owner
         except SQLAlchemyError:
-            logger.exception(
-                "Error validating agent", agent_id=agent_id, user_id=user_id
-            )
             raise
 
     CREATE_AGENT_FROM_PROMPT = """

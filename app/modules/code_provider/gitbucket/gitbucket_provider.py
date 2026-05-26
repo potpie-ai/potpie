@@ -176,9 +176,6 @@ class GitBucketProvider(ICodeProvider):
                 logger.error(
                     "  3. Repository name format issue (expected: 'root/repo' for GitBucket)"
                 )
-                logger.error(
-                    f"  4. GitBucket instance not accessible at {self.base_url}"
-                )
 
             raise
 
@@ -239,12 +236,8 @@ class GitBucketProvider(ICodeProvider):
         try:
             repo = self._get_repo(repo_name)
         except GithubException:
-            logger.exception("GitBucket: Failed to get repository", repo_name=repo_name)
             raise
         except Exception:
-            logger.exception(
-                "GitBucket: Unexpected error getting repository", repo_name=repo_name
-            )
             raise
 
         # GitBucket doesn't handle ref=None well, so resolve it to the default branch
@@ -346,11 +339,6 @@ class GitBucketProvider(ICodeProvider):
                                 f"GitBucket: Raw API fallback succeeded for '{current_path}', found {len(contents)} items"
                             )
                         except Exception:
-                            logger.exception(
-                                "GitBucket: Raw API fallback also failed",
-                                current_path=current_path,
-                                repo_name=repo_name,
-                            )
                             raise
                     else:
                         raise
@@ -512,7 +500,6 @@ class GitBucketProvider(ICodeProvider):
                 )
                 logger.error("  1. Branch doesn't exist")
                 logger.error("  2. Repository access issues")
-                logger.error("  3. GitBucket API compatibility issues")
 
             raise
 
@@ -645,12 +632,6 @@ class GitBucketProvider(ICodeProvider):
             }
 
         except GithubException:
-            logger.exception(
-                "[GITBUCKET] Error comparing branches",
-                base_branch=base_branch,
-                head_branch=head_branch,
-                repo_name=repo_name,
-            )
             raise
 
     # ============ Pull Request Operations ============
@@ -1213,13 +1194,9 @@ class GitBucketProvider(ICodeProvider):
                 logger.error("  1. Repository doesn't exist")
                 logger.error("  2. Insufficient permissions")
                 logger.error("  3. GitBucket archive feature not available")
-                logger.error("  4. Repository name format issue")
 
             raise
         except Exception:
-            logger.exception(
-                "GitBucket: Unexpected error getting archive link", repo_name=repo_name
-            )
             raise
 
     # ============ Provider Metadata ============

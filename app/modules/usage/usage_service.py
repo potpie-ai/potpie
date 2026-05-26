@@ -49,7 +49,6 @@ class UsageService:
             }
 
         except SQLAlchemyError as e:
-            logger.exception("Failed to fetch usage data: %s", e)
             raise Exception("Failed to fetch usage data") from e
 
     @staticmethod

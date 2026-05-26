@@ -67,10 +67,6 @@ class ProjectService:
             )
             return project_name
         except SQLAlchemyError as e:
-            logger.error(
-                f"Database error in get_project_name for project IDs {project_ids}: {e}",
-                exc_info=True,
-            )
             raise ProjectServiceError(
                 f"Failed to retrieve project name for project IDs {project_ids}"
             ) from e
@@ -78,10 +74,6 @@ class ProjectService:
             logger.warning(str(e))
             raise
         except Exception as e:
-            logger.error(
-                f"Unexpected error in get_project_name for project IDs {project_ids}: {e}",
-                exc_info=True,
-            )
             raise ProjectServiceError(
                 f"An unexpected error occurred while retrieving project name for project IDs {project_ids}"
             ) from e
@@ -427,11 +419,9 @@ class ProjectService:
             return project
         except IntegrityError:
             db.rollback()
-            logger.exception(f"IntegrityError creating project {project.id}")
             raise
         except Exception:
             db.rollback()
-            logger.exception(f"Error creating project {project.id}")
             raise
 
     @staticmethod
@@ -480,18 +470,10 @@ class ProjectService:
                 )
 
         except SQLAlchemyError as e:
-            logger.error(
-                f"Database error in get_demo_repo_id for repo name {repo_name}: {e}",
-                exc_info=True,
-            )
             raise ProjectServiceError(
                 f"Failed to retrieve demo repo ID for repo name {repo_name}"
             ) from e
         except Exception as e:
-            logger.error(
-                f"Unexpected error in get_demo_repo_id for repo name {repo_name}: {e}",
-                exc_info=True,
-            )
             raise ProjectServiceError(
                 f"An unexpected error occurred while retrieving demo repo ID for repo name {repo_name}"
             ) from e

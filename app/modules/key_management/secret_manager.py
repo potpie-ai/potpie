@@ -198,9 +198,6 @@ class SecretStorageHandler:
                                 f"Successfully created new secret in GCP for {service}"
                             )
                         except Exception as create_error:
-                            logger.error(
-                                f"Failed to create secret in GCP for {service}: {str(create_error)}"
-                            )
                             raise HTTPException(
                                 status_code=500,
                                 detail=f"Failed to create secret: {str(create_error)}",
@@ -224,13 +221,11 @@ class SecretStorageHandler:
                     f"Successfully stored encrypted key in preferences for {service}"
                 )
             else:
-                logger.error("Neither GCP nor database storage is available")
                 raise HTTPException(
                     status_code=500,
                     detail="Neither GCP nor database storage is available",
                 )
         except Exception as e:
-            logger.error(f"Error storing secret for {service}: {str(e)}")
             raise
 
     @staticmethod
@@ -321,7 +316,6 @@ class SecretStorageHandler:
             # For test-user, return None silently instead of logging error
             if is_test_user:
                 return None
-            logger.error(f"Error getting secret for {service}: {str(e)}")
             raise
 
     @staticmethod
@@ -837,7 +831,6 @@ class SecretManager:
             return secret
 
         except Exception as e:
-            logger.error(f"Error getting secrets for user {user['user_id']}: {str(e)}")
             raise
 
     @router.put("/secrets/")
@@ -994,7 +987,6 @@ class SecretManager:
             )
             return APIKeyResponse(api_key=api_key)
         except Exception as e:
-            logger.error(f"Error creating API key for user {user['user_id']}: {str(e)}")
             raise
 
     @router.delete("/api-keys")
@@ -1032,7 +1024,6 @@ class SecretManager:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error getting API key for user {user['user_id']}: {str(e)}")
             raise HTTPException(
                 status_code=500, detail="Internal server error while retrieving API key"
             )
