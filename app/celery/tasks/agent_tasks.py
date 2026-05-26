@@ -168,7 +168,7 @@ def execute_agent_background(
             logger.info(
                 f"Starting background agent execution with tunnel_url={tunnel_url}, "
                 f"local_mode={local_mode}, conversation_id={conversation_id}"
-            )
+            , tunnel_url=tunnel_url, local_mode=local_mode, conversation_id=conversation_id)
             try:
                 # Set task status to indicate task has started
                 redis_manager.set_task_status(conversation_id, run_id, "running")
@@ -455,7 +455,7 @@ def execute_agent_background(
                         logger.info(
                             "[LLM cost - partial before error] "
                             f"total={total_cost} credits"
-                        )
+                        , total_cost=total_cost)
                         print(
                             "[LLM cost - partial before error] "
                             f"total={total_cost} credits",
@@ -748,7 +748,7 @@ def execute_regenerate_background(
                         )
                         logger.info(msg)
                         print(msg, flush=True)
-                    logger.info(f"[LLM cost this run] total={total_cost} credits")
+                    logger.info(f"[LLM cost this run] total={total_cost} credits", total_cost=total_cost)
                     print(
                         f"[LLM cost this run] total={total_cost} credits",
                         flush=True,
@@ -814,7 +814,7 @@ def execute_regenerate_background(
                             print(msg, flush=True)
                         logger.info(
                             f"[LLM cost - partial before error] total={total_cost} credits"
-                        )
+                        , total_cost=total_cost)
                         print(
                             f"[LLM cost - partial before error] total={total_cost} credits",
                             flush=True,

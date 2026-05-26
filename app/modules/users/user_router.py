@@ -46,7 +46,7 @@ class UserAPI:
             if authenticated_uid != request.uid:
                 logger.warning(
                     f"UID mismatch: authenticated={authenticated_uid}, requested={request.uid}"
-                )
+                , authenticated_uid=authenticated_uid, request_uid=request.uid)
                 raise HTTPException(
                     status_code=403,
                     detail="You can only save onboarding data for your own account",
@@ -75,7 +75,7 @@ class UserAPI:
             doc_ref = db_firestore.collection("users").document(request.uid)
             doc_ref.set(user_doc, merge=True)
 
-            logger.info(f"Successfully saved onboarding data for user {request.uid}")
+            logger.info(f"Successfully saved onboarding data for user {request.uid}", request_uid=request.uid)
 
             return OnboardingDataResponse(
                 success=True, message="Onboarding information saved successfully"

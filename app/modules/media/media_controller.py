@@ -107,7 +107,7 @@ class MediaController:
                 message_id=message_id,
             )
 
-            logger.info(f"User {self.user_id} uploaded image: {result.id}")
+            logger.info(f"User {self.user_id} uploaded image: {result.id}", self_user_id=self.user_id, result_id=result.id)
             return result
 
         except MediaServiceError as e:

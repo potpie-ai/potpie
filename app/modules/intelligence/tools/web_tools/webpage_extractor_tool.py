@@ -95,7 +95,7 @@ class WebpageExtractorTool:
         # Truncate response if it exceeds character limits
         truncated_result = truncate_dict_response(result)
         if len(str(result)) > 80000:
-            logger.warning(f"webpage_extractor_tool output truncated for URL: {url}")
+            logger.warning(f"webpage_extractor_tool output truncated for URL: {url}", url=url)
         return truncated_result
 
 

@@ -77,7 +77,7 @@ class CodeProviderCreatePullRequestTool:
     def _get_github_client(self, repo_name: str) -> Github:
         """Get code provider client using provider factory."""
         try:
-            logger.info(f"[CREATE_PR] Creating provider for repo: {repo_name}")
+            logger.info(f"[CREATE_PR] Creating provider for repo: {repo_name}", repo_name=repo_name)
             provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
             logger.info(
                 f"[CREATE_PR] Provider created successfully, type: {type(provider).__name__}"
@@ -116,10 +116,10 @@ class CodeProviderCreatePullRequestTool:
         """
         logger.info(
             f"[CREATE_PR] Starting PR creation: repo={repo_name}, head={head_branch}, base={base_branch}, title={title}"
-        )
+        , repo_name=repo_name, head_branch=head_branch, base_branch=base_branch, title=title)
         try:
             # Initialize GitHub client
-            logger.info(f"[CREATE_PR] Getting client for repo: {repo_name}")
+            logger.info(f"[CREATE_PR] Getting client for repo: {repo_name}", repo_name=repo_name)
             g = self._get_github_client(repo_name)
 
             # Normalize input repo_name if needed, then get actual name for API calls
@@ -138,24 +138,24 @@ class CodeProviderCreatePullRequestTool:
             )
             logger.info(
                 f"[CREATE_PR] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}"
-            )
+            , provider_type=provider_type, repo_name=repo_name, actual_repo_name=actual_repo_name)
 
             repo = g.get_repo(actual_repo_name)
-            logger.info(f"[CREATE_PR] Successfully got repo object: {repo.name}")
+            logger.info(f"[CREATE_PR] Successfully got repo object: {repo.name}", repo_name=repo.name)
 
             # Check if the branches exist
             try:
                 logger.info(
                     f"[CREATE_PR] Checking if head branch exists: heads/{head_branch}"
-                )
+                , head_branch=head_branch)
                 head_ref = repo.get_git_ref(f"heads/{head_branch}")
                 logger.info(
                     f"[CREATE_PR] Head branch exists: {head_ref.ref}, sha: {head_ref.object.sha}"
-                )
+                , head_ref_ref=head_ref.ref, head_ref_object_sha=head_ref.object.sha)
             except GithubException as e:
                 logger.error(
                     f"[CREATE_PR] Head branch '{head_branch}' not found: status={e.status}, data={e.data}"
-                )
+                , head_branch=head_branch, e_status=e.status, e_data=e.data)
                 return {
                     "success": False,
                     "error": f"Head branch '{head_branch}' not found: {str(e)}",
@@ -165,15 +165,15 @@ class CodeProviderCreatePullRequestTool:
             try:
                 logger.info(
                     f"[CREATE_PR] Checking if base branch exists: heads/{base_branch}"
-                )
+                , base_branch=base_branch)
                 base_ref = repo.get_git_ref(f"heads/{base_branch}")
                 logger.info(
                     f"[CREATE_PR] Base branch exists: {base_ref.ref}, sha: {base_ref.object.sha}"
-                )
+                , base_ref_ref=base_ref.ref, base_ref_object_sha=base_ref.object.sha)
             except GithubException as e:
                 logger.error(
                     f"[CREATE_PR] Base branch '{base_branch}' not found: status={e.status}, data={e.data}"
-                )
+                , base_branch=base_branch, e_status=e.status, e_data=e.data)
                 return {
                     "success": False,
                     "error": f"Base branch '{base_branch}' not found: {str(e)}",
@@ -183,7 +183,7 @@ class CodeProviderCreatePullRequestTool:
             # Create the pull request
             logger.info(
                 f"[CREATE_PR] Creating pull request: head={head_branch}, base={base_branch}"
-            )
+            , head_branch=head_branch, base_branch=base_branch)
 
             # For GitBucket, use raw API call to avoid PyGithub parsing issues
             if provider_type == "gitbucket":
@@ -219,7 +219,7 @@ class CodeProviderCreatePullRequestTool:
                     pr_url = data.get("html_url")
                     logger.info(
                         f"[CREATE_PR] Successfully created PR #{pr_number}: {pr_url}"
-                    )
+                    , pr_number=pr_number, pr_url=pr_url)
 
                     result = {
                         "success": True,
@@ -232,7 +232,7 @@ class CodeProviderCreatePullRequestTool:
                         "reviewers_added": False,  # Skip reviewers for GitBucket
                         "labels_added": False,  # Skip labels for GitBucket
                     }
-                    logger.info(f"[CREATE_PR] Returning success result: {result}")
+                    logger.info(f"[CREATE_PR] Returning success result: {result}", result=result)
                     return result
                 except Exception as e:
                     raise
@@ -243,12 +243,12 @@ class CodeProviderCreatePullRequestTool:
             )
             logger.info(
                 f"[CREATE_PR] Successfully created PR #{pr.number}: {pr.html_url}"
-            )
+            , pr_number=pr.number, pr_html_url=pr.html_url)
 
             # Add reviewers if provided
             if reviewers:
                 try:
-                    logger.info(f"[CREATE_PR] Adding reviewers: {reviewers}")
+                    logger.info(f"[CREATE_PR] Adding reviewers: {reviewers}", reviewers=reviewers)
                     pr.create_review_request(reviewers=reviewers)
                     logger.info("[CREATE_PR] Successfully added reviewers")
                 except GithubException as e:
@@ -259,7 +259,7 @@ class CodeProviderCreatePullRequestTool:
             # Add labels if provided
             if labels:
                 try:
-                    logger.info(f"[CREATE_PR] Adding labels: {labels}")
+                    logger.info(f"[CREATE_PR] Adding labels: {labels}", labels=labels)
                     pr.add_to_labels(*labels)
                     logger.info("[CREATE_PR] Successfully added labels")
                 except GithubException as e:
@@ -278,7 +278,7 @@ class CodeProviderCreatePullRequestTool:
                 "reviewers_added": reviewers is not None,
                 "labels_added": labels is not None,
             }
-            logger.info(f"[CREATE_PR] Returning success result: {result}")
+            logger.info(f"[CREATE_PR] Returning success result: {result}", result=result)
             return result
 
         except GithubException as e:

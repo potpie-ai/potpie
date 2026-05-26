@@ -179,14 +179,14 @@ class AuthAPI:
         # User has SSO account, wants to link GitHub
         # ============================================================
         if link_to_user_id and is_github_flow:
-            logger.info(f"GitHub linking: Linking GitHub to SSO user {link_to_user_id}")
+            logger.info(f"GitHub linking: Linking GitHub to SSO user {link_to_user_id}", link_to_user_id=link_to_user_id)
 
             # Find the SSO user
             db.expire_all()  # Ensure fresh data
             user = await async_user_service.get_user_by_uid(link_to_user_id)
 
             if not user:
-                logger.error(f"SSO user {link_to_user_id} not found in database!")
+                logger.error(f"SSO user {link_to_user_id} not found in database!", link_to_user_id=link_to_user_id)
                 return Response(
                     content=json.dumps(
                         {"error": "User not found. Please sign in again."}
@@ -207,7 +207,7 @@ class AuthAPI:
             )
 
             if existing_github:
-                logger.info(f"GitHub already linked to user {user.uid}")
+                logger.info(f"GitHub already linked to user {user.uid}", user_uid=user.uid)
                 return Response(
                     content=json.dumps(
                         _signup_response_with_custom_token(
@@ -242,7 +242,7 @@ class AuthAPI:
                 logger.warning(
                     f"GitHub account {provider_uid} is already linked to user {existing_provider_with_uid.user_id}, "
                     f"cannot link to user {user.uid}"
-                )
+                , provider_uid=provider_uid, existing_provider_with_uid_user_id=existing_provider_with_uid.user_id, user_uid=user.uid)
                 return Response(
                     content=json.dumps(
                         {
@@ -256,7 +256,7 @@ class AuthAPI:
             # Link GitHub provider
             logger.info(
                 f"Linking GitHub (provider_uid={provider_uid}) to user {user.uid}"
-            )
+            , provider_uid=provider_uid, user_uid=user.uid)
             provider_create = AuthProviderCreate(
                 provider_type=provider_type,  # Use the variable instead of hardcoding
                 provider_uid=provider_uid,  # GitHub Firebase UID
@@ -281,7 +281,7 @@ class AuthAPI:
                     )
                     logger.error(
                         f"GitHub account {provider_uid} is already linked to another user: {e}"
-                    )
+                    , provider_uid=provider_uid, e=e)
                     return Response(
                         content=json.dumps(
                             {
@@ -297,7 +297,7 @@ class AuthAPI:
                 db.rollback()
                 raise
 
-            logger.info(f"Successfully linked GitHub to user {user.uid}")
+            logger.info(f"Successfully linked GitHub to user {user.uid}", user_uid=user.uid)
             return Response(
                 content=json.dumps(
                     _signup_response_with_custom_token(
@@ -319,7 +319,7 @@ class AuthAPI:
         if is_github_flow:
             logger.info(
                 f"GitHub sign-in: Checking if GitHub UID {provider_uid} is linked"
-            )
+            , provider_uid=provider_uid)
 
             # Check if this GitHub Firebase UID is already linked
             existing_provider = (
@@ -335,7 +335,7 @@ class AuthAPI:
             if not existing_provider:
                 logger.warning(
                     f"Blocked new GitHub signup attempt: GitHub UID {provider_uid} is not linked to any user"
-                )
+                , provider_uid=provider_uid)
                 return Response(
                     content=json.dumps(
                         {
@@ -352,7 +352,7 @@ class AuthAPI:
                     existing_provider.user_id
                 )
                 if user:
-                    logger.info(f"GitHub {provider_uid} linked to user {user.uid}")
+                    logger.info(f"GitHub {provider_uid} linked to user {user.uid}", provider_uid=provider_uid, user_uid=user.uid)
 
                     # Update last login (encrypt token before storing; update_last_login does not encrypt)
                     if oauth_token:
@@ -378,7 +378,7 @@ class AuthAPI:
                     )
 
             # GitHub not linked - create new user with GitHub as primary
-            logger.info(f"GitHub {provider_uid} not linked. Creating new user...")
+            logger.info(f"GitHub {provider_uid} not linked. Creating new user...", provider_uid=provider_uid)
 
             try:
                 new_user, _ = await unified_auth.authenticate_or_create(
@@ -391,7 +391,7 @@ class AuthAPI:
                     email_verified=email_verified,
                 )
 
-                logger.info(f"Created new user {new_user.uid} with GitHub")
+                logger.info(f"Created new user {new_user.uid} with GitHub", new_user_uid=new_user.uid)
 
                 background_tasks.add_task(
                     send_slack_message, f"New signup: {email} ({display_name})"
@@ -420,7 +420,7 @@ class AuthAPI:
                 )
             except Exception as e:
                 db.rollback()
-                logger.error(f"Failed to create user: {e}", exc_info=True)
+                logger.error(f"Failed to create user: {e}", exc_info=True, e=e)
                 return Response(
                     content=json.dumps({"error": f"Signup failed: {str(e)}"}),
                     status_code=500,
@@ -435,7 +435,7 @@ class AuthAPI:
 
         if user:
             # Existing user
-            logger.info(f"Email/password user exists: {user.uid}")
+            logger.info(f"Email/password user exists: {user.uid}", user_uid=user.uid)
 
             # Check GitHub linking
             has_github, _ = unified_auth.check_github_linked(user.uid)
@@ -464,7 +464,7 @@ class AuthAPI:
                     email_verified=email_verified,
                 )
 
-                logger.info(f"Created email/password user: {new_user.uid}")
+                logger.info(f"Created email/password user: {new_user.uid}", new_user_uid=new_user.uid)
                 background_tasks.add_task(
                     send_slack_message, f"New signup: {email} ({display_name})"
                 )
@@ -483,7 +483,7 @@ class AuthAPI:
                 )
             except Exception as e:
                 db.rollback()
-                logger.error(f"Email/password signup failed: {e}", exc_info=True)
+                logger.error(f"Email/password signup failed: {e}", exc_info=True, e=e)
                 return Response(
                     content=json.dumps({"error": str(e)}),
                     status_code=500,
@@ -580,7 +580,7 @@ class AuthAPI:
                     # New user with generic email - block them
                     logger.warning(
                         f"Blocked new signup attempt with generic email: {verified_email} via {sso_request.sso_provider}"
-                    )
+                    , verified_email=verified_email, sso_request_sso_provider=sso_request.sso_provider)
                     return JSONResponse(
                         content={
                             "error": "Personal email addresses are not allowed. Please use your work/corporate email to sign in.",
@@ -591,7 +591,7 @@ class AuthAPI:
                 # Existing user with generic email - allow (legacy policy)
                 logger.info(
                     f"Allowing legacy user with generic email: {verified_email}"
-                )
+                , verified_email=verified_email)
 
             # Authenticate or create user
             user, response = await unified_auth.authenticate_or_create(
@@ -627,7 +627,7 @@ class AuthAPI:
                 logger.info(
                     f"New user {user.uid} ({verified_email}) created via SSO. "
                     f"GitHub linking required: {response.needs_github_linking}"
-                )
+                , user_uid=user.uid, verified_email=verified_email, response_needs_github_linking=response.needs_github_linking)
 
             return JSONResponse(
                 content=response.model_dump(),

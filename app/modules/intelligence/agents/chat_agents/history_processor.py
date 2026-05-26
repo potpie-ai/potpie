@@ -75,7 +75,7 @@ def _get_model_name_from_context(ctx: RunContext) -> Optional[str]:
             if match:
                 return match.group(1)
     except Exception as e:
-        logger.debug(f"Failed to extract model name from context: {e}")
+        logger.debug(f"Failed to extract model name from context: {e}", e=e)
     return None
 
 

@@ -16,7 +16,7 @@ def cleanup_expired_cache_entries(self: Task):
         cleanup_service = CacheCleanupService(db)
 
         deleted_count = cleanup_service.cleanup_expired_entries()
-        logger.info(f"Cache cleanup completed: {deleted_count} entries removed")
+        logger.info(f"Cache cleanup completed: {deleted_count} entries removed", deleted_count=deleted_count)
 
         return {"deleted_count": deleted_count, "status": "success"}
 
@@ -40,7 +40,7 @@ def cleanup_least_accessed_cache_entries(self: Task, max_entries: int = 100000):
         if deleted_count > 0:
             logger.info(
                 f"Cache size cleanup completed: {deleted_count} entries removed"
-            )
+            , deleted_count=deleted_count)
 
         return {"deleted_count": deleted_count, "status": "success"}
 
@@ -60,7 +60,7 @@ def get_cache_cleanup_stats(self: Task):
         cleanup_service = CacheCleanupService(db)
 
         stats = cleanup_service.get_cleanup_stats()
-        logger.info(f"Cache stats: {stats}")
+        logger.info(f"Cache stats: {stats}", stats=stats)
 
         return {"stats": stats, "status": "success"}
 

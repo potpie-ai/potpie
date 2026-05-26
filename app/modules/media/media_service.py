@@ -98,7 +98,7 @@ class MediaService:
             self.s3_client.head_bucket(Bucket=self.bucket_name)
             logger.info(
                 f"Initialized boto3 client for provider {self.storage_provider.value} (bucket={self.bucket_name})"
-            )
+            , self_storage_provider_value=self.storage_provider.value, self_bucket_name=self.bucket_name)
         except Exception as e:
             raise MediaServiceError(f"Failed to initialize object storage: {e}")
 
@@ -196,7 +196,7 @@ class MediaService:
 
             logger.info(
                 f"Successfully uploaded image {attachment_id} to {storage_path}"
-            )
+            , attachment_id=attachment_id, storage_path=storage_path)
 
             return AttachmentUploadResponse(
                 id=attachment_id,
@@ -276,7 +276,7 @@ class MediaService:
 
             logger.info(
                 f"Successfully uploaded file {attachment_id} to {storage_path}"
-            )
+            , attachment_id=attachment_id, storage_path=storage_path)
             return AttachmentUploadResponse(
                 id=attachment_id,
                 attachment_type=AttachmentType.DOCUMENT,
@@ -356,7 +356,7 @@ class MediaService:
                 else:
                     logger.info(
                         f"Skipping resize for small image: {img.width}x{img.height}"
-                    )
+                    , img_width=img.width, img_height=img.height)
                     file_metadata["resized"] = False
 
             # Convert to RGB if necessary (for JPEG output)
@@ -422,7 +422,7 @@ class MediaService:
         try:
             logger.info(
                 f"Uploading object -> provider={self.storage_provider.value} bucket={self.bucket_name} key={storage_path} content_type={mime_type}"
-            )
+            , self_storage_provider_value=self.storage_provider.value, self_bucket_name=self.bucket_name, storage_path=storage_path, mime_type=mime_type)
             md5_b64 = base64.b64encode(hashlib.md5(file_data).digest()).decode("utf-8")
             self.s3_client.put_object(
                 Bucket=self.bucket_name,
@@ -431,7 +431,7 @@ class MediaService:
                 ContentType=mime_type,
                 ContentMD5=md5_b64,
             )
-            logger.info(f"Uploaded object to {self.bucket_name}:{storage_path}")
+            logger.info(f"Uploaded object to {self.bucket_name}:{storage_path}", self_bucket_name=self.bucket_name, storage_path=storage_path)
         except Exception as e:
             raise MediaServiceError(f"Failed to upload to object storage: {e}")
 
@@ -529,12 +529,12 @@ class MediaService:
                     )
                     logger.info(
                         f"Deleted object from {self.bucket_name}:{attachment.storage_path}"
-                    )
+                    , self_bucket_name=self.bucket_name, attachment_storage_path=attachment.storage_path)
                 except ClientError as e:
                     if e.response.get("Error", {}).get("Code") == "NoSuchKey":
                         logger.warning(
                             f"File not found in bucket={self.bucket_name} key={attachment.storage_path}; continuing with DB delete"
-                        )
+                        , self_bucket_name=self.bucket_name, attachment_storage_path=attachment.storage_path)
                     else:
                         raise
             except Exception as e:
@@ -546,7 +546,7 @@ class MediaService:
             self.db.delete(attachment)
             self.db.commit()
 
-            logger.info(f"Successfully deleted attachment {attachment_id}")
+            logger.info(f"Successfully deleted attachment {attachment_id}", attachment_id=attachment_id)
             return True
 
         except Exception as e:
@@ -598,7 +598,7 @@ class MediaService:
             logger.info(
                 f"Updated message {message_id}: linked {updated_count} new attachment(s), "
                 f"total on message={attachment_count}, has_attachments={message.has_attachments}"
-            )
+            , message_id=message_id, updated_count=updated_count, attachment_count=attachment_count, message_has_attachments=message.has_attachments)
 
         except Exception as e:
             self.db.rollback()
@@ -625,7 +625,7 @@ class MediaService:
                         )
                         logger.info(
                             f"Generated signed URL for attachment {attachment.id}"
-                        )
+                        , attachment_id=attachment.id)
                     except Exception as e:
                         logger.warning(
                             f"Failed to generate signed URL for attachment {attachment.id}: {str(e)}"
@@ -634,7 +634,7 @@ class MediaService:
                         download_url = f"/api/media/{attachment.id}/download"
                         logger.info(
                             f"Using fallback download URL for attachment {attachment.id}: {download_url}"
-                        )
+                        , attachment_id=attachment.id, download_url=download_url)
 
                 result.append(
                     AttachmentInfo(

@@ -484,7 +484,7 @@ class AnalyticsService:
                 daily_costs_map[date_key]["tokens"] += input_tokens + output_tokens
                 daily_costs_map[date_key]["run_count"] += 1
             except (ValueError, TypeError) as e:
-                logger.debug(f"Skipping invalid cost record: {e}")
+                logger.debug(f"Skipping invalid cost record: {e}", e=e)
                 continue
 
         # Convert daily costs to list

@@ -60,22 +60,22 @@ class UsageReportingService:
 
                 if response.status_code == 200:
                     result = response.json()
-                    logger.info(f"Usage reported successfully: {result}")
+                    logger.info(f"Usage reported successfully: {result}", result=result)
                     return result
                 else:
                     logger.error(
                         f"Failed to report usage: {response.status_code} - {response.text}"
-                    )
+                    , response_status_code=response.status_code, response_text=response.text)
                     return {
                         "status": "error",
                         "error": f"HTTP {response.status_code}",
                     }
 
         except httpx.ConnectError as e:
-            logger.error(f"Cannot connect to stripe-potpie: {e}")
+            logger.error(f"Cannot connect to stripe-potpie: {e}", e=e)
             return {"status": "error", "error": "stripe-potpie service unavailable"}
         except Exception as e:
-            logger.error(f"Error reporting usage: {e}")
+            logger.error(f"Error reporting usage: {e}", e=e)
             return {"status": "error", "error": str(e)}
 
     @staticmethod

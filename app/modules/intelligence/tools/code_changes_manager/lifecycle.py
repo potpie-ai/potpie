@@ -49,7 +49,7 @@ def _get_project_id_from_conversation_id(conversation_id: Optional[str]) -> Opti
             _project_id_cache[conversation_id] = project_id
             logger.info(
                 f"CodeChangesManager: Resolved project_id={project_id} from conversation_id={conversation_id}"
-            )
+            , project_id=project_id, conversation_id=conversation_id)
             return project_id
 
         _project_id_cache[conversation_id] = None
@@ -57,7 +57,7 @@ def _get_project_id_from_conversation_id(conversation_id: Optional[str]) -> Opti
     except Exception as e:
         logger.warning(
             f"CodeChangesManager: Failed to resolve project_id from conversation_id={conversation_id}: {e}"
-        )
+        , conversation_id=conversation_id, e=e)
         return None
 
 
@@ -70,13 +70,13 @@ def _get_code_changes_manager() -> CodeChangesManager:
     if manager is not None and manager._conversation_id != conversation_id:
         logger.info(
             f"CodeChangesManager: conversation_id changed from {manager._conversation_id} to {conversation_id}, creating new manager"
-        )
+        , manager__conversation_id=manager._conversation_id, conversation_id=conversation_id)
         manager = None
 
     if manager is None:
         logger.info(
             f"CodeChangesManager: Creating new manager instance for conversation_id={conversation_id}"
-        )
+        , conversation_id=conversation_id)
         manager = CodeChangesManager(conversation_id=conversation_id)
         ctx.set(manager)
         logger.info(
@@ -101,7 +101,7 @@ def _init_code_changes_manager(
         f"conversation_id={conversation_id}, agent_id={agent_id}, "
         f"user_id={user_id}, tunnel_url={tunnel_url}, local_mode={local_mode}, "
         f"repository={repository}, branch={branch}"
-    )
+    , conversation_id=conversation_id, agent_id=agent_id, user_id=user_id, tunnel_url=tunnel_url, local_mode=local_mode, repository=repository, branch=branch)
     _set_local_mode(local_mode)
     _set_conversation_id(conversation_id)
     _set_agent_id(agent_id)
@@ -117,7 +117,7 @@ def _init_code_changes_manager(
     logger.info(
         f"CodeChangesManager: Initializing manager for conversation_id={conversation_id} "
         f"(previous conversation_id: {old_conversation_id}, previous file count: {old_count})"
-    )
+    , conversation_id=conversation_id, old_conversation_id=old_conversation_id, old_count=old_count)
 
     new_manager = CodeChangesManager(conversation_id=conversation_id)
     ctx.set(new_manager)

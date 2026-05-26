@@ -79,9 +79,9 @@ class GeneralPurposeAgent(ChatAgent):
 
         logger.info(
             f"GeneralPurposeAgent: supports_pydantic={supports_pydantic}, should_use_multi_agent={should_use_multi}"
-        )
-        logger.info(f"Current model: {self.llm_provider.chat_config.model}")
-        logger.info(f"Model capabilities: {self.llm_provider.chat_config.capabilities}")
+        , supports_pydantic=supports_pydantic, should_use_multi=should_use_multi)
+        logger.info(f"Current model: {self.llm_provider.chat_config.model}", self_llm_provider_chat_config_model=self.llm_provider.chat_config.model)
+        logger.info(f"Model capabilities: {self.llm_provider.chat_config.capabilities}", self_llm_provider_chat_config_capabilities=self.llm_provider.chat_config.capabilities)
 
         if supports_pydantic:
             if should_use_multi:
@@ -118,7 +118,7 @@ class GeneralPurposeAgent(ChatAgent):
         else:
             logger.error(
                 f"❌ Model '{self.llm_provider.chat_config.model}' does not support Pydantic - using fallback PydanticRagAgent"
-            )
+            , self_llm_provider_chat_config_model=self.llm_provider.chat_config.model)
             return PydanticRagAgent(self.llm_provider, agent_config, tools)
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:

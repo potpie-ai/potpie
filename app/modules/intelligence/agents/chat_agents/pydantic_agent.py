@@ -398,7 +398,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             logger.debug(f"Context images: {len(context_images)}")
 
             for img_id, img_data in all_images.items():
-                logger.debug(f"Image {img_id}:")
+                logger.debug(f"Image {img_id}:", img_id=img_id)
                 logger.debug(f"  - Type: {img_data.get('context_type', 'unknown')}")
                 logger.debug(f"  - File name: {img_data.get('file_name', 'unknown')}")
                 logger.debug(f"  - File size: {img_data.get('file_size', 'unknown')}")
@@ -406,11 +406,11 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                 logger.debug(f"  - Has base64: {'base64' in img_data}")
                 if "base64" in img_data and isinstance(img_data["base64"], str):
                     base64_len = len(img_data["base64"])
-                    logger.debug(f"  - Base64 length: {base64_len}")
+                    logger.debug(f"  - Base64 length: {base64_len}", base64_len=base64_len)
 
         # Test vision model detection
         is_vision = self.llm_provider.is_vision_model()
-        logger.debug(f"Current model supports vision: {is_vision}")
+        logger.debug(f"Current model supports vision: {is_vision}", is_vision=is_vision)
 
     def _create_multimodal_user_content(
         self, ctx: ChatContext
@@ -435,12 +435,12 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
 
                 # Validate required fields
                 if "base64" not in image_data:
-                    logger.error(f"Missing base64 data for image {attachment_id}")
+                    logger.error(f"Missing base64 data for image {attachment_id}", attachment_id=attachment_id)
                     continue
 
                 base64_data = image_data["base64"]
                 if not isinstance(base64_data, str) or not base64_data:
-                    logger.error(f"Invalid base64 data for image {attachment_id}")
+                    logger.error(f"Invalid base64 data for image {attachment_id}", attachment_id=attachment_id)
                     continue
 
                 # Validate base64 format
@@ -465,7 +465,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                 ):
                     logger.warning(
                         f"Invalid mime type for image {attachment_id}: {mime_type}, defaulting to image/jpeg"
-                    )
+                    , attachment_id=attachment_id, mime_type=mime_type)
                     mime_type = "image/jpeg"
 
                 # Create data URL
@@ -476,12 +476,12 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                 file_size = image_data.get("file_size", 0)
                 logger.info(
                     f"Adding image {attachment_id} ({file_name}, {file_size} bytes, {mime_type}) to multimodal content"
-                )
+                , attachment_id=attachment_id, file_name=file_name, file_size=file_size, mime_type=mime_type)
 
                 content.append(ImageUrl(url=data_url))
                 logger.info(
                     f"Successfully added image {attachment_id} to multimodal content"
-                )
+                , attachment_id=attachment_id)
 
             except Exception:
                 logger.exception(
@@ -508,14 +508,14 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                 try:
                     # Apply same validation as above
                     if not isinstance(image_data, dict) or "base64" not in image_data:
-                        logger.error(f"Invalid context image data for {attachment_id}")
+                        logger.error(f"Invalid context image data for {attachment_id}", attachment_id=attachment_id)
                         continue
 
                     base64_data = image_data["base64"]
                     if not isinstance(base64_data, str) or not base64_data:
                         logger.error(
                             f"Invalid base64 data for context image {attachment_id}"
-                        )
+                        , attachment_id=attachment_id)
                         continue
 
                     # Validate base64 format
@@ -544,12 +544,12 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                     file_size = image_data.get("file_size", 0)
                     logger.info(
                         f"Adding context image {attachment_id} ({file_name}, {file_size} bytes, {mime_type}) to multimodal content"
-                    )
+                    , attachment_id=attachment_id, file_name=file_name, file_size=file_size, mime_type=mime_type)
 
                     content.append(ImageUrl(url=data_url))
                     logger.info(
                         f"Successfully added context image {attachment_id} to multimodal content"
-                    )
+                    , attachment_id=attachment_id)
                 except Exception:
                     logger.exception(
                         f"Failed to add context image {attachment_id} to content",
@@ -649,7 +649,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                         message_history=message_history,
                     )
             except (TimeoutError, anyio.WouldBlock, Exception) as mcp_error:
-                logger.warning(f"MCP server initialization failed: {mcp_error}")
+                logger.warning(f"MCP server initialization failed: {mcp_error}", mcp_error=mcp_error)
                 logger.info("Continuing without MCP servers...")
 
                 # Fallback: run without MCP servers
@@ -713,7 +713,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
         is_vision = self.llm_provider.is_vision_model()
         logger.info(
             f"[PydanticRagAgent.run_stream] has_images={has_images}, has_documents={has_documents}, is_vision_model={is_vision}, model={self.llm_provider.chat_config.model}"
-        )
+        , has_images=has_images, has_documents=has_documents, is_vision=is_vision, self_llm_provider_chat_config_model=self.llm_provider.chat_config.model)
 
         # Check if we have media and if the model supports vision
         if has_multimodal_content and is_vision:
@@ -726,7 +726,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             if has_multimodal_content and not is_vision:
                 logger.warning(
                     f"[PydanticRagAgent.run_stream] Multimodal content provided but model '{self.llm_provider.chat_config.model}' doesn't support vision, proceeding with text-only streaming"
-                )
+                , self_llm_provider_chat_config_model=self.llm_provider.chat_config.model)
             # Use standard PydanticAI streaming for text-only
             async for chunk in self._run_standard_stream(ctx):
                 yield chunk
@@ -843,7 +843,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                         if reasoning_hash:
                             logger.info(
                                 f"Reasoning content saved with hash: {reasoning_hash}"
-                            )
+                            , reasoning_hash=reasoning_hash)
 
         except Exception:
             logger.exception("Error in multimodal stream")
@@ -912,7 +912,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                 ) as pydantic_error:
                                     logger.warning(
                                         f"Pydantic-ai error in model request stream: {pydantic_error}"
-                                    )
+                                    , pydantic_error=pydantic_error)
                                     yield ChatAgentResponse(
                                         response="\n\n*Encountered an issue while processing your request. Trying to recover...*\n\n",
                                         tool_calls=[],
@@ -998,7 +998,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                 ) as pydantic_error:
                                     logger.warning(
                                         f"Pydantic-ai error in tool call stream: {pydantic_error}"
-                                    )
+                                    , pydantic_error=pydantic_error)
                                     yield ChatAgentResponse(
                                         response="\n\n*Encountered an issue while calling tools. Trying to recover...*\n\n",
                                         tool_calls=[],
@@ -1028,7 +1028,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                 if reasoning_hash:
                                     logger.info(
                                         f"Reasoning content saved with hash: {reasoning_hash}"
-                                    )
+                                    , reasoning_hash=reasoning_hash)
                                 # Yield thinking content at the end of stream
                                 if reasoning_manager.content:
                                     yield ChatAgentResponse(
@@ -1039,7 +1039,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                     )
 
             except (TimeoutError, anyio.WouldBlock, Exception) as mcp_error:
-                logger.warning(f"MCP server initialization failed: {mcp_error}")
+                logger.warning(f"MCP server initialization failed: {mcp_error}", mcp_error=mcp_error)
                 logger.info("Continuing without MCP servers...")
 
                 # Fallback: run without MCP servers
@@ -1089,7 +1089,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                 ) as pydantic_error:
                                     logger.warning(
                                         f"Pydantic-ai error in fallback model request stream: {pydantic_error}"
-                                    )
+                                    , pydantic_error=pydantic_error)
                                     yield ChatAgentResponse(
                                         response="\n\n*Encountered an issue while processing your request. Trying to recover...*\n\n",
                                         tool_calls=[],
@@ -1175,7 +1175,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                 ) as pydantic_error:
                                     logger.warning(
                                         f"Pydantic-ai error in fallback tool call stream: {pydantic_error}"
-                                    )
+                                    , pydantic_error=pydantic_error)
                                     yield ChatAgentResponse(
                                         response="\n\n*Encountered an issue while calling tools. Trying to recover...*\n\n",
                                         tool_calls=[],
@@ -1205,7 +1205,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                                 if reasoning_hash:
                                     logger.info(
                                         f"Reasoning content saved with hash: {reasoning_hash}"
-                                    )
+                                    , reasoning_hash=reasoning_hash)
                                 # Yield thinking content at the end of stream
                                 if reasoning_manager.content:
                                     yield ChatAgentResponse(
@@ -1218,7 +1218,7 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
                 except (ModelRetry, AgentRunError, UserError) as pydantic_error:
                     logger.error(
                         f"Pydantic-ai error in fallback agent iteration: {pydantic_error}"
-                    )
+                    , pydantic_error=pydantic_error)
                     yield ChatAgentResponse(
                         response=f"\n\n*The agent encountered an error while processing your request: {str(pydantic_error)}*\n\n",
                         tool_calls=[],

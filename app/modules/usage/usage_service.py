@@ -75,7 +75,7 @@ class UsageService:
             # Could not get or create Dodo customer - allow usage but log warning
             logger.warning(
                 f"Could not get or create Dodo customer for user {user_id}, allowing usage"
-            )
+            , user_id=user_id)
             return True
 
         # Get real-time credit balance from Dodo

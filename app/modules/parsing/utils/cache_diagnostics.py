@@ -91,7 +91,7 @@ def analyze_cache_misses(nodes: List[Dict[str, Any]], db: Session) -> Dict[str, 
                         }
                     )
         except Exception as e:
-            logger.error(f"Error analyzing node {node_id}: {e}")
+            logger.error(f"Error analyzing node {node_id}: {e}", node_id=node_id, e=e)
 
     # Calculate percentages
     if diagnostics["total_nodes"] > 0:

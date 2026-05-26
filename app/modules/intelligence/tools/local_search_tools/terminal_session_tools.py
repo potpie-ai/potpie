@@ -40,7 +40,7 @@ def terminal_session_output_tool(input_data: TerminalSessionOutputInput) -> str:
     """
     logger.info(
         f"📥 [Tool Call] terminal_session_output: Getting output for session {input_data.session_id}"
-    )
+    , input_data_session_id=input_data.session_id)
 
     user_id, conversation_id = get_context_vars()
 
@@ -116,7 +116,7 @@ def terminal_session_signal_tool(input_data: TerminalSessionSignalInput) -> str:
     """
     logger.info(
         f"📤 [Tool Call] terminal_session_signal: Sending {input_data.signal} to session {input_data.session_id}"
-    )
+    , input_data_signal=input_data.signal, input_data_session_id=input_data.session_id)
 
     user_id, conversation_id = get_context_vars()
 

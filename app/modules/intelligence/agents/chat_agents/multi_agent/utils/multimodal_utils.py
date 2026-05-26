@@ -79,12 +79,12 @@ def validate_and_build_data_url(image_data: dict, attachment_id: str) -> Optiona
 
         # Validate required fields
         if "base64" not in image_data:
-            logger.error(f"Missing base64 data for image {attachment_id}")
+            logger.error(f"Missing base64 data for image {attachment_id}", attachment_id=attachment_id)
             return None
 
         base64_data = image_data["base64"]
         if not isinstance(base64_data, str) or not base64_data:
-            logger.error(f"Invalid base64 data for image {attachment_id}")
+            logger.error(f"Invalid base64 data for image {attachment_id}", attachment_id=attachment_id)
             return None
 
         # Validate base64 format
@@ -103,7 +103,7 @@ def validate_and_build_data_url(image_data: dict, attachment_id: str) -> Optiona
         ):
             logger.warning(
                 f"Invalid mime type for image {attachment_id}: {mime_type}, defaulting to image/jpeg"
-            )
+            , attachment_id=attachment_id, mime_type=mime_type)
             mime_type = "image/jpeg"
 
         # Create data URL
@@ -142,7 +142,7 @@ def validate_and_get_document_url(doc_data: dict, attachment_id: str) -> Optiona
             or doc_data.get("download_url")
         )
         if not isinstance(document_url, str) or not document_url:
-            logger.warning(f"Missing document URL for document {attachment_id}")
+            logger.warning(f"Missing document URL for document {attachment_id}", attachment_id=attachment_id)
             return None
         if not document_url.startswith("https://"):
             logger.warning(

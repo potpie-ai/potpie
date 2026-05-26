@@ -97,7 +97,7 @@ class DebugAgent(ChatAgent):
 
         logger.info(
             f"DebugAgent: supports_pydantic={supports_pydantic}, should_use_multi_agent={should_use_multi}"
-        )
+        , supports_pydantic=supports_pydantic, should_use_multi=should_use_multi)
 
         if supports_pydantic:
             if should_use_multi:

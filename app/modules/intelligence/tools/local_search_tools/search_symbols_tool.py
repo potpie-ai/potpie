@@ -19,7 +19,7 @@ def search_symbols_tool(input_data: SearchSymbolsInput) -> str:
     """Search for symbols (functions, classes, variables, etc.) in a specific file using LocalServer."""
     logger.info(
         f"🔍 [Tool Call] search_symbols_tool: Searching symbols in '{input_data.file_path}'"
-    )
+    , input_data_file_path=input_data.file_path)
 
     user_id, conversation_id = get_context_vars()
 

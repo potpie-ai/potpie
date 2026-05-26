@@ -734,7 +734,7 @@ async def jira_oauth_callback(
 
                 logger.info(
                     f"Using Jira redirect_uri for token exchange: {redirect_uri}"
-                )
+                , redirect_uri=redirect_uri)
 
                 save_request = JiraSaveRequest(
                     code=code,
@@ -1347,7 +1347,7 @@ async def sentry_webhook(request: Request) -> Dict[str, Any]:
                 logger.info(
                     f"Sentry webhook event {event_id} published for integration {integration_id}, "
                     f"type: {event_type}"
-                )
+                , event_id=event_id, integration_id=integration_id, event_type=event_type)
 
                 return {
                     "status": "success",
@@ -1518,7 +1518,7 @@ async def linear_webhook(
         else:
             logger.warning(
                 f"No Linear integration found for organization {organization_id}"
-            )
+            , organization_id=organization_id)
 
             return {
                 "status": "success",
@@ -1845,14 +1845,14 @@ async def jira_webhook(
                                     integration_id = integration.integration_id
                                     logger.info(
                                         f"Found integration {integration_id} for webhook {webhook_id} + site {site_id}"
-                                    )
+                                    , integration_id=integration_id, webhook_id=webhook_id, site_id=site_id)
                                     break
                                 elif not site_id:
                                     # Fallback: match webhook_id only if site_id unavailable (less secure)
                                     integration_id = integration.integration_id
                                     logger.warning(
                                         f"Found integration {integration_id} for webhook {webhook_id} (no site_id verification)"
-                                    )
+                                    , integration_id=integration_id, webhook_id=webhook_id)
                                     break
 
                         if integration_id:

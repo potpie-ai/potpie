@@ -82,7 +82,7 @@ class ToolCallStreamManager:
 
         try:
             self._sync_publish_stream_part(key, event_data)
-            logger.debug(f"Published stream part to tool call stream {key}")
+            logger.debug(f"Published stream part to tool call stream {key}", key=key)
         except Exception as e:
             raise
 
@@ -135,7 +135,7 @@ class ToolCallStreamManager:
                 None,  # Use default thread pool
                 partial(self._sync_publish_stream_part, key, event_data),
             )
-            logger.debug(f"Published stream part to tool call stream {key} (async)")
+            logger.debug(f"Published stream part to tool call stream {key} (async)", key=key)
         except Exception as e:
             logger.error(
                 f"Failed to publish stream part to Redis stream {key}: {str(e)}"
@@ -325,7 +325,7 @@ class ToolCallStreamManager:
 
                         # Check for end events
                         if event.get("type") == "tool_call_stream_end":
-                            logger.debug(f"Tool call stream {key} ended")
+                            logger.debug(f"Tool call stream {key} ended", key=key)
                             yield event
                             return
 
@@ -356,7 +356,7 @@ class ToolCallStreamManager:
                     formatted_key = key_str.replace("_json", "")
                     formatted[formatted_key] = parsed_value
                 except Exception as e:
-                    logger.error(f"Failed to parse {key_str}: {value_str}, error: {e}")
+                    logger.error(f"Failed to parse {key_str}: {value_str}, error: {e}", key_str=key_str, value_str=value_str, e=e)
                     formatted[key_str.replace("_json", "")] = {}
             else:
                 formatted[key_str] = value_str
@@ -368,6 +368,6 @@ class ToolCallStreamManager:
         key = self.stream_key(call_id)
         try:
             self.redis_client.delete(key)
-            logger.debug(f"Cleaned up tool call stream {key}")
+            logger.debug(f"Cleaned up tool call stream {key}", key=key)
         except Exception as e:
             logger.warning(f"Failed to cleanup tool call stream {key}: {str(e)}")

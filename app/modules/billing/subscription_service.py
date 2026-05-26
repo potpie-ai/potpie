@@ -66,11 +66,11 @@ class BillingSubscriptionService:
                     # The dodo_customer_id should be in the subscription data
                     return data.get("dodo_customer_id")
                 else:
-                    logger.warning(f"Failed to get subscription status: {response.status_code}")
+                    logger.warning(f"Failed to get subscription status: {response.status_code}", response_status_code=response.status_code)
                     return None
 
         except Exception as e:
-            logger.error(f"Error getting dodo_customer_id: {e}")
+            logger.error(f"Error getting dodo_customer_id: {e}", e=e)
             return None
 
     @staticmethod
@@ -93,7 +93,7 @@ class BillingSubscriptionService:
             return dodo_customer_id
 
         # No customer ID found, initialize as free user
-        logger.info(f"[billing] No dodo_customer_id for user {user_id} - initializing free user")
+        logger.info(f"[billing] No dodo_customer_id for user {user_id} - initializing free user", user_id=user_id)
         return await BillingSubscriptionService._initialize_free_user(user_id)
 
     @staticmethod
@@ -104,7 +104,7 @@ class BillingSubscriptionService:
         """
         if not _billing_enabled():
             return None
-        logger.info(f"[billing] Initializing free user in Dodo: {user_id}")
+        logger.info(f"[billing] Initializing free user in Dodo: {user_id}", user_id=user_id)
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
@@ -123,9 +123,9 @@ class BillingSubscriptionService:
                 else:
                     logger.warning(
                         f"[billing] initialize-free-user returned {resp.status_code}: {resp.text}"
-                    )
+                    , resp_status_code=resp.status_code, resp_text=resp.text)
         except Exception as e:
-            logger.error(f"[billing] Failed to initialize free user {user_id}: {e}")
+            logger.error(f"[billing] Failed to initialize free user {user_id}: {e}", user_id=user_id, e=e)
         return None
 
     @staticmethod
@@ -154,11 +154,11 @@ class BillingSubscriptionService:
                 if response.status_code == 200:
                     return response.json()
                 else:
-                    logger.warning(f"Failed to get credit balance: {response.status_code}")
+                    logger.warning(f"Failed to get credit balance: {response.status_code}", response_status_code=response.status_code)
                     return dict(_FREE_TIER_STATUS)
 
         except Exception as e:
-            logger.error(f"Error getting subscription status: {e}")
+            logger.error(f"Error getting subscription status: {e}", e=e)
             return dict(_FREE_TIER_STATUS)
 
     @staticmethod

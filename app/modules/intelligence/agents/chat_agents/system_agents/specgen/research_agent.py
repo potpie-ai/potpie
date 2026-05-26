@@ -138,7 +138,7 @@ def create_research_agent(
     missing_tools = [name for name in tool_names if name not in retrieved_tool_names]
     
     if missing_tools:
-        logger.warning(f"[RESEARCH_AGENT] Missing tools: {missing_tools}")
+        logger.warning(f"[RESEARCH_AGENT] Missing tools: {missing_tools}", missing_tools=missing_tools)
     logger.info(f"[RESEARCH_AGENT] Successfully constructed with {len(tools)} tools: {retrieved_tool_names}")
     
     return PydanticRagAgent(llm_provider, agent_config, tools)

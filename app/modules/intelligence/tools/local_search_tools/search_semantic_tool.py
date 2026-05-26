@@ -46,7 +46,7 @@ def search_semantic_tool(input_data: SearchSemanticInput) -> str:
     logger.info(
         f"🔍 [Tool Call] search_semantic_tool: Query='{input_data.query}', "
         f"project_id={input_data.project_id}, top_k={input_data.top_k}"
-    )
+    , input_data_query=input_data.query, input_data_project_id=input_data.project_id, input_data_top_k=input_data.top_k)
     
     user_id, conversation_id = get_context_vars()
     
@@ -112,7 +112,7 @@ def search_semantic_tool(input_data: SearchSemanticInput) -> str:
             except Exception:
                 pass
     except Exception as e:
-        logger.exception(f"Error in semantic search fallback: {e}")
+        logger.exception(f"Error in semantic search fallback: {e}", e=e)
         return (
             f"❌ Semantic search failed: {str(e)}\n\n"
             "Please ensure:\n"

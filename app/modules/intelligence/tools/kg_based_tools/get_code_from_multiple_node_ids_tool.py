@@ -62,7 +62,7 @@ class GetCodeFromMultipleNodeIdsTool:
         try:
             project = self._get_project(project_id)
             if not project:
-                logger.error(f"Project with ID '{project_id}' not found in database")
+                logger.error(f"Project with ID '{project_id}' not found in database", project_id=project_id)
                 return {
                     "error": f"Project with ID '{project_id}' not found in database"
                 }

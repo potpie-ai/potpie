@@ -70,7 +70,7 @@ class ParsingController:
                 repo_details.repo_name = repo_details.repo_path.split("/")[-1]
                 logger.info(
                     f"Auto-detected filesystem path: repo_path={repo_details.repo_path}, repo_name={repo_details.repo_name}"
-                )
+                , repo_details_repo_path=repo_details.repo_path, repo_details_repo_name=repo_details.repo_name)
 
         if config_provider.get_is_development_mode():
             # In dev mode: if both repo_path and repo_name are provided, prioritize repo_path (local)
@@ -108,7 +108,7 @@ class ParsingController:
             normalized_repo_name = normalize_repo_name(repo_name)
             logger.debug(
                 f"Original repo_name: {repo_name}, Normalized: {normalized_repo_name}"
-            )
+            , repo_name=repo_name, normalized_repo_name=normalized_repo_name)
 
             project = await project_manager.get_project_from_db(
                 normalized_repo_name,
@@ -218,7 +218,7 @@ class ParsingController:
                 if project.status == ProjectStatusEnum.INFERRING.value:
                     logger.info(
                         f"Project {project_id} already in inferring state. Returning current state."
-                    )
+                    , project_id=project_id)
                     return {"project_id": project_id, "status": project.status}
 
                 # Check if this project is already parsed for the requested commit
@@ -360,7 +360,7 @@ class ParsingController:
             "status": ProjectStatusEnum.SUBMITTED.value,
         }
 
-        logger.info(f"Submitting parsing task for new project {new_project_id}")
+        logger.info(f"Submitting parsing task for new project {new_project_id}", new_project_id=new_project_id)
         repo_name = repo_details.repo_name or repo_details.repo_path.split("/")[-1]
         await project_manager.register_project(
             repo_name,

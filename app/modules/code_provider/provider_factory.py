@@ -69,7 +69,7 @@ class CodeProviderFactory:
                 LocalProvider,
             )
 
-            logger.debug(f"Using LocalProvider for repository path: {local_repo_path}")
+            logger.debug(f"Using LocalProvider for repository path: {local_repo_path}", local_repo_path=local_repo_path)
             return LocalProvider(default_repo_path=local_repo_path)
 
         # Determine provider type
@@ -120,7 +120,7 @@ class CodeProviderFactory:
                 )
 
             provider = LocalProvider(default_repo_path=base_url)
-            logger.info(f"Created LocalProvider for path: {base_url}")
+            logger.info(f"Created LocalProvider for path: {base_url}", base_url=base_url)
             return provider  # Return early, no authentication needed
 
         else:
@@ -211,9 +211,9 @@ class CodeProviderFactory:
             "Authorization": f"Bearer {jwt}",
             "X-GitHub-Api-Version": "2022-11-28",
         }
-        logger.info(f"ProviderFactory: About to make GitHub API request to get installation ID for {repo_name}")
+        logger.info(f"ProviderFactory: About to make GitHub API request to get installation ID for {repo_name}", repo_name=repo_name)
         response = requests.get(url, headers=headers, timeout=60)
-        logger.info(f"ProviderFactory: GitHub API request completed with status {response.status_code} for {repo_name}")
+        logger.info(f"ProviderFactory: GitHub API request completed with status {response.status_code} for {repo_name}", response_status_code=response.status_code, repo_name=repo_name)
 
         if response.status_code == 404:
             # App not installed on this repository (likely public repo or no access)
@@ -295,19 +295,19 @@ class CodeProviderFactory:
             tunnel_url = tunnel_service.get_tunnel_url(user_id, conversation_id)
 
             if not tunnel_url:
-                logger.debug(f"No tunnel available for user {user_id}")
+                logger.debug(f"No tunnel available for user {user_id}", user_id=user_id)
                 return None
 
             logger.info(
                 f"Creating UserLocalTunnelProvider for user {user_id} via tunnel {tunnel_url}"
-            )
+            , user_id=user_id, tunnel_url=tunnel_url)
             return UserLocalTunnelProvider(
                 user_id=user_id,
                 conversation_id=conversation_id,
                 tunnel_url=tunnel_url,
             )
         except Exception as e:
-            logger.debug(f"Failed to create tunnel provider: {e}")
+            logger.debug(f"Failed to create tunnel provider: {e}", e=e)
             return None
 
     @staticmethod
@@ -335,7 +335,7 @@ class CodeProviderFactory:
         Raises:
             ValueError: If no authentication method is available
         """
-        logger.info(f"ProviderFactory: create_provider_with_fallback called for {repo_name}")
+        logger.info(f"ProviderFactory: create_provider_with_fallback called for {repo_name}", repo_name=repo_name)
         
         # Check if tunnel provider is available (highest priority for local access)
         # This should be checked before local filesystem access
@@ -347,7 +347,7 @@ class CodeProviderFactory:
                     logger.info("Using UserLocalTunnelProvider (tunnel available and accessible)")
                     return tunnel_provider
             except Exception as e:
-                logger.debug(f"Tunnel provider check failed: {e}, falling back to other providers")
+                logger.debug(f"Tunnel provider check failed: {e}, falling back to other providers", e=e)
         
         # Handle local repositories without authentication
         local_repo_path = CodeProviderFactory._resolve_local_repo_path(repo_name)
@@ -358,7 +358,7 @@ class CodeProviderFactory:
 
             logger.debug(
                 f"Using LocalProvider (fallback) for repository path: {local_repo_path}"
-            )
+            , local_repo_path=local_repo_path)
             return LocalProvider(default_repo_path=local_repo_path)
 
         provider_type = os.getenv("CODE_PROVIDER", "github").lower()
@@ -387,9 +387,9 @@ class CodeProviderFactory:
                 "GitHub App is configured, trying App auth first", repo_name=repo_name
             )
             try:
-                logger.info(f"ProviderFactory: About to call create_github_app_provider for {repo_name}")
+                logger.info(f"ProviderFactory: About to call create_github_app_provider for {repo_name}", repo_name=repo_name)
                 provider = CodeProviderFactory.create_github_app_provider(repo_name)
-                logger.info(f"ProviderFactory: create_github_app_provider completed for {repo_name}")
+                logger.info(f"ProviderFactory: create_github_app_provider completed for {repo_name}", repo_name=repo_name)
                 return provider
             except Exception as e:
                 # Check if this is an expected failure (app not installed on repo)
@@ -402,12 +402,12 @@ class CodeProviderFactory:
                     # This is expected for public repos or repos where app isn't installed
                     logger.debug(
                         f"GitHub App not installed on repository {repo_name} (expected for public repos or repos where app isn't installed), falling back to PAT"
-                    )
+                    , repo_name=repo_name)
                 else:
                     # Unexpected error - log as warning
                     logger.warning(
                         f"GitHub App authentication failed for {repo_name}: {e}, falling back to PAT"
-                    )
+                    , repo_name=repo_name, e=e)
                 # Continue to PAT fallback below
 
         # For GitHub: Try GH_TOKEN_LIST first (where GitHub PATs are stored)
@@ -455,7 +455,7 @@ class CodeProviderFactory:
         if provider_type == ProviderType.GITHUB:
             logger.info(
                 f"No PAT configured, trying unauthenticated access for {repo_name}"
-            )
+            , repo_name=repo_name)
             try:
                 # Use GitHub.com API for GitHub provider (not GitBucket or other configured base URLs)
                 base_url = "https://api.github.com"
@@ -463,7 +463,7 @@ class CodeProviderFactory:
                 provider.set_unauthenticated_client()
                 return provider
             except Exception as e:
-                logger.warning(f"Failed to create unauthenticated provider: {e}")
+                logger.warning(f"Failed to create unauthenticated provider: {e}", e=e)
 
         # If we get here, we have no auth method
         raise ValueError(

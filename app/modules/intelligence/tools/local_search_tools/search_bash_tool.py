@@ -133,7 +133,7 @@ def search_bash_tool(input_data: SearchBashInput) -> str:
             return f"❌ Bash command failed (cloud execution): {error_msg}"
 
     except Exception as e:
-        logger.exception(f"Error in cloud bash_command fallback: {e}")
+        logger.exception(f"Error in cloud bash_command fallback: {e}", e=e)
         return (
             f"❌ Failed to execute bash command in cloud (fallback): {str(e)}\n\n"
             "Please ensure:\n"

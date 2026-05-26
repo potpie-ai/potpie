@@ -90,13 +90,13 @@ def _check_memory_pressure() -> tuple[bool, Optional[float]]:
             logger.warning(
                 f"Memory pressure detected: {memory_usage_percent:.1%} ({rss_mb:.1f}MB / {max_memory_mb:.1f}MB). "
                 f"Skipping non-critical operations."
-            )
+            , memory_usage_percent=memory_usage_percent, rss_mb=rss_mb, max_memory_mb=max_memory_mb)
 
         return is_under_pressure, memory_usage_percent
     except ImportError:
         return False, None
     except Exception as e:
-        logger.debug(f"Failed to check memory pressure: {e}")
+        logger.debug(f"Failed to check memory pressure: {e}", e=e)
         return False, None
 
 
@@ -139,5 +139,5 @@ def _get_git_file_size(
             operation_name=f"get_file_size({file_path})",
         )
     except Exception as e:
-        logger.debug(f"Could not get file size for {file_path}: {e}")
+        logger.debug(f"Could not get file size for {file_path}: {e}", file_path=file_path, e=e)
         return None

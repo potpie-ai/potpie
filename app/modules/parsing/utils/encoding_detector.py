@@ -61,7 +61,7 @@ class EncodingDetector:
             except (UnicodeDecodeError, UnicodeError):
                 continue
             except Exception as e:
-                logger.error(f"Error opening file {file_path}: {e}")
+                logger.error(f"Error opening file {file_path}: {e}", file_path=file_path, e=e)
                 return None
 
         return None
@@ -88,15 +88,15 @@ class EncodingDetector:
                 with open(file_path, "r", encoding=encoding) as f:
                     content = f.read()
                     if encoding != "utf-8":
-                        logger.debug(f"Read {file_path} using {encoding} encoding")
+                        logger.debug(f"Read {file_path} using {encoding} encoding", file_path=file_path, encoding=encoding)
                     return content, encoding
             except (UnicodeDecodeError, UnicodeError):
                 continue
             except Exception as e:
-                logger.error(f"Error reading {file_path}: {e}")
+                logger.error(f"Error reading {file_path}: {e}", file_path=file_path, e=e)
                 return None, None
 
-        logger.warning(f"Could not read {file_path} with any supported encoding")
+        logger.warning(f"Could not read {file_path} with any supported encoding", file_path=file_path)
         return None, None
 
     @staticmethod

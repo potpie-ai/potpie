@@ -41,7 +41,7 @@ def write_change_to_worktree(
         if _get_local_mode():
             logger.debug(
                 f"_write_change_to_worktree: skipped (local_mode=True), file_path={file_path}, project_id={project_id}"
-            )
+            , file_path=file_path, project_id=project_id)
             return False, "local_mode"
 
         if not project_id:
@@ -51,7 +51,7 @@ def write_change_to_worktree(
         if not conversation_id:
             logger.warning(
                 f"_write_change_to_worktree: skipped (no conversation_id), file_path={file_path}, project_id={project_id}"
-            )
+            , file_path=file_path, project_id=project_id)
             return False, "no_conversation_id"
 
         user_id = _get_user_id()
@@ -72,7 +72,7 @@ def write_change_to_worktree(
             logger.warning(
                 f"_write_change_to_worktree: Could not get edits worktree: {failure_reason}, "
                 f"project_id={project_id}, conversation_id={conversation_id}"
-            )
+            , failure_reason=failure_reason, project_id=project_id, conversation_id=conversation_id)
             return False, f"worktree_unavailable:{failure_reason}"
 
         worktree_abs = os.path.abspath(worktree_path)
@@ -83,7 +83,7 @@ def write_change_to_worktree(
             if common != worktree_abs:
                 logger.error(
                     f"_write_change_to_worktree: Path traversal blocked for '{file_path}', project_id={project_id}"
-                )
+                , file_path=file_path, project_id=project_id)
                 return False, "path_traversal"
         except ValueError:
             return False, "path_traversal"
@@ -93,7 +93,7 @@ def write_change_to_worktree(
                 os.remove(full_path)
             logger.info(
                 f"_write_change_to_worktree: Deleted '{file_path}' from edits worktree, project_id={project_id}"
-            )
+            , file_path=file_path, project_id=project_id)
             return True, None
         else:
             if content is None:
@@ -105,7 +105,7 @@ def write_change_to_worktree(
                 f.write(content)
             logger.info(
                 f"_write_change_to_worktree: Wrote '{file_path}' to edits worktree, project_id={project_id}"
-            )
+            , file_path=file_path, project_id=project_id)
             return True, None
 
     except Exception as e:
@@ -242,7 +242,7 @@ def commit_file_and_extract_patch(
                 )
                 return patch if patch and patch.strip() else None
             except Exception as e:
-                logger.warning(f"Failed to extract patch for {file_path}: {e}")
+                logger.warning(f"Failed to extract patch for {file_path}: {e}", file_path=file_path, e=e)
                 return None
 
         patch = safe_git_repo_operation(
@@ -260,7 +260,7 @@ def commit_file_and_extract_patch(
                 key = f"pr_patches:{conversation_id}:{safe_file_path}"
                 client.setex(key, CODE_CHANGES_TTL_SECONDS, patch)
             except Exception as e:
-                logger.warning(f"Failed to store patch for {file_path}: {e}")
+                logger.warning(f"Failed to store patch for {file_path}: {e}", file_path=file_path, e=e)
 
         return {"success": True, "commit_hash": commit_hash, "patch": patch}
 
@@ -327,10 +327,10 @@ def commit_all_files_and_extract_patches(
             try:
                 common = os.path.commonpath([worktree_abs, full_path])
                 if common != worktree_abs:
-                    logger.warning(f"Path traversal blocked for '{fpath}'")
+                    logger.warning(f"Path traversal blocked for '{fpath}'", fpath=fpath)
                     continue
             except ValueError:
-                logger.warning(f"Path traversal blocked for '{fpath}'")
+                logger.warning(f"Path traversal blocked for '{fpath}'", fpath=fpath)
                 continue
 
             if change.change_type == ChangeType.DELETE:
@@ -399,7 +399,7 @@ def commit_all_files_and_extract_patches(
                     )
                     return patch if patch and patch.strip() else None
                 except Exception as e:
-                    logger.warning(f"Failed to extract patch for {fp}: {e}")
+                    logger.warning(f"Failed to extract patch for {fp}: {e}", fp=fp, e=e)
                     return None
 
             patch = safe_git_repo_operation(
@@ -418,7 +418,7 @@ def commit_all_files_and_extract_patches(
                     key = f"pr_patches:{conversation_id}:{safe_file_path}"
                     client.setex(key, CODE_CHANGES_TTL_SECONDS, patch)
                 except Exception as e:
-                    logger.warning(f"Failed to store patch for {fpath}: {e}")
+                    logger.warning(f"Failed to store patch for {fpath}: {e}", fpath=fpath, e=e)
 
         return {
             "success": True,

@@ -199,7 +199,7 @@ class GithubService:
         project_id: str,
         commit_id: str,
     ) -> str:
-        logger.info(f"Attempting to access file: {file_path} in repo: {repo_name}")
+        logger.info(f"Attempting to access file: {file_path} in repo: {repo_name}", file_path=file_path, repo_name=repo_name)
 
         try:
             # Try authenticated access first
@@ -539,7 +539,7 @@ class GithubService:
                     github_username = github_user.login
                     logger.info(
                         f"Retrieved GitHub username {github_username} from API for user {user_id}"
-                    )
+                    , github_username=github_username, user_id=user_id)
                 except GithubException as e:
                     error_str = str(e)
                     is_414_error = (
@@ -570,7 +570,7 @@ class GithubService:
             if not github_oauth_token:
                 logger.info(
                     f"No user OAuth token for {firebase_uid}, falling back to system tokens"
-                )
+                , firebase_uid=firebase_uid)
                 # Try GH_TOKEN_LIST first
                 token_list_str = os.getenv("GH_TOKEN_LIST", "")
                 if token_list_str:
@@ -761,12 +761,12 @@ class GithubService:
                                 error_text = await response.text()
                                 logger.error(
                                     f"Failed to fetch page {url}. Response: {error_text}"
-                                )
+                                , url=url, error_text=error_text)
                                 return []
                         except (ClientConnectorError, asyncio.TimeoutError) as net_err:
                             attempt += 1
                             if attempt >= max_attempts:
-                                logger.error(f"Network error fetching {url}: {net_err}")
+                                logger.error(f"Network error fetching {url}: {net_err}", url=url, net_err=net_err)
                                 return []
                             await asyncio.sleep(backoff)
                             backoff *= 2
@@ -975,7 +975,7 @@ class GithubService:
                                                 # Skip if rel format is unexpected (e.g., "pageabc")
                                                 logger.debug(
                                                     f"Skipping unexpected rel format in Link header: {rel}"
-                                                )
+                                                , rel=rel)
                                                 continue
 
                                         if should_add:
@@ -1104,7 +1104,7 @@ class GithubService:
             total_duration = time.time() - start_time  # Calculate total duration
             logger.info(
                 f"get_repos_for_user executed in {total_duration:.2f} seconds"
-            )  # Log total duration
+            , total_duration=total_duration)  # Log total duration
 
     async def get_combined_user_repos(
         self, user_id: str, async_session: Optional[AsyncSession] = None
@@ -1284,14 +1284,14 @@ class GithubService:
                     logger.info(
                         f"GitHub App auth failed with 404 for {repo_name}, "
                         f"attempting final fallback to PAT pool"
-                    )
+                    , repo_name=repo_name)
                     try:
                         # Force PAT authentication by using the public instance method
                         github_client = self.get_public_github_instance()
                         repo = github_client.get_repo(repo_name)
                         logger.info(
                             f"Successfully accessed {repo_name} using PAT after App auth failed"
-                        )
+                        , repo_name=repo_name)
                         return github_client, repo
                     except Exception as pat_error:
                         logger.warning(
@@ -1309,7 +1309,7 @@ class GithubService:
     ) -> str:
         logger.info(
             f"Fetching project structure for project ID: {project_id}, path: {path}"
-        )
+        , project_id=project_id, path=path)
 
         # Modify cache key to reflect that we're only caching the specific path
         cache_key = (
@@ -1333,7 +1333,7 @@ class GithubService:
         if cached_structure:
             logger.info(
                 f"Project structure found in cache for project ID: {project_id}, path: {path}"
-            )
+            , project_id=project_id, path=path)
             return (
                 cached_structure.decode("utf-8")
                 if isinstance(cached_structure, bytes)

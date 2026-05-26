@@ -102,7 +102,7 @@ class MainApp:
             allow_methods=["*"],
             allow_headers=["*"],
         )
-        logger.info(f"CORS configured with allowed origins: {origins}")
+        logger.info(f"CORS configured with allowed origins: {origins}", origins=origins)
 
     def setup_logging_middleware(self):
         """

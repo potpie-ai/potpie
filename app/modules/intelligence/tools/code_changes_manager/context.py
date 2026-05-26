@@ -44,7 +44,7 @@ def get_code_changes_manager_ctx() -> ContextVar:
 def _set_conversation_id(conversation_id: Optional[str]) -> None:
     """Set the conversation_id for the current execution context."""
     _conversation_id_ctx.set(conversation_id)
-    logger.info(f"CodeChangesManager: Set conversation_id to {conversation_id}")
+    logger.info(f"CodeChangesManager: Set conversation_id to {conversation_id}", conversation_id=conversation_id)
 
 
 def _get_conversation_id() -> Optional[str]:
@@ -55,7 +55,7 @@ def _get_conversation_id() -> Optional[str]:
 def _set_agent_id(agent_id: Optional[str]) -> None:
     """Set the agent_id for the current execution context."""
     _agent_id_ctx.set(agent_id)
-    logger.info(f"CodeChangesManager: Set agent_id to {agent_id}")
+    logger.info(f"CodeChangesManager: Set agent_id to {agent_id}", agent_id=agent_id)
 
 
 def _get_agent_id() -> Optional[str]:
@@ -78,7 +78,7 @@ def _set_tunnel_url(tunnel_url: Optional[str]) -> None:
     _tunnel_url_ctx.set(tunnel_url)
     logger.info(
         f"CodeChangesManager: _set_tunnel_url called with tunnel_url={tunnel_url}"
-    )
+    , tunnel_url=tunnel_url)
 
 
 def _get_tunnel_url() -> Optional[str]:

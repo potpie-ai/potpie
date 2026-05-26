@@ -114,7 +114,7 @@ def redis_stream_generator(
     redis_manager = RedisStreamManager()
     logger.info(
         f"Stream consumer started for {conversation_id}:{run_id}, waiting for events"
-    )
+    , conversation_id=conversation_id, run_id=run_id)
 
     try:
         for event in redis_manager.consume_stream(conversation_id, run_id, cursor):
@@ -199,7 +199,7 @@ async def start_celery_task_and_stream(
 
     # Store the Celery task ID for later revocation
     await async_redis_manager.set_task_id(conversation_id, run_id, task_result.id)
-    logger.info(f"Started agent task {task_result.id} for {conversation_id}:{run_id}")
+    logger.info(f"Started agent task {task_result.id} for {conversation_id}:{run_id}", task_result_id=task_result.id, conversation_id=conversation_id, run_id=run_id)
 
     # Wait for task to reach any terminal or active state (avoids blocking 30s if task goes straight to completed/error)
     task_started = await async_redis_manager.wait_for_task_start(
@@ -210,14 +210,14 @@ async def start_celery_task_and_stream(
         if status in ("completed", "error"):
             logger.info(
                 f"Task already {status} for {conversation_id}:{run_id} - stream will contain result"
-            )
+            , status=status, conversation_id=conversation_id, run_id=run_id)
     logger.info(
         f"Task start check done for {conversation_id}:{run_id} (started={task_started})"
-    )
+    , conversation_id=conversation_id, run_id=run_id, task_started=task_started)
     if not task_started:
         logger.warning(
             f"Background task failed to start within 30s for {conversation_id}:{run_id} - may still be queued"
-        )
+        , conversation_id=conversation_id, run_id=run_id)
 
     # Return Redis stream response (sync generator runs in Starlette thread pool)
     return StreamingResponse(
@@ -275,7 +275,7 @@ async def start_celery_task_and_wait(
     await async_redis_manager.set_task_id(conversation_id, run_id, task_result.id)
     logger.info(
         f"Started agent task {task_result.id} for {conversation_id}:{run_id} (non-streaming)"
-    )
+    , task_result_id=task_result.id, conversation_id=conversation_id, run_id=run_id)
 
     # Wait for task to reach any terminal or active state (avoids blocking 30s if task goes straight to completed/error)
     task_started = await async_redis_manager.wait_for_task_start(
@@ -286,11 +286,11 @@ async def start_celery_task_and_wait(
         if status in ("completed", "error"):
             logger.info(
                 f"Task already {status} for {conversation_id}:{run_id} - collecting from stream"
-            )
+            , status=status, conversation_id=conversation_id, run_id=run_id)
     if not task_started:
         logger.warning(
             f"Background task failed to start within 30s for {conversation_id}:{run_id} - may still be queued"
-        )
+        , conversation_id=conversation_id, run_id=run_id)
 
     # Collect all chunks from the stream (sync consume_stream in thread pool)
     full_message = ""
@@ -354,10 +354,10 @@ async def start_celery_task_and_wait(
                     error_message = event.get("message", "Unknown error occurred")
                     logger.error(
                         f"Task completed with error for {conversation_id}:{run_id}: {error_message}"
-                    )
+                    , conversation_id=conversation_id, run_id=run_id, error_message=error_message)
                 elif status == "cancelled":
                     error_message = "Task was cancelled"
-                    logger.info(f"Task cancelled for {conversation_id}:{run_id}")
+                    logger.info(f"Task cancelled for {conversation_id}:{run_id}", conversation_id=conversation_id, run_id=run_id)
                 break
 
         # If we got an error, raise an exception

@@ -700,7 +700,7 @@ async def duplicate_graph(self, old_repo_id: str, new_repo_id: str):
 
         logger.info(
             f"Successfully duplicated graph from {old_repo_id} to {new_repo_id}"
-        )
+        , old_repo_id=old_repo_id, new_repo_id=new_repo_id)
 
     except Exception:
         logger.exception(

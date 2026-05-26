@@ -198,7 +198,7 @@ class CodeProviderController:
                 logger.info(
                     f"PAT authentication failed with {error_type} for {repo_name}, "
                     "trying unauthenticated access for public repo"
-                )
+                , error_type=error_type, repo_name=repo_name)
                 try:
                     from app.modules.code_provider.github.github_provider import GitHubProvider
 
@@ -209,11 +209,11 @@ class CodeProviderController:
                     logger.info(f"Cached {len(all_branches)} branches for {repo_name} (unauthenticated)")
                     return all_branches
                 except Exception as unauth_error:
-                    logger.warning(f"Unauthenticated access also failed for {repo_name}: {unauth_error}")
+                    logger.warning(f"Unauthenticated access also failed for {repo_name}: {unauth_error}", repo_name=repo_name, unauth_error=unauth_error)
 
             if provider_type == "github" and os.getenv("GITHUB_APP_ID") and config_provider.get_github_key():
                 try:
-                    logger.info(f"Retrying branch fetch for {repo_name} with GitHub App auth")
+                    logger.info(f"Retrying branch fetch for {repo_name} with GitHub App auth", repo_name=repo_name)
                     provider = CodeProviderFactory.create_github_app_provider(repo_name)
                     all_branches = provider.list_branches(repo_name)
                     self.branch_cache.cache_all_branches(repo_name, all_branches, ttl=3600)

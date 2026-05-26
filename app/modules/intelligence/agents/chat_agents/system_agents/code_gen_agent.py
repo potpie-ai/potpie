@@ -318,15 +318,15 @@ class CodeGenAgent(ChatAgent):
 
         logger.info(
             f"CodeGenAgent: supports_pydantic={supports_pydantic}, should_use_multi_agent={should_use_multi}"
-        )
-        logger.info(f"Current model: {self.llm_provider.chat_config.model}")
-        logger.info(f"Model capabilities: {self.llm_provider.chat_config.capabilities}")
+        , supports_pydantic=supports_pydantic, should_use_multi=should_use_multi)
+        logger.info(f"Current model: {self.llm_provider.chat_config.model}", self_llm_provider_chat_config_model=self.llm_provider.chat_config.model)
+        logger.info(f"Model capabilities: {self.llm_provider.chat_config.capabilities}", self_llm_provider_chat_config_capabilities=self.llm_provider.chat_config.capabilities)
 
         if supports_pydantic:
             if should_use_multi:
                 logger.info(
                     f"✅ Using PydanticMultiAgent (multi-agent system) [local_mode={local_mode}]"
-                )
+                , local_mode=local_mode)
                 # Create specialized delegate agents for code generation: THINK_EXECUTE + integration agents
                 integration_agents = create_integration_agents()
                 delegate_agents = {
@@ -359,7 +359,7 @@ class CodeGenAgent(ChatAgent):
         else:
             logger.error(
                 f"❌ Model '{self.llm_provider.chat_config.model}' does not support Pydantic - using fallback PydanticRagAgent"
-            )
+            , self_llm_provider_chat_config_model=self.llm_provider.chat_config.model)
             return PydanticRagAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:

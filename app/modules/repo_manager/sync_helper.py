@@ -261,7 +261,7 @@ def get_or_create_worktree_path(
                 )
             )
         except Exception as email_err:
-            logger.exception(f"[Repomanager] Failed to send failure email: {email_err}")
+            logger.exception(f"[Repomanager] Failed to send failure email: {email_err}", email_err=email_err)
 
     # Determine failure reason for richer error propagation
     failure_reason = "auth_failed"
@@ -332,7 +332,7 @@ def get_or_create_edits_worktree_path(
             f"[Repomanager] get_or_create_edits_worktree_path: Failed to get project {project_id}: {e}",
             project_id=project_id,
             user_id=user_id,
-        )
+         e=e)
         return None, "project_lookup_failed"
 
     if not repo_name:
@@ -350,7 +350,7 @@ def get_or_create_edits_worktree_path(
             f"[Repomanager] Reusing existing edits worktree for {repo_name}:{new_branch_name}",
             repo_name=repo_name,
             user_id=effective_user_id,
-        )
+         new_branch_name=new_branch_name)
         return existing, None
 
     # ============================================================================
@@ -375,7 +375,7 @@ def get_or_create_edits_worktree_path(
             f"[Repomanager] GitHub App token not available for edits worktree: {e}",
             repo_name=repo_name,
             user_id=effective_user_id,
-        )
+         e=e)
 
     user_oauth_token = None
     if sql_db and effective_user_id:
@@ -390,7 +390,7 @@ def get_or_create_edits_worktree_path(
                 f"[Repomanager] Could not get OAuth token for edits worktree: {e}",
                 repo_name=repo_name,
                 user_id=effective_user_id,
-            )
+             e=e)
 
     last_error = None
 
@@ -408,7 +408,7 @@ def get_or_create_edits_worktree_path(
                 repo_name=repo_name,
                 user_id=effective_user_id,
                 branch=new_branch_name,
-            )
+             method_name=method_name, new_branch_name=new_branch_name)
             worktree_path = repo_manager.create_worktree_with_new_branch(
                 repo_name=repo_name,
                 base_ref=base_branch,
@@ -426,7 +426,7 @@ def get_or_create_edits_worktree_path(
                     user_id=effective_user_id,
                     branch=new_branch_name,
                     method=method_name,
-                )
+                 worktree_path_str=worktree_path_str)
                 return worktree_path_str, None
         except Exception as e:
             last_error = e
@@ -434,7 +434,7 @@ def get_or_create_edits_worktree_path(
                 f"[Repomanager] {method_name} failed for edits worktree: {e}",
                 repo_name=repo_name,
                 user_id=effective_user_id,
-            )
+             method_name=method_name, e=e)
 
     failure_reason = "auth_failed"
     if last_error:
@@ -504,7 +504,7 @@ def ensure_repo_registered(
                 f"[Repomanager] Failed to get repo local path for {repo_name}: {e}",
                 repo_name=repo_name,
                 user_id=user_id,
-            )
+             e=e)
             return
 
         # Check for worktree path (where repos are actually stored)
@@ -529,14 +529,14 @@ def ensure_repo_registered(
                             f"[Repomanager] Registered existing worktree {repo_name}@{ref} from {registered_from}",
                             repo_name=repo_name,
                             user_id=user_id,
-                        )
+                         ref=ref, registered_from=registered_from)
                         return
                     except Exception as e:
                         logger.warning(
                             f"[Repomanager] Failed to register existing worktree {repo_name}: {e}",
                             repo_name=repo_name,
                             user_id=user_id,
-                        )
+                         e=e)
 
         # Check base repo path (for repos without worktrees)
         if expected_base_path.exists() and expected_base_path.is_dir():
@@ -555,14 +555,14 @@ def ensure_repo_registered(
                         f"[Repomanager] Registered existing base repo {repo_name} from {registered_from}",
                         repo_name=repo_name,
                         user_id=user_id,
-                    )
+                     registered_from=registered_from)
                     return
                 except Exception as e:
                     logger.warning(
                         f"[Repomanager] Failed to register existing base repo {repo_name}: {e}",
                         repo_name=repo_name,
                         user_id=user_id,
-                    )
+                     e=e)
 
         # For local repos (repo_path), check if it's a different location
         if repo_path and os.path.exists(repo_path):
@@ -570,7 +570,7 @@ def ensure_repo_registered(
                 logger.debug(
                     f"Repo {repo_name} has external path {repo_path}, not registering in repo manager. "
                     f"Repo manager base path: {repo_manager.repos_base_path}"
-                )
+                , repo_name=repo_name, repo_path=repo_path, repo_manager_repos_base_path=repo_manager.repos_base_path)
             else:
                 try:
                     repo_manager.register_repo(
@@ -592,7 +592,7 @@ def ensure_repo_registered(
                         f"[Repomanager] Failed to register local repo {repo_name}: {e}",
                         repo_name=repo_name,
                         user_id=user_id,
-                    )
+                     e=e)
 
         # If we get here, repo doesn't exist in repo manager's directory structure
         expected_worktree_info = "N/A"
@@ -618,4 +618,4 @@ def ensure_repo_registered(
             repo_name=repo_name,
             user_id=user_id,
             exc_info=True,
-        )
+         e=e)

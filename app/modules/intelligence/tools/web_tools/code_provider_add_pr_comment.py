@@ -98,7 +98,7 @@ class CodeProviderAddPRCommentsTool:
     def _get_github_client(self, repo_name: str) -> Github:
         """Get code provider client using provider factory."""
         try:
-            logger.info(f"[ADD_PR_COMMENT] Creating provider for repo: {repo_name}")
+            logger.info(f"[ADD_PR_COMMENT] Creating provider for repo: {repo_name}", repo_name=repo_name)
             provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
             logger.info(
                 f"[ADD_PR_COMMENT] Provider created successfully, type: {type(provider).__name__}"
@@ -154,7 +154,7 @@ class CodeProviderAddPRCommentsTool:
         # Validate review_action
         valid_actions = ["COMMENT", "APPROVE", "REQUEST_CHANGES"]
         if review_action not in valid_actions:
-            logger.error(f"[ADD_PR_COMMENT] Invalid review_action: {review_action}")
+            logger.error(f"[ADD_PR_COMMENT] Invalid review_action: {review_action}", review_action=review_action)
             return {
                 "success": False,
                 "error": f"Invalid review_action: {review_action}. Must be one of: {', '.join(valid_actions)}",
@@ -184,22 +184,22 @@ class CodeProviderAddPRCommentsTool:
 
             logger.info(
                 f"[ADD_PR_COMMENT] Provider type: {provider_type}, Original repo: {repo_name}, Normalized: {normalized_input}, Actual repo for API: {actual_repo_name}"
-            )
+            , provider_type=provider_type, repo_name=repo_name, normalized_input=normalized_input, actual_repo_name=actual_repo_name)
 
             repo = g.get_repo(actual_repo_name)
-            logger.info(f"[ADD_PR_COMMENT] Successfully got repo object: {repo.name}")
+            logger.info(f"[ADD_PR_COMMENT] Successfully got repo object: {repo.name}", repo_name=repo.name)
 
             # Get the pull request
             try:
-                logger.info(f"[ADD_PR_COMMENT] Getting PR #{pr_number}")
+                logger.info(f"[ADD_PR_COMMENT] Getting PR #{pr_number}", pr_number=pr_number)
                 pr = repo.get_pull(pr_number)
                 logger.info(
                     f"[ADD_PR_COMMENT] Successfully got PR #{pr.number}: {pr.title}"
-                )
+                , pr_number=pr.number, pr_title=pr.title)
             except GithubException as e:
                 logger.error(
                     f"[ADD_PR_COMMENT] PR #{pr_number} not found: status={e.status}, data={e.data}"
-                )
+                , pr_number=pr_number, e_status=e.status, e_data=e.data)
                 return {
                     "success": False,
                     "error": f"Pull request #{pr_number} not found: {str(e)}",
@@ -246,7 +246,7 @@ class CodeProviderAddPRCommentsTool:
                         comment_url = data.get("html_url")
                         logger.info(
                             f"[ADD_PR_COMMENT] Successfully added general comment: {comment_id}"
-                        )
+                        , comment_id=comment_id)
 
                         return {
                             "success": True,
@@ -266,7 +266,7 @@ class CodeProviderAddPRCommentsTool:
                 comment = pr.create_issue_comment(general_comment)
                 logger.info(
                     f"[ADD_PR_COMMENT] Successfully added general comment: {comment.id}"
-                )
+                , comment_id=comment.id)
                 return {
                     "success": True,
                     "operation": "add_general_comment",
@@ -285,7 +285,7 @@ class CodeProviderAddPRCommentsTool:
                     "error": "No commits found in this pull request",
                 }
             latest_commit = commits[-1]
-            logger.info(f"[ADD_PR_COMMENT] Latest commit: {latest_commit.sha}")
+            logger.info(f"[ADD_PR_COMMENT] Latest commit: {latest_commit.sha}", latest_commit_sha=latest_commit.sha)
 
             # Prepare review comments
             review_comments = []
@@ -310,7 +310,7 @@ class CodeProviderAddPRCommentsTool:
                     if comment.start_line is not None and comment.end_line is not None:
                         logger.info(
                             f"[ADD_PR_COMMENT] Multi-line comment: start={comment.start_line}, end={comment.end_line}"
-                        )
+                        , comment_start_line=comment.start_line, comment_end_line=comment.end_line)
                         comment_data["start_line"] = comment.start_line
                         comment_data["line"] = comment.end_line
                         # In multi-line mode, position refers to the end line
@@ -327,7 +327,7 @@ class CodeProviderAddPRCommentsTool:
 
             # If we have errors with any comments, return them
             if errors:
-                logger.error(f"[ADD_PR_COMMENT] Errors preparing comments: {errors}")
+                logger.error(f"[ADD_PR_COMMENT] Errors preparing comments: {errors}", errors=errors)
                 return {
                     "success": False,
                     "error": "Errors occurred while preparing comments",
@@ -420,7 +420,7 @@ class CodeProviderAddPRCommentsTool:
                         "comments_count": len(added_comments),
                         "errors": errors if errors else None,
                     }
-                    logger.info(f"[ADD_PR_COMMENT] Returning success result: {result}")
+                    logger.info(f"[ADD_PR_COMMENT] Returning success result: {result}", result=result)
                     return result
                 except Exception as e:
                     logger.exception("[ADD_PR_COMMENT] Raw API call failed")
@@ -436,7 +436,7 @@ class CodeProviderAddPRCommentsTool:
                 event=review_action,
                 comments=review_comments,
             )
-            logger.info(f"[ADD_PR_COMMENT] Successfully created review: id={review.id}")
+            logger.info(f"[ADD_PR_COMMENT] Successfully created review: id={review.id}", review_id=review.id)
 
             result = {
                 "success": True,
@@ -448,7 +448,7 @@ class CodeProviderAddPRCommentsTool:
                 "comments_count": len(review_comments),
                 "errors": errors if errors else None,
             }
-            logger.info(f"[ADD_PR_COMMENT] Returning success result: {result}")
+            logger.info(f"[ADD_PR_COMMENT] Returning success result: {result}", result=result)
             return result
 
         except GithubException as e:

@@ -54,7 +54,7 @@ class CodeChangesManager:
         logger.info(
             f"CodeChangesManager: Initialized with conversation_id={conversation_id}, "
             f"redis_key={self._redis_key}"
-        )
+        , conversation_id=conversation_id, self__redis_key=self._redis_key)
 
     @property
     def _redis_key(self) -> str:
@@ -121,7 +121,7 @@ class CodeChangesManager:
         if file_path in changes and changes[file_path].change_type != ChangeType.DELETE:
             logger.warning(
                 f"CodeChangesManager.add_file: File '{file_path}' already exists (not deleted)"
-            )
+            , file_path=file_path)
             return False
 
         change = FileChange(
@@ -136,7 +136,7 @@ class CodeChangesManager:
         self._persist_change()
         logger.info(
             f"CodeChangesManager.add_file: Successfully added file '{file_path}'"
-        )
+        , file_path=file_path)
         return True
 
     def _apply_update(
@@ -151,7 +151,7 @@ class CodeChangesManager:
     ) -> bool:
         logger.debug(
             f"CodeChangesManager._apply_update: Applying update to '{file_path}'"
-        )
+        , file_path=file_path)
         previous_content = override_previous_content
         if file_path in self.changes:
             existing = self.changes[file_path]
@@ -159,7 +159,7 @@ class CodeChangesManager:
             if existing.change_type == ChangeType.DELETE:
                 logger.warning(
                     f"CodeChangesManager._apply_update: File '{file_path}' is marked for deletion."
-                )
+                , file_path=file_path)
                 return False
 
             if (
@@ -230,11 +230,11 @@ class CodeChangesManager:
         if not result:
             logger.warning(
                 f"CodeChangesManager.update_file: Failed to update file '{file_path}' - file may be marked for deletion"
-            )
+            , file_path=file_path)
             return False
         logger.info(
             f"CodeChangesManager.update_file: Successfully updated file '{file_path}'"
-        )
+        , file_path=file_path)
         return result
 
     def update_file_lines(
@@ -259,7 +259,7 @@ class CodeChangesManager:
             if len(lines) == 1 and lines[0] == "":
                 logger.warning(
                     f"CodeChangesManager.update_file_lines: WARNING - File '{file_path}' appears to be empty or not found."
-                )
+                , file_path=file_path)
 
             if start_line < 1 or start_line > len(lines):
                 return {
@@ -363,7 +363,7 @@ class CodeChangesManager:
         project_id: Optional[str] = None,
         db: Optional[Session] = None,
     ) -> Dict[str, Any]:
-        logger.info(f"CodeChangesManager.replace_in_file: str_replace in '{file_path}'")
+        logger.info(f"CodeChangesManager.replace_in_file: str_replace in '{file_path}'", file_path=file_path)
         try:
             current_content = self._get_current_content(
                 file_path, project_id=project_id, db=db
@@ -456,7 +456,7 @@ class CodeChangesManager:
             if len(lines) == 1 and lines[0] == "":
                 logger.warning(
                     f"CodeChangesManager.insert_lines: WARNING - File '{file_path}' appears to be empty!"
-                )
+                , file_path=file_path)
 
             if line_number < 1:
                 return {"success": False, "error": "line_number must be >= 1"}
@@ -563,7 +563,7 @@ class CodeChangesManager:
             if len(lines) == 1 and lines[0] == "":
                 logger.warning(
                     f"CodeChangesManager.delete_lines: WARNING - File '{file_path}' appears to be empty or not found."
-                )
+                , file_path=file_path)
 
             if start_line < 1 or start_line > len(lines):
                 return {
@@ -643,7 +643,7 @@ class CodeChangesManager:
     ) -> bool:
         logger.info(
             f"CodeChangesManager.delete_file: Marking file '{file_path}' for deletion (preserve_content={preserve_content})"
-        )
+        , file_path=file_path, preserve_content=preserve_content)
         previous_content = None
         changes = self.changes
         if file_path in changes:
@@ -674,7 +674,7 @@ class CodeChangesManager:
             self._persist_change()
         logger.info(
             f"CodeChangesManager.delete_file: Successfully marked file '{file_path}' for deletion"
-        )
+        , file_path=file_path)
         return True
 
     def get_file(self, file_path: str) -> Optional[Dict[str, Any]]:

@@ -116,7 +116,7 @@ class PromptService:
             self.db.commit()
             self.db.refresh(db_prompt)
 
-            logger.info(f"Updated prompt with ID: {prompt_id}, user_id: {user_id}")
+            logger.info(f"Updated prompt with ID: {prompt_id}, user_id: {user_id}", prompt_id=prompt_id, user_id=user_id)
             return PromptResponse.model_validate(db_prompt)
         except PromptNotFoundError as e:
             logger.warning(str(e))
@@ -142,7 +142,7 @@ class PromptService:
             if result == 0:
                 raise PromptNotFoundError(f"Prompt with id {prompt_id} not found")
             self.db.commit()
-            logger.info(f"Deleted prompt with ID: {prompt_id}, user_id: {user_id}")
+            logger.info(f"Deleted prompt with ID: {prompt_id}, user_id: {user_id}", prompt_id=prompt_id, user_id=user_id)
         except PromptNotFoundError as e:
             logger.warning(str(e))
             raise
@@ -273,7 +273,7 @@ class PromptService:
                     update_reasons.append("status changed")
                     logger.info(
                         f"Status changed from {existing_prompt.status} to {prompt.status}"
-                    )
+                    , existing_prompt_status=existing_prompt.status, prompt_status=prompt.status)
 
                 if update_needed:
                     existing_prompt.text = prompt.text

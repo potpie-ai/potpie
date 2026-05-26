@@ -52,7 +52,7 @@ def truncate_dict_response(
                 # Truncation occurred
                 logger.warning(
                     f"Truncated '{key}' field from {original_length} to {max_length} characters"
-                )
+                , key=key, original_length=original_length, max_length=max_length)
             truncated_response[key] = truncated_value
         elif isinstance(value, dict):
             # Recursively truncate nested dictionaries
