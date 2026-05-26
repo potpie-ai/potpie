@@ -12,8 +12,6 @@
 # (default: `potpie_default`). Override with COMPOSE_NETWORK if your stack
 # names its network differently.
 
-version: "3.9"
-
 networks:
   default:
     name: ${COMPOSE_NETWORK:-potpie_default}
