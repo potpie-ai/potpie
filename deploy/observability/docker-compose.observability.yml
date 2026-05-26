@@ -1,0 +1,63 @@
+# Log aggregation + dashboard stack for the observability package's prod JSONL output.
+#
+# What this gives you:
+# - Loki         on :3100  — stores JSONL log lines from FastAPI + Celery
+# - Promtail     on :9080  — tails Docker container stdout and ships to Loki
+# - Grafana      on :3000  — UI; pre-provisioned with Loki as a data source
+#
+# Run from repo root:
+#   docker compose -f deploy/observability/docker-compose.observability.yml up -d
+#
+# Required: the FastAPI / Celery containers must be on the same Docker network
+# (default: `potpie_default`). Override with COMPOSE_NETWORK if your stack
+# names its network differently.
+
+version: "3.9"
+
+networks:
+  default:
+    name: ${COMPOSE_NETWORK:-potpie_default}
+    external: true
+
+volumes:
+  loki-data:
+  grafana-data:
+
+services:
+  loki:
+    image: grafana/loki:3.3.2
+    container_name: potpie-loki
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki-data:/loki
+    restart: unless-stopped
+
+  promtail:
+    image: grafana/promtail:3.3.2
+    container_name: potpie-promtail
+    command: -config.file=/etc/promtail/promtail-config.yaml
+    volumes:
+      - ./promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: potpie-grafana
+    ports:
+      - "3001:3000"   # 3001 on host to avoid colliding with Next.js
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana-datasources.yaml:/etc/grafana/provisioning/datasources/loki.yaml:ro
+    depends_on:
+      - loki
+    restart: unless-stopped
