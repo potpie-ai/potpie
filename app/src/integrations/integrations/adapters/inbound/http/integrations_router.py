@@ -197,10 +197,8 @@ async def initiate_sentry_oauth(
 ) -> Dict[str, Any]:
     """Initiate Sentry OAuth flow"""
     try:
-        # Log the OAuth initiation details
-        logger.info("=== OAuth Initiation Debug ===")
-        logger.info(
-            "OAuth parameters", redirect_uri=request.redirect_uri, state=request.state
+        logger.debug(
+            "OAuth initiation", redirect_uri=request.redirect_uri, state=request.state
         )
 
         # Generate authorization URL. Sign the state to prevent tampering.
@@ -2663,8 +2661,7 @@ async def debug_test_token_exchange(
 ) -> Dict[str, Any]:
     """Debug endpoint to test OAuth token exchange with detailed logging"""
     try:
-        logger.info("=== DEBUG TOKEN EXCHANGE TEST ===")
-        logger.info("Test redirect URI", redirect_uri=redirect_uri)
+        logger.debug("debug token exchange test", redirect_uri=redirect_uri)
 
         # Call the token exchange method directly
         result = await integrations_service._exchange_code_for_tokens(

@@ -123,19 +123,15 @@ class UserService:
             return None
 
     def get_user_id_by_email(self, email: str) -> str:
-        logger.info(f"DEBUG: get_user_id_by_email called for email: {email}")
         try:
             user = self.db.query(User).filter(User.email == email).first()
             if user:
-                logger.info(
-                    f"DEBUG: Found user with uid: {user.uid} for email: {email}"
-                )
                 return user.uid
             else:
-                logger.warning(f"DEBUG: No user found for email: {email}")
+                logger.debug("user_id_by_email: no user found")
                 return None
-        except Exception as e:
-            logger.error(f"DEBUG: Error fetching user ID by email {email}: {e}")
+        except Exception:
+            logger.exception("user_id_by_email: lookup failed")
             return None
 
     async def get_user_by_email(self, email: str) -> User:
@@ -158,18 +154,15 @@ class UserService:
         return await asyncio.get_running_loop().run_in_executor(None, _query)
 
     def get_user_ids_by_emails(self, emails: List[str]) -> List[str]:
-        logger.info(f"DEBUG: get_user_ids_by_emails called for emails: {emails}")
         try:
             users = self.db.query(User).filter(User.email.in_(emails)).all()
             if users:
-                user_ids = [user.uid for user in users]
-                logger.info(f"DEBUG: Found user IDs: {user_ids} for emails: {emails}")
-                return user_ids
+                return [user.uid for user in users]
             else:
-                logger.warning(f"DEBUG: No users found for emails: {emails}")
+                logger.debug("user_ids_by_emails: no users found", count=len(emails))
                 return None
-        except Exception as e:
-            logger.error(f"DEBUG: Error fetching user ID by emails {emails}: {e}")
+        except Exception:
+            logger.exception("user_ids_by_emails: lookup failed", count=len(emails))
             return None
 
     async def get_user_profile_pic(self, uid: str) -> UserProfileResponse:

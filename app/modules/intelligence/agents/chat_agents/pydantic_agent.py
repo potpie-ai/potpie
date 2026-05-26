@@ -385,35 +385,32 @@ CURRENT CONTEXT AND AGENT TASK OVERVIEW:
 
     def _debug_multimodal_content(self, ctx: ChatContext) -> None:
         """Debug method to log detailed information about multimodal content"""
-        logger.info("=== MULTIMODAL CONTENT DEBUG ===")
-        logger.info(f"Context has images: {ctx.has_images()}")
-        logger.info(f"Context has documents: {ctx.has_documents()}")
+        logger.debug(f"Context has images: {ctx.has_images()}")
+        logger.debug(f"Context has documents: {ctx.has_documents()}")
 
         if ctx.has_images():
             all_images = ctx.get_all_images()
             current_images = ctx.get_current_images_only()
             context_images = ctx.get_context_images_only()
 
-            logger.info(f"Total images: {len(all_images)}")
-            logger.info(f"Current images: {len(current_images)}")
-            logger.info(f"Context images: {len(context_images)}")
+            logger.debug(f"Total images: {len(all_images)}")
+            logger.debug(f"Current images: {len(current_images)}")
+            logger.debug(f"Context images: {len(context_images)}")
 
             for img_id, img_data in all_images.items():
-                logger.info(f"Image {img_id}:")
-                logger.info(f"  - Type: {img_data.get('context_type', 'unknown')}")
-                logger.info(f"  - File name: {img_data.get('file_name', 'unknown')}")
-                logger.info(f"  - File size: {img_data.get('file_size', 'unknown')}")
-                logger.info(f"  - MIME type: {img_data.get('mime_type', 'unknown')}")
-                logger.info(f"  - Has base64: {'base64' in img_data}")
+                logger.debug(f"Image {img_id}:")
+                logger.debug(f"  - Type: {img_data.get('context_type', 'unknown')}")
+                logger.debug(f"  - File name: {img_data.get('file_name', 'unknown')}")
+                logger.debug(f"  - File size: {img_data.get('file_size', 'unknown')}")
+                logger.debug(f"  - MIME type: {img_data.get('mime_type', 'unknown')}")
+                logger.debug(f"  - Has base64: {'base64' in img_data}")
                 if "base64" in img_data and isinstance(img_data["base64"], str):
                     base64_len = len(img_data["base64"])
-                    logger.info(f"  - Base64 length: {base64_len}")
+                    logger.debug(f"  - Base64 length: {base64_len}")
 
         # Test vision model detection
         is_vision = self.llm_provider.is_vision_model()
-        logger.info(f"Current model supports vision: {is_vision}")
-
-        logger.info("=== END MULTIMODAL DEBUG ===")
+        logger.debug(f"Current model supports vision: {is_vision}")
 
     def _create_multimodal_user_content(
         self, ctx: ChatContext
