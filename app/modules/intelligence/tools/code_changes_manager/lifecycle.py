@@ -4,7 +4,7 @@ import json
 import re
 from typing import Dict, Optional
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 from .manager import CodeChangesManager
 from .context import (
@@ -20,7 +20,7 @@ from .context import (
     _set_local_mode,
 )
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Cache for project_id lookup from conversation_id
 _project_id_cache: Dict[str, Optional[str]] = {}

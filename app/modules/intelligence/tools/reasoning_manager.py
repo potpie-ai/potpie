@@ -9,9 +9,9 @@ import hashlib
 import os
 from contextvars import ContextVar
 from typing import Optional
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Context variable for reasoning manager - provides isolation per execution context
 _reasoning_manager_ctx: ContextVar[Optional["ReasoningManager"]] = ContextVar(

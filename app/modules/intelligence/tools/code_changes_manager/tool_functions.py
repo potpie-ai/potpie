@@ -5,7 +5,7 @@ import json
 import uuid
 from datetime import datetime
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 from .tool_inputs import (
     AddFileInput,
@@ -43,7 +43,7 @@ from .diff import (
 from .content_resolver import read_file_from_codebase
 from .models import ChangeType
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 # Tool functions

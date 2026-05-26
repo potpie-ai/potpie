@@ -7,9 +7,9 @@ OAuth 2.0 (3LO) requires using api.atlassian.com endpoints with the cloud ID.
 API Reference: https://developer.atlassian.com/cloud/confluence/rest/v2/intro/
 """
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 import httpx

@@ -6,7 +6,7 @@ from typing import Dict, Optional, Any
 
 from sqlalchemy.orm import Session
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 from .constants import (
     MAX_FILE_SIZE_BYTES,
@@ -16,7 +16,7 @@ from .constants import (
 from .models import ChangeType, FileChange
 from .utils import _execute_with_timeout, _check_memory_pressure, _get_git_file_size
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 def read_file_from_codebase(file_path: str) -> Optional[str]:

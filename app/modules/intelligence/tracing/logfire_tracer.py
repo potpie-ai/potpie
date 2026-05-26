@@ -47,12 +47,12 @@ from typing import Any, Dict, Optional
 
 import logfire
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 # Max length for baggage/attribute values (Logfire truncates longer strings)
 _LOGFIRE_ATTR_MAX_LEN = 1000
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 def _patch_otel_detach_for_async_context() -> None:

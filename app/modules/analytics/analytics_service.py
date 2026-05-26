@@ -16,9 +16,9 @@ from app.modules.analytics.schemas import (
     RawSpan,
     UserAnalyticsResponse,
 )
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Pattern for valid identifiers passed into SQL queries (Firebase UIDs,
 # UUIDs, etc.).  Rejects anything that could be used for SQL injection.

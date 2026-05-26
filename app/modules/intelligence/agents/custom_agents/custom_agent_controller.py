@@ -16,9 +16,9 @@ from app.modules.intelligence.agents.custom_agents.custom_agents_service import 
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.users.user_service import UserService
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class CustomAgentController:

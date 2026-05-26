@@ -23,9 +23,9 @@ from app.modules.intelligence.prompts.prompt_schema import (
 from app.modules.conversations.message.message_schema import MessageResponse
 from app.modules.intelligence.prompts.prompt_schema import EnhancedPromptResponse
 from app.modules.intelligence.provider.provider_service import ProviderService
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class PromptServiceError(Exception):

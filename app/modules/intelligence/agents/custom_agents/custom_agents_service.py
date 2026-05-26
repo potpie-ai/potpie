@@ -29,9 +29,9 @@ from app.modules.intelligence.provider.provider_service import (
 )
 from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.key_management.secret_manager import SecretManager
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class CustomAgentService:

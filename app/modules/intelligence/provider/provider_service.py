@@ -10,7 +10,7 @@ from app.core.config_provider import config_provider
 from app.modules.key_management.secret_manager import SecretManager
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.posthog_helper import PostHogClient
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from app.modules.intelligence.tracing.logfire_tracer import (
     logfire_llm_call_metadata,
 )
@@ -50,7 +50,7 @@ import time
 import asyncio
 from functools import wraps
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 litellm.num_retries = 5  # Number of retries for rate limited requests
 

@@ -9,14 +9,14 @@ from app.modules.code_provider.base.code_provider_interface import (
     ICodeProvider,
 )
 from app.modules.code_provider.github.github_provider import GitHubProvider
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 try:
     from github.GithubException import GithubException
 except ImportError:
     GithubException = None
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class ProviderType(str, Enum):

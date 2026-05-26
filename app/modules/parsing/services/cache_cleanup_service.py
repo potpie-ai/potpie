@@ -3,9 +3,9 @@ from sqlalchemy import delete
 from app.modules.parsing.models.inference_cache_model import InferenceCache
 from datetime import datetime, timedelta, timezone
 import os
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class CacheCleanupService:

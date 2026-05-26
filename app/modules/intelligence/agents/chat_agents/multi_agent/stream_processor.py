@@ -37,9 +37,9 @@ from app.modules.intelligence.agents.chat_agents.tool_helpers import (
     get_tool_call_info_content,
     try_extract_streaming_preview,
 )
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Tool name constants
 TOOL_NAME_SHOW_UPDATED_FILE = "show_updated_file"

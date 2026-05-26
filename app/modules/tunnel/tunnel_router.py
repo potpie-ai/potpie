@@ -7,10 +7,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.modules.auth.auth_service import AuthService
 from app.modules.tunnel.tunnel_service import get_tunnel_service
 from app.modules.tunnel.socket_service import get_socket_service
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from pydantic import BaseModel, Field
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 router = APIRouter()
 
 

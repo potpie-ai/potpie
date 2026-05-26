@@ -23,19 +23,30 @@ from urllib.parse import urlparse, urlunparse
 from dotenv import load_dotenv
 
 from app.core.models import *  # noqa #This will import and initialize all models
-from app.modules.intelligence.tracing.logfire_tracer import (
-    initialize_logfire_tracing,
-)
-from app.modules.utils.logger import configure_logging, setup_logger
 from celery import Celery
 from celery.signals import worker_process_init, worker_process_shutdown
+
+from observability import _state as _obs_state
+from observability import configure, get_logger
+from observability.integrations.celery import install_celery_observability
+from observability.profiles import celery as celery_profile
 
 # Load environment variables from a .env file if present
 load_dotenv()
 
-# Configure logging
-configure_logging()
-logger = setup_logger(__name__)
+_obs_cfg = celery_profile()
+# Pydantic AI instrumentation is enabled; base_task.run_async uses asyncio.run()
+# per task so each run has a fresh event loop and OTel context (no deferred
+# aclose() in wrong context). worker_process_init OTel detach patch remains as safety net.
+_obs_cfg.logfire.instrument_pydantic_ai = True
+
+# Configure observability for this process IF we are the entrypoint (Celery
+# worker). When this module is imported by the FastAPI web app, main.py has
+# already called configure(monolith()) — skip to avoid clobbering its sinks.
+if _obs_state.get("configured_pid") != os.getpid():
+    configure(_obs_cfg)
+
+logger = get_logger(__name__)
 
 # Redis configuration
 redishost = os.getenv("REDISHOST", "localhost")
@@ -166,10 +177,10 @@ def configure_celery(queue_prefix: str):
 
 configure_celery(queue_name)
 
-# Pydantic AI instrumentation is enabled; base_task.run_async uses asyncio.run()
-# per task so each run has a fresh event loop and OTel context (no deferred
-# aclose() in wrong context). worker_process_init OTel detach patch remains as safety net.
-initialize_logfire_tracing(instrument_pydantic_ai=True)
+# Wire Celery-side observability signals: worker_process_init re-configures
+# observability INSIDE each forked worker (fork-safe init for Sentry/logfire
+# sockets) and task_prerun/postrun bracket each task with log_context.
+install_celery_observability(celery_app, config=_obs_cfg)
 
 
 def configure_litellm_for_celery():

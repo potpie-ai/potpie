@@ -3,9 +3,9 @@
 from contextvars import ContextVar
 from typing import Optional, Any
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Context variable for code changes manager - provides isolation per execution context
 # This ensures parallel agent runs have separate, isolated state

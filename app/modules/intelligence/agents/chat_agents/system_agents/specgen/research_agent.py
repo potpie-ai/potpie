@@ -3,9 +3,9 @@ from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
 from app.modules.intelligence.agents.chat_agents.agent_config import AgentConfig, TaskConfig
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 RESEARCH_AGENT_PROMPT = """You are the Research Agent. Your job is to explore a codebase using tools and gather evidence-backed findings.
 

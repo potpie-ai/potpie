@@ -6,14 +6,14 @@ Tools for managing async terminal command sessions (getting output, sending sign
 
 from typing import Optional
 from pydantic import BaseModel, Field
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from .tunnel_utils import (
     get_terminal_session_output,
     send_terminal_session_signal,
     get_context_vars,
 )
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class TerminalSessionOutputInput(BaseModel):

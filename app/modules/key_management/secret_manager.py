@@ -23,11 +23,11 @@ from app.modules.key_management.secrets_schema import (
 from app.modules.key_management.storage_config import is_gcp_secret_manager_enabled
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.APIRouter import APIRouter
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from app.modules.utils.posthog_helper import PostHogClient
 
 # Set up logging
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class SecretStorageHandler:

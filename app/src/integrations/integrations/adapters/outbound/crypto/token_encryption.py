@@ -6,9 +6,9 @@ import os
 import base64
 import hashlib
 from cryptography.fernet import Fernet
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class TokenEncryption:

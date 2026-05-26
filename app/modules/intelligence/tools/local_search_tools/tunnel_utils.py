@@ -10,9 +10,9 @@ import os
 import time
 from typing import Dict, Any, List, Optional
 import httpx
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Prefix for socket-backed tunnel URL (get_tunnel_url returns this when socket is online)
 SOCKET_TUNNEL_PREFIX = "socket://"

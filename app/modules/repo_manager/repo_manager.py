@@ -24,9 +24,9 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import quote, urlparse
 
 from app.modules.repo_manager.repo_manager_interface import IRepoManager
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class RepoManager(IRepoManager):

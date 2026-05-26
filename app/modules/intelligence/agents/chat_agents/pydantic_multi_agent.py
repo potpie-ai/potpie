@@ -10,7 +10,7 @@ from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
 from .agent_config import AgentConfig
 from .history_processor import create_history_processor
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 from ..chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 
@@ -35,7 +35,7 @@ from .multi_agent.utils.tool_utils import create_error_response
 # Export AgentType for backward compatibility
 __all__ = ["PydanticMultiAgent", "AgentType"]
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class PydanticMultiAgent(ChatAgent):

@@ -13,9 +13,9 @@ from app.modules.parsing.knowledge_graph.qdrant_indexing_service import (
     index_nodes_to_qdrant,
 )
 from app.modules.search.search_service import SearchService
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class CodeGraphService:

@@ -25,9 +25,9 @@ from pydantic_ai.messages import (
 from pydantic_ai.usage import UsageLimits
 
 from app.modules.intelligence.agents.chat_agent import ChatAgentResponse
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Timeout constants for subagent operations
 # These are generous timeouts to allow complex tasks to complete

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from app.modules.conversations.conversation.conversation_model import (
     Conversation,
     ConversationStatus,
@@ -70,7 +70,7 @@ from app.modules.billing.subscription_service import billing_subscription_servic
 from .conversation_store import ConversationStore, StoreError
 from ..message.message_store import MessageStore
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class ConversationServiceError(Exception):

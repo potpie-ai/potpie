@@ -19,9 +19,9 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # gVisor release URL base
 GVISOR_RELEASE_BASE = "https://storage.googleapis.com/gvisor/releases/release/latest"
@@ -295,9 +295,12 @@ def get_runsc_path() -> Optional[Path]:
 
 def main():
     """Main entry point for command-line usage."""
-    from app.modules.utils.logger import configure_logging
+    from observability import configure
+    from observability.profiles import standalone
 
-    configure_logging(level="INFO")
+    cfg = standalone()
+    cfg.level = "INFO"
+    configure(cfg)
 
     force = "--force" in sys.argv
 

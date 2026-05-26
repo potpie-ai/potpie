@@ -69,9 +69,9 @@ except ImportError as e:
         'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'
     ) from e
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 def _sanitize_anthropic_messages(messages: list) -> list:

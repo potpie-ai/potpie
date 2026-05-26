@@ -22,9 +22,9 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.modules.projects.projects_service import ProjectService
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Lazy import for GitPython - top-level import causes SIGSEGV in forked workers
 if TYPE_CHECKING:

@@ -25,9 +25,9 @@ from app.modules.parsing.utils.content_hash import (
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Global singleton for SentenceTransformer to avoid reloading
 _embedding_model = None

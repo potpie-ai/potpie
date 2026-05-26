@@ -8,9 +8,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.modules.intelligence.tools.tool_utils import truncate_dict_response
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class WebpageExtractorInput(BaseModel):

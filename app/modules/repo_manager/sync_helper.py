@@ -9,9 +9,9 @@ import traceback
 from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 from app.modules.utils.email_helper import EmailHelper
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from app.modules.repo_manager.repo_manager import RepoManager

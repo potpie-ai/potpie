@@ -5,13 +5,13 @@ from typing import Dict, Optional, Any
 
 from sqlalchemy.orm import Session
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 from .constants import CODE_CHANGES_TTL_SECONDS
 from .models import ChangeType, FileChange
 from .context import _get_local_mode, _get_conversation_id, _get_user_id
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 def write_change_to_worktree(

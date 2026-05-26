@@ -7,14 +7,14 @@ from typing import Any, Dict, List, Optional
 import redis
 
 from app.core.config_provider import config_provider
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 try:
     import redis.asyncio as redis_async
 except ImportError:
     redis_async = None  # type: ignore[assignment]
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class BranchCache:

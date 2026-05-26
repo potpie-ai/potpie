@@ -32,7 +32,7 @@ def _get_git_module():
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from sqlalchemy.orm import Session
 from redis import Redis
 from redis.exceptions import RedisError
@@ -50,7 +50,7 @@ try:
 except ImportError:
     redis_async = None  # type: ignore[assignment]
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Lazy async Redis client for project structure cache (shared across instances)
 _async_redis_cache: Optional[Any] = None

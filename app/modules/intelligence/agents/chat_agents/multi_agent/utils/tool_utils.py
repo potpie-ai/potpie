@@ -31,9 +31,9 @@ from ...tool_helpers import (
     get_delegation_info_content,
     get_delegation_result_content,
 )
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Max chars of tool result content streamed to browser (prevents OOM on large codebases)
 _MAX_TOOL_RESULT_STREAM_CHARS = 10_000

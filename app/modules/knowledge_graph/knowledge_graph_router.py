@@ -8,9 +8,9 @@ from app.modules.auth.auth_service import AuthService
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 from app.modules.projects.projects_service import ProjectService
 from app.modules.projects.projects_model import Project
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 router = APIRouter()
 
 

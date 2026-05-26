@@ -3,7 +3,7 @@
 from typing import Dict, Any, Optional
 from urllib.parse import quote as url_quote
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 from .context import (
     _get_user_id,
@@ -17,7 +17,7 @@ from .lifecycle import _get_code_changes_manager, _extract_error_message
 from .diff import create_unified_diff
 from .models import ChangeType
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 def _append_line_stats(

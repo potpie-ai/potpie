@@ -19,9 +19,9 @@ from app.modules.intelligence.provider.openrouter_usage_context import (
     push_usage_from_run,
 )
 from app.modules.intelligence.tracing.logfire_tracer import logfire_trace_metadata
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 def init_managers(

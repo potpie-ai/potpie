@@ -15,14 +15,14 @@ from typing import Any, Dict, Optional
 import redis
 
 from app.core.config_provider import ConfigProvider
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 try:
     import redis.asyncio as aioredis
 except ImportError:
     aioredis = None  # type: ignore[assignment]
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Redis key prefix for tunnel connections
 TUNNEL_KEY_PREFIX = "tunnel_connection"

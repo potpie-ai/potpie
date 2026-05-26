@@ -10,10 +10,10 @@ from app.modules.users.user_schema import (
     OnboardingDataResponse,
 )
 from app.modules.utils.APIRouter import APIRouter
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 router = APIRouter()
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class UserAPI:

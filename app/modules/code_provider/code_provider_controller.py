@@ -158,9 +158,9 @@ class CodeProviderController:
         Sync helper: fetch all branches from provider with fallbacks (PAT, unauthenticated, GitHub App).
         Runs in thread pool to avoid blocking the event loop on slow GitHub API.
         """
-        from app.modules.utils.logger import setup_logger
+        from observability import get_logger
 
-        logger = setup_logger(__name__)
+        logger = get_logger(__name__)
         provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
         all_branches = provider.list_branches(repo_name)
         self.branch_cache.cache_all_branches(repo_name, all_branches, ttl=3600)
@@ -172,9 +172,9 @@ class CodeProviderController:
         Sync helper: fetch branches with full fallback chain (PAT -> unauthenticated -> GitHub App).
         Used from asyncio.to_thread to avoid blocking the event loop.
         """
-        from app.modules.utils.logger import setup_logger
+        from observability import get_logger
 
-        logger = setup_logger(__name__)
+        logger = get_logger(__name__)
         try:
             return self._fetch_branches_from_provider_sync(repo_name)
         except Exception as e:
@@ -238,9 +238,9 @@ class CodeProviderController:
         Returns paginated results if limit is specified.
         GitHub API calls run in a thread pool to avoid blocking the event loop.
         """
-        from app.modules.utils.logger import setup_logger
+        from observability import get_logger
 
-        logger = setup_logger(__name__)
+        logger = get_logger(__name__)
         search_query = self._normalize_search_query(search)
 
         # Fast path: check cache (async Redis when available)
@@ -289,8 +289,8 @@ class CodeProviderController:
             Dictionary containing filtered repositories
         """
         try:
-            from app.modules.utils.logger import setup_logger
-            logger = setup_logger(__name__)
+            from observability import get_logger
+            logger = get_logger(__name__)
 
             # Normalize and validate search query
             search_query = self._normalize_search_query(search)

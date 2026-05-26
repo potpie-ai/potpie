@@ -17,9 +17,9 @@ from app.modules.intelligence.agents.chat_agent import (
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 # Single consolidated prompt: explore repo → ask repo-relevant MCQs → take user answers → generate spec (markdown + Mermaid).

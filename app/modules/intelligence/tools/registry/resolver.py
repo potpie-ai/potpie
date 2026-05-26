@@ -9,12 +9,12 @@ from app.modules.intelligence.tools.registry.annotation_logging import (
 )
 from app.modules.intelligence.tools.registry.exceptions import RegistryError
 from app.modules.intelligence.tools.registry.registry import ToolRegistry
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 if TYPE_CHECKING:
     from app.modules.intelligence.tools.tool_service import ToolService
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class ToolResolver:

@@ -8,7 +8,7 @@ import hashlib
 import base64
 import json
 import time
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from integrations import hash_user_id
 
 import urllib.parse
@@ -50,7 +50,7 @@ from integrations.domain.integrations_schema import (
 )
 
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
 

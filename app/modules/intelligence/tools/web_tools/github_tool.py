@@ -13,9 +13,9 @@ from app.modules.code_provider.provider_factory import CodeProviderFactory
 from app.modules.parsing.utils.repo_name_normalizer import (
     get_actual_repo_name_for_lookup,
 )
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class RepositoryAccessError(Exception):

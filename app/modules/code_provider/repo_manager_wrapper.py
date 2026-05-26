@@ -16,9 +16,9 @@ from app.modules.code_provider.base.code_provider_interface import (
     AuthMethod,
 )
 from app.modules.repo_manager.repo_manager_interface import IRepoManager
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from git import Repo

@@ -17,9 +17,9 @@ from app.modules.intelligence.agents.context_config import (
     get_history_token_budget,
 )
 from app.modules.intelligence.agents.chat_agent import ChatContext
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 def _history_strings_to_model_messages(

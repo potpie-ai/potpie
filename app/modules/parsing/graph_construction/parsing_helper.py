@@ -7,9 +7,9 @@ from sqlalchemy.orm import Session
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_service import ProjectService
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 def _fetch_github_branch_head_sha_http(

@@ -1,6 +1,6 @@
 import os
 import secrets
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 from typing import Dict, Any, Optional, Type, List
 from pydantic import BaseModel, Field
@@ -11,7 +11,7 @@ from langchain_core.tools import StructuredTool
 
 from app.modules.code_provider.provider_factory import CodeProviderFactory
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class CodeProviderPRComment(BaseModel):

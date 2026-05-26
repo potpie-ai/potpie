@@ -13,12 +13,12 @@ from app.modules.intelligence.tools.registry.annotation_logging import (
     get_annotations_for_logging,
 )
 from app.modules.intelligence.tools.registry.exceptions import RegistryError
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 if TYPE_CHECKING:
     from app.modules.intelligence.tools.registry.resolver import ToolResolver
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Max length for short_description in discovery responses (schema allows 200)
 _SHORT_DESC_MAX = 200

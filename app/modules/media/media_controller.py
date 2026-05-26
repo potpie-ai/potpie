@@ -18,9 +18,9 @@ from app.modules.conversations.access.access_service import ShareChatService
 from app.modules.conversations.conversation.conversation_schema import (
     ConversationAccessType,
 )
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 def _safe_content_disposition_filename(name: str) -> str:

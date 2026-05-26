@@ -19,9 +19,9 @@ from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.intelligence.tools.registry import ToolResolver
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator, Optional
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Local mode prompt (defined before class to avoid forward reference issues)
 code_gen_task_prompt_local = """

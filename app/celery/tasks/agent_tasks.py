@@ -14,7 +14,7 @@ from app.celery.tasks.base_task import BaseTask
 from app.modules.conversations.utils.redis_streaming import RedisStreamManager
 from app.modules.users.user_model import User
 from app.modules.users.user_service import UserService
-from app.modules.utils.logger import setup_logger, log_context
+from observability import get_logger, log_context
 from app.modules.intelligence.tracing.logfire_tracer import logfire_trace_metadata
 from app.modules.intelligence.provider.openrouter_usage_context import (
     init_usage_context,
@@ -22,7 +22,7 @@ from app.modules.intelligence.provider.openrouter_usage_context import (
     estimate_cost_for_log,
 )
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 def _resolve_user_email_for_celery(db: Session, user_id: str) -> str:

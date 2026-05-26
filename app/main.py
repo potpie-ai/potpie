@@ -12,7 +12,6 @@ load_dotenv(override=True)
 
 from contextlib import asynccontextmanager
 
-import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -36,9 +35,6 @@ from app.modules.intelligence.prompts.prompt_router import router as prompt_rout
 from app.modules.intelligence.prompts.system_prompt_setup import SystemPromptSetup
 from app.modules.intelligence.provider.provider_router import router as provider_router
 from app.modules.intelligence.tools.tool_router import router as tool_router
-from app.modules.intelligence.tracing.logfire_tracer import (
-    initialize_logfire_tracing,
-)
 from app.modules.key_management.secret_manager import router as secret_manager_router
 from app.modules.knowledge_graph.knowledge_graph_router import (
     router as knowledge_graph_router,
@@ -58,11 +54,12 @@ from app.modules.context_graph.context_engine_http import (
 )
 from app.modules.users.user_service import UserService
 from app.modules.utils.firebase_setup import FirebaseSetup
-from app.modules.utils.logger import configure_logging, setup_logger
-from app.modules.utils.logging_middleware import LoggingContextMiddleware
+from observability import configure, get_logger
+from observability.integrations.fastapi import LoggingContextMiddleware
+from observability.profiles import monolith
 
-configure_logging()
-logger = setup_logger(__name__)
+configure(monolith())
+logger = get_logger(__name__)
 load_providers()
 
 
@@ -76,8 +73,8 @@ class MainApp:
                 "Development mode enabled but ENV is not set to development. Exiting."
             )
             exit(1)
-        self.setup_sentry()
-        self.setup_tracing()
+        # Sentry init + logfire tracing are wired by observability.configure(monolith())
+        # at module load. setup_sentry / setup_tracing removed.
 
         @asynccontextmanager
         async def lifespan(_app: FastAPI):
@@ -91,34 +88,6 @@ class MainApp:
         self.setup_logging_middleware()
         self.setup_socket_io()
         self.include_routers()
-
-    def setup_sentry(self):
-        if os.getenv("ENV") == "production":
-            try:
-                # Explicitly configure integrations to avoid auto-enabling Strawberry
-                # which causes crashes when Strawberry is not installed
-                from sentry_sdk.integrations.fastapi import FastApiIntegration
-                from sentry_sdk.integrations.logging import LoggingIntegration
-                from sentry_sdk.integrations.stdlib import StdlibIntegration
-
-                sentry_sdk.init(
-                    dsn=os.getenv("SENTRY_DSN"),
-                    traces_sample_rate=0.25,
-                    profiles_sample_rate=1.0,
-                    default_integrations=False,
-                    integrations=[
-                        FastApiIntegration(),
-                        LoggingIntegration(),
-                        StdlibIntegration(),
-                    ],
-                )
-            except Exception:
-                logger.exception(
-                    "Sentry initialization failed (non-fatal but should be investigated)"
-                )
-
-    def setup_tracing(self):
-        initialize_logfire_tracing()
 
     def setup_cors(self):
         # Get allowed origins from environment variable, default to localhost:3000 for development

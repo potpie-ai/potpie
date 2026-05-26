@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Any, Union
 import redis
 from sqlalchemy.orm import Session
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from app.core.config_provider import ConfigProvider
 
 from .constants import (
@@ -36,7 +36,7 @@ from .git_ops import (
 )
 from .context import _get_local_mode
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class CodeChangesManager:

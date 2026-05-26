@@ -6,9 +6,9 @@ different encodings (UTF-8, UTF-16, Windows-1252, etc.)
 """
 
 from typing import Optional, Tuple
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class EncodingDetector:

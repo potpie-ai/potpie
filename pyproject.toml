@@ -88,6 +88,7 @@ dependencies = [
     "typer>=0.15.0",
     "parsing",
     "potpie-sandbox",
+    "observability",
     "daytona>=0.134.0",
     "tree-sitter-c-sharp==0.23.1",
     "tree-sitter-embedded-template==0.25.0",
@@ -105,6 +106,7 @@ parsing = { path = "app/src/parsing" }
 context-engine = { path = "app/src/context-engine", editable = true }
 potpie-integrations = { path = "app/src/integrations", editable = true }
 potpie-sandbox = { path = "app/src/sandbox", editable = true }
+observability = { path = "app/src/observability", editable = true }
 
 [project.scripts]
 potpie-seed = "seed.cli:main"

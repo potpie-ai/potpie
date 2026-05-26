@@ -7,9 +7,9 @@ from typing import Optional, AsyncGenerator
 from datetime import datetime
 from functools import partial
 from app.core.config_provider import ConfigProvider
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class ToolCallStreamManager:

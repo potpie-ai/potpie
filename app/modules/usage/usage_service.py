@@ -7,10 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.conversations.conversation.conversation_model import Conversation
 from app.modules.conversations.message.message_model import Message, MessageType
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from app.modules.billing.subscription_service import billing_subscription_service
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class UsageService:

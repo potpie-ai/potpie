@@ -33,10 +33,10 @@ from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.repo_manager import RepoManager
 from app.modules.utils.email_helper import EmailHelper
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from app.modules.utils.posthog_helper import PostHogClient
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 load_dotenv(override=True)
 

@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db, get_async_db
 from app.modules.auth.auth_service import AuthService
-from app.modules.utils.logger import setup_logger, log_context
+from observability import get_logger, log_context
 from app.modules.conversations.access.access_schema import (
     RemoveAccessRequest,
     ShareChatRequest,
@@ -62,7 +62,7 @@ from app.modules.conversations.utils.redis_streaming import AsyncRedisStreamMana
 from app.modules.conversations.session.session_service import AsyncSessionService
 
 router = APIRouter()
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 _VSCODE_EXT_PATTERN = re.compile(r"\bPotpie-VSCode-Extension/\d+\.\d+(?:\.\d+)?\b")
 
 AuthenticatedUser = Annotated[dict[str, Any], Depends(AuthService.check_auth)]

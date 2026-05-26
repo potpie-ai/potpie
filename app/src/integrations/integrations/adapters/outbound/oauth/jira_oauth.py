@@ -4,9 +4,9 @@ from typing import Dict, Optional, Any
 from starlette.config import Config
 from integrations.adapters.outbound.oauth.atlassian_oauth_base import AtlassianOAuthBase
 import httpx
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class JiraOAuth(AtlassianOAuthBase):

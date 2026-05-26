@@ -7,9 +7,9 @@ from typing import List, Optional, Sequence
 from pydantic_ai.messages import DocumentUrl, ImageUrl, UserContent
 
 from app.modules.intelligence.agents.chat_agent import ChatContext
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 # Keys must stay aligned with pydantic_ai.messages._document_format_lookup (file input for OpenAI).
 _SUPPORTED_DOCUMENT_MIMES = frozenset(

@@ -4,11 +4,11 @@ import threading
 import os as os_module
 from typing import Callable, TypeVar, Optional
 
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 from .constants import MEMORY_PRESSURE_THRESHOLD
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 T = TypeVar("T")
 

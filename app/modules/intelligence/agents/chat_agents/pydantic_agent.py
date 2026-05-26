@@ -17,7 +17,7 @@ from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from .agent_config import AgentConfig, TaskConfig
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from app.modules.intelligence.tools.reasoning_manager import (
     _get_reasoning_manager,
     _reset_reasoning_manager,
@@ -60,7 +60,7 @@ from app.modules.intelligence.agents.chat_agents.multi_agent.utils.tool_utils im
 from pydantic_ai.exceptions import ModelRetry, AgentRunError, UserError
 from langchain_core.tools import StructuredTool
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 def _sanitize_prompt_file_name(file_name: object, max_length: int = 200) -> str:

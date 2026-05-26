@@ -22,9 +22,9 @@ from typing import List, Optional, Dict
 from dataclasses import dataclass
 
 from app.modules.utils.install_gvisor import get_runsc_path
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass

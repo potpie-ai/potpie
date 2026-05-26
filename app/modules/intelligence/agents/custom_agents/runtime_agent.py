@@ -13,10 +13,10 @@ from app.modules.intelligence.agents.chat_agents.agent_config import (
 from app.modules.intelligence.provider.exceptions import UnsupportedProviderError
 from app.modules.intelligence.tools.tool_service import ToolService
 from ..chat_agent import ChatAgent, ChatAgentResponse, ChatContext
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class CustomTaskConfig(BaseModel):

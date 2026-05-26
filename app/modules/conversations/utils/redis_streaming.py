@@ -6,10 +6,10 @@ from datetime import datetime
 from typing import Generator, Optional
 
 from app.core.config_provider import ConfigProvider
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from app.modules.intelligence.provider.openrouter_usage_context import estimate_cost_for_log
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class RedisStreamManager:

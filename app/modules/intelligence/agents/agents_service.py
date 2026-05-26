@@ -24,7 +24,7 @@ from app.modules.intelligence.tools.registry import (
     ToolResolver,
     build_registry_from_tool_service,
 )
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
 from .chat_agent import AgentWithInfo, ChatContext
 from .chat_agents.system_agents import (
@@ -38,7 +38,7 @@ from .chat_agents.system_agents import (
     unit_test_agent,
 )
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class AgentInfo(BaseModel):

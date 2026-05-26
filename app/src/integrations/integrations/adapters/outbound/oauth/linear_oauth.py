@@ -9,10 +9,10 @@ import httpx
 import urllib.parse
 import time
 import hashlib
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from integrations import hash_user_id
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class LinearOAuthStore:

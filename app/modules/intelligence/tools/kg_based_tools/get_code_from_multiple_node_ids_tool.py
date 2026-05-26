@@ -10,9 +10,9 @@ from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_model import Project
 from app.modules.intelligence.tools.tool_utils import truncate_dict_response
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class GetCodeFromMultipleNodeIdsInput(BaseModel):

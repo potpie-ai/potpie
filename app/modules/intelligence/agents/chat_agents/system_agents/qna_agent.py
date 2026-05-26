@@ -16,10 +16,10 @@ from app.modules.intelligence.agents.multi_agent_config import MultiAgentConfig
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class QnAAgent(ChatAgent):

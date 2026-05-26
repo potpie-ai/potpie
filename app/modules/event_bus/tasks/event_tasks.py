@@ -11,9 +11,9 @@ from celery import Task
 from app.celery.celery_app import celery_app
 from app.core.database import SessionLocal
 from app.modules.event_bus.handlers import WebhookEventHandler, CustomEventHandler
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class EventTask(Task):

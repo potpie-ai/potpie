@@ -18,9 +18,9 @@ from .utils.context_utils import create_project_context_info
 from .utils.tool_call_stream_manager import ToolCallStreamManager
 from .utils.tool_utils import truncate_result_content
 from app.modules.intelligence.agents.chat_agent import ChatContext, ChatAgentResponse
-from app.modules.utils.logger import setup_logger
+from observability import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class DelegationManager:
