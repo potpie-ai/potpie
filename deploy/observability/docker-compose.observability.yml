@@ -8,13 +8,13 @@
 # Run from repo root:
 #   docker compose -f deploy/observability/docker-compose.observability.yml up -d
 #
-# Required: the FastAPI / Celery containers must be on the same Docker network
-# (default: `potpie_default`). Override with COMPOSE_NETWORK if your stack
-# names its network differently.
+# Required: the FastAPI / Celery containers must be on the same Docker network.
+# scripts/start.sh uses compose.yaml, which creates `potpie_app-network` by
+# default. Override with COMPOSE_NETWORK if your stack names it differently.
 
 networks:
   default:
-    name: ${COMPOSE_NETWORK:-potpie_default}
+    name: ${COMPOSE_NETWORK:-potpie_app-network}
     external: true
 
 volumes:

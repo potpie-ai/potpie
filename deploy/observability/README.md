@@ -20,8 +20,8 @@ package](../../app/src/observability). Closes the audit's
 
 ```bash
 # 1. Make sure your app stack is up first and shares a network named
-#    'potpie_default' (or set COMPOSE_NETWORK in your env).
-docker network ls | grep potpie_default
+#    'potpie_app-network' (or set COMPOSE_NETWORK in your env).
+docker network ls | grep potpie_app-network
 
 # 2. Tag your FastAPI / Celery containers so Promtail picks them up:
 #    labels:
