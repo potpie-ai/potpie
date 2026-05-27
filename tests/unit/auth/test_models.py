@@ -141,7 +141,10 @@ class TestUserAuthProvider:
 
     def test_oauth_tokens(self, db_session, test_user):
         """Test storing OAuth tokens (encrypted)"""
-        from app.modules.integrations.token_encryption import encrypt_token, decrypt_token
+        from integrations.adapters.outbound.crypto.token_encryption import (
+            decrypt_token,
+            encrypt_token,
+        )
 
         # Tokens should be encrypted when stored
         plain_access_token = "access-token-123"

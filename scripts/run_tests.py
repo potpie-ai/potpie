@@ -27,6 +27,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TESTS_DIR = PROJECT_ROOT / "tests"
+SANDBOX_UNIT_TESTS_DIR = PROJECT_ROOT / "app" / "src" / "sandbox" / "tests" / "unit"
 
 
 BANNER_WIDTH = 72
@@ -123,7 +124,7 @@ def main() -> int:
     if args.unit_only:
         print_phase_banner("Unit")
         code = run_pytest(
-            str(TESTS_DIR / "unit"), "-m", "unit",
+            str(TESTS_DIR / "unit"), str(SANDBOX_UNIT_TESTS_DIR), "-m", "unit",
             *args.pytest_extra,
             phase_name="Unit",
             coverage=args.coverage,
@@ -175,7 +176,7 @@ def main() -> int:
 
     # Full run: unit → integration (no stress/real_parse) → real_parse (optional) → stress (optional)
     phases = [
-        ("Unit", [str(TESTS_DIR / "unit"), "-m", "unit"]),
+        ("Unit", [str(TESTS_DIR / "unit"), str(SANDBOX_UNIT_TESTS_DIR), "-m", "unit"]),
         (
             "Integration",
             [

@@ -20,7 +20,7 @@ cli/momentum_cli/.momentum
 !.env.template
 *.log
 .cursorrules
-projects/
+/projects/
 # Ignore PyCharm config
 .idea
 
@@ -84,6 +84,8 @@ worktrees/
 .pytest_cache/
 specs/
 
+*.egg-info/
+temp.txt
 debug
 target
 
@@ -97,4 +99,3 @@ target
 # Contains mutation testing data
 **/mutants.out*/
 seed/.state/
-potpie.egg-info

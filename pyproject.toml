@@ -3,14 +3,16 @@ name = "potpie"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 dependencies = [
+    "context-engine[all]",
+    "potpie-integrations",
     "aiohttp>=3.13.4",
     "alembic>=1.17.1",
     "anthropic>=0.72.0",
     "logfire[litellm]>=3.2.0",
     "asyncpg>=0.30.0",
-    "authlib>=1.6.9",
+    "authlib>=1.6.11",
     "boto3>=1.40.67",
     "celery>=5.5.3",
     "chardet>=5.2.0",
@@ -20,21 +22,21 @@ dependencies = [
     "firebase-admin>=7.1.0",
     "firecrawl-py>=4.6.0",
     "flower>=2.0.1",
-    "gitpython>=3.1.45",
+    "gitpython>=3.1.50",
     "google-cloud-secret-manager>=2.25.0",
     "google-cloud-storage>=3.5.0",
     "grep-ast>=0.6.0",
     "gunicorn>=23.0.0",
     "httpx>=0.28.1",
-    "instructor>=1.13.0",
-    "mistralai<2.0.0",  # >=2.0.0 breaks instructor import compatibility
+    "instructor>=1.15.0",
     "jiter>=0.11.1",
     "joblib>=1.5.2",
     "kombu>=5.5.4",
     "langchain>=1.0.3",
-    "langchain-core>=1.2.28",
+    "langchain-core>=1.3.3",
+    "langsmith>=0.8.0",
     "langgraph>=1.0.10",
-    "litellm>=1.83.0",
+    "litellm>=1.83.10,<1.84.0",
     "loguru>=0.7.3",
     "neo4j>=5.28.2",
     "networkx>=3.4.2",
@@ -47,7 +49,7 @@ dependencies = [
     "posthog>=6.9.0",
     "protobuf>=6.33.5",
     "psycopg-binary>=3.2.12",
-    "pydantic-ai>=1.56.0",
+    "pydantic-ai-slim[ag-ui,anthropic,bedrock,cli,cohere,evals,fastmcp,google,groq,huggingface,logfire,mcp,openai,retries,spec,temporal,ui,vertexai,xai]>=1.102.0",
     "pydantic-ai-todo>=0.1.6",
     "pydantic[email]>=2.12.4",
     "qdrant-client>=1.12.0",
@@ -55,9 +57,9 @@ dependencies = [
     "pygments>=2.20.0",
     "pyjwt>=2.12.1",
     "pynacl>=1.6.2",
-    "python-dotenv>=1.2.1",
+    "python-dotenv>=1.2.2",
     "pyasn1>=0.6.3",
-    "python-multipart>=0.0.22",
+    "python-multipart>=0.0.28",
     "redis>=7.0.1",
     "python-socketio>=5.11.0",
     "requests>=2.33.1",
@@ -71,19 +73,38 @@ dependencies = [
     "transformers>=4.57.1",
     "tree-sitter>=0.20.4",
     "tree-sitter-language-pack>=0.13.0",
+    "mako>=1.3.12",
     "fastmcp>=3.2.0",
     "lupa>=2.7",
     "tornado>=6.5.5",
-    "urllib3>=2.6.3",
+    "urllib3>=2.7.0",
     "uuid6>=2025.0.1",
     "uvicorn>=0.38.0",
     "greenlet>=3.3.0",
+    "graphiti-core>=0.28.2",
+    "griffe>=2.0.1",
+    "tldextract>=5.3.1",
+    "hatchet-sdk>=1.29.0",
     "typer>=0.15.0",
     "parsing",
+    "potpie-sandbox",
+    "daytona>=0.134.0",
+    "tree-sitter-c-sharp==0.23.1",
+    "tree-sitter-embedded-template==0.25.0",
+    "tree-sitter-yaml==0.7.2",
 ]
+
+[tool.uv]
+# litellm>=1.83.10 clears CVE-2026-40217 (<1.83.10) but pins openai==2.24.0, which conflicts with
+# pydantic-ai + context-engine; override to the root stack. litellm still declares python-dotenv==1.0.1.
+# Root uses pydantic-ai-slim without the mistral extra so mistralai is not pulled (fixes universal lock on 3.13).
+override-dependencies = ["python-dotenv>=1.2.2", "openai>=2.7.1", "idna>=3.15"]
 
 [tool.uv.sources]
 parsing = { path = "app/src/parsing" }
+context-engine = { path = "app/src/context-engine", editable = true }
+potpie-integrations = { path = "app/src/integrations", editable = true }
+potpie-sandbox = { path = "app/src/sandbox", editable = true }
 
 [project.scripts]
 potpie-seed = "seed.cli:main"
@@ -140,7 +161,7 @@ omit = [
     "app/modules/intelligence/agents/chat_agents/multi_agent/stream_processor.py",
     "app/modules/intelligence/tools/code_changes_manager/tool_functions.py",
     "app/modules/parsing/knowledge_graph/inference_service.py",
-    "app/modules/integrations/integrations_service.py",
+    "app/src/integrations/integrations/application/integrations_service.py",
     "app/modules/repo_manager/repo_manager.py",
     "app/modules/parsing/graph_construction/parsing_repomap.py",
     "app/modules/intelligence/tools/jira_tools/jira_client.py",
@@ -164,7 +185,7 @@ omit = [
     "app/modules/utils/gvisor_runner.py",
     "app/modules/utils/install_gvisor.py",
     "app/modules/utils/email_helper.py",
-    "app/modules/integrations/integrations_router.py",
+    "app/src/integrations/integrations/adapters/inbound/http/integrations_router.py",
     "app/modules/utils/firebase_setup.py",
     "app/modules/code_provider/github/github_service.py",
     "app/modules/code_provider/github/github_provider.py",

@@ -6,7 +6,7 @@ and validating tool call/result pairing (safety net).
 """
 
 import logging
-from typing import Dict, List, Optional, Set, Tuple
+from typing import List, Optional, Set
 
 from pydantic_ai.messages import (
     ModelMessage,
@@ -33,7 +33,9 @@ MAX_TOOL_ARGS_CHARS = 500
 MAX_TOOL_RESULT_LINES = 6
 
 # Truncation message for evicted tool results
-DEFAULT_TRUNCATION_MESSAGE = "[Result truncated to save tokens — re-call tool if full output is needed]"
+DEFAULT_TRUNCATION_MESSAGE = (
+    "[Result truncated to save tokens — re-call tool if full output is needed]"
+)
 
 
 def truncate_tool_result_message(
@@ -56,9 +58,14 @@ def truncate_tool_result_message(
                 else:
                     new_parts.append(part)
             except Exception as e:
-                logger.debug("ToolReturnPart.model_copy failed, keeping part as-is: %s", e)
+                logger.debug(
+                    "ToolReturnPart.model_copy failed, keeping part as-is: %s", e
+                )
                 new_parts.append(part)
-        elif hasattr(part, "__dict__") and part.__dict__.get("part_kind") == "tool-return":
+        elif (
+            hasattr(part, "__dict__")
+            and part.__dict__.get("part_kind") == "tool-return"
+        ):
             model_copy = getattr(part, "model_copy", None)
             if callable(model_copy) and hasattr(part, "content"):
                 try:
@@ -298,7 +305,11 @@ def validate_and_fix_tool_pairing(
                 messages_to_skip.add(i + 1)
         if is_tool_result and i > 0:
             prev = messages[i - 1]
-            if not is_user_message(prev) and is_tool_call_message(prev) and not is_llm_response_message(prev):
+            if (
+                not is_user_message(prev)
+                and is_tool_call_message(prev)
+                and not is_llm_response_message(prev)
+            ):
                 messages_to_skip.add(i - 1)
 
     ids_whose_tool_results_must_skip: Set[str] = set()
@@ -339,7 +350,9 @@ def validate_and_fix_tool_pairing(
             break
 
     if not validated_messages and messages:
-        validated_messages = [m for m in messages if is_user_message(m)] or [messages[0]]
+        validated_messages = [m for m in messages if is_user_message(m)] or [
+            messages[0]
+        ]
 
     return validated_messages
 
@@ -384,7 +397,11 @@ def _one_validation_pass(
             if is_tool_call_message(msg) and i + 1 < len(messages):
                 if not is_llm_response_message(messages[i + 1]):
                     to_skip.add(i + 1)
-            if is_tool_result_message(msg) and i > 0 and is_tool_call_message(messages[i - 1]):
+            if (
+                is_tool_result_message(msg)
+                and i > 0
+                and is_tool_call_message(messages[i - 1])
+            ):
                 if not is_llm_response_message(messages[i - 1]):
                     to_skip.add(i - 1)
 

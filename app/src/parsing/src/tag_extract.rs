@@ -97,10 +97,10 @@ pub fn extract_graph(repo_dir: &str) -> GraphPayload {
 
         for (ident, node_id) in file_graph.definitions {
             let file = node_id.split(':').next().unwrap_or(&node_id).to_string();
-            defines.entry(ident).or_default().push(DefinitionMetadata {
-                node_id,
-                file,
-            });
+            defines
+                .entry(ident)
+                .or_default()
+                .push(DefinitionMetadata { node_id, file });
         }
 
         for (ident, reference) in file_graph.references {
@@ -122,7 +122,11 @@ pub fn extract_graph(repo_dir: &str) -> GraphPayload {
 
         for reference in refs {
             // Extract source file from reference.source_id for scope filtering
-            let source_file = reference.source_id.split(':').next().unwrap_or(&reference.source_id);
+            let source_file = reference
+                .source_id
+                .split(':')
+                .next()
+                .unwrap_or(&reference.source_id);
 
             // Separate same-file and cross-file targets
             // Prefer same-file matches but allow cross-file when no same-file target exists
@@ -190,7 +194,10 @@ pub fn extract_graph(repo_dir: &str) -> GraphPayload {
         }
     }
 
-    GraphPayload { nodes, relationships }
+    GraphPayload {
+        nodes,
+        relationships,
+    }
 }
 
 pub fn extract_tags(relative_path: &str, text: &str) -> Vec<TagPayload> {
@@ -234,13 +241,14 @@ pub fn extract_tags(relative_path: &str, text: &str) -> Vec<TagPayload> {
                 continue;
             };
 
-            let (kind, tag_type) = if let Some(tag_type) = capture_name.strip_prefix("name.definition.") {
-                ("def", tag_type)
-            } else if let Some(tag_type) = capture_name.strip_prefix("name.reference.") {
-                ("ref", tag_type)
-            } else {
-                continue;
-            };
+            let (kind, tag_type) =
+                if let Some(tag_type) = capture_name.strip_prefix("name.definition.") {
+                    ("def", tag_type)
+                } else if let Some(tag_type) = capture_name.strip_prefix("name.reference.") {
+                    ("ref", tag_type)
+                } else {
+                    continue;
+                };
 
             let mut node_text = match capture.node.utf8_text(bytes) {
                 Ok(node_text) => node_text.to_string(),
@@ -305,23 +313,54 @@ fn extract_file_graph(file: CodeFile) -> FileGraphData {
     // Parse the file once to get the tree for proper scope containment
     let lang = match filename_to_lang(&file.relative_path) {
         Some(l) => l,
-        None => return FileGraphData { nodes, relationships, definitions, references },
+        None => {
+            return FileGraphData {
+                nodes,
+                relationships,
+                definitions,
+                references,
+            }
+        }
     };
     let language = match language_for_lang(lang) {
         Some(l) => l,
-        None => return FileGraphData { nodes, relationships, definitions, references },
+        None => {
+            return FileGraphData {
+                nodes,
+                relationships,
+                definitions,
+                references,
+            }
+        }
     };
     if load_query(lang).is_none() {
-        return FileGraphData { nodes, relationships, definitions, references };
+        return FileGraphData {
+            nodes,
+            relationships,
+            definitions,
+            references,
+        };
     }
 
     let mut parser = Parser::new();
     if parser.set_language(&language).is_err() {
-        return FileGraphData { nodes, relationships, definitions, references };
+        return FileGraphData {
+            nodes,
+            relationships,
+            definitions,
+            references,
+        };
     }
     let tree = match parser.parse(&file.text, None) {
         Some(t) => t,
-        None => return FileGraphData { nodes, relationships, definitions, references },
+        None => {
+            return FileGraphData {
+                nodes,
+                relationships,
+                definitions,
+                references,
+            }
+        }
     };
     let root_node = tree.root_node();
     let bytes = file.text.as_bytes();
@@ -362,8 +401,11 @@ fn extract_file_graph(file: CodeFile) -> FileGraphData {
                         }
                     }
                     // Method/function definitions
-                    "method_declaration" | "function_definition" | "function_declaration"
-                    | "method_definition" | "constructor_declaration" => {
+                    "method_declaration"
+                    | "function_definition"
+                    | "function_declaration"
+                    | "method_definition"
+                    | "constructor_declaration" => {
                         if enclosing_method.is_none() {
                             if let Some(name_node) = node.child_by_field_name("name") {
                                 if let Ok(name) = name_node.utf8_text(bytes) {
@@ -396,9 +438,7 @@ fn extract_file_graph(file: CodeFile) -> FileGraphData {
                     // For interface definitions, similarly avoid self-reference
                     ("INTERFACE", None)
                 }
-                "method" | "function" => {
-                    ("FUNCTION", enclosing_class)
-                }
+                "method" | "function" => ("FUNCTION", enclosing_class),
                 _ => continue,
             };
 
@@ -543,22 +583,34 @@ fn language_for_lang(lang: &str) -> Option<Language> {
 
 fn load_query(lang: &str) -> Option<&'static str> {
     match lang {
-        "python" => Some(include_str!("../parsing/queries/tree-sitter-python-tags.scm")),
-        "javascript" => Some(include_str!("../parsing/queries/tree-sitter-javascript-tags.scm")),
-        "typescript" | "tsx" => {
-            Some(include_str!("../parsing/queries/tree-sitter-typescript-tags.scm"))
-        }
+        "python" => Some(include_str!(
+            "../parsing/queries/tree-sitter-python-tags.scm"
+        )),
+        "javascript" => Some(include_str!(
+            "../parsing/queries/tree-sitter-javascript-tags.scm"
+        )),
+        "typescript" | "tsx" => Some(include_str!(
+            "../parsing/queries/tree-sitter-typescript-tags.scm"
+        )),
         "c" => Some(include_str!("../parsing/queries/tree-sitter-c-tags.scm")),
-        "c_sharp" => Some(include_str!("../parsing/queries/tree-sitter-c_sharp-tags.scm")),
+        "c_sharp" => Some(include_str!(
+            "../parsing/queries/tree-sitter-c_sharp-tags.scm"
+        )),
         "cpp" => Some(include_str!("../parsing/queries/tree-sitter-cpp-tags.scm")),
-        "elixir" => Some(include_str!("../parsing/queries/tree-sitter-elixir-tags.scm")),
+        "elixir" => Some(include_str!(
+            "../parsing/queries/tree-sitter-elixir-tags.scm"
+        )),
         "go" => Some(include_str!("../parsing/queries/tree-sitter-go-tags.scm")),
         "java" => Some(include_str!("../parsing/queries/tree-sitter-java-tags.scm")),
-        "ocaml" => Some(include_str!("../parsing/queries/tree-sitter-ocaml-tags.scm")),
+        "ocaml" => Some(include_str!(
+            "../parsing/queries/tree-sitter-ocaml-tags.scm"
+        )),
         "php" => Some(include_str!("../parsing/queries/tree-sitter-php-tags.scm")),
         "ruby" => Some(include_str!("../parsing/queries/tree-sitter-ruby-tags.scm")),
         "rust" => Some(include_str!("../parsing/queries/tree-sitter-rust-tags.scm")),
-        "elisp" => Some(include_str!("../parsing/queries/tree-sitter-elisp-tags.scm")),
+        "elisp" => Some(include_str!(
+            "../parsing/queries/tree-sitter-elisp-tags.scm"
+        )),
         "elm" => Some(include_str!("../parsing/queries/tree-sitter-elm-tags.scm")),
         "ql" => Some(include_str!("../parsing/queries/tree-sitter-ql-tags.scm")),
         _ => None,
@@ -585,7 +637,11 @@ mod tests {
 
         let graph = extract_graph(temp_dir.path().to_str().expect("temp path should be utf-8"));
 
-        assert_eq!(graph.nodes.len(), 3, "expected file node and two function nodes");
+        assert_eq!(
+            graph.nodes.len(),
+            3,
+            "expected file node and two function nodes"
+        );
         assert_eq!(
             graph.relationships.len(),
             3,
@@ -626,11 +682,8 @@ mod tests {
 
         // Create two files: helper.py defines foo(), main.py calls foo() from helper
         let helper_path = temp_dir.path().join("helper.py");
-        fs::write(
-            &helper_path,
-            "def foo():\n    return 1\n",
-        )
-        .expect("should write helper fixture source file");
+        fs::write(&helper_path, "def foo():\n    return 1\n")
+            .expect("should write helper fixture source file");
 
         let main_path = temp_dir.path().join("main.py");
         fs::write(
@@ -645,11 +698,7 @@ mod tests {
         // 1 function node for bar (in main.py), 1 function node for foo (in helper.py)
         // Plus CONTAINS edges for each file
         // Plus a cross-file REFERENCES edge from bar to foo
-        let node_ids: HashSet<_> = graph
-            .nodes
-            .iter()
-            .map(|node| node.id.as_str())
-            .collect();
+        let node_ids: HashSet<_> = graph.nodes.iter().map(|node| node.id.as_str()).collect();
 
         assert!(
             node_ids.contains("main.py"),
@@ -758,20 +807,17 @@ mod tests {
         )
         .expect("should write nested main fixture source file");
 
-        fs::write(
-            lib_dir.join("helpers.py"),
-            "def foo():\n    return 1\n",
-        )
-        .expect("should write nested helper fixture source file");
+        fs::write(lib_dir.join("helpers.py"), "def foo():\n    return 1\n")
+            .expect("should write nested helper fixture source file");
 
         let graph = extract_graph(temp_dir.path().to_str().expect("temp path should be utf-8"));
 
-        let node_ids: HashSet<_> = graph
-            .nodes
-            .iter()
-            .map(|node| node.id.as_str())
-            .collect();
-        assert!(node_ids.contains("pkg/main.py:bar"), "expected nested bar node, got: {:?}", node_ids);
+        let node_ids: HashSet<_> = graph.nodes.iter().map(|node| node.id.as_str()).collect();
+        assert!(
+            node_ids.contains("pkg/main.py:bar"),
+            "expected nested bar node, got: {:?}",
+            node_ids
+        );
         assert!(
             node_ids.contains("pkg/lib/helpers.py:foo"),
             "expected nested helper foo node, got: {:?}",
@@ -802,11 +848,8 @@ mod tests {
         fs::create_dir_all(&models_dir).expect("should create models fixture directory");
         fs::create_dir_all(&services_dir).expect("should create services fixture directory");
 
-        fs::write(
-            models_dir.join("user.py"),
-            "class User:\n    pass\n",
-        )
-        .expect("should write model fixture source file");
+        fs::write(models_dir.join("user.py"), "class User:\n    pass\n")
+            .expect("should write model fixture source file");
 
         fs::write(
             services_dir.join("factory.py"),

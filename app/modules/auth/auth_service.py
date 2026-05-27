@@ -131,7 +131,10 @@ class AuthService:
         try:
             decoded_token = auth.verify_id_token(token)
         except Exception as err:
-            logging.warning("Firebase token verification failed: %s", str(err))
+            logging.warning(
+                "Firebase token verification failed (error_type=%s)",
+                type(err).__name__,
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=INVALID_FIREBASE_AUTH_ERROR,
@@ -154,7 +157,9 @@ class AuthService:
             token = auth.create_custom_token(uid)
             return token.decode("utf-8") if isinstance(token, bytes) else token
         except Exception as e:
-            logging.warning("create_custom_token failed for uid=%s: %s", uid, e)
+            logging.warning(
+                "create_custom_token failed (error_type=%s)", type(e).__name__
+            )
             return None
 
     @staticmethod

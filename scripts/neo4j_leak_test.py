@@ -38,7 +38,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-import time
 from pathlib import Path
 
 # Load .env and ensure app is importable
@@ -49,6 +48,7 @@ if str(repo_root) not in sys.path:
 os.chdir(repo_root)
 
 from dotenv import load_dotenv
+
 load_dotenv(repo_root / ".env")
 
 
@@ -56,6 +56,7 @@ def get_rss_mb(pid: int | None = None) -> float | None:
     """Current process or given PID RSS in MiB. Returns None if unavailable."""
     try:
         import psutil
+
         p = psutil.Process(pid or os.getpid())
         return p.memory_info().rss / (1024 * 1024)
     except Exception:
@@ -80,6 +81,7 @@ def get_neo4j_connection_count(uri: str, user: str, password: str) -> int | None
     """Return number of Bolt connections seen by Neo4j server, or None if query not supported."""
     try:
         from neo4j import GraphDatabase
+
         driver = GraphDatabase.driver(uri, auth=(user, password))
         try:
             with driver.session() as session:
@@ -91,7 +93,9 @@ def get_neo4j_connection_count(uri: str, user: str, password: str) -> int | None
             try:
                 # Neo4j 5.x: SHOW CONNECTIONS (if available)
                 with driver.session() as session:
-                    result = session.run("SHOW CONNECTIONS YIELD connectionId RETURN count(*) AS c")
+                    result = session.run(
+                        "SHOW CONNECTIONS YIELD connectionId RETURN count(*) AS c"
+                    )
                     rec = result.single()
                     return rec["c"] if rec else None
             except Exception:
@@ -129,7 +133,9 @@ def run_direct_mode(iterations: int, sample_neo4j_connections: bool) -> bool:
         except Exception as e:
             if i == 0:
                 print(f"ERROR: Could not connect to Neo4j at {uri}: {e}")
-                print("Ensure Neo4j is running and NEO4J_URI/USERNAME/PASSWORD are correct.")
+                print(
+                    "Ensure Neo4j is running and NEO4J_URI/USERNAME/PASSWORD are correct."
+                )
             return False
         finally:
             driver.close()
@@ -169,10 +175,16 @@ def run_direct_mode(iterations: int, sample_neo4j_connections: bool) -> bool:
                 conn_ok = False
 
     print("")
-    print(f"RSS: first half avg = {first_half_avg:.1f} MiB, second half avg = {second_half_avg:.1f} MiB")
-    print(f"RSS growth (second - first half avg) = {rss_growth_mb:.1f} MiB (threshold {rss_threshold_mb} MiB)")
+    print(
+        f"RSS: first half avg = {first_half_avg:.1f} MiB, second half avg = {second_half_avg:.1f} MiB"
+    )
+    print(
+        f"RSS growth (second - first half avg) = {rss_growth_mb:.1f} MiB (threshold {rss_threshold_mb} MiB)"
+    )
     if conn_samples:
-        print(f"Neo4j connections: sample range {min(conn_samples)}–{max(conn_samples)}")
+        print(
+            f"Neo4j connections: sample range {min(conn_samples)}–{max(conn_samples)}"
+        )
         if not conn_ok:
             print("Neo4j connection count increased over run — possible leak.")
 
@@ -183,7 +195,9 @@ def run_direct_mode(iterations: int, sample_neo4j_connections: bool) -> bool:
         print("FAIL: Neo4j connection count grew; possible connection leak.")
         return False
     print("PASS: No significant RSS or connection growth detected.")
-    print("(Direct mode tests raw driver only. Use --api with app running to test app request-path cleanup.)")
+    print(
+        "(Direct mode tests raw driver only. Use --api with app running to test app request-path cleanup.)"
+    )
     return True
 
 
@@ -210,7 +224,9 @@ def run_api_mode(
         repo = repo_name or os.getenv("REPO_NAME", "octocat/Hello-World")
         branch = branch_name or os.getenv("BRANCH_NAME", "main")
         payload = {"repo_name": repo, "branch_name": branch}
-        print(f"API mode (parse): {iterations} requests to {url} (repo={repo}, branch={branch})")
+        print(
+            f"API mode (parse): {iterations} requests to {url} (repo={repo}, branch={branch})"
+        )
         # Parse can be slow (Celery) or return quickly; use longer timeout
         timeout = 60.0
     else:
@@ -232,7 +248,9 @@ def run_api_mode(
                 if rss is not None:
                     rss_samples.append(rss)
             if (i + 1) % 10 == 0:
-                rss_str = f"  server RSS={rss_samples[-1]:.1f} MiB" if rss_samples else ""
+                rss_str = (
+                    f"  server RSS={rss_samples[-1]:.1f} MiB" if rss_samples else ""
+                )
                 print(f"  request {i + 1}/{iterations}  errors={errors}{rss_str}")
 
     if errors > 0:
@@ -310,15 +328,24 @@ def main() -> int:
                 print("ERROR: For profile semantic-search set PROJECT_ID")
                 return 1
             ok = run_api_mode(
-                base_url, auth, args.profile, args.iterations, server_pid,
+                base_url,
+                auth,
+                args.profile,
+                args.iterations,
+                server_pid,
                 project_id=project_id,
             )
         else:
             repo_name = os.getenv("REPO_NAME", "octocat/Hello-World")
             branch_name = os.getenv("BRANCH_NAME", "main")
             ok = run_api_mode(
-                base_url, auth, args.profile, args.iterations, server_pid,
-                repo_name=repo_name, branch_name=branch_name,
+                base_url,
+                auth,
+                args.profile,
+                args.iterations,
+                server_pid,
+                repo_name=repo_name,
+                branch_name=branch_name,
             )
 
     return 0 if ok else 1

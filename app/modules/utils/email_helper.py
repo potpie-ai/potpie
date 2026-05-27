@@ -10,30 +10,27 @@ logger = logging.getLogger(__name__)
 # Timeout for Resend API send (seconds). Used by _send_with_resend.
 RESEND_SEND_TIMEOUT_SECONDS = 30
 
-# Try to import email-inspector library for robust email domain detection
+# Optional: email_inspector bundled free-provider list (PyPI: email-inspector)
 try:
-    from email_inspector import inspect as email_inspect
+    from email_inspector.free_providers import is_free_email as _inspector_is_free_email
 
     EMAIL_INSPECTOR_AVAILABLE = True
 except ImportError:
     EMAIL_INSPECTOR_AVAILABLE = False
-    logging.warning(
-        "email-inspector library not available. "
-        "Falling back to built-in personal email domain list. "
-        "Install with: pip install email-inspector"
+    _inspector_is_free_email = None  # type: ignore[assignment, misc]
+    logger.debug(
+        "email_inspector not importable; using built-in personal email domain list"
     )
 
-# Try to import tldextract for proper domain extraction (handles multi-part TLDs)
+# Optional: tldextract for registrable domain extraction (multi-part TLDs)
 try:
     import tldextract
 
     TLDEXTRACT_AVAILABLE = True
 except ImportError:
     TLDEXTRACT_AVAILABLE = False
-    logging.warning(
-        "tldextract library not available. "
-        "Falling back to simple domain extraction. "
-        "Install with: pip install tldextract"
+    logger.debug(
+        "tldextract not importable; using simple domain extraction for registrable domain"
     )
 
 
@@ -138,7 +135,7 @@ Co-Founder, Potpie 🥧</p>
         # Internal recipients from env (no PII in source)
         internal_recipients = _get_internal_recipients()
         if not internal_recipients:
-            logging.debug(
+            logger.debug(
                 "EMAIL_INTERNAL_RECIPIENTS unset or invalid; skipping parsing failure alert"
             )
             return
@@ -398,17 +395,15 @@ def is_personal_email_domain(email: str) -> bool:
     if not email or "@" not in email:
         return False
 
-    # Try using email-inspector library first (more robust, 16,000+ domains)
-    if EMAIL_INSPECTOR_AVAILABLE:
+    # Try using email_inspector bundled list first (large free-provider set)
+    if EMAIL_INSPECTOR_AVAILABLE and _inspector_is_free_email is not None:
         try:
-            result = email_inspect(email)
-            # email-inspector returns a dict with 'free' key indicating if it's a free email
-            if isinstance(result, dict) and "free" in result:
-                return result["free"]
-            # Fallback if result format is unexpected
+            return bool(_inspector_is_free_email(email))
         except Exception as e:
-            logging.warning(
-                f"Error using email-inspector for {email}: {e}. Falling back to built-in list."
+            logger.warning(
+                "Error using email_inspector for %s: %s. Falling back to built-in list.",
+                email,
+                e,
             )
 
     # Fallback to built-in comprehensive list

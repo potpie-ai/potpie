@@ -38,6 +38,18 @@ class User(Base):
     created_prompts = relationship("Prompt", back_populates="creator")
     preferences = relationship("UserPreferences", back_populates="user", uselist=False)
     custom_agents = relationship("CustomAgent", back_populates="user")
+    context_graph_pots = relationship(
+        "ContextGraphPot",
+        back_populates="user",
+        foreign_keys="[ContextGraphPot.user_id]",
+        cascade="all, delete-orphan",
+    )
+    context_graph_pot_memberships = relationship(
+        "ContextGraphPotMember",
+        foreign_keys="[ContextGraphPotMember.user_id]",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
     # SSO relationships
     auth_providers = relationship(

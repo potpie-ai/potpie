@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 from dataclasses import dataclass
@@ -129,6 +130,12 @@ def _mask_email(email: str | None) -> str | None:
     return f"{local_part[0]}***@{domain}"
 
 
+def mask_identifier(value: object | None) -> str | None:
+    if value is None:
+        return None
+    return hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:8]
+
+
 def _json_error_response(
     error: str, status_code: int, details: str | None = None
 ) -> JSONResponse:
@@ -174,11 +181,18 @@ def _extract_signup_provider_info(
 
 def _parse_signup_request(body: dict[str, Any]) -> SignupRequestData:
     provider_username = body.get("providerUsername")
+    raw_email_verified = (
+        body["emailVerified"]
+        if "emailVerified" in body
+        else body.get("email_verified", False)
+    )
     return SignupRequestData(
         uid=body.get("uid"),
         email=body.get("email"),
         display_name=body.get("displayName") or body.get("display_name"),
-        email_verified=body.get("emailVerified") or body.get("email_verified", False),
+        email_verified=(
+            raw_email_verified if isinstance(raw_email_verified, bool) else False
+        ),
         link_to_user_id=body.get("linkToUserId"),
         github_firebase_uid=body.get("githubFirebaseUid"),
         oauth_token=body.get("accessToken") or body.get("access_token"),
@@ -190,10 +204,10 @@ def _parse_signup_request(body: dict[str, Any]) -> SignupRequestData:
 def _log_signup_request(signup_data: SignupRequestData) -> None:
     logger.info(
         "Signup: uid=%s, email=%s, linkToUserId=%s, githubFirebaseUid=%s, hasToken=%s",
-        signup_data.uid,
+        mask_identifier(signup_data.uid),
         _mask_email(signup_data.email),
-        signup_data.link_to_user_id,
-        signup_data.github_firebase_uid,
+        mask_identifier(signup_data.link_to_user_id),
+        mask_identifier(signup_data.github_firebase_uid),
         bool(signup_data.oauth_token),
     )
 
@@ -274,9 +288,9 @@ def _link_github_provider(
         db.rollback()
         if _is_provider_uid_conflict(error):
             logger.error(
-                "GitHub account %s is already linked to another user: %s",
-                signup_data.provider_uid,
-                error,
+                "GitHub account %s is already linked to another user (error_type=%s)",
+                mask_identifier(signup_data.provider_uid),
+                type(error).__name__,
             )
             return _json_error_response(GITHUB_LINK_CONFLICT_ERROR, 409)
         raise
@@ -308,19 +322,27 @@ async def _handle_github_linking_signup(
     db: Session,
 ) -> JSONResponse:
     logger.info(
-        "GitHub linking: Linking GitHub to SSO user %s", signup_data.link_to_user_id
+        "GitHub linking: Linking GitHub to SSO user %s",
+        mask_identifier(signup_data.link_to_user_id),
     )
 
     db.expire_all()
     user = await async_user_service.get_user_by_uid(signup_data.link_to_user_id)
     if not user:
-        logger.error("SSO user %s not found in database!", signup_data.link_to_user_id)
+        logger.error(
+            "SSO user %s not found in database!",
+            mask_identifier(signup_data.link_to_user_id),
+        )
         return _json_error_response("User not found. Please sign in again.", 404)
 
-    logger.info("Found SSO user: uid=%s, email=%s", user.uid, user.email)
+    logger.info(
+        "Found SSO user: uid=%s, email=%s",
+        mask_identifier(user.uid),
+        _mask_email(user.email),
+    )
 
     if _get_existing_github_provider(db, user.uid):
-        logger.info("GitHub already linked to user %s", user.uid)
+        logger.info("GitHub already linked to user %s", mask_identifier(user.uid))
         return _signup_success_response(
             user.uid, exists=True, needs_github_linking=False, status_code=200
         )
@@ -331,22 +353,22 @@ async def _handle_github_linking_signup(
     if existing_provider_with_uid and existing_provider_with_uid.user_id != user.uid:
         logger.warning(
             "GitHub account %s is already linked to user %s, cannot link to user %s",
-            signup_data.provider_uid,
-            existing_provider_with_uid.user_id,
-            user.uid,
+            mask_identifier(signup_data.provider_uid),
+            mask_identifier(existing_provider_with_uid.user_id),
+            mask_identifier(user.uid),
         )
         return _json_error_response(GITHUB_LINK_CONFLICT_ERROR, 409)
 
     logger.info(
         "Linking GitHub (provider_uid=%s) to user %s",
-        signup_data.provider_uid,
-        user.uid,
+        mask_identifier(signup_data.provider_uid),
+        mask_identifier(user.uid),
     )
     link_response = _link_github_provider(unified_auth, db, user.uid, signup_data)
     if link_response:
         return link_response
 
-    logger.info("Successfully linked GitHub to user %s", user.uid)
+    logger.info("Successfully linked GitHub to user %s", mask_identifier(user.uid))
     return _signup_success_response(
         user.uid, exists=True, needs_github_linking=False, status_code=200
     )
@@ -369,7 +391,7 @@ async def _create_github_signup_user(
             email_verified=signup_data.email_verified,
         )
 
-        logger.info("Created new user %s with GitHub", new_user.uid)
+        logger.info("Created new user %s with GitHub", mask_identifier(new_user.uid))
         _queue_signup_notification(
             background_tasks, signup_data.email, signup_data.display_name
         )
@@ -400,14 +422,14 @@ async def _handle_github_signin_signup(
 ) -> JSONResponse:
     logger.info(
         "GitHub sign-in: Checking if GitHub UID %s is linked",
-        signup_data.provider_uid,
+        mask_identifier(signup_data.provider_uid),
     )
 
     existing_provider = _get_github_provider_by_uid(db, signup_data.provider_uid)
     if not existing_provider:
         logger.warning(
             "Blocked new GitHub signup attempt: GitHub UID %s is not linked to any user",
-            signup_data.provider_uid,
+            mask_identifier(signup_data.provider_uid),
         )
         return _json_error_response(
             GITHUB_SIGNUP_DISABLED_ERROR,
@@ -417,7 +439,11 @@ async def _handle_github_signin_signup(
 
     user = await async_user_service.get_user_by_uid(existing_provider.user_id)
     if user:
-        logger.info("GitHub %s linked to user %s", signup_data.provider_uid, user.uid)
+        logger.info(
+            "GitHub %s linked to user %s",
+            mask_identifier(signup_data.provider_uid),
+            mask_identifier(user.uid),
+        )
         await _update_github_last_login(
             async_user_service, user.uid, signup_data.oauth_token
         )
@@ -425,7 +451,10 @@ async def _handle_github_signin_signup(
             user.uid, exists=True, needs_github_linking=False, status_code=200
         )
 
-    logger.info("GitHub %s not linked. Creating new user...", signup_data.provider_uid)
+    logger.info(
+        "GitHub %s not linked. Creating new user...",
+        mask_identifier(signup_data.provider_uid),
+    )
     return await _create_github_signup_user(
         signup_data, unified_auth, background_tasks, db
     )
@@ -438,11 +467,11 @@ async def _handle_email_password_signup(
     background_tasks: BackgroundTasks,
     db: Session,
 ) -> JSONResponse:
-    logger.info("Email/password flow for %s", signup_data.email)
+    logger.info("Email/password flow for %s", _mask_email(signup_data.email))
     user = await async_user_service.get_user_by_uid(signup_data.uid)
 
     if user:
-        logger.info("Email/password user exists: %s", user.uid)
+        logger.info("Email/password user exists: %s", mask_identifier(user.uid))
         has_github, _ = unified_auth.check_github_linked(user.uid)
         return _signup_success_response(
             user.uid,
@@ -461,7 +490,10 @@ async def _handle_email_password_signup(
             email_verified=signup_data.email_verified,
         )
 
-        logger.info("Created email/password user: %s", new_user.uid)
+        logger.info(
+            "Created email/password user: %s",
+            mask_identifier(new_user.uid),
+        )
         _queue_signup_notification(
             background_tasks, signup_data.email, signup_data.display_name
         )
@@ -492,7 +524,7 @@ class AuthAPI:
             return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, he.status_code)
         except Exception as e:
             logger.error("Login error: %s", e, exc_info=True)
-            return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 400)
+            return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 500)
 
     @staticmethod
     @auth_router.post("/signup")
@@ -515,7 +547,12 @@ class AuthAPI:
            - If yes: Return that user
            - If no: Create new user with GitHub UID
         """
-        signup_data = _parse_signup_request(await request.json())
+        try:
+            body = await request.json()
+        except ValueError:
+            return _json_error_response(INVALID_REQUEST_ERROR, 400)
+
+        signup_data = _parse_signup_request(body)
         _log_signup_request(signup_data)
 
         validation_error = _validate_signup_request(signup_data)
@@ -636,7 +673,9 @@ class AuthAPI:
                 if not existing_user:
                     # New user with generic email - block them
                     logger.warning(
-                        f"Blocked new signup attempt with generic email: {verified_email} via {sso_request.sso_provider}"
+                        "Blocked new signup attempt with generic email: %s via %s",
+                        _mask_email(verified_email),
+                        sso_request.sso_provider,
                     )
                     return JSONResponse(
                         content={
@@ -647,7 +686,8 @@ class AuthAPI:
                     )
                 # Existing user with generic email - allow (legacy policy)
                 logger.info(
-                    f"Allowing legacy user with generic email: {verified_email}"
+                    "Allowing legacy user with generic email: %s",
+                    _mask_email(verified_email),
                 )
 
             # Authenticate or create user
@@ -682,8 +722,10 @@ class AuthAPI:
             # The response.needs_github_linking flag is already set correctly
             if response.status == "new_user":
                 logger.info(
-                    f"New user {user.uid} ({verified_email}) created via SSO. "
-                    f"GitHub linking required: {response.needs_github_linking}"
+                    "New user %s (%s) created via SSO. GitHub linking required: %s",
+                    mask_identifier(user.uid),
+                    _mask_email(verified_email),
+                    response.needs_github_linking,
                 )
 
             return JSONResponse(
@@ -764,7 +806,7 @@ class AuthAPI:
 
         except Exception as e:
             logger.error("Cancel provider linking error: %s", e, exc_info=True)
-            return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 400)
+            return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 500)
 
     @staticmethod
     @auth_router.get("/providers/me")
@@ -809,7 +851,7 @@ class AuthAPI:
 
         except Exception as e:
             logger.error("Get providers error: %s", e, exc_info=True)
-            return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 400)
+            return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 500)
 
     @staticmethod
     @auth_router.post("/providers/set-primary")
@@ -847,7 +889,7 @@ class AuthAPI:
 
         except Exception as e:
             logger.error("Set primary provider error: %s", e, exc_info=True)
-            return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 400)
+            return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 500)
 
     @staticmethod
     @auth_router.delete("/providers/unlink")
@@ -891,7 +933,7 @@ class AuthAPI:
 
         except Exception as e:
             logger.error("Unlink provider error: %s", e, exc_info=True)
-            return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 400)
+            return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 500)
 
     @staticmethod
     @auth_router.get("/account/me")
@@ -945,4 +987,4 @@ class AuthAPI:
 
         except Exception as e:
             logger.error("Get account error: %s", e, exc_info=True)
-            return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 400)
+            return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 500)

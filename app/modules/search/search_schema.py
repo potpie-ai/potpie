@@ -1,17 +1,19 @@
 from typing import List
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class SearchRequest(BaseModel):
     project_id: str
-    query: str = Field(..., min_length=1, strip_whitespace=True)
+    query: str = Field(..., min_length=1)
 
-    @validator("query")
-    def validate_query(cls, v):
-        if not v.strip():
+    @field_validator("query", mode="after")
+    @classmethod
+    def strip_and_validate_query(cls, v: str) -> str:
+        s = v.strip()
+        if not s:
             raise ValueError("Search query cannot be empty or contain only whitespace")
-        return v
+        return s
 
 
 class SearchResult(BaseModel):

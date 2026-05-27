@@ -119,6 +119,8 @@ class TestUserServiceSetupDummyUser:
         assert created_user.provider_username == "self"
         assert created_user.created_at is not None
         assert created_user.last_login_at is not None
+        assert created_user.created_at.tzinfo == timezone.utc
+        assert created_user.last_login_at.tzinfo == timezone.utc
         assert created_user.created_at == created_user.last_login_at
 
     def test_setup_dummy_user_does_not_create_when_user_exists(
