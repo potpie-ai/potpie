@@ -21,6 +21,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+
+from observability import get_logger
 import os
 import time
 from dataclasses import dataclass, field
@@ -61,7 +63,7 @@ from adapters.outbound.reconciliation.llm_plan_schema import LlmReconciliationPl
 if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 _RECONCILIATION_INSTRUCTIONS = """You are a context-graph ingestion agent for a software project.

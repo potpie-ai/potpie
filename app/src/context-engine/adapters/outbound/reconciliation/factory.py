@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import logging
 
+from observability import get_logger
+
 from domain.ports.reconciliation_agent import ReconciliationAgentPort
 from domain.ports.reconciliation_tools import ReconciliationToolsPort
 from domain.reconciliation_flags import agent_planner_enabled
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def try_pydantic_deep_reconciliation_agent(

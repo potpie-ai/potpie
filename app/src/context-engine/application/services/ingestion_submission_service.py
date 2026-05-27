@@ -10,6 +10,8 @@ plans during agent batch processing, not during inbound submission.
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 from uuid import uuid4
 
 from application.services.event_admission import admit_event
@@ -31,7 +33,7 @@ from domain.ports.reconciliation_agent import ReconciliationAgentPort
 from domain.ports.reconciliation_ledger import ReconciliationLedgerPort
 from domain.ports.settings import ContextEngineSettingsPort
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class DefaultIngestionSubmissionService(IngestionSubmissionService):

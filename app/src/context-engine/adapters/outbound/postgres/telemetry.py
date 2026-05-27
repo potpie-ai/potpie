@@ -10,6 +10,8 @@ Errors are logged at WARNING and swallowed.
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 import os
 import uuid
 from datetime import datetime, timezone
@@ -22,7 +24,7 @@ from adapters.outbound.postgres.session import database_url, make_session_factor
 from domain.ports.telemetry import CostEvent, DriftSnapshot
 from domain.error_redaction import safe_error
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class SqlAlchemyTelemetry:

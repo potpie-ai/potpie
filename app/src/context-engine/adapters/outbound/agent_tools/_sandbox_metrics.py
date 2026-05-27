@@ -17,9 +17,11 @@ Event names follow the plan:
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 from typing import Any, Callable, Mapping
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 SandboxMetricsSink = Callable[[str, Mapping[str, Any], float], None]
@@ -43,4 +45,4 @@ def record(name: str, labels: Mapping[str, Any] | None = None, value: float = 1.
     try:
         _SINK(name, dict(labels or {}), float(value))
     except Exception:  # noqa: BLE001
-        logger.debug("sandbox metric %s emit failed", name, exc_info=True)
+        logger.debug("sandbox metric %s emit failed", name, exc_info=True, name=name)

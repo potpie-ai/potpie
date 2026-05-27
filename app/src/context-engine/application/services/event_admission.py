@@ -14,6 +14,8 @@ reconciliation worker via ``jobs.enqueue_batch``.
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 from dataclasses import dataclass
 
 from domain.context_events import ContextEvent, EventScope
@@ -22,7 +24,7 @@ from domain.ports.context_graph_job_queue import ContextGraphJobQueuePort
 from domain.ports.ingestion_config import IngestionConfigPort
 from domain.ports.reconciliation_ledger import ReconciliationLedgerPort
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass(slots=True, frozen=True)
@@ -81,7 +83,7 @@ def admit_event(
                 "defaulting to immediate",
                 event.pot_id,
                 exc_info=True,
-            )
+             event_pot_id=event.pot_id)
 
     if mode == "windowed":
         # Batch stays pending; periodic flush task picks it up.
@@ -97,7 +99,7 @@ def admit_event(
             "batch is durable, next event will re-enqueue",
             batch_id,
             event_id,
-        )
+         batch_id=batch_id, event_id=event_id)
     return EventAdmissionOutcome(
         event_id=event_id, batch_id=batch_id, inserted=True, enqueued=True,
     )

@@ -13,9 +13,11 @@ choice for this module.
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 import os
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def configure_observability() -> None:
@@ -35,6 +37,7 @@ def configure_observability() -> None:
             LogfireConfig,
             ObservabilityConfig,
             SentryConfig,
+            parse_bool,
         )
     except ModuleNotFoundError:
         # Observability is a hard dep, so this should never fire — but if a
@@ -64,8 +67,10 @@ def configure_observability() -> None:
         logfire=LogfireConfig(
             enabled=bool(logfire_token),
             token=logfire_token,
-            send_to_cloud=os.getenv("LOGFIRE_SEND_TO_CLOUD", "true").lower()
-            != "false",
+            send_to_cloud=parse_bool(
+                os.getenv("LOGFIRE_SEND_TO_CLOUD"),
+                default=True,
+            ),
             project_name=os.getenv("LOGFIRE_PROJECT_NAME", "context-engine"),
             # Defensive default for forked workers (Hatchet etc.). If/when a
             # caller proves the OTel contextvar issue doesn't apply, flip
@@ -77,4 +82,4 @@ def configure_observability() -> None:
     try:
         configure(cfg)
     except Exception as exc:  # pragma: no cover — defensive
-        logger.warning("observability.configure failed: %s", exc)
+        logger.warning("observability.configure failed: %s", exc, exc=exc)

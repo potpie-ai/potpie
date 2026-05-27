@@ -19,6 +19,8 @@ import hashlib
 import hmac
 import json
 import logging
+
+from observability import get_logger
 from typing import Any, Callable, Iterable, Mapping, Sequence
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -42,7 +44,7 @@ from domain.source_resolution import (
     SourceResolutionResult,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 SourceControlFactory = Callable[[str], GitHubReadPort]
@@ -126,7 +128,7 @@ class GitHubConnector(SourceConnectorPort):
         try:
             client = self._source_for_repo(repo_name)
         except Exception as exc:
-            logger.warning("github list_artifacts: source_for_repo failed: %s", exc)
+            logger.warning("github list_artifacts: source_for_repo failed: %s", exc, exc=exc)
             return ()
         out: list[SourceReferenceRecord] = []
         for pr in client.iter_closed_pulls(repo_name):
@@ -257,7 +259,7 @@ class GitHubConnector(SourceConnectorPort):
         try:
             client = self._source_for_repo(repo_name)
         except Exception as exc:
-            logger.warning("github propose_plan: source_for_repo failed: %s", exc)
+            logger.warning("github propose_plan: source_for_repo failed: %s", exc, exc=exc)
             return None
 
         bundle = _fetch_full_pr(client, repo_name, pr_number)
@@ -336,7 +338,7 @@ def _fetch_full_pr(
                 issue_number,
                 repo_name,
                 exc,
-            )
+             issue_number=issue_number, repo_name=repo_name, exc=exc)
     return {
         "pr_data": pr_data,
         "commits": commits,

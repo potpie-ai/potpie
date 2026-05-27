@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
+
+from observability import get_logger
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -21,7 +23,7 @@ from adapters.inbound.mcp.tool_impl import (
     run_context_status,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # streamable_http_path="/" so FastAPI mount at /mcp yields https://host/mcp (not /mcp/mcp).
 mcp_http = FastMCP(

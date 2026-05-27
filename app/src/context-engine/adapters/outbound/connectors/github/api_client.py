@@ -9,6 +9,8 @@ behind the connector boundary).
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 from datetime import datetime
 from typing import Any, Iterator, List, Protocol
 
@@ -16,7 +18,7 @@ from github import Github
 
 from domain.backfill_window import backfill_window_since, clamp_backfill_limit
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class GitHubReadPort(Protocol):

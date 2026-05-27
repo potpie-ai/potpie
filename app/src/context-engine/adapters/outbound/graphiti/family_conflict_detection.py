@@ -7,6 +7,8 @@ See docs/context-graph-improvements/06-conflict-surfacing.md
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -18,7 +20,7 @@ from domain.graph_quality import (
 from domain.ontology import normalize_graphiti_edge_name
 from domain.reconciliation_flags import conflict_detection_enabled
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _normalize_dt(value: Any) -> datetime | None:
@@ -66,7 +68,7 @@ async def apply_family_conflict_detection(driver: Any, group_id: str) -> dict[st
     try:
         from graphiti_core.driver.driver import GraphProvider
     except Exception as exc:  # pragma: no cover - optional dependency
-        logger.debug("graphiti_core not available for conflict detection: %s", exc)
+        logger.debug("graphiti_core not available for conflict detection: %s", exc, exc=exc)
         return {"ok": False, "error": "graphiti_core_unavailable"}
 
     if getattr(driver, "provider", None) != GraphProvider.NEO4J:

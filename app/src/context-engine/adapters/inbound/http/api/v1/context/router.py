@@ -7,6 +7,8 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Callable, Literal, Optional
 
+from observability import get_logger
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -76,7 +78,7 @@ def _ndjson_line(event: dict[str, Any]) -> bytes:
 
     return (_json.dumps(event, default=str) + "\n").encode("utf-8")
 
-_logger = logging.getLogger(__name__)
+_logger = get_logger(__name__)
 
 
 # Operator/admin routes (``/reset``, ``/conflicts/*``, ``/maintenance/*``) are
@@ -87,7 +89,7 @@ _logger = logging.getLogger(__name__)
 OPERATOR_TAG = "context:operator"
 
 _AUDIT_LOGGER_NAME = "context_engine.operator_audit"
-_audit_logger = logging.getLogger(_AUDIT_LOGGER_NAME)
+_audit_logger = get_logger(_AUDIT_LOGGER_NAME)
 
 
 def _actor_identity(actor: Any) -> str:
@@ -128,7 +130,7 @@ def _audit_operator_action(
             if k in fields:
                 continue
             fields[k] = v
-    _audit_logger.warning("operator_action %s", action, extra={"audit": fields})
+    _audit_logger.warning("operator_action %s", action, extra={"audit": fields}, action=action)
 
 
 def _ingest_rejection_returns_422() -> bool:
@@ -789,7 +791,7 @@ def create_context_router(
                     "(event %s); batch is durable, next event will re-enqueue",
                     batch_id,
                     event_id,
-                )
+                 batch_id=batch_id, event_id=event_id)
 
         return JSONResponse(
             status_code=202,
@@ -896,7 +898,7 @@ def create_context_router(
                     "(pot %s); batch is durable, will be re-enqueued",
                     batch_id,
                     pot_id,
-                )
+                 batch_id=batch_id, pot_id=pot_id)
 
         return JSONResponse(
             status_code=202,
@@ -1234,7 +1236,7 @@ def create_context_router(
                     "stream_event_activity iterator failed for %s: %s",
                     event_id,
                     exc,
-                )
+                 event_id=event_id, exc=exc)
                 yield _ndjson_line(
                     {"type": "end", "status": "error", "message": str(exc)}
                 )
@@ -1295,7 +1297,7 @@ def create_context_router(
             except Exception as exc:  # noqa: BLE001
                 _logger.warning(
                     "stream_pot_events iterator failed for %s: %s", pot_id, exc
-                )
+                , pot_id=pot_id, exc=exc)
                 yield _ndjson_line(
                     {"type": "end", "status": "error", "message": str(exc)}
                 )
@@ -1477,7 +1479,7 @@ def create_context_router(
         try:
             items = container.episodic.list_open_conflicts(resolved_pot_id)
         except Exception as exc:
-            _logger.exception("list_open_conflicts failed for pot=%s", body.pot_id)
+            _logger.exception("list_open_conflicts failed for pot=%s", body.pot_id, pot=body.pot_id)
             raise HTTPException(
                 status_code=500, detail=safe_error(exc)
             ) from exc

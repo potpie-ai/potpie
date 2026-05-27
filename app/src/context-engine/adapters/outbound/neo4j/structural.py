@@ -9,6 +9,8 @@ module is now read-only and Phase 3 will collapse it into a per-family
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -19,7 +21,7 @@ from domain.ontology import ENTITY_TYPES, INCLUDE_KEY_LABELS
 from domain.ports.settings import ContextEngineSettingsPort
 from adapters.outbound.neo4j.port import StructuralReadPort
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Bound the unindexed full-partition aggregations in get_graph_overview so a
 # large / bulk-poisoned pot can't turn it into an expensive blocking scan
@@ -884,7 +886,7 @@ class Neo4jStructuralAdapter(StructuralReadPort):
                     "message": "ok",
                 }
         except Exception as exc:
-            logger.exception("get_project_graph failed pot=%s", pot_id)
+            logger.exception("get_project_graph failed pot=%s", pot_id, pot=pot_id)
             return {
                 "pot_id": pot_id,
                 "pr_number": pr_number,
@@ -1063,7 +1065,7 @@ class Neo4jStructuralAdapter(StructuralReadPort):
                     "message": "ok",
                 }
         except Exception as exc:  # noqa: BLE001
-            logger.exception("get_graph_overview failed pot=%s", pot_id)
+            logger.exception("get_graph_overview failed pot=%s", pot_id, pot=pot_id)
             empty["message"] = str(exc)
             return empty
         finally:
@@ -1187,7 +1189,7 @@ class Neo4jStructuralAdapter(StructuralReadPort):
                     "message": "ok",
                 }
         except Exception as exc:
-            logger.exception("get_debugging_memory failed pot=%s", pot_id)
+            logger.exception("get_debugging_memory failed pot=%s", pot_id, pot=pot_id)
             return {
                 "pot_id": pot_id,
                 "limit": lim,
@@ -1255,7 +1257,7 @@ class Neo4jStructuralAdapter(StructuralReadPort):
                 )
                 return [record.data() for record in res]
         except Exception as exc:
-            logger.exception("expand_causal_neighbours failed pot=%s: %s", pot_id, exc)
+            logger.exception("expand_causal_neighbours failed pot=%s: %s", pot_id, exc, pot=pot_id, exc=exc)
             return []
         finally:
             drv.close()
@@ -1369,7 +1371,7 @@ class Neo4jStructuralAdapter(StructuralReadPort):
                     chain.append(data)
                     cur = nxt
         except Exception as exc:
-            logger.exception("walk_causal_chain_backward failed pot=%s: %s", pot_id, exc)
+            logger.exception("walk_causal_chain_backward failed pot=%s: %s", pot_id, exc, pot=pot_id, exc=exc)
             return []
         finally:
             drv.close()
@@ -1408,7 +1410,7 @@ class Neo4jStructuralAdapter(StructuralReadPort):
                 uid = one.data().get("uuid")
                 return str(uid) if uid else None
         except Exception as exc:
-            logger.exception("resolve_entity_uuid_for_service_hint failed: %s", exc)
+            logger.exception("resolve_entity_uuid_for_service_hint failed: %s", exc, exc=exc)
             return None
         finally:
             drv.close()
@@ -1439,7 +1441,7 @@ class Neo4jStructuralAdapter(StructuralReadPort):
                 row = rec.single()
                 return row.data() if row is not None else None
         except Exception as exc:
-            logger.exception("get_episodic_entity_node failed: %s", exc)
+            logger.exception("get_episodic_entity_node failed: %s", exc, exc=exc)
             return None
         finally:
             drv.close()

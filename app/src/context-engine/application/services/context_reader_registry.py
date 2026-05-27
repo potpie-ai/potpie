@@ -9,6 +9,8 @@ The application layer never branches on family names.
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 from collections.abc import Sequence
 from typing import Any
 
@@ -26,7 +28,7 @@ from domain.graph_query import (
 )
 from domain.ports.context_reader import ContextReaderPort
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 _GOAL_AUTO_FAMILIES: dict[ContextGraphGoal, tuple[str, ...]] = {
@@ -99,7 +101,7 @@ class ContextReaderRegistry:
             try:
                 outcome = reader.read(request)
             except Exception as exc:  # noqa: BLE001
-                logger.exception("reader %s failed", family)
+                logger.exception("reader %s failed", family, family=family)
                 results.append(
                     ReaderResult(
                         family=family,

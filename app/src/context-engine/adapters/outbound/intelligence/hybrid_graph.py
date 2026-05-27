@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+
+from observability import get_logger
 from typing import Any
 
 from adapters.outbound.graphiti.port import EpisodicGraphPort
@@ -24,7 +26,7 @@ from domain.intelligence_models import (
 )
 from domain.ports.intelligence_provider import IntelligenceProvider
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _DEFAULT_NODE_LABELS = ["PullRequest", "Decision", "Issue", "Feature"]
 
@@ -303,7 +305,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
                 structural=self._structural,
             )
         except Exception as exc:
-            logger.exception("search_context failed: %s", exc)
+            logger.exception("search_context failed: %s", exc, exc=exc)
             return []
 
     async def get_artifact_context(
@@ -324,7 +326,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
         try:
             row = await asyncio.to_thread(_load)
         except Exception as exc:
-            logger.exception("get_pr_review_context failed: %s", exc)
+            logger.exception("get_pr_review_context failed: %s", exc, exc=exc)
             return None
         if not row.get("found"):
             return None
@@ -369,7 +371,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
         try:
             rows = await asyncio.to_thread(_load)
         except Exception as exc:
-            logger.exception("get_change_history failed: %s", exc)
+            logger.exception("get_change_history failed: %s", exc, exc=exc)
             return []
         return [_row_to_change_record(r) for r in rows]
 
@@ -401,7 +403,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
         try:
             rows = await asyncio.to_thread(_load)
         except Exception as exc:
-            logger.exception("get_decisions failed: %s", exc)
+            logger.exception("get_decisions failed: %s", exc, exc=exc)
             return []
         return [_row_to_decision_record(r) for r in rows]
 
@@ -426,7 +428,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
         try:
             row = await asyncio.to_thread(_load)
         except Exception as exc:
-            logger.exception("get_pr_review_context (discussions) failed: %s", exc)
+            logger.exception("get_pr_review_context (discussions) failed: %s", exc, exc=exc)
             return []
         if not row.get("found"):
             return []
@@ -454,7 +456,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
         try:
             rows = await asyncio.to_thread(_load)
         except Exception as exc:
-            logger.exception("get_file_owners failed: %s", exc)
+            logger.exception("get_file_owners failed: %s", exc, exc=exc)
             return []
         out: list[OwnershipRecord] = []
         for r in rows:
@@ -514,7 +516,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
         try:
             payload = await asyncio.to_thread(_load)
         except Exception as exc:
-            logger.exception("get_project_graph failed: %s", exc)
+            logger.exception("get_project_graph failed: %s", exc, exc=exc)
             return []
         rows = payload.get("nodes") or []
         out: list[ProjectContextRecord] = []
@@ -554,7 +556,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
                     pot_id, scope.services[0]
                 )
             except Exception as exc:
-                logger.debug("resolve_entity_uuid_for_service_hint: %s", exc)
+                logger.debug("resolve_entity_uuid_for_service_hint: %s", exc, exc=exc)
         if not focal and self._episodic.enabled:
             try:
                 edges = await self._episodic.search_async(
@@ -564,7 +566,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
                     node_labels=_DEFAULT_NODE_LABELS,
                 )
             except Exception as exc:
-                logger.exception("get_causal_chain semantic seed failed: %s", exc)
+                logger.exception("get_causal_chain semantic seed failed: %s", exc, exc=exc)
                 edges = []
             if edges:
                 e0 = edges[0]
@@ -590,7 +592,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
         try:
             chain, focal_row = await asyncio.to_thread(_load)
         except Exception as exc:
-            logger.exception("get_causal_chain structural failed: %s", exc)
+            logger.exception("get_causal_chain structural failed: %s", exc, exc=exc)
             return []
 
         def _ref_time(row: dict[str, Any]) -> str | None:
@@ -640,13 +642,13 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
             try:
                 return self._episodic.list_open_conflicts(pot_id)
             except Exception as exc:
-                logger.exception("list_open_conflicts failed: %s", exc)
+                logger.exception("list_open_conflicts failed: %s", exc, exc=exc)
                 return []
 
         try:
             return await asyncio.to_thread(_load)
         except Exception as exc:
-            logger.exception("list_open_conflicts thread failed: %s", exc)
+            logger.exception("list_open_conflicts thread failed: %s", exc, exc=exc)
             return []
 
     async def get_debugging_memory(
@@ -680,7 +682,7 @@ class HybridGraphIntelligenceProvider(IntelligenceProvider):
         try:
             payload = await asyncio.to_thread(_load)
         except Exception as exc:
-            logger.exception("get_debugging_memory failed: %s", exc)
+            logger.exception("get_debugging_memory failed: %s", exc, exc=exc)
             return []
         rows = payload.get("nodes") or []
         requested = set(include)

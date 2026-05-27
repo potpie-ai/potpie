@@ -15,6 +15,8 @@ dict-backed fake.
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 import re
 from datetime import datetime, timezone
 from typing import Sequence
@@ -39,7 +41,7 @@ from domain.source_resolution import (
     clamp_text,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 _IDENTIFIER_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -137,7 +139,7 @@ class LinearIssueResolver:
                 )
                 continue
             except Exception as exc:
-                logger.exception("linear issue fetch failed: %s", exc)
+                logger.exception("linear issue fetch failed: %s", exc, exc=exc)
                 out.fallbacks.append(
                     ResolverFallback(
                         code=RESOLVER_ERROR,

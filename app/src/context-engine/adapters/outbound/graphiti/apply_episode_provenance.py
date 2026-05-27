@@ -11,11 +11,13 @@ structural applier already stamps on canonical mutations.
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 from typing import Any
 
 from domain.graph_mutations import ProvenanceRef
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def apply_episode_provenance(
@@ -31,7 +33,7 @@ async def apply_episode_provenance(
     try:
         from graphiti_core.driver.driver import GraphProvider
     except Exception as exc:  # pragma: no cover
-        logger.debug("graphiti_core not available: %s", exc)
+        logger.debug("graphiti_core not available: %s", exc, exc=exc)
         return {"ok": False, "error": "graphiti_core_unavailable"}
 
     if getattr(driver, "provider", None) != GraphProvider.NEO4J:
@@ -52,7 +54,7 @@ async def apply_episode_provenance(
             props=props,
         )
     except Exception as exc:
-        logger.warning("episode provenance node stamp failed: %s", exc)
+        logger.warning("episode provenance node stamp failed: %s", exc, exc=exc)
         return {"ok": False, "error": str(exc), "edges_stamped": 0}
 
     stamped = 0
@@ -71,7 +73,7 @@ async def apply_episode_provenance(
         if records:
             stamped = int(records[0].get("cnt") or 0)
     except Exception as exc:
-        logger.warning("episode provenance edge stamp failed: %s", exc)
+        logger.warning("episode provenance edge stamp failed: %s", exc, exc=exc)
         return {"ok": False, "error": str(exc), "edges_stamped": stamped}
 
     return {"ok": True, "group_id": group_id, "edges_stamped": stamped}

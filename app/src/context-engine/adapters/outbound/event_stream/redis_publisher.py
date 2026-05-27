@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import json
 import logging
+
+from observability import get_logger
 import os
 import time
 from collections.abc import Iterator
@@ -28,7 +30,7 @@ try:
 except ImportError:  # pragma: no cover - redis is an extras dep
     redis = None  # type: ignore[assignment]
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Defaults match the chat stream manager so operators tune one knob.
 _DEFAULT_STREAM_TTL_SECONDS = 60 * 60  # 1 hour
@@ -215,7 +217,7 @@ class RedisEventStreamPublisher:
             )
             self._client.expire(key, self._ttl)
         except Exception as exc:  # noqa: BLE001 - liveness must not fail ingestion
-            logger.warning("event stream publish to %s failed: %s", key, exc)
+            logger.warning("event stream publish to %s failed: %s", key, exc, key=key, exc=exc)
 
     def _replay_and_tail(
         self,
@@ -236,7 +238,7 @@ class RedisEventStreamPublisher:
             min_id = cursor or "-"
             past = self._client.xrange(key, min=min_id, max="+")  # pyright: ignore[reportGeneralTypeIssues]
         except Exception as exc:
-            logger.error("event stream replay (%s) failed: %s", key, exc)
+            logger.error("event stream replay (%s) failed: %s", key, exc, key=key, exc=exc)
             yield _end_event(status="error", message=f"replay failed: {exc}")
             return
 
@@ -258,7 +260,7 @@ class RedisEventStreamPublisher:
                     {key: last_id}, block=5000, count=10
                 )
             except Exception as exc:
-                logger.error("event stream tail (%s) failed: %s", key, exc)
+                logger.error("event stream tail (%s) failed: %s", key, exc, key=key, exc=exc)
                 yield _end_event(status="error", message=f"tail failed: {exc}")
                 return
 
@@ -300,7 +302,7 @@ def _format_entry(entry_id: Any, fields: dict[Any, Any]) -> dict[str, Any]:
             try:
                 out[key[:-5]] = json.loads(value)
             except Exception:
-                logger.warning("event stream: invalid JSON in field %s", key)
+                logger.warning("event stream: invalid JSON in field %s", key, key=key)
                 out[key[:-5]] = None
         elif key == "sequence" and isinstance(value, str):
             try:

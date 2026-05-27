@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 import os
 from datetime import datetime
 
@@ -18,7 +20,7 @@ from adapters.outbound.http.potpie_context_api_client import (
     PotpieContextApiError,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 mcp = FastMCP("potpie")
 
 

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 from datetime import datetime
 from uuid import uuid4
 
@@ -17,7 +19,7 @@ from domain.ports.ingestion_ledger import (
     SyncStateRow,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class SqlAlchemyIngestionLedger(IngestionLedgerPort):

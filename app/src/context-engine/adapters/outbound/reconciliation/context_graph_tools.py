@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+
+from observability import get_logger
 from typing import Any
 
 from domain.graph_query import (
@@ -23,7 +25,7 @@ from domain.ports.context_graph import ContextGraphPort
 from domain.ports.reconciliation_tools import ReconciliationToolsPort, ToolDescriptor
 from domain.reconciliation import ReconciliationRequest
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 _TOOLS: tuple[ToolDescriptor, ...] = (

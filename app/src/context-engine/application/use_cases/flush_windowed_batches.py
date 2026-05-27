@@ -15,6 +15,8 @@ so duplicate enqueues are safe.
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 import time
 from dataclasses import dataclass
 
@@ -22,7 +24,7 @@ from domain.ports.batch_repository import BatchRepositoryPort
 from domain.ports.context_graph_job_queue import ContextGraphJobQueuePort
 from domain.ports.ingestion_config import IngestionConfigPort
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass(slots=True, frozen=True)
@@ -56,7 +58,7 @@ def flush_ready_windowed_pots(
         except Exception:
             logger.exception(
                 "flush_windowed: failed to read open batch for pot %s", cfg.pot_id
-            )
+            , cfg_pot_id=cfg.pot_id)
             errors += 1
             continue
         if batch_id is None:
@@ -70,7 +72,7 @@ def flush_ready_windowed_pots(
                 "flush_windowed: enqueue_batch failed for batch %s (pot %s)",
                 batch_id,
                 cfg.pot_id,
-            )
+             batch_id=batch_id, cfg_pot_id=cfg.pot_id)
             errors += 1
 
     return FlushOutcome(
@@ -102,7 +104,7 @@ def force_flush_pot(
             "force_flush_pot: enqueue_batch failed for batch %s (pot %s)",
             batch_id,
             pot_id,
-        )
+         batch_id=batch_id, pot_id=pot_id)
         # Caller decides whether to surface as 5xx — we still return the
         # batch_id so the user sees something durable was created.
     return batch_id

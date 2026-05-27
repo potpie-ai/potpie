@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hmac
 import logging
+
+from observability import get_logger
 import os
 from collections.abc import Generator
 from functools import lru_cache
@@ -16,7 +18,7 @@ from adapters.outbound.postgres.session import database_url, make_session_factor
 from bootstrap.container import ContextEngineContainer
 from bootstrap.standalone_container import build_standalone_context_engine_container
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
@@ -52,7 +54,7 @@ def require_api_key(key: str | None = Security(_api_key_header)) -> None:
                     "scoping. This must never be used in a network-reachable "
                     "or multi-tenant deployment.",
                     ALLOW_NO_AUTH_ENV,
-                )
+                 ALLOW_NO_AUTH_ENV=ALLOW_NO_AUTH_ENV)
                 _no_auth_warned = True
             return None
         raise HTTPException(

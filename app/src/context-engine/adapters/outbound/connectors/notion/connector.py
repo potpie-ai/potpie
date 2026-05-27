@@ -29,6 +29,8 @@ wrong and Phase 2 should not have closed.
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, Protocol, Sequence
 from uuid import uuid4
@@ -52,7 +54,7 @@ from domain.source_resolution import (
     clamp_text,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class NotionPageFetcher(Protocol):
@@ -141,7 +143,7 @@ class NotionConnector(SourceConnectorPort):
                     )
                 )
         except Exception as exc:
-            logger.warning("notion list_artifacts failed: %s", exc)
+            logger.warning("notion list_artifacts failed: %s", exc, exc=exc)
         return out
 
     def normalize_webhook(

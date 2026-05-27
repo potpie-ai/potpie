@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+
+from observability import get_logger
 import time
 from typing import Any
 
@@ -53,7 +55,7 @@ from domain.source_resolution import (
     SourceResolutionResult,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _compute_coverage(
@@ -471,7 +473,7 @@ class ContextResolutionService:
                 ]
             )
         except Exception as exc:
-            logger.exception("source_resolver failed: %s", exc)
+            logger.exception("source_resolver failed: %s", exc, exc=exc)
             return SourceResolutionResult(
                 fallbacks=[
                     ResolverFallback(
@@ -514,7 +516,7 @@ class ContextResolutionService:
                 return name, res
             except Exception as exc:
                 per_lat[name] = int((time.perf_counter() - t0) * 1000)
-                logger.exception("%s failed: %s", name, exc)
+                logger.exception("%s failed: %s", name, exc, name=name, exc=exc)
                 errors.append(
                     ResolutionError(
                         source=name,
@@ -799,7 +801,7 @@ class ContextResolutionService:
         try:
             open_cf = await self._provider.list_open_conflicts(request.pot_id)
         except Exception as exc:
-            logger.warning("list_open_conflicts failed: %s", exc)
+            logger.warning("list_open_conflicts failed: %s", exc, exc=exc)
         bundle.open_conflicts = open_cf
         bundle.quality.conflicts = open_cf
         if open_cf and any(

@@ -11,12 +11,14 @@ owner connected — never a shared service key. The host wires this in via
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 from typing import Any, Callable
 
 from adapters.outbound.connectors.linear.fetcher import LinearIssueFetcher
 from domain.error_redaction import safe_error
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def build_linear_tools(
@@ -72,7 +74,7 @@ def build_linear_tools(
             except PermissionError as exc:
                 return {"error": "linear_auth_failed", "message": safe_error(exc)}
             except Exception as exc:
-                logger.exception("linear_list_issues failed pot=%s", pot_id)
+                logger.exception("linear_list_issues failed pot=%s", pot_id, pot=pot_id)
                 return {"error": safe_error(exc)}
             return {"count": len(issues), "issues": issues}
 
@@ -96,7 +98,7 @@ def build_linear_tools(
             except PermissionError as exc:
                 return {"error": "linear_auth_failed", "message": safe_error(exc)}
             except Exception as exc:
-                logger.exception("linear_list_projects failed pot=%s", pot_id)
+                logger.exception("linear_list_projects failed pot=%s", pot_id, pot=pot_id)
                 return {"error": safe_error(exc)}
             return {"count": len(projects), "projects": projects}
 
@@ -107,7 +109,7 @@ def build_linear_tools(
             except PermissionError as exc:
                 return {"error": "linear_auth_failed", "message": safe_error(exc)}
             except Exception as exc:
-                logger.exception("linear_get_project %s failed", project_id)
+                logger.exception("linear_get_project %s failed", project_id, project_id=project_id)
                 return {"error": safe_error(exc)}
             if project is None:
                 return {"found": False, "project_id": project_id}
@@ -133,7 +135,7 @@ def build_linear_tools(
             except PermissionError as exc:
                 return {"error": "linear_auth_failed", "message": safe_error(exc)}
             except Exception as exc:
-                logger.exception("linear_list_documents failed pot=%s", pot_id)
+                logger.exception("linear_list_documents failed pot=%s", pot_id, pot=pot_id)
                 return {"error": safe_error(exc)}
             return {"count": len(docs), "documents": docs}
 
@@ -144,7 +146,7 @@ def build_linear_tools(
             except PermissionError as exc:
                 return {"error": "linear_auth_failed", "message": safe_error(exc)}
             except Exception as exc:
-                logger.exception("linear_get_document %s failed", document_id)
+                logger.exception("linear_get_document %s failed", document_id, document_id=document_id)
                 return {"error": safe_error(exc)}
             if doc is None:
                 return {"found": False, "document_id": document_id}
@@ -159,7 +161,7 @@ def build_linear_tools(
                 # it so the agent adds a warning instead of inventing facts.
                 return {"error": "linear_auth_failed", "message": safe_error(exc)}
             except Exception as exc:
-                logger.exception("linear_get_issue %s failed", issue_id)
+                logger.exception("linear_get_issue %s failed", issue_id, issue_id=issue_id)
                 return {"error": safe_error(exc)}
             if issue is None:
                 return {"found": False, "issue_id": issue_id}

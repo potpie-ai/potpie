@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib
 import logging
+
+from observability import get_logger
 import os
 
 from domain.ports.context_graph_job_queue import (
@@ -13,7 +15,7 @@ from domain.ports.context_graph_job_queue import (
 
 from bootstrap.potpie_path import ensure_potpie_repo_on_sys_path
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # CONTEXT_GRAPH_JOB_QUEUE_BACKEND: celery | hatchet | noop
 # When unset, defaults to celery (host Potpie adapter). If that module is not importable (e.g. standalone
@@ -54,7 +56,7 @@ def _resolve_celery(*, explicit_backend_was_set: bool) -> ContextGraphJobQueuePo
             "CONTEXT_GRAPH_JOB_QUEUE_BACKEND=noop to silence, or point CONTEXT_GRAPH_CELERY_QUEUE_MODULE "
             "at an importable module.",
             exc,
-        )
+         exc=exc)
         return NoOpContextGraphJobQueue()
 
 
@@ -105,7 +107,7 @@ def _resolve_hatchet(*, explicit_backend_was_set: bool) -> ContextGraphJobQueueP
             "Set HATCHET_CLIENT_TOKEN and run the Hatchet worker, or set "
             "CONTEXT_GRAPH_JOB_QUEUE_BACKEND=celery to silence this.",
             exc,
-        )
+         exc=exc)
         try:
             q = _import_celery_queue_adapter()
             logger.info("Context graph job queue: celery (host adapter)")
@@ -117,5 +119,5 @@ def _resolve_hatchet(*, explicit_backend_was_set: bool) -> ContextGraphJobQueueP
                 "For real workers: install hatchet-sdk + token, run from Potpie with `app` on "
                 "PYTHONPATH, or set CONTEXT_GRAPH_JOB_QUEUE_BACKEND=noop to silence.",
                 celery_exc,
-            )
+             celery_exc=celery_exc)
             return NoOpContextGraphJobQueue()

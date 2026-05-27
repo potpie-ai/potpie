@@ -19,6 +19,8 @@ never depends on a notification being delivered.
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 import time
 from collections.abc import Iterator
 from datetime import datetime, timezone
@@ -38,7 +40,7 @@ from domain.ports.agent_execution_log import (
     TERMINAL_RECORD_TYPES,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Single shared NOTIFY channel; the batch_id rides in the payload so we
 # never hit the 63-char identifier limit and only LISTEN once. Writes emit
@@ -129,7 +131,7 @@ class PostgresAgentExecutionLog:
                 {"chan": _NOTIFY_CHANNEL, "payload": batch_id},
             )
         except Exception:  # noqa: BLE001 - liveness must not fail the write
-            logger.debug("pg_notify failed for batch %s", batch_id, exc_info=True)
+            logger.debug("pg_notify failed for batch %s", batch_id, exc_info=True, batch_id=batch_id)
 
     def append(
         self,
@@ -298,7 +300,7 @@ class PostgresAgentExecutionLog:
             with self._open() as db:
                 rows = self._fetch_after(db, batch_id, last_seq)
         except Exception as exc:  # noqa: BLE001
-            logger.error("execution-log replay failed for %s: %s", batch_id, exc)
+            logger.error("execution-log replay failed for %s: %s", batch_id, exc, batch_id=batch_id, exc=exc)
             yield {
                 "type": "end",
                 "status": "error",
@@ -325,7 +327,7 @@ class PostgresAgentExecutionLog:
             except Exception as exc:  # noqa: BLE001
                 logger.error(
                     "execution-log tail failed for %s: %s", batch_id, exc
-                )
+                , batch_id=batch_id, exc=exc)
                 yield {
                     "type": "end",
                     "status": "error",

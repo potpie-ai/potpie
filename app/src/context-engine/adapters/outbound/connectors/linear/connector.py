@@ -18,6 +18,8 @@ import hashlib
 import hmac
 import json
 import logging
+
+from observability import get_logger
 from typing import Any, Iterable, Mapping, Sequence
 
 from adapters.outbound.connectors.linear.events import linear_issue_from_payload
@@ -39,7 +41,7 @@ from domain.source_resolution import (
     SourceResolutionResult,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _verify_linear_signature(
@@ -147,7 +149,7 @@ class LinearConnector(SourceConnectorPort):
         try:
             return linear_payload_to_event(body)
         except LinearWebhookError as exc:
-            logger.info("linear webhook ignored: %s", exc)
+            logger.info("linear webhook ignored: %s", exc, exc=exc)
             return None
 
     async def fetch(
@@ -184,7 +186,7 @@ class LinearConnector(SourceConnectorPort):
         try:
             issue = linear_issue_from_payload(issue_payload)
         except Exception as exc:
-            logger.warning("linear propose_plan: parse failed: %s", exc)
+            logger.warning("linear propose_plan: parse failed: %s", exc, exc=exc)
             return None
 
         comment_payload = payload.get("comment")
@@ -205,7 +207,7 @@ class LinearConnector(SourceConnectorPort):
                     ),
                 )
             except Exception as exc:
-                logger.warning("linear propose_plan: comment parse failed: %s", exc)
+                logger.warning("linear propose_plan: comment parse failed: %s", exc, exc=exc)
 
         prev_state_payload = payload.get("previous_state")
         previous_state = None
