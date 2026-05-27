@@ -272,6 +272,9 @@ def _split_csv(value: str | None) -> list[str]:
 
 
 def main() -> None:
+    from bootstrap.observability import configure_observability
+
+    configure_observability()
     mcp.run()
 
 

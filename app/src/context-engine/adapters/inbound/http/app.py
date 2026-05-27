@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from adapters.inbound.http._hardening import install_hardening
 from adapters.inbound.http.api.router import api_router
 from adapters.inbound.http.webhooks.router import webhooks_router
+from bootstrap.observability import configure_observability
 
 try:
     __version__ = importlib.metadata.version("context-engine")
@@ -19,7 +20,18 @@ logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
+    configure_observability()
     app = FastAPI(title="context-engine", version=__version__)
+
+    # Attach the observability request-context middleware so every log
+    # inside a request automatically carries request_id / path / method
+    # (and user_id when auth populates request.state.user).
+    try:
+        from observability.integrations.fastapi import LoggingContextMiddleware
+
+        app.add_middleware(LoggingContextMiddleware)
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("LoggingContextMiddleware not attached: %s", exc)
 
     @app.exception_handler(HTTPException)
     async def http_exception_handler(

@@ -822,6 +822,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "mcp" },
+    { name = "observability", extra = ["logfire"] },
     { name = "pydantic" },
     { name = "rich" },
     { name = "typer" },
@@ -850,6 +851,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.0.0" },
     { name = "neo4j", marker = "extra == 'all'", specifier = ">=5.28.0" },
     { name = "neo4j", marker = "extra == 'graph'", specifier = ">=5.28.0" },
+    { name = "observability", extras = ["logfire"], editable = "app/src/observability" },
     { name = "openai", marker = "extra == 'benchmarks'", specifier = ">=1.50.0" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'all'", specifier = ">=3.2" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2" },
@@ -2760,7 +2762,7 @@ wheels = [
 
 [[package]]
 name = "logfire"
-version = "4.32.0"
+version = "4.34.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "executing" },
@@ -2772,9 +2774,9 @@ dependencies = [
     { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/98/64/f927d4f9de1f1371047b9016adba1ec2e08258301708d548d41f86f27772/logfire-4.32.0.tar.gz", hash = "sha256:f1dc9d756a4b28f0483645244aaf3ea8535b8e2ae5a1068442a968ca0c746304", size = 1088575, upload-time = "2026-04-10T19:36:54.172Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/81/a6/6cbd7064d7ab120fbdd72ca1a218b3fa3343a5f1f0733fcfa34d43333aaf/logfire-4.34.0.tar.gz", hash = "sha256:d88bb04f26a5ae0064d36eeb0fca5413599f0e2d068d629bcab25993ff405e25", size = 1144711, upload-time = "2026-05-26T18:09:51.81Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/02/33/81b13e1f2044b5fe0112068a2494526db9cfdf784030a2ea57688279360a/logfire-4.32.0-py3-none-any.whl", hash = "sha256:d9cff51c3c093c4161ece87a65e6ac6e2d862258b62494c30d93d713e9858758", size = 312412, upload-time = "2026-04-10T19:36:50.97Z" },
+    { url = "https://files.pythonhosted.org/packages/de/04/a386debccf1e91575dda55fa07b96f8309fc544833d7eec24b69869278f9/logfire-4.34.0-py3-none-any.whl", hash = "sha256:b9d9fc71aec184b28c29a9a9e280c954a3ea52c399f1d7b95ce82bff6b177364", size = 344385, upload-time = "2026-05-26T18:09:48.436Z" },
 ]
 
 [package.optional-dependencies]
@@ -3553,6 +3555,27 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c2/f3/d86c845465a2723ad7e1e5c36dcd75ddb82898b3f53be47ebd429fb2fa5d/nvidia_nvtx-13.0.85-py3-none-manylinux1_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:4936d1d6780fbe68db454f5e72a42ff64d1fd6397df9f363ae786930fd5c1cd4", size = 148047, upload-time = "2025-09-04T08:29:01.761Z" },
     { url = "https://files.pythonhosted.org/packages/a8/64/3708a90d1ebe202ffdeb7185f878a3c84d15c2b2c31858da2ce0583e2def/nvidia_nvtx-13.0.85-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:cb7780edb6b14107373c835bf8b72e7a178bac7367e23da7acb108f973f157a6", size = 148878, upload-time = "2025-09-04T08:28:53.627Z" },
 ]
+
+[[package]]
+name = "observability"
+version = "0.1.0"
+source = { editable = "app/src/observability" }
+
+[package.optional-dependencies]
+logfire = [
+    { name = "logfire" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "celery", marker = "extra == 'celery'", specifier = ">=5.6.3,<6.0" },
+    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=4.32.1,<5.0" },
+    { name = "loguru", marker = "extra == 'loguru'", specifier = ">=0.7.3" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3,<10.0" },
+    { name = "sentry-sdk", marker = "extra == 'sentry'", specifier = ">=2.43.0,<3.0" },
+    { name = "starlette", marker = "extra == 'fastapi'", specifier = ">=1.0.0,<2.0" },
+]
+provides-extras = ["loguru", "sentry", "logfire", "fastapi", "celery", "dev"]
 
 [[package]]
 name = "obstore"
