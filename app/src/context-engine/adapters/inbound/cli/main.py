@@ -1717,6 +1717,9 @@ def ingest_cmd(
 
 
 def main() -> None:
+    from bootstrap.observability import configure_observability
+
+    configure_observability()
     app()
 
 

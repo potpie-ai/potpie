@@ -15,7 +15,13 @@ dependencies = [
     "typer>=0.15.0",
     "uvicorn[standard]>=0.32.0",
     "pydantic>=2.0",
+    "observability[logfire]",
 ]
+
+[tool.uv.sources]
+# Resolve the in-monorepo observability path-package by relative path so
+# context-engine works standalone (CLI / MCP / HTTP) as well as via root.
+observability = { path = "../observability", editable = true }
 
 [project.optional-dependencies]
 postgres = [
