@@ -1,13 +1,8 @@
-"""Sensitive-data redaction.
+"""Sensitive-data sanitization before logs reach any sink/infra API.
 
-Ported verbatim from app/modules/utils/logger.py SENSITIVE_PATTERNS /
-filter_sensitive_data (already app.*-free). Runs as a logging.Filter so it
-applies to every handler regardless of sink (stdlib-core requirement).
-
-KNOWN GAP (unchanged from the audit, deliberately not silently "fixed" here):
-patterns redact credentials/tokens but NOT emails or arbitrary user IDs. The
-email/PII decision is tracked separately (audit-remediation issue), not in
-this port — porting must not change behavior.
+Runs as a logging.Filter so every handler/sink gets scrubbed messages and
+structured fields. Keep this package app.*-free: the sanitizer only uses local
+regexes and conservative replacements.
 """
 
 from __future__ import annotations
@@ -16,9 +11,34 @@ import logging
 import re
 
 REDACTION = r"\1=***REDACTED***"
+EMAIL_REDACTION = "***REDACTED_EMAIL***"
+PHONE_REDACTION = "***REDACTED_PHONE***"
+PERSON_NAME_REDACTION = r"\1=***REDACTED_NAME***"
+API_KEY_REDACTION = "***REDACTED_API_KEY***"
+CLOUD_KEY_REDACTION = "***REDACTED_CLOUD_KEY***"
 
-# (compiled pattern, replacement) — verbatim port.
+# (compiled pattern, replacement).
 SENSITIVE_PATTERNS: list[tuple[re.Pattern, str]] = [
+    # Cloud provider key shapes that often leak without a key=value prefix.
+    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), CLOUD_KEY_REDACTION),
+    (re.compile(r"\bASIA[0-9A-Z]{16}\b"), CLOUD_KEY_REDACTION),
+    (re.compile(r"\bAIza[0-9A-Za-z_-]{30,45}\b"), CLOUD_KEY_REDACTION),
+    (re.compile(r"\bya29\.[0-9A-Za-z_-]+\b"), CLOUD_KEY_REDACTION),
+    (re.compile(r"\bgh[pousr]_[0-9A-Za-z_]{36,255}\b"), API_KEY_REDACTION),
+    (re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"), API_KEY_REDACTION),
+    (re.compile(r"\bxox[baprs]-[0-9A-Za-z-]{10,}\b"), API_KEY_REDACTION),
+    (re.compile(r"-----BEGIN PRIVATE KEY-----.*?-----END PRIVATE KEY-----",
+                re.DOTALL),
+     "-----BEGIN PRIVATE KEY-----***REDACTED***-----END PRIVATE KEY-----"),
+    # PII shapes.
+    (re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b",
+                re.IGNORECASE),
+     EMAIL_REDACTION),
+    (re.compile(r"\b(?:\+?\d[\d\s().-]{7,}\d)\b"), PHONE_REDACTION),
+    (re.compile(r'\b(name|full_name|first_name|last_name)=["\']?([^"\'\s&]+)',
+                re.IGNORECASE),
+     PERSON_NAME_REDACTION),
+    # Common key=value / JSON / dict secret shapes.
     (re.compile(r'(password|passwd|pwd)=["\']?([^"\'\s&]+)', re.IGNORECASE),
      REDACTION),
     (re.compile(r'(token|access_token|refresh_token|id_token)=["\']?([^"\'\s&]+)',
@@ -29,7 +49,18 @@ SENSITIVE_PATTERNS: list[tuple[re.Pattern, str]] = [
      REDACTION),
     (re.compile(r'(api[_-]?key|apikey)=["\']?([^"\'\s&]+)', re.IGNORECASE),
      REDACTION),
-    (re.compile(r'(auth|authorization)=["\']?([^"\'\s&]+)', re.IGNORECASE),
+    (re.compile(r'(aws_access_key_id|aws_secret_access_key|aws_session_token)'
+                r'=["\']?([^"\'\s&]+)', re.IGNORECASE),
+     REDACTION),
+    (re.compile(r'(azure_account_key|azure_storage_key|accountkey)'
+                r'=["\']?([^"\'\s&;]+)', re.IGNORECASE),
+     REDACTION),
+    (re.compile(r'(private_key|client_email)=["\']?([^"\'\s&]+)',
+                re.IGNORECASE),
+     REDACTION),
+    (re.compile(r'(auth|authorization)=["\']?'
+                r'((?:Bearer|Basic)\s+[^"\'\s&]+|[^"\'\s&]+)',
+                re.IGNORECASE),
      REDACTION),
     (re.compile(r"Bearer\s+([A-Za-z0-9\-._~+/]+=*)", re.IGNORECASE),
      r"Bearer ***REDACTED***"),
@@ -40,23 +71,43 @@ SENSITIVE_PATTERNS: list[tuple[re.Pattern, str]] = [
      r"\1://\2:***REDACTED***@"),
     (re.compile(r"([?&]code=)([A-Za-z0-9\-._~]{20,100})([&\s]|$)", re.IGNORECASE),
      r"\1***REDACTED***\3"),
-    (re.compile(r'("(?:password|token|secret|api_key)"\s*:\s*)"([^"]+)"',
+    (re.compile(r'("(?:password|token|secret|api_key|apiKey|private_key|'
+                r'client_email|aws_access_key_id|aws_secret_access_key|'
+                r'aws_session_token|azure_account_key|account_key)"\s*:\s*)"([^"]+)"',
                 re.IGNORECASE),
      r'\1"***REDACTED***"'),
-    (re.compile(r"('(?:password|token|secret|api_key)'\s*:\s*)'([^']+)'",
+    (re.compile(r"('(?:password|token|secret|api_key|apiKey|private_key|"
+                r"client_email|aws_access_key_id|aws_secret_access_key|"
+                r"aws_session_token|azure_account_key|account_key)'\s*:\s*)'([^']+)'",
                 re.IGNORECASE),
      r"\1'***REDACTED***'"),
 ]
 
 
-def redact(text: str) -> str:
-    """Scrub sensitive data from a string. Non-strings pass through unchanged."""
+def sanitize_log_text(text: str) -> str:
+    """Scrub sensitive data from log text before it reaches infra sinks."""
     if not isinstance(text, str):
         return text
     out = text
     for pattern, replacement in SENSITIVE_PATTERNS:
         out = pattern.sub(replacement, out)
     return out
+
+
+def redact(text: str) -> str:
+    """Backward-compatible alias for sanitize_log_text()."""
+    return sanitize_log_text(text)
+
+
+def sanitize_log_value(value):
+    """Scrub log values recursively before they reach infra sinks."""
+    if isinstance(value, str):
+        return sanitize_log_text(value)
+    if isinstance(value, dict):
+        return {k: sanitize_log_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return type(value)(sanitize_log_value(v) for v in value)
+    return value
 
 
 class RedactionFilter(logging.Filter):
@@ -76,8 +127,5 @@ class RedactionFilter(logging.Filter):
         for attr in ("obs_fields", "obs_context"):
             data = getattr(record, attr, None)
             if isinstance(data, dict):
-                setattr(record, attr, {
-                    k: (redact(v) if isinstance(v, str) else v)
-                    for k, v in data.items()
-                })
+                setattr(record, attr, sanitize_log_value(data))
         return True

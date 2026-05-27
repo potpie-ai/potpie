@@ -90,9 +90,18 @@ def reap_stale_batches(
                 batch.status,
                 batch.attempt_count,
                 batch.claimed_at,
-             status=batch.id, attempt=batch.pot_id, claimed_at=batch.status, batch_attempt_count=batch.attempt_count, batch_claimed_at=batch.claimed_at)
+                batch_id=batch.id,
+                pot_id=batch.pot_id,
+                status=batch.status,
+                attempt=batch.attempt_count,
+                claimed_at=batch.claimed_at,
+            )
         except Exception:
-            logger.exception("reap_stale_batches: failed to reap batch %s", batch.id, batch_id=batch.id)
+            logger.exception(
+                "reap_stale_batches: failed to reap batch %s",
+                batch.id,
+                batch_id=batch.id,
+            )
             errors += 1
 
     return ReapOutcome(

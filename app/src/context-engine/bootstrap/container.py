@@ -7,11 +7,6 @@ from typing import Callable
 
 from sqlalchemy.orm import Session
 
-from adapters.outbound.connectors.github import (
-    GitHubConnector,
-    GitHubReadPort,
-    PyGithubSourceControl,
-)
 from adapters.outbound.connectors.notion import NotionConnector
 from adapters.outbound.graphiti.context_graph import GraphitiContextGraphAdapter
 from adapters.outbound.reconciliation.context_graph_tools import (
@@ -400,6 +395,12 @@ def build_container_with_github_token(
     Hosts that need Linear (or any other source) register their connector
     onto the returned ``container.connectors`` after construction.
     """
+    from adapters.outbound.connectors.github import (
+        GitHubConnector,
+        GitHubReadPort,
+        PyGithubSourceControl,
+    )
+
     try:
         from github import Auth, Github
 
