@@ -102,3 +102,5 @@ def test_resolve_cli_pot_ref_uuid_normalizes() -> None:
     got, err = cs.resolve_cli_pot_ref(s)
     assert err == ""
     assert got == "550e8400-e29b-41d4-a716-446655440000"
+
+

@@ -392,3 +392,5 @@ def workspace_setup_banner(project_id: str, conversation_id: str | None) -> str:
         derived = f"agent/edits-{conversation_id[:8].replace('/', '-')}"
         return f"Setting up workspace for {repo} on {derived} (from {base})…"
     return f"Setting up workspace for {repo} (from {base})…"
+
+

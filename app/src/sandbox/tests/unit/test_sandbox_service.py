@@ -217,3 +217,4 @@ async def test_json_store_round_trips_workspace(tmp_path: Path) -> None:
     assert found is not None
     assert found.id == workspace.id
     assert found.location.local_path == workspace.location.local_path
+

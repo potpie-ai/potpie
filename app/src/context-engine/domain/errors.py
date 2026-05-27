@@ -44,3 +44,4 @@ class ReconciliationPlanValidationError(ContextEngineError):
 
 class ReconciliationApplyError(ContextEngineError):
     """Deterministic apply step failed after validation."""
+

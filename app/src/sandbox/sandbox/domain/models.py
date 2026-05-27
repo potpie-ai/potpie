@@ -386,3 +386,4 @@ class RemoteAuth:
 
     token: str = field(repr=False)
     kind: str = "env"
+

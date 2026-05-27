@@ -391,3 +391,4 @@ def _validate_invalidations(items: list[InvalidationOp]) -> list[str]:
                     f"invalidation target_edge has non-canonical edge_type: {edge_type!r}"
                 )
     return errors
+

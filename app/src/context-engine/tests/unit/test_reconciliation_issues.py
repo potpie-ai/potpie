@@ -47,3 +47,4 @@ def test_validation_lines_to_issues_order() -> None:
     assert len(rows) == 2
     assert rows[0]["entity"] == "adr:0042"
     assert rows[1]["entity"] == "technology:mongodb"
+

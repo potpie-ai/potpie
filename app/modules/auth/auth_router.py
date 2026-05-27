@@ -1,4 +1,3 @@
-import hashlib
 import logging
 import os
 from dataclasses import dataclass
@@ -133,7 +132,7 @@ def _mask_email(email: str | None) -> str | None:
 def mask_identifier(value: object | None) -> str | None:
     if value is None:
         return None
-    return hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:8]
+    return "[REDACTED]"
 
 
 def _json_error_response(

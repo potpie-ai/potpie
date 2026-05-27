@@ -10,3 +10,4 @@ class LockManager(Protocol):
     @asynccontextmanager
     async def lock(self, key: str) -> AsyncIterator[None]:
         ...
+

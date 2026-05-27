@@ -75,3 +75,4 @@ class PullRequestFailed(GitPlatformError):
 
 class GitPlatformNotConfigured(GitPlatformError):
     """No `GitPlatformProvider` is wired into the service."""
+

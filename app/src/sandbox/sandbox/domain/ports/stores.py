@@ -62,3 +62,4 @@ class RepoCacheStore(Protocol):
 
 class SandboxStore(WorkspaceStore, RuntimeStore, RepoCacheStore, Protocol):
     """Combined store used by SandboxService."""
+

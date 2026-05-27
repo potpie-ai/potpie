@@ -452,3 +452,4 @@ class CodeGraphService:
         with self.driver.session() as session:
             result = session.run(query)
             return [record.data() for record in result]
+
