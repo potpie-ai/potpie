@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from application.use_cases.process_batch import process_batch
 from bootstrap.container import ContextEngineContainer
+from observability import log_context
 
 
 def handle_process_batch(
@@ -41,17 +42,21 @@ def handle_process_batch(
     batch = batches_repo.claim_batch_by_id(batch_id)
     if batch is None:
         return {"status": "skipped", "reason": "not_pending", "batch_id": batch_id}
-    outcome = process_batch(
-        batch=batch,
-        agent=container.reconciliation_agent,
-        batches=batches_repo,
-        reco_ledger=container.reconciliation_ledger(db),
-        checkpoints=container.agent_checkpoint_store(db),
-        pots=container.pots,
-        policy=container.policy(),
-        stream_publisher=container.event_stream_publisher,
-        execution_log=container.agent_execution_log(db),
-    )
+    # Bind batch_id / pot_id at the job boundary so every log emitted by
+    # process_batch and the reconciliation agent it drives carries them as
+    # structured fields. Single seam, no body changes downstream.
+    with log_context(batch_id=batch.id, pot_id=batch.pot_id):
+        outcome = process_batch(
+            batch=batch,
+            agent=container.reconciliation_agent,
+            batches=batches_repo,
+            reco_ledger=container.reconciliation_ledger(db),
+            checkpoints=container.agent_checkpoint_store(db),
+            pots=container.pots,
+            policy=container.policy(),
+            stream_publisher=container.event_stream_publisher,
+            execution_log=container.agent_execution_log(db),
+        )
     return {
         "status": "ok" if outcome.ok else "failed",
         "batch_id": outcome.batch_id,
