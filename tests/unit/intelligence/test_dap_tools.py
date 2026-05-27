@@ -146,6 +146,23 @@ class TestStartSessionResultSchema:
         assert r.message is None
 
 
+class TestStartDebugSessionInputSchema:
+    def test_args_is_launch_config_object(self):
+        from app.modules.intelligence.tools.dap_tools import StartDebugSessionInput
+
+        inp = StartDebugSessionInput(
+            program="/a.py",
+            args={"args": ["--flag"], "stopOnEntry": True},
+        )
+        assert inp.args == {"args": ["--flag"], "stopOnEntry": True}
+
+    def test_args_rejects_raw_list_in_tool_schema(self):
+        from app.modules.intelligence.tools.dap_tools import StartDebugSessionInput
+
+        with pytest.raises(ValidationError):
+            StartDebugSessionInput(program="/a.py", args=["--flag"])  # type: ignore[arg-type]
+
+
 class TestSetBreakpointsResultSchema:
     def test_round_trip(self):
         from app.modules.intelligence.tools.dap_schemas import SetBreakpointsResult
@@ -280,7 +297,8 @@ class TestDapErrorSchema:
 
     @pytest.mark.parametrize("etype", [
         "no_tunnel", "unknown_route", "timeout",
-        "tunnel_unreachable", "no_user_id", "unknown_error",
+        "tunnel_unreachable", "backend_socket_error", "extension_error",
+        "no_user_id", "unknown_error",
     ])
     def test_all_valid_error_types(self, etype):
         from app.modules.intelligence.tools.dap_schemas import DapError
@@ -303,6 +321,26 @@ class TestMakeDapError:
         assert err["error_type"] == "no_user_id"
         assert "user" in err["message"].lower()
         assert err["message"] != _NO_TUNNEL_MSG
+
+    def test_dap_error_backend_loop_mismatch_not_reported_as_tunnel_drop(self):
+        from app.modules.intelligence.tools.dap_tools import _make_dap_error
+
+        err = _make_dap_error(error_type="backend_loop_mismatch", context="snapshot").model_dump(mode="json")
+
+        assert err["error"] == "backend_loop_mismatch"
+        assert err["error_type"] == "backend_socket_error"
+        assert "not evidence" in err["message"]
+        assert "disconnected" in err["message"]
+
+    def test_dap_error_extension_error_not_reported_as_tunnel_drop(self):
+        from app.modules.intelligence.tools.dap_tools import _make_dap_error
+
+        err = _make_dap_error(error_type="debug adapter not available", context="start_session").model_dump(mode="json")
+
+        assert err["error"] == "debug adapter not available"
+        assert err["error_type"] == "extension_error"
+        assert "debug adapter" in err["message"]
+        assert "Reconnect and retry" not in err["message"]
 
 
 # ===========================================================================
@@ -498,6 +536,109 @@ class TestRouteDapCommand:
         assert result is None
         assert err == "unknown_route"
 
+    def test_socket_route_hyphenizes_method_endpoint(self):
+        from unittest.mock import patch as _patch
+        from app.modules.intelligence.tools.local_search_tools.tunnel_utils import route_dap_command
+
+        mock_svc = MagicMock()
+        mock_svc.get_tunnel_url.return_value = "socket://workspace-1"
+        mock_svc.get_workspace_id.return_value = "workspace-1"
+
+        with _patch(
+            "app.modules.tunnel.tunnel_service.get_tunnel_service",
+            return_value=mock_svc,
+        ), _patch(
+            "app.modules.intelligence.tools.code_changes_manager._get_tunnel_url",
+            return_value=None,
+        ), _patch(
+            "app.modules.intelligence.tools.code_changes_manager._get_repository",
+            return_value=None,
+        ), _patch(
+            "app.modules.intelligence.tools.code_changes_manager._get_branch",
+            return_value=None,
+        ), _patch(
+            "app.modules.intelligence.tools.local_search_tools.tunnel_utils._execute_via_socket",
+            return_value={"session_id": "s1", "status": "paused"},
+        ) as mock_socket:
+            result, err = route_dap_command(
+                method="continue_execution",
+                payload={},
+                user_id="u1",
+                conversation_id="c1",
+            )
+
+        assert err is None
+        assert result["session_id"] == "s1"
+        assert mock_socket.call_args.kwargs["endpoint"] == "/api/debug/continue-execution"
+
+    def test_socket_timeout_returns_timeout_code(self):
+        from unittest.mock import patch as _patch
+        from app.modules.intelligence.tools.local_search_tools.tunnel_utils import route_dap_command
+
+        mock_svc = MagicMock()
+        mock_svc.get_tunnel_url.return_value = "socket://workspace-1"
+        mock_svc.get_workspace_id.return_value = "workspace-1"
+
+        with _patch(
+            "app.modules.tunnel.tunnel_service.get_tunnel_service",
+            return_value=mock_svc,
+        ), _patch(
+            "app.modules.intelligence.tools.code_changes_manager._get_tunnel_url",
+            return_value=None,
+        ), _patch(
+            "app.modules.intelligence.tools.code_changes_manager._get_repository",
+            return_value=None,
+        ), _patch(
+            "app.modules.intelligence.tools.code_changes_manager._get_branch",
+            return_value=None,
+        ), _patch(
+            "app.modules.intelligence.tools.local_search_tools.tunnel_utils._execute_via_socket",
+            return_value=(None, "timeout"),
+        ):
+            result, err = route_dap_command(
+                method="start_session",
+                payload={"program": "a.py"},
+                user_id="u1",
+                conversation_id="c1",
+            )
+
+        assert result is None
+        assert err == "timeout"
+
+    def test_socket_extension_error_is_preserved(self):
+        from unittest.mock import patch as _patch
+        from app.modules.intelligence.tools.local_search_tools.tunnel_utils import route_dap_command
+
+        mock_svc = MagicMock()
+        mock_svc.get_tunnel_url.return_value = "socket://workspace-1"
+        mock_svc.get_workspace_id.return_value = "workspace-1"
+
+        with _patch(
+            "app.modules.tunnel.tunnel_service.get_tunnel_service",
+            return_value=mock_svc,
+        ), _patch(
+            "app.modules.intelligence.tools.code_changes_manager._get_tunnel_url",
+            return_value=None,
+        ), _patch(
+            "app.modules.intelligence.tools.code_changes_manager._get_repository",
+            return_value=None,
+        ), _patch(
+            "app.modules.intelligence.tools.code_changes_manager._get_branch",
+            return_value=None,
+        ), _patch(
+            "app.modules.intelligence.tools.local_search_tools.tunnel_utils._execute_via_socket",
+            return_value=(None, "debug adapter not available"),
+        ):
+            result, err = route_dap_command(
+                method="start_session",
+                payload={"program": "a.py"},
+                user_id="u1",
+                conversation_id="c1",
+            )
+
+        assert result is None
+        assert err == "debug adapter not available"
+
 
 # ===========================================================================
 # A3.3 — Per-tool tests
@@ -534,7 +675,13 @@ class TestStartDebugSession:
 
         with patch(_DISPATCH, return_value=(None, "no_tunnel")) as mock_d, \
              patch(_CTX, return_value=_CTX_RETURN):
-            start_debug_session(program="/a.py", language="python", mode="launch", port=5678)
+            start_debug_session(
+                program="/a.py",
+                language="python",
+                mode="launch",
+                port=5678,
+                args={"stopOnEntry": True},
+            )
 
         mock_d.assert_called_once()
         kwargs = mock_d.call_args.kwargs if mock_d.call_args.kwargs else {}
@@ -546,6 +693,17 @@ class TestStartDebugSession:
         payload_val = kwargs.get("payload") or (args[1] if len(args) > 1 else None)
         assert payload_val["program"] == "/a.py"
         assert payload_val["port"] == 5678
+        assert payload_val["args"] == {"stopOnEntry": True}
+
+    def test_legacy_argv_list_is_wrapped_as_launch_config_args(self):
+        from app.modules.intelligence.tools.dap_tools import start_debug_session
+
+        with patch(_DISPATCH, return_value=(None, "no_tunnel")) as mock_d, \
+             patch(_CTX, return_value=_CTX_RETURN):
+            start_debug_session(program="/a.py", args=["--flag"])
+
+        payload = mock_d.call_args.kwargs["payload"]
+        assert payload["args"] == {"args": ["--flag"]}
 
     def test_does_not_raise_on_exception(self):
         from app.modules.intelligence.tools.dap_tools import start_debug_session
@@ -727,6 +885,14 @@ class TestEvaluateExpression:
         assert result["type"] == "int"
         assert result["expression"] == "x+1"
 
+    def test_preserves_falsy_extension_result_values(self):
+        from app.modules.intelligence.tools.dap_tools import evaluate_expression
+
+        with patch(_DISPATCH, return_value=({"session_id": "s1", "expression": "x", "result": 0}, None)), \
+             patch(_CTX, return_value=_CTX_RETURN):
+            result = evaluate_expression(expression="x")
+        assert result["value"] == "0"
+
     def test_no_tunnel_returns_dap_error(self):
         from app.modules.intelligence.tools.dap_tools import evaluate_expression
 
@@ -840,6 +1006,102 @@ class TestStopDebugSession:
 
 
 # ===========================================================================
+# A3.6 — Extension contract parsing with stubbed responder shapes
+# ===========================================================================
+
+
+class TestExtensionContractShapes:
+    def test_each_dap_tool_parses_extension_json_shapes(self):
+        import app.modules.intelligence.tools.dap_tools as dap
+
+        def fake_dispatch(method, payload, user_id, conversation_id=None, timeout=30.0):
+            assert user_id == _CTX_RETURN[0]
+            if method == "start_session":
+                return {
+                    "session_id": "sess-1",
+                    "program": payload["program"],
+                    "language": payload["language"],
+                    "status": "initialized",
+                }, None
+            if method == "set_breakpoints":
+                return {
+                    "session_id": "sess-1",
+                    "file": payload["file"],
+                    "breakpoints": [{"line": 25, "verified": True}],
+                }, None
+            if method in {"snapshot", "step_over", "step_into", "step_out"}:
+                return {
+                    "session_id": "sess-1",
+                    "status": "paused",
+                    "paused_at": {"file": "/repo/app.py", "line": 25, "function": "main"},
+                    "call_stack": [
+                        {"frame_id": 1, "function": "main", "file": "/repo/app.py", "line": 25}
+                    ],
+                    "locals": {"x": "10", "y": "20"},
+                    "expression_results": [
+                        {"expression": "x + y", "result": "30"}
+                    ],
+                }, None
+            if method == "continue_execution":
+                return {"session_id": "sess-1", "status": "running"}, None
+            if method == "evaluate":
+                return {
+                    "session_id": "sess-1",
+                    "expression": payload["expression"],
+                    "result": "30",
+                }, None
+            if method == "list_sessions":
+                return {
+                    "sessions": [
+                        {
+                            "session_id": "sess-1",
+                            "program": "/repo/app.py",
+                            "language": "python",
+                            "status": "paused",
+                            "createdAt": "2026-05-21T00:00:00Z",
+                        }
+                    ]
+                }, None
+            if method == "stop_session":
+                return {"session_id": "sess-1", "stopped": True}, None
+            raise AssertionError(f"Unexpected method: {method}")
+
+        with patch(_DISPATCH, side_effect=fake_dispatch), patch(_CTX, return_value=_CTX_RETURN):
+            start = dap.start_debug_session(
+                program="/repo/app.py",
+                language="python",
+                args={"stopOnEntry": True},
+            )
+            bps = dap.set_breakpoints(file="/repo/app.py", lines=[25])
+            snapshot = dap.take_debug_snapshot(
+                session_id="sess-1",
+                expressions=["x + y"],
+                wait_for_stop=True,
+            )
+            step = dap.step_over(session_id="sess-1", expressions=["x + y"])
+            continued = dap.continue_execution(session_id="sess-1")
+            evaluated = dap.evaluate_expression(
+                expression="x + y",
+                session_id="sess-1",
+                frame_id=1,
+            )
+            sessions = dap.list_debug_sessions()
+            stopped = dap.stop_debug_session(session_id="sess-1")
+
+        assert start["status"] == "initialized"
+        assert bps["breakpoints"][0]["verified"] is True
+        assert snapshot["call_stack"][0]["name"] == "main"
+        assert snapshot["call_stack"][0]["source_path"] == "/repo/app.py"
+        assert snapshot["locals"] == {"x": "10", "y": "20"}
+        assert snapshot["expression_results"][0]["result"] == "30"
+        assert step["expression_results"][0]["expression"] == "x + y"
+        assert continued["status"] == "running"
+        assert evaluated["value"] == "30"
+        assert sessions["sessions"][0]["created_at"] == "2026-05-21T00:00:00Z"
+        assert stopped["status"] == "terminated"
+
+
+# ===========================================================================
 # A3.5 — Registration checks (source text inspection, same pattern as A4 tests)
 # ===========================================================================
 
@@ -875,36 +1137,17 @@ class TestRegistration:
             )
 
     def test_all_dap_tools_in_debug_agent_get_tools(self):
-        import ast
-        import pathlib
-
-        src_path = (
-            pathlib.Path(__file__).parents[3]
-            / "app"
-            / "modules"
-            / "intelligence"
-            / "agents"
-            / "chat_agents"
-            / "system_agents"
-            / "debug_agent.py"
+        from app.modules.intelligence.agents.chat_agents.system_agents.debug_agent import (
+            DEBUG_AGENT_BASE_TOOLS,
+            DEBUG_AGENT_DAP_TOOLS,
+            DEBUG_AGENT_TERMINAL_TOOLS,
         )
-        source = src_path.read_text(encoding="utf-8")
-        tree = ast.parse(source)
 
-        tool_list: list[str] = []
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "get_tools"
-                and node.args
-                and isinstance(node.args[0], ast.List)
-            ):
-                for elt in node.args[0].elts:
-                    if isinstance(elt, ast.Constant):
-                        tool_list.append(elt.value)
-
-        assert tool_list, "Could not find get_tools([...]) call in debug_agent.py"
+        tool_list = (
+            list(DEBUG_AGENT_BASE_TOOLS)
+            + list(DEBUG_AGENT_DAP_TOOLS)
+            + list(DEBUG_AGENT_TERMINAL_TOOLS)
+        )
 
         expected_keys = [
             "start_debug_session",
@@ -920,7 +1163,7 @@ class TestRegistration:
         ]
         for key in expected_keys:
             assert key in tool_list, (
-                f"'{key}' not found in DebugAgent's get_tools([...]) call. Found: {tool_list}"
+                f"'{key}' not found in DebugAgent's tool allow-list. Found: {tool_list}"
             )
 
     def test_dap_tools_not_in_embedding_dependent_tools(self):

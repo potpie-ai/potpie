@@ -80,7 +80,7 @@ class QueryContextGraphInput(BaseModel):
 
 _STUB_MESSAGE = (
     "context graph service not yet wired; agent should fall back to "
-    "ask_knowledge_graph_queries / search_text / file structure tools"
+    "ask_knowledge_graph_queries / search_text / search_bash / file structure tools"
 )
 
 
@@ -131,8 +131,8 @@ def query_context_graph_tool() -> StructuredTool:
             "Returns a ranked list of file/symbol/snippet results with relevance scores. "
             "IMPORTANT: the service is not yet wired — the tool returns available=False "
             "today. When available=False, fall back to ask_knowledge_graph_queries, "
-            "search_text, get_code_file_structure, or fetch_file as directed by the "
-            "discovery priority order."
+            "search_text, search_bash, get_code_file_structure, or fetch_file as "
+            "directed by the discovery priority order."
         ),
         args_schema=QueryContextGraphInput,
     )

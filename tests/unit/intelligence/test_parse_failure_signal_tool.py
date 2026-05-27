@@ -13,7 +13,6 @@ Tests cover all supported failure signal formats:
 import pytest
 
 from app.modules.intelligence.tools.parse_failure_signal_tool import (
-    ParseFailureSignalInput,
     parse_failure_signal,
 )
 

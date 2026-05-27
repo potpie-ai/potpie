@@ -22,6 +22,54 @@ _SOCKET_MAX_RETRIES = int(os.getenv("SOCKET_MAX_RETRIES", "2"))
 _SOCKET_RETRY_DELAY_SECS = float(os.getenv("SOCKET_RETRY_DELAY_SECS", "1.0"))
 
 
+def _normalize_socket_error(error_type: Optional[str]) -> Optional[str]:
+    """Map timeout-shaped socket/extension errors to the route-level timeout code."""
+    if not error_type:
+        return error_type
+    normalized = str(error_type).strip()
+    lowered = normalized.lower()
+    if "timeout" in lowered or "timed out" in lowered:
+        return "timeout"
+    return normalized
+
+
+def _route_socket_error(error_type: Optional[str]) -> str:
+    """Preserve extension/debug errors while classifying real socket failures."""
+    normalized = _normalize_socket_error(error_type)
+    if not normalized:
+        return "unknown_error"
+    if normalized in {
+        "timeout",
+        "no_tunnel",
+        "unknown_route",
+        "tunnel_unreachable",
+        "backend_loop_mismatch",
+    }:
+        return normalized
+
+    lowered = normalized.lower()
+    if (
+        normalized == "emit_failed"
+        or normalized == "connection_error"
+        or "workspace offline" in lowered
+        or "no socket connected" in lowered
+        or "redis unavailable" in lowered
+    ):
+        return "tunnel_unreachable"
+
+    return normalized
+
+
+def _socket_result(
+    result: Optional[Dict[str, Any]],
+    error_type: Optional[str],
+    return_error: bool,
+):
+    if return_error:
+        return result, _normalize_socket_error(error_type)
+    return result
+
+
 def _execute_via_socket(
     user_id: str,
     conversation_id: Optional[str],
@@ -31,7 +79,8 @@ def _execute_via_socket(
     repository: Optional[str] = None,
     branch: Optional[str] = None,
     timeout: float = 120.0,
-) -> Optional[Dict[str, Any]]:
+    return_error: bool = False,
+):
     """Execute a tool call via Socket.IO with simple retry on transient failures.
 
     Returns the unwrapped result dict on success, or None if all attempts fail.
@@ -43,13 +92,16 @@ def _execute_via_socket(
 
     last_error: Optional[str] = None
     for attempt in range(1, _SOCKET_MAX_RETRIES + 2):  # +2: initial attempt + retries
+        # Re-resolve tunnel on retries so we don't keep using a stale socket:// URL
+        # after invalidate_workspace_socket cleared a dead registration.
+        resolved_tunnel_url = tunnel_url if attempt == 1 else None
         try:
             out = get_tunnel_service().execute_tool_call_with_fallback(
                 user_id=user_id,
                 conversation_id=conversation_id,
                 endpoint=endpoint,
                 payload=payload,
-                tunnel_url=tunnel_url,
+                tunnel_url=resolved_tunnel_url,
                 repository=repository,
                 branch=branch,
                 timeout=timeout,
@@ -57,37 +109,43 @@ def _execute_via_socket(
             # Socket tool_response shape: { success, result?, error? }
             if isinstance(out, dict) and "success" in out:
                 if out.get("success") and "result" in out:
-                    return out["result"]
-                return None
-            return out
+                    return _socket_result(out["result"], None, return_error)
+                return _socket_result(
+                    None,
+                    out.get("error") or "tool_error",
+                    return_error,
+                )
+            return _socket_result(out, None, return_error)
         except TunnelConnectionError as exc:
-            last_error = exc.last_error or str(exc)
+            last_error = _normalize_socket_error(exc.last_error or str(exc))
             # Do NOT retry on timeout: the extension may have completed the operation
             # and the response was lost. Retrying would emit a duplicate tool_call,
             # causing double execution (e.g. replace_in_file runs twice, second fails).
             if last_error == "timeout":
                 logger.warning(
-                    "[_execute_via_socket] Attempt %d failed (timeout) — not retrying to avoid duplicate execution",
-                    attempt,
+                    f"[_execute_via_socket] Attempt {attempt} failed (timeout) — not retrying to avoid duplicate execution"
                 )
-                return None
+                return _socket_result(None, "timeout", return_error)
+            if last_error == "emit_failed" and attempt <= _SOCKET_MAX_RETRIES:
+                delay = _SOCKET_RETRY_DELAY_SECS * attempt
+                logger.warning(
+                    f"[_execute_via_socket] Attempt {attempt}/{_SOCKET_MAX_RETRIES + 1} emit_failed — "
+                    f"retrying in {delay:.1f}s after cache invalidation"
+                )
+                time.sleep(delay)
+                continue
             if attempt <= _SOCKET_MAX_RETRIES:
                 delay = _SOCKET_RETRY_DELAY_SECS * attempt
                 logger.warning(
-                    "[_execute_via_socket] Attempt %d/%d failed (%s) — retrying in %.1fs",
-                    attempt,
-                    _SOCKET_MAX_RETRIES + 1,
-                    last_error,
-                    delay,
+                    f"[_execute_via_socket] Attempt {attempt}/{_SOCKET_MAX_RETRIES + 1} failed ({last_error}) — "
+                    f"retrying in {delay:.1f}s"
                 )
                 time.sleep(delay)
             else:
                 logger.warning(
-                    "[_execute_via_socket] All %d attempts failed (last: %s)",
-                    _SOCKET_MAX_RETRIES + 1,
-                    last_error,
+                    f"[_execute_via_socket] All {_SOCKET_MAX_RETRIES + 1} attempts failed (last: {last_error})"
                 )
-    return None
+    return _socket_result(None, last_error, return_error)
 
 
 def _curl_equivalent_terminal_execute(
@@ -642,7 +700,6 @@ def format_search_result(operation: str, result: dict) -> str:
 
         if exit_code == 0 and output:
             # Success with output
-            lines = output.strip().split("\n")
             formatted = f"📋 **Bash command result** (`{command}`):\n\n"
             formatted += f"```\n{output[:5000]}\n```\n"  # Limit to 5k chars
             if len(output) > 5000:
@@ -785,9 +842,10 @@ def route_terminal_command(
         request_timeout_sec = float(timeout) / 1000 + 5
         if tunnel_url and tunnel_url.startswith(SOCKET_TUNNEL_PREFIX):
             logger.info(
-                f"[Tunnel Routing] 🚀 Routing terminal command to LocalServer via Socket.IO (timeout={request_timeout_sec}s)"
-            , request_timeout_sec=request_timeout_sec)
-            result = _execute_via_socket(
+                f"[Tunnel Routing] 🚀 Routing terminal command to LocalServer via Socket.IO (timeout={request_timeout_sec}s)",
+                request_timeout_sec=request_timeout_sec,
+            )
+            socket_call = _execute_via_socket(
                 user_id=user_id,
                 conversation_id=conversation_id,
                 endpoint="/api/terminal/execute",
@@ -796,11 +854,26 @@ def route_terminal_command(
                 repository=repository,
                 branch=branch,
                 timeout=request_timeout_sec,
+                return_error=True,
             )
+            if isinstance(socket_call, tuple):
+                result, socket_error = socket_call
+            else:
+                result, socket_error = socket_call, None
             if result is not None:
                 logger.info("[Tunnel Routing] ✅ Terminal command succeeded")
                 return result, None
-            return None, "tunnel_unreachable"
+            socket_error = _normalize_socket_error(socket_error)
+            if socket_error == "timeout":
+                logger.info(
+                    "[Tunnel Routing] Terminal command timed out waiting for tool_response; socket registration was not invalidated"
+                )
+                return None, "timeout"
+            route_error = _route_socket_error(socket_error)
+            logger.info(
+                f"[Tunnel Routing] Terminal socket call returned None (error={socket_error}, route_error={route_error})"
+            )
+            return None, route_error
 
         # Legacy HTTP path (e.g. direct local URL)
         base = (tunnel_url or "").rstrip("/")
@@ -968,8 +1041,7 @@ def route_workspace_debug_context(
         branch = _get_branch()
         if context_tunnel_url:
             logger.info(
-                "[route_workspace_debug_context] Using fresh tunnel_url from context: %s",
-                context_tunnel_url,
+                f"[route_workspace_debug_context] Using fresh tunnel_url from context: {context_tunnel_url}"
             )
         tunnel_service = get_tunnel_service()
         tunnel_url = tunnel_service.get_tunnel_url(
@@ -990,8 +1062,7 @@ def route_workspace_debug_context(
                 )
             else:
                 logger.info(
-                    "[route_workspace_debug_context] Workspace socket offline for workspace_id=%s",
-                    workspace_id,
+                    f"[route_workspace_debug_context] Workspace socket offline for workspace_id={workspace_id}"
                 )
             return None, "no_tunnel"
 
@@ -1003,10 +1074,9 @@ def route_workspace_debug_context(
 
         if tunnel_url.startswith(SOCKET_TUNNEL_PREFIX):
             logger.info(
-                "[route_workspace_debug_context] Routing workspace.debug_context via Socket.IO (timeout=%.1fs)",
-                timeout,
+                f"[route_workspace_debug_context] Routing workspace.debug_context via Socket.IO (timeout={timeout:.1f}s)"
             )
-            result = _execute_via_socket(
+            socket_call = _execute_via_socket(
                 user_id=user_id,
                 conversation_id=conversation_id,
                 endpoint="/api/workspace/debug-context",
@@ -1015,7 +1085,12 @@ def route_workspace_debug_context(
                 repository=repository,
                 branch=branch,
                 timeout=timeout,
+                return_error=True,
             )
+            if isinstance(socket_call, tuple):
+                result, socket_error = socket_call
+            else:
+                result, socket_error = socket_call, None
             if result is not None:
                 # Check whether the extension signalled an unknown-route error
                 # (some implementations return a structured error in the result body
@@ -1026,16 +1101,21 @@ def route_workspace_debug_context(
                     "route_not_found",
                 ):
                     logger.info(
-                        "[route_workspace_debug_context] Extension returned unknown-route error: %s",
-                        result.get("error"),
+                        f"[route_workspace_debug_context] Extension returned unknown-route error: {result.get('error')}"
                     )
                     return None, "unknown_route"
                 logger.info("[route_workspace_debug_context] RPC succeeded")
                 return result, None
+            socket_error = _normalize_socket_error(socket_error)
+            if socket_error == "timeout":
+                logger.info(
+                    "[route_workspace_debug_context] RPC timed out waiting for tool_response; socket registration was not invalidated"
+                )
+                return None, "timeout"
             logger.info(
-                "[route_workspace_debug_context] Socket call returned None — tunnel unreachable or extension did not respond"
+                f"[route_workspace_debug_context] Socket call returned None (error={socket_error})"
             )
-            return None, "tunnel_unreachable"
+            return None, _route_socket_error(socket_error)
 
         # Legacy HTTP path (direct local URL without socket prefix)
         import httpx
@@ -1043,9 +1123,7 @@ def route_workspace_debug_context(
         base = tunnel_url.rstrip("/")
         url = f"{base}/api/workspace/debug-context"
         logger.info(
-            "[route_workspace_debug_context] Routing via HTTP: %s (timeout=%.1fs)",
-            url,
-            timeout,
+            f"[route_workspace_debug_context] Routing via HTTP: {url} (timeout={timeout:.1f}s)"
         )
         try:
             with httpx.Client(timeout=timeout) as client:
@@ -1060,9 +1138,7 @@ def route_workspace_debug_context(
             )
             return None, "timeout"
         except httpx.ConnectError as e:
-            logger.warning(
-                "[route_workspace_debug_context] HTTP connect failed: %s", e
-            )
+            logger.warning(f"[route_workspace_debug_context] HTTP connect failed: {e}")
             return None, "tunnel_unreachable"
         if response.status_code == 404:
             logger.info(
@@ -1074,16 +1150,12 @@ def route_workspace_debug_context(
             logger.info("[route_workspace_debug_context] HTTP RPC succeeded")
             return result, None
         logger.warning(
-            "[route_workspace_debug_context] HTTP %s: %s",
-            response.status_code,
-            response.text[:300],
+            f"[route_workspace_debug_context] HTTP {response.status_code}: {response.text[:300]}"
         )
         return None, "tunnel_unreachable"
 
     except Exception as e:
-        logger.exception(
-            "[route_workspace_debug_context] Unexpected error: %s", e
-        )
+        logger.exception(f"[route_workspace_debug_context] Unexpected error: {e}")
         return None, "unknown_error"
 
 
@@ -1145,8 +1217,7 @@ def route_dap_command(
         branch = _get_branch()
         if context_tunnel_url:
             logger.info(
-                "[route_dap_command] Using fresh tunnel_url from context: %s",
-                context_tunnel_url,
+                f"[route_dap_command] Using fresh tunnel_url from context: {context_tunnel_url}"
             )
         tunnel_service = get_tunnel_service()
         tunnel_url = tunnel_service.get_tunnel_url(
@@ -1167,8 +1238,7 @@ def route_dap_command(
                 )
             else:
                 logger.info(
-                    "[route_dap_command] Workspace socket offline for workspace_id=%s",
-                    workspace_id,
+                    f"[route_dap_command] Workspace socket offline for workspace_id={workspace_id}"
                 )
             return None, "no_tunnel"
 
@@ -1184,11 +1254,9 @@ def route_dap_command(
             # Endpoint string passed to the socket bridge (not a Socket.IO event name).
             socket_endpoint = f"/api/debug/{method.replace('_', '-')}"
             logger.info(
-                "[route_dap_command] Routing debug.%s via Socket.IO (timeout=%.1fs)",
-                method,
-                timeout,
+                f"[route_dap_command] Routing debug.{method} via Socket.IO (timeout={timeout:.1f}s)"
             )
-            result = _execute_via_socket(
+            socket_call = _execute_via_socket(
                 user_id=user_id,
                 conversation_id=conversation_id,
                 endpoint=socket_endpoint,
@@ -1197,7 +1265,12 @@ def route_dap_command(
                 repository=repository,
                 branch=branch,
                 timeout=timeout,
+                return_error=True,
             )
+            if isinstance(socket_call, tuple):
+                result, socket_error = socket_call
+            else:
+                result, socket_error = socket_call, None
             if result is not None:
                 # Extension may signal an unknown-route error in the result body.
                 if isinstance(result, dict) and result.get("error") in (
@@ -1206,28 +1279,30 @@ def route_dap_command(
                     "route_not_found",
                 ):
                     logger.info(
-                        "[route_dap_command] Extension returned unknown-route for debug.%s: %s",
-                        method,
-                        result.get("error"),
+                        f"[route_dap_command] Extension returned unknown-route for debug.{method}: {result.get('error')}"
                     )
                     return None, "unknown_route"
-                logger.info("[route_dap_command] debug.%s RPC succeeded", method)
+                logger.info(f"[route_dap_command] debug.{method} RPC succeeded")
                 return result, None
+            socket_error = _normalize_socket_error(socket_error)
+            if socket_error == "timeout":
+                logger.info(
+                    f"[route_dap_command] debug.{method} RPC timed out waiting for tool_response; socket registration was not invalidated"
+                )
+                return None, "timeout"
+            route_error = _route_socket_error(socket_error)
             logger.info(
-                "[route_dap_command] Socket call returned None for debug.%s — tunnel unreachable or extension did not respond",
-                method,
+                f"[route_dap_command] Socket call returned None for debug.{method} "
+                f"(error={socket_error}, route_error={route_error})"
             )
-            return None, "tunnel_unreachable"
+            return None, route_error
 
         # Legacy HTTP path (direct local URL without socket prefix)
         http_method = method.replace("_", "-")
         base = tunnel_url.rstrip("/")
         url = f"{base}/api/debug/{http_method}"
         logger.info(
-            "[route_dap_command] Routing debug.%s via HTTP: %s (timeout=%.1fs)",
-            method,
-            url,
-            timeout,
+            f"[route_dap_command] Routing debug.{method} via HTTP: {url} (timeout={timeout:.1f}s)"
         )
         try:
             with httpx.Client(timeout=timeout) as client:
@@ -1237,37 +1312,27 @@ def route_dap_command(
                     headers={"Content-Type": "application/json"},
                 )
         except httpx.TimeoutException:
-            logger.warning(
-                "[route_dap_command] HTTP request timed out for debug.%s", method
-            )
+            logger.warning(f"[route_dap_command] HTTP request timed out for debug.{method}")
             return None, "timeout"
         except httpx.ConnectError as e:
-            logger.warning(
-                "[route_dap_command] HTTP connect failed for debug.%s: %s", method, e
-            )
+            logger.warning(f"[route_dap_command] HTTP connect failed for debug.{method}: {e}")
             return None, "tunnel_unreachable"
         if response.status_code == 404:
             logger.info(
-                "[route_dap_command] HTTP 404 — route debug.%s not implemented on extension",
-                method,
+                f"[route_dap_command] HTTP 404 — route debug.{method} not implemented on extension"
             )
             return None, "unknown_route"
         if response.status_code == 200:
             result = response.json()
-            logger.info("[route_dap_command] HTTP debug.%s RPC succeeded", method)
+            logger.info(f"[route_dap_command] HTTP debug.{method} RPC succeeded")
             return result, None
         logger.warning(
-            "[route_dap_command] HTTP %s for debug.%s: %s",
-            response.status_code,
-            method,
-            response.text[:300],
+            f"[route_dap_command] HTTP {response.status_code} for debug.{method}: {response.text[:300]}"
         )
         return None, "tunnel_unreachable"
 
     except Exception as e:
-        logger.exception(
-            "[route_dap_command] Unexpected error dispatching debug.%s: %s", method, e
-        )
+        logger.exception(f"[route_dap_command] Unexpected error dispatching debug.{method}: {e}")
         return None, "unknown_error"
 
 

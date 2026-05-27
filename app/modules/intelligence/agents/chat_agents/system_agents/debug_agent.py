@@ -2,15 +2,9 @@ from app.modules.intelligence.agents.chat_agents.agent_config import (
     AgentConfig,
     TaskConfig,
 )
-from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
-from app.modules.intelligence.agents.chat_agents.pydantic_multi_agent import (
-    PydanticMultiAgent,
-    AgentType as MultiAgentType,
+from app.modules.intelligence.agents.chat_agents.pydantic_deep_debug_agent import (
+    PydanticDeepDebugAgent,
 )
-from app.modules.intelligence.agents.chat_agents.multi_agent.agent_factory import (
-    create_integration_agents,
-)
-from app.modules.intelligence.agents.multi_agent_config import MultiAgentConfig
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
@@ -22,6 +16,61 @@ from app.modules.intelligence.agents.chat_agents.system_agents.debug_agent_promp
 )
 
 logger = get_logger(__name__)
+
+# Base tools always requested for the DebugAgent (per the debug-agent spec).
+# Keep this list focused: file/text navigation, workspace context, failure-signal
+# parsing, hypothesis tracking, focused todo ops, and validation.
+# Excludes (deliberately): KG/code-graph tools, web tools, broad sandbox shell /
+# edit / git tools, broad todo tools (write_todos, remove_todo, add_subtask,
+# set_dependency), and requirements tools — these are out of scope for the
+# debugging agent.
+DEBUG_AGENT_BASE_TOOLS: tuple[str, ...] = (
+    "parse_failure_signal",
+    "get_workspace_debug_context",
+    "get_code_file_structure",
+    "search_text",
+    "search_bash",
+    "fetch_file",
+    "fetch_files_batch",
+    "run_validation",
+    "record_hypothesis",
+    "update_hypothesis_status",
+    "append_hypothesis_evidence",
+    "list_hypotheses",
+    "read_todos",
+    "add_todo",
+    "update_todo_status",
+    "get_available_tasks",
+)
+
+# DAP debugger tools (A3) — only included when ctx.local_mode is True, since
+# they require a running VS Code / DAP debug adapter.
+DEBUG_AGENT_DAP_TOOLS: tuple[str, ...] = (
+    "start_debug_session",
+    "set_breakpoints",
+    "take_debug_snapshot",
+    "step_over",
+    "step_into",
+    "step_out",
+    "continue_execution",
+    "evaluate_expression",
+    "list_debug_sessions",
+    "stop_debug_session",
+)
+
+# Potpie terminal tools (VS Code extension tunnel) — local_mode only.
+# Used for compile/run, launch.json creation/cleanup, and other shell tasks
+# that must not go through sandbox_shell (read-only extension mode).
+DEBUG_AGENT_TERMINAL_TOOLS: tuple[str, ...] = (
+    "execute_terminal_command",
+    "terminal_session_output",
+    "terminal_session_signal",
+)
+
+# Set form for fast membership checks when filtering tools in non-local mode.
+DAP_TOOL_NAMES: set[str] = set(DEBUG_AGENT_DAP_TOOLS)
+TERMINAL_TOOL_NAMES: set[str] = set(DEBUG_AGENT_TERMINAL_TOOLS)
+LOCAL_MODE_ONLY_TOOL_NAMES: set[str] = DAP_TOOL_NAMES | TERMINAL_TOOL_NAMES
 
 
 class DebugAgent(ChatAgent):
@@ -36,6 +85,13 @@ class DebugAgent(ChatAgent):
         self.prompt_provider = prompt_provider
 
     def _build_agent(self, ctx: Optional[ChatContext] = None) -> ChatAgent:
+        local_mode = ctx.local_mode if ctx else False
+        logger.info(
+            "[DEBUG DebugAgent] _build_agent called: local_mode={} user_id={} conversation_id={}",
+            local_mode,
+            getattr(ctx, "user_id", None),
+            getattr(ctx, "conversation_id", None),
+        )
         agent_config = AgentConfig(
             role="Debugging and Code Analysis Specialist",
             goal="Provide comprehensive debugging solutions and code analysis by identifying root causes, tracing code flows, and delivering precise fixes. For general queries, maintain a conversational approach while grounding responses in code context.",
@@ -44,10 +100,10 @@ class DebugAgent(ChatAgent):
                     1. Conversational code exploration and Q&A - helping users understand codebases naturally
                     2. Systematic debugging - when faced with bugs, you follow rigorous methodologies to find root causes
                     3. Strategic thinking - you fix problems at their source, not just patch symptoms
-                    4. Code navigation - you expertly traverse knowledge graphs, code structures, and relationships
+                    4. Code navigation - you expertly traverse code structures, file relationships, and call paths
                     5. Contextual understanding - you build comprehensive mental models of how code fits together
 
-                    You adapt your approach: conversational for questions, methodical for debugging. You use todo and requirements tools to track progress and ensure thoroughness.
+                    You adapt your approach: conversational for questions, methodical for debugging. You use focused todo tools (read_todos, add_todo, update_todo_status, get_available_tasks) to track progress and ensure thoroughness.
                 """,
             tasks=[
                 TaskConfig(
@@ -57,128 +113,41 @@ class DebugAgent(ChatAgent):
             ],
         )
 
-        # Exclude embedding-dependent tools during INFERRING status
-        exclude_embedding_tools = ctx.is_inferring() if ctx else False
-        if exclude_embedding_tools:
-            logger.info(
-                "Project is in INFERRING status - excluding embedding-dependent tools"
-            )
-
         tools = self.tools_provider.get_tools(
-            [
-                "get_code_from_multiple_node_ids",
-                "get_node_neighbours_from_node_id",
-                "get_code_from_probable_node_name",
-                "query_context_graph",
-                "ask_knowledge_graph_queries",
-                "get_nodes_from_tags",
-                "get_code_file_structure",
-                "search_text",
-                "get_workspace_debug_context",
-                "parse_failure_signal",
-                "run_validation",
-                # DAP debugger tools (A3)
-                "start_debug_session",
-                "set_breakpoints",
-                "take_debug_snapshot",
-                "step_over",
-                "step_into",
-                "step_out",
-                "continue_execution",
-                "evaluate_expression",
-                "list_debug_sessions",
-                "stop_debug_session",
-                "webpage_extractor",
-                "web_search_tool",
-                "fetch_file",
-                "fetch_files_batch",
-                "analyze_code_structure",
-                "sandbox_text_editor",
-                "sandbox_shell",
-                "sandbox_search",
-                "sandbox_git",
-                "read_todos",
-                "write_todos",
-                "add_todo",
-                "update_todo_status",
-                "remove_todo",
-                "add_subtask",
-                "set_dependency",
-                "get_available_tasks",
-                "add_requirements",
-                "get_requirements",
-                "record_hypothesis",
-                "update_hypothesis_status",
-                "append_hypothesis_evidence",
-                "list_hypotheses",
-            ],
-            exclude_embedding_tools=exclude_embedding_tools,
+            list(DEBUG_AGENT_BASE_TOOLS)
+            + list(DEBUG_AGENT_DAP_TOOLS)
+            + list(DEBUG_AGENT_TERMINAL_TOOLS),
         )
-
-        supports_pydantic = self.llm_provider.supports_pydantic("chat")
-        should_use_multi = MultiAgentConfig.should_use_multi_agent("debugging_agent")
+        local_mode = ctx.local_mode if ctx else False
+        if not local_mode:
+            tools = [
+                tool
+                for tool in tools
+                if getattr(tool, "name", None) not in LOCAL_MODE_ONLY_TOOL_NAMES
+            ]
+            logger.info(
+                "DebugAgent: local_mode=False - excluding DAP and terminal tools"
+            )
 
         logger.info(
             "DebugAgent routing",
             supports_pydantic=supports_pydantic,
             should_use_multi=should_use_multi,
         )
-
-        if supports_pydantic:
-            if should_use_multi:
-                logger.info("✅ Using PydanticMultiAgent (multi-agent system)")
-                # Create specialized delegate agents for debugging: THINK_EXECUTE + integration agents
-                integration_agents = create_integration_agents()
-                delegate_agents = {
-                    MultiAgentType.THINK_EXECUTE: AgentConfig(
-                        role="Debug Solution Specialist",
-                        goal="Provide comprehensive debugging solutions",
-                        backstory="Expert at creating debugging strategies and solutions.",
-                        tasks=[
-                            TaskConfig(
-                                description="Create debugging solutions and strategies",
-                                expected_output="Debugging solution plan",
-                            )
-                        ],
-                        max_iter=12,
-                    ),
-                    **integration_agents,
-                }
-                return PydanticMultiAgent(
-                    self.llm_provider,
-                    agent_config,
-                    tools,
-                    None,
-                    delegate_agents,
-                    tools_provider=self.tools_provider,
-                )
-            else:
-                logger.info("❌ Multi-agent disabled by config, using PydanticRagAgent")
-                return PydanticRagAgent(self.llm_provider, agent_config, tools)
-        else:
-            logger.error(
-                "❌ Model does not support Pydantic - using fallback PydanticRagAgent"
-            )
-            return PydanticRagAgent(self.llm_provider, agent_config, tools)
-
-    async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
-        if ctx.node_ids and len(ctx.node_ids) > 0:
-            code_results = await self.tools_provider.get_code_from_multiple_node_ids_tool.run_multiple(
-                ctx.project_id, ctx.node_ids
-            )
-            ctx.additional_context += (
-                f"Code referred to in the query:\n {code_results}\n"
-            )
-        return ctx
+        logger.info(
+            "[DEBUG DebugAgent] tool names given to agent (local_mode={}): {}",
+            local_mode,
+            sorted(getattr(t, "name", str(t)) for t in tools),
+        )
+        logger.info("Using PydanticDeepDebugAgent")
+        return PydanticDeepDebugAgent(self.llm_provider, agent_config, tools)
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
-        ctx = await self._enriched_context(ctx)
         return await self._build_agent(ctx).run(ctx)
 
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-        ctx = await self._enriched_context(ctx)
         async for chunk in self._build_agent(ctx).run_stream(ctx):
             yield chunk
 

@@ -60,6 +60,27 @@ def init_managers(
     from app.modules.intelligence.tools.hypothesis_state_tool import (
         _reset_hypothesis_store,
     )
+    from app.modules.intelligence.tools.code_changes_manager import (
+        _init_code_changes_manager,
+    )
+
+    # Populate ContextVars (user_id, repository, tunnel_url, etc.) so all tunnel-
+    # dependent tools (search_bash, terminal, DAP, etc.) can route to the VS Code
+    # extension via the registered Socket.IO workspace.  This call was accidentally
+    # removed in commit 2e3d1bb9 (Feat/context engine #749), breaking tool routing.
+    logger.info(
+        f"🔄 [init_managers] Calling _init_code_changes_manager with "
+        f"tunnel_url={tunnel_url}, local_mode={local_mode}, repository={repository}, branch={branch}"
+    )
+    _init_code_changes_manager(
+        conversation_id=conversation_id,
+        agent_id=agent_id,
+        user_id=user_id,
+        tunnel_url=tunnel_url,
+        local_mode=local_mode,
+        repository=repository,
+        branch=branch,
+    )
 
     _reset_todo_manager()
     _set_sandbox_run_context(

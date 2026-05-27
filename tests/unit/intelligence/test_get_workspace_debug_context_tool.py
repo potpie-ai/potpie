@@ -24,7 +24,7 @@ os.environ.setdefault("POSTGRES_SERVER", "postgresql://test:test@localhost:5432/
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
 import pytest
-from unittest.mock import patch, call
+from unittest.mock import patch
 
 from app.modules.intelligence.tools.get_workspace_debug_context_tool import (
     LaunchConfig,
@@ -536,38 +536,19 @@ def test_tool_registered_in_tool_service():
 
 
 def test_get_workspace_debug_context_in_debug_agent_tool_list():
-    import ast
-    import pathlib
-
-    src_path = (
-        pathlib.Path(__file__).parents[3]
-        / "app"
-        / "modules"
-        / "intelligence"
-        / "agents"
-        / "chat_agents"
-        / "system_agents"
-        / "debug_agent.py"
+    from app.modules.intelligence.agents.chat_agents.system_agents.debug_agent import (
+        DEBUG_AGENT_BASE_TOOLS,
+        DEBUG_AGENT_DAP_TOOLS,
+        DEBUG_AGENT_TERMINAL_TOOLS,
     )
-    source = src_path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
 
-    tool_list: list[str] = []
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "get_tools"
-            and node.args
-            and isinstance(node.args[0], ast.List)
-        ):
-            for elt in node.args[0].elts:
-                if isinstance(elt, ast.Constant):
-                    tool_list.append(elt.value)
-
-    assert tool_list, "Could not find get_tools([...]) call in debug_agent.py"
+    tool_list = (
+        list(DEBUG_AGENT_BASE_TOOLS)
+        + list(DEBUG_AGENT_DAP_TOOLS)
+        + list(DEBUG_AGENT_TERMINAL_TOOLS)
+    )
     assert "get_workspace_debug_context" in tool_list, (
-        f"'get_workspace_debug_context' not found in DebugAgent's get_tools([...]) call. "
+        f"'get_workspace_debug_context' not found in DebugAgent's tool allow-list. "
         f"Found: {tool_list}"
     )
 

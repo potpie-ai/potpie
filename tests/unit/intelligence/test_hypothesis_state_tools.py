@@ -28,7 +28,6 @@ os.environ.setdefault("POSTGRES_SERVER", "postgresql://test:test@localhost:5432/
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
 import contextvars
-from datetime import datetime, timezone
 
 import pytest
 
@@ -42,7 +41,6 @@ from app.modules.intelligence.tools.hypothesis_state_tool import (
     UpdateHypothesisStatusInput,
     AppendHypothesisEvidenceInput,
     _hypothesis_store_ctx,
-    get_hypothesis_store,
     record_hypothesis,
     update_hypothesis_status,
     append_hypothesis_evidence,
@@ -470,37 +468,18 @@ def test_hypothesis_state_tool_import_in_tool_service_source():
 
 
 def test_all_four_tools_in_debug_agent_tool_list():
-    """All four hypothesis tool names must appear in DebugAgent's get_tools([...]) call."""
-    import ast
-    import pathlib
-
-    src_path = (
-        pathlib.Path(__file__).parents[3]
-        / "app"
-        / "modules"
-        / "intelligence"
-        / "agents"
-        / "chat_agents"
-        / "system_agents"
-        / "debug_agent.py"
+    """All four hypothesis tool names must appear in DebugAgent's tool allow-list."""
+    from app.modules.intelligence.agents.chat_agents.system_agents.debug_agent import (
+        DEBUG_AGENT_BASE_TOOLS,
+        DEBUG_AGENT_DAP_TOOLS,
+        DEBUG_AGENT_TERMINAL_TOOLS,
     )
-    source = src_path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
 
-    tool_list: list[str] = []
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "get_tools"
-            and node.args
-            and isinstance(node.args[0], ast.List)
-        ):
-            for elt in node.args[0].elts:
-                if isinstance(elt, ast.Constant):
-                    tool_list.append(elt.value)
-
-    assert tool_list, "Could not find get_tools([...]) call in debug_agent.py"
+    tool_list = (
+        list(DEBUG_AGENT_BASE_TOOLS)
+        + list(DEBUG_AGENT_DAP_TOOLS)
+        + list(DEBUG_AGENT_TERMINAL_TOOLS)
+    )
 
     expected = [
         "record_hypothesis",
@@ -510,7 +489,7 @@ def test_all_four_tools_in_debug_agent_tool_list():
     ]
     for name in expected:
         assert name in tool_list, (
-            f"'{name}' not found in DebugAgent's get_tools([...]) list. "
+            f"'{name}' not found in DebugAgent's tool allow-list. "
             f"Found: {tool_list}"
         )
 
@@ -581,3 +560,118 @@ def test_record_default_conversation_id_is_empty_string():
     # The autouse fixture installs a fresh default store (no conversation_id)
     result = record_hypothesis(title="Default conversation_id hypothesis")
     assert result["conversation_id"] == ""
+
+
+# ---------------------------------------------------------------------------
+# 15. Schema coercion: string evidence/validation_plan → List[str]
+#
+# Root-cause guard: Traces 019e44e1... and 019e44dc... both showed the LLM
+# passing evidence/validation_plan as multi-line strings (following the prompt
+# example `evidence="<bullet points>"`) rather than as lists. This caused
+# RecordHypothesisInput pydantic validation to raise ValidationError, which
+# handle_exception caught and returned "An internal error occurred." — causing
+# record_hypothesis to silently fail and the hypothesis store to stay empty.
+#
+# The fix adds a field_validator that coerces str → List[str] by splitting on
+# newlines and stripping list markers. These tests lock that in.
+# ---------------------------------------------------------------------------
+
+
+def test_record_hypothesis_input_accepts_string_evidence():
+    """RecordHypothesisInput must coerce a newline-joined string to List[str].
+
+    The prompt example shows evidence as a string; the LLM follows the example.
+    Without coercion, pydantic raises ValidationError → tool returns
+    'An internal error occurred.' and the hypothesis store stays empty.
+    """
+    inp = RecordHypothesisInput(
+        title="Zero-length check missing",
+        evidence="- ASan shows heap-buffer-overflow in zipmapNext\n- Error: length=0",
+    )
+    assert isinstance(inp.evidence, list), "evidence must be coerced to a list"
+    assert len(inp.evidence) >= 1
+
+
+def test_record_hypothesis_input_accepts_string_validation_plan():
+    """RecordHypothesisInput must coerce a string validation_plan to List[str]."""
+    inp = RecordHypothesisInput(
+        title="Zero-length check missing",
+        validation_plan="- Set breakpoint at zipmapValidateIntegrity\n- Check length == 0",
+    )
+    assert isinstance(inp.validation_plan, list), "validation_plan must be coerced to a list"
+    assert len(inp.validation_plan) >= 1
+
+
+def test_record_hypothesis_input_string_evidence_splits_correctly():
+    """Each non-empty line (minus leading list markers) becomes a separate entry."""
+    inp = RecordHypothesisInput(
+        title="Test",
+        evidence="- First observation\n- Second observation\n- Third observation",
+    )
+    assert len(inp.evidence) == 3
+    assert inp.evidence[0] == "First observation"
+    assert inp.evidence[1] == "Second observation"
+    assert inp.evidence[2] == "Third observation"
+
+
+def test_record_hypothesis_input_empty_string_evidence_becomes_empty_list():
+    """An empty string for evidence must result in an empty list, not ['']."""
+    inp = RecordHypothesisInput(title="Test", evidence="")
+    assert inp.evidence == []
+
+
+def test_record_hypothesis_input_list_evidence_passes_through_unchanged():
+    """List evidence must not be modified by the coercion validator."""
+    obs = ["Stack trace shows auth.py:42", "NPE when user is None"]
+    inp = RecordHypothesisInput(title="Test", evidence=obs)
+    assert inp.evidence == obs
+
+
+# ---------------------------------------------------------------------------
+# 16. Full tool pipeline: string evidence must NOT trigger 'An internal error'
+#
+# These tests exercise the same code path the production agent uses:
+#   LLM args → RecordHypothesisInput validation → record_hypothesis() → store
+# ---------------------------------------------------------------------------
+
+
+def test_wrapped_record_hypothesis_succeeds_with_string_evidence():
+    """Simulates what the LLM does in practice: pass evidence as a string.
+
+    The tool must not return 'An internal error occurred.' after the schema fix.
+    Without the fix, pydantic raises ValidationError which handle_exception
+    swallows, leaving the hypothesis store empty.
+    """
+    import asyncio
+    from app.modules.intelligence.agents.chat_agents.multi_agent.utils.tool_utils import (
+        _adapt_func_for_from_schema,
+        handle_exception,
+    )
+
+    tools = create_hypothesis_state_tools()
+    rh_tool = next(t for t in tools if t.name == "record_hypothesis")
+    adapted = _adapt_func_for_from_schema(rh_tool)
+    wrapped = handle_exception(adapted)
+
+    result = asyncio.run(
+        wrapped(
+            title="Zero-length validation missing in zipmapValidateIntegrity",
+            status="proposed",
+            evidence="- ASan shows heap-buffer-overflow in zipmapNext at rdb.c:2408\n"
+                     "- Error message: Hash zipmap with big length (0)",
+            validation_plan="- Set breakpoint at zipmapValidateIntegrity\n"
+                            "- Verify length == 0 is not rejected",
+        )
+    )
+
+    assert result != "An internal error occurred. Please try again later.", (
+        "record_hypothesis must not return an internal-error string when evidence "
+        "is passed as a string. This indicates RecordHypothesisInput is rejecting "
+        "string evidence instead of coercing it to a list."
+    )
+    assert isinstance(result, dict), f"Expected dict result, got {type(result)}: {result!r}"
+    assert result.get("id", "").startswith("hyp_"), f"Expected hypothesis id, got: {result}"
+    # Verify the hypothesis actually landed in the store
+    stored = list_hypotheses()["hypotheses"]
+    assert len(stored) == 1
+    assert stored[0]["id"] == result["id"]

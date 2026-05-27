@@ -21,11 +21,7 @@ All tools return .model_dump(mode="json") dicts. On any failure (including
 missing tunnel) they return a DapError dict — they never raise.
 """
 
-# E4 dependency: `evaluate` requires a new TS handler not present in current
-# DebugSessionManager.ts. All other 9 methods map to existing DebugSessionManager
-# methods.
-
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
@@ -62,12 +58,22 @@ _UNKNOWN_ROUTE_MSG = (
     "Extension-side handlers are part of E4 — returns available=False until E4 lands."
 )
 _TIMEOUT_MSG = (
-    "DAP RPC timed out — the VS Code extension may be busy or the tunnel is degraded. "
-    "Retry when the extension is responsive."
+    "DAP RPC timed out waiting for the extension response. The workspace tunnel "
+    "may still be connected; the extension may still be processing the request."
 )
 _TUNNEL_UNREACHABLE_MSG = (
     "Tunnel is registered but unreachable — the VS Code extension may have disconnected. "
     "Reconnect and retry."
+)
+_BACKEND_SOCKET_MSG = (
+    "DAP RPC failed in the backend Socket.IO bridge before the request could be "
+    "delivered. This is not evidence that the VS Code extension disconnected; "
+    "check backend tunnel logs and restart the backend/worker if the bridge is wedged."
+)
+_EXTENSION_ERROR_MSG = (
+    "DAP RPC reached the workspace socket, but the extension or debug adapter "
+    "returned an error. The tunnel may still be connected; inspect the error field "
+    "and extension logs for the DAP-specific failure."
 )
 _NO_USER_ID_MSG = "No authenticated user context — cannot route DAP command."
 
@@ -78,7 +84,8 @@ def _make_dap_error(error_type: Optional[str], context: str) -> DapError:
         msg = _NO_TUNNEL_MSG
         etype: Literal[
             "no_tunnel", "unknown_route", "timeout",
-            "tunnel_unreachable", "no_user_id", "unknown_error"
+            "tunnel_unreachable", "backend_socket_error",
+            "extension_error", "no_user_id", "unknown_error"
         ] = "no_tunnel"
     elif error_type == "no_user_id":
         msg = _NO_USER_ID_MSG
@@ -92,12 +99,15 @@ def _make_dap_error(error_type: Optional[str], context: str) -> DapError:
     elif error_type == "tunnel_unreachable":
         msg = _TUNNEL_UNREACHABLE_MSG
         etype = "tunnel_unreachable"
-    else:
-        msg = (
-            f"DAP command '{context}' failed (error_type={error_type!r}). "
-            "The VS Code extension tunnel may be unavailable or misconfigured."
-        )
+    elif error_type == "backend_loop_mismatch":
+        msg = _BACKEND_SOCKET_MSG
+        etype = "backend_socket_error"
+    elif error_type == "unknown_error":
+        msg = f"DAP command '{context}' failed with an unexpected backend error."
         etype = "unknown_error"
+    else:
+        msg = _EXTENSION_ERROR_MSG
+        etype = "extension_error"
     return DapError(
         available=False,
         error=error_type or "unknown_error",
@@ -160,9 +170,12 @@ class StartDebugSessionInput(BaseModel):
         None,
         description="Port to attach to (only relevant for attach mode).",
     )
-    args: Optional[List[str]] = Field(
+    args: Optional[Dict[str, Any]] = Field(
         None,
-        description="Additional command-line arguments to pass to the program.",
+        description=(
+            "Optional launch-configuration overrides passed through to the VS Code "
+            "extension. To pass program argv, use {'args': ['--flag']}."
+        ),
     )
 
 
@@ -171,7 +184,7 @@ def start_debug_session(
     language: Literal["python", "node", "go", "unknown"] = "python",
     mode: Literal["launch", "attach"] = "launch",
     port: Optional[int] = None,
-    args: Optional[List[str]] = None,
+    args: Optional[Dict[str, Any] | List[str]] = None,
 ) -> dict:
     """Start a new VS Code debug session."""
     user_id, conversation_id = get_context_vars()
@@ -183,7 +196,10 @@ def start_debug_session(
     if port is not None:
         payload["port"] = port
     if args is not None:
-        payload["args"] = args
+        # Back-compat: older callers passed a raw argv list. The extension now
+        # treats payload.args as a launch-config override object, so wrap argv
+        # under the launch-config "args" key.
+        payload["args"] = {"args": args} if isinstance(args, list) else args
 
     try:
         result, error_type = route_dap_command(
@@ -625,11 +641,8 @@ def evaluate_expression(
 ) -> dict:
     """Evaluate a single expression in the current debug frame.
 
-    Note for E4 (extension-side implementation):
-        DebugSessionManager.ts does not yet have an ``evaluate(...)`` public method.
-        The extension-side handler for /api/debug/evaluate must be added
-        specifically for this tool. Expected response shape:
-            {session_id: string, expression: string, result: string, type?: string}
+    Expected extension response shape:
+        {session_id: string, expression: string, result: string, type?: string}
     """
     user_id, conversation_id = get_context_vars()
     payload: dict = {"expression": expression}
@@ -656,10 +669,11 @@ def evaluate_expression(
 
     if result is not None:
         try:
+            raw_value = result["result"] if "result" in result else result.get("value", "")
             return EvaluateResult(
                 session_id=result.get("session_id", session_id or ""),
                 expression=result.get("expression", expression),
-                value=str(result.get("result") or result.get("value") or ""),
+                value=str(raw_value),
                 type=result.get("type"),
             ).model_dump(mode="json")
         except Exception as parse_exc:

@@ -8,6 +8,7 @@ accounting, and the terminal completed-end event).
 
 from __future__ import annotations
 
+import json
 from typing import Any, AsyncIterator, Callable, Optional
 
 from app.modules.conversations.exceptions import GenerationCancelled
@@ -20,7 +21,7 @@ DEFAULT_CANCEL_MESSAGE = "Generation cancelled by user"
 
 
 def serialize_tool_calls(tool_calls: Any) -> list:
-    """Serialize agent tool calls to JSON-able values (model_dump / dict / str)."""
+    """Serialize agent tool calls to JSON-able dicts for Redis ``tool_calls_json``."""
     result: list = []
     if not tool_calls:
         return result
@@ -29,6 +30,14 @@ def serialize_tool_calls(tool_calls: Any) -> list:
             result.append(tc.model_dump())
         elif hasattr(tc, "dict"):
             result.append(tc.dict())
+        elif isinstance(tc, dict):
+            result.append(tc)
+        elif isinstance(tc, str):
+            try:
+                parsed = json.loads(tc)
+                result.append(parsed if isinstance(parsed, dict) else {"raw": tc})
+            except json.JSONDecodeError:
+                result.append({"raw": tc})
         else:
             result.append(str(tc))
     return result
@@ -66,16 +75,17 @@ async def run_agent_turn(
                 _safe_flush(flush_partial)
                 sink.emit("end", {"status": "cancelled", "message": cancel_message})
                 return False
-            sink.emit(
-                "chunk",
-                {
-                    "content": getattr(chunk, "message", "") or "",
-                    "citations_json": getattr(chunk, "citations", None) or [],
-                    "tool_calls_json": serialize_tool_calls(
-                        getattr(chunk, "tool_calls", None)
-                    ),
-                },
-            )
+            thinking = getattr(chunk, "thinking", None)
+            payload: dict[str, Any] = {
+                "content": getattr(chunk, "message", "") or "",
+                "citations_json": getattr(chunk, "citations", None) or [],
+                "tool_calls_json": serialize_tool_calls(
+                    getattr(chunk, "tool_calls", None)
+                ),
+            }
+            if thinking:
+                payload["thinking"] = thinking
+            sink.emit("chunk", payload)
         # A cooperative cancel can make chunk_stream end cleanly (the agent stops
         # yielding) instead of raising — without this final check the run would be
         # reported as completed. Re-check after the loop so it's treated as cancelled.

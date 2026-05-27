@@ -90,19 +90,25 @@ def test_section_headers_contains_fix_proposal_literal():
 # 3. DISCOVERY_PRIORITY_ORDER
 # ---------------------------------------------------------------------------
 
-def test_discovery_priority_order_starts_with_context_graph():
-    assert DISCOVERY_PRIORITY_ORDER[0] == "query_context_graph"
+def test_discovery_priority_order_starts_with_search_bash():
+    assert DISCOVERY_PRIORITY_ORDER[0] == "search_bash"
 
 
 def test_discovery_priority_order_contains_all_expected_tools():
     expected = [
-        "query_context_graph",
-        "ask_knowledge_graph_queries",
+        "search_bash",
         "search_text",
         "get_code_file_structure",
         "fetch_file",
+        "fetch_files_batch",
     ]
     assert DISCOVERY_PRIORITY_ORDER == expected
+
+
+def test_discovery_priority_order_excludes_knowledge_graph_tools():
+    """DebugAgent is a pure pydantic-deep agent and must not depend on KG discovery."""
+    assert "query_context_graph" not in DISCOVERY_PRIORITY_ORDER
+    assert "ask_knowledge_graph_queries" not in DISCOVERY_PRIORITY_ORDER
 
 
 # ---------------------------------------------------------------------------

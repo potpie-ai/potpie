@@ -122,8 +122,8 @@ _MSG_NO_TUNNEL = (
     "Ensure the Potpie extension is running and shows 'Connected' status."
 )
 _MSG_TIMEOUT = (
-    "workspace.debug_context RPC timed out — the VS Code extension may be busy "
-    "or the tunnel is degraded. Retry when the extension is responsive."
+    "workspace.debug_context RPC timed out waiting for the extension response. "
+    "The workspace tunnel may still be connected; the extension may still be processing the request."
 )
 _MSG_UNKNOWN_ROUTE = (
     "workspace.debug_context handler not yet implemented in the VS Code extension "

@@ -53,19 +53,15 @@ HYPOTHESIS_SECTION_HEADERS = {
 
 # ---------------------------------------------------------------------------
 # Code-discovery priority order.
-# The agent must consult tools in this sequence when locating code.
-# query_context_graph (A8) is listed first so the agent is forward-compatible
-# with the context graph once it becomes available; it may return
-# available=False today and the agent falls through to the next tool.
+# The agent must consult tools in this order during Phase 3 when locating code.
 # ---------------------------------------------------------------------------
 
 DISCOVERY_PRIORITY_ORDER: list[str] = [
-    "query_context_graph",         # A8 - primary, may return available=False today
-    "ask_knowledge_graph_queries", # existing, requires non-INFERRING status
-    # search_text is the registered grep-style text search tool; swap for search_colgrep when feat/colgrep merges
+    "search_bash",                 # local_mode_only: read-only rg/bash for compound source + test searches
     "search_text",                 # local_mode_only: ripgrep-backed text search via VS Code tunnel
     "get_code_file_structure",     # directory/file tree for structural navigation
     "fetch_file",                  # fetch raw file content by path
+    "fetch_files_batch",           # fetch multiple files in one call
 ]
 
 

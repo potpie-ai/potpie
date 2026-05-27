@@ -5,8 +5,11 @@ Covers:
   2. Stub accepts and ignores arbitrary query/project_id/limit values.
   3. ContextGraphResult and QueryContextGraphOutput round-trip through Pydantic.
   4. Tool is registered in ToolService._initialize_tools and retrievable by name.
-  5. "query_context_graph" is in DebugAgent's tool list at the FIRST position of
-     the discovery section (immediately before ask_knowledge_graph_queries).
+
+Note: the DebugAgent no longer uses query_context_graph (it was removed from the
+DebugAgent's discovery flow when DebugAgent was repositioned as a pure pydantic-deep
+agent). The tool itself remains registered for other agents, so these tests cover
+the tool's own contract — not its presence in DebugAgent.
 """
 from __future__ import annotations
 
@@ -21,8 +24,6 @@ os.environ.setdefault("POSTGRES_SERVER", "postgresql://test:test@localhost:5432/
 # Also set REDIS_URL to avoid similar issues with other eagerly-initialised modules.
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
-from unittest.mock import MagicMock, patch
-
 import pytest
 
 from pydantic import ValidationError
@@ -32,7 +33,6 @@ from app.modules.intelligence.tools.query_context_graph_tool import (
     QueryContextGraphInput,
     QueryContextGraphOutput,
     query_context_graph,
-    query_context_graph_tool,
 )
 
 pytestmark = pytest.mark.unit
@@ -153,7 +153,7 @@ def test_query_context_graph_output_roundtrip_stub_shape():
         available=False,
         results=[],
         message="context graph service not yet wired; agent should fall back to "
-        "ask_knowledge_graph_queries / search_text / file structure tools",
+        "ask_knowledge_graph_queries / search_text / search_bash / file structure tools",
     )
     dumped = original.model_dump()
     restored = QueryContextGraphOutput.model_validate(dumped)
@@ -266,75 +266,4 @@ def test_query_context_graph_tool_import_exists_in_tool_service_source():
     source = src_path.read_text(encoding="utf-8")
     assert "query_context_graph_tool" in source, (
         "tool_service.py must import from query_context_graph_tool"
-    )
-
-
-# ---------------------------------------------------------------------------
-# 5. "query_context_graph" is FIRST in DebugAgent's discovery section
-# ---------------------------------------------------------------------------
-
-
-def test_query_context_graph_is_first_discovery_tool_in_debug_agent():
-    """query_context_graph must appear in the DebugAgent tool list AND must be
-    immediately before ask_knowledge_graph_queries (first in discovery section).
-
-    Tested via AST inspection to avoid importing the heavy debug_agent module chain.
-    """
-    import ast
-    import pathlib
-
-    src_path = (
-        pathlib.Path(__file__).parents[3]
-        / "app" / "modules" / "intelligence" / "agents"
-        / "chat_agents" / "system_agents" / "debug_agent.py"
-    )
-    source = src_path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-
-    tool_list: list[str] = []
-    for node in ast.walk(tree):
-        # Look for a call: *.get_tools([...], ...)
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "get_tools"
-            and node.args
-            and isinstance(node.args[0], ast.List)
-        ):
-            for elt in node.args[0].elts:
-                if isinstance(elt, ast.Constant):
-                    tool_list.append(elt.value)
-
-    assert tool_list, "Could not find get_tools([...]) call in debug_agent.py"
-    assert "query_context_graph" in tool_list, (
-        "'query_context_graph' not found in DebugAgent tool list"
-    )
-
-    qcg_idx = tool_list.index("query_context_graph")
-    assert "ask_knowledge_graph_queries" in tool_list, (
-        "'ask_knowledge_graph_queries' not found in DebugAgent tool list"
-    )
-    akg_idx = tool_list.index("ask_knowledge_graph_queries")
-
-    assert qcg_idx < akg_idx, (
-        f"'query_context_graph' (index {qcg_idx}) must come before "
-        f"'ask_knowledge_graph_queries' (index {akg_idx}) — it is first in the discovery section"
-    )
-    # Verify it immediately precedes ask_knowledge_graph_queries (no other discovery
-    # tool inserted between them by mistake)
-    assert qcg_idx + 1 == akg_idx, (
-        f"'query_context_graph' (index {qcg_idx}) must be IMMEDIATELY before "
-        f"'ask_knowledge_graph_queries' (index {akg_idx})"
-    )
-
-
-def test_discovery_priority_order_first_entry_matches_tool_name():
-    """DISCOVERY_PRIORITY_ORDER[0] must be exactly 'query_context_graph'."""
-    from app.modules.intelligence.agents.chat_agents.system_agents.debug_hypothesis_contract import (
-        DISCOVERY_PRIORITY_ORDER,
-    )
-
-    assert DISCOVERY_PRIORITY_ORDER[0] == "query_context_graph", (
-        f"Expected DISCOVERY_PRIORITY_ORDER[0] == 'query_context_graph', "
-        f"got {DISCOVERY_PRIORITY_ORDER[0]!r}"
     )

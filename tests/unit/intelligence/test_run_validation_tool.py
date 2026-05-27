@@ -25,15 +25,13 @@ import os
 os.environ.setdefault("POSTGRES_SERVER", "postgresql://test:test@localhost:5432/testdb")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
 from app.modules.intelligence.tools.run_validation_tool import (
-    RunValidationInput,
     RunValidationResult,
     run_validation,
-    run_validation_tool,
     _find_last_error_line,
     _last_nonempty_line,
     _build_evidence_summary,
@@ -433,39 +431,20 @@ def test_run_validation_registered_in_tool_service():
 
 
 def test_run_validation_in_debug_agent_tool_list():
-    """'run_validation' must appear in DebugAgent's get_tools([...]) call."""
-    import ast
-    import pathlib
-
-    src_path = (
-        pathlib.Path(__file__).parents[3]
-        / "app"
-        / "modules"
-        / "intelligence"
-        / "agents"
-        / "chat_agents"
-        / "system_agents"
-        / "debug_agent.py"
+    """'run_validation' must appear in DebugAgent's tool allow-list."""
+    from app.modules.intelligence.agents.chat_agents.system_agents.debug_agent import (
+        DEBUG_AGENT_BASE_TOOLS,
+        DEBUG_AGENT_DAP_TOOLS,
+        DEBUG_AGENT_TERMINAL_TOOLS,
     )
-    source = src_path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
 
-    tool_list: list[str] = []
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "get_tools"
-            and node.args
-            and isinstance(node.args[0], ast.List)
-        ):
-            for elt in node.args[0].elts:
-                if isinstance(elt, ast.Constant):
-                    tool_list.append(elt.value)
-
-    assert tool_list, "Could not find get_tools([...]) call in debug_agent.py"
+    tool_list = (
+        list(DEBUG_AGENT_BASE_TOOLS)
+        + list(DEBUG_AGENT_DAP_TOOLS)
+        + list(DEBUG_AGENT_TERMINAL_TOOLS)
+    )
     assert "run_validation" in tool_list, (
-        f"'run_validation' not found in DebugAgent's get_tools([...]) call. "
+        f"'run_validation' not found in DebugAgent's tool allow-list. "
         f"Found: {tool_list}"
     )
 

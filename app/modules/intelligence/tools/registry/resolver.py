@@ -90,6 +90,11 @@ class ToolResolver:
             len(names),
             len(tools),
         )
+        logger.info(
+            "[DEBUG resolver] execute_terminal_command in resolved names: {} | in returned tools: {}",
+            "execute_terminal_command" in names,
+            any(getattr(t, "name", None) == "execute_terminal_command" for t in tools),
+        )
         # #region agent log
         try:
             _dp = "/Users/nandan/Desktop/Dev/potpie/.cursor/debug-65030d.log"

@@ -10,7 +10,6 @@ from app.modules.intelligence.agents.chat_agents.system_agents.debug_agent_promp
     debug_task_prompt,
 )
 from app.modules.intelligence.agents.chat_agents.system_agents.debug_hypothesis_contract import (
-    HYPOTHESIS_MARKDOWN_EXAMPLE,
     HypothesisStatus,
 )
 
@@ -25,16 +24,16 @@ REQUIRED_TOOLS = [
     "parse_failure_signal",
     # A4 — workspace debug context
     "get_workspace_debug_context",
-    # A8 — context graph (discovery priority 1)
-    "query_context_graph",
-    # knowledge graph (discovery priority 2)
-    "ask_knowledge_graph_queries",
-    # text search (discovery priority 3)
+    # bash/ripgrep search (discovery priority 1)
+    "search_bash",
+    # text search (discovery priority 2)
     "search_text",
-    # structural navigation (discovery priority 4)
+    # structural navigation (discovery priority 3)
     "get_code_file_structure",
-    # raw file fetch (discovery priority 5)
+    # raw file fetch (discovery priority 4)
     "fetch_file",
+    # batch file fetch (discovery priority 5)
+    "fetch_files_batch",
     # A5 — hypothesis state tools
     "record_hypothesis",
     "update_hypothesis_status",
@@ -51,6 +50,10 @@ REQUIRED_TOOLS = [
     "evaluate_expression",
     # A6 — validation
     "run_validation",
+    # Local-mode terminal (Potpie VS Code tunnel)
+    "execute_terminal_command",
+    "terminal_session_output",
+    "terminal_session_signal",
 ]
 
 
@@ -175,6 +178,19 @@ def test_prompt_makes_phase_1_required() -> None:
     )
 
 
+def test_prompt_has_root_cause_discipline_section() -> None:
+    """The prompt should preserve systematic debugging: trace symptoms to source before fixes."""
+    loop_idx = debug_task_prompt.find("## DEBUGGING LOOP")
+    phase1_idx = debug_task_prompt.find("### Phase 1")
+    assert loop_idx != -1 and phase1_idx > loop_idx
+    pre_phase1 = debug_task_prompt[loop_idx:phase1_idx]
+
+    assert "Root-Cause Discipline" in pre_phase1
+    assert "No fix proposal before" in pre_phase1
+    assert "trace backward" in pre_phase1
+    assert "boundary evidence" in pre_phase1
+
+
 def test_prompt_requires_card_terminator() -> None:
     """The Phase 4 description must instruct the model to terminate each hypothesis
     card with a literal '---' line so the webview parser can identify boundaries.
@@ -217,14 +233,38 @@ def test_phase_4_pauses_before_dap_tools() -> None:
     )
 
 
-def test_phase_4_allows_one_to_four_hypotheses() -> None:
-    """The mandatory count is now 1-4 (not 2-4); a single confident hypothesis is fine."""
+def test_phase_4_allows_one_to_five_hypotheses() -> None:
+    """The mandatory count is now 1-5; a single confident hypothesis is still fine."""
     phase4_idx = debug_task_prompt.find("### Phase 4")
     phase5_idx = debug_task_prompt.find("### Phase 5")
     phase4_section = debug_task_prompt[phase4_idx:phase5_idx]
-    assert "1 to 4" in phase4_section, (
-        "Phase 4 count should be '1 to 4 hypotheses' — single hypothesis allowed."
+    assert "1 to 5" in phase4_section, (
+        "Phase 4 count should be '1 to 5 hypotheses' — single hypothesis allowed."
     )
+
+
+def test_phase_3_has_discovery_budget_and_stop_rules() -> None:
+    """Weaker models must stop discovery loops and synthesize hypotheses."""
+    phase3_idx = debug_task_prompt.find("### Phase 3")
+    phase4_idx = debug_task_prompt.find("### Phase 4")
+    assert phase3_idx != -1 and phase4_idx > phase3_idx
+    phase3_section = debug_task_prompt[phase3_idx:phase4_idx]
+
+    assert "Discovery budget and stop rules" in phase3_section
+    assert "at most **three** additional targeted" in phase3_section
+    assert "Never repeat the same search query" in phase3_section
+    assert "synthesize hypotheses from the evidence already gathered" in phase3_section
+
+
+def test_phase_4_requires_traceback_and_pattern_comparison() -> None:
+    """Phase 4 should turn engineer-style tracing into falsifiable hypotheses."""
+    phase4_idx = debug_task_prompt.find("### Phase 4")
+    phase5_idx = debug_task_prompt.find("### Phase 5")
+    assert phase4_idx != -1 and phase5_idx > phase4_idx
+    phase4_section = debug_task_prompt[phase4_idx:phase5_idx]
+
+    assert "Trace backward from the immediate failing line" in phase4_section
+    assert "Compare similar working and broken paths" in phase4_section
 
 
 def test_phase_5_entry_requires_list_hypotheses() -> None:
@@ -261,6 +301,17 @@ def test_phase_5c_has_three_cases() -> None:
     )
 
 
+def test_phase_5c_does_not_treat_initialized_as_runtime_state() -> None:
+    """start_debug_session status='initialized' must be followed by a snapshot."""
+    phase5_idx = debug_task_prompt.find("### Phase 5")
+    phase6_idx = debug_task_prompt.find("### Phase 6")
+    phase5_section = debug_task_prompt[phase5_idx:phase6_idx]
+
+    assert '"initialized"' in phase5_section
+    assert "Do not infer" in phase5_section
+    assert "take_debug_snapshot" in phase5_section
+
+
 def test_rejected_verdict_pauses_for_user() -> None:
     """After a 'rejected' verdict, agent must pause and ask user, not auto-move."""
     phase5_idx = debug_task_prompt.find("### Phase 5")
@@ -285,4 +336,68 @@ def test_prompt_has_all_of_them_escape_hatch() -> None:
     assert "all of them" in debug_task_prompt, (
         "Prompt must support an 'all of them' escape hatch so users can run "
         "through hypotheses without pausing if they prefer."
+    )
+
+
+# ---------------------------------------------------------------------------
+# 7. launch.json creation + cleanup narrative
+# ---------------------------------------------------------------------------
+
+def test_phase_5c_offers_launch_json_creation() -> None:
+    """Case B must offer a third option: agent creates launch.json for the session."""
+    phase5_idx = debug_task_prompt.find("### Phase 5")
+    phase6_idx = debug_task_prompt.find("### Phase 6")
+    phase5_section = debug_task_prompt[phase5_idx:phase6_idx]
+
+    assert "launch.json" in phase5_section, (
+        "Case B must mention launch.json as part of the missing-config path."
+    )
+    assert "create" in phase5_section.lower(), (
+        "Case B must offer to create a launch.json for the session."
+    )
+
+
+def test_phase_5c_launch_json_has_cleanup_step() -> None:
+    """After creating launch.json the agent must offer to remove it when done."""
+    phase5_idx = debug_task_prompt.find("### Phase 5")
+    phase6_idx = debug_task_prompt.find("### Phase 6")
+    phase5_section = debug_task_prompt[phase5_idx:phase6_idx]
+
+    assert "cleanup" in phase5_section.lower() or "remove it" in phase5_section.lower(), (
+        "Phase 5c must include a cleanup step for agent-created launch.json."
+    )
+    assert "keep it" in phase5_section.lower(), (
+        "Cleanup prompt must give user the option to keep the generated launch.json."
+    )
+
+
+def test_phase_2_explains_missing_prerequisites() -> None:
+    """Phase 2 must identify which specific prerequisite is missing when unavailable."""
+    phase2_idx = debug_task_prompt.find("### Phase 2")
+    phase3_idx = debug_task_prompt.find("### Phase 3")
+    assert phase2_idx != -1 and phase3_idx > phase2_idx
+    phase2_section = debug_task_prompt[phase2_idx:phase3_idx]
+
+    assert "launch.json" in phase2_section, (
+        "Phase 2 must explicitly check for launch.json presence."
+    )
+    assert "launch_configs" in phase2_section, (
+        "Phase 2 must reference the launch_configs field from get_workspace_debug_context."
+    )
+    assert "inferred_commands" in phase2_section, (
+        "Phase 2 must reference the inferred_commands field from get_workspace_debug_context."
+    )
+
+
+def test_phase_5c_handles_compiled_binary_prerequisite() -> None:
+    """For C/C++ the agent must block on compilation before starting the debug session."""
+    phase5_idx = debug_task_prompt.find("### Phase 5")
+    phase6_idx = debug_task_prompt.find("### Phase 6")
+    phase5_section = debug_task_prompt[phase5_idx:phase6_idx]
+
+    assert "gcc" in phase5_section or "debug symbols" in phase5_section, (
+        "Phase 5c must mention compiling with debug symbols for C/C++ projects."
+    )
+    assert "ready" in phase5_section.lower(), (
+        "Phase 5c must ask user to reply 'ready' after compilation before starting DAP."
     )

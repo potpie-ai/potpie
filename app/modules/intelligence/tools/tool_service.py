@@ -92,6 +92,7 @@ from app.modules.intelligence.tools.confluence_tools import (
 from app.modules.intelligence.tools.web_tools.web_search_tool import web_search_tool
 from app.modules.intelligence.provider.provider_service import ProviderService
 from langchain_core.tools import StructuredTool
+from .local_search_tools.tools import create_local_search_tools
 from .todo_management_tool import create_todo_management_tools
 from .requirement_verification_tool import create_requirement_verification_tools
 from .sandbox.tools import create_sandbox_tools
@@ -269,6 +270,20 @@ class ToolService:
 
         for tool in create_agent_context_tools(self.db, self.user_id):
             tools[tool.name] = tool
+
+        # Local workspace search tools routed through the VS Code tunnel. They
+        # fail gracefully when no tunnel is attached, but must still be
+        # registered so agents can choose them when local mode is available.
+        for tool in create_local_search_tools():
+            tools[tool.name] = tool
+
+        logger.info(
+            "[DEBUG tool_service] execute_terminal_command registered: {} | "
+            "terminal_session_output registered: {} | terminal_session_signal registered: {}",
+            "execute_terminal_command" in tools,
+            "terminal_session_output" in tools,
+            "terminal_session_signal" in tools,
+        )
 
         # bash_command, apply_changes, git_commit, git_push, create_pr_workflow,
         # checkout_worktree_branch — all removed during the sandbox migration.

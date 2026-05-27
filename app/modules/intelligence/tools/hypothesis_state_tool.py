@@ -22,7 +22,7 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.modules.intelligence.agents.chat_agents.system_agents.debug_hypothesis_contract import (
     HypothesisStatus,
@@ -63,6 +63,25 @@ class RecordHypothesisInput(BaseModel):
         default_factory=list,
         description="Validation steps to confirm or refute this hypothesis.",
     )
+
+    @field_validator("evidence", "validation_plan", mode="before")
+    @classmethod
+    def _coerce_string_to_list(cls, v: object) -> object:
+        """Coerce a newline-joined string to a list of non-empty strings.
+
+        LLMs commonly follow the prompt example and pass evidence/validation_plan
+        as a multi-line string (e.g. "- obs1\n- obs2") rather than as a list.
+        Without this coercion, pydantic raises ValidationError → handle_exception
+        returns "An internal error occurred." → the hypothesis store stays empty.
+        """
+        if not isinstance(v, str):
+            return v
+        lines = [
+            line.lstrip("-•* \t").rstrip()
+            for line in v.splitlines()
+            if line.strip()
+        ]
+        return lines
 
 
 class UpdateHypothesisStatusInput(BaseModel):

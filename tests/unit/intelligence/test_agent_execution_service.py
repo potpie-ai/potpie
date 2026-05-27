@@ -7,6 +7,7 @@ This is the shared logic both the Celery and Hatchet backends drive.
 from app.modules.conversations.exceptions import GenerationCancelled
 from app.modules.intelligence.agents.runtime.agent_execution_service import (
     run_agent_turn,
+    serialize_tool_calls,
 )
 from app.modules.intelligence.agents.runtime.redis_sink import RedisStreamSink
 
@@ -41,10 +42,11 @@ class FakeToolCall:
 
 
 class FakeChunk:
-    def __init__(self, message="", citations=None, tool_calls=None):
+    def __init__(self, message="", citations=None, tool_calls=None, thinking=None):
         self.message = message
         self.citations = citations
         self.tool_calls = tool_calls
+        self.thinking = thinking
 
 
 async def _agen(items):
@@ -72,6 +74,25 @@ async def test_emits_start_then_chunks_then_returns_completed():
     assert first_chunk["tool_calls_json"] == [{"name": "search"}]
     second_chunk = sink.events[2][1]
     assert second_chunk["citations_json"] == ["c1"]
+
+
+async def test_chunk_emits_thinking_when_present():
+    sink = FakeSink()
+    completed = await run_agent_turn(
+        start_payload={},
+        chunk_stream=_agen([FakeChunk(message="hi", thinking="step 1")]),
+        sink=sink,
+        flush_partial=lambda: None,
+    )
+    assert completed is True
+    assert sink.events[1][1]["thinking"] == "step 1"
+
+
+def test_serialize_tool_calls_parses_json_strings():
+    raw = '{"call_id": "c1", "tool_name": "search"}'
+    assert serialize_tool_calls([raw]) == [
+        {"call_id": "c1", "tool_name": "search"}
+    ]
 
 
 async def test_cancellation_mid_stream_flushes_and_emits_cancelled_end():

@@ -248,6 +248,8 @@ class DapError(BaseModel):
       unknown_route     — Extension does not yet handle this DAP route
       timeout           — RPC timed out
       tunnel_unreachable — Tunnel registered but socket/HTTP call failed
+      backend_socket_error — Backend socket bridge failed before delivery
+      extension_error   — Extension/debug adapter returned a DAP error
       no_user_id        — No user context available
       unknown_error     — Catch-all for unexpected exceptions
     """
@@ -267,6 +269,8 @@ class DapError(BaseModel):
         "unknown_route",
         "timeout",
         "tunnel_unreachable",
+        "backend_socket_error",
+        "extension_error",
         "no_user_id",
         "unknown_error",
     ] = Field(..., description="Categorised error type for programmatic handling.")
