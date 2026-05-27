@@ -359,9 +359,8 @@ class _ExecutionLogSink:
             )
         except Exception:  # noqa: BLE001 - liveness must not fail ingestion
             logger.warning(
-                "execution-log emit (%s) failed for batch %s",
-                record_type,
-                self._batch_id,
+                "execution-log emit failed",
+                record_type=record_type,
                 exc_info=True,
             )
 
@@ -384,8 +383,7 @@ class _ExecutionLogSink:
             )
         except Exception:  # noqa: BLE001
             logger.warning(
-                "execution-log part upsert failed for batch %s",
-                self._batch_id,
+                "execution-log part upsert failed",
                 exc_info=True,
             )
 
@@ -603,9 +601,7 @@ class _ExecutionLogCheckpointBridge:
         try:
             messages_json = json.loads(raw.decode("utf-8"))
         except Exception:
-            logger.exception(
-                "checkpoint serialize failed for batch %s", self._batch_id
-            )
+            logger.exception("checkpoint serialize failed")
             return
         if not isinstance(messages_json, list):
             return
@@ -772,7 +768,7 @@ class PydanticDeepReconciliationAgent:
                 self._run_batch_async(ctx, execution_log=execution_log)
             )
         except Exception as exc:
-            logger.exception("batch agent run crashed for batch %s", ctx.batch_id)
+            logger.exception("batch agent run crashed")
             return BatchAgentOutcome(
                 ok=False,
                 error=str(exc),
@@ -940,11 +936,7 @@ class PydanticDeepReconciliationAgent:
             )
         except (asyncio.TimeoutError, TimeoutError):
             await _run_cleanup_callbacks(state)
-            logger.error(
-                "agent.run() timed out after %.0fs for batch %s",
-                run_timeout,
-                ctx.batch_id,
-            )
+            logger.error("agent.run() timed out", timeout_s=run_timeout)
             return BatchAgentOutcome(
                 ok=False,
                 completed_event_ids=list(state.completed_event_ids),
@@ -959,7 +951,7 @@ class PydanticDeepReconciliationAgent:
             )
         except Exception as exc:
             await _run_cleanup_callbacks(state)
-            logger.exception("agent.run() raised for batch %s", ctx.batch_id)
+            logger.exception("agent.run() raised")
             return BatchAgentOutcome(
                 ok=False,
                 completed_event_ids=list(state.completed_event_ids),
@@ -996,11 +988,10 @@ class PydanticDeepReconciliationAgent:
         except Exception:
             pass
         logger.info(
-            "batch %s agent run finished: completed=%d finish_called=%s usage=%s",
-            ctx.batch_id,
-            len(state.completed_event_ids),
-            state.finish_called,
-            usage_payload,
+            "agent run finished",
+            completed_count=len(state.completed_event_ids),
+            finish_called=state.finish_called,
+            usage=usage_payload,
         )
         try:
             self._telemetry.record_cost(
@@ -1070,11 +1061,9 @@ class PydanticDeepReconciliationAgent:
                 dropped.append(name or "?")
         if dropped:
             logger.info(
-                "playbook tool allowlist blocked %s for batch %s "
-                "(allowed=%s)",
-                sorted(set(dropped)),
-                ctx.batch_id,
-                sorted(allowed),
+                "playbook tool allowlist blocked tools",
+                blocked=sorted(set(dropped)),
+                allowed=sorted(allowed),
             )
         return kept
 
@@ -1153,10 +1142,7 @@ class PydanticDeepReconciliationAgent:
                 if snapshot:
                     body["current_context_snapshot"] = snapshot
             except Exception:
-                logger.exception(
-                    "failed to build initial context snapshot for batch %s",
-                    ctx.batch_id,
-                )
+                logger.exception("failed to build initial context snapshot")
         # Data-fence: everything below is attacker-influenceable (webhook /
         # PR / issue / comment bodies in ``payload``, ``actor``, and any
         # snapshot text). It is DATA to analyze, never instructions. The
@@ -1204,7 +1190,7 @@ class PydanticDeepReconciliationAgent:
                 fn = _make_handler(desc.name)
                 built.append(Tool(fn, name=desc.name, description=desc.description))
             except Exception:
-                logger.exception("failed to build read tool %s", desc.name)
+                logger.exception("failed to build read tool", tool=desc.name)
         return built
 
     def _build_mutation_tools(self, state: _BatchRunState) -> list[Any]:
@@ -1240,11 +1226,9 @@ class PydanticDeepReconciliationAgent:
             _apply_calls["n"] += 1
             if _apply_calls["n"] > _apply_cap:
                 logger.error(
-                    "apply_graph_mutations cap (%d) exceeded for batch "
-                    "pot=%s — refusing further mutations (possible loop / "
-                    "prompt injection)",
-                    _apply_cap,
-                    state.pot_id,
+                    "apply_graph_mutations cap exceeded — refusing further "
+                    "mutations (possible loop / prompt injection)",
+                    cap=_apply_cap,
                 )
                 return {
                     "ok": False,
@@ -1284,7 +1268,7 @@ class PydanticDeepReconciliationAgent:
                     provenance_context=prov,
                 )
             except Exception as exc:
-                logger.exception("apply_plan failed for batch event %s", event_id)
+                logger.exception("apply_plan failed", event_id=event_id)
                 return {"ok": False, "error": f"apply_failed: {exc}"}
             ms = result.mutation_summary
             counts = {
