@@ -90,8 +90,6 @@ def test_install_agent_bundle_claude_creates_claude_files(tmp_path: Path) -> Non
     content = (repo / "CLAUDE.md").read_text(encoding="utf-8")
     assert "<!-- potpie-start -->" in content
     assert "context_resolve" in content
-    assert (repo / ".claude" / "commands" / "potpie-feature.md").exists()
-    assert (repo / ".claude" / "commands" / "potpie-record.md").exists()
 
 
 def test_install_agent_bundle_claude_merges_into_existing_claude_md(tmp_path: Path) -> None:

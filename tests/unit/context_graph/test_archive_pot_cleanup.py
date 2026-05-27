@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -131,9 +132,7 @@ class TestDispatchPotSandboxCleanup:
             mod.dispatch_pot_sandbox_cleanup(db, pot_id="pot-1")
             # Execute the runner inline to verify the gc_caches arg.
             runner = thr.call_args.kwargs["target"]
-            fake_async.run.side_effect = (
-                lambda coro: __import__("asyncio").get_event_loop().run_until_complete(coro)
-            )
+            fake_async.run.side_effect = asyncio.run
             runner()
         assert captured.get("delete_repo_caches") is True
         assert captured.get("user_id") == "u1"
@@ -163,9 +162,7 @@ class TestDispatchPotSandboxCleanup:
         ), patch("threading.Thread") as thr:
             mod.dispatch_pot_sandbox_cleanup(db, pot_id="pot-1")
             runner = thr.call_args.kwargs["target"]
-            fake_async.run.side_effect = (
-                lambda coro: __import__("asyncio").get_event_loop().run_until_complete(coro)
-            )
+            fake_async.run.side_effect = asyncio.run
             runner()
         # Shared cache, GC must be off even though the flag was on.
         assert captured.get("delete_repo_caches") is False

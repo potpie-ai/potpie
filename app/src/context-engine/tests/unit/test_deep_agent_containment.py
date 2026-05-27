@@ -89,8 +89,81 @@ def test_playbook_allowlist_drops_undeclared_external_tools():
     kept = {
         t.name for t in agent._enforce_playbook_tool_allowlist(tools, ctx)
     }
-    assert "github_get_pull_request" in kept
+    assert kept == {"github_get_pull_request"}
+    assert "sandbox_read_file" not in kept
     assert "evil_tool" not in kept
+
+
+def test_repository_added_allowlist_keeps_backfill_hydration_tools():
+    agent = PydanticDeepReconciliationAgent()
+    ctx = _ctx([_event("e1", system="github", etype="repository", action="added")])
+    tools = [
+        _NamedTool("github_list_pull_requests"),
+        _NamedTool("github_get_pull_request"),
+        _NamedTool("github_get_pull_request_commits"),
+        _NamedTool("github_get_pull_request_review_comments"),
+        _NamedTool("github_get_pull_request_issue_comments"),
+        _NamedTool("github_get_issue"),
+        _NamedTool("linear_get_issue"),
+    ]
+    kept = {
+        t.name for t in agent._enforce_playbook_tool_allowlist(tools, ctx)
+    }
+    assert kept == {
+        "github_list_pull_requests",
+        "github_get_pull_request",
+        "github_get_pull_request_commits",
+        "github_get_pull_request_review_comments",
+        "github_get_pull_request_issue_comments",
+        "github_get_issue",
+    }
+    assert "linear_get_issue" not in kept
+
+
+def test_playbook_allowlist_unions_hints_across_batch_events():
+    agent = PydanticDeepReconciliationAgent()
+    ctx = _ctx(
+        [
+            _event(
+                "e1",
+                system="github",
+                etype="pull_request",
+                action="merged",
+            ),
+            _event("e2", system="github", etype="issue", action="opened"),
+        ]
+    )
+    tools = [
+        _NamedTool("github_get_pull_request"),
+        _NamedTool("github_get_issue"),
+        _NamedTool("linear_list_issues"),
+        _NamedTool("sandbox_read_file"),
+    ]
+    kept = {
+        t.name for t in agent._enforce_playbook_tool_allowlist(tools, ctx)
+    }
+    assert kept == {"github_get_pull_request", "github_get_issue"}
+    assert "linear_list_issues" not in kept
+    assert "sandbox_read_file" not in kept
+
+
+def test_playbook_allowlist_ignores_default_playbook_hints():
+    """Fallback playbook hints are advisory, not an authorization boundary."""
+    agent = PydanticDeepReconciliationAgent()
+    ctx = _ctx([_event("e1", system="custom", etype="signal", action="fired")])
+    tools = [
+        _NamedTool("context_search"),
+        _NamedTool("sandbox_read_file"),
+        _NamedTool("github_get_pull_request"),
+    ]
+    kept = {
+        t.name for t in agent._enforce_playbook_tool_allowlist(tools, ctx)
+    }
+    assert kept == {
+        "context_search",
+        "sandbox_read_file",
+        "github_get_pull_request",
+    }
 
 
 def test_playbook_allowlist_no_hints_is_unrestricted():

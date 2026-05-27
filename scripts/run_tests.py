@@ -12,6 +12,9 @@ Single entry point to run the full test suite. Used by developers and CI.
 Usage:
   uv run python scripts/run_tests.py
   uv run python scripts/run_tests.py --unit-only
+  uv run python scripts/run_tests.py --context-graph-only
+  uv run python scripts/run_tests.py --context-graph-engine-only
+  uv run python scripts/run_tests.py --context-graph-host-only
   uv run python scripts/run_tests.py --coverage   # or -c (term + htmlcov/)
   SKIP_REAL_PARSE=1 uv run python scripts/run_tests.py
 """
@@ -28,6 +31,33 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TESTS_DIR = PROJECT_ROOT / "tests"
 SANDBOX_UNIT_TESTS_DIR = PROJECT_ROOT / "app" / "src" / "sandbox" / "tests" / "unit"
+CONTEXT_ENGINE_TESTS_DIR = PROJECT_ROOT / "app" / "src" / "context-engine" / "tests"
+CONTEXT_ENGINE_UNIT_TESTS_DIR = CONTEXT_ENGINE_TESTS_DIR / "unit"
+CONTEXT_ENGINE_INTEGRATION_TESTS_DIR = CONTEXT_ENGINE_TESTS_DIR / "integration"
+
+# Pre-existing tests that fail at collection time and are not in scope for
+# this CI wiring (flagged for follow-up so the bitrot is visible, not hidden):
+#  - ``test_benchmark_evaluator.py``: imports ``benchmarks.evaluator`` (the
+#    real package is ``benchmarks.evaluators`` plural; module renamed).
+#  - ``test_benchmark_dataset.py``: imports legacy benchmark fixture helpers
+#    and fixture data that no longer match the current connector layout.
+#  - ``test_edge_collapse_golden.py``: loads
+#    ``tests/fixtures/edge_collapse_golden.json`` which was never committed.
+#  - ``test_linear_issue_plan.py``, ``test_linear_issue_resolver.py``, and
+#    ``test_linear_webhook_normalize.py``: load missing
+#    ``tests/data/linear/*.json`` fixtures.
+_CONTEXT_ENGINE_PYTEST_IGNORES: tuple[str, ...] = (
+    f"--ignore={CONTEXT_ENGINE_UNIT_TESTS_DIR / 'benchmarks' / 'test_benchmark_dataset.py'}",
+    f"--ignore={CONTEXT_ENGINE_UNIT_TESTS_DIR / 'benchmarks' / 'test_benchmark_evaluator.py'}",
+    f"--ignore={CONTEXT_ENGINE_UNIT_TESTS_DIR / 'test_edge_collapse_golden.py'}",
+    f"--ignore={CONTEXT_ENGINE_UNIT_TESTS_DIR / 'test_linear_issue_plan.py'}",
+    f"--ignore={CONTEXT_ENGINE_UNIT_TESTS_DIR / 'test_linear_issue_resolver.py'}",
+    f"--ignore={CONTEXT_ENGINE_UNIT_TESTS_DIR / 'test_linear_webhook_normalize.py'}",
+)
+CONTEXT_GRAPH_HOST_UNIT_TESTS_DIR = TESTS_DIR / "unit" / "context_graph"
+CONTEXT_GRAPH_HOST_INTEGRATION_TESTS_DIR = (
+    TESTS_DIR / "integration-tests" / "context_graph"
+)
 
 
 BANNER_WIDTH = 72
@@ -76,26 +106,53 @@ def main() -> int:
         description="Run test suite (unit → integration → real_parse → stress). "
         "Uses markers and testpaths; new tests are discovered automatically.",
     )
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
         "--unit-only",
         action="store_true",
         help="Run only unit tests (tests/unit/, marker: unit).",
     )
-    group.add_argument(
+    mode_group.add_argument(
         "--integration-only",
         action="store_true",
         help="Run only integration tests, excluding stress and real_parse.",
     )
-    group.add_argument(
+    mode_group.add_argument(
         "--real-parse-only",
         action="store_true",
         help="Run only real_parse tests (Postgres + Neo4j required).",
     )
-    group.add_argument(
+    mode_group.add_argument(
         "--stress-only",
         action="store_true",
         help="Run only stress tests.",
+    )
+    mode_group.add_argument(
+        "--context-graph-only",
+        action="store_true",
+        help=(
+            "Run only context-graph tests: engine unit + engine integration "
+            "(app/src/context-engine/tests/) plus host-bridge unit + "
+            "integration (tests/.../context_graph/). Fakes-only; no live "
+            "GitHub/Linear/Graphiti/Neo4j/Redis/Celery/LLM."
+        ),
+    )
+    mode_group.add_argument(
+        "--context-graph-engine-only",
+        action="store_true",
+        help=(
+            "Run only context-engine tests under app/src/context-engine/tests/ "
+            "(unit + integration). Fakes-only."
+        ),
+    )
+    mode_group.add_argument(
+        "--context-graph-host-only",
+        action="store_true",
+        help=(
+            "Run only Potpie host-bridge context-graph tests under "
+            "tests/unit/context_graph/ and tests/integration-tests/context_graph/. "
+            "Fakes-only."
+        ),
     )
     parser.add_argument(
         "--coverage",
@@ -108,7 +165,8 @@ def main() -> int:
         nargs="*",
         help="Extra arguments passed to pytest (e.g. -x, -k 'test_foo').",
     )
-    args = parser.parse_args()
+    args, unknown_pytest_extra = parser.parse_known_args()
+    args.pytest_extra.extend(unknown_pytest_extra)
 
     skip_real_parse = os.environ.get("SKIP_REAL_PARSE", "").strip().lower() in ("1", "true", "yes")
     run_stress = os.environ.get("RUN_STRESS", "").strip().lower() in ("1", "true", "yes")
@@ -124,7 +182,11 @@ def main() -> int:
     if args.unit_only:
         print_phase_banner("Unit")
         code = run_pytest(
-            str(TESTS_DIR / "unit"), str(SANDBOX_UNIT_TESTS_DIR), "-m", "unit",
+            str(TESTS_DIR / "unit"),
+            str(SANDBOX_UNIT_TESTS_DIR),
+            str(CONTEXT_ENGINE_UNIT_TESTS_DIR),
+            *_CONTEXT_ENGINE_PYTEST_IGNORES,
+            "-m", "unit",
             *args.pytest_extra,
             phase_name="Unit",
             coverage=args.coverage,
@@ -138,9 +200,65 @@ def main() -> int:
         print_phase_banner("Integration")
         code = run_pytest(
             str(TESTS_DIR / "integration-tests"),
+            str(CONTEXT_ENGINE_INTEGRATION_TESTS_DIR),
             "-m", "not stress and not real_parse and not github_live",
             *args.pytest_extra,
             phase_name="Integration",
+            coverage=args.coverage,
+            coverage_final=True,
+        )
+        if code == 0 and args.coverage:
+            print(f"HTML report: file://{PROJECT_ROOT / 'htmlcov' / 'index.html'}")
+        return code
+
+    if (
+        args.context_graph_only
+        or args.context_graph_engine_only
+        or args.context_graph_host_only
+    ):
+        # Fakes only; no external services. Markers stay permissive because the
+        # auto-marking conftest under app/src/context-engine/tests/ applies
+        # ``unit`` / ``integration`` by directory, and host-bridge tests
+        # already mark themselves.
+        paths: list[str] = []
+        phase = "Context Graph"
+        if args.context_graph_engine_only:
+            phase = "Context Graph (engine)"
+            paths.extend(
+                [
+                    str(CONTEXT_ENGINE_UNIT_TESTS_DIR),
+                    str(CONTEXT_ENGINE_INTEGRATION_TESTS_DIR),
+                ]
+            )
+        elif args.context_graph_host_only:
+            phase = "Context Graph (host bridge)"
+            paths.extend(
+                [
+                    str(CONTEXT_GRAPH_HOST_UNIT_TESTS_DIR),
+                    str(CONTEXT_GRAPH_HOST_INTEGRATION_TESTS_DIR),
+                ]
+            )
+        else:
+            paths.extend(
+                [
+                    str(CONTEXT_ENGINE_UNIT_TESTS_DIR),
+                    str(CONTEXT_ENGINE_INTEGRATION_TESTS_DIR),
+                    str(CONTEXT_GRAPH_HOST_UNIT_TESTS_DIR),
+                    str(CONTEXT_GRAPH_HOST_INTEGRATION_TESTS_DIR),
+                ]
+            )
+        print_phase_banner(phase)
+        ignores = (
+            _CONTEXT_ENGINE_PYTEST_IGNORES
+            if args.context_graph_host_only is False
+            else ()
+        )
+        code = run_pytest(
+            *paths,
+            *ignores,
+            "-m", "not stress and not real_parse and not github_live",
+            *args.pytest_extra,
+            phase_name=phase,
             coverage=args.coverage,
             coverage_final=True,
         )
@@ -176,11 +294,21 @@ def main() -> int:
 
     # Full run: unit → integration (no stress/real_parse) → real_parse (optional) → stress (optional)
     phases = [
-        ("Unit", [str(TESTS_DIR / "unit"), str(SANDBOX_UNIT_TESTS_DIR), "-m", "unit"]),
+        (
+            "Unit",
+            [
+                str(TESTS_DIR / "unit"),
+                str(SANDBOX_UNIT_TESTS_DIR),
+                str(CONTEXT_ENGINE_UNIT_TESTS_DIR),
+                *_CONTEXT_ENGINE_PYTEST_IGNORES,
+                "-m", "unit",
+            ],
+        ),
         (
             "Integration",
             [
                 str(TESTS_DIR / "integration-tests"),
+                str(CONTEXT_ENGINE_INTEGRATION_TESTS_DIR),
                 "-m", "not stress and not real_parse and not github_live",
             ],
         ),

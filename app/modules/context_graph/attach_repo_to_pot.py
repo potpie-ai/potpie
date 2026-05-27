@@ -23,6 +23,7 @@ import logging
 import os
 import uuid
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from sqlalchemy.orm import Session
 
@@ -65,6 +66,39 @@ def _allowed_provider_hosts() -> set[str]:
     return hosts
 
 
+def _validate_remote_url(
+    remote_url: str | None,
+    *,
+    provider_host: str,
+    allowed_hosts: set[str],
+) -> str | None:
+    """Return a trimmed clone URL after enforcing host/scheme boundaries."""
+    value = (remote_url or "").strip()
+    if not value:
+        return None
+
+    parsed = urlparse(value)
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").strip().lower()
+
+    # Support the common scp-like Git SSH syntax: git@github.com:owner/repo.git.
+    if not scheme and "@" in value and ":" in value:
+        _, _, after_at = value.partition("@")
+        host = after_at.split(":", 1)[0].strip().lower()
+        scheme = "ssh"
+
+    if (
+        scheme not in {"https", "ssh"}
+        or host not in allowed_hosts
+        or host != provider_host
+    ):
+        raise ValueError(
+            f"remote_url not allowed: {value!r} "
+            "(must be https/ssh and match the provider host)"
+        )
+    return value
+
+
 def attach_repo_to_pot(
     db: Session,
     *,
@@ -93,12 +127,19 @@ def attach_repo_to_pot(
     # SSRF / token-exfil guard: a pot owner could otherwise register an
     # internal ``provider_host`` and make the sandbox clone/fetch target it
     # carrying the injected auth token (security review M-2).
-    if provider_host.lower() not in _allowed_provider_hosts():
+    allowed_hosts = _allowed_provider_hosts()
+    provider_host = provider_host.lower()
+    if provider_host not in allowed_hosts:
         raise ValueError(
             f"provider_host not allowed: {provider_host!r} "
             "(set CONTEXT_ENGINE_ALLOWED_PROVIDER_HOSTS to permit a "
             "GitHub Enterprise host)"
         )
+    remote_url = _validate_remote_url(
+        remote_url,
+        provider_host=provider_host,
+        allowed_hosts=allowed_hosts,
+    )
 
     existing = (
         db.query(ContextGraphPotRepository)
@@ -163,7 +204,7 @@ def attach_repo_to_pot(
         owner=owner,
         repo=repo,
         external_repo_id=(external_repo_id or "").strip() or None,
-        remote_url=(remote_url or "").strip() or None,
+        remote_url=remote_url,
         default_branch=(default_branch or "").strip() or None,
         added_by_user_id=submitted_by_user_id,
     )
