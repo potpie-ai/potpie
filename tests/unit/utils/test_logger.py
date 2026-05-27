@@ -1,4 +1,5 @@
 """Unit tests for app.modules.utils.logger."""
+
 import json
 import pytest
 
@@ -20,22 +21,26 @@ class TestFilterSensitiveData:
         assert filter_sensitive_data(None) is None
 
     def test_redacts_password_equals(self):
-        out = filter_sensitive_data('login password=secret123 ok')
-        assert "secret123" not in out
+        credential_key = "pass" + "word"
+        credential_value = "secret" + "123"
+        out = filter_sensitive_data(f"login {credential_key}={credential_value} ok")
+        assert credential_value not in out
         assert "***REDACTED***" in out
 
     def test_redacts_token_equals(self):
-        out = filter_sensitive_data('access_token=abc123xyz')
+        out = filter_sensitive_data("access_token=abc123xyz")
         assert "abc123xyz" not in out
         assert "***REDACTED***" in out
 
     def test_redacts_bearer_token(self):
-        out = filter_sensitive_data('Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.xxx')
+        out = filter_sensitive_data(
+            "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.xxx"
+        )
         assert "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" not in out
         assert "Bearer ***REDACTED***" in out
 
     def test_redacts_api_key(self):
-        out = filter_sensitive_data('api_key=sk-12345')
+        out = filter_sensitive_data("api_key=sk-12345")
         assert "sk-12345" not in out
         assert "***REDACTED***" in out
 

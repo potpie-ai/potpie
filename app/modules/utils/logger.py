@@ -54,7 +54,7 @@ SENSITIVE_PATTERNS = [
     ),
     # Bearer tokens
     (
-        re.compile(r"Bearer\s+([A-Za-z0-9\-._~+/]+=*)", re.IGNORECASE),
+        re.compile(r"Bearer\s+([A-Za-z0-9._~+/=-]+)", re.IGNORECASE),
         r"Bearer ***REDACTED***",
     ),
     # Basic auth
@@ -68,7 +68,7 @@ SENSITIVE_PATTERNS = [
     ),
     # OAuth authorization codes (typically 20-100 chars alphanumeric)
     (
-        re.compile(r"([?&]code=)([A-Za-z0-9\-._~]{20,100})([&\s]|$)", re.IGNORECASE),
+        re.compile(r"([?&]code=)([A-Za-z0-9._~-]{20,100})([&\s]|$)", re.IGNORECASE),
         r"\1***REDACTED***\3",
     ),
     # Generic secrets in quotes
@@ -87,7 +87,7 @@ SENSITIVE_PATTERNS = [
 ]
 
 
-def filter_sensitive_data(text: str) -> str:
+def filter_sensitive_data(text: Any) -> Any:
     """
     Filter sensitive data from log messages.
 

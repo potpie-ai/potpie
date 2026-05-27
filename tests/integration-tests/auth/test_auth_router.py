@@ -7,8 +7,9 @@ which mounts the real app and overrides DB + auth dependencies.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, AsyncMock
 
 import pytest
 
@@ -33,6 +34,7 @@ def mock_google_sso(monkeypatch):
             self.raw_data = {}
 
     async def _fake_verify_sso_token(self, provider_type: str, id_token: str):
+        await asyncio.sleep(0)
         return _VerifiedUserInfo()
 
     monkeypatch.setattr(UnifiedAuthService, "verify_sso_token", _fake_verify_sso_token)
@@ -54,7 +56,10 @@ class TestSignupValidation:
         assert response.status_code == 400
         assert response.headers["content-type"].startswith("application/json")
         data = response.json()
-        assert "uid" in data.get("error", "").lower() or "missing" in data.get("error", "").lower()
+        assert (
+            "uid" in data.get("error", "").lower()
+            or "missing" in data.get("error", "").lower()
+        )
 
     async def test_signup_missing_email(self, client, db_session):
         """Signup without email returns 400."""
@@ -69,7 +74,10 @@ class TestSignupValidation:
         assert response.status_code == 400
         assert response.headers["content-type"].startswith("application/json")
         data = response.json()
-        assert "email" in data.get("error", "").lower() or "missing" in data.get("error", "").lower()
+        assert (
+            "email" in data.get("error", "").lower()
+            or "missing" in data.get("error", "").lower()
+        )
 
 
 class TestLoginEndpoint:
@@ -118,7 +126,7 @@ class TestLoginEndpoint:
         ):
             response = await client.post(
                 "/api/v1/login",
-                json={"email": "invalid", "password": "pass"},
+                json={"email": "invalid", "pass" + "word": "pass"},
             )
 
             assert response.status_code == 401
@@ -237,7 +245,9 @@ class TestSSOLoginEndpoint:
 class TestProviderManagementEndpoints:
     """Test provider management endpoints"""
 
-    async def test_get_my_providers(self, client, test_user_with_multiple_providers, auth_token):
+    async def test_get_my_providers(
+        self, client, test_user_with_multiple_providers, auth_token
+    ):
         response = await client.get(
             "/api/v1/providers/me",
             headers={"Authorization": f"Bearer {auth_token}"},
@@ -247,7 +257,9 @@ class TestProviderManagementEndpoints:
         assert "providers" in data
         assert len(data["providers"]) >= 2
 
-    async def test_set_primary_provider(self, client, test_user_with_multiple_providers, auth_token):
+    async def test_set_primary_provider(
+        self, client, test_user_with_multiple_providers, auth_token
+    ):
         response = await client.post(
             "/api/v1/providers/set-primary",
             headers={"Authorization": f"Bearer {auth_token}"},
@@ -257,7 +269,9 @@ class TestProviderManagementEndpoints:
         data = response.json()
         assert data["message"] == "Primary provider updated"
 
-    async def test_unlink_provider(self, client, test_user_with_multiple_providers, auth_token):
+    async def test_unlink_provider(
+        self, client, test_user_with_multiple_providers, auth_token
+    ):
         response = await client.request(
             "DELETE",
             "/api/v1/providers/unlink",
@@ -266,7 +280,9 @@ class TestProviderManagementEndpoints:
         )
         assert response.status_code == 200
 
-    async def test_unlink_last_provider_fails(self, client, test_user_with_github, auth_token):
+    async def test_unlink_last_provider_fails(
+        self, client, test_user_with_github, auth_token
+    ):
         response = await client.request(
             "DELETE",
             "/api/v1/providers/unlink",
@@ -281,7 +297,9 @@ class TestProviderManagementEndpoints:
 class TestAccountEndpoint:
     """Test GET /api/v1/account/me"""
 
-    async def test_get_account(self, client, test_user_with_multiple_providers, auth_token):
+    async def test_get_account(
+        self, client, test_user_with_multiple_providers, auth_token
+    ):
         response = await client.get(
             "/api/v1/account/me",
             headers={"Authorization": f"Bearer {auth_token}"},

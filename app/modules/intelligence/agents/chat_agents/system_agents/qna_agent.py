@@ -36,14 +36,19 @@ class QnAAgent(ChatAgent):
         self.tools_provider = tools_provider
         self.prompt_provider = prompt_provider
 
-    def _build_agent(self, ctx: Optional[ChatContext] = None) -> ChatAgent:
+    @staticmethod
+    def _has_complete_prefetch(ctx: Optional[ChatContext]) -> bool:
         bundle = getattr(ctx, "context_intelligence_bundle", None) if ctx else None
-        cov = (bundle or {}).get("coverage") or {} if isinstance(bundle, dict) else {}
-        prefetch_complete = (
-            isinstance(cov, dict) and str(cov.get("status") or "").upper() == "COMPLETE"
+        if not isinstance(bundle, dict):
+            return False
+        coverage = bundle.get("coverage") or {}
+        return (
+            isinstance(coverage, dict)
+            and str(coverage.get("status") or "").upper() == "COMPLETE"
         )
 
-        if bundle and prefetch_complete:
+    def _build_agent(self, ctx: Optional[ChatContext] = None) -> ChatAgent:
+        if self._has_complete_prefetch(ctx):
             goal = (
                 "Answer questions using prefetched CONTEXT INTELLIGENCE first when coverage is COMPLETE; "
                 "avoid redundant graph tools; use code-level tools only when source is needed."

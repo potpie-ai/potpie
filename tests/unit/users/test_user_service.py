@@ -77,7 +77,7 @@ class TestUserServiceCreateUser:
             provider_username=None,
         )
         mock_db.commit.side_effect = Exception("constraint error")
-        uid, message, error = user_service.create_user(details)
+        uid, _, error = user_service.create_user(details)
         assert uid == ""
         assert error is True
 

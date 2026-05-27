@@ -106,7 +106,7 @@ class AuthService:
     @staticmethod
     def _resolve_bearer_credential(
         request: Request,
-        credential: HTTPAuthorizationCredentials | None,
+        credential: HTTPAuthorizationCredentials | object | None,
     ) -> HTTPAuthorizationCredentials | None:
         if isinstance(credential, HTTPAuthorizationCredentials):
             return credential
@@ -166,7 +166,7 @@ class AuthService:
     async def check_auth(
         request: Request,
         res: Response,
-        credential: HTTPAuthorizationCredentials = Depends(
+        credential: HTTPAuthorizationCredentials | object | None = Depends(
             HTTPBearer(auto_error=False)
         ),
     ):

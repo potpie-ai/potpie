@@ -286,7 +286,7 @@ def _link_github_provider(
     except IntegrityError as error:
         db.rollback()
         if _is_provider_uid_conflict(error):
-            logger.error(
+            logger.exception(
                 "GitHub account %s is already linked to another user (error_type=%s)",
                 mask_identifier(signup_data.provider_uid),
                 type(error).__name__,
@@ -295,9 +295,7 @@ def _link_github_provider(
         raise
     except Exception as error:
         db.rollback()
-        logger.error(
-            "Unexpected error linking GitHub provider: %s", error, exc_info=True
-        )
+        logger.exception("Unexpected error linking GitHub provider: %s", error)
         raise
 
 
@@ -408,7 +406,7 @@ async def _create_github_signup_user(
         )
     except Exception as error:
         db.rollback()
-        logger.error("Failed to create user: %s", error, exc_info=True)
+        logger.exception("Failed to create user: %s", error)
         return _json_error_response(GENERIC_SIGNUP_FAILURE_ERROR, 500)
 
 
@@ -501,7 +499,7 @@ async def _handle_email_password_signup(
         )
     except Exception as error:
         db.rollback()
-        logger.error("Email/password signup failed: %s", error, exc_info=True)
+        logger.exception("Email/password signup failed: %s", error)
         return _json_error_response(GENERIC_SIGNUP_FAILURE_ERROR, 500)
 
 
@@ -522,7 +520,7 @@ class AuthAPI:
         except HTTPException as he:
             return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, he.status_code)
         except Exception as e:
-            logger.error("Login error: %s", e, exc_info=True)
+            logger.exception("Login error: %s", e)
             return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 500)
 
     @staticmethod
@@ -733,10 +731,10 @@ class AuthAPI:
             )
 
         except ValueError as ve:
-            logger.error(f"SSO login validation error: {str(ve)}", exc_info=True)
+            logger.exception("SSO login validation error: %s", ve)
             return _json_error_response(INVALID_REQUEST_ERROR, 400)
         except Exception as e:
-            logger.error(f"SSO login error: {str(e)}", exc_info=True)
+            logger.exception("SSO login error: %s", e)
             return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 500)
 
     @staticmethod
@@ -775,10 +773,10 @@ class AuthAPI:
             )
 
         except ValueError as ve:
-            logger.error(f"Provider linking validation error: {str(ve)}", exc_info=True)
+            logger.exception("Provider linking validation error: %s", ve)
             return _json_error_response(INVALID_REQUEST_ERROR, 400)
         except Exception as e:
-            logger.error(f"Provider linking error: {str(e)}", exc_info=True)
+            logger.exception("Provider linking error: %s", e)
             return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 500)
 
     @staticmethod
@@ -804,7 +802,7 @@ class AuthAPI:
                 )
 
         except Exception as e:
-            logger.error("Cancel provider linking error: %s", e, exc_info=True)
+            logger.exception("Cancel provider linking error: %s", e)
             return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 500)
 
     @staticmethod
@@ -849,7 +847,7 @@ class AuthAPI:
             )
 
         except Exception as e:
-            logger.error("Get providers error: %s", e, exc_info=True)
+            logger.exception("Get providers error: %s", e)
             return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 500)
 
     @staticmethod
@@ -887,7 +885,7 @@ class AuthAPI:
                 )
 
         except Exception as e:
-            logger.error("Set primary provider error: %s", e, exc_info=True)
+            logger.exception("Set primary provider error: %s", e)
             return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 500)
 
     @staticmethod
@@ -931,7 +929,7 @@ class AuthAPI:
                 return _json_error_response(INVALID_REQUEST_ERROR, 400)
 
         except Exception as e:
-            logger.error("Unlink provider error: %s", e, exc_info=True)
+            logger.exception("Unlink provider error: %s", e)
             return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 500)
 
     @staticmethod
@@ -985,5 +983,5 @@ class AuthAPI:
             )
 
         except Exception as e:
-            logger.error("Get account error: %s", e, exc_info=True)
+            logger.exception("Get account error: %s", e)
             return _json_error_response(GENERIC_REQUEST_FAILURE_ERROR, 500)
