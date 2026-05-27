@@ -111,7 +111,6 @@ class UserService:
             )
             uid, message, error = user_service.create_user(user)
 
-        uid, _, _ = user_service.create_user(user)
         logger.info(f"Created dummy user with uid: {uid}")
 
     def get_user_by_uid(self, uid: str):
