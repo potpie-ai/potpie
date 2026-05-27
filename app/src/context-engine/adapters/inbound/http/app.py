@@ -3,6 +3,8 @@
 import importlib.metadata
 import logging
 
+from observability import get_logger
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
@@ -16,7 +18,7 @@ try:
 except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0"
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def create_app() -> FastAPI:
@@ -31,7 +33,7 @@ def create_app() -> FastAPI:
 
         app.add_middleware(LoggingContextMiddleware)
     except Exception as exc:  # pragma: no cover — defensive
-        logger.warning("LoggingContextMiddleware not attached: %s", exc)
+        logger.warning("LoggingContextMiddleware not attached: %s", exc, exc=exc)
 
     @app.exception_handler(HTTPException)
     async def http_exception_handler(

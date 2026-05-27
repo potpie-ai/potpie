@@ -17,6 +17,8 @@ the ref's ``resolver_hint``.
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 import re
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Sequence
@@ -40,7 +42,7 @@ from domain.source_resolution import (
     clamp_text,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # RepoResolver can be sync or async: ``(pot_id, ref) -> repo_name | None``.
 # Returning ``None`` emits an UNSUPPORTED_SOURCE_TYPE fallback for that ref.
@@ -151,7 +153,7 @@ class GitHubPullRequestResolver:
                 )
                 continue
             except Exception as exc:
-                logger.exception("github PR fetch failed: %s", exc)
+                logger.exception("github PR fetch failed: %s", exc, exc=exc)
                 out.fallbacks.append(
                     ResolverFallback(
                         code=RESOLVER_ERROR,

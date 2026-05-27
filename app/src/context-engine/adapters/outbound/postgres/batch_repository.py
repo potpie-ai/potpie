@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -26,7 +28,7 @@ from domain.reconciliation_batch import (
     ReconciliationBatch,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _utcnow() -> datetime:

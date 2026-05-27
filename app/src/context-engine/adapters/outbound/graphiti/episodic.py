@@ -6,6 +6,8 @@ import asyncio
 import concurrent.futures
 import gc
 import logging
+
+from observability import get_logger
 import threading
 from datetime import datetime
 from collections.abc import Coroutine
@@ -37,7 +39,7 @@ from domain.graph_mutations import (
 from domain.ports.settings import ContextEngineSettingsPort
 from domain.reconciliation import EpisodeDraft
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _T = TypeVar("_T")
 
@@ -88,7 +90,7 @@ async def _ensure_graphiti_entity_defaults_async(driver: Any, pot_id: str) -> No
             "Graphiti entity default repair failed for pot %s",
             pot_id,
             exc_info=True,
-        )
+         pot_id=pot_id)
 
 
 class GraphitiEpisodicAdapter(EpisodicGraphPort):
@@ -117,7 +119,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
             self._date_filter_cls = DateFilter
         except Exception as exc:
             self._init_error = str(exc)
-            logger.warning("GraphitiEpisodicAdapter disabled due to init error: %s", exc)
+            logger.warning("GraphitiEpisodicAdapter disabled due to init error: %s", exc, exc=exc)
 
     def _get_graphiti(self):
         if not self._enabled or self._init_error:
@@ -156,7 +158,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
             return client
         except Exception as exc:
             self._init_error = str(exc)
-            logger.warning("Graphiti init failed: %s", exc)
+            logger.warning("Graphiti init failed: %s", exc, exc=exc)
             return None
 
     @property
@@ -194,7 +196,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
         try:
             await close_fn()
         except Exception as exc:
-            logger.debug("Async HTTP client close: %s", exc)
+            logger.debug("Async HTTP client close: %s", exc, exc=exc)
 
     async def _close_graphiti_aux_http_clients(self, graphiti: Any) -> None:
         """Close LLM/embedder/reranker HTTP clients (Graphiti.close() only closes Neo4j).
@@ -238,12 +240,12 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
         except Exception as exc:
-            logger.debug("Graphiti pending-task drain: %s", exc)
+            logger.debug("Graphiti pending-task drain: %s", exc, exc=exc)
         try:
             await self._close_graphiti_aux_http_clients(client)
             await client.close()
         except Exception as exc:
-            logger.debug("Graphiti close after sync run: %s", exc)
+            logger.debug("Graphiti close after sync run: %s", exc, exc=exc)
         self._thread_local.graphiti = None
         self._thread_local.graphiti_loop = None
         # Drop the last user-visible references above; force GC NOW so any
@@ -265,7 +267,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
             if late:
                 await asyncio.gather(*late, return_exceptions=True)
         except Exception as exc:
-            logger.debug("Graphiti post-gc drain: %s", exc)
+            logger.debug("Graphiti post-gc drain: %s", exc, exc=exc)
 
     def _sync_run(self, factory: Callable[[], Coroutine[Any, Any, _T]]) -> _T:
         async def _wrapped() -> _T:
@@ -340,7 +342,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
                     g.driver, pot_id, str(episode_uuid), provenance
                 )
             except Exception as exc:
-                logger.warning("Episode provenance stamp failed: %s", exc)
+                logger.warning("Episode provenance stamp failed: %s", exc, exc=exc)
         try:
             from adapters.outbound.graphiti.temporal_supersede import (
                 apply_predicate_family_auto_supersede,
@@ -348,7 +350,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
 
             await apply_predicate_family_auto_supersede(g.driver, pot_id)
         except Exception as exc:
-            logger.warning("Predicate-family auto-supersede failed: %s", exc)
+            logger.warning("Predicate-family auto-supersede failed: %s", exc, exc=exc)
         try:
             from adapters.outbound.graphiti.ontology_classifier_pass import (
                 run_ontology_classifier_pass,
@@ -356,7 +358,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
 
             await run_ontology_classifier_pass(g.driver, pot_id)
         except Exception as exc:
-            logger.warning("Ontology classifier pass failed: %s", exc)
+            logger.warning("Ontology classifier pass failed: %s", exc, exc=exc)
         try:
             from adapters.outbound.graphiti.family_conflict_detection import (
                 apply_family_conflict_detection,
@@ -364,7 +366,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
 
             await apply_family_conflict_detection(g.driver, pot_id)
         except Exception as exc:
-            logger.warning("Family conflict detection failed: %s", exc)
+            logger.warning("Family conflict detection failed: %s", exc, exc=exc)
         return str(episode_uuid) if episode_uuid else None
 
     def add_episode(
@@ -653,7 +655,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
                         "valid_at": record.get("valid_at"),
                     }
         except Exception as exc:
-            logger.warning("episodic provenance lookup failed: %s", exc)
+            logger.warning("episodic provenance lookup failed: %s", exc, exc=exc)
         return out
 
     @staticmethod
@@ -802,7 +804,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
                 query, gid=pot_id, uuids=list(uuids)
             )
         except Exception as exc:
-            logger.warning("Endpoint-label post-filter query failed: %s", exc)
+            logger.warning("Endpoint-label post-filter query failed: %s", exc, exc=exc)
             return edges
         wanted = {str(lb) for lb in node_labels}
         labels_by_uuid: dict[str, set[str]] = {}
@@ -858,7 +860,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
             from graphiti_core.search.search_filters import SearchFilters
             from graphiti_core.search.search_config_recipes import EDGE_HYBRID_SEARCH_RRF
         except Exception as exc:
-            logger.warning("graphiti search helpers unavailable: %s", exc)
+            logger.warning("graphiti search helpers unavailable: %s", exc, exc=exc)
             edges = await g.search(
                 query=query,
                 group_ids=[pot_id],
@@ -1017,7 +1019,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
                     "group_id_nodes_remaining": remaining,
                 }
         except Exception as exc:
-            logger.warning("reset_pot_async failed: %s", exc)
+            logger.warning("reset_pot_async failed: %s", exc, exc=exc)
             return {"ok": False, "error": str(exc)}
         return {
             "ok": True,
@@ -1051,7 +1053,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
         try:
             return self._sync_run(_run)
         except Exception as exc:
-            logger.warning("list_open_conflicts failed: %s", exc)
+            logger.warning("list_open_conflicts failed: %s", exc, exc=exc)
             return []
 
     def resolve_open_conflict(
@@ -1081,7 +1083,7 @@ class GraphitiEpisodicAdapter(EpisodicGraphPort):
         try:
             return self._sync_run(_run)
         except Exception as exc:
-            logger.warning("resolve_open_conflict failed: %s", exc)
+            logger.warning("resolve_open_conflict failed: %s", exc, exc=exc)
             return {"ok": False, "error": str(exc)}
 
     def relabel_nodes_from_edges_for_pot(self, pot_id: str) -> dict[str, Any]:

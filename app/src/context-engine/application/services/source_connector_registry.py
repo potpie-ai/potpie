@@ -17,6 +17,8 @@ Replaces (Phase 2 deletions):
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 from typing import Iterable, Mapping, Sequence
 
 from domain.context_events import ContextEvent
@@ -39,7 +41,7 @@ from domain.source_resolution import (
     SourceResolutionResult,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class SourceConnectorRegistry:
@@ -60,7 +62,7 @@ class SourceConnectorRegistry:
     def register(self, connector: SourceConnectorPort) -> None:
         kind = connector.kind().lower()
         if kind in self._by_kind:
-            logger.warning("Replacing already-registered connector kind=%s", kind)
+            logger.warning("Replacing already-registered connector kind=%s", kind, kind=kind)
         self._by_kind[kind] = connector
 
     def all(self) -> Sequence[SourceConnectorPort]:
@@ -238,7 +240,7 @@ class SourceConnectorRegistry:
                 )
                 continue
             except Exception as exc:
-                logger.exception("connector fetch failed: %s", exc)
+                logger.exception("connector fetch failed: %s", exc, exc=exc)
                 out.fallbacks.append(
                     ResolverFallback(
                         code=RESOLVER_ERROR,

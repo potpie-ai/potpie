@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+
+from observability import get_logger
 import os
 from dataclasses import dataclass
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass

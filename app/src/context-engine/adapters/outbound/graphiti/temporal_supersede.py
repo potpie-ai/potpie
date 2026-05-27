@@ -7,6 +7,8 @@ See docs/context-graph-improvements/01-temporal-resolution-in-search.md
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 import os
 from collections import defaultdict
 from dataclasses import asdict, dataclass
@@ -23,7 +25,7 @@ from domain.ontology import (
     temporal_subject_key_for_edge,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _families_from_env() -> frozenset[str] | None:
@@ -87,7 +89,7 @@ async def apply_predicate_family_auto_supersede(driver: Any, group_id: str) -> d
     try:
         from graphiti_core.driver.driver import GraphProvider
     except Exception as exc:  # pragma: no cover - optional dependency
-        logger.debug("graphiti_core not available for auto_supersede: %s", exc)
+        logger.debug("graphiti_core not available for auto_supersede: %s", exc, exc=exc)
         return {"ok": False, "error": "graphiti_core_unavailable"}
 
     if getattr(driver, "provider", None) != GraphProvider.NEO4J:
@@ -257,7 +259,7 @@ async def apply_predicate_family_auto_supersede(driver: Any, group_id: str) -> d
     if invalidated:
         logger.info(
             "auto_supersede: invalidated %d edges in group_id=%s", invalidated, group_id
-        )
+        , group_id=invalidated)
 
     return {
         "ok": True,

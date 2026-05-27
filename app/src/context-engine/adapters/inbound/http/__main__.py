@@ -1,10 +1,12 @@
 import logging
+
+from observability import get_logger
 import os
 import sys
 
 import uvicorn
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
@@ -31,7 +33,7 @@ def _assert_safe_to_bind(host: str) -> None:
         "CONTEXT_ENGINE_API_KEY is unset. Configure an API key, bind to "
         "127.0.0.1, or set CONTEXT_ENGINE_ALLOW_NO_AUTH=1 for local dev only.",
         host,
-    )
+     CONTEXT_ENGINE_HOST=host)
     sys.exit(1)
 
 

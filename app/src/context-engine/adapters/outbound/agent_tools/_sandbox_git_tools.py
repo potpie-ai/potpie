@@ -18,6 +18,8 @@ Conventions:
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 from typing import Any, Awaitable, Callable
 
 from adapters.outbound.agent_tools._path_safety import (
@@ -27,7 +29,7 @@ from adapters.outbound.agent_tools._path_safety import (
 )
 from domain.error_redaction import safe_error
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Hardening flags prepended to every git invocation: kill the ``ext::`` /
 # ``file::`` / fd transports and any per-invocation config override so a
@@ -143,7 +145,7 @@ def build_git_history_tools(
         except Exception as exc:
             logger.exception(
                 "git tool: sandbox acquire failed for repo=%s", repo
-            )
+            , repo=repo)
             return None, None, sandbox_unavailable_error(exc, repo=repo)
 
         from sandbox.domain.models import CommandKind  # type: ignore[import-not-found]
@@ -187,7 +189,7 @@ def build_git_history_tools(
         except Exception as exc:
             logger.exception(
                 "sandbox_checkout: facade init failed for repo=%s", repo
-            )
+            , repo=repo)
             return sandbox_unavailable_error(exc, ref=ref, repo=repo)
 
         async with facade.repo_lock(attachment.full_name):
@@ -199,7 +201,7 @@ def build_git_history_tools(
                 logger.exception(
                     "sandbox_checkout: acquire failed for repo=%s",
                     attachment.full_name,
-                )
+                 repo=attachment.full_name)
                 return sandbox_unavailable_error(
                     exc, ref=ref, repo=attachment.full_name
                 )

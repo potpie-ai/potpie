@@ -24,13 +24,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+
+from observability import get_logger
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 from adapters.outbound.agent_tools._path_safety import is_safe_relpath
 from domain.error_redaction import safe_error
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass(slots=True, frozen=True)
@@ -239,7 +241,7 @@ class PotSandboxFacade:
                     "release_session failed for pot=%s repo=%s",
                     self._cfg.pot_id,
                     full,
-                )
+                 pot=self._cfg.pot_id, repo=full)
         self._workspaces.clear()
 
 
@@ -306,7 +308,7 @@ def build_sandbox_tools(
             logger.info(
                 "sandbox tools disabled for pot %s (no pot sandbox config)",
                 state.pot_id,
-            )
+             state_pot_id=state.pot_id)
             return []
 
         facade_box: dict[str, Any] = {"facade": None, "client": None}
@@ -401,7 +403,7 @@ def build_sandbox_tools(
                     "sandbox_read_file: acquire failed for pot=%s repo=%s",
                     cfg.pot_id,
                     repo,
-                )
+                 pot=cfg.pot_id, repo=repo)
                 _tool_call("sandbox_read_file", False)
                 return _sandbox_unavailable_error(
                     exc, path=path, repo=repo
@@ -456,7 +458,7 @@ def build_sandbox_tools(
                     "sandbox_list_dir: acquire failed for pot=%s repo=%s",
                     cfg.pot_id,
                     repo,
-                )
+                 pot=cfg.pot_id, repo=repo)
                 _tool_call("sandbox_list_dir", False)
                 return _sandbox_unavailable_error(
                     exc, path=path, repo=repo
@@ -501,7 +503,7 @@ def build_sandbox_tools(
                     "sandbox_search: acquire failed for pot=%s repo=%s",
                     cfg.pot_id,
                     repo,
-                )
+                 pot=cfg.pot_id, repo=repo)
                 _tool_call("sandbox_search", False)
                 return _sandbox_unavailable_error(
                     exc, pattern=pattern, repo=repo

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -26,7 +28,7 @@ from domain.ports.reconciliation_ledger import (
     ReconciliationWorkEventRow,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _utcnow() -> datetime:
@@ -99,7 +101,7 @@ class SqlAlchemyReconciliationLedger(ReconciliationLedgerPort):
                 event.repo_name,
                 event.source_system,
                 event.source_id,
-            )
+             pot=event.pot_id, repo=event.repo_name, source_system=event.source_system, source_id=event.source_id)
             existing = self._db.scalar(
                 select(ContextEventModel.id).where(
                     ContextEventModel.pot_id == event.pot_id,

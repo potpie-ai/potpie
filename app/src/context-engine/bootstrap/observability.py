@@ -13,9 +13,11 @@ choice for this module.
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 import os
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def configure_observability() -> None:
@@ -77,4 +79,4 @@ def configure_observability() -> None:
     try:
         configure(cfg)
     except Exception as exc:  # pragma: no cover — defensive
-        logger.warning("observability.configure failed: %s", exc)
+        logger.warning("observability.configure failed: %s", exc, exc=exc)

@@ -29,12 +29,14 @@ for correctness.)
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 from dataclasses import dataclass
 
 from domain.ports.batch_repository import BatchRepositoryPort
 from domain.ports.reconciliation_ledger import ReconciliationLedgerPort
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass(slots=True, frozen=True)
@@ -88,9 +90,9 @@ def reap_stale_batches(
                 batch.status,
                 batch.attempt_count,
                 batch.claimed_at,
-            )
+             status=batch.id, attempt=batch.pot_id, claimed_at=batch.status, batch_attempt_count=batch.attempt_count, batch_claimed_at=batch.claimed_at)
         except Exception:
-            logger.exception("reap_stale_batches: failed to reap batch %s", batch.id)
+            logger.exception("reap_stale_batches: failed to reap batch %s", batch.id, batch_id=batch.id)
             errors += 1
 
     return ReapOutcome(

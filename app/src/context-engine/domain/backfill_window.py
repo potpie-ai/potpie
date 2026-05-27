@@ -23,10 +23,12 @@ redeploy.
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 import os
 from datetime import datetime, timedelta, timezone
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _DEFAULT_WINDOW_DAYS = 365
 _DEFAULT_MAX_ITEMS = 300
@@ -39,7 +41,7 @@ def _env_int(name: str, default: int) -> int:
     try:
         return int(raw)
     except ValueError:
-        logger.warning("%s not an int: %r; using default %d", name, raw, default)
+        logger.warning("%s not an int: %r; using default %d", name, raw, default, name=name, raw=raw, default=default)
         return default
 
 

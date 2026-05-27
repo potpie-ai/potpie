@@ -13,6 +13,8 @@ maintenance backfill entrypoint.
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 from collections import defaultdict
 from typing import Any
 
@@ -20,7 +22,7 @@ from domain.ontology import ENTITY_TYPES, is_canonical_entity_label
 from domain.ontology_classifier import build_signals, classify_entity
 from domain.reconciliation_flags import infer_canonical_labels_enabled
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _safe_label(label: str) -> str:
@@ -52,7 +54,7 @@ async def run_ontology_classifier_pass(
     try:
         from graphiti_core.driver.driver import GraphProvider
     except Exception as exc:  # pragma: no cover
-        logger.debug("graphiti_core not available: %s", exc)
+        logger.debug("graphiti_core not available: %s", exc, exc=exc)
         return {"ok": False, "error": "graphiti_core_unavailable"}
 
     if getattr(driver, "provider", None) != GraphProvider.NEO4J:

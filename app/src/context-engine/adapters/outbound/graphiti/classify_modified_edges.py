@@ -9,6 +9,8 @@ See docs/context-graph-improvements/02-edge-type-collapse.md.
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 from typing import Any
 
 from domain.entity_schema import normalized_episodic_edge_allowlist
@@ -18,7 +20,7 @@ from domain.reconciliation_flags import (
     classify_modified_edges_enabled,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 _FETCH_MODIFIED = """
@@ -51,7 +53,7 @@ async def classify_modified_edges_for_group(
     try:
         from graphiti_core.driver.driver import GraphProvider
     except Exception as exc:  # pragma: no cover
-        logger.debug("graphiti_core not available: %s", exc)
+        logger.debug("graphiti_core not available: %s", exc, exc=exc)
         return {"ok": False, "error": "graphiti_core_unavailable"}
 
     if getattr(driver, "provider", None) != GraphProvider.NEO4J:
@@ -130,7 +132,7 @@ async def classify_modified_edges_for_group(
                 updated += 1
         except Exception as exc:
             errors.append(f"{uuid}: {exc}")
-            logger.warning("classify_modified_edges update failed: %s", exc)
+            logger.warning("classify_modified_edges update failed: %s", exc, exc=exc)
 
     out: dict[str, Any] = {
         "ok": True,

@@ -20,6 +20,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+
+from observability import get_logger
 import os
 import time
 from typing import Any
@@ -37,7 +39,7 @@ from domain.ports.query_agent import (
 from domain.ports.reconciliation_tools import ToolDescriptor
 from domain.ports.telemetry import CostEvent, NoOpTelemetry, TelemetryPort
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _DEFAULT_TIMEOUT_S = 30.0
 _DEFAULT_REQUEST_LIMIT = 8
@@ -194,7 +196,7 @@ class PydanticQueryAgent:
                 try:
                     result = await run_tool(name, args)
                 except Exception as exc:  # noqa: BLE001 - surfaced to the model
-                    logger.exception("query agent tool %s failed", name)
+                    logger.exception("query agent tool %s failed", name, name=name)
                     return {"error": f"tool_failed:{exc}"}
                 state.record(name, args, result)
                 return _compact_for_llm(result)

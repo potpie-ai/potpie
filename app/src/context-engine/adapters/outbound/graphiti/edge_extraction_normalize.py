@@ -6,6 +6,8 @@ Monkey-patches ``graphiti_core.utils.maintenance.edge_operations.extract_edges``
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 from typing import Any
 
 from domain.entity_schema import normalized_episodic_edge_allowlist
@@ -15,7 +17,7 @@ from domain.extraction_edges import (
 )
 from domain.reconciliation_flags import strict_extraction_enabled
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _PATCH_INSTALLED = False
 

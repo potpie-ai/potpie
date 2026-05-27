@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import logging
+
+from observability import get_logger
 from datetime import datetime, timezone
 from typing import Any
 
@@ -26,7 +28,7 @@ from domain.ingestion_event_models import (
 )
 from domain.ports.ingestion_event_store import IngestionEventStore
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _utcnow() -> datetime:
@@ -194,7 +196,7 @@ class SqlAlchemyIngestionEventStore(IngestionEventStore):
             try:
                 ts, eid = _decode_list_cursor(cursor)
             except (ValueError, UnicodeDecodeError) as e:
-                logger.warning("invalid event list cursor: %s", e)
+                logger.warning("invalid event list cursor: %s", e, e=e)
                 return EventListPage(items=(), next_cursor=None)
             q = q.where(
                 or_(

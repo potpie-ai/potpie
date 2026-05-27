@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import logging
 
+from observability import get_logger
+
 from fastapi import APIRouter, HTTPException, Request
 
 from adapters.outbound.postgres.session import make_session_factory
@@ -20,7 +22,7 @@ from domain.ingestion_event_models import IngestionSubmissionRequest
 from domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
 from domain.ports.pot_resolution import RepoRef
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 github_router = APIRouter()
 
@@ -111,7 +113,7 @@ async def github_webhook(request: Request):
     finally:
         session.close()
 
-    logger.info("github_webhook ingest receipt=%s", receipt)
+    logger.info("github_webhook ingest receipt=%s", receipt, receipt=receipt)
     return {
         "processed": True,
         "event_id": receipt.event_id,

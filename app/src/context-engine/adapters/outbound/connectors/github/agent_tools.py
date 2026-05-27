@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import functools
 import logging
+
+from observability import get_logger
 from typing import Any, Callable
 
 from adapters.outbound.connectors.github.api_client import GitHubReadPort
 from domain.error_redaction import safe_error
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def build_github_tools(
@@ -69,7 +71,7 @@ def build_github_tools(
                 logger.exception(
                     "github tools: failed to resolve repo allowlist for pot %s",
                     pot_id,
-                )
+                 pot_id=pot_id)
                 allowed = set()
 
         def _repo_allowed(repo_name: str) -> bool:
@@ -109,7 +111,7 @@ def build_github_tools(
                     repo_name, pr_number, include_diff=include_diff
                 )
             except Exception as exc:
-                logger.exception("github_get_pull_request %s#%s failed", repo_name, pr_number)
+                logger.exception("github_get_pull_request %s#%s failed", repo_name, pr_number, repo_name=repo_name, pr_number=pr_number)
                 return {"error": safe_error(exc)}
 
         def github_get_pull_request_commits(
@@ -124,7 +126,7 @@ def build_github_tools(
                     "github_get_pull_request_commits %s#%s failed",
                     repo_name,
                     pr_number,
-                )
+                 repo_name=repo_name, pr_number=pr_number)
                 return {"error": safe_error(exc)}
 
         def github_get_pull_request_review_comments(
@@ -142,7 +144,7 @@ def build_github_tools(
                     "github_get_pull_request_review_comments %s#%s failed",
                     repo_name,
                     pr_number,
-                )
+                 repo_name=repo_name, pr_number=pr_number)
                 return {"error": safe_error(exc)}
 
         def github_get_pull_request_issue_comments(
@@ -160,7 +162,7 @@ def build_github_tools(
                     "github_get_pull_request_issue_comments %s#%s failed",
                     repo_name,
                     pr_number,
-                )
+                 repo_name=repo_name, pr_number=pr_number)
                 return {"error": safe_error(exc)}
 
         def github_get_issue(repo_name: str, issue_number: int) -> dict[str, Any]:
@@ -168,7 +170,7 @@ def build_github_tools(
             try:
                 return _resolve(repo_name).get_issue(repo_name, int(issue_number))
             except Exception as exc:
-                logger.exception("github_get_issue %s#%s failed", repo_name, issue_number)
+                logger.exception("github_get_issue %s#%s failed", repo_name, issue_number, repo_name=repo_name, issue_number=issue_number)
                 return {"error": safe_error(exc)}
 
         def github_list_pull_requests(
@@ -182,7 +184,7 @@ def build_github_tools(
                     repo_name, state=state, limit=limit
                 )
             except Exception as exc:
-                logger.exception("github_list_pull_requests %s failed", repo_name)
+                logger.exception("github_list_pull_requests %s failed", repo_name, repo_name=repo_name)
                 return {"error": safe_error(exc)}
             return {"repo_name": repo_name, "count": len(items), "pull_requests": items}
 
@@ -197,7 +199,7 @@ def build_github_tools(
                     repo_name, state=state, limit=limit
                 )
             except Exception as exc:
-                logger.exception("github_list_issues %s failed", repo_name)
+                logger.exception("github_list_issues %s failed", repo_name, repo_name=repo_name)
                 return {"error": safe_error(exc)}
             return {"repo_name": repo_name, "count": len(items), "issues": items}
 

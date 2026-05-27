@@ -16,6 +16,8 @@ across chunks is preserved.
 from __future__ import annotations
 
 import logging
+
+from observability import get_logger
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -54,7 +56,7 @@ from domain.reconciliation_batch import (
     ReconciliationBatch,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _chunk_size_default() -> int:
@@ -75,7 +77,7 @@ def _chunk_size_default() -> int:
         logger.warning(
             "CONTEXT_ENGINE_MAX_CHUNK_EVENTS not an int: %r; using default 20",
             raw,
-        )
+         raw=raw)
         return 20
 
 
@@ -152,7 +154,7 @@ def process_batch(
                 record_type,
                 batch.id,
                 exc_info=True,
-            )
+             record_type=record_type, batch_id=batch.id)
 
     if batch.status == BATCH_STATUS_DONE:
         return ProcessBatchOutcome(
@@ -174,7 +176,7 @@ def process_batch(
                 "batch %s denied apply.write by policy: %s",
                 batch.id,
                 decision.reason,
-            )
+             batch_id=batch.id, decision_reason=decision.reason)
             batches.mark_batch_failed(batch.id, f"policy:{decision.reason}")
             refs = batches.list_events_for_batch(batch.id)
             denied_event_ids = [
@@ -226,7 +228,7 @@ def process_batch(
                 "batch %s references missing event %s; skipping",
                 batch.id,
                 ref.event_id,
-            )
+             batch_id=batch.id, ref_event_id=ref.event_id)
             continue
         events.append(_event_from_row(row))
 
@@ -372,7 +374,7 @@ def process_batch(
         except Exception as exc:
             logger.exception(
                 "batch %s chunk %d/%d agent run failed", batch.id, idx, chunks_total
-            )
+            , batch_id=batch.id, idx=idx, chunks_total=chunks_total)
             failure_outcome = BatchAgentOutcome(ok=False, error=str(exc))
             # The crashed agent may have streamed records up to its last
             # durable checkpoint — advance past them so the terminal
@@ -568,7 +570,7 @@ def _start_runs_for_pending(
             )
             run_ids[eid] = run_id
         except Exception:
-            logger.exception("failed to open reconciliation run for event %s", eid)
+            logger.exception("failed to open reconciliation run for event %s", eid, eid=eid)
     return run_ids
 
 
@@ -581,7 +583,7 @@ def _claim_events_for_processing(
         try:
             reco_ledger.claim_event_for_processing(eid)
         except Exception:
-            logger.exception("failed to mark event %s processing", eid)
+            logger.exception("failed to mark event %s processing", eid, eid=eid)
 
 
 def _flush_outcome_trace(
@@ -616,7 +618,7 @@ def _flush_outcome_trace(
                     outcome.error or "agent_returned_not_ok",
                 )
         except Exception:
-            logger.exception("failed to finalize reconciliation run %s", run_id)
+            logger.exception("failed to finalize reconciliation run %s", run_id, run_id=run_id)
 
 
 def _flush_failure_trace(
@@ -640,7 +642,7 @@ def _flush_failure_trace(
                 run_id, outcome.error or "agent_crashed"
             )
         except Exception:
-            logger.exception("failed to mark reconciliation run %s failed", run_id)
+            logger.exception("failed to mark reconciliation run %s failed", run_id, run_id=run_id)
 
 
 def _append_records(
@@ -662,7 +664,7 @@ def _append_records(
                 "failed to append work event (kind=%s) to run %s",
                 rec.event_kind,
                 run_id,
-            )
+             kind=rec.event_kind, run_id=run_id)
 
 
 def _fmt_event_ids(event_ids: list[str], *, head: int = 10) -> str:
@@ -710,7 +712,7 @@ def _safe_publish_status_one(
     except Exception:
         logger.warning(
             "stream publish_status failed for event %s", event_id, exc_info=True
-        )
+        , event_id=event_id)
 
 
 def _safe_publish_status(
@@ -739,7 +741,7 @@ def _safe_publish_status(
         except Exception:
             logger.warning(
                 "stream publish_status failed for event %s", eid, exc_info=True
-            )
+            , eid=eid)
 
 
 def _safe_publish_end(
@@ -757,7 +759,7 @@ def _safe_publish_end(
     except Exception:
         logger.warning(
             "stream publish_end failed for event %s", event_id, exc_info=True
-        )
+        , event_id=event_id)
 
 
 def _event_from_row(row: ContextEventRow) -> ContextEvent:

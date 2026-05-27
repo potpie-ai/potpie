@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+
+from observability import get_logger
 import os
 import time
 
@@ -19,7 +21,7 @@ from adapters.outbound.synthesis.prompt import (
 from domain.intelligence_models import IntelligenceBundle
 from domain.ports.telemetry import CostEvent, NoOpTelemetry, TelemetryPort
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _DEFAULT_TIMEOUT_S = 8.0
 
