@@ -33,6 +33,25 @@ from domain.error_redaction import safe_error
 logger = logging.getLogger(__name__)
 
 
+def _is_not_found_error(exc: BaseException) -> bool:
+    """True for a backend "path does not exist" error.
+
+    A missing file/dir is a normal answer to an agent probe, not an
+    infrastructure fault — callers use this to return a structured
+    ``not_found`` result and log quietly instead of emitting an
+    ERROR-level traceback that looks like the sandbox is broken.
+
+    Detected backend-agnostically (this adapter talks to the abstract
+    ``SandboxClient``, never the SDK): by class name — Daytona raises
+    ``DaytonaNotFoundError`` — and by message for the exec backends
+    (Docker/local raise ``SandboxOpError("file not found: …")``).
+    """
+    if "notfound" in type(exc).__name__.lower():
+        return True
+    message = str(exc).lower()
+    return "not found" in message or "no such file" in message
+
+
 @dataclass(slots=True, frozen=True)
 class SandboxSessionConfig:
     """Legacy single-repo session identity.
@@ -411,6 +430,26 @@ def build_sandbox_tools(
                     handle, path, max_bytes=max_read_bytes
                 )
             except Exception as exc:
+                _tool_call("sandbox_read_file", False)
+                if _is_not_found_error(exc):
+                    logger.debug(
+                        "sandbox_read_file: not found pot=%s repo=%s path=%s",
+                        cfg.pot_id,
+                        attachment.full_name,
+                        path,
+                    )
+                    return {
+                        "error": "file not found",
+                        "kind": "not_found",
+                        "path": path,
+                        "repo": attachment.full_name,
+                    }
+                logger.exception(
+                    "sandbox_read_file: read failed for pot=%s repo=%s path=%s",
+                    cfg.pot_id,
+                    attachment.full_name,
+                    path,
+                )
                 return {
                     "error": safe_error(exc),
                     "path": path,
@@ -464,6 +503,26 @@ def build_sandbox_tools(
             try:
                 entries = await facade_box["client"].list_dir(handle, path)
             except Exception as exc:
+                _tool_call("sandbox_list_dir", False)
+                if _is_not_found_error(exc):
+                    logger.debug(
+                        "sandbox_list_dir: not found pot=%s repo=%s path=%s",
+                        cfg.pot_id,
+                        attachment.full_name,
+                        path,
+                    )
+                    return {
+                        "error": "directory not found",
+                        "kind": "not_found",
+                        "path": path,
+                        "repo": attachment.full_name,
+                    }
+                logger.exception(
+                    "sandbox_list_dir: list failed for pot=%s repo=%s path=%s",
+                    cfg.pot_id,
+                    attachment.full_name,
+                    path,
+                )
                 return {
                     "error": safe_error(exc),
                     "path": path,
@@ -515,6 +574,13 @@ def build_sandbox_tools(
                     max_hits=max_search_hits,
                 )
             except Exception as exc:
+                logger.exception(
+                    "sandbox_search: search failed for pot=%s repo=%s pattern=%s",
+                    cfg.pot_id,
+                    attachment.full_name,
+                    pattern,
+                )
+                _tool_call("sandbox_search", False)
                 return {
                     "error": safe_error(exc),
                     "pattern": pattern,
@@ -534,6 +600,140 @@ def build_sandbox_tools(
                     for h in hits
                 ],
             }
+
+        def _session_payload(attachment: Any, result: Any) -> dict[str, Any]:
+            return {
+                "repo": attachment.full_name,
+                "session_id": result.session_id,
+                "running": bool(result.running),
+                "exit_code": result.exit_code,
+                "output": result.output,
+                "truncated": result.truncated,
+            }
+
+        async def sandbox_exec(
+            command: str,
+            repo: str | None = None,
+            tty: bool = False,
+            yield_time_ms: int = 10_000,
+            max_output_bytes: int | None = None,
+        ) -> dict[str, Any]:
+            """Start a streamable command in a pot repo's worktree (read-only)."""
+            try:
+                facade = await _ensure_facade()
+                attachment, handle = await facade.acquire(repo)
+            except _AmbiguousRepoError as exc:
+                return _ambiguous_error(exc)
+            except _UnknownRepoError as exc:
+                return _unknown_error(exc)
+            except Exception as exc:
+                logger.exception(
+                    "sandbox_exec: acquire failed for pot=%s repo=%s",
+                    cfg.pot_id,
+                    repo,
+                )
+                _tool_call("sandbox_exec", False)
+                return _sandbox_unavailable_error(exc, repo=repo)
+            from sandbox.domain.models import CommandKind
+
+            try:
+                result = await facade_box["client"].exec_start(
+                    handle,
+                    [command],
+                    shell=True,
+                    tty=tty,
+                    yield_time_ms=yield_time_ms,
+                    max_output_bytes=max_output_bytes,
+                    command_kind=CommandKind.READ,
+                )
+            except Exception as exc:
+                _tool_call("sandbox_exec", False)
+                if _is_not_found_error(exc):
+                    return {
+                        "error": safe_error(exc),
+                        "kind": "not_found",
+                        "repo": attachment.full_name,
+                    }
+                logger.exception(
+                    "sandbox_exec: start failed for pot=%s repo=%s",
+                    cfg.pot_id,
+                    attachment.full_name,
+                )
+                return {
+                    "error": safe_error(exc),
+                    "repo": attachment.full_name,
+                    "command": command,
+                }
+            facade_box.setdefault("exec_sessions", {})[result.session_id] = (
+                attachment.full_name
+            )
+            _tool_call("sandbox_exec", True)
+            return _session_payload(attachment, result)
+
+        async def sandbox_write_stdin(
+            session_id: str,
+            chars: str = "",
+            kill: bool = False,
+            yield_time_ms: int = 10_000,
+            max_output_bytes: int | None = None,
+        ) -> dict[str, Any]:
+            """Write stdin / poll / kill a sandbox_exec session by id."""
+            repo = facade_box.get("exec_sessions", {}).get(session_id)
+            if repo is None:
+                return {
+                    "error": "unknown or expired session_id",
+                    "kind": "not_found",
+                    "session_id": session_id,
+                }
+            try:
+                facade = await _ensure_facade()
+                attachment, handle = await facade.acquire(repo)
+            except Exception as exc:
+                logger.exception(
+                    "sandbox_write_stdin: acquire failed for pot=%s repo=%s",
+                    cfg.pot_id,
+                    repo,
+                )
+                _tool_call("sandbox_write_stdin", False)
+                return _sandbox_unavailable_error(exc, session_id=session_id)
+            client = facade_box["client"]
+            try:
+                if kill:
+                    await client.exec_kill(handle, session_id)
+                    facade_box.get("exec_sessions", {}).pop(session_id, None)
+                    _tool_call("sandbox_write_stdin", True)
+                    return {
+                        "repo": attachment.full_name,
+                        "session_id": session_id,
+                        "running": False,
+                        "killed": True,
+                    }
+                result = await client.exec_write_stdin(
+                    handle,
+                    session_id,
+                    chars,
+                    yield_time_ms=yield_time_ms,
+                    max_output_bytes=max_output_bytes,
+                )
+            except Exception as exc:
+                _tool_call("sandbox_write_stdin", False)
+                if _is_not_found_error(exc):
+                    facade_box.get("exec_sessions", {}).pop(session_id, None)
+                    return {
+                        "error": safe_error(exc),
+                        "kind": "not_found",
+                        "session_id": session_id,
+                    }
+                logger.exception(
+                    "sandbox_write_stdin: failed for pot=%s session=%s",
+                    cfg.pot_id,
+                    session_id,
+                )
+                return {"error": safe_error(exc), "session_id": session_id}
+            if not result.running:
+                facade_box.get("exec_sessions", {}).pop(session_id, None)
+            _tool_call("sandbox_write_stdin", True)
+            return _session_payload(attachment, result)
 
         # Phase 4 git-history tools are appended here in the same builder.
         from adapters.outbound.agent_tools._sandbox_git_tools import (
@@ -578,6 +778,38 @@ def build_sandbox_tools(
                     "glob filter (e.g. '*.py') and case_sensitive flag. "
                     "Returns up to ~200 hits. Pass repo='owner/name' when "
                     "multiple repos are attached."
+                ),
+            ),
+            Tool(
+                sandbox_exec,
+                name="sandbox_exec",
+                description=(
+                    "Start a streamable / long-running command in a pot repo's "
+                    "worktree and read its progress. Returns after a short "
+                    "window even if still running, handing back a session_id. "
+                    "Use for builds, test runs, or interactive probes; set "
+                    "tty=true for programs that need a terminal. Returns "
+                    "{session_id, output, running, exit_code, truncated}. If "
+                    "running is true, drive it with sandbox_write_stdin. Pass "
+                    "repo='owner/name' when multiple repos are attached. "
+                    "For any text/code search use ripgrep ('rg -n PATTERN', "
+                    "'rg -t py PATTERN', 'rg -l PATTERN | head') — never "
+                    "'grep -r' or 'find ... -exec grep'; rg is preinstalled, "
+                    "faster, and honors .gitignore ('fd', 'jq', 'tree', 'git', "
+                    "'python3', 'node' are also available). Prefer sandbox_search "
+                    "for simple searches; reach here only for pipes / flags it "
+                    "doesn't expose."
+                ),
+            ),
+            Tool(
+                sandbox_write_stdin,
+                name="sandbox_write_stdin",
+                description=(
+                    "Drive a running sandbox_exec session by session_id: write "
+                    "to its stdin (chars; add a trailing newline to submit a "
+                    "line), poll for more output (empty chars), or stop it "
+                    "(kill=true). Returns the same shape as sandbox_exec. Poll "
+                    "until running is false to capture the exit_code."
                 ),
             ),
         ]

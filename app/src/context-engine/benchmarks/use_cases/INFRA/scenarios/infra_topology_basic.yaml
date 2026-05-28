@@ -4,44 +4,69 @@ tier: quick
 difficulty: easy
 source_mix: single
 universe: acme
+light: true
 
 description: |
   An agent is debugging an inventory-svc 5xx and needs the service's
-  dependency topology to know what else to check. The engine should
-  return the upstream + downstream edges grounded in the canonical
-  Acme architecture (architecture.md + the checkout-api README),
-  including:
+  dependency topology to know what else to check. This is the canonical
+  INFRA scenario: it grades the engine on the one capability the current
+  topology ontology actually implements — extracting a service graph from
+  the architecture doc and surfacing it.
 
-    - inventory-svc → postgres(inventory-prod-db)
-    - inventory-svc → kafka(orders-topic)
-    - checkout-api → inventory-svc
+  The Acme architecture doc (universe seed) describes the full topology;
+  reconciliation should materialize it as canonical entities + edges:
+    - 7 Service nodes (checkout-api, inventory-svc, payments-svc,
+      notifications-svc, auth-svc, web-app, analytics-pipeline)
+    - DataStore nodes per service (inventory-prod-db, checkout-prod-db, …)
+    - DEPENDS_ON edges service→service (checkout-api → inventory-svc, …)
+    - USES edges service→datastore (inventory-svc → inventory-prod-db, …)
 
-  Owners (`@platform-data` / bench-user-2) must be named. Environments
-  (dev/staging/prod) should be acknowledged as distinct.
+  Precision trap: an onboarding/HR handbook is ingested as a distractor.
+  It names no services and must NOT introduce Service or DataStore nodes —
+  the engine should record it as a Document and nothing more.
+
+  Owner attribution (@platform-data / bench-user-2) is graded in the
+  synthesis judge rather than the structural snapshot: the current
+  query/read layer surfaces service↔service and service↔datastore edges
+  but not ownership edges, so asserting OWNED_BY structurally would grade
+  a read-layer gap, not reconciliation quality.
 
 ingest:
   - { event: repo_docs/checkout_api_readme_update.json, at: "-10d", tags: [signal] }
+  - { event: repo_docs/onboarding_handbook_noise.json, at: "-6d", tags: [distractor] }
 
 post_ingest_assertions:
   graph_must_contain_entities:
-    - { label: Document, key_pattern: "checkout-api-readme" }
-    - { label: Document, key_pattern: "platform-architecture" }
+    - { label: Service, min_count: 7 }
+    - { label: Service, key_pattern: "service:.*inventory-svc", min_count: 1 }
+    - { label: Service, key_pattern: "service:.*checkout-api", min_count: 1 }
+    - { label: DataStore, key_pattern: "datastore:.*inventory-prod-db", min_count: 1 }
+  graph_must_contain_edges:
+    - { from_label: Service, to_label: Service, type: DEPENDS_ON, min_count: 1 }
+    - { from_label: Service, to_label: DataStore, type: USES, min_count: 1 }
+  graph_must_not_contain:
+    - { label: Service, key_pattern: "(?i)(onboarding|handbook|payroll|benefits|pto)", max_count: 0 }
+    - { label: DataStore, key_pattern: "(?i)(workday|helpdesk)", max_count: 0 }
+  no_orphan_entities: false
+  coverage_floor: 80
   reconciliation:
-    soft_downgrades_max: 3
+    soft_downgrades_max: 6
     failed_events_max: 0
 
 query:
   intent: debugging
   scope: { service: inventory-svc }
-  include: [service_map, repo_map, owners, docs]
+  include: [infra_topology, owners, docs]
   mode: balanced
   source_policy: summary
 
 retrieval_assertions:
-  required_includes_used: [owners]
-  source_refs_min: 2
+  required_includes_used: [infra_topology]
+  source_refs_min: 1
   must_cite_event_id:
     - universe/acme/00-architecture.json
+  must_not_cite_event_id:
+    - repo_docs/onboarding_handbook_noise.json
 
 judge:
   pass_score: 65
@@ -57,7 +82,7 @@ judge:
         Missing one of these three reduces the score; inventing
         dependencies that are not in the architecture doc fails this.
     - name: environment_distinction
-      weight: 25
+      weight: 20
       pass_threshold: 3
       dimensions: [INFRA]
       prompt: |
@@ -65,7 +90,7 @@ judge:
         environments (dev/staging/prod) and that ArgoCD is the deploy
         path? Collapsing them all into "production" fails this.
     - name: owner_attribution
-      weight: 20
+      weight: 25
       pass_threshold: 4
       dimensions: [INFRA]
       prompt: |
@@ -80,4 +105,5 @@ judge:
         Are all services named in the answer drawn from the canonical
         Acme service list (checkout-api, inventory-svc, payments-svc,
         notifications-svc, auth-svc, web-app, analytics-pipeline)?
-        Inventing a service name fails this criterion.
+        Inventing a service name — or treating the onboarding handbook
+        as if it described a service — fails this criterion.

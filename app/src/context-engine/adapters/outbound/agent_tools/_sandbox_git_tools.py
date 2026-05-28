@@ -158,6 +158,11 @@ def build_git_history_tools(
                 max_output_bytes=max_output_bytes,
             )
         except Exception as exc:
+            logger.exception(
+                "git tool: exec failed for repo=%s cmd=%s",
+                attachment.full_name,
+                cmd[:3],
+            )
             return attachment, None, {
                 "error": safe_error(exc),
                 "kind": "exec_failed",

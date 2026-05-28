@@ -3,19 +3,20 @@
 Covers the agent that drives retrieval over the shared read tools, the
 answer-envelope-shaped result it produces, and graceful degradation onto the
 deterministic resolve path when the agent is unconfigured, empty, or failing.
+Every read tool now resolves through the single ReadOrchestrator.
 """
 
 from __future__ import annotations
 
 import os
-from unittest.mock import MagicMock
 
 import pytest
 
-from adapters.outbound.graphiti.context_graph import (
-    GraphitiContextGraphAdapter,
+from adapters.outbound.graph.context_graph_service import (
+    ContextGraphService,
     _investigate_envelope,
 )
+from adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
 from adapters.outbound.query_agent.null_agent import NullQueryAgent
 from adapters.outbound.query_agent.pydantic_query_agent import (
     PydanticQueryAgent,
@@ -23,27 +24,16 @@ from adapters.outbound.query_agent.pydantic_query_agent import (
     _describe,
     _RunState,
 )
-from application.services.context_reader_registry import ContextReaderRegistry
+from application.services.read_orchestrator import ReadOrchestrator
 from bootstrap.container import _build_query_agent
 from domain.graph_query import (
     ContextGraphGoal,
     ContextGraphQuery,
-    ContextGraphResult,
     ContextGraphScope,
     ContextGraphStrategy,
 )
-from domain.graph_quality import GraphQualityReport
-from domain.intelligence_models import (
-    ContextResolutionRequest,
-    CoverageReport,
-    DecisionRecord,
-    IntelligenceBundle,
-    ResolutionMeta,
-)
 from domain.ports.query_agent import QueryAgentResult, QueryAgentStep
 from domain.ports.reconciliation_tools import ToolDescriptor
-from domain.source_references import FreshnessReport
-from domain.source_resolution import SourceResolutionResult
 
 pytestmark = pytest.mark.unit
 
@@ -52,16 +42,10 @@ class _Episodic:
     enabled = True
 
 
-class _Structural:
-    pass
-
-
-def _adapter(*, readers=None, query_agent=None, resolution_service=None):
-    return GraphitiContextGraphAdapter(
-        episodic=_Episodic(),  # type: ignore[arg-type]
-        structural=_Structural(),  # type: ignore[arg-type]
-        readers=readers or ContextReaderRegistry(),
-        resolution_service=resolution_service,
+def _adapter(*, claim_query=None, query_agent=None) -> ContextGraphService:
+    return ContextGraphService(
+        graph_writer=_Episodic(),  # type: ignore[arg-type]
+        orchestrator=ReadOrchestrator(claim_query=claim_query or InMemoryClaimQueryStore()),
         query_agent=query_agent,
     )
 
@@ -94,17 +78,17 @@ def test_run_state_accumulates_evidence_steps_and_dedupes_refs() -> None:
         },
     )
     state.record(
-        "context_graph_overview",
+        "context_infra_topology",
         {},
-        {"kind": "graph_overview", "result": {"entities": 12}},
+        {"kind": "infra_topology", "result": {"entities": 12}},
     )
     assert [s.tool for s in state.steps] == [
         "context_search",
-        "context_graph_overview",
+        "context_infra_topology",
     ]
     assert state.steps[0].result_count == 2
     assert state.steps[1].result_count == 1
-    assert len(state.evidence) == 3  # 2 hits + 1 overview dict
+    assert len(state.evidence) == 3  # 2 hits + 1 topology dict
     assert state.source_refs == ["gh:pr:1", "gh:pr:2"]  # deduped, ordered
 
 
@@ -181,11 +165,11 @@ class _FakeAgent:
 
     async def investigate(self, request, *, tools, run_tool):
         self.tool_names = [t.name for t in tools]
+        # Every read tool resolves through the orchestrator and returns an
+        # envelope dict (no per-tool preset routing / arg validation anymore).
         self.results = [
-            await run_tool("context_search", {"query": "auth", "limit": 3}),
-            await run_tool("context_search", {}),  # missing query -> error
-            await run_tool("context_graph_overview", {}),
-            await run_tool("bogus_tool", {}),  # unknown -> error
+            await run_tool("context_search", {"query": "auth"}),
+            await run_tool("context_infra_topology", {}),
         ]
         return QueryAgentResult(
             answer="team-platform owns auth (gh:pr:1).",
@@ -201,33 +185,22 @@ class _FakeAgent:
 
 
 async def test_investigate_runs_tool_loop_and_wraps_result() -> None:
-    readers = MagicMock()
-    readers.execute.return_value = ContextGraphResult(
-        kind="semantic_search",
-        goal="retrieve",
-        strategy="semantic",
-        result=[{"uuid": "u1", "source_refs": ["gh:pr:1"]}],
-    )
     agent = _FakeAgent()
-    adapter = _adapter(readers=readers, query_agent=agent)
+    adapter = _adapter(query_agent=agent)
 
     out = await adapter.query_async(_investigate_request())
 
-    # Reuses the shared 4-tool catalog.
+    # Advertises the shared read-tool catalog to the agent.
     assert agent.tool_names == [
         "context_search",
-        "context_recent_changes",
-        "context_file_owners",
-        "context_graph_overview",
+        "context_coding_preferences",
+        "context_infra_topology",
+        "context_timeline",
+        "context_prior_bugs",
     ]
-    # Only valid tool calls reach the readers (bad-arg + unknown short-circuit).
-    assert readers.execute.call_count == 2
-    valid_search_preset = readers.execute.call_args_list[0].args[0]
-    assert valid_search_preset.goal == ContextGraphGoal.RETRIEVE
-    assert valid_search_preset.include == ["semantic_search"]
-    assert valid_search_preset.scope.repo_name == "potpie-ai/potpie"
-    assert agent.results[1] == {"error": "query_required", "kind": "error"}
-    assert agent.results[3] == {"error": "unknown_tool:bogus_tool", "kind": "error"}
+    # Each tool call resolves through the orchestrator into an envelope dict.
+    assert all(isinstance(r, dict) for r in agent.results)
+    assert "items" in agent.results[0]
 
     assert out.kind == "query_agent"
     assert out.goal == "investigate"
@@ -239,11 +212,11 @@ async def test_investigate_runs_tool_loop_and_wraps_result() -> None:
 
 
 async def test_investigate_falls_back_when_agent_not_configured() -> None:
-    adapter = _adapter(query_agent=None)  # resolution_service also None
+    adapter = _adapter(query_agent=None)
     out = await adapter.query_async(_investigate_request())
+    assert out.kind == "resolve_context"
     assert out.meta["path"] == "investigate_fallback"
     assert out.meta["fallback"] == "query_agent_not_configured"
-    assert out.error == "resolution_service_unavailable"
 
 
 async def test_investigate_falls_back_when_agent_returns_none() -> None:
@@ -267,46 +240,18 @@ async def test_investigate_falls_back_when_agent_raises() -> None:
 
 
 async def test_investigate_fallback_yields_resolve_answer_envelope() -> None:
-    bundle = IntelligenceBundle(
-        request=ContextResolutionRequest(pot_id="pot-1", query="q", scope=None),
-        semantic_hits=[],
-        artifacts=[],
-        changes=[],
-        decisions=[DecisionRecord(decision="Use Neo4j", rationale="r", pr_number=7)],
-        discussions=[],
-        ownership=[],
-        project_map=[],
-        debugging_memory=[],
-        causal_chain=[],
-        source_refs=[],
-        coverage=CoverageReport(status="complete"),
-        freshness=FreshnessReport(),
-        quality=GraphQualityReport(),
-        fallbacks=[],
-        source_resolution=SourceResolutionResult(),
-        open_conflicts=[],
-        recommended_next_actions=[],
-        errors=[],
-        meta=ResolutionMeta(provider="test"),
-    )
-
-    class _ResolutionService:
-        async def resolve(self, _request):
-            return bundle
-
     class _NoneAgent:
         async def investigate(self, *a, **k):
             return None
 
-    adapter = _adapter(
-        query_agent=_NoneAgent(), resolution_service=_ResolutionService()
-    )
+    adapter = _adapter(query_agent=_NoneAgent())
     out = await adapter.query_async(_investigate_request())
 
     assert out.kind == "resolve_context"
     assert out.meta["path"] == "investigate_fallback"
     assert out.meta["fallback"] == "query_agent_unavailable"
-    assert "decision" in out.result["answer"]["summary"].lower()
+    # Empty claim store → deterministic fallback summary, always present.
+    assert "summary" in out.result["answer"]
 
 
 # --- Container gating ------------------------------------------------------------

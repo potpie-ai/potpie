@@ -5,7 +5,7 @@ Covers:
 - ``_audit_operator_action`` emits a structured log record with the action,
   pot_id, actor identity, dry-run flag, and extra fields.
 - ``_actor_identity`` extracts a sensible label from common actor shapes.
-- Operator-tagged routes (``/reset``, ``/conflicts/*``, ``/maintenance/*``) carry
+- Operator-tagged routes (``/reset``, ``/maintenance/*``) carry
   the ``context:operator`` OpenAPI tag so docs and SDKs can group them away
   from the everyday agent surface.
 """
@@ -107,9 +107,6 @@ def test_operator_routes_carry_operator_tag():
     router = _build_router_stub()
     operator_paths = {
         "/reset",
-        "/conflicts/list",
-        "/conflicts/resolve",
-        "/maintenance/classify-modified-edges",
     }
     seen: dict[str, list[str]] = {}
     for route in router.routes:

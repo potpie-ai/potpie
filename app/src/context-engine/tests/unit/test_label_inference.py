@@ -18,10 +18,10 @@ from domain.reconciliation import ReconciliationPlan
 pytestmark = pytest.mark.unit
 
 
-def test_edge_endpoint_rules_cover_decides_for_target() -> None:
-    assert ("DECIDES_FOR", "target") in EDGE_ENDPOINT_INFERRED_LABELS
-    assert inferred_labels_for_episodic_edge_endpoint("decides_for", "target") == ("Decision",)
-    assert inferred_labels_for_episodic_edge_endpoint("DECIDES_FOR", "source") == ()
+def test_edge_endpoint_rules_cover_deployed_to() -> None:
+    assert ("DEPLOYED_TO", "target") in EDGE_ENDPOINT_INFERRED_LABELS
+    assert inferred_labels_for_episodic_edge_endpoint("deployed_to", "target") == ("Environment",)
+    assert inferred_labels_for_episodic_edge_endpoint("DEPLOYED_TO", "source") == ("Service",)
 
 
 def test_ambiguous_roles_return_empty() -> None:
@@ -29,42 +29,37 @@ def test_ambiguous_roles_return_empty() -> None:
     assert inferred_labels_for_episodic_edge_endpoint("FIXES", "source") == ()
 
 
-def test_enrich_plan_adds_decision_label_and_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_enrich_plan_adds_inferred_endpoint_labels(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_INFER_LABELS", "1")
     plan = ReconciliationPlan(
         event_ref=EventRef(event_id="e1", source_system="test", pot_id="p1"),
         summary="t",
-        episodes=[],
         entity_upserts=[
             EntityUpsert(
-                entity_key="k-scope",
+                entity_key="service:ledger",
                 labels=("Service",),
-                properties={"name": "ledger", "criticality": "high", "lifecycle_state": "active"},
+                properties={"name": "ledger"},
             ),
             EntityUpsert(
-                entity_key="k-adr",
-                labels=("Document",),
-                properties={"title": "ADR 1", "source_uri": "https://example.com/a"},
+                entity_key="environment:prod",
+                labels=("Entity",),
+                properties={},
             ),
         ],
         edge_upserts=[
             EdgeUpsert(
-                edge_type="DECIDES_FOR",
-                from_entity_key="k-adr",
-                to_entity_key="k-scope",
+                edge_type="DEPLOYED_TO",
+                from_entity_key="service:ledger",
+                to_entity_key="environment:prod",
                 properties={},
             )
         ],
     )
     enrich_reconciliation_plan_entity_labels(plan)
     by_key = {e.entity_key: e for e in plan.entity_upserts}
-    # Rule: DECIDES_FOR → label on target endpoint (see 03-canonical-node-labels.md).
-    assert "Document" in by_key["k-adr"].labels
-    assert "Decision" in by_key["k-scope"].labels
-    assert "Service" in by_key["k-scope"].labels
-    assert by_key["k-scope"].properties.get("title") == "k-scope"
-    assert by_key["k-scope"].properties.get("summary") == ""
-    assert by_key["k-scope"].properties.get("status") == "unknown"
+    # Rule: DEPLOYED_TO → Service on source, Environment on target.
+    assert "Service" in by_key["service:ledger"].labels
+    assert "Environment" in by_key["environment:prod"].labels
 
 
 def test_validate_reconciliation_runs_enrich_when_flag(
@@ -74,36 +69,35 @@ def test_validate_reconciliation_runs_enrich_when_flag(
     plan = ReconciliationPlan(
         event_ref=EventRef(event_id="e1", source_system="test", pot_id="p1"),
         summary="t",
-        episodes=[],
         entity_upserts=[
             EntityUpsert(
-                entity_key="k-scope",
+                entity_key="service:ledger",
                 labels=("Service",),
-                properties={"name": "ledger", "criticality": "high", "lifecycle_state": "active"},
+                properties={"name": "ledger"},
             ),
             EntityUpsert(
-                entity_key="k-adr",
-                labels=("Document",),
-                properties={"title": "ADR 1", "source_uri": "https://example.com/a"},
+                entity_key="environment:prod",
+                labels=("Entity",),
+                properties={},
             ),
         ],
         edge_upserts=[
             EdgeUpsert(
-                edge_type="DECIDES_FOR",
-                from_entity_key="k-adr",
-                to_entity_key="k-scope",
+                edge_type="DEPLOYED_TO",
+                from_entity_key="service:ledger",
+                to_entity_key="environment:prod",
                 properties={},
             )
         ],
     )
     validate_reconciliation_plan(plan, "p1")
     by_key = {e.entity_key: e for e in plan.entity_upserts}
-    assert "Decision" in by_key["k-scope"].labels
-    assert "Service" in by_key["k-scope"].labels
+    assert "Environment" in by_key["environment:prod"].labels
+    assert "Service" in by_key["service:ledger"].labels
 
 
 def test_safe_label_guard() -> None:
-    assert is_canonical_entity_label("Decision") is True
+    assert is_canonical_entity_label("Service") is True
     assert is_canonical_entity_label("NotAType") is False
 
 

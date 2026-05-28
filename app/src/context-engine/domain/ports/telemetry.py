@@ -21,7 +21,7 @@ class CostEvent:
 
     - ``"agent"`` — the reconciliation agent batch run
     - ``"synthesis"`` — answer-summary synthesizer on the resolve path
-    - ``"graphiti_extract"`` — Graphiti's internal extraction passes
+    - ``"llm_extract"`` — the planner agent's LLM extraction passes
     - ``"connector"`` — connector-side LLM (e.g. Linear normalization)
 
     ``input_tokens`` / ``output_tokens`` may be None when the SDK did not

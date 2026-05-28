@@ -74,7 +74,6 @@ app = typer.Typer(
 pot_app = typer.Typer(help="Active pot and local pot helpers.")
 pot_repo_app = typer.Typer(help="Repositories attached to a context pot (Potpie API).")
 event_app = typer.Typer(help="Inspect and wait for ingestion events.")
-conflict_app = typer.Typer(help="Predicate-family conflicts (QualityIssue).")
 
 # Set by root callback; read by all subcommands (including nested `pot`).
 _cli_state: dict[str, Any] = {"json": False, "verbose": False, "source": None}
@@ -142,7 +141,7 @@ def _ingest_result_from_http(status_code: int, data: dict[str, Any]) -> dict[str
     if status_code == 202:
         return {
             "status": "queued",
-            "episode_uuid": data.get("episode_uuid"),
+            "mutation_id": data.get("mutation_id"),
             "event_id": data.get("event_id"),
             "job_id": data.get("job_id"),
             "downgrades": list(data.get("downgrades") or []),
@@ -150,7 +149,7 @@ def _ingest_result_from_http(status_code: int, data: dict[str, Any]) -> dict[str
     if "event_id" in data or "job_id" in data:
         return {
             "status": data.get("status") or "applied",
-            "episode_uuid": data.get("episode_uuid"),
+            "mutation_id": data.get("mutation_id"),
             "event_id": data.get("event_id"),
             "job_id": data.get("job_id"),
             "downgrades": list(data.get("downgrades") or []),
@@ -158,7 +157,7 @@ def _ingest_result_from_http(status_code: int, data: dict[str, Any]) -> dict[str
         }
     return {
         "status": "applied",
-        "episode_uuid": data.get("episode_uuid"),
+        "mutation_id": data.get("mutation_id"),
         "event_id": data.get("event_id"),
         "job_id": data.get("job_id"),
         "downgrades": list(data.get("downgrades") or []),
@@ -296,7 +295,7 @@ def doctor_cmd() -> None:
 
     summary: list[str] = [
         "[dim]search / ingest / pot hard-reset call Potpie POST /api/v2/context/* with X-API-Key.[/dim]",
-        "[dim]Local Neo4j/Graphiti is not required on this machine.[/dim]",
+        "[dim]Local Neo4j is not required on this machine.[/dim]",
     ]
     if health_ok is True:
         summary.append("[green]GET /health on Potpie base URL succeeded.[/green]")
@@ -1015,60 +1014,6 @@ def event_wait_cmd(
 app.add_typer(event_app, name="event")
 
 
-@conflict_app.command("list")
-def conflict_list_cmd(
-    cwd: str = typer.Option(
-        ".",
-        "--cwd",
-        help="Git working tree used when inferring pot from remote / env",
-    ),
-) -> None:
-    """List open predicate-family conflicts for the active pot."""
-    load_cli_env()
-    j, v = _flags()
-    cwd_resolved = str(Path(cwd).resolve())
-    pot_id = _pot_id_or_git(None, cwd=cwd_resolved)
-    client = _cli_client_or_exit(v)
-    try:
-        out = client.conflicts_list(pot_id)
-    except PotpieContextApiError as exc:
-        emit_error("Could not list conflicts", _format_api_error(exc), verbose=v)
-        raise typer.Exit(code=1) from exc
-    print_json_blob(out, as_json=j)
-
-
-@conflict_app.command("resolve")
-def conflict_resolve_cmd(
-    issue_uuid: str = typer.Argument(..., help="QualityIssue uuid"),
-    action: str = typer.Option(
-        "supersede_older",
-        "--action",
-        "-a",
-        help="Resolution strategy (supersede_older stamps invalid_at on the older edge)",
-    ),
-    cwd: str = typer.Option(
-        ".",
-        "--cwd",
-        help="Git working tree used when inferring pot from remote / env",
-    ),
-) -> None:
-    """Resolve one open conflict (default: supersede the older episodic edge)."""
-    load_cli_env()
-    j, v = _flags()
-    cwd_resolved = str(Path(cwd).resolve())
-    pot_id = _pot_id_or_git(None, cwd=cwd_resolved)
-    client = _cli_client_or_exit(v)
-    try:
-        out = client.conflicts_resolve(pot_id, issue_uuid, action=action)
-    except PotpieContextApiError as exc:
-        emit_error("Could not resolve conflict", _format_api_error(exc), verbose=v)
-        raise typer.Exit(code=1) from exc
-    print_json_blob(out, as_json=j)
-
-
-app.add_typer(conflict_app, name="conflict")
-
-
 @app.command("add")
 def add_repo_cmd(
     path: str = typer.Argument(
@@ -1119,7 +1064,7 @@ def search(
     node_labels: str | None = typer.Option(
         None,
         "--node-labels",
-        help="Optional comma-separated Graphiti labels, e.g. PullRequest,Decision",
+        help="Optional comma-separated entity labels, e.g. PullRequest,Decision",
     ),
     repo_name: str | None = typer.Option(
         None,
@@ -1136,7 +1081,7 @@ def search(
     include_invalidated: bool = typer.Option(
         False,
         "--include-invalidated",
-        help="Return superseded facts too (Graphiti edges with invalid_at set). Ignored when --as-of is set.",
+        help="Return superseded facts too (edges with invalid_at set). Ignored when --as-of is set.",
     ),
     with_temporal: bool = typer.Option(
         False,
@@ -1148,16 +1093,16 @@ def search(
         "--as-of",
         help="ISO 8601 instant; restrict results to edges valid at that time (valid_at/invalid_at window).",
     ),
-    episode_uuid: str | None = typer.Option(
+    mutation_id: str | None = typer.Option(
         None,
-        "--episode",
-        "-e",
-        help="Only facts linked to this ingested episode UUID (server-side filter).",
+        "--mutation-id",
+        "-m",
+        help="Only facts written by this apply-plan mutation UUID (server-side filter).",
     ),
     no_provenance: bool = typer.Option(
         False,
         "--no-provenance",
-        help="Hide source / reference_time / episode line in plain (non-JSON) output.",
+        help="Hide source / reference_time / mutation_id line in plain (non-JSON) output.",
     ),
     cwd: str = typer.Option(
         ".",
@@ -1195,8 +1140,8 @@ def search(
         "source_descriptions": [_resolved_source_label(source_description)]
         if _resolved_source_label(source_description)
         else [],
-        "episode_uuids": [episode_uuid.strip()]
-        if episode_uuid and episode_uuid.strip()
+        "mutation_ids": [mutation_id.strip()]
+        if mutation_id and mutation_id.strip()
         else [],
         "include_invalidated": include_invalidated,
         "as_of": as_of_dt,
@@ -1388,14 +1333,14 @@ def overview_cmd(
     limit: int = typer.Option(12, "--limit", "-n"),
     cwd: str = typer.Option(".", "--cwd"),
 ) -> None:
-    """Fetch graph-wide readiness / activity snapshot (goal=aggregate, include=[graph_overview])."""
+    """Fetch the project's infra/topology snapshot (services, datastores, deps)."""
     j, v = _flags()
     pot_id = _pot_id_or_git(pot, cwd=str(Path(cwd).resolve()))
     body: dict[str, Any] = {
         "pot_id": pot_id,
-        "goal": "aggregate",
+        "goal": "retrieve",
         "strategy": "auto",
-        "include": ["graph_overview"],
+        "include": ["infra_topology"],
         "limit": limit,
         "scope": _resolve_scope_body(repo_name=repo_name),
     }
@@ -1703,7 +1648,7 @@ def ingest_cmd(
         raise typer.Exit(code=2)
     if (
         out["status"] == "applied"
-        and not out.get("episode_uuid")
+        and not out.get("mutation_id")
         and not out.get("event_id")
     ):
         emit_error(

@@ -16,7 +16,6 @@ from domain.ports.policy import (
     ACTION_CONNECTOR_FETCH,
     ACTION_CONNECTOR_LIST,
     ACTION_POT_INGEST_EPISODE,
-    ACTION_POT_MAINTENANCE,
     ACTION_POT_READ,
     ACTION_POT_RECORD,
     ACTION_POT_RESET,
@@ -27,7 +26,6 @@ from domain.ports.policy import (
     REASON_CONTEXT_GRAPH_UNAVAILABLE,
     REASON_EPISODIC_UNAVAILABLE,
     REASON_FORBIDDEN,
-    REASON_MAINTENANCE_WRITE_DISABLED,
     REASON_RECONCILIATION_AGENT_UNAVAILABLE,
     REASON_RECONCILIATION_DISABLED,
     REASON_UNKNOWN_POT,
@@ -38,8 +36,6 @@ from domain.ports.pot_resolution import PotResolutionPort
 from domain.ports.settings import ContextEngineSettingsPort
 from domain.reconciliation_flags import (
     agent_planner_enabled,
-    allow_edge_classify_write_enabled,
-    classify_modified_edges_enabled,
     reconciliation_enabled,
 )
 
@@ -191,20 +187,6 @@ class DefaultPolicyAdapter:
                 detail="Episodic graph backend unavailable.",
                 status_code=503,
             )
-        if action == ACTION_POT_MAINTENANCE:
-            dry_run = bool(ctx.get("dry_run", True))
-            if not dry_run and not (
-                classify_modified_edges_enabled()
-                and allow_edge_classify_write_enabled()
-            ):
-                return PolicyDecision.deny(
-                    REASON_MAINTENANCE_WRITE_DISABLED,
-                    detail=(
-                        "Server must set CONTEXT_ENGINE_CLASSIFY_MODIFIED_EDGES=1 "
-                        "and CONTEXT_ENGINE_ALLOW_EDGE_CLASSIFY_WRITE=1 to apply writes."
-                    ),
-                    status_code=403,
-                )
         if action == ACTION_POT_INGEST_EPISODE and not self._settings.is_enabled():
             return PolicyDecision.deny(
                 REASON_CONTEXT_GRAPH_DISABLED,

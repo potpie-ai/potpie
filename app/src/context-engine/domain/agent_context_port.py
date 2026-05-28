@@ -1,14 +1,29 @@
-"""Stable agent-facing context port vocabulary and helpers."""
+"""Stable agent-facing context port vocabulary and helpers.
+
+Agent-surface adapter over the unified ontology catalog. The record-type
+vocabulary, the advertised include families, and the planned-vs-backed
+split are *derived* from :data:`domain.ontology.RECORD_TYPES` and
+:data:`domain.ontology.STRUCTURAL_INCLUDES`; this module only owns the
+intent set, the resolve recipes, and the per-intent default-include map.
+
+The read orchestrator (``application/services/read_orchestrator``)
+answers exactly :data:`READER_BACKED_INCLUDES`. :data:`PLANNED_INCLUDES`
+holds advertised-but-not-yet-implemented keys; the orchestrator surfaces
+them as ``unsupported_include`` (reason ``not_implemented``) rather than
+silent zeros. Adding a backing reader moves the key over automatically.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict
-from datetime import datetime
 from typing import Any
 
-from domain.intelligence_models import IntelligenceBundle
+from domain.ontology import (
+    PUBLIC_RECORD_TYPES,
+    STRUCTURAL_INCLUDES,
+    advertised_include_families,
+)
 
 CONTEXT_INTENTS: frozenset[str] = frozenset(
     {
@@ -26,219 +41,51 @@ CONTEXT_INTENTS: frozenset[str] = frozenset(
     }
 )
 
-CONTEXT_INCLUDE_VALUES: frozenset[str] = frozenset(
+# --- Derived vocabularies ---------------------------------------------------
+# Derived from RECORD_TYPES + STRUCTURAL_INCLUDES so the agent surface and
+# the graph schema cannot drift apart. The coherence check enforces that
+# READER_BACKED_INCLUDES matches the runtime reader registry.
+
+CONTEXT_RECORD_TYPES: frozenset[str] = PUBLIC_RECORD_TYPES
+
+# ``READER_BACKED_INCLUDES`` mirrors ``ReadOrchestrator.backed_includes`` —
+# the coherence check asserts they match. Adding a reader to the
+# orchestrator's ``_routing`` dict requires adding the key here too.
+READER_BACKED_INCLUDES: frozenset[str] = frozenset(
     {
-        "purpose",
-        "feature_map",
-        "service_map",
-        "repo_map",
-        "docs",
-        "tickets",
-        "decisions",
-        "recent_changes",
-        "owners",
-        "prior_fixes",
-        "diagnostic_signals",
-        "incidents",
-        "alerts",
-        "deployments",
-        "runbooks",
-        "local_workflows",
-        "scripts",
-        "config",
-        "preferences",
-        "agent_instructions",
-        "source_status",
-        "operations",
-        "discussions",
-        "artifact",
-        "semantic_search",
-        "causal_chain",
-        # v2 ontology additions — surfaced as first-class include keys so
-        # agents can target them without going through aggregates.
-        "policies",
-        "constraints",
-        "initiatives",
-        "risks",
-        "open_questions",
-        "migrations",
-        "feature_flags",
-        "datastores",
-        "contracts",
-        "interfaces",
-        "schemas",
-        "dependencies",
-        "integrations",
-        "releases",
-        "branches",
-        "commits",
-        "pull_requests",
-        "investigations",
-        "observations",
-        "bug_patterns",
-        "fixes",
-        "metrics",
-        "role_assignments",
-        "oncall",
-        "teams",
-        "agents",
-        "documents",
-        "people",
-        "roadmap",
-        "activities",
+        "coding_preferences",
+        "infra_topology",
         "timeline",
-        "periods",
-        "conflicts",
+        "prior_bugs",
+        # Visualization read: the full canonical subgraph (all RELATES_TO,
+        # incl. generic RELATED_TO). Backed by RawGraphReader; used by the
+        # graph explorer, not an agent use-case family.
+        "raw_graph",
     }
 )
 
-CONTEXT_RECORD_TYPES: frozenset[str] = frozenset(
-    {
-        "decision",
-        "fix",
-        "bug_pattern",
-        "investigation",
-        "diagnostic_signal",
-        "preference",
-        "workflow",
-        "feature_note",
-        "service_note",
-        "runbook_note",
-        "integration_note",
-        "incident_summary",
-        "doc_reference",
-    }
-)
+# The full published agent include contract — derived from the ontology.
+CONTEXT_INCLUDE_VALUES: frozenset[str] = advertised_include_families()
 
-DEBUGGING_MEMORY_INCLUDES: frozenset[str] = frozenset(
-    {
-        "prior_fixes",
-        "diagnostic_signals",
-        "incidents",
-        "alerts",
-    }
-)
+# Anything advertised but not yet reader-backed.
+PLANNED_INCLUDES: frozenset[str] = CONTEXT_INCLUDE_VALUES - READER_BACKED_INCLUDES
 
-PROJECT_MAP_INCLUDES: frozenset[str] = frozenset(
-    {
-        "purpose",
-        "feature_map",
-        "service_map",
-        "repo_map",
-        "docs",
-        "tickets",
-        "deployments",
-        "runbooks",
-        "local_workflows",
-        "scripts",
-        "config",
-        "preferences",
-        "agent_instructions",
-        "operations",
-        # v2: also routable through the project_map response
-        "policies",
-        "constraints",
-        "initiatives",
-        "risks",
-        "open_questions",
-        "migrations",
-        "feature_flags",
-        "datastores",
-        "contracts",
-        "dependencies",
-        "releases",
-    }
-)
+# Keys the resolver honestly flags as not-yet-implemented (no backing reader).
+# Retained as an alias for back-compat.
+FALLBACK_ONLY_INCLUDES: frozenset[str] = PLANNED_INCLUDES
 
 DEFAULT_INTENT_INCLUDES: dict[str, tuple[str, ...]] = {
-    "feature": (
-        "purpose",
-        "feature_map",
-        "service_map",
-        "docs",
-        "tickets",
-        "decisions",
-        "recent_changes",
-        "owners",
-        "preferences",
-        "source_status",
-    ),
-    "debugging": (
-        "prior_fixes",
-        "diagnostic_signals",
-        "incidents",
-        "alerts",
-        "causal_chain",
-        "recent_changes",
-        "config",
-        "deployments",
-        "owners",
-        "source_status",
-    ),
-    "review": (
-        "artifact",
-        "discussions",
-        "owners",
-        "recent_changes",
-        "decisions",
-        "preferences",
-        "source_status",
-    ),
-    "operations": (
-        "deployments",
-        "runbooks",
-        "alerts",
-        "incidents",
-        "scripts",
-        "config",
-        "owners",
-        "source_status",
-    ),
-    "planning": (
-        "purpose",
-        "feature_map",
-        "service_map",
-        "docs",
-        "tickets",
-        "decisions",
-        "recent_changes",
-        "source_status",
-    ),
-    "docs": ("docs", "decisions", "source_status"),
-    "onboarding": (
-        "purpose",
-        "repo_map",
-        "service_map",
-        "docs",
-        "local_workflows",
-        "agent_instructions",
-        "source_status",
-    ),
-    "refactor": (
-        "service_map",
-        "repo_map",
-        "recent_changes",
-        "decisions",
-        "owners",
-        "source_status",
-    ),
-    "test": (
-        "recent_changes",
-        "decisions",
-        "local_workflows",
-        "scripts",
-        "source_status",
-    ),
-    "security": (
-        "service_map",
-        "docs",
-        "decisions",
-        "incidents",
-        "config",
-        "owners",
-        "source_status",
-    ),
-    "unknown": ("semantic_search", "recent_changes", "decisions", "source_status"),
+    "feature": ("coding_preferences", "infra_topology", "decisions", "owners", "docs"),
+    "debugging": ("prior_bugs", "infra_topology", "timeline"),
+    "review": ("coding_preferences", "decisions", "timeline", "owners"),
+    "operations": ("infra_topology", "timeline", "owners"),
+    "planning": ("infra_topology", "decisions", "timeline", "docs"),
+    "docs": ("docs", "decisions"),
+    "onboarding": ("infra_topology", "coding_preferences", "docs", "owners"),
+    "refactor": ("infra_topology", "coding_preferences", "timeline"),
+    "test": ("coding_preferences", "timeline"),
+    "security": ("infra_topology", "prior_bugs", "decisions"),
+    "unknown": ("infra_topology", "timeline", "decisions"),
 }
 
 CONTEXT_RESOLVE_RECIPES: dict[str, dict[str, Any]] = {
@@ -321,8 +168,6 @@ CONTEXT_RESOLVE_RECIPES: dict[str, dict[str, Any]] = {
     },
 }
 
-FALLBACK_ONLY_INCLUDES: frozenset[str] = frozenset()
-
 
 def normalize_context_intent(intent: str | None) -> str:
     value = (intent or "unknown").strip().lower()
@@ -397,6 +242,13 @@ def context_port_manifest() -> dict[str, Any]:
             },
         },
         "recipes": CONTEXT_RESOLVE_RECIPES,
+        "include_families": {
+            # Honest capability map: ``reader_backed`` keys are answered by a P9
+            # reader today; ``planned`` keys are requestable but surface as
+            # ``unsupported_include`` until a reader backs them.
+            "reader_backed": sorted(READER_BACKED_INCLUDES),
+            "planned": sorted(PLANNED_INCLUDES),
+        },
         "rules": [
             "Start non-trivial work with context_status or context_resolve for the active pot and task scope.",
             "Use intent/include/mode/source_policy presets instead of separate context tools per use case.",
@@ -438,151 +290,3 @@ def build_context_record_source_id(
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
     return f"context_record:{record_type}:{digest}"
-
-
-def _confidence_for_coverage(status: str) -> float:
-    if status == "complete":
-        return 0.82
-    if status == "partial":
-        return 0.55
-    return 0.2
-
-
-def _verification_state(bundle: IntelligenceBundle) -> str:
-    if not bundle.source_refs:
-        return "unknown"
-    states = {ref.verification_state for ref in bundle.source_refs}
-    if states == {"verified"}:
-        return "verified"
-    if "verification_failed" in states:
-        return "verification_failed"
-    if "needs_verification" in states:
-        return "needs_verification"
-    return "unverified"
-
-
-def _summary(bundle: IntelligenceBundle) -> str:
-    parts: list[str] = []
-    if bundle.artifacts:
-        parts.append(f"{len(bundle.artifacts)} artifact")
-    if bundle.changes:
-        parts.append(f"{len(bundle.changes)} recent change")
-    if bundle.decisions:
-        parts.append(f"{len(bundle.decisions)} decision")
-    if bundle.discussions:
-        parts.append(f"{len(bundle.discussions)} discussion")
-    if bundle.ownership:
-        parts.append(f"{len(bundle.ownership)} owner signal")
-    if bundle.project_map:
-        parts.append(f"{len(bundle.project_map)} project-map fact")
-    if bundle.debugging_memory:
-        parts.append(f"{len(bundle.debugging_memory)} debugging memory item")
-    if bundle.causal_chain:
-        parts.append(f"{len(bundle.causal_chain)} causal chain step")
-    if bundle.semantic_hits:
-        parts.append(f"{len(bundle.semantic_hits)} memory hit")
-    if not parts:
-        return "No matching project context was found for this request."
-    return "Resolved " + ", ".join(parts) + " for this request."
-
-
-def bundle_to_agent_envelope(
-    bundle: IntelligenceBundle,
-    *,
-    answer_summary: str | None = None,
-    synthesis_usage: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Return the stable minimal-port response envelope for agents.
-
-    ``answer_summary`` overrides the deterministic count-string fallback when
-    an LLM synthesizer produced a real answer. Pass ``None`` (default) to keep
-    the fallback — ensuring the envelope never carries an empty summary.
-
-    ``synthesis_usage`` (optional) captures the synthesizer's last-call
-    usage (model, input/output tokens, latency_ms) so it can be surfaced under
-    ``meta.cost.synthesis``. Pass ``None`` when no LLM call was made.
-    """
-    bundle_dict = asdict(bundle)
-    meta = dict(bundle_dict["meta"]) if isinstance(bundle_dict["meta"], dict) else {}
-    cost: dict[str, Any] = {
-        "resolve_ms": meta.get("total_latency_ms", 0),
-        "per_call_latency_ms": dict(meta.get("per_call_latency_ms", {})),
-    }
-    if synthesis_usage is not None:
-        cost["synthesis"] = dict(synthesis_usage)
-    meta["cost"] = cost
-
-    quality = dict(bundle_dict["quality"]) if isinstance(bundle_dict["quality"], dict) else {}
-    quality["drift"] = _drift_summary(quality)
-
-    return {
-        "ok": True,
-        "answer": {
-            "summary": answer_summary or _summary(bundle),
-            "artifacts": bundle_dict["artifacts"],
-            "recent_changes": bundle_dict["changes"],
-            "decisions": bundle_dict["decisions"],
-            "discussions": bundle_dict["discussions"],
-            "owners": bundle_dict["ownership"],
-            "project_map": bundle_dict["project_map"],
-            "debugging_memory": bundle_dict["debugging_memory"],
-        },
-        "facts": {
-            "changes": bundle_dict["changes"],
-            "decisions": bundle_dict["decisions"],
-            "ownership": bundle_dict["ownership"],
-            "project_map": bundle_dict["project_map"],
-            "debugging_memory": bundle_dict["debugging_memory"],
-            "causal_chain": bundle_dict["causal_chain"],
-        },
-        "evidence": bundle_dict["semantic_hits"] + bundle_dict["discussions"],
-        "source_refs": bundle_dict["source_refs"],
-        "source_resolution": bundle_dict["source_resolution"],
-        "confidence": _confidence_for_coverage(bundle.coverage.status),
-        "as_of": _iso_or_none(bundle.request.as_of),
-        "open_conflicts": bundle_dict["open_conflicts"],
-        "coverage": bundle_dict["coverage"],
-        "freshness": bundle_dict["freshness"],
-        "quality": quality,
-        "verification_state": _verification_state(bundle),
-        "fallbacks": bundle_dict["fallbacks"],
-        "recommended_next_actions": bundle_dict["recommended_next_actions"],
-        "errors": bundle_dict["errors"],
-        "meta": meta,
-        "bundle": bundle_dict,
-    }
-
-
-def _drift_summary(quality_dict: dict[str, Any]) -> dict[str, Any]:
-    """Derive an agent-facing drift summary from the quality block.
-
-    The drift summary is the single place an agent reads to decide
-    "is this graph stale enough to verify before acting?". It mirrors the
-    ``quality.status`` taxonomy and surfaces the underlying signals.
-    """
-    metrics = quality_dict.get("metrics") or {}
-    status = quality_dict.get("status", "unknown")
-    return {
-        "status": status,
-        "signals": {
-            "stale_refs": int(metrics.get("stale_ref_count", 0) or 0),
-            "needs_verification_refs": int(
-                metrics.get("needs_verification_ref_count", 0) or 0
-            ),
-            "verification_failed_refs": int(
-                metrics.get("verification_failed_ref_count", 0) or 0
-            ),
-            "source_access_gaps": int(metrics.get("source_access_gap_count", 0) or 0),
-            "missing_coverage": int(metrics.get("missing_coverage_count", 0) or 0),
-            "fallbacks": int(metrics.get("fallback_count", 0) or 0),
-            "open_conflicts": len(quality_dict.get("conflicts") or []),
-        },
-        "thresholds": {
-            "watch": "any stale, missing, fallback, or unverified facts",
-            "degraded": "verification_failed or source_access_gap > 0",
-        },
-    }
-
-
-def _iso_or_none(value: datetime | None) -> str | None:
-    return value.isoformat() if value is not None else None

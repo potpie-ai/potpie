@@ -1,0 +1,105 @@
+id: bug_redis_connection_flap
+use_case: BUG
+tier: quick
+difficulty: easy
+source_mix: dual
+universe: acme
+light: true
+
+description: |
+  auth-svc is throwing intermittent Redis ConnectionErrors and brief 401/500
+  blips on token verification. The on-call is mid-page and doesn't yet know
+  this is a known, benign, self-healing pattern.
+
+  Ground truth: there is a runbook (`runbooks/redis-connection-flap.md`)
+  that documents exactly this. auth-svc → redis(auth-cache) on ElastiCache
+  holds long-lived TCP connections; when ElastiCache fails a node over
+  (planned maintenance or AZ blip), the stale pooled connections fail once
+  before the pool reconnects. Crucially, the cache is an OPTIMISATION — every
+  read falls back to verifying the JWT against the public key — so a flap
+  degrades latency, never correctness, and self-heals in <60s. The runbook
+  says: do NOT page P1; check the ElastiCache events console for an ongoing
+  failover. A prior alert (-60d) shows the pattern firing and auto-resolving
+  in 48s during a maintenance window.
+
+  Today: the same `auth_svc_redis_connection_errors` monitor fires again
+  (41/min) with no auth-svc deploy in the last 5 days.
+
+  A strong answer surfaces the runbook, explains the flap is benign /
+  self-healing (correctness preserved via JWT fallback), tells the on-call
+  NOT to treat it as a P1 outage, and points at the likely ElastiCache
+  failover as the trigger — and notes the fix levers already shipped
+  (health_check_interval, retry_on_timeout).
+
+  Easy tier: alerting + repo_docs, low distractors, recent.
+
+ingest:
+  - { event: repo_docs/bug_redis_flap_runbook.json, at: "-160d", tags: [signal] }
+  - { event: alerting/bug_redis_flap_prior.json, at: "-60d", tags: [signal] }
+  - { event: alerting/bug_redis_flap_today.json, at: "0d", tags: [signal] }
+
+distractor_events:
+  - { event: noise/alerting_noise_template.json, at: "-50d..-2d", count: 4 }
+
+post_ingest_assertions:
+  # NOTE (read-layer gating): Document/Alert nodes are reconciled but the
+  # topology read surfaces only Service/DataStore. The runbook-recall
+  # capability is graded in retrieval + the judge. Anchor on auth-svc.
+  graph_must_contain_entities:
+    - { label: Service, key_pattern: "service:.*auth-svc", min_count: 1 }
+  no_orphan_entities: false
+  reconciliation:
+    soft_downgrades_max: 4
+    failed_events_max: 0
+
+query:
+  intent: debugging
+  scope: { service: auth-svc }
+  include: [prior_bugs, infra_topology, timeline]
+  mode: balanced
+  source_policy: summary
+
+retrieval_assertions:
+  source_refs_min: 1
+  must_cite_event_id:
+    - repo_docs/bug_redis_flap_runbook.json
+  forbid_in_answer:
+    - "I don't have information"
+    - "no runbook"
+
+judge:
+  pass_score: 75
+  criteria:
+    - name: surfaces_prior_runbook
+      weight: 30
+      pass_threshold: 4
+      prompt: |
+        Does the answer surface runbooks/redis-connection-flap.md (the
+        runbook covering this exact auth-svc Redis flap) and the prior
+        occurrence that auto-resolved during an ElastiCache maintenance
+        window?
+    - name: identifies_benign_pattern
+      weight: 25
+      pass_threshold: 3
+      prompt: |
+        Does the answer explain this is a benign, self-healing flap caused
+        by ElastiCache node failover — and crucially that correctness is
+        preserved because token verification falls back to the JWT public
+        key (the cache is only an optimisation)?
+    - name: actionable_first_steps
+      weight: 25
+      pass_threshold: 3
+      prompt: |
+        Does the answer give the runbook's guidance — do NOT page P1, check
+        the ElastiCache events console for an ongoing failover, expect
+        recovery in <60s — and reference the mitigations already shipped
+        (health_check_interval, retry_on_timeout)?
+    - name: no_hallucination
+      weight: 20
+      pass_threshold: 5
+      prompt: |
+        Are all claims grounded? Valid references: auth-svc, redis,
+        auth-cache, ElastiCache, JWT public key, health_check_interval,
+        retry_on_timeout, runbooks/redis-connection-flap.md, bench-user-14.
+        Inventing a different root cause (e.g. claiming auth-svc is down, or
+        a code bug) or other services/people fails this criterion.

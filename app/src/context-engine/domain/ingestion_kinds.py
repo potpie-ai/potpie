@@ -8,7 +8,7 @@ with a different payload shape.
 ``connector_sync`` remains as an internal label used by the bridge
 ingestion ledger (``adapters/outbound/postgres/ledger.py``) for
 out-of-tree integrations (e.g. the Linear bridge in
-``app/src/integrations``) that write directly into Graphiti and stamp
+``app/src/integrations``) that write directly into the graph and stamp
 their bridge-status row. The context-engine submission service does not
 emit events of this kind; it is preserved only because the ledger schema
 filters on it.

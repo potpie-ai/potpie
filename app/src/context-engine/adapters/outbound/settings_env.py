@@ -6,7 +6,7 @@ from domain.ports.settings import ContextEngineSettingsPort
 
 
 def context_engine_neo4j_uri() -> str | None:
-    """Neo4j for Graphiti + context-engine structural graph (optional dedicated cluster/DB)."""
+    """Neo4j for the context graph (optional dedicated cluster/DB)."""
     return (os.getenv("CONTEXT_ENGINE_NEO4J_URI") or os.getenv("CONTEXT_ENGINE_NEO4J_URL") or "").strip() or None
 
 

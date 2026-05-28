@@ -50,25 +50,30 @@ class TestSlugAliasIdentity:
 
 
 class TestExternalIdIdentity:
-    """EXTERNAL_ID keys preserve the source identifier shape (no slugify)."""
+    """EXTERNAL_ID keys preserve the source identifier shape (no slugify).
 
-    def test_pr_with_extra_segment(self) -> None:
-        spec = get_identity("PullRequest")
+    Activity is the canonical EXTERNAL_ID entity in the unified ontology;
+    PR/Issue/Commit/Deployment are now ``verb`` sub-kinds of Activity rather
+    than separate labels (see ``timeline_plan.build_timeline_mutations``).
+    """
+
+    def test_activity_with_extra_segment(self) -> None:
+        spec = get_identity("Activity")
         assert spec is not None
         key = mint_entity_key(
-            spec, external_id="1042", extra_segments=("acme/api",)
+            spec, external_id="1042", extra_segments=("github/pr",)
         )
-        assert key == "github:pr:acme/api:1042"
+        assert key == "activity:github/pr:1042"
 
     def test_external_id_preserves_slashes(self) -> None:
-        spec = get_identity("Commit")
+        spec = get_identity("Activity")
         assert spec is not None
         # Commit SHAs are hex; verify shape passes through unmangled.
         key = mint_entity_key(spec, external_id="abc123def456")
-        assert key == "commit:abc123def456"
+        assert key == "activity:abc123def456"
 
     def test_requires_external_id(self) -> None:
-        spec = get_identity("PullRequest")
+        spec = get_identity("Activity")
         assert spec is not None
         with pytest.raises(IdentityError):
             mint_entity_key(spec, name="ignored", external_id=None)
@@ -109,7 +114,7 @@ class TestValidateEntityKey:
         assert validate_entity_key(svc, key) is True
 
     def test_round_trip_external(self) -> None:
-        spec = get_identity("PullRequest")
+        spec = get_identity("Activity")
         assert spec is not None
         key = mint_entity_key(spec, external_id="42")
         assert validate_entity_key(spec, key) is True

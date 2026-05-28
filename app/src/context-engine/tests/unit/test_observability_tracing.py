@@ -7,10 +7,7 @@ from contextlib import contextmanager
 import pytest
 
 from application.use_cases.context_graph_jobs import _ingress_links
-from application.use_cases.resolve_context import resolve_context
 from bootstrap import observability_runtime
-from bootstrap.observability_context import get_correlation
-from domain.intelligence_models import ContextResolutionRequest, IntelligenceBundle
 
 
 class RecordingObs:
@@ -102,42 +99,3 @@ def test_ingress_links_is_best_effort_on_error() -> None:
             raise RuntimeError("db down")
 
     assert _ingress_links(object(), BadRepo(), "b") == []
-
-
-@pytest.mark.unit
-async def test_resolve_context_opens_span_and_binds_pot(
-    recording_obs: RecordingObs,
-) -> None:
-    seen_corr: dict = {}
-
-    class FakeService:
-        async def resolve(self, request):
-            seen_corr.update(get_correlation())
-            return IntelligenceBundle(request=request)
-
-    req = ContextResolutionRequest(pot_id="pot-xyz", query="why")
-    bundle = await resolve_context(FakeService(), req)
-
-    assert bundle.request.pot_id == "pot-xyz"
-    # pot bound for the duration of the awaited resolve
-    assert seen_corr.get("pot_id") == "pot-xyz"
-    # correlation cleaned up after the scope exits
-    assert get_correlation() == {}
-    # span + metrics emitted
-    assert any(n == "context.resolve" for n, _ in recording_obs.spans)
-    assert any(n == "ce.resolve.latency_ms" for n, _ in recording_obs.histograms)
-    assert ("ce.resolve.total", 1) in recording_obs.counters
-
-
-@pytest.mark.unit
-async def test_resolve_context_records_error_metric(
-    recording_obs: RecordingObs,
-) -> None:
-    class Boom:
-        async def resolve(self, request):
-            raise ValueError("nope")
-
-    with pytest.raises(ValueError):
-        await resolve_context(Boom(), ContextResolutionRequest(pot_id="p", query="q"))
-    assert ("ce.resolve.total", 1) in recording_obs.counters
-    assert get_correlation() == {}

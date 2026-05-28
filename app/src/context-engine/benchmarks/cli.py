@@ -18,7 +18,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
+import time
 from pathlib import Path
 
 from benchmarks.core.lifecycle import make_client
@@ -64,6 +66,7 @@ def _filter(
     difficulty: str | None,
     source_mix: str | None,
     dimension: str | None,
+    light_only: bool = False,
 ) -> list[Scenario]:
     out = scenarios
     if scenario_id:
@@ -72,6 +75,10 @@ def _filter(
             print(f"error: no scenario with id '{scenario_id}'", file=sys.stderr)
             raise SystemExit(2)
         return out  # When picking a specific scenario, ignore other filters.
+    if light_only:
+        # ``run-light`` selects the curated 5-scenario subset by tag;
+        # tier / use_case / dimension filters do not apply.
+        return [s for s in out if s.light]
     if use_case:
         out = [s for s in out if s.use_case == use_case]
     if difficulty:
@@ -94,6 +101,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
                 "difficulty": s.difficulty,
                 "source_mix": s.source_mix,
                 "tier": s.tier,
+                "light": s.light,
                 "dimensions": list(s.effective_dimensions),
                 "description": s.description,
                 "source_path": str(s.source_path.relative_to(BENCHMARKS_ROOT)),
@@ -130,11 +138,59 @@ def _cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_run(args: argparse.Namespace) -> int:
+def _configure_logging(verbose: bool) -> None:
+    """Show benchmark progress (``benchmarks.*`` at INFO) without third-party noise.
+
+    The runner / ingestion / in-process engine emit phase breadcrumbs under the
+    ``benchmarks`` logger; those always show. ``--verbose`` additionally
+    surfaces the chatty engine + HTTP loggers (httpx, openai, the in-process
+    reconciliation agent, etc.).
+    """
     logging.basicConfig(
-        level=logging.INFO if args.verbose else logging.WARNING,
+        level=logging.INFO if verbose else logging.WARNING,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    logging.getLogger("benchmarks").setLevel(logging.INFO)
+    if not verbose:
+        for noisy in (
+            "httpx", "httpcore", "openai", "urllib3", "neo4j", "sqlalchemy",
+            "app", "adapters", "application", "bootstrap", "LiteLLM", "litellm",
+        ):
+            logging.getLogger(noisy).setLevel(logging.WARNING)
+
+
+def _run_scenario_worker(payload):  # type: ignore[no-untyped-def]
+    """ProcessPool entrypoint for the in-process engine (module-level → picklable).
+
+    Each scenario runs in its own process so the reconciliation agent's
+    per-batch ``asyncio.run`` and the SQLAlchemy session are fully isolated —
+    the safe way to parallelize the in-process path (threads share a process
+    and hit the agent's 'Event loop is closed' race).
+    """
+    scenario, ingest_timeout, skip_judge, invariant = payload
+    os.environ["POTPIE_BENCH_INPROCESS"] = "1"
+    _configure_logging(False)
+    set_fixture_source_id_lookup(build_source_id_index(FIXTURES_ROOT))
+    return run_scenario(
+        scenario=scenario,
+        client=make_client(),
+        fixtures_root=FIXTURES_ROOT,
+        benchmarks_root=BENCHMARKS_ROOT,
+        ingest_timeout_s=ingest_timeout,
+        skip_judge=skip_judge,
+        invariant=invariant,
+    )
+
+
+def _cmd_run(args: argparse.Namespace) -> int:
+    _configure_logging(args.verbose)
+    if getattr(args, "local", False):
+        # In-process engine: no HTTP server on :8001, no Celery worker.
+        os.environ["POTPIE_BENCH_INPROCESS"] = "1"
+    inprocess = os.environ.get("POTPIE_BENCH_INPROCESS", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+    light_only = bool(getattr(args, "light_only", False))
     scenarios = _filter(
         _load_scenarios(),
         use_case=args.use_case,
@@ -143,14 +199,22 @@ def _cmd_run(args: argparse.Namespace) -> int:
         difficulty=args.difficulty,
         source_mix=args.source_mix,
         dimension=args.dimension,
+        light_only=light_only,
     )
     if not scenarios:
-        print(
-            f"no scenarios match (use_case={args.use_case!r} tier={args.tier!r} "
-            f"difficulty={args.difficulty!r} source_mix={args.source_mix!r} "
-            f"dimension={args.dimension!r})",
-            file=sys.stderr,
-        )
+        if light_only:
+            print(
+                "no scenarios tagged `light: true` — tag one easy scenario per "
+                "dimension and try again",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"no scenarios match (use_case={args.use_case!r} tier={args.tier!r} "
+                f"difficulty={args.difficulty!r} source_mix={args.source_mix!r} "
+                f"dimension={args.dimension!r})",
+                file=sys.stderr,
+            )
         return 2
 
     # Make structured citation matching available to the retrieval evaluator
@@ -160,6 +224,42 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     client = make_client()
     started = now_iso()
+    n = len(scenarios)
+    n_workers = min(args.concurrency, n) if args.concurrency > 1 and n > 1 else 1
+    mode = "in-process (no :8001 server / no worker)" if inprocess else f"http {client._base}"
+    invariant = bool(getattr(args, "invariant", False))
+    judge = (
+        "off (--skip-judge)"
+        if args.skip_judge
+        else ("invariant (schema-independent)" if invariant else "rubric")
+    )
+    label = "benchmark run-light" if light_only else "benchmark run"
+    print(
+        f"▶ {label} | {n} scenario(s) | mode={mode} | "
+        f"concurrency={n_workers}"
+        + (" (processes)" if (n_workers > 1 and inprocess) else (" (threads)" if n_workers > 1 else ""))
+        + f" | tier={('light' if light_only else args.tier)} | judge={judge}"
+    )
+    run_started = time.monotonic()
+
+    results: list = []
+    done = 0
+    passed = 0
+
+    def _log_done(r) -> None:  # type: ignore[no-untyped-def]
+        nonlocal done, passed
+        done += 1
+        if r.aggregate_passed:
+            passed += 1
+        check = "✓" if r.aggregate_passed else "✗"
+        el = (r.latency_ms or {}).get("total_ms", 0.0) / 1000.0
+        tail = f"  ERROR: {r.error}" if getattr(r, "error", None) else ""
+        print(
+            f"[{done:>3}/{n}] {check} {r.id:<46} "
+            f"agg={r.aggregate_score:5.1f} ing={r.ingestion.score:5.1f} "
+            f"ret={r.retrieval.score:5.1f} syn={r.synthesis.score:5.1f} "
+            f"{el:5.1f}s  (passed {passed}/{done}){tail}"
+        )
 
     def _run_one(scenario):  # type: ignore[no-untyped-def]
         return run_scenario(
@@ -169,40 +269,52 @@ def _cmd_run(args: argparse.Namespace) -> int:
             benchmarks_root=BENCHMARKS_ROOT,
             ingest_timeout_s=args.ingest_timeout,
             skip_judge=args.skip_judge,
+            invariant=invariant,
         )
 
-    def _print_result(r) -> None:  # type: ignore[no-untyped-def]
-        check = "✓" if r.aggregate_passed else "✗"
-        print(
-            f"  {check} {r.id:<48} agg={r.aggregate_score:5.1f}  "
-            f"ing={r.ingestion.score:5.1f}  ret={r.retrieval.score:5.1f}  "
-            f"syn={r.synthesis.score:5.1f}"
-        )
+    if n_workers > 1 and inprocess:
+        # In-process: parallelize across PROCESSES so each scenario gets its
+        # own asyncio loop / agent / DB session (thread-safe alternative would
+        # hit the agent's 'Event loop is closed' race).
+        from concurrent.futures import ProcessPoolExecutor, as_completed
 
-    results: list = []
-    if args.concurrency > 1 and len(scenarios) > 1:
-        # Pots are isolated by construction; fan-out is safe. Cap workers
-        # at the number of scenarios so we don't spin idle threads on a
-        # one-off ``--scenario X`` invocation.
+        with ProcessPoolExecutor(max_workers=n_workers) as pool:
+            futures = {
+                pool.submit(
+                    _run_scenario_worker,
+                    (s, args.ingest_timeout, args.skip_judge, invariant),
+                ): s
+                for s in scenarios
+            }
+            for fut in as_completed(futures):
+                s = futures[fut]
+                try:
+                    result = fut.result()
+                except Exception as exc:  # noqa: BLE001 — a crashed subprocess
+                    result = _failed_scenario_result(s, f"subprocess crashed: {exc}")
+                results.append(result)
+                _log_done(result)
+    elif n_workers > 1:
+        # HTTP: reconciliation runs in the engine worker; bench threads just
+        # submit + poll over HTTP (thread-safe). Pots are isolated.
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        n_workers = min(args.concurrency, len(scenarios))
-        print(f"running {len(scenarios)} scenarios with concurrency={n_workers}")
         with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="bench-scenario") as pool:
             futures = {pool.submit(_run_one, s): s for s in scenarios}
             for fut in as_completed(futures):
                 result = fut.result()
                 results.append(result)
-                _print_result(result)
-        # Preserve declared scenario order in the final report so cell-by-
-        # cell diffs against a baseline don't shuffle.
-        order = {s.id: i for i, s in enumerate(scenarios)}
-        results.sort(key=lambda r: order.get(r.id, 1_000_000))
+                _log_done(result)
     else:
-        for scenario in scenarios:
+        for i, scenario in enumerate(scenarios, 1):
+            print(f"[{i:>3}/{n}] ▶ {scenario.id}  ({scenario.use_case}/{scenario.difficulty}/{scenario.source_mix})")
             result = _run_one(scenario)
             results.append(result)
-            _print_result(result)
+            _log_done(result)
+
+    # Preserve declared scenario order in the report so baseline diffs don't shuffle.
+    order = {s.id: i for i, s in enumerate(scenarios)}
+    results.sort(key=lambda r: order.get(r.id, 1_000_000))
 
     finished = now_iso()
     report = aggregate_report(
@@ -218,16 +330,55 @@ def _cmd_run(args: argparse.Namespace) -> int:
     REPORTS_ROOT.mkdir(parents=True, exist_ok=True)
     out_path = REPORTS_ROOT / f"{started.replace(':', '-')}.json"
     write_json(report, out_path)
+
+    total_s = time.monotonic() - run_started
+    failed = [r for r in results if not r.aggregate_passed]
     print()
     print(f"report: {out_path.relative_to(BENCHMARKS_ROOT)}")
     print(
-        f"aggregate: {report.aggregate_score:.1f}  "
-        f"pass_rate: {report.pass_rate * 100:.0f}%  "
-        f"scenarios: {report.scenario_count}"
+        f"done: {len(results)} scenario(s) in {total_s:.1f}s | "
+        f"{len(results) - len(failed)} passed, {len(failed)} failed | "
+        f"aggregate {report.aggregate_score:.1f}  pass_rate {report.pass_rate * 100:.0f}%"
     )
-
-    failed = [r for r in results if not r.aggregate_passed]
+    if failed:
+        print(f"failed ({len(failed)}):")
+        for r in failed:
+            reason = f" — {r.error}" if getattr(r, "error", None) else (
+                f" — ing={r.ingestion.score:.0f} ret={r.retrieval.score:.0f} syn={r.synthesis.score:.0f}"
+            )
+            print(f"  ✗ {r.id}{reason}")
+    slow = sorted(results, key=lambda r: (r.latency_ms or {}).get("total_ms", 0.0), reverse=True)[:3]
+    if slow and (slow[0].latency_ms or {}).get("total_ms"):
+        print(
+            "slowest: "
+            + ", ".join(f"{r.id} {(r.latency_ms or {}).get('total_ms', 0.0) / 1000:.0f}s" for r in slow)
+        )
     return 1 if failed else 0
+
+
+def _failed_scenario_result(scenario, error: str):  # type: ignore[no-untyped-def]
+    """Build a zero-score ScenarioResult for a scenario whose worker crashed."""
+    from benchmarks.core.result import AxisScore, ScenarioResult
+
+    def _z(reason: str) -> AxisScore:
+        return AxisScore(score=0.0, passed=False, errors=[reason])
+
+    return ScenarioResult(
+        id=scenario.id,
+        use_case=scenario.use_case,
+        tier=scenario.tier,
+        aggregate_score=0.0,
+        aggregate_passed=False,
+        ingestion=_z(error),
+        retrieval=_z("skipped (worker crashed)"),
+        synthesis=_z("skipped (worker crashed)"),
+        latency_ms={},
+        pot_id=None,
+        error=error,
+        difficulty=scenario.difficulty,
+        source_mix=scenario.source_mix,
+        dimensions=list(scenario.effective_dimensions),
+    )
 
 
 def _cmd_smoke(args: argparse.Namespace) -> int:
@@ -375,8 +526,54 @@ def main(argv: list[str] | None = None) -> int:
         help="Run N scenarios in parallel (pots are isolated; safe up to engine capacity).",
     )
     p_run.add_argument("--skip-judge", action="store_true", help="Skip the LLM-judge axis (cheap dry runs)")
+    p_run.add_argument(
+        "--invariant",
+        action="store_true",
+        help="Schema-independent grading: replace the per-rubric synthesis judge "
+        "with an LLM call that grades the agent's answer against the scenario's "
+        "input events alone (faithfulness/coverage/clarity/usefulness). Ingestion "
+        "and retrieval axes stay in the report as diagnostics but do not gate.",
+    )
+    p_run.add_argument(
+        "--local",
+        action="store_true",
+        help="Run the engine in-process (no HTTP server on :8001, no Celery worker; "
+        "reuses Postgres/Neo4j and reconciles inline). Equivalent to POTPIE_BENCH_INPROCESS=1.",
+    )
     p_run.add_argument("--verbose", "-v", action="store_true")
-    p_run.set_defaults(func=_cmd_run)
+    p_run.set_defaults(func=_cmd_run, light_only=False)
+
+    # --- run-light: curated 5-scenario subset, 5-way parallel, invariant judge.
+    p_light = sub.add_parser(
+        "run-light",
+        help="Quick 5-scenario invariant run (one per dimension; concurrency 5).",
+    )
+    p_light.add_argument("--ingest-timeout", type=float, default=180.0)
+    p_light.add_argument(
+        "--concurrency",
+        type=int,
+        default=5,
+        help="Default 5 — one process per scenario.",
+    )
+    p_light.add_argument("--skip-judge", action="store_true")
+    p_light.add_argument(
+        "--local",
+        action="store_true",
+        help="Run the engine in-process (recommended for light runs; no :8001 / no worker).",
+    )
+    p_light.add_argument("--verbose", "-v", action="store_true")
+    # Defaults that match the regular `run` namespace so _cmd_run can share code.
+    p_light.set_defaults(
+        func=_cmd_run,
+        tier="quick",
+        use_case=None,
+        scenario=None,
+        difficulty=None,
+        source_mix=None,
+        dimension=None,
+        invariant=True,
+        light_only=True,
+    )
 
     p_list = sub.add_parser("list", help="List discovered scenarios")
     p_list.add_argument("--json", action="store_true")

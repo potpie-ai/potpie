@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,7 @@ from benchmarks.core.scenario import Scenario
 from benchmarks.core.universe import resolve_seeds_for_scenario
 from benchmarks.evaluators.ingestion_quality import evaluate_ingestion_quality
 from benchmarks.evaluators.llm_judge import evaluate_synthesis, synthesis_by_dimension
+from benchmarks.evaluators.llm_judge_invariant import evaluate_synthesis_invariant
 from benchmarks.evaluators.retrieval import evaluate_retrieval
 
 logger = logging.getLogger(__name__)
@@ -48,6 +50,18 @@ logger = logging.getLogger(__name__)
 def _aggregate(scenario: Scenario, ingestion_score: float, retrieval_score: float, synthesis_score: float) -> float:
     w = scenario.axis_weights
     return ingestion_score * w.ingestion + retrieval_score * w.retrieval + synthesis_score * w.synthesis
+
+
+def _aggregate_invariant(synthesis_score: float) -> float:
+    """In invariant mode the headline is the invariant judge, period.
+
+    Ingestion + retrieval are still computed and recorded as diagnostics
+    (see ``run_scenario``), but they don't enter the aggregate — by
+    design, since the goal of invariant mode is to score the agent's
+    answer against the input events without leaning on engine-internal
+    shape.
+    """
+    return synthesis_score
 
 
 def _empty_axis(reason: str) -> AxisScore:
@@ -61,6 +75,7 @@ def _build_by_dimension(
     retrieval: AxisScore,
     synthesis: AxisScore,
     synthesis_details: dict[str, Any] | None,
+    invariant: bool = False,
 ) -> list[DimensionScore]:
     """Build per-dimension scores for the result.
 
@@ -87,7 +102,13 @@ def _build_by_dimension(
 
     for dim in dims:
         synth_score = synth_by_dim.get(dim, default_synth)
-        agg = _aggregate(scenario, ingestion.score, retrieval.score, synth_score)
+        if invariant:
+            # Invariant mode: ingestion/retrieval don't enter the aggregate;
+            # the invariant judge returns a single answer-level score that
+            # broadcasts across declared dimensions for COMBO scenarios.
+            agg = _aggregate_invariant(synth_score)
+        else:
+            agg = _aggregate(scenario, ingestion.score, retrieval.score, synth_score)
         out.append(
             DimensionScore(
                 dimension=dim,
@@ -110,6 +131,7 @@ def run_scenario(
     judge_client: Any | None = None,
     ingest_timeout_s: float = 180.0,
     skip_judge: bool = False,
+    invariant: bool = False,
 ) -> ScenarioResult:
     """Run a single scenario end-to-end against a real engine.
 
@@ -158,6 +180,12 @@ def run_scenario(
             fixtures_root=fixtures_root,
             anchor=anchor,
         )
+        roles = Counter(e.role for e in events)
+        logger.info(
+            "scenario %s: ingesting %d events (seed=%d signal=%d distractor=%d) into pot %s",
+            scenario.id, len(events), roles.get("seed", 0), roles.get("signal", 0),
+            roles.get("distractor", 0), pot.pot_id,
+        )
 
         ingest_started = time.monotonic()
         outcomes: list[IngestionOutcome] = replay_all(
@@ -167,8 +195,18 @@ def run_scenario(
         )
         latency["ingest_total_ms"] = (time.monotonic() - ingest_started) * 1000
         latency["events_replayed"] = float(len(events))
+        _ingest_failed = sum(1 for o in outcomes if o.error is not None)
+        logger.info(
+            "scenario %s: ingested %d/%d ok, %d failed in %.1fs",
+            scenario.id, len(outcomes) - _ingest_failed, len(outcomes),
+            _ingest_failed, latency["ingest_total_ms"] / 1000,
+        )
 
         snapshot = snapshot_graph(client, pot.pot_id)
+        logger.info(
+            "scenario %s: graph snapshot — %d entities, %d edges",
+            scenario.id, len(snapshot.entities), len(snapshot.edges),
+        )
         ingestion_eval = evaluate_ingestion_quality(
             snapshot=snapshot,
             outcomes=outcomes,
@@ -184,6 +222,10 @@ def run_scenario(
         )
 
         query_started = time.monotonic()
+        logger.info(
+            "scenario %s: resolving context (intent=%s, include=%s)",
+            scenario.id, scenario.query.intent, ",".join(scenario.query.include) or "-",
+        )
         try:
             response = resolve_context(client, pot.pot_id, scenario.query)
             latency["query_ms"] = (time.monotonic() - query_started) * 1000
@@ -197,6 +239,15 @@ def run_scenario(
                 precision=retrieval_eval.precision,
                 details=dict(retrieval_eval.details),
                 errors=retrieval_eval.errors,
+            )
+            _inc = retrieval_eval.details.get("includes_used") or []
+            _inc_str = ",".join(str(x) for x in _inc) if isinstance(_inc, (list, tuple)) else "-"
+            logger.info(
+                "scenario %s: retrieval %.0f (%d source_refs, includes=%s) in %.1fs",
+                scenario.id, retrieval_axis.score,
+                retrieval_eval.details.get("source_ref_count", 0),
+                _inc_str or "-",
+                latency["query_ms"] / 1000,
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("scenario %s: query failed", scenario.id)
@@ -214,13 +265,40 @@ def run_scenario(
         elif response:
             judge_started = time.monotonic()
             try:
-                synthesis_eval = evaluate_synthesis(
-                    description=scenario.description,
-                    query=scenario.query,
-                    response=response,
-                    rubric=scenario.judge,
-                    client=judge_client,
-                )
+                if invariant:
+                    # Schema-independent judge: grades the answer against
+                    # the scenario's signal events only — the engine's
+                    # graph shape, include vocabulary, and query params
+                    # do not enter the score.
+                    signal_events = [e for e in events if e.role == "signal"]
+                    seed_count = sum(1 for e in events if e.role == "seed")
+                    distractor_count = sum(1 for e in events if e.role == "distractor")
+                    logger.info(
+                        "scenario %s: invariant judge on %d signal event(s) "
+                        "(+ %d seed, %d distractor in context)...",
+                        scenario.id, len(signal_events), seed_count, distractor_count,
+                    )
+                    synthesis_eval = evaluate_synthesis_invariant(
+                        description=scenario.description,
+                        query=scenario.query,
+                        response=response,
+                        signal_events=signal_events,
+                        seed_count=seed_count,
+                        distractor_count=distractor_count,
+                        client=judge_client,
+                    )
+                else:
+                    logger.info(
+                        "scenario %s: judging synthesis (%d criteria)...",
+                        scenario.id, len(scenario.judge.criteria),
+                    )
+                    synthesis_eval = evaluate_synthesis(
+                        description=scenario.description,
+                        query=scenario.query,
+                        response=response,
+                        rubric=scenario.judge,
+                        client=judge_client,
+                    )
                 latency["judge_ms"] = (time.monotonic() - judge_started) * 1000
                 synthesis_details = dict(synthesis_eval.details)
                 synthesis_axis = AxisScore(
@@ -235,11 +313,38 @@ def run_scenario(
         else:
             synthesis_axis = _empty_axis("skipped (no query response)")
 
-        aggregate = _aggregate(
-            scenario, ingestion_axis.score, retrieval_axis.score, synthesis_axis.score
-        )
-        passed = ingestion_axis.passed and retrieval_axis.passed and synthesis_axis.passed
+        if invariant:
+            # Headline = invariant judge. Ingestion/retrieval are
+            # diagnostic-only in this mode (kept in the report so we can
+            # spot regressions, but they do not gate pass/fail).
+            aggregate = _aggregate_invariant(synthesis_axis.score)
+            passed = synthesis_axis.passed
+        else:
+            aggregate = _aggregate(
+                scenario, ingestion_axis.score, retrieval_axis.score, synthesis_axis.score
+            )
+            passed = ingestion_axis.passed and retrieval_axis.passed and synthesis_axis.passed
         latency["total_ms"] = (time.monotonic() - start_total) * 1000
+        if invariant:
+            sub = synthesis_axis.details.get("scores") if isinstance(synthesis_axis.details, dict) else None
+            sub_str = (
+                f" [F={sub.get('faithfulness')} C={sub.get('coverage')} "
+                f"Cl={sub.get('clarity')} U={sub.get('usefulness')}]"
+                if isinstance(sub, dict) else ""
+            )
+            logger.info(
+                "scenario %s: %s invariant=%.1f%s (det ing=%.1f ret=%.1f) in %.1fs",
+                scenario.id, "PASS" if passed else "FAIL", aggregate,
+                sub_str, ingestion_axis.score, retrieval_axis.score,
+                latency["total_ms"] / 1000,
+            )
+        else:
+            logger.info(
+                "scenario %s: %s agg=%.1f (ing=%.1f ret=%.1f syn=%.1f) in %.1fs",
+                scenario.id, "PASS" if passed else "FAIL", aggregate,
+                ingestion_axis.score, retrieval_axis.score, synthesis_axis.score,
+                latency["total_ms"] / 1000,
+            )
 
         return ScenarioResult(
             id=scenario.id,
@@ -261,6 +366,7 @@ def run_scenario(
                 retrieval=retrieval_axis,
                 synthesis=synthesis_axis,
                 synthesis_details=synthesis_details,
+                invariant=invariant,
             ),
         )
     finally:

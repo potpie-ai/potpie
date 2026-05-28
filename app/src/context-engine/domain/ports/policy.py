@@ -44,7 +44,6 @@ ACTION_POT_RECORD = "record"
 ACTION_POT_INGEST_EPISODE = "ingest_episode"
 ACTION_POT_RESET = "reset"
 ACTION_POT_RESOLVE_CONFLICT = "resolve_conflict"
-ACTION_POT_MAINTENANCE = "maintenance"
 
 # Connector actions
 ACTION_CONNECTOR_LIST = "list"
@@ -65,7 +64,6 @@ REASON_EPISODIC_UNAVAILABLE = "episodic_unavailable"
 REASON_UNKNOWN_POT = "unknown_pot"
 REASON_FORBIDDEN = "forbidden"
 REASON_UNSUPPORTED_RESOURCE = "unsupported_resource"
-REASON_MAINTENANCE_WRITE_DISABLED = "maintenance_write_disabled"
 
 
 @dataclass(frozen=True, slots=True)

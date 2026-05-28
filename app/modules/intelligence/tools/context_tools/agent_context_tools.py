@@ -11,12 +11,12 @@ from app.modules.context_graph.wiring import build_container_for_user_session
 from domain.actor import Actor
 from domain.agent_context_port import (
     build_context_record_source_id,
-    bundle_to_agent_envelope,
     context_port_manifest,
     context_recipe_for_intent,
     normalize_record_type,
 )
 from domain.graph_query import (
+    ContextGraphBudget,
     ContextGraphGoal,
     ContextGraphQuery,
     ContextGraphScope,
@@ -24,11 +24,6 @@ from domain.graph_query import (
 )
 from domain.ingestion_event_models import IngestionSubmissionRequest
 from domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
-from domain.intelligence_models import (
-    ContextBudget,
-    ContextResolutionRequest,
-    ContextScope,
-)
 
 
 def _split_csv(value: Optional[str]) -> list[str]:
@@ -183,15 +178,19 @@ class AgentContextTools:
         self._assert_pot_access(pot_id)
         if not self._container.settings.is_enabled():
             return {"ok": False, "error": "context_graph_disabled"}
-        if self._container.resolution_service is None:
-            return {"ok": False, "error": "resolver_unavailable"}
+        if self._container.context_graph is None:
+            return {"ok": False, "error": "context_graph_unavailable"}
 
-        req = ContextResolutionRequest(
+        request = ContextGraphQuery(
             pot_id=pot_id,
             query=query,
-            consumer_hint=consumer_hint,
+            goal=ContextGraphGoal.ANSWER,
+            strategy=ContextGraphStrategy.AUTO,
             intent=intent,
-            scope=ContextScope(
+            consumer_hint=consumer_hint,
+            include=_split_csv(include),
+            exclude=_split_csv(exclude),
+            scope=ContextGraphScope(
                 repo_name=repo_name,
                 branch=branch,
                 file_path=file_path,
@@ -205,11 +204,8 @@ class AgentContextTools:
                 user=user,
                 source_refs=_split_csv(source_refs),
             ),
-            include=_split_csv(include),
-            exclude=_split_csv(exclude),
-            mode=mode,
             source_policy=source_policy,
-            budget=ContextBudget(
+            budget=ContextGraphBudget(
                 max_items=max_items,
                 max_tokens=max_tokens,
                 timeout_ms=timeout_ms,
@@ -217,8 +213,14 @@ class AgentContextTools:
             ),
             as_of=_parse_as_of(as_of),
         )
-        bundle = await self._container.resolution_service.resolve(req)
-        return bundle_to_agent_envelope(bundle)
+        out = await self._container.context_graph.query_async(request)
+        result = out.result if isinstance(out.result, dict) else {}
+        return {
+            "ok": out.error is None,
+            **result,
+            "meta": out.meta,
+            "error": out.error,
+        }
 
     async def context_search(
         self,
@@ -408,11 +410,11 @@ class AgentContextTools:
                     "message": "Context graph is disabled for this server.",
                 }
             )
-        if self._container.resolution_service is None:
+        if self._container.context_graph is None:
             gaps.append(
                 {
-                    "code": "resolver_unavailable",
-                    "message": "Context resolution service is not configured.",
+                    "code": "context_graph_unavailable",
+                    "message": "Context read surface is not configured.",
                 }
             )
         if not resolved.repos:

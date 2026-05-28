@@ -36,20 +36,45 @@ class RetrievalEvaluation(EvaluationResult):
     precision: float = 100.0
 
 
+def _envelope(response: dict[str, Any]) -> dict[str, Any]:
+    """Return the AgentEnvelope dict.
+
+    The read trunk (P8/P9) wraps the envelope under ``result`` in a
+    ``ContextGraphResult`` (``{kind, goal, strategy, result, meta}``). Older
+    shapes put the envelope fields at the top level — accept both.
+    """
+    result = response.get("result")
+    if isinstance(result, dict):
+        return result
+    return response
+
+
 def _includes_used(response: dict[str, Any]) -> set[str]:
     """Which include keys did the engine actually contribute data for?
 
-    Preferred source: the engine's own ``coverage.available`` list, which
-    is the source of truth (``domain.intelligence_models.CoverageReport``).
-    Fallback: structural inference over response shape, used only when
-    the response doesn't carry a coverage report (e.g. older engine
-    versions, or smoke tests with synthetic responses).
-
-    The hard-coded key list in the fallback is intentionally narrow —
-    new include keys should propagate via the engine's ``coverage``
-    field, not by editing this function.
+    Preferred source: the AgentEnvelope's ``coverage`` list (P8 shape) —
+    each entry is ``{include, status, candidate_pool}``; an include counts
+    as used when its status is not ``empty``. We also union the ``items[]``
+    include names (a reader that returned rows is, by definition, used).
+    Fallbacks: the older ``coverage.available`` list, then structural
+    inference over the response shape (smoke tests / legacy engines).
     """
-    # Preferred: engine-declared coverage.
+    env = _envelope(response)
+
+    # Preferred (P8): coverage list + items include names.
+    cov = env.get("coverage")
+    used_new: set[str] = set()
+    if isinstance(cov, list):
+        for c in cov:
+            if isinstance(c, dict) and c.get("include") and c.get("status") != "empty":
+                used_new.add(str(c["include"]))
+    for it in env.get("items") or []:
+        if isinstance(it, dict) and it.get("include"):
+            used_new.add(str(it["include"]))
+    if used_new:
+        return used_new
+
+    # Legacy: engine-declared coverage.available.
     coverage = response.get("coverage") or {}
     available = coverage.get("available") if isinstance(coverage, dict) else None
     if isinstance(available, list) and available:
@@ -85,15 +110,34 @@ def _includes_used(response: dict[str, Any]) -> set[str]:
     return used
 
 
+def _envelope_source_refs(response: dict[str, Any]) -> set[str]:
+    """Distinct canonical source refs the envelope's items carry (P8 shape)."""
+    out: set[str] = set()
+    for it in _envelope(response).get("items") or []:
+        if not isinstance(it, dict):
+            continue
+        payload = it.get("payload")
+        if isinstance(payload, dict):
+            ref = payload.get("source_ref")
+            if isinstance(ref, str) and ref:
+                out.add(ref)
+    return out
+
+
 def _source_ref_count(response: dict[str, Any]) -> int:
+    # P8 envelope: distinct source_refs across items.
+    env_refs = _envelope_source_refs(response)
+    if env_refs:
+        return len(env_refs)
     refs = response.get("source_refs") or []
     return len(refs) if isinstance(refs, list) else 0
 
 
 def _answer_text(response: dict[str, Any]) -> str:
-    answer = response.get("answer") or {}
-    summary = answer.get("summary") or ""
-    return str(summary)
+    answer = _envelope(response).get("answer") or response.get("answer") or {}
+    if isinstance(answer, dict):
+        return str(answer.get("summary") or "")
+    return str(answer or "")
 
 
 def _cited_source_ids(response: dict[str, Any]) -> set[str]:
@@ -105,6 +149,9 @@ def _cited_source_ids(response: dict[str, Any]) -> set[str]:
     which carry the same field on multi-hit responses.
     """
     out: set[str] = set()
+    # P8 envelope: each item's payload carries the canonical source_ref.
+    out |= _envelope_source_refs(response)
+    # Legacy flat shapes.
     for ref in response.get("source_refs") or []:
         if not isinstance(ref, dict):
             continue
@@ -168,6 +215,12 @@ def _cites_event(
 
 def _haystack(response: dict[str, Any]) -> str:
     parts: list[str] = []
+    # P8 envelope items (payloads carry fact/source_ref/keys).
+    for it in _envelope(response).get("items") or []:
+        if isinstance(it, dict):
+            payload = it.get("payload")
+            if isinstance(payload, dict):
+                parts.extend(str(v) for v in payload.values())
     for ref in response.get("source_refs") or []:
         if isinstance(ref, dict):
             parts.extend(str(v) for v in ref.values())
@@ -203,21 +256,36 @@ def _resolve_offset_to_dt(at: str, anchor: datetime) -> datetime:
     return parsed
 
 
+def _parse_iso(val: Any) -> datetime | None:
+    if not isinstance(val, str) or not val:
+        return None
+    try:
+        dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
 def _extract_cited_timestamps(response: dict[str, Any]) -> list[datetime]:
-    """Pull ISO timestamps out of source_refs and evidence for window checks."""
+    """Pull ISO timestamps out of envelope items / source_refs for window checks."""
     out: list[datetime] = []
+    # P8 envelope: each item payload carries ``valid_at`` (the claim's time).
+    for it in _envelope(response).get("items") or []:
+        if isinstance(it, dict):
+            payload = it.get("payload")
+            if isinstance(payload, dict):
+                for key in ("valid_at", "occurred_at", "merged_at", "created_at", "timestamp"):
+                    dt = _parse_iso(payload.get(key))
+                    if dt is not None:
+                        out.append(dt)
+                        break
     for ref in response.get("source_refs") or []:
         if isinstance(ref, dict):
             for key in ("occurred_at", "timestamp", "merged_at", "created_at"):
-                val = ref.get(key)
-                if isinstance(val, str):
-                    try:
-                        dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
-                        if dt.tzinfo is None:
-                            dt = dt.replace(tzinfo=timezone.utc)
-                        out.append(dt)
-                    except ValueError:
-                        continue
+                dt = _parse_iso(ref.get(key))
+                if dt is not None:
+                    out.append(dt)
+                    break
     return out
 
 

@@ -131,9 +131,9 @@ class TestDispatchPotSandboxCleanup:
             mod.dispatch_pot_sandbox_cleanup(db, pot_id="pot-1")
             # Execute the runner inline to verify the gc_caches arg.
             runner = thr.call_args.kwargs["target"]
-            fake_async.run.side_effect = (
-                lambda coro: __import__("asyncio").get_event_loop().run_until_complete(coro)
-            )
+            # Fresh loop per call — robust to a closed global loop left by an
+            # earlier async test (pytest-asyncio auto mode) in the full suite.
+            fake_async.run.side_effect = lambda coro: __import__("asyncio").run(coro)
             runner()
         assert captured.get("delete_repo_caches") is True
         assert captured.get("user_id") == "u1"
@@ -163,9 +163,9 @@ class TestDispatchPotSandboxCleanup:
         ), patch("threading.Thread") as thr:
             mod.dispatch_pot_sandbox_cleanup(db, pot_id="pot-1")
             runner = thr.call_args.kwargs["target"]
-            fake_async.run.side_effect = (
-                lambda coro: __import__("asyncio").get_event_loop().run_until_complete(coro)
-            )
+            # Fresh loop per call — robust to a closed global loop left by an
+            # earlier async test (pytest-asyncio auto mode) in the full suite.
+            fake_async.run.side_effect = lambda coro: __import__("asyncio").run(coro)
             runner()
         # Shared cache, GC must be off even though the flag was on.
         assert captured.get("delete_repo_caches") is False

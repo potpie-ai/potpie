@@ -27,7 +27,6 @@ benchmarks = [
     "openai>=1.50.0",
 ]
 graph = [
-    "graphiti-core>=0.28.0",
     "neo4j>=5.28.0",
 ]
 github = [
@@ -47,7 +46,6 @@ observability = [
 all = [
     "sqlalchemy>=2.0",
     "psycopg[binary]>=3.2",
-    "graphiti-core>=0.28.0",
     "neo4j>=5.28.0",
     "pygithub>=2.8.0",
     "pydantic-deep>=0.3.0",

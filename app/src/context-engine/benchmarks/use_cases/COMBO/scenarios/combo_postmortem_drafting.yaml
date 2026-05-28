@@ -1,0 +1,151 @@
+id: combo_postmortem_drafting
+use_case: COMBO
+tier: quick
+difficulty: hard
+source_mix: full
+universe: acme
+dimensions: [BUG, TIME]
+
+description: |
+  An incident lead asks the agent: "Draft a postmortem for OPS-389."
+
+  A good postmortem is a composite of two dimensions:
+
+    - TIME side:  an accurate, ordered timeline of the event — the
+                  pg_pool_utilization alert firing at 09:24 UTC on
+                  inventory-prod-db, the 503 spike 09:23-09:34, the
+                  on-call restart mitigation, the #incidents thread, and
+                  the fix landing in PR #1244 that afternoon. The events
+                  must be in the right order with the right times.
+    - BUG side:   root cause, fix, and prevention — the proximate cause
+                  was the 18 -> 24 worker expansion (PR #1240) pushing
+                  inventory-prod-db past its pool ceiling, which is the
+                  SAME failure class as OPS-218. The fix mirrors PR #892
+                  (clamp per-worker connections to 4). Prevention is
+                  ADR-045's +25% rule + DBA sign-off, which the +33%
+                  expansion violated.
+
+  Failure modes:
+    - A timeline with no root-cause/prevention analysis → BUG fails.
+    - A root-cause essay with no ordered timeline, or events out of
+      order / with invented times → TIME fails.
+    - A postmortem that treats OPS-389 as isolated and never connects
+      it to OPS-218 / ADR-045 → both dimensions score shallow.
+
+  `by_dimension` splits this into a TIME score (timeline fidelity) and a
+  BUG score (root cause + prevention), so a well-ordered timeline cannot
+  paper over a missing prevention section.
+
+ingest:
+  # Today's incident, in order.
+  - { event: alerting/inventory_pool_utilization_ops389.json, at: "-6h", tags: [signal] }
+  - { event: linear/issue_create__OPS-389.json, at: "-5h", tags: [signal] }
+  - { event: slack/incidents_thread__ops389_inventory_pool.json, at: "-5h", tags: [signal] }
+  - { event: github/pr_merged__1244__inventory_pool_clamp.json, at: "-1h", tags: [signal] }
+  # The change that triggered it.
+  - { event: github/pr_merged__1240__inventory_worker_scale.json, at: "-2d", tags: [signal] }
+  # Prior-incident lineage for the root-cause / prevention sections.
+  - { event: linear/issue_create__OPS-218.json, at: "-90d", tags: [signal] }
+  - { event: linear/issue_create__OPS-220__postmortem.json, at: "-80d", tags: [signal] }
+
+distractor_events:
+  - { event: "noise/slack_chatter_noise_template.json", at: "-2d..-1h", count: 15, shape: "noise/random" }
+  - { event: "noise/alerting_noise_template.json", at: "-2d..-1h", count: 10, shape: "noise/random" }
+
+post_ingest_assertions:
+  # NOTE (read-layer gating): neither declared dimension is structurally
+  # gradeable. TIME (Alert / PR / Issue ordering) and BUG (Issue / Decision
+  # recurrence) are reconciled but the topology read returns only
+  # Service / DataStore + DEPENDS_ON / USES, not these event tiers — a
+  # structural assertion on them would grade a read-layer gap. The timeline
+  # and root-cause synthesis is graded by the judge + retrieval_assertions.
+  # We anchor the structural floor on inventory-svc, which the read surfaces.
+  graph_must_contain_entities:
+    - { label: Service, key_pattern: "service:.*inventory-svc", min_count: 1 }
+  graph_must_not_contain:
+    - { label: Issue, key_pattern: "NOISE-.*", max_count: 0 }
+  no_orphan_entities: false
+  reconciliation:
+    soft_downgrades_max: 6
+    failed_events_max: 0
+
+query:
+  intent: operations
+  scope: { service: inventory-svc, incident: OPS-389 }
+  include: [prior_bugs, timeline, decisions, owners, docs]
+  mode: balanced
+  source_policy: summary
+
+retrieval_assertions:
+  required_includes_used: [prior_bugs, timeline]
+  source_refs_min: 4
+  must_cite_event_id:
+    - linear/issue_create__OPS-389.json
+    - github/pr_merged__1244__inventory_pool_clamp.json
+  must_not_cite_event_id:
+    - noise/slack_chatter_noise_template.json
+    - noise/alerting_noise_template.json
+  temporal:
+    must_order_correctly: true
+    window: { from: "-2d", to: "0d" }
+    out_of_window_refs_max: 4
+  forbid_in_answer:
+    - "I don't have information"
+    - "no incident"
+
+judge:
+  pass_score: 55
+  criteria:
+    # TIME side ---
+    - name: ordered_incident_timeline
+      weight: 25
+      pass_threshold: 4
+      dimensions: [TIME]
+      prompt: |
+        Does the postmortem present an ordered timeline of OPS-389 with
+        correct sequencing and times: the worker-fleet change ~2 days
+        prior (PR #1240), the pg_pool_utilization alert at ~09:24 UTC,
+        the 503 spike 09:23-09:34, the on-call worker restart mitigation,
+        and the fix (PR #1244) landing the same afternoon? Events out of
+        order, or invented times not in the data, fail this criterion.
+    - name: timeline_grounded_not_invented
+      weight: 10
+      pass_threshold: 4
+      dimensions: [TIME]
+      prompt: |
+        Are the timeline entries drawn from the actual events (the alert,
+        the OPS-389 issue, the #incidents thread, the two PRs) rather than
+        plausible-but-fabricated steps? An invented "paged the DBA at
+        09:30" that is not in the data fails.
+    # BUG side ---
+    - name: root_cause_and_fix
+      weight: 25
+      pass_threshold: 4
+      dimensions: [BUG]
+      prompt: |
+        Does the postmortem state the root cause (the 18 -> 24 worker
+        expansion in PR #1240 pushed inventory-prod-db past its pool
+        ceiling) and the fix (PR #1244 clamping DEFAULT_DB_CONNECTIONS_
+        PER_WORKER to 4, mirroring the OPS-218 / PR #892 remediation)?
+    - name: prevention_tied_to_prior_incident
+      weight: 25
+      pass_threshold: 3
+      dimensions: [BUG]
+      prompt: |
+        Does the prevention section connect OPS-389 to the prior OPS-218
+        incident as the same failure class and cite ADR-045 / the OPS-220
+        +25% fleet rule + DBA sign-off, noting the +33% expansion violated
+        it? A prevention section that lists generic advice without this
+        lineage scores low.
+    # Cross-dimension integration ---
+    - name: coherent_publishable_postmortem
+      weight: 15
+      pass_threshold: 3
+      prompt: |
+        Does the output read as a single coherent, publishable postmortem
+        (summary, timeline, root cause, resolution, prevention) rather
+        than two disconnected blobs — and does it avoid hallucinating
+        facts? Valid identifiers: OPS-218, OPS-220, OPS-389, PR #1240,
+        PR #1244, PR #892, ADR-045, inventory-svc, inventory-prod-db,
+        bench-user-2, bench-user-4, bench-user-6. Other invented PRs,
+        SHAs, times, or names lower this score.

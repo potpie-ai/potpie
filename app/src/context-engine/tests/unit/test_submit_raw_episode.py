@@ -24,14 +24,11 @@ def _container(
         repo_name="o/r",
     )
     pots.resolve_pot.return_value = ResolvedPot(pot_id="p1", name="n", repos=[repo])
-    structural = MagicMock()
     j = jobs if jobs is not None else MagicMock()
     return ContextEngineContainer(
         settings=settings,
-        episodic=episodic,
-        structural=structural,
+        graph_writer=episodic,
         pots=pots,
-        
         jobs=j,
         context_graph=context_graph,
     )
@@ -54,13 +51,9 @@ def test_async_without_database_errors():
     assert out.error == "async_requires_database"
 
 
-def test_direct_graph_write_without_database():
-    episodic = MagicMock()
-    episodic.enabled = True
-    graph = MagicMock()
-    graph.write_raw_episode.return_value = {"episode_uuid": "uuid-1"}
-    c = _container(episodic, context_graph=graph)
-    t = datetime(2025, 1, 2, tzinfo=timezone.utc)
+def test_sync_without_database_requires_database():
+    """Synchronous narrative ingest now requires the async pipeline."""
+    c = _container(MagicMock())
     out = submit_raw_episode(
         container=c,
         db=None,
@@ -68,50 +61,12 @@ def test_direct_graph_write_without_database():
         name="n",
         episode_body="b",
         source_description="src",
-        reference_time=t,
+        reference_time=datetime.now(timezone.utc),
         idempotency_key=None,
         sync=True,
     )
-    assert out.ok
-    assert out.status == "applied"
-    assert out.episode_uuid == "uuid-1"
-    graph.write_raw_episode.assert_called_once()
-
-
-def test_direct_graph_write_standalone_pot_no_repo():
-    """Raw ingest allows pots with no linked GitHub repo (context_graph_pots)."""
-    episodic = MagicMock()
-    episodic.enabled = True
-    graph = MagicMock()
-    graph.write_raw_episode.return_value = {"episode_uuid": "uuid-solo"}
-    settings = MagicMock()
-    settings.is_enabled.return_value = True
-    pots = MagicMock()
-    pots.resolve_pot.return_value = ResolvedPot(pot_id="solo", name="solo", repos=[])
-    c = ContextEngineContainer(
-        settings=settings,
-        episodic=episodic,
-        structural=MagicMock(),
-        pots=pots,
-        
-        jobs=MagicMock(),
-        context_graph=graph,
-    )
-    t = datetime(2025, 1, 2, tzinfo=timezone.utc)
-    out = submit_raw_episode(
-        container=c,
-        db=None,
-        pot_id="solo",
-        name="n",
-        episode_body="b",
-        source_description="src",
-        reference_time=t,
-        idempotency_key=None,
-        sync=True,
-    )
-    assert out.ok
-    assert out.status == "applied"
-    graph.write_raw_episode.assert_called_once()
+    assert not out.ok
+    assert out.error == "requires_database"
 
 
 @pytest.mark.parametrize("sync", [True, False])
@@ -135,7 +90,7 @@ def test_with_database_delegates_to_submission(monkeypatch, sync: bool):
         if queued:
             return EventReceipt(event_id="e1", status="queued", job_id="j1")
         return EventReceipt(
-            event_id="e1", status="done", episode_uuid="u1", job_id="j1"
+            event_id="e1", status="done", mutation_id="u1", job_id="j1"
         )
 
     monkeypatch.setattr(DefaultIngestionSubmissionService, "submit", fake_submit)
@@ -157,6 +112,6 @@ def test_with_database_delegates_to_submission(monkeypatch, sync: bool):
         assert out.status == "queued"
     else:
         assert out.status == "applied"
-        assert out.episode_uuid == "u1"
+        assert out.mutation_id == "u1"
 
 

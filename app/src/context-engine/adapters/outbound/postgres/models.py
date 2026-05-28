@@ -114,9 +114,6 @@ class ContextEventModel(Base):
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
 
-    graphiti_episode_uuid: Mapped[str | None] = mapped_column(
-        String(255), nullable=True
-    )
     entity_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     bridge_written: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     bridge_status: Mapped[str] = mapped_column(

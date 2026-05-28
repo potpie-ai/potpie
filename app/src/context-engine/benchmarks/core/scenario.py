@@ -250,6 +250,11 @@ class Scenario:
     universe: str | None = None
     seed: tuple[SeedStep, ...] = ()
     distractor_events: tuple[DistractorStep, ...] = ()
+    # Curated 5-scenario subset for ``benchmarks run-light``. Set on
+    # exactly one easy/medium scenario per dimension so a light run
+    # exercises PREF/INFRA/TIME/BUG/COMBO end-to-end in seconds (with
+    # ``--concurrency 5`` + invariant judging).
+    light: bool = False
 
     @property
     def effective_dimensions(self) -> tuple[str, ...]:
@@ -607,6 +612,7 @@ def load_scenario(path: Path) -> Scenario:
         universe=(str(raw["universe"]) if raw.get("universe") else None),
         seed=_parse_seed(raw.get("seed"), path),
         distractor_events=_parse_distractors(raw.get("distractor_events"), path),
+        light=bool(raw.get("light", False)),
     )
 
 

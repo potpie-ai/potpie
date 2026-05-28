@@ -85,8 +85,8 @@ class EventReceipt:
     """True when an equivalent submission already exists (dedupe / idempotency)."""
     job_id: str | None = None
     """Async queue / correlation id when applicable."""
-    episode_uuid: str | None = None
-    """Raw episodic ingest: Graphiti episode id after inline apply when available."""
+    mutation_id: str | None = None
+    """Per-apply mutation UUID stamped onto every edge for write provenance."""
     reconciliation: Any | None = None
     """Agent reconciliation: populated on synchronous inline reconcile."""
     extras: dict[str, Any] | None = None

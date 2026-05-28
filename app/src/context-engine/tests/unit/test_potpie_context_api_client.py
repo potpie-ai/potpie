@@ -48,39 +48,6 @@ def test_client_context_graph_query_success(monkeypatch: pytest.MonkeyPatch) -> 
     assert out["result"] == [{"uuid": "u"}]
 
 
-def test_client_classify_modified_edges_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    class FakeClient:
-        def __init__(self, *a: Any, **k: Any) -> None:
-            pass
-
-        def __enter__(self) -> FakeClient:
-            return self
-
-        def __exit__(self, *a: Any) -> None:
-            pass
-
-        def post(self, url: str, **kwargs: Any) -> httpx.Response:
-            assert url.endswith("/maintenance/classify-modified-edges")
-            body = kwargs.get("json") or {}
-            assert body["pot_id"] == "p1"
-            assert body["dry_run"] is True
-            return httpx.Response(
-                200,
-                json={"ok": True, "examined": 0, "would_update": 0, "dry_run": True},
-            )
-
-        def get(self, *a: Any, **k: Any) -> httpx.Response:
-            raise AssertionError("unused")
-
-    monkeypatch.setattr(
-        "adapters.outbound.http.potpie_context_api_client.httpx.Client",
-        FakeClient,
-    )
-    c = PotpieContextApiClient("http://example.com", "k")
-    out = c.classify_modified_edges({"pot_id": "p1", "dry_run": True})
-    assert out.get("ok") is True
-
-
 def test_client_ingest_queued(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeClient:
         def __init__(self, *a: Any, **k: Any) -> None:
@@ -438,7 +405,7 @@ def test_client_ingest_422_raises_ingest_rejected(monkeypatch: pytest.MonkeyPatc
                 json={
                     "status": "reconciliation_rejected",
                     "event_id": "e-rej",
-                    "episode_uuid": None,
+                    "mutation_id": None,
                     "errors": [{"entity": "adr:1", "issue": "unknown canonical labels: X"}],
                     "downgrades": [],
                 },

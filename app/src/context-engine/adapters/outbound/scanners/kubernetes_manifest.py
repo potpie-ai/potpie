@@ -1,23 +1,22 @@
-"""Kubernetes manifest scanner (rebuild plan P4 / F1 fix).
+"""Kubernetes manifest scanner (topology core).
 
-Proper-POC F1: INFRA reader returned 0% coverage on "which environment
-runs auth-svc?" because no edge in the graph linked a Deployment to a
-Service. The PR-deployed Activity carried a deployment id but the
-Service ↔ Deployment join was missing in the ontology.
+Answers "which environment runs service X?" with a real edge instead of
+0% coverage. Reads a Kubernetes Deployment / StatefulSet / DaemonSet
+manifest and emits one deterministic claim per workload:
 
-This scanner reads a Kubernetes Deployment / StatefulSet / DaemonSet
-manifest and emits two deterministic claims:
+- ``Service -[DEPLOYED_TO]-> Environment`` — the service runs in the
+  environment stamped from the path scope (see :mod:`domain.path_scope`).
+  The ``environment`` is also stamped on the edge so the topology reader
+  can filter by it directly.
 
-- ``Deployment -[OF_SERVICE]-> Service`` (singleton: a deployment runs
-  one service in this ontology)
-- ``Deployment -[DEPLOYED_TO]-> Environment`` (singleton: env stamped
-  from the path scope, see :mod:`domain.path_scope`)
-
-The deployment's external_id is the manifest's ``metadata.name``; the
-service is inferred from the manifest's labels (preferred:
+The service is inferred from the manifest's labels (preferred:
 ``app.kubernetes.io/name``, fallback: ``app``) and corroborated by the
-path scope. The environment comes from the path (e.g.
-``clusters/prod/auth-svc.yaml`` → ``prod``).
+path scope; the environment comes from the path (e.g.
+``clusters/prod/auth-svc.yaml`` → ``prod``). The workload's
+``metadata.name`` + kind are carried as edge provenance properties — the
+deployment object itself is not a node in the topology ontology (the
+*fact* that a service runs in an env is the edge; the deploy *event*
+belongs to a later timeline tier).
 
 YAML is parsed with PyYAML's ``safe_load_all`` — we never execute. Files
 that are not Kubernetes (no ``apiVersion`` + ``kind``) are silently
@@ -66,7 +65,7 @@ _PATH_PATTERN_RE = re.compile(
 
 
 class KubernetesManifestScanner:
-    """Emits ``Deployment OF_SERVICE Service`` + ``Deployment DEPLOYED_TO Env``."""
+    """Emits ``Service DEPLOYED_TO Environment`` from workload manifests."""
 
     SCANNER_KIND = "kubernetes-manifest"
 
@@ -83,8 +82,8 @@ class KubernetesManifestScanner:
         return ConfigSourceScannerCapability(
             kind=self.SCANNER_KIND,
             description=(
-                "Reads Kubernetes workload manifests; emits Deployment OF_SERVICE "
-                "Service and Deployment DEPLOYED_TO Environment (F1 fix)."
+                "Reads Kubernetes workload manifests; emits Service DEPLOYED_TO "
+                "Environment with the environment stamped on the edge."
             ),
             handles_file_patterns=(
                 "clusters/**/*.yaml",
@@ -93,7 +92,7 @@ class KubernetesManifestScanner:
                 "manifests/**/*.yaml",
                 "deployments/**/*.yaml",
             ),
-            emits_predicates=("OF_SERVICE", "DEPLOYED_TO"),
+            emits_predicates=("DEPLOYED_TO",),
         )
 
     def handles(self, file_ref: ConfigFileRef) -> bool:
@@ -150,7 +149,6 @@ class KubernetesManifestScanner:
                 continue
 
             name = metadata.get("name")
-            namespace = metadata.get("namespace")
             if not isinstance(name, str) or not name.strip():
                 warnings.append(
                     f"kubernetes-manifest:{file_ref.path} doc#{doc_index}: missing metadata.name"
@@ -162,107 +160,66 @@ class KubernetesManifestScanner:
             )
             environment = scope.environment
 
-            deployment_key = _deployment_key(
-                name=name, namespace=namespace if isinstance(namespace, str) else None
-            )
-            if deployment_key is None:
+            service_key = _service_key(service_name)
+            if service_key is None:
                 warnings.append(
-                    f"kubernetes-manifest:{file_ref.path}: could not mint deployment key"
+                    f"kubernetes-manifest:{file_ref.path}: could not infer service for "
+                    f"workload {name!r}"
                 )
                 continue
 
-            if deployment_key not in seen_entities:
+            if service_key not in seen_entities:
                 entities.append(
                     ScannerEntity(
-                        entity_key=deployment_key,
-                        label="Deployment",
-                        name=name,
-                        properties={
-                            "kind": kind,
-                            "api_version": api_version,
-                            "namespace": namespace
-                            if isinstance(namespace, str)
-                            else None,
-                            "derived_from": "kubernetes-manifest-scanner",
-                        },
+                        entity_key=service_key,
+                        label="Service",
+                        name=service_name,
+                        properties={"derived_from": "kubernetes-manifest-scanner"},
                     )
                 )
-                seen_entities.add(deployment_key)
+                seen_entities.add(service_key)
 
-            # ----- OF_SERVICE -----
-            service_key = _service_key(service_name)
-            if service_key:
-                if service_key not in seen_entities:
-                    entities.append(
-                        ScannerEntity(
-                            entity_key=service_key,
-                            label="Service",
-                            name=service_name,
-                            properties={"derived_from": "kubernetes-manifest-scanner"},
-                        )
-                    )
-                    seen_entities.add(service_key)
-                claims.append(
-                    ScannerClaim(
-                        subject_key=deployment_key,
-                        predicate="OF_SERVICE",
-                        object_key=service_key,
-                        source_ref=_source_ref(
-                            repo=file_ref.repo_name,
-                            path=file_ref.path,
-                            doc_index=doc_index,
-                            predicate="of_service",
-                        ),
-                        source_system=self._source_system,
-                        fact=f"deployment {name} runs service {service_name}",
-                        valid_at=valid_at,
-                        evidence_strength="deterministic",
-                        properties={
-                            "kind": kind,
-                            "scope_service": scope.service,
-                            "observed_at": observed_at,
-                        },
-                    )
-                )
-            else:
-                warnings.append(
-                    f"kubernetes-manifest:{file_ref.path}: could not infer service for "
-                    f"deployment {name!r}"
-                )
-
-            # ----- DEPLOYED_TO -----
+            # ----- Service DEPLOYED_TO Environment -----
             env_key = _environment_key(environment) if environment else None
-            if env_key:
-                if env_key not in seen_entities:
-                    entities.append(
-                        ScannerEntity(
-                            entity_key=env_key,
-                            label="Environment",
-                            name=environment,
-                            properties={"derived_from": "kubernetes-manifest-scanner"},
-                        )
-                    )
-                    seen_entities.add(env_key)
-                claims.append(
-                    ScannerClaim(
-                        subject_key=deployment_key,
-                        predicate="DEPLOYED_TO",
-                        object_key=env_key,
-                        source_ref=_source_ref(
-                            repo=file_ref.repo_name,
-                            path=file_ref.path,
-                            doc_index=doc_index,
-                            predicate="deployed_to",
-                        ),
-                        source_system=self._source_system,
-                        fact=f"deployment {name} deployed to {environment}",
-                        valid_at=valid_at,
-                        evidence_strength="deterministic",
-                        properties={
-                            "observed_at": observed_at,
-                        },
+            if env_key is None:
+                warnings.append(
+                    f"kubernetes-manifest:{file_ref.path}: no environment in path scope "
+                    f"for workload {name!r}; skipping DEPLOYED_TO"
+                )
+                continue
+            if env_key not in seen_entities:
+                entities.append(
+                    ScannerEntity(
+                        entity_key=env_key,
+                        label="Environment",
+                        name=environment,
+                        properties={"derived_from": "kubernetes-manifest-scanner"},
                     )
                 )
+                seen_entities.add(env_key)
+            claims.append(
+                ScannerClaim(
+                    subject_key=service_key,
+                    predicate="DEPLOYED_TO",
+                    object_key=env_key,
+                    source_ref=_source_ref(
+                        repo=file_ref.repo_name,
+                        path=file_ref.path,
+                        doc_index=doc_index,
+                        predicate="deployed_to",
+                    ),
+                    source_system=self._source_system,
+                    fact=f"service {service_name} deployed to {environment}",
+                    valid_at=valid_at,
+                    evidence_strength="deterministic",
+                    properties={
+                        "environment": environment,
+                        "workload": name,
+                        "workload_kind": kind,
+                        "observed_at": observed_at,
+                    },
+                )
+            )
 
         return ScanResult(
             entities=tuple(entities),
@@ -315,20 +272,6 @@ def _infer_service_name(
         return scope_service
 
     return fallback
-
-
-def _deployment_key(*, name: str, namespace: str | None) -> str | None:
-    spec = get_identity("Deployment")
-    if spec is None:
-        return None
-    try:
-        if namespace:
-            return mint_entity_key(
-                spec, external_id=name, extra_segments=("k8s", namespace)
-            )
-        return mint_entity_key(spec, external_id=name, extra_segments=("k8s",))
-    except IdentityError:
-        return None
 
 
 def _service_key(service_name: str | None) -> str | None:

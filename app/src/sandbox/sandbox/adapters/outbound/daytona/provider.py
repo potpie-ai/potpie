@@ -39,16 +39,20 @@ from urllib.parse import quote, urlparse
 logger = logging.getLogger(__name__)
 
 from sandbox.domain.errors import RepoAuthFailed, RepoCacheUnavailable, RuntimeNotFound, RuntimeUnavailable
+from sandbox.adapters.outbound.daytona.exec_sessions import DaytonaExecSessions
 from sandbox.domain.models import (
     Capabilities,
     ExecChunk,
     ExecRequest,
     ExecResult,
+    ExecSessionResult,
     Mount,
     Runtime,
     RuntimeCapabilities,
     RuntimeSpec,
     RuntimeState,
+    SessionExecRequest,
+    SessionInputRequest,
     Workspace,
     WorkspaceLocation,
     WorkspaceMode,
@@ -1459,6 +1463,7 @@ class DaytonaRuntimeProvider:
     def __init__(self, workspace_provider: DaytonaWorkspaceProvider) -> None:
         self._workspace_provider = workspace_provider
         self._runtimes: dict[str, Runtime] = {}
+        self._exec_sessions = DaytonaExecSessions()
 
     async def create(self, workspace_id: str, spec: RuntimeSpec) -> Runtime:
         sandbox = self._workspace_provider.sandbox_for_workspace(workspace_id)
@@ -1563,6 +1568,51 @@ class DaytonaRuntimeProvider:
             yield ExecChunk(stream="stdout", data=result.stdout)
         if result.stderr:
             yield ExecChunk(stream="stderr", data=result.stderr)
+
+    # -- Unified exec sessions (pipe + PTY) -----------------------------
+    async def exec_session_start(
+        self, runtime: Runtime, request: SessionExecRequest
+    ) -> ExecSessionResult:
+        sandbox = self._sandbox_with_recovery(runtime)
+        return await self._exec_sessions.start(
+            sandbox,
+            cwd=request.cwd or runtime.spec.workdir,
+            env=dict(request.env),
+            cmd=request.cmd,
+            shell=request.shell,
+            tty=request.tty,
+            yield_time_ms=request.yield_time_ms,
+            max_output_bytes=request.max_output_bytes,
+        )
+
+    async def exec_session_write(
+        self, runtime: Runtime, request: SessionInputRequest
+    ) -> ExecSessionResult:
+        sandbox = self._sandbox_with_recovery(runtime)
+        return await self._exec_sessions.write(
+            sandbox,
+            request.session_id,
+            request.data,
+            request.yield_time_ms,
+            request.max_output_bytes,
+        )
+
+    async def exec_session_poll(
+        self,
+        runtime: Runtime,
+        session_id: str,
+        *,
+        yield_time_ms: int,
+        max_output_bytes: int | None = None,
+    ) -> ExecSessionResult:
+        sandbox = self._sandbox_with_recovery(runtime)
+        return await self._exec_sessions.poll(
+            sandbox, session_id, yield_time_ms, max_output_bytes
+        )
+
+    async def exec_session_kill(self, runtime: Runtime, session_id: str) -> None:
+        sandbox = self._sandbox_with_recovery(runtime)
+        await self._exec_sessions.kill(sandbox, session_id)
 
     # ------------------------------------------------------------------
     # Native filesystem ops (duck-typed; SandboxService prefers these

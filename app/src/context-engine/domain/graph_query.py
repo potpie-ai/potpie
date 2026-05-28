@@ -70,7 +70,8 @@ class ContextGraphQuery(BaseModel):
     scope: ContextGraphScope = Field(default_factory=ContextGraphScope)
     node_labels: list[str] = Field(default_factory=list)
     source_descriptions: list[str] = Field(default_factory=list)
-    episode_uuids: list[str] = Field(default_factory=list)
+    mutation_ids: list[str] = Field(default_factory=list)
+    """Filter results to facts written by these apply-plan mutation UUIDs."""
     as_of: datetime | None = None
     # Optional temporal window for timeline queries. ``since`` and ``until``
     # compose with ``as_of`` (which remains a point-in-time snapshot pointer
@@ -100,212 +101,83 @@ class ContextGraphResult(BaseModel):
     meta: dict[str, Any] = Field(default_factory=dict)
 
 
-def preset_semantic_search(
+# Read-tool presets. Every preset emits an include the ReadOrchestrator backs
+# (or [] for the generic, intent-routed search). Keeping them in one place means
+# the agent read-tool surface and the orchestrator cannot drift: a preset naming
+# an unbacked include would surface as ``unsupported_include`` instead of data.
+# The tool-name → include mapping lives in
+# ``adapters.outbound.reconciliation.context_graph_tools.READ_TOOL_INCLUDE``.
+
+
+def preset_context_search(
     *,
     pot_id: str,
     query: str,
-    limit: int = 12,
+    intent: str | None = None,
+    include: list[str] | None = None,
     repo_name: str | None = None,
+    file_path: str | None = None,
+    function_name: str | None = None,
+    pr_number: int | None = None,
     node_labels: list[str] | None = None,
-    source_description: str | None = None,
     include_invalidated: bool = False,
     as_of: datetime | None = None,
+    limit: int = 12,
 ) -> ContextGraphQuery:
+    """Generic lookup: the orchestrator routes by ``intent`` (or an explicit
+    ``include`` list) into its reader families."""
     return ContextGraphQuery(
         pot_id=pot_id,
         query=query,
         goal=ContextGraphGoal.RETRIEVE,
-        strategy=ContextGraphStrategy.SEMANTIC,
-        include=["semantic_search"],
-        scope=ContextGraphScope(repo_name=repo_name),
+        strategy=ContextGraphStrategy.AUTO,
+        intent=intent,
+        include=list(include or []),
+        scope=ContextGraphScope(
+            repo_name=repo_name,
+            file_path=file_path,
+            function_name=function_name,
+            pr_number=pr_number,
+        ),
         node_labels=list(node_labels or []),
-        source_descriptions=[source_description] if source_description else [],
         include_invalidated=include_invalidated,
         as_of=as_of,
         limit=limit,
     )
 
 
-def preset_change_history(
+def preset_reader_lookup(
     *,
     pot_id: str,
+    include: str,
+    query: str | None = None,
+    repo_name: str | None = None,
     file_path: str | None = None,
     function_name: str | None = None,
-    repo_name: str | None = None,
     pr_number: int | None = None,
-    limit: int = 10,
-    as_of: datetime | None = None,
-) -> ContextGraphQuery:
-    return ContextGraphQuery(
-        pot_id=pot_id,
-        goal=ContextGraphGoal.TIMELINE,
-        strategy=ContextGraphStrategy.TEMPORAL,
-        include=["change_history"],
-        scope=ContextGraphScope(
-            repo_name=repo_name,
-            file_path=file_path,
-            function_name=function_name,
-            pr_number=pr_number,
-        ),
-        limit=limit,
-        as_of=as_of,
-    )
-
-
-def preset_file_owners(
-    *,
-    pot_id: str,
-    file_path: str,
-    repo_name: str | None = None,
-    limit: int = 5,
-) -> ContextGraphQuery:
-    return ContextGraphQuery(
-        pot_id=pot_id,
-        goal=ContextGraphGoal.AGGREGATE,
-        strategy=ContextGraphStrategy.EXACT,
-        include=["owners"],
-        scope=ContextGraphScope(repo_name=repo_name, file_path=file_path),
-        limit=limit,
-    )
-
-
-def preset_decisions(
-    *,
-    pot_id: str,
-    file_path: str | None = None,
-    function_name: str | None = None,
-    repo_name: str | None = None,
-    pr_number: int | None = None,
-    limit: int = 20,
-) -> ContextGraphQuery:
-    return ContextGraphQuery(
-        pot_id=pot_id,
-        goal=ContextGraphGoal.RETRIEVE,
-        strategy=ContextGraphStrategy.EXACT,
-        include=["decisions"],
-        scope=ContextGraphScope(
-            repo_name=repo_name,
-            file_path=file_path,
-            function_name=function_name,
-            pr_number=pr_number,
-        ),
-        limit=limit,
-    )
-
-
-def preset_pr_review_context(
-    *,
-    pot_id: str,
-    pr_number: int,
-    repo_name: str | None = None,
-) -> ContextGraphQuery:
-    return ContextGraphQuery(
-        pot_id=pot_id,
-        goal=ContextGraphGoal.RETRIEVE,
-        strategy=ContextGraphStrategy.EXACT,
-        include=["pr_review_context"],
-        scope=ContextGraphScope(repo_name=repo_name, pr_number=pr_number),
-    )
-
-
-def preset_pr_diff(
-    *,
-    pot_id: str,
-    pr_number: int,
-    file_path: str | None = None,
-    repo_name: str | None = None,
-    limit: int = 30,
-) -> ContextGraphQuery:
-    return ContextGraphQuery(
-        pot_id=pot_id,
-        goal=ContextGraphGoal.RETRIEVE,
-        strategy=ContextGraphStrategy.EXACT,
-        include=["pr_diff"],
-        scope=ContextGraphScope(
-            repo_name=repo_name,
-            file_path=file_path,
-            pr_number=pr_number,
-        ),
-        limit=limit,
-    )
-
-
-def preset_project_graph(
-    *,
-    pot_id: str,
-    repo_name: str | None = None,
-    pr_number: int | None = None,
-    services: list[str] | None = None,
-    features: list[str] | None = None,
-    environment: str | None = None,
-    user: str | None = None,
-    include: list[str] | None = None,
-    limit: int = 12,
-) -> ContextGraphQuery:
-    return ContextGraphQuery(
-        pot_id=pot_id,
-        goal=ContextGraphGoal.NEIGHBORHOOD,
-        strategy=ContextGraphStrategy.TRAVERSAL,
-        include=list(include or []),
-        scope=ContextGraphScope(
-            repo_name=repo_name,
-            pr_number=pr_number,
-            services=list(services or []),
-            features=list(features or []),
-            environment=environment,
-            user=user,
-        ),
-        limit=limit,
-    )
-
-
-def preset_timeline(
-    *,
-    pot_id: str,
-    user: str | None = None,
-    feature: str | None = None,
-    file_path: str | None = None,
-    branch: str | None = None,
     since: datetime | None = None,
     until: datetime | None = None,
-    window: str | None = None,
-    verbs: list[str] | None = None,
-    limit: int = 20,
+    include_invalidated: bool = False,
+    as_of: datetime | None = None,
+    limit: int = 12,
 ) -> ContextGraphQuery:
-    """Preset for timeline subgraph queries.
-
-    Scoping knobs compose: omit everything to get the global pulse for the
-    window; pass ``user`` to filter by actor; pass ``feature``/``file_path``
-    to filter by touched subject; pass ``verbs`` to filter by action type.
-    """
+    """Target a single P9 reader by its include family (one of
+    coding_preferences / infra_topology / timeline / prior_bugs)."""
     return ContextGraphQuery(
         pot_id=pot_id,
-        goal=ContextGraphGoal.TIMELINE,
-        strategy=ContextGraphStrategy.TEMPORAL,
-        include=["timeline"],
+        query=query,
+        goal=ContextGraphGoal.RETRIEVE,
+        strategy=ContextGraphStrategy.AUTO,
+        include=[include],
         scope=ContextGraphScope(
-            user=user,
-            features=[feature] if feature else [],
+            repo_name=repo_name,
             file_path=file_path,
-            branch=branch,
+            function_name=function_name,
+            pr_number=pr_number,
         ),
         since=since,
         until=until,
-        window=window,
-        verbs=list(verbs or []),
-        limit=limit,
-    )
-
-
-def preset_graph_overview(
-    *,
-    pot_id: str,
-    limit: int = 20,
-) -> ContextGraphQuery:
-    return ContextGraphQuery(
-        pot_id=pot_id,
-        goal=ContextGraphGoal.AGGREGATE,
-        strategy=ContextGraphStrategy.EXACT,
-        include=["graph_overview"],
+        include_invalidated=include_invalidated,
+        as_of=as_of,
         limit=limit,
     )

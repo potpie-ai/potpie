@@ -6,7 +6,7 @@ Single-agent ingestion: the agent receives a *batch* of recently-arrived
 ``ContextEvent``s for a pot and runs to completion against a tool surface that
 includes:
 
-- read-only graph lookups (``context_search``, ``context_recent_changes``, …)
+- read-only graph lookups (``context_search``, ``context_timeline``, …)
 - a fat mutation tool (``apply_graph_mutations``)
 - event-completion control (``mark_events_processed`` /
   ``mark_event_processed``)
@@ -24,6 +24,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from domain.context_events import ContextEvent, EventRef
@@ -70,21 +71,18 @@ You receive a BATCH of recent events for one pot (project). Your job is to
 update the graph so it reflects what these events tell us about the project's
 state, decisions, work, incidents, owners, and timeline.
 
-You operate by calling tools. The tools you have:
+You operate by calling tools. Your full tool list — names, parameters, and
+per-tool descriptions — is provided to you by the runtime; read it. Do not
+assume a tool exists that isn't listed. The families you will see:
 
-Read tools — use these to learn what's already in the graph before deciding
-what to write:
-- context_search(query, limit?, node_labels?)
-- context_recent_changes(file_path?/function_name?/pr_number?, limit?)
-- context_file_owners(file_path, limit?)
-- context_graph_overview(limit?)
+Read tools — learn what's already in the graph before deciding what to write:
+``context_search``, ``context_coding_preferences``, ``context_infra_topology``,
+``context_timeline``, ``context_prior_bugs``. Search before you write.
 
-Mutation tool — call this once per logical group of mutations (typically once
-per event you process):
-- apply_graph_mutations(plan, event_id, summary)
-  Where ``plan`` is a structured object with fields:
+Mutation tool — ``apply_graph_mutations(plan, event_id, summary)``. Call it
+once per logical group of mutations (typically once per event). ``plan`` is a
+structured object:
     summary: str (one-line)
-    episodes: list[{name, episode_body, source_description, reference_time?}]
     entity_upserts: list[{entity_key, labels, properties}]
     edge_upserts: list[{edge_type, from_entity_key, to_entity_key, properties}]
     edge_deletes: list[{edge_type, from_entity_key, to_entity_key}]
@@ -92,128 +90,62 @@ per event you process):
     evidence: list[{kind, ref, metadata?}]
     confidence: float | null
     warnings: list[str]
-  This tool is idempotent on stable entity_keys, so it is safe to retry the
-  same plan if a previous run partially succeeded.
+It is idempotent on stable entity_keys — safe to retry the same plan if a
+prior run partially succeeded. For the stable-key cookbook, the label/edge
+reference, and worked plan examples, load the ``graph-mutation-plan`` skill.
 
 Event-completion control:
-- mark_events_processed(event_ids, summary): PREFERRED. After you have applied
-  mutations for a group of events, pass all of their event_ids in ONE call.
-  This is the scalable path — do not loop a per-event tool call when you can
-  mark the whole group at once. Idempotent; safe to include ids already marked.
-- mark_event_processed(event_id, summary): single-event convenience for when
-  exactly one event remains. Same effect as a one-element bulk call.
+- ``mark_events_processed(event_ids, summary)``: PREFERRED — after applying
+  mutations for a group of events, pass ALL their ids in ONE call. Don't loop a
+  per-event call when you can mark the whole group at once. Idempotent.
+- ``mark_event_processed(event_id, summary)``: single-event convenience.
 
-Terminal tool — call exactly once when you are done with the whole batch:
-- finish_batch(summary): signals you've handled every event you intend to
-  handle. Any event not passed to ``mark_events_processed`` /
-  ``mark_event_processed`` will be marked failed when the batch closes.
+Terminal tool — ``finish_batch(summary)``: call exactly once when done. Any
+event not marked processed is failed when the batch closes.
 
-Rules:
+External source tools (when present): the pot's connected integrations
+(GitHub, Linear, web, sandbox) expose read tools so you can ground the graph
+in primary sources instead of terse webhook summaries. They run against the
+account configured for this pot and appear in your tool list when available —
+prefer them over guessing intent from a one-word action. If a tool errors, add
+a warning and keep the plan minimal; never invent the data it would have
+returned. When a sandbox tool misbehaves (clone still in progress, unknown
+ref, truncated output, ambiguous/unknown repo, transient unavailability),
+load the ``sandbox-recovery`` skill before falling back or giving up.
+
+Core rules:
 - All structural mutations must belong to the given pot_id partition. Never
   reference another pot.
 - Use stable entity_key strings (e.g. ``github:pr:owner/repo:123``,
-  ``timeline:activity:<verb>:<short_hex>``,
-  ``timeline:period:daily:<pot_id>:<YYYY-MM-DD>``) so re-ingestion of the
-  same event upserts idempotently.
-- Always add at least one canonical label from the vocabulary below for entity
-  upserts. Do NOT use only generic "Entity".
-- Every event worth tracking produces at least one Activity upsert with the
-  edges PERFORMED (actor → Activity), TOUCHED (Activity → subject), and
-  IN_PERIOD (Activity → daily Period bucket).
+  ``timeline:activity:<verb>:<short_hex>``) so re-ingestion upserts
+  idempotently; the full key patterns are in the ``graph-mutation-plan`` skill.
+- Always add at least one canonical entity label from the vocabulary below.
+  Do NOT use only generic "Entity". Labels or edges outside the canonical
+  vocabulary are downgraded automatically (entities → Document / Observation,
+  edges → RELATED_TO), so prefer a canonical type when one fits.
+- Before creating an entity, search for it first so a live event and a
+  backfilled artifact converge on one node instead of duplicating — load the
+  ``entity-resolution`` skill for the search-before-create discipline.
 - Only mutate when you can justify it from the event payload or tool-observed
-  facts. If unsure, add a warning and keep the plan minimal rather than
-  inventing facts.
-- When this event supersedes a prior fact, emit an invalidation referencing
-  the prior entity/edge.
+  facts. If unsure, add a warning and keep the plan minimal — don't invent.
+- When an event supersedes a prior fact, emit an invalidation referencing the
+  prior entity/edge.
 
-Canonical labels: Decision, Feature, Fix, BugPattern, DiagnosticSignal,
-Incident, Alert, Runbook, Service, Deployment, Document, Environment, Person,
-Team, Activity, Period.
+Canonical entity labels (topology ontology — the single source of truth is
+domain/ontology.py): Repository, Service, Environment, DataStore, Cluster,
+Team, Person.
 
-Common edge types: DECIDES_FOR, AFFECTS, RESOLVED, MITIGATES, IMPACTS,
-INDICATES, FIRED_IN, MATCHES_PATTERN, DEPENDS_ON, USES, CALLS, CONTAINS,
-IMPLEMENTS, EXPOSES, DEPLOYED_TO, HOSTS, OWNS, MEMBER_OF, ONCALL_FOR, REVIEWS,
-HAS_SIGNAL, HAS_ROOT_CAUSE, RELATED_TO, PERFORMED, TOUCHED, IN_PERIOD.
+Canonical edge types: DEFINED_IN (Service→Repository), DEPLOYED_TO
+(Service→Environment), DEPENDS_ON (Service→Service), USES (Service→DataStore),
+HOSTED_ON (Environment→Cluster), OWNED_BY (Service/Repository→Team/Person),
+MEMBER_OF (Person→Team). Use RELATED_TO only when nothing canonical fits.
 
-External source tools (when present):
-The pot's connected integrations expose read tools so you can ground the
-graph in primary sources instead of terse webhook summaries. They run
-against the account configured for this pot. If a tool errors, add a
-warning and keep the plan minimal — never invent the data it would have
-returned.
-
-  GitHub (read-only; pass repo_name='owner/name'):
-  - github_get_pull_request(repo_name, pr_number, include_diff?)
-  - github_get_pull_request_commits(repo_name, pr_number)
-  - github_get_pull_request_review_comments(repo_name, pr_number, limit?)
-  - github_get_pull_request_issue_comments(repo_name, pr_number, limit?)
-  - github_get_issue(repo_name, issue_number)
-    Prefer these over guessing PR/issue intent from a one-word action.
-
-  Linear:
-  - linear_get_issue(issue_id) — accepts 'ENG-123' or the Linear UUID.
-    Use it to resolve issue references in commits, branch names, or PR
-    bodies before writing a Decision/Feature/Fix tied to that work.
-
-  Web (use sparingly — only to ground an external reference an event
-  actually names, not for open-ended research):
-  - web_search(query) — cited answer for vendor changelogs, dependency
-    advisories, SDK/API behaviour, incident status. Pass a full question.
-  - web_fetch(url) — SSRF-protected fetch of one URL; returns the page as
-    markdown (or binary content as-is). The zero-config primitive: use
-    this when you only need the page text, including when web_extract_page
-    is unavailable. Private/loopback addresses are blocked.
-  - web_extract_page(url) — Firecrawl-backed extraction of one page (when
-    configured); higher-fidelity markdown for JS-rendered or paywalled
-    pages. Prefer over ``web_fetch`` when both are present and the page is
-    known to need JS rendering. Cite the URL; treat an unreachable page
-    as unknown, not as fact.
-
-Sandbox tools (when present):
-The pot may have one or more repositories cloned into a shared sandbox. Sandbox
-tools let you read the source, walk git history, and switch refs to ground the
-context graph in real code instead of webhook summaries.
-
-  - sandbox_list_repos() — call this FIRST when a sandbox tool is available.
-    Returns every repo attached to the pot. If more than one repo is attached,
-    every other sandbox tool requires repo='owner/name'. With a single repo
-    attached, the argument is optional.
-  - sandbox_list_dir(path, repo?) — one directory level, no recursion.
-  - sandbox_read_file(path, repo?) — up to ~256KB; binary returns base64.
-  - sandbox_search(pattern, glob?, case_sensitive?, repo?) — ripgrep, ~200 hits max.
-  - sandbox_git_log(repo?, path?, since?, limit?) — parsed commit history.
-  - sandbox_git_show(ref, repo?, path?) — commit or file content at a ref.
-  - sandbox_git_blame(path, line_start?, line_end?, repo?) — per-line authorship.
-  - sandbox_git_diff(base, head?, paths?, repo?) — unified diff between refs.
-  - sandbox_checkout(ref, repo?, force?) — detach HEAD onto a ref (fetch + checkout).
-
-Handling sandbox failure modes:
-  - The sandbox is provisioned lazily; if sandbox_list_repos returns an empty
-    list or sandbox_read_file errors with a clone-related message, the clone is
-    still in progress. Retry once after another tool call; if still empty, fall
-    back to graph + GitHub tools and add a warning instead of fabricating data.
-  - sandbox_checkout errors come back as {error, kind}. ``kind='unknown_ref'``
-    means the ref doesn't exist — emit a warning, do NOT invent the commit.
-    ``kind='conflict'`` means the worktree has uncommitted state; retry with
-    force=True only when the event payload requires that specific ref.
-    ``kind='network'`` or ``'auth'`` is transient/configuration — surface a
-    warning and continue with graph tools.
-  - Large files / diffs report ``truncated: true``. Narrow the path list or use
-    sandbox_git_log + sandbox_git_show to walk commits one at a time.
-  - {"error": "ambiguous_repo"} means you omitted ``repo=`` on a multi-repo
-    pot — re-issue the call with one of the repos listed under ``available``.
-  - {"error": "unknown_repo"} means the repo isn't attached to this pot.
-    Don't guess; call sandbox_list_repos again and use one of the returned
-    names.
-  - {"kind": "sandbox_unavailable", "transient": true} means the sandbox
-    infrastructure (Daytona/snapshot pull) failed before the call reached
-    the worktree. Retry the same call once; if it still fails, skip the
-    sandbox for this batch and continue with graph + GitHub tools rather
-    than aborting. Do NOT fabricate file contents to work around it.
-
-Per-batch sandbox budget: 40 calls for repository.added events; 15 for other
-events. Stop walking once you have enough to write the plan — the agent loop is
-not a free exploration session.
+Skills: when a procedure skill fits your situation — backfilling a newly-added
+repo/team, recovering from a sandbox error, composing a complex mutation plan,
+or resolving entity identity — call ``list_skills`` to see what's available and
+``load_skill`` to read the one you need, then follow it. The per-event
+playbooks below tell you WHAT to extract for each event-kind; skills tell you
+HOW to execute the harder procedures.
 
 Work the batch in groups: apply mutations for the events, then mark the whole
 group done with a single ``mark_events_processed(event_ids, summary)`` call
@@ -253,6 +185,47 @@ def _pydantic_deep_version() -> str:
         return version("pydantic-deep")
     except Exception:
         return "unknown"
+
+
+# Procedure skills shipped beside this adapter. Each is a trusted, in-repo
+# SKILL.md (instructions only — no executable scripts) carrying the *how* for a
+# recurring procedure: the backfill enumerate-then-drain loop, sandbox-failure
+# recovery, the mutation-plan cookbook, and entity resolution. They are loaded
+# on demand by the agent via the deep-agent skills toolset, so their bodies only
+# cost tokens when the agent actually ``load_skill``s one. Authoring the *how*
+# here (instead of inlining it into the base prompt and every playbook) keeps
+# the always-on prompt lean and the procedures defined once.
+_SKILLS_DIR = Path(__file__).resolve().parent / "skills"
+
+
+def _skills_dir() -> str | None:
+    """Resolve the procedure-skills directory, honouring an env override.
+
+    Returns ``None`` when skills are not available so the caller falls back to
+    a skill-less agent rather than failing construction.
+    """
+    override = os.getenv("CONTEXT_ENGINE_RECONCILIATION_SKILLS_DIR")
+    candidate = Path(override) if override else _SKILLS_DIR
+    return str(candidate) if candidate.is_dir() else None
+
+
+def _skills_enabled_for(ctx: BatchAgentContext) -> bool:
+    """Whether to attach the procedure-skills toolset for this batch.
+
+    Gated like the planner: the skills menu (name + one-line description) is
+    cheap, but the toolset adds ``list_skills`` / ``load_skill`` turns, so we
+    only attach it for batches doing real extraction — any event-kind that
+    matches a registered (non-default) playbook. The trivial unknown-event path
+    stays lean. ``CONTEXT_ENGINE_RECONCILIATION_SKILLS=0`` is a kill switch.
+    """
+    flag = os.getenv("CONTEXT_ENGINE_RECONCILIATION_SKILLS", "1").strip().lower()
+    if flag in ("0", "false", "no", "off"):
+        return False
+    if _skills_dir() is None:
+        return False
+    return any(
+        not is_default_playbook(pb) for pb in _playbooks_for_events(ctx.events)
+    )
 
 
 def _provenance_from_event(ev: ContextEvent, *, agent_name: str) -> ProvenanceContext:
@@ -874,13 +847,29 @@ class PydanticDeepReconciliationAgent:
         # for one of the batch's event-kinds sets ``enables_planner``.
         planner_on = playbooks_enable_planner(_playbooks_for_events(ctx.events))
 
+        # Procedure skills (backfill / sandbox-recovery / mutation-plan /
+        # entity-resolution) carry the *how* on demand. The directory is a
+        # trusted in-repo location — not attacker input — so attaching it does
+        # not widen the containment surface (the external prompt-injectable
+        # tools stay gated by the playbook allowlist above). Gated per batch to
+        # keep the trivial path lean.
+        skills_on = _skills_enabled_for(ctx)
+        skills_dir = _skills_dir() if skills_on else None
+        logger.debug(
+            "deep agent for batch %s: planner=%s skills=%s",
+            ctx.batch_id,
+            planner_on,
+            bool(skills_dir),
+        )
+
         agent = create_deep_agent(
             model=self._model,
             instructions=self._compose_instructions(ctx),
             include_todo=planner_on,
             include_filesystem=False,
             include_subagents=False,
-            include_skills=False,
+            include_skills=bool(skills_dir),
+            skill_directories=[skills_dir] if skills_dir else None,
             include_plan=planner_on,
             web_search=False,
             web_fetch=False,
@@ -1304,7 +1293,6 @@ class PydanticDeepReconciliationAgent:
                 return {"ok": False, "error": f"apply_failed: {exc}"}
             ms = result.mutation_summary
             counts = {
-                "episodes_written": ms.episodes_written,
                 "entity_upserts_applied": ms.entity_upserts_applied,
                 "edge_upserts_applied": ms.edge_upserts_applied,
                 "edge_deletes_applied": ms.edge_deletes_applied,
@@ -1321,14 +1309,14 @@ class PydanticDeepReconciliationAgent:
                         "title": "Graph updated",
                         "counts": counts,
                         "summary": llm_plan.summary,
-                        "episode_uuids": list(result.episode_uuids or []),
+                        "mutation_id": result.mutation_id,
                     },
                     event_id=event_id,
                 )
             return {
                 "ok": result.ok,
                 "error": result.error,
-                "episode_uuids": list(result.episode_uuids or []),
+                "mutation_id": result.mutation_id,
                 "mutation_counts": counts,
                 "downgrades": list(result.downgrades or []),
                 "warnings": list(domain_plan.warnings or []),
@@ -1339,7 +1327,7 @@ class PydanticDeepReconciliationAgent:
                 apply_graph_mutations,
                 name="apply_graph_mutations",
                 description=(
-                    "Apply a structured graph mutation plan (episodes + entity/edge upserts/deletes "
+                    "Apply a structured graph mutation plan (entity/edge upserts/deletes "
                     "+ invalidations) for a single event in this batch. Idempotent on stable "
                     "entity_keys. Call once per event you process."
                 ),

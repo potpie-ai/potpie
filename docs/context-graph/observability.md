@@ -1,136 +1,124 @@
-# Context Engine — Observability
+# Observability
 
-End-to-end tracing, metrics, and structured logging for the context engine.
-Backend-neutral (OTLP → Tempo / Prometheus / Loki); **ships dark** — the
-NoOp sink is the default and there is zero overhead until an OTLP endpoint
-is configured.
+Last reviewed: 2026-05-28.
 
-## Enabling it
+Observability must work for both local OSS and managed cloud without making
+local installs heavy.
+
+Default behavior:
+
+- Local OSS ships dark: local logs, no remote telemetry unless enabled.
+- Managed cloud enables hosted tracing, metrics, logs, readiness, and cost
+  telemetry through deployment config.
+- The core engine emits through ports/adapters, not direct vendor SDK calls.
+
+## Enabling
 
 ```bash
-CONTEXT_ENGINE_OBSERVABILITY=1                      # 1 | console | off (default off)
+CONTEXT_ENGINE_OBSERVABILITY=1                      # 1 | console | off
 OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
 OTEL_SERVICE_NAME=context-engine
-CONTEXT_ENGINE_LOG_FORMAT=json                      # plain (default) | json
+CONTEXT_ENGINE_LOG_FORMAT=json                      # plain | json
 CONTEXT_ENGINE_LOG_LEVEL=INFO
 ```
 
-`CONTEXT_ENGINE_OBSERVABILITY=console` selects a dependency-free adapter
-that prints spans/metrics — useful locally. The real adapter needs the
-`observability` extra (`pip install -e ".[observability]"`:
-`opentelemetry-sdk`, `-exporter-otlp`, `-instrumentation-openai`). Collector
-+ alert + dashboard configs are in [`deployment/observability/`](../../deployment/observability/).
+`CONTEXT_ENGINE_OBSERVABILITY=console` is the local-friendly mode. OTLP export
+belongs behind an optional extra and explicit config.
 
 ## Architecture
 
-A thin hexagonal port — `domain/ports/observability.py:ObservabilityPort`
-(`span` / `baggage` / `current_traceparent` / `counter` / `histogram` /
-`gauge`) — with three adapters: `NoOp` (default), `Console`, `Otel`. Nothing
-outside `adapters/outbound/observability/otel.py` imports `opentelemetry`;
-that is what keeps the backend swappable. Wired through `build_container`
-exactly like the existing `TelemetryPort` (env-gated `_default_*` → NoOp,
-duck-typed `set_*` attach). `bootstrap/observability_runtime.py` exposes the
-same instance process-globally for the three composition-root concerns that
-can't reach a container (ASGI middleware, the Celery worker, the infra
-proxy).
+Use a hexagonal observability port:
 
-### Provider-aware OTel adapter
+- `domain/ports/observability.py`
+- outbound adapters under `adapters/outbound/observability/`
+- composition-root wiring in bootstrap/runtime code
 
-The parent Potpie Celery worker already owns a Logfire `TracerProvider`
-that instruments pydantic-ai. The adapter detects this: if a real SDK
-provider exists it *attaches* a second OTLP processor to it (agent spans
-ride the same provider and nest under our spans); standalone, it owns the
-provider. This avoids the dual-provider trap that would silently break
-correlation.
+The core should emit spans, metrics, and logs through this boundary. Local and
+managed deployments decide where those signals go.
 
-### Trace topology (the key decision)
+## Trace Shape
 
-The pipeline is fan-in/fan-out — `N events → 1 windowed batch → chunked
-agent run → M mutations` — so "one trace per event" is wrong and a 5-minute
-window kills live context propagation. The model:
+Important spans:
 
-1. **Ingress** is a short sync trace. Its `traceparent` is persisted into
-   the (previously dead) `context_events.correlation_id` column.
-2. **The batch run** is the primary async trace. On claim it starts a fresh
-   trace with OTel **span-links** reconstructed from each event's persisted
-   `correlation_id` — the correct primitive for delayed fan-in batches.
-3. Each chunk's `agent.run_batch` span sets **baggage**
-   (`ce.pot_id/batch_id/chunk/event_ids`) so pydantic-ai's own child spans
-   inherit the ids and are traceable back to the agent run.
-4. `graph.add_episode` records `graph.episode_uuid` — the durable
-   event→graph-node link, in-trace.
+| Span | Meaning |
+|---|---|
+| `daemon.request` or `HTTP {method} {route}` | Local daemon or hosted API request. |
+| `context.resolve` | Resolve/search request. |
+| `reader.{include}` | One reader execution. |
+| `context.record` | Structured record write. |
+| `scanner.{name}` | Local scanner execution. |
+| `graph.write` | Validated graph mutation apply. |
+| `graph.query` | Claim query or graph neighborhood read. |
+| `event.ledger.append` | Managed/event-ledger webhook capture. |
+| `reconciliation.run` | Managed or optional local raw-event reconciliation. |
 
-## Span catalogue
+Batch ingestion traces should link source events to reconciliation runs instead
+of pretending delayed fan-in is one synchronous request.
 
-| Span | Where | Key attributes |
-|---|---|---|
-| `HTTP {method} {route}` | ingress middleware | `http.*`, binds `trace_id` |
-| `ingest.submit` | submission service | `pot_id`, `ingest.event_id`, `ingest.duplicate` |
-| `batch.process` | worker entry | `batch_id`, `pot_id`, links→ingress |
-| `agent.run_batch` | per chunk | `pot_id`, `batch_id`, `agent.chunk`, `agent.event_ids` |
-| `graph.add_episode` | Graphiti write | `pot_id`, `event_id`, `graph.episode_uuid` |
-| OpenAI SDK spans | auto (Graphiti) | nested under `graph.add_episode` |
-| `context.resolve` | read path | `pot_id`, `resolve.intent/mode` |
-| `reader.{family}` | per reader | `reader.family`, `reader.count` |
-| `neo4j.{op}` | infra proxy | `db.system`, `db.op` |
+## Metrics
 
-## Metric catalogue
+Minimum counters:
 
-Counters (OTLP→Prometheus appends nothing; `.`→`_`):
+- `ce.resolve.total{result}`
+- `ce.resolve.unsupported_include_total{include}`
+- `ce.record.total{result,record_type}`
+- `ce.scanner.total{result,scanner}`
+- `ce.graph.write_total{result}`
+- `ce.graph.query_total{result}`
+- `ce.daemon.restart_total` for local
+- `ce.event_ledger.events_total{source}` for managed/event-ledger
+- `ce.reconciliation.total{result}` for raw-event reconciliation
 
-- `ce.ingest.events_total{source}`, `ce.ingest.dedup_total{source}`
-- `ce.batch.started_total`, `ce.batch.finished_total{result}`,
-  `ce.batch.reaped_total` ← **the dead-letter signal, page on it**
-- `ce.events.reconciled_total`, `ce.events.failed_total`
-- `ce.agent.timeout_total`
-- `ce.resolve.total{result}`, `ce.resolve.reader_fallback_total{reason}`
-- `ce.llm.calls_total / tokens_total / input_tokens_total /
-  output_tokens_total{kind,model}` (mirrored from `TelemetryPort`,
-  **includes Graphiti's previously-invisible calls**)
-- `ce.neo4j.errors_total{op}`
+Useful histograms:
 
-Histograms: `ce.batch.time_in_pending_ms` (windowed canary),
-`ce.agent.tool_calls`, `ce.graph.add_episode_ms`, `ce.resolve.latency_ms`,
-`ce.llm.latency_ms`, `ce.neo4j.query_ms{op}`.
+- `ce.resolve.latency_ms`
+- `ce.reader.latency_ms{include}`
+- `ce.graph.write_ms`
+- `ce.graph.query_ms`
+- `ce.scanner.latency_ms{scanner}`
+- `ce.reconciliation.latency_ms`
 
-Gauges: `ce.drift.{stale_refs,verification_failed_refs,source_access_gaps,
-open_conflicts,missing_coverage}` (mirrored from drift snapshots),
-`ce.dependency_up{dependency}`.
+Readiness gauges:
+
+- `ce.dependency_up{dependency}`
+- `ce.daemon_up`
+- `ce.graph_store_up`
+- `ce.event_ledger_lag`
 
 ## Logging
 
-`bootstrap/logging_setup.py` installs one root handler from every
-entrypoint. A `CorrelationFilter` injects the active
-`trace_id/event_id/pot_id/batch_id/run_id/...` onto **every** record, and
-`JsonFormatter` serializes `extra=` payloads — so the formerly-dropped
-operator-audit channel (`extra={"audit": ...}`) now renders, and all ~200
-existing `getLogger` sites get structured, trace-correlated JSON **without
-being rewritten**. (This is a deliberate, lower-risk realization of the
-plan's "structlog migration": stdlib + a formatter is the swappable seam
-for 200 stdlib call sites; forcing structlog would be churn for no added
-capability.)
+Use structured logs when configured. Every request or daemon action should carry
+the active pot id, request id, daemon profile (`local` or `cloud`), and graph
+store adapter where safe.
+
+Local logs should be easy to find from:
+
+```bash
+potpie daemon logs
+potpie doctor
+```
 
 ## Readiness
 
-`GET /health` is unchanged (liveness). `GET /ready` probes Postgres +
-Neo4j (hard) and Redis (optional), emits `ce.dependency_up`, and returns
-503 when a hard dependency is down — standard k8s readiness semantics.
+Local readiness should check:
 
-## Deviations from the plan (and why)
+- daemon process and version
+- local auth/IPC
+- active pot registry
+- local graph store
+- local state DB/migrations
+- registered readers and scanners
+- MCP config when installed
 
-- **Logging:** stdlib JSON + correlation filter instead of a structlog
-  rewrite of ~200 sites — identical outcome, no churn, formatter is the
-  swappable seam.
-- **`episode_uuid` backlink:** recorded as a `graph.add_episode` span
-  attribute instead of a new `context_events` column. The host owns the
-  schema (no migration framework here) and per-event attribution inside a
-  multi-event chunk is ambiguous; the trace backend is where you pivot
-  event→graph anyway, so this is faithful to the observability intent at
-  far lower risk to the hot path.
-- **Infra proxy scope:** wraps the Neo4j structural adapter only. The
-  Graphiti episodic adapter is excluded (a route does
-  `isinstance(container.episodic, GraphitiEpisodicAdapter)`, and its
-  hottest call already has a dedicated span).
-- **`record_drift`:** was already wired (`ContextResolutionService.
-  _emit_drift_snapshot`); the original plan note was stale. Phase C added
-  the OTel mirror, not the wiring.
+Managed readiness should check:
+
+- API process
+- auth/policy dependencies
+- hosted graph store
+- operational DB
+- queue/worker dependencies
+- event ledger
+- configured source connectors
+
+Liveness and readiness should stay separate. A running daemon/API can be live
+while graph storage is not ready.

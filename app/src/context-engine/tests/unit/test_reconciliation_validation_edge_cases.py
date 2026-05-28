@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 import pytest
 
 from application.services.reconciliation_validation import (
-    MAX_EPISODES,
     MAX_GENERIC_EDGES,
     MAX_GENERIC_ENTITY_UPSERTS,
     MAX_INVALIDATIONS,
@@ -16,22 +13,13 @@ from application.services.reconciliation_validation import (
 from domain.context_events import EventRef
 from domain.errors import ReconciliationPlanValidationError
 from domain.graph_mutations import EdgeDelete, EdgeUpsert, EntityUpsert, InvalidationOp
-from domain.reconciliation import EpisodeDraft, ReconciliationPlan
+from domain.reconciliation import ReconciliationPlan
 
 pytestmark = pytest.mark.unit
 
 
 def _ref(pot_id: str = "p1") -> EventRef:
     return EventRef(event_id="e1", source_system="github", pot_id=pot_id)
-
-
-def _episode() -> EpisodeDraft:
-    return EpisodeDraft(
-        name="ep",
-        episode_body="body",
-        source_description="test",
-        reference_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
-    )
 
 
 def _valid_entity_upsert(key: str = "source-ref:github:pr:1") -> EntityUpsert:
@@ -52,7 +40,7 @@ def _valid_edge_upsert() -> EdgeUpsert:
 
 
 def _valid_plan(**kwargs) -> ReconciliationPlan:  # type: ignore[no-untyped-def]
-    defaults = dict(event_ref=_ref(), summary="ok", episodes=[])
+    defaults = dict(event_ref=_ref(), summary="ok")
     defaults.update(kwargs)
     return ReconciliationPlan(**defaults)
 
@@ -64,11 +52,6 @@ def _valid_plan(**kwargs) -> ReconciliationPlan:  # type: ignore[no-untyped-def]
 
 def test_validate_empty_plan_passes() -> None:
     validate_reconciliation_plan(_valid_plan(), "p1")
-
-
-def test_validate_plan_with_episodes_passes() -> None:
-    plan = _valid_plan(episodes=[_episode(), _episode()])
-    validate_reconciliation_plan(plan, "p1")
 
 
 def test_validate_plan_with_valid_structural_mutations_passes() -> None:
@@ -88,22 +71,6 @@ def test_validate_pot_id_mismatch_raises() -> None:
     plan = _valid_plan()
     with pytest.raises(ReconciliationPlanValidationError, match="pot_id"):
         validate_reconciliation_plan(plan, "wrong-pot")
-
-
-# ---------------------------------------------------------------------------
-# Episode cap
-# ---------------------------------------------------------------------------
-
-
-def test_validate_exactly_max_episodes_passes() -> None:
-    plan = _valid_plan(episodes=[_episode()] * MAX_EPISODES)
-    validate_reconciliation_plan(plan, "p1")
-
-
-def test_validate_exceeds_max_episodes_raises() -> None:
-    plan = _valid_plan(episodes=[_episode()] * (MAX_EPISODES + 1))
-    with pytest.raises(ReconciliationPlanValidationError, match="too many episodes"):
-        validate_reconciliation_plan(plan, "p1")
 
 
 # ---------------------------------------------------------------------------

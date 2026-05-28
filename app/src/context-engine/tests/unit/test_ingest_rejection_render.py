@@ -8,7 +8,7 @@ def test_print_ingest_rejection_plain(capsys) -> None:
         {
             "status": "reconciliation_rejected",
             "event_id": "3d6ab2c2-4f43-4a5f-8b3c-12bee7386613",
-            "episode_uuid": None,
+            "mutation_id": None,
             "errors": [
                 {"entity": "adr:0042", "issue": "unknown canonical labels: ADR"},
                 {"entity": "DECIDED_BY", "issue": "unknown canonical edge type"},
@@ -30,7 +30,7 @@ def test_print_ingest_success_shows_downgrade_hint(capsys) -> None:
     print_ingest_result(
         {
             "status": "applied",
-            "episode_uuid": "ep-1",
+            "mutation_id": "ep-1",
             "event_id": "e1",
             "downgrades": [{"kind": "edge_type", "from": "X", "to": "RELATED_TO"}],
         },

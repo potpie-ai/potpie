@@ -13,7 +13,6 @@ from domain.actor import Actor
 from domain.ports.policy import (
     ACTION_APPLY_WRITE,
     ACTION_POT_INGEST_EPISODE,
-    ACTION_POT_MAINTENANCE,
     ACTION_POT_READ,
     ACTION_POT_RECORD,
     ACTION_POT_RESET,
@@ -21,7 +20,6 @@ from domain.ports.policy import (
     REASON_AGENT_PLANNER_DISABLED,
     REASON_CONTEXT_GRAPH_DISABLED,
     REASON_FORBIDDEN,
-    REASON_MAINTENANCE_WRITE_DISABLED,
     REASON_RECONCILIATION_AGENT_UNAVAILABLE,
     REASON_RECONCILIATION_DISABLED,
     REASON_UNKNOWN_POT,
@@ -193,42 +191,6 @@ def test_pot_reset_denies_unknown_pot():
     )
     assert not decision.allowed
     assert decision.reason == REASON_UNKNOWN_POT
-
-
-def test_pot_maintenance_blocks_writes_without_flags():
-    with patch.dict(
-        os.environ,
-        {
-            "CONTEXT_ENGINE_CLASSIFY_MODIFIED_EDGES": "0",
-            "CONTEXT_ENGINE_ALLOW_EDGE_CLASSIFY_WRITE": "0",
-        },
-    ):
-        decision = _adapter(pots={"p1": "x"}).authorize(
-            actor=None,
-            resource=RESOURCE_POT,
-            action=ACTION_POT_MAINTENANCE,
-            context={"pot_id": "p1", "dry_run": False},
-        )
-    assert not decision.allowed
-    assert decision.reason == REASON_MAINTENANCE_WRITE_DISABLED
-    assert decision.status_code == 403
-
-
-def test_pot_maintenance_dry_run_allowed_without_flags():
-    with patch.dict(
-        os.environ,
-        {
-            "CONTEXT_ENGINE_CLASSIFY_MODIFIED_EDGES": "0",
-            "CONTEXT_ENGINE_ALLOW_EDGE_CLASSIFY_WRITE": "0",
-        },
-    ):
-        decision = _adapter(pots={"p1": "x"}).authorize(
-            actor=None,
-            resource=RESOURCE_POT,
-            action=ACTION_POT_MAINTENANCE,
-            context={"pot_id": "p1", "dry_run": True},
-        )
-    assert decision.allowed
 
 
 def test_apply_write_requires_engine_enabled():

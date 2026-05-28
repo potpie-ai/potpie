@@ -1,10 +1,9 @@
-"""KubernetesManifestScanner (rebuild plan P4 / F1 fix).
+"""KubernetesManifestScanner (topology core).
 
-The F1 failure mode in the proper POC: INFRA reader returned 0%
-coverage because the graph had no edge linking a Deployment to its
-Service. This suite confirms the scanner emits
-``Deployment OF_SERVICE Service`` + ``Deployment DEPLOYED_TO Environment``
-deterministically from a manifest's labels + file path.
+Confirms the scanner emits ``Service DEPLOYED_TO Environment``
+deterministically from a manifest's labels + file path, with the
+environment stamped on the edge. The deployment object is not a node
+(the fact that a service runs in an env is the edge).
 """
 
 from __future__ import annotations
@@ -82,22 +81,20 @@ class TestHandlesAndDispatch:
 
 
 class TestF1FixServiceJoin:
-    def test_emits_of_service_and_deployed_to_from_path_and_labels(self) -> None:
+    def test_emits_deployed_to_from_path_and_labels(self) -> None:
         scanner = KubernetesManifestScanner()
         result = scanner.parse_to_claims(
             _ref("clusters/prod/auth-svc.yaml", MANIFEST_AUTH_PROD)
         )
         preds = sorted(c.predicate for c in result.claims)
-        assert preds == ["DEPLOYED_TO", "OF_SERVICE"]
-
-        of_service = next(c for c in result.claims if c.predicate == "OF_SERVICE")
-        assert of_service.subject_key.startswith("deployment:")
-        assert of_service.object_key == "service:auth-svc"
-        assert of_service.evidence_strength == "deterministic"
-        assert of_service.source_system == "kubernetes"
+        assert preds == ["DEPLOYED_TO"]
 
         deployed_to = next(c for c in result.claims if c.predicate == "DEPLOYED_TO")
+        assert deployed_to.subject_key == "service:auth-svc"
         assert deployed_to.object_key == "environment:prod"
+        assert deployed_to.properties.get("environment") == "prod"
+        assert deployed_to.evidence_strength == "deterministic"
+        assert deployed_to.source_system == "kubernetes"
 
     def test_service_inferred_from_path_when_labels_missing(self) -> None:
         manifest = dedent(
@@ -110,9 +107,10 @@ class TestF1FixServiceJoin:
         ).strip()
         scanner = KubernetesManifestScanner()
         result = scanner.parse_to_claims(_ref("clusters/staging/users.yaml", manifest))
-        of_service = next(c for c in result.claims if c.predicate == "OF_SERVICE")
-        # No labels → falls back to path scope: clusters/<env>/<service>.yaml
-        assert of_service.object_key == "service:users"
+        deployed_to = next(c for c in result.claims if c.predicate == "DEPLOYED_TO")
+        # No labels → service falls back to path scope: clusters/<env>/<service>.yaml
+        assert deployed_to.subject_key == "service:users"
+        assert deployed_to.object_key == "environment:staging"
 
     def test_multi_doc_manifest_emits_per_workload(self) -> None:
         manifest = MANIFEST_AUTH_PROD + "\n---\n" + dedent(
@@ -123,17 +121,17 @@ class TestF1FixServiceJoin:
               name: auth-cache
               namespace: auth
               labels:
-                app: auth-svc
+                app.kubernetes.io/name: auth-cache
             """
         ).strip()
         scanner = KubernetesManifestScanner()
         result = scanner.parse_to_claims(
             _ref("clusters/prod/auth-svc.yaml", manifest)
         )
-        of_service_claims = [c for c in result.claims if c.predicate == "OF_SERVICE"]
-        assert len(of_service_claims) == 2
-        deployment_keys = {c.subject_key for c in of_service_claims}
-        assert len(deployment_keys) == 2  # two distinct deployments
+        deployed_to_claims = [c for c in result.claims if c.predicate == "DEPLOYED_TO"]
+        assert len(deployed_to_claims) == 2  # one per workload
+        service_keys = {c.subject_key for c in deployed_to_claims}
+        assert service_keys == {"service:auth-svc", "service:auth-cache"}
 
     def test_non_workload_kind_skipped(self) -> None:
         manifest = dedent(
@@ -180,16 +178,15 @@ class TestParseRobustness:
         assert any("metadata.name" in w for w in result.warnings)
 
     def test_no_path_scope_environment_no_deployed_to_edge(self) -> None:
-        # k8s/<env>/... convention; if env is missing, no DEPLOYED_TO is
-        # emitted (we don't guess environment).
+        # k8s/<env>/... convention; if env is missing we don't guess it, so
+        # no DEPLOYED_TO edge is emitted at all (the env is the object).
         scanner = KubernetesManifestScanner()
         result = scanner.parse_to_claims(
             _ref("k8s/foo-svc.yaml", MANIFEST_AUTH_PROD)
         )
         preds = [c.predicate for c in result.claims]
-        assert "OF_SERVICE" in preds
-        # k8s/foo-svc.yaml has no environment segment → no DEPLOYED_TO
         assert "DEPLOYED_TO" not in preds
+        assert any("environment" in w for w in result.warnings)
 
 
 if __name__ == "__main__":  # pragma: no cover

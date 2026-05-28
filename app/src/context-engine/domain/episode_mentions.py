@@ -2,11 +2,11 @@
 
 Per the proper POC's F4 failure mode: TIME reader queries like "what
 activities touched service:auth-svc in last 7d" missed PR events
-because PR Activity entities link to ``person`` (via PERFORMED_BY) and
+because PR Activity entities link to ``person`` (via PERFORMED) and
 ``pr:1042`` (via TOUCHED) but never to ``service:auth-svc`` — the
 service is mentioned in the PR body, not in a structured field.
 
-The fix per the Graphiti research: every entity mentioned in an
+Coverage rule: every entity mentioned in an
 enriched episode body gets a ``:RELATES_TO {name: 'MENTIONS'}`` claim
 back from the episode's Activity entity. The TIME reader then does
 ``MATCH (a:Activity)-[:MENTIONS]->(target {entity_key: $key})``.

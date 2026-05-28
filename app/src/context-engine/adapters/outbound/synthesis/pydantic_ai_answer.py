@@ -16,7 +16,7 @@ from adapters.outbound.synthesis.prompt import (
     SYNTHESIS_INSTRUCTIONS,
     build_synthesis_prompt,
 )
-from domain.intelligence_models import IntelligenceBundle
+from domain.agent_envelope import AgentEnvelope
 from domain.ports.telemetry import CostEvent, NoOpTelemetry, TelemetryPort
 
 logger = logging.getLogger(__name__)
@@ -56,7 +56,7 @@ class PydanticAIAnswerSynthesizer:
         self._telemetry: TelemetryPort = telemetry or NoOpTelemetry()
         self.last_usage: dict[str, int | str | None] | None = None
 
-    async def synthesize(self, bundle: IntelligenceBundle) -> str | None:
+    async def synthesize(self, envelope: AgentEnvelope) -> str | None:
         self.last_usage = None
         try:
             from pydantic_ai import Agent  # type: ignore[import-not-found]
@@ -64,7 +64,7 @@ class PydanticAIAnswerSynthesizer:
             logger.warning("pydantic_ai not installed; skipping answer synthesis")
             return None
 
-        prompt = build_synthesis_prompt(bundle)
+        prompt = build_synthesis_prompt(envelope)
         t0 = time.perf_counter()
         try:
             agent = Agent(
@@ -91,7 +91,7 @@ class PydanticAIAnswerSynthesizer:
         try:
             self._telemetry.record_cost(
                 CostEvent(
-                    pot_id=bundle.request.pot_id,
+                    pot_id=envelope.pot_id,
                     kind="synthesis",
                     model=self._model,
                     input_tokens=_int_or_none(usage.get("input_tokens")),

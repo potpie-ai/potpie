@@ -1,0 +1,101 @@
+id: bug_dependency_conflict_pydantic_v1_v2
+use_case: BUG
+tier: quick
+difficulty: medium
+source_mix: dual
+universe: acme
+
+description: |
+  A new engineer's PR (#1203) has red CI on inventory-svc with
+  `PydanticImportError: BaseSettings has been moved to pydantic-settings`.
+  They didn't touch settings code — adding a new dependency dragged in an
+  old pydantic. They ask whether there's a precedent.
+
+  Ground truth: this is a recurring trap. A helper package declares a
+  FLOATING pydantic range (`pydantic>=1.8`); a fresh lock resolves an old
+  pydantic 1.x next to the project's 2.x, two pydantics become importable,
+  and BaseModel/BaseSettings break. ADR-014 mandates Pydantic v2 only. The
+  prior fix is PR #1044 (payments-svc): pin the helper to a version that
+  requires pydantic>=2.5,<3, add an explicit top-level pydantic==2.6.* pin,
+  move BaseSettings to pydantic-settings. A Notion page documents the
+  pattern and the PR #1044 precedent and notes the durable fix is the
+  dependency-pinning policy (no floating ranges).
+
+  A strong answer recognises this as the known pydantic-v1/v2 transitive-dep
+  conflict, cites ADR-014 (v2-only) and the PR #1044 precedent, and gives
+  the concrete fix recipe (find the offending dep, pin it to require v2,
+  add the top-level pin, migrate BaseSettings).
+
+  Medium tier: two sources (github + notion) plus ADR-014, with distractors.
+
+ingest:
+  - { event: github/bug_pydantic_prior_fix.json, at: "-45d", tags: [signal] }
+  - { event: notion/bug_pydantic_migration_notes.json, at: "-40d", tags: [signal] }
+  - { event: github/bug_pydantic_conflict_ci_fail.json, at: "0d", tags: [signal] }
+
+distractor_events:
+  - { event: noise/github_chore_noise_template.json, at: "-40d..-2d", count: 12 }
+
+post_ingest_assertions:
+  # NOTE (read-layer gating): PR/Document/Decision nodes are reconciled but
+  # the topology read surfaces only Service/DataStore. The case-retrieval
+  # capability is graded in retrieval + the judge. Anchor on the services.
+  graph_must_contain_entities:
+    - { label: Service, key_pattern: "service:.*(inventory-svc|payments-svc)", min_count: 1 }
+  no_orphan_entities: false
+  reconciliation:
+    soft_downgrades_max: 4
+    failed_events_max: 0
+
+query:
+  intent: debugging
+  scope: { service: inventory-svc }
+  include: [prior_bugs, infra_topology, timeline]
+  mode: balanced
+  source_policy: summary
+
+retrieval_assertions:
+  required_includes_used: [prior_bugs]
+  source_refs_min: 2
+  must_cite_event_id:
+    - github/bug_pydantic_prior_fix.json
+    - universe/acme/20-adr-014-pydantic.json
+  must_not_cite_event_id:
+    - noise/github_chore_noise_template.json
+  forbid_in_answer:
+    - "I don't have information"
+
+judge:
+  pass_score: 65
+  criteria:
+    - name: surfaces_prior_incident
+      weight: 30
+      pass_threshold: 4
+      prompt: |
+        Does the answer surface PR #1044 (the prior payments-svc fix for the
+        same pydantic v1/v2 transitive-dep conflict) and/or the Notion
+        migration-notes page documenting the pattern?
+    - name: identifies_recurrence_pattern
+      weight: 20
+      pass_threshold: 3
+      prompt: |
+        Does the answer correctly diagnose the root cause as a transitive
+        dependency pulling in an OLD pydantic (floating range) alongside the
+        project's v2 — not a bug in the engineer's own code — and tie it to
+        ADR-014 (Pydantic v2 only)?
+    - name: actionable_first_steps
+      weight: 30
+      pass_threshold: 3
+      prompt: |
+        Does the answer give the concrete fix recipe: find the offending dep
+        (pip tree / lock diff), pin it to a version requiring pydantic>=2.5,<3,
+        add an explicit top-level pydantic==2.6.* pin, and move BaseSettings
+        to pydantic-settings?
+    - name: no_hallucination
+      weight: 20
+      pass_threshold: 5
+      prompt: |
+        Are all claims grounded? Valid references: ADR-014, PR #1044,
+        PR #1203, pydantic, pydantic-settings, BaseSettings, inventory-svc,
+        payments-svc, acme-stripe-helpers, acme-webhook-kit, bench-user-3,
+        bench-user-17. Other PRs/services/people are hallucinations.

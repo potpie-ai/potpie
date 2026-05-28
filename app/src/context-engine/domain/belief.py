@@ -154,9 +154,11 @@ _FAMILY_TTL_HOURS: Mapping[str, float] = {
     "OF_SERVICE": 24 * 90,
     "OWNED_BY": 24 * 90,
     # Activity / process — short-lived, decays fast.
-    "PERFORMED_BY": 24 * 7,
+    "PERFORMED": 24 * 7,
+    "AUTHORED": 24 * 7,
     "TOUCHED": 24 * 7,
     "MENTIONS": 24 * 14,
+    "IN_PERIOD": 24 * 14,
     # Decisions / policies — long-lived but should decay if not re-attested.
     "POLICY_APPLIES_TO": 24 * 365,
     "RESOLVED": 24 * 365,

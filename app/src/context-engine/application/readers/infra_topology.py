@@ -1,16 +1,15 @@
-"""InfraTopologyReader (UC2 / P9).
+"""InfraTopologyReader (topology core).
 
 Inputs: scope (service / env / file). Logic: bounded neighbourhood
-traversal over claim edges with infra predicates (``DEPLOYED_TO``,
-``OF_SERVICE``, ``DEPENDS_ON``, ``STORED_IN``, ``USES``, ``EXPOSES``,
-``CONFIGURED_BY``), environment-filtered via the ``environment`` edge
-property. Supports blast-radius (incoming ``DEPENDS_ON`` traversal
-with depth). Supports ``as_of`` via the bitemporal predicate.
+traversal over claim edges with topology predicates (``DEFINED_IN``,
+``DEPLOYED_TO``, ``DEPENDS_ON``, ``USES``, ``HOSTED_ON``, ``OWNED_BY``),
+environment-filtered via the ``environment`` edge property. Supports
+blast-radius (incoming ``DEPENDS_ON`` traversal with depth). Supports
+``as_of`` via the bitemporal predicate.
 
-This reader is the F1 reader: with the Kubernetes scanner emitting
-``Deployment OF_SERVICE Service`` and ``Deployment DEPLOYED_TO Env``,
-the question "what env runs auth-svc?" returns a real edge instead of
-0% coverage.
+With the Kubernetes scanner emitting ``Service DEPLOYED_TO Environment``
+directly (env stamped on the edge), the question "what env runs
+auth-svc?" returns a real edge instead of 0% coverage.
 """
 
 from __future__ import annotations
@@ -29,16 +28,12 @@ from domain.ranking import Candidate, RankingService
 
 
 _INFRA_PREDICATES: tuple[str, ...] = (
+    "DEFINED_IN",
     "DEPLOYED_TO",
-    "OF_SERVICE",
     "DEPENDS_ON",
-    "STORED_IN",
     "USES",
-    "EXPOSES",
-    "CONFIGURED_BY",
+    "HOSTED_ON",
     "OWNED_BY",
-    "PRIMARY_STORE",
-    "CURRENT_VERSION",
 )
 
 
@@ -94,8 +89,9 @@ class InfraTopologyReader:
         Each hop fans out from the current anchor frontier in both
         directions (outgoing + incoming). The depth bound is set on
         the reader; depth=2 lets queries like "what env runs service X"
-        traverse Service ← OF_SERVICE — Deployment → DEPLOYED_TO → Env
-        without paging through irrelevant subgraphs.
+        (Service → DEPLOYED_TO → Env, one hop) plus a second hop for
+        blast-radius (Service ← DEPENDS_ON — caller, or Service → USES →
+        DataStore) without paging through irrelevant subgraphs.
         """
         if not anchor_keys:
             return self.claim_query.find_claims(

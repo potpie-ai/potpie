@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from adapters.outbound.claim_query.in_memory import InMemoryClaimQueryStore
+from adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
 from application.readers import (
     CodingPreferencesReader,
     InfraTopologyReader,
@@ -138,36 +138,37 @@ class TestCodingPreferencesReader:
 class TestInfraTopologyReader:
     def _setup_store(self) -> InMemoryClaimQueryStore:
         store = InMemoryClaimQueryStore()
-        # F1 fix: Deployment OF_SERVICE Service + Deployment DEPLOYED_TO Env
-        store.add(
-            _row(
-                predicate="OF_SERVICE",
-                subject_key="deployment:k8s:auth:auth-svc",
-                object_key="service:auth-svc",
-                fact="deployment auth-svc runs service auth-svc",
-                evidence_strength="deterministic",
-                properties={"environment": "prod"},
-            )
-        )
+        # Topology core: Service DEPLOYED_TO Environment, env stamped on edge.
         store.add(
             _row(
                 predicate="DEPLOYED_TO",
-                subject_key="deployment:k8s:auth:auth-svc",
+                subject_key="service:auth-svc",
                 object_key="environment:prod",
-                fact="deployment auth-svc deployed to prod",
+                fact="service auth-svc deployed to prod",
                 evidence_strength="deterministic",
                 properties={"environment": "prod"},
             )
         )
-        # A staging deployment of the same service (env-filtered out)
+        # Same service in staging (env-filtered out for prod queries).
         store.add(
             _row(
-                predicate="OF_SERVICE",
-                subject_key="deployment:k8s:auth:auth-svc-staging",
-                object_key="service:auth-svc",
-                fact="deployment auth-svc-staging runs service auth-svc",
+                predicate="DEPLOYED_TO",
+                subject_key="service:auth-svc",
+                object_key="environment:staging",
+                fact="service auth-svc deployed to staging",
                 evidence_strength="deterministic",
                 properties={"environment": "staging"},
+            )
+        )
+        # An extra topology edge: Service USES DataStore.
+        store.add(
+            _row(
+                predicate="USES",
+                subject_key="service:auth-svc",
+                object_key="datastore:auth-pg",
+                fact="service auth-svc uses datastore auth-pg",
+                evidence_strength="deterministic",
+                properties={},
             )
         )
         return store
@@ -181,9 +182,8 @@ class TestInfraTopologyReader:
             ReadRequest(pot_id="pot-1", scope={"services": ["auth-svc"]})
         )
         preds = {r.candidate.payload["predicate"] for r in response.items}
-        assert "OF_SERVICE" in preds
         assert "DEPLOYED_TO" in preds
-        # And we found something — F1 fix proven.
+        # Service → Environment is a direct edge now (no Deployment node).
         assert response.coverage_status != "empty"
 
     def test_environment_filter_excludes_staging(self) -> None:

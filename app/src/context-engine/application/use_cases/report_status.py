@@ -13,11 +13,13 @@ from typing import Any, Mapping
 
 from sqlalchemy.orm import Session
 
-from adapters.outbound.postgres.reconciliation_ledger import (
-    SqlAlchemyReconciliationLedger,
-)
 from bootstrap.container import ContextEngineContainer
-from domain.agent_context_port import context_port_manifest, context_recipe_for_intent
+from domain.agent_context_port import (
+    DEFAULT_INTENT_INCLUDES,
+    READER_BACKED_INCLUDES,
+    context_port_manifest,
+    context_recipe_for_intent,
+)
 from domain.context_status import (
     DEFAULT_RESOLVER_CAPABILITIES,
     EventLedgerHealth,
@@ -34,7 +36,7 @@ from domain.context_status import (
     status_source_to_payload,
 )
 from domain.graph_quality import assess_graph_quality
-from domain.intelligence_models import CoverageReport
+from domain.graph_quality import CoverageReport
 from domain.source_references import SourceReferenceRecord
 
 
@@ -69,7 +71,7 @@ def report_status(
                 "message": "Context graph is disabled for this server.",
             }
         )
-    if container.resolution_service is None:
+    if container.context_graph is None:
         gaps.append(
             {
                 "code": "resolver_unavailable",
@@ -83,14 +85,6 @@ def report_status(
                 "message": "This pot has no attached repositories.",
             }
         )
-    if not container.episodic.enabled:
-        gaps.append(
-            {
-                "code": "episodic_graph_unavailable",
-                "message": "Graphiti episodic search is not enabled.",
-            }
-        )
-
     sources: list[Any] = []
     if container.pot_source_listing is not None:
         try:
@@ -110,7 +104,7 @@ def report_status(
     reconciliation_health = ReconciliationLedgerHealth()
     if db is not None:
         try:
-            reconciliation_health = SqlAlchemyReconciliationLedger(
+            reconciliation_health = container.reconciliation_ledger(
                 db
             ).summarize_pot_reconciliation(pot_id)
         except Exception:
@@ -150,7 +144,7 @@ def report_status(
                 }
             )
 
-    if container.resolution_service is None:
+    if container.context_graph is None:
         capabilities = [
             ResolverCapability(
                 policy=c.policy,
@@ -194,12 +188,8 @@ def report_status(
         for ref in source_refs_field
     ]
     quality = assess_graph_quality(refs=source_ref_records, coverage=coverage, fallbacks=[])
+    # Predicate-family conflict detection was removed with the episodic tier.
     open_conflicts: list[dict[str, Any]] = []
-    if container.episodic.enabled:
-        try:
-            open_conflicts = container.episodic.list_open_conflicts(resolved.pot_id)
-        except Exception:
-            open_conflicts = []
     quality.conflicts = open_conflicts
 
     reco: list[dict[str, Any]] = []
@@ -289,16 +279,24 @@ def report_status(
             }
             for m in container.connectors.manifest_for_pot(resolved.pot_id)
         ],
+        # Reader manifest: the read trunk (P8/P9) routes includes to a fixed
+        # set of claim-store-backed readers. The container no longer exposes a
+        # ``readers`` registry (the ReadOrchestrator owns routing), so surface
+        # the published reader-backed include vocabulary instead.
         "readers": [
             {
-                "family": r.family,
-                "description": r.description,
-                "intents": list(r.intents),
-                "requires_scope": list(r.requires_scope),
-                "cost": r.cost,
-                "backend": r.backend,
+                "family": name,
+                "description": f"Reader-backed include '{name}' over the canonical claim store.",
+                "intents": [
+                    intent
+                    for intent, includes in DEFAULT_INTENT_INCLUDES.items()
+                    if name in includes
+                ],
+                "requires_scope": [],
+                "cost": "standard",
+                "backend": "claim_query",
             }
-            for r in container.readers.manifest()
+            for name in sorted(READER_BACKED_INCLUDES)
         ],
         "scope": scope_payload,
         "coverage": asdict(coverage),

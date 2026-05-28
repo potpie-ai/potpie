@@ -1,14 +1,10 @@
 """Build the canonical :class:`AgentEnvelope` from reader responses (P8).
 
-This service is the single envelope-shaper for the new canonical path.
-Callers (HTTP resolve, MCP context_search, CLI) hand in a list of
-``(include, ReadResponse)`` pairs and the resolved intent; the builder
-sorts cross-include by ranker score, computes per-include coverage,
-and rolls up the overall confidence per F5.
-
-The legacy `bundle_to_agent_envelope` / `IntelligenceBundle` shapes
-remain in place during the migration window. This builder is the
-forward path; new code calls it, old code is migrated incrementally.
+This service is the single envelope-shaper for the read path. The
+:class:`ReadOrchestrator` hands in a list of ``(include, ReadResponse)``
+pairs and the resolved intent; the builder sorts cross-include by ranker
+score, computes per-include coverage, and rolls up the overall confidence
+per F5. It is the only envelope shape.
 """
 
 from __future__ import annotations
@@ -18,15 +14,17 @@ from datetime import datetime
 from typing import Iterable, Mapping, Sequence
 
 from application.readers._common import ReadResponse
+from domain.agent_context_port import (
+    includes_for_request,
+    normalize_context_intent,
+    unsupported_include_values,
+)
 from domain.agent_envelope import (
     AgentEnvelope,
-    AgentInclude,
-    AgentIntent,
     CoverageReport,
     EvidenceItem,
     UnsupportedInclude,
     derive_overall_confidence,
-    resolve_includes,
 )
 
 
@@ -34,7 +32,7 @@ from domain.agent_envelope import (
 class IncludeResult:
     """One reader's contribution to the envelope."""
 
-    include: AgentInclude
+    include: str
     response: ReadResponse
 
 
@@ -46,16 +44,29 @@ class EnvelopeBuilder:
         self,
         *,
         pot_id: str,
-        intent: AgentIntent,
+        intent: str,
         results: Iterable[IncludeResult],
         requested_includes: Sequence[str] | None = None,
+        extra_unsupported: Sequence[UnsupportedInclude] = (),
         as_of: datetime | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> AgentEnvelope:
-        matched, unsupported_raw = resolve_includes(
-            intent=intent, requested=requested_includes
-        )
+        intent = normalize_context_intent(intent)
+        requested_list = list(requested_includes or [])
+        # Resolve against the canonical vocabulary: empty request → the
+        # intent's default includes; unknown names → ``unsupported`` (never
+        # silently dropped to zero).
+        resolved = includes_for_request(intent, requested_list, [])
+        unsupported_names = unsupported_include_values(requested_list)
+        unsupported_set = set(unsupported_names)
+        matched = [inc for inc in resolved if inc not in unsupported_set]
         matched_set = set(matched)
+        # Unknown names (not in the vocab) + caller-supplied not-implemented
+        # entries (in-vocab includes the orchestrator had no reader for).
+        unsupported_raw = tuple(
+            UnsupportedInclude(name=name, reason="unknown_include")
+            for name in unsupported_names
+        ) + tuple(extra_unsupported)
 
         items: list[EvidenceItem] = []
         coverage: list[CoverageReport] = []
@@ -104,16 +115,15 @@ class EnvelopeBuilder:
 def envelope_to_dict(envelope: AgentEnvelope) -> dict[str, object]:
     """Serialise the canonical envelope to a JSON-shaped dict.
 
-    Used by the HTTP/MCP boundary to send the envelope on the wire; the
-    intent + include enums are serialised as their string values so the
-    receiving side doesn't need to import the enum classes.
+    Used by the HTTP/MCP boundary to send the envelope on the wire; ``intent``
+    and ``include`` are already canonical strings.
     """
     return {
         "pot_id": envelope.pot_id,
-        "intent": envelope.intent.value,
+        "intent": envelope.intent,
         "items": [
             {
-                "include": item.include.value,
+                "include": item.include,
                 "candidate_key": item.candidate_key,
                 "score": item.score,
                 "payload": dict(item.payload),
@@ -124,7 +134,7 @@ def envelope_to_dict(envelope: AgentEnvelope) -> dict[str, object]:
         ],
         "coverage": [
             {
-                "include": c.include.value,
+                "include": c.include,
                 "status": c.status,
                 "candidate_pool": c.candidate_pool,
             }

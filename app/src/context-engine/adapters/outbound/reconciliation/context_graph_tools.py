@@ -14,10 +14,8 @@ from typing import Any
 
 from domain.graph_query import (
     ContextGraphQuery,
-    preset_change_history,
-    preset_file_owners,
-    preset_graph_overview,
-    preset_semantic_search,
+    preset_context_search,
+    preset_reader_lookup,
 )
 from domain.ports.context_graph import ContextGraphPort
 from domain.ports.reconciliation_tools import ReconciliationToolsPort, ToolDescriptor
@@ -26,14 +24,29 @@ from domain.reconciliation import ReconciliationRequest
 logger = logging.getLogger(__name__)
 
 
+# Tool name → ReadOrchestrator include family. ``None`` is the generic,
+# intent-routed search (the orchestrator expands the request's intent into
+# reader families). Every non-None value MUST be an include the orchestrator
+# backs; ``test_read_tools_match_orchestrator`` pins this so the agent tool
+# surface can never drift from the readers again.
+READ_TOOL_INCLUDE: dict[str, str | None] = {
+    "context_search": None,
+    "context_coding_preferences": "coding_preferences",
+    "context_infra_topology": "infra_topology",
+    "context_timeline": "timeline",
+    "context_prior_bugs": "prior_bugs",
+}
+
+
 _TOOLS: tuple[ToolDescriptor, ...] = (
     ToolDescriptor(
         name="context_search",
         category="context_lookup",
         description=(
-            "Semantic search across the pot's existing facts. Use to find "
-            "decisions, incidents, services, features, or documents that "
-            "may already capture what this event describes."
+            "Generic lookup across the pot's existing memory. Routes by the "
+            "task's intent into the project's readers (coding preferences, "
+            "infra topology, timeline, prior bugs). Start here, then narrow "
+            "with a targeted tool below."
         ),
         json_schema={
             "type": "object",
@@ -50,16 +63,50 @@ _TOOLS: tuple[ToolDescriptor, ...] = (
         },
     ),
     ToolDescriptor(
-        name="context_recent_changes",
+        name="context_coding_preferences",
         category="context_lookup",
         description=(
-            "Recent change history for a file, function, or PR in this pot. "
-            "Use to see what has been touched or discussed recently near "
-            "the target of the current event."
+            "Coding conventions, patterns, libraries, and rules that apply to "
+            "this pot (optionally scoped to a file). Use before proposing how "
+            "something should be written or structured."
         ),
         json_schema={
             "type": "object",
             "properties": {
+                "query": {"type": "string", "description": "optional free-text focus"},
+                "file_path": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 8},
+            },
+        },
+    ),
+    ToolDescriptor(
+        name="context_infra_topology",
+        category="context_lookup",
+        description=(
+            "Services, datastores, dependencies, environments, and deployment "
+            "topology known for this pot. Use to see what infrastructure "
+            "already exists before adding or changing it."
+        ),
+        json_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "optional free-text focus"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
+            },
+        },
+    ),
+    ToolDescriptor(
+        name="context_timeline",
+        category="context_lookup",
+        description=(
+            "Recent changes and activity in this pot, optionally scoped to a "
+            "file, function, or PR. Use to see what has been touched or "
+            "discussed recently near the target of the current event."
+        ),
+        json_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
                 "file_path": {"type": "string"},
                 "function_name": {"type": "string"},
                 "pr_number": {"type": "integer"},
@@ -68,30 +115,18 @@ _TOOLS: tuple[ToolDescriptor, ...] = (
         },
     ),
     ToolDescriptor(
-        name="context_file_owners",
-        category="context_lookup",
-        description="Owners / reviewers inferred for a file in this pot.",
-        json_schema={
-            "type": "object",
-            "properties": {
-                "file_path": {"type": "string"},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
-            },
-            "required": ["file_path"],
-        },
-    ),
-    ToolDescriptor(
-        name="context_graph_overview",
+        name="context_prior_bugs",
         category="context_lookup",
         description=(
-            "High-level readiness/size signal for this pot (entity/edge "
-            "counts, recent activity). Use to decide whether the graph "
-            "already has relevant memory."
+            "Prior occurrences of a symptom and the fixes / decisions that "
+            "resolved them. Use when an event describes a bug, incident, or "
+            "regression to check whether it has happened before."
         ),
         json_schema={
             "type": "object",
             "properties": {
-                "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
+                "query": {"type": "string", "description": "symptom / error to match"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 8},
             },
         },
     ),
@@ -104,8 +139,8 @@ def _run_query(graph: ContextGraphPort, query: ContextGraphQuery) -> dict[str, A
     The agent may invoke tools from inside a running event loop (pydantic-deep
     runs under ``asyncio.run``). ``ContextGraphPort.query()`` handles this by
     raising only for answer queries when a loop is already running; the
-    evidence-leg queries used by these tools (semantic_search, change_history,
-    owners, graph_overview) execute on the sync path.
+    retrieve-goal queries used by these tools (the generic search and the P9
+    reader lookups) execute on the sync path.
     """
     try:
         result = graph.query(query)
@@ -148,71 +183,42 @@ class ContextGraphReconciliationTools(ReconciliationToolsPort):
     ) -> dict[str, Any]:
         if not self._graph.enabled:
             return {"error": "context_graph_disabled", "kind": "error"}
+        if tool_name not in READ_TOOL_INCLUDE:
+            return {"error": f"unknown_tool:{tool_name}", "kind": "error"}
+        args = arguments or {}
         pot_id = request.pot_id
         repo_name = request.repo_name
-        args = arguments or {}
-        if tool_name == "context_search":
-            q = str(args.get("query") or "").strip()
-            if not q:
+        query = str(args.get("query") or "").strip()
+        limit = max(1, min(int(args.get("limit") or 12), 50))
+        include = READ_TOOL_INCLUDE[tool_name]
+
+        if include is None:  # generic, intent-routed search
+            if not query:
                 return {"error": "query_required", "kind": "error"}
-            limit = int(args.get("limit") or 8)
             labels_arg = args.get("node_labels") or []
-            node_labels = [str(x) for x in labels_arg] if isinstance(labels_arg, list) else []
-            return _run_query(
-                self._graph,
-                preset_semantic_search(
-                    pot_id=pot_id,
-                    query=q,
-                    limit=max(1, min(limit, 25)),
-                    repo_name=repo_name,
-                    node_labels=node_labels or None,
-                ),
+            node_labels = (
+                [str(x) for x in labels_arg] if isinstance(labels_arg, list) else []
             )
-        if tool_name == "context_recent_changes":
-            file_path = args.get("file_path")
-            function_name = args.get("function_name")
+            graph_query = preset_context_search(
+                pot_id=pot_id,
+                query=query,
+                repo_name=repo_name,
+                node_labels=node_labels or None,
+                limit=limit,
+            )
+        else:  # targeted single-reader lookup
             pr_number = args.get("pr_number")
-            limit = int(args.get("limit") or 10)
-            if not any([file_path, function_name, pr_number]):
-                return {
-                    "error": "one_of_file_path_function_name_pr_number_required",
-                    "kind": "error",
-                }
-            return _run_query(
-                self._graph,
-                preset_change_history(
-                    pot_id=pot_id,
-                    file_path=file_path,
-                    function_name=function_name,
-                    pr_number=int(pr_number) if pr_number else None,
-                    repo_name=repo_name,
-                    limit=max(1, min(limit, 25)),
-                ),
+            graph_query = preset_reader_lookup(
+                pot_id=pot_id,
+                include=include,
+                query=query or None,
+                repo_name=repo_name,
+                file_path=args.get("file_path"),
+                function_name=args.get("function_name"),
+                pr_number=int(pr_number) if pr_number else None,
+                limit=limit,
             )
-        if tool_name == "context_file_owners":
-            file_path = args.get("file_path")
-            if not file_path:
-                return {"error": "file_path_required", "kind": "error"}
-            limit = int(args.get("limit") or 5)
-            return _run_query(
-                self._graph,
-                preset_file_owners(
-                    pot_id=pot_id,
-                    file_path=str(file_path),
-                    repo_name=repo_name,
-                    limit=max(1, min(limit, 10)),
-                ),
-            )
-        if tool_name == "context_graph_overview":
-            limit = int(args.get("limit") or 20)
-            return _run_query(
-                self._graph,
-                preset_graph_overview(
-                    pot_id=pot_id,
-                    limit=max(1, min(limit, 50)),
-                ),
-            )
-        return {"error": f"unknown_tool:{tool_name}", "kind": "error"}
+        return _run_query(self._graph, graph_query)
 
 
 def build_initial_context_snapshot(
@@ -224,12 +230,12 @@ def build_initial_context_snapshot(
     """Prefetch a bounded baseline snapshot the agent sees before any tool call."""
     out: dict[str, Any] = {}
     try:
-        out["graph_overview"] = tools.execute_read_tool(
-            request, "context_graph_overview", {"limit": 20}
+        out["infra_topology"] = tools.execute_read_tool(
+            request, "context_infra_topology", {"limit": 20}
         )
     except Exception:
-        logger.exception("graph_overview snapshot failed")
-        out["graph_overview"] = {"error": "snapshot_failed", "kind": "error"}
+        logger.exception("infra_topology snapshot failed")
+        out["infra_topology"] = {"error": "snapshot_failed", "kind": "error"}
     if semantic_seed:
         try:
             out["semantic_seed"] = tools.execute_read_tool(
@@ -267,4 +273,5 @@ __all__ = [
     "ContextGraphReconciliationTools",
     "build_initial_context_snapshot",
     "READ_TOOL_DESCRIPTORS",
+    "READ_TOOL_INCLUDE",
 ]

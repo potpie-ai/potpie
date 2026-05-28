@@ -2,7 +2,13 @@
 
 > Living plan for what the bench measures, how it scores, and which instances exist.
 > Pairs with `app/src/context-engine/benchmarks/README.md` (the how-to-run guide).
-> Last revised: 2026-05-20.
+> Last reviewed for local-first docs: 2026-05-28.
+
+This is a graph-quality benchmark plan, not the open-source packaging roadmap.
+Use it to validate that local and managed graph adapters return equivalent
+agent envelopes for the same seeded corpus. Mentions of `--local` or
+`InProcessEngineClient` refer to benchmark execution mode, not the final
+daemon-based OSS product shape.
 
 The bench exists to give us a per-dimension score for the engine that survives
 ontology / query-layer churn, so that the work of improving each layer shows up
@@ -548,11 +554,11 @@ benchable end-to-end after Phase 2.
 | **P1 — Canonical universe** | Author `universe/acme/` seed bundle + universe seeder. | Seeding a pot produces the topology, team, 3 ADRs, 2 runbooks without bench-time errors. | **Done** (8 seed envelopes; ramp to full 10-ADR bundle deferred) |
 | **P2 — Schema + sub-axes** | Schema extensions, precision/coverage evaluators, distractor injection, per-use-case axis weights. | Scenarios score on all three primary axes + coverage + precision; report shows new panels. | **Done** |
 | **P3 — Connectors** | Slack / Notion / repo_docs / alerting / deploy fixture connectors. | At least one fixture per new source, validated by `fixture validate`. | **Done** — fixtures land; engine-side stubs ship as `_bench_stubs.py` (passive plan-only) |
-| **P4 — Quick corpus** | Author the 30 quick-tier instances (per §5.4). 1× easy + 1× medium per use case first; ramp. | All 30 scenarios load; ≥ 80 % execute end-to-end (pass rate unimportant at this stage). | **Seed (5 of 30)** — OPS-218 + PREF/INFRA/TIME easy + COMBO medium |
-| **P5 — Composite & adversarial** | 5 composite scenarios + adversarial ladder rung for each use case. | Composite scenarios score per declared dimension; adversarial scenarios run without crashing the reconciliation agent. | **Planned** |
-| **P6 — Extended ramp** | Ramp to 60 instances; nightly CI job. | Nightly run produces a report; baseline diff hooked up. | **Partial** — baseline-diff renderer + smoke gate landed 2026-05-20; nightly CI still planned |
+| **P4 — Quick corpus** | Author the 30 quick-tier instances (per §5.4). 1× easy + 1× medium per use case first; ramp. | All 30 scenarios load; ≥ 80 % execute end-to-end (pass rate unimportant at this stage). | **Done** (2026-05-25) — 30 quick-tier instances authored across PREF/INFRA/TIME/BUG/COMBO; all load + smoke clean. See the 2026-05-25 corpus expansion note below. |
+| **P5 — Composite & adversarial** | 5 composite scenarios + adversarial ladder rung for each use case. | Composite scenarios score per declared dimension; adversarial scenarios run without crashing the reconciliation agent. | **Done** (2026-05-25) — 7 COMBO (per-dimension) + adversarial rungs for BUG/INFRA/TIME. See the 2026-05-25 corpus expansion note below. |
+| **P6 — Extended ramp** | Ramp to 60 instances; nightly CI job. | Nightly run produces a report; baseline diff hooked up. | **In progress** — 48 of 60 (18 extended landed 2026-05-25); baseline-diff renderer + smoke gate already in; nightly CI still planned |
 
-### 8.2 What landed in the 2026-05-20 operational pass (Tier 1/2/3 follow-up)
+### 2026-05-20 operational pass (Tier 1/2/3 follow-up)
 
 Triggered by review findings from running the bench end-to-end against the live engine:
 
@@ -577,11 +583,123 @@ Triggered by review findings from running the bench end-to-end against the live 
 - `--ablate reconciliation` ablation mode (needs engine-side header support).
 - Real-data corpus anchor (P6 nightly + capture-and-redact tooling).
 
+### 2026-05-26 schema-independent pass
+
+Triggered by the recognition that the per-rubric judge and the deterministic ingestion / retrieval evaluators were measuring the **engine's data model** (graph labels, include vocabulary, fixture ids) almost as much as the agent's actual answer quality — so every ontology / read-trunk refactor moved the score. The pass adds an **invariant** grading mode and a **light** runner subset:
+
+- **`evaluators/llm_judge_invariant.py`.** New schema-independent judge. Inputs: the scenario's `signal:`-tagged envelopes (full JSON) + counts of seed/distractor events (without content) + the agent's full answer. One LLM call returns four 0..100 sub-scores (faithfulness / coverage / clarity / usefulness), weighted 30/30/20/20 → aggregate. The engine's `coverage`/`includes`/`items` shape is *not* shown to the judge — the schema-independence is enforced at prompt-construction time.
+- **Runner branch in `runner.py`.** `run_scenario(..., invariant=True)` keeps the full data path (ingest + reconcile + query) but: (a) ingestion + retrieval axes drop their gating role (they're recorded in the report as diagnostics only), (b) synthesis is replaced by the invariant judge, (c) aggregate = invariant score, (d) `_build_by_dimension` broadcasts the invariant score across declared COMBO dimensions.
+- **CLI: `--invariant` flag** on `run` (any filter combo) + new top-level **`run-light`** subcommand that selects scenarios tagged `light: true`, defaults `--concurrency 5`, and turns invariant on by default. Five-way parallel, schema-independent, end-to-end.
+- **Light subset (5 scenarios).** `pref_logging_structlog` (PREF/easy), `infra_topology_basic` (INFRA/easy), `time_recent_changes_window_14d` (TIME/easy), `bug_redis_connection_flap` (BUG/easy), `combo_onboarding_new_engineer` (COMBO/medium). New `light: bool = False` field on `Scenario`; loader picks it up; `list --json` surfaces it. A corpus test asserts exactly one light scenario per dimension so the curated subset can't drift.
+- **Tests: 16 new** across two files. `test_invariant_judge.py` exercises the prompt builder (asserts engine-internal field values like `ready` / `prior_bugs` don't leak into the judge prompt), the JSON parser (strict / fenced / clamped / unparseable), the weighted aggregate, the empty-response short-circuit, and the unparseable-response failure path with a stubbed OpenAI client. `test_light_subset.py` exercises the loader field + the per-dimension corpus invariant. **55 / 55 bench tests pass.**
+
+This is the first signal in the bench that survives schema churn by construction: changing an include name or splitting a node label doesn't move the invariant score because the judge never sees those concepts.
+
 P0 + P1 + P2 is the smallest valuable beachhead — those are done, so
 every ontology change to the engine now produces a clean score signal.
 P3 onward is corpus expansion that runs in parallel.
 
-### 8.1 What landed in the 2026-05-20 implementation pass
+### 2026-05-25 corpus expansion (P4 + P5 + extended ramp)
+
+The corpus went from **5 authored scenarios → 48** (30 quick + 18 extended),
+clearing the §5.4 quick-tier target (30) and starting the extended ramp.
+All 48 pass `python -m benchmarks smoke` (fixture resolution + timeline
+assembly + evaluator math + reporting) and `python -m benchmarks fixture
+validate`. Coverage by use case × difficulty:
+
+| Use case | easy | medium | hard | adversarial | total |
+|---|---:|---:|---:|---:|---:|
+| PREF  | 2 | 5 | 3 | 0 | 10 |
+| INFRA | 1 | 4 | 3 | 1 | 9 |
+| TIME  | 2 | 4 | 2 | 1 | 9 |
+| BUG   | 4 | 4 | 4 | 1 | 13 |
+| COMBO | 0 | 3 | 4 | 0 | 7 |
+
+- **Universe ramp.** Added ADR-002 (testing), ADR-031 (security/input
+  validation), ADR-045 (DB migrations + the +25% capacity rule, formalising
+  the OPS-220 lesson), and an environments-and-secrets matrix doc to
+  `fixtures/raw_events/universe/acme/` (8 → 12 seed envelopes). Added four
+  clone-mode distractor templates under `fixtures/raw_events/noise/`
+  (github / linear / slack / alerting).
+- **Connectors exercised for real.** The previously-empty `notion/`,
+  `alerting/`, and `deploy/` fixture dirs are now populated; every scenario
+  draws from the source mix its difficulty rung demands (single → full →
+  adversarial). ~110 fixture envelopes total.
+- **BUG (13).** Authored: pool-exhaustion v2 (multi-source OPS-218→OPS-389),
+  OOM-consumer, redis-flap, pydantic v1/v2 conflict, JWT-expiry race,
+  staging↔prod config drift, **celery worker-starvation (adversarial: two
+  near-miss priors, only one correct)**, plus extended n+1, CORS, Stripe
+  webhook idempotency, disk-full-from-debug-logging, kafka rebalance storm.
+- **PREF (10).** error-handling/AcmeError, pydantic-over-dataclass, test
+  layout, **naming/style accumulated from review comments (no ADR)**,
+  security input validation, plus extended api-versioning, db-migration,
+  async-celery, dependency-pinning.
+- **INFRA (9).** env-adapter matrix, deploy flow, secret routing, on-call
+  topology, plus extended kafka topology, cache strategy, data-flow lineage,
+  and an **adversarial service-dependency-removal (fresh vs stale doc)**.
+- **TIME (9).** PR↔issue attribution, deploy→symptom correlation, multi-
+  quarter drift, hotspot detection, **window edge-cases (±1h of the 14d
+  boundary)**, plus extended release cadence, incident-timeline reconstruct,
+  dependency-bump history.
+- **COMBO (7).** debug-recent-infra-change (TIME+BUG+INFRA), postmortem
+  drafting (BUG+TIME), release readiness (TIME+INFRA), decision-lookup-with-
+  recency (PREF+TIME), incident-to-prevention (BUG+PREF), capacity planning
+  (INFRA+TIME) — each per-dimension graded.
+
+**Live end-to-end status (2026-05-25, branch `feat/ce-observability`).**
+The bench runs against a live engine end-to-end (pot create →
+`/events/reconcile` → graph snapshot → `context_resolve` → report → drop);
+reconciliation runs for real (the `pydantic-deep` agent on `gpt-5.4-mini`,
+real entity/edge mutations). After the read-trunk consolidation (P8/P9) three
+alignment fixes were needed and landed (2026-05-25):
+
+1. **Status endpoint (engine).** `report_status.py` referenced the removed
+   `ContextEngineContainer.resolution_service` and `.readers` attributes →
+   `/context/status` 500'd (blocked `probe`). Repointed to `container.context_graph`
+   and derived the reader manifest from `READER_BACKED_INCLUDES`. `probe` is
+   now **READY** (all 7 connectors registered, all drain checks pass).
+2. **Graph snapshot (bench).** The read trunk answers every read as an
+   `AgentEnvelope` (`result.items[]`), not `result.nodes/edges` — so the
+   old snapshot parser saw 0 entities. `core/graph_inspect.py` now
+   reconstructs entities + edges from the envelope's claim items
+   (`payload.subject_key/object_key/predicate`; label from key prefix),
+   querying **unscoped** with the reader-backed includes for the full topology.
+3. **Retrieval evaluator + include vocab (bench).** The engine's read vocab is
+   now `{coding_preferences, infra_topology, timeline, prior_bugs}` + planned
+   `{owners, decisions, docs}`; scenarios used the old vocab (`service_map`,
+   `prior_fixes`, …) so nothing routed to a reader. `evaluators/retrieval.py`
+   now reads the envelope shape (`coverage`/`items`/`answer`), and all 48
+   scenarios' `query.include` / `required_includes_used` were migrated to the
+   reader-backed vocab.
+
+Verified live: `infra_topology_basic` scores **ingestion 100 / retrieval 100**
+(`includes_used=['infra_topology']`, cites the architecture doc, 0 failed
+events, 41 entities / 50 edges).
+
+**In-process harness (recommended; non-blocking, no :8001).** A new driver
+(`benchmarks/core/local_engine.py`, `InProcessEngineClient`) runs the bench
+**without the HTTP server on :8001 and without a Celery worker** — it builds
+the engine container in-process and reconciles inline against the shared
+Postgres/Neo4j via the same `handle_process_batch` verb the worker uses.
+Activate with `python -m benchmarks run --local` (or `POTPIE_BENCH_INPROCESS=1`).
+This frees the app's port, is fully self-contained (needs only Postgres +
+Neo4j up + `OPENAI_API_KEY`), and — being single-threaded — sidesteps the
+"Event loop is closed" race below entirely. Verified: `--local` on
+`infra_topology_basic` reconciles with 0 failed events and retrieval 100.
+
+**Operational notes for the HTTP path:**
+- Run the Celery worker with `--pool=solo --concurrency=1`. Under the
+  `threads` pool, concurrent reconciliation batches hit an
+  *"Event loop is closed"* asyncio-across-threads race in the `pydantic-deep`
+  agent (a separate engine concurrency bug) that fails most events; `solo`
+  serializes and reconciles cleanly. (The in-process harness avoids this.)
+- Use `--ingest-timeout` ≥ 600 — the 12-seed universe makes per-scenario
+  warmup heavy under per-event LLM reconciliation.
+- Synthesis (judge) axis needs an engine answer synthesizer
+  (`CONTEXT_ENGINE_ANSWER_SYNTHESIS_MODEL`); without it `goal=answer` returns
+  a deterministic fallback summary and the judge grades thin.
+
+### 2026-05-20 implementation pass
 
 - `scenario.py` rewrite: new enums (`USE_CASES`, `DIMENSIONS`,
   `DIFFICULTIES`, `SOURCE_MIXES`), schema fields (`dimensions`,

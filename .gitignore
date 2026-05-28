@@ -10,6 +10,8 @@ venv/
 .env
 *.json
 !seed/data/**/*.json
+# Vendored Daytona local-dev stack (config bound into the compose containers)
+!app/src/sandbox/daytona/**/*.json
 .momentum
 db
 cli/momentum_cli/.momentum

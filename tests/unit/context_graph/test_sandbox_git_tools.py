@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from adapters.outbound.agent_tools._sandbox_git_tools import _GIT_HARDENING
 from adapters.outbound.agent_tools.sandbox import (
     PotSandboxConfig,
     RepoAttachment,
@@ -16,6 +17,12 @@ from adapters.outbound.agent_tools.sandbox import (
 )
 
 pytestmark = pytest.mark.unit
+
+# git commands are exec'd with the protocol-hardening ``-c`` flags spliced in
+# right after ``git`` (``git <hardening> <subcommand> …``), so a positional
+# arg that was at index N is now at ``len(_GIT_HARDENING) + N``.
+_HARD = len(_GIT_HARDENING)
+_REF_IDX = 1 + _HARD + 2  # git, <hardening>, subcommand, origin/--detach, ref
 
 
 @dataclass
@@ -146,7 +153,7 @@ class TestSandboxGitLog:
             since="2 weeks ago", limit=10
         )
         cmd = client.exec_log[0]
-        assert cmd[0:3] == ["git", "log", "--max-count=10"]
+        assert cmd[: _HARD + 3] == ["git", *_GIT_HARDENING, "log", "--max-count=10"]
         assert any(arg.startswith("--pretty=format:") for arg in cmd)
         assert "--since=2 weeks ago" in cmd
         assert out["count"] == 2
@@ -187,8 +194,9 @@ class TestSandboxCheckout:
         tools = _build_tools(repos=[("a", "x")], client=client)
         out = await _get_func(tools["sandbox_checkout"])(ref="main")
         assert out == {"repo": "a/x", "ref": "main", "head_sha": "deadbeef"}
-        assert client.exec_log[0][:3] == ["git", "fetch", "origin"]
-        assert client.exec_log[1][:3] == ["git", "checkout", "--detach"]
+        assert client.exec_log[0][: _HARD + 3] == ["git", *_GIT_HARDENING, "fetch", "origin"]
+        assert client.exec_log[1][: _HARD + 3] == ["git", *_GIT_HARDENING, "checkout", "--detach"]
+        # rev-parse is a bare read — no protocol hardening spliced in.
         assert client.exec_log[2] == ["git", "rev-parse", "HEAD"]
 
     async def test_force_flag_passed_to_checkout(self) -> None:
@@ -227,19 +235,15 @@ class TestSandboxCheckout:
         )
         # Both completed successfully.
         assert all("head_sha" in r for r in results)
-        # Each three-call block stays contiguous.
-        cmds = [c[2] if len(c) > 2 else "" for c in client.exec_log]
-        # The two blocks: ['alpha', '--detach' or 'alpha', 'HEAD'] +
-        # ['beta', '--detach' or 'beta', 'HEAD'] OR the reverse order.
-        # Verify no interleaving: refs in fetch positions (indices 0, 3) are
-        # different, and same ref appears in the checkout positions (1, 4).
-        fetch_refs = {client.exec_log[0][3], client.exec_log[3][3]}
+        # Each three-call block (fetch, checkout, rev-parse) stays contiguous;
+        # no interleaving. The ref lands at the same position in the fetch and
+        # checkout commands (after the spliced-in hardening flags).
+        fetch_refs = {client.exec_log[0][_REF_IDX], client.exec_log[3][_REF_IDX]}
         assert fetch_refs == {"alpha", "beta"}
-        # The ref on index 1 (first checkout) matches the ref on index 0
-        # (first fetch).
-        assert client.exec_log[0][3] == client.exec_log[1][3]
+        # The ref on the first checkout matches the ref on the first fetch.
+        assert client.exec_log[0][_REF_IDX] == client.exec_log[1][_REF_IDX]
         # Similarly for the second block.
-        assert client.exec_log[3][3] == client.exec_log[4][3]
+        assert client.exec_log[3][_REF_IDX] == client.exec_log[4][_REF_IDX]
 
 
 @pytest.mark.asyncio

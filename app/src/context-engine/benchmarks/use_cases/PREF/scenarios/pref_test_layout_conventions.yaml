@@ -1,0 +1,131 @@
+id: pref_test_layout_conventions
+use_case: PREF
+tier: quick
+difficulty: medium
+source_mix: dual
+universe: acme
+
+description: |
+  An engineer is about to write the first unit test for a new
+  checkout-api handler (`app/handlers/orders.py`) and asks the agent
+  where the test goes and what conventions apply. Two sources reinforce
+  the same rules:
+
+    - ADR-002 (`docs/adr/002-test-conventions.md`) — the canonical
+      decision: tests live in `tests/` mirroring the package tree
+      (`tests/unit|integration|e2e`), pytest only (no
+      `unittest.TestCase`), behaviour-stating names
+      (`test_<unit>_<condition>_<expected>`), no network/real DB in
+      `tests/unit/` (use `acme.testing.fakes`), `conftest.py` at the
+      narrowest scope, `parametrize` over loops, and an 85% coverage
+      gate.
+    - A recent GitHub PR (#1219) that added exactly such tests for the
+      order-lookup handler: file at
+      `tests/unit/handlers/test_orders.py` mirroring the source,
+      plain `def test_...` functions with behaviour names, parametrize,
+      in-memory fakes, a narrow `conftest.py`, and coverage kept above
+      the gate.
+
+  Ground truth: the test for `app/handlers/orders.py` goes at
+  `tests/unit/handlers/test_orders.py`; use plain pytest functions (not
+  `unittest.TestCase`); name them by behaviour; keep `tests/unit/`
+  network-free using `acme.testing.fakes`; use `parametrize`; respect
+  the 85% coverage gate.
+
+  Why it's hard: medium distractor noise plus the need to translate a
+  policy document into a *specific file path* for *this* source file —
+  the engine has to derive the mirrored path
+  `app/handlers/orders.py` → `tests/unit/handlers/test_orders.py` from
+  the rule, using PR #1219 as the worked precedent.
+
+ingest:
+  - { event: github/pref_pr__1219__mirrored_test_layout.json, at: "-16d", tags: [signal] }
+
+distractor_events:
+  - { event: noise/github_chore_noise_template.json, at: "-38d..-4d", count: 12 }
+  - { event: noise/linear_issue_noise_template.json, at: "-42d..-6d", count: 5 }
+
+post_ingest_assertions:
+  # NOTE (read-layer gating): ADR-002 (Document/Decision) and the PR #1219
+  # enforcement event are reconciled, but the topology read path surfaces
+  # only Service/DataStore + DEPENDS_ON/USES — not Document/Decision/Person.
+  # We anchor the structural floor on the checkout-api Service under test
+  # and grade the PREF capability via retrieval + judge.
+  graph_must_contain_entities:
+    - { label: Service, key_pattern: "service:.*checkout-api", min_count: 1 }
+  graph_must_not_contain:
+    - { label: Issue, key_pattern: "NOISE-.*", max_count: 0 }
+  no_orphan_entities: false
+  reconciliation:
+    soft_downgrades_max: 4
+    failed_events_max: 0
+
+query:
+  intent: test
+  scope: { service: checkout-api }
+  include: [coding_preferences, decisions, docs]
+  mode: balanced
+  source_policy: summary
+
+retrieval_assertions:
+  required_includes_used: [coding_preferences]
+  source_refs_min: 2
+  must_cite_event_id:
+    - universe/acme/23-adr-002-testing.json
+    - github/pref_pr__1219__mirrored_test_layout.json
+  must_not_cite_event_id:
+    - noise/github_chore_noise_template.json
+    - noise/linear_issue_noise_template.json
+  forbid_in_answer:
+    - "I don't have information"
+    - "no testing conventions"
+
+judge:
+  pass_score: 65
+  criteria:
+    - name: derives_mirrored_test_path
+      weight: 30
+      pass_threshold: 4
+      dimensions: [PREF]
+      prompt: |
+        Does the answer give the correct mirrored test path for
+        `app/handlers/orders.py` — i.e. `tests/unit/handlers/test_orders.py`
+        — and explain the mirrored-tree + unit/integration/e2e split
+        from ADR-002? A vague "put it in tests/" without the mirrored
+        path fails.
+    - name: pytest_style_rules
+      weight: 25
+      pass_threshold: 3
+      dimensions: [PREF]
+      prompt: |
+        Does the answer require pytest (plain `def test_...` functions,
+        NOT `unittest.TestCase`), behaviour-stating test names, and
+        `parametrize` for table cases? At least two of these three must
+        be present and correct to pass.
+    - name: no_network_in_unit
+      weight: 20
+      pass_threshold: 3
+      dimensions: [PREF]
+      prompt: |
+        Does the answer state that `tests/unit/` must not touch the
+        network or a real DB, using the in-memory fakes
+        (`acme.testing.fakes`), and mention the 85% coverage gate?
+        Mentioning narrow-scope `conftest.py` is a bonus.
+    - name: uses_pr_precedent
+      weight: 10
+      pass_threshold: 3
+      dimensions: [PREF]
+      prompt: |
+        Does the answer reference PR #1219 as the worked precedent for
+        the order-lookup tests (mirrored path + fakes + parametrize),
+        rather than only quoting the ADR abstractly?
+    - name: no_invented_rules
+      weight: 15
+      pass_threshold: 5
+      dimensions: [PREF]
+      prompt: |
+        Does every cited rule map to ADR-002 or PR #1219? Valid
+        identifiers: ADR-002, pytest, unittest.TestCase, parametrize,
+        acme.testing.fakes, conftest.py, 85% coverage,
+        tests/unit|integration|e2e, PR #1219, checkout-api. Any other
+        coverage number, ADR, runner, or invented rule must fail.

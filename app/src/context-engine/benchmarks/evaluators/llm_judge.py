@@ -104,27 +104,48 @@ def _build_user_prompt(
     return "\n".join(sections)
 
 
+def _create_judge_completion(client: Any, messages: list[dict[str, str]]):
+    """Call chat.completions, tolerating the max_tokens vs max_completion_tokens split.
+
+    Newer OpenAI models (gpt-5.x / o-series) reject ``max_tokens`` and require
+    ``max_completion_tokens``; older models only know ``max_tokens``. Try the
+    newer parameter first and fall back on the specific BadRequest.
+    """
+    try:
+        return client.chat.completions.create(
+            model=JUDGE_MODEL,
+            max_completion_tokens=JUDGE_MAX_TOKENS,
+            messages=messages,
+        )
+    except Exception as exc:  # noqa: BLE001 — narrow on the param error below
+        msg = str(exc)
+        if "max_completion_tokens" in msg or "max_tokens" in msg or "Unsupported parameter" in msg:
+            return client.chat.completions.create(
+                model=JUDGE_MODEL,
+                max_tokens=JUDGE_MAX_TOKENS,
+                messages=messages,
+            )
+        raise
+
+
 def _grade_one(
     client: Any, *, description: str, query: QuerySpec, response: dict[str, Any], criterion: JudgeCriterion
 ) -> CriterionGrade:
     prompt = _build_user_prompt(
         description=description, query=query, response=response, criterion=criterion
     )
-    completion = client.chat.completions.create(
-        model=JUDGE_MODEL,
-        max_tokens=JUDGE_MAX_TOKENS,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a strict, calibrated evaluator of agent answers. "
-                    "You score one criterion at a time. Be conservative: 5 is rare and "
-                    "means the answer fully and explicitly satisfies the criterion."
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ],
-    )
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a strict, calibrated evaluator of agent answers. "
+                "You score one criterion at a time. Be conservative: 5 is rare and "
+                "means the answer fully and explicitly satisfies the criterion."
+            ),
+        },
+        {"role": "user", "content": prompt},
+    ]
+    completion = _create_judge_completion(client, messages)
     text = (completion.choices[0].message.content or "") if completion.choices else ""
     match = _SCORE_RE.search(text)
     if not match:

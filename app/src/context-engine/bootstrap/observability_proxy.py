@@ -6,11 +6,9 @@ sprinkled into the adapters themselves. The proxy forwards every
 attribute untouched and wraps only public *callables* in a span +
 latency histogram + error counter.
 
-Scope note: applied to the Neo4j structural read adapter (all-sync
-``get_*`` surface, zero ``isinstance`` coupling — safe to wrap). The
-Graphiti episodic adapter is intentionally *not* proxied: a route does
-``isinstance(container.episodic, GraphitiEpisodicAdapter)``, and its
-hottest call (``add_episode``) already has a dedicated span. Only applied
+Generic — use it to wrap any infra adapter whose public methods we want
+spans + metrics for. The wrapped target must keep its public callables
+free of ``isinstance`` coupling from the surrounding code. Only applied
 when observability is live, so there is zero overhead in the NoOp default.
 """
 

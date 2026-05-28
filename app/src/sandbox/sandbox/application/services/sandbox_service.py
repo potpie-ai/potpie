@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from sandbox.domain.errors import (
@@ -13,8 +14,13 @@ from sandbox.domain.models import (
     Author,
     ExecRequest,
     ExecResult,
+    ExecSessionResult,
     Mount,
     NetworkMode,
+    SESSION_YIELD_MAX_MS,
+    SESSION_YIELD_MIN_MS,
+    SessionExecRequest,
+    SessionInputRequest,
     PullRequest,
     PullRequestComment,
     PullRequestCommentResult,
@@ -571,9 +577,12 @@ class SandboxService:
                 continue
         return {"hibernated": hibernated, "destroyed": destroyed}
 
-    async def _exec_unlocked(
-        self, workspace_id: str, request: ExecRequest
-    ) -> ExecResult:
+    async def _resolve_running_runtime(self, workspace_id: str) -> Runtime:
+        """Find (or create) the workspace's runtime and ensure it is running.
+
+        Shared by the one-shot exec path and the unified-exec session path so
+        both provision and cold-start the runtime identically.
+        """
         runtime = await self._store.find_runtime_by_workspace(
             workspace_id, self._runtime_provider.kind
         )
@@ -583,19 +592,93 @@ class SandboxService:
             runtime = await self._runtime_provider.start(runtime)
         if runtime.state is RuntimeState.DELETED:
             raise RuntimeNotFound(f"Runtime was deleted: {runtime.id}")
+        return runtime
 
-        result = await self._runtime_provider.exec(runtime, request)
+    async def _touch_runtime(self, runtime: Runtime) -> None:
         runtime.last_used_at = utc_now()
         runtime.updated_at = utc_now()
         await self._store.save_runtime(runtime)
 
+    async def _mark_workspace_used(
+        self, workspace_id: str, *, dirty: bool = False
+    ) -> None:
         workspace = await self.get_workspace(workspace_id)
         workspace.last_used_at = utc_now()
         workspace.updated_at = utc_now()
-        if request.command_kind.mutates_workspace and result.exit_code == 0:
+        if dirty:
             workspace.dirty = True
         await self._store.save_workspace(workspace)
+
+    async def _exec_unlocked(
+        self, workspace_id: str, request: ExecRequest
+    ) -> ExecResult:
+        runtime = await self._resolve_running_runtime(workspace_id)
+        result = await self._runtime_provider.exec(runtime, request)
+        await self._touch_runtime(runtime)
+        await self._mark_workspace_used(
+            workspace_id,
+            dirty=request.command_kind.mutates_workspace and result.exit_code == 0,
+        )
         return result
+
+    # ------------------------------------------------------------------
+    # Unified exec — Codex-style streamable sessions.
+    #
+    # Sessions are deliberately NOT taken under the per-workspace write lock:
+    # a long-lived command (dev server, REPL, watch build) would otherwise
+    # hold the lock for its whole lifetime and deadlock concurrent tools.
+    # Isolation is the backend's job (one sandbox per pot); the write lock
+    # only guards the atomic one-shot mutation path.
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _clamp_yield_ms(yield_time_ms: int) -> int:
+        return max(SESSION_YIELD_MIN_MS, min(int(yield_time_ms), SESSION_YIELD_MAX_MS))
+
+    async def exec_session_start(
+        self, workspace_id: str, request: SessionExecRequest
+    ) -> ExecSessionResult:
+        runtime = await self._resolve_running_runtime(workspace_id)
+        request = replace(request, yield_time_ms=self._clamp_yield_ms(request.yield_time_ms))
+        result = await self._runtime_provider.exec_session_start(runtime, request)
+        await self._touch_runtime(runtime)
+        # A write-kind command may mutate the tree the moment it runs; mark
+        # the workspace dirty optimistically (we can't wait for an exit code
+        # on a long-lived session).
+        await self._mark_workspace_used(
+            workspace_id, dirty=request.command_kind.mutates_workspace
+        )
+        return result
+
+    async def exec_session_write(
+        self, workspace_id: str, request: SessionInputRequest
+    ) -> ExecSessionResult:
+        runtime = await self._resolve_running_runtime(workspace_id)
+        request = replace(request, yield_time_ms=self._clamp_yield_ms(request.yield_time_ms))
+        result = await self._runtime_provider.exec_session_write(runtime, request)
+        await self._touch_runtime(runtime)
+        return result
+
+    async def exec_session_poll(
+        self,
+        workspace_id: str,
+        session_id: str,
+        *,
+        yield_time_ms: int = 10_000,
+        max_output_bytes: int | None = None,
+    ) -> ExecSessionResult:
+        runtime = await self._resolve_running_runtime(workspace_id)
+        result = await self._runtime_provider.exec_session_poll(
+            runtime,
+            session_id,
+            yield_time_ms=self._clamp_yield_ms(yield_time_ms),
+            max_output_bytes=max_output_bytes,
+        )
+        await self._touch_runtime(runtime)
+        return result
+
+    async def exec_session_kill(self, workspace_id: str, session_id: str) -> None:
+        runtime = await self._resolve_running_runtime(workspace_id)
+        await self._runtime_provider.exec_session_kill(runtime, session_id)
 
     def _build_runtime_spec(
         self,

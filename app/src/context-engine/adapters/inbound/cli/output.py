@@ -198,7 +198,7 @@ def _lifecycle_cli_tag(status: Any) -> str | None:
 
 
 def _format_search_provenance_line(row: dict[str, Any]) -> str | None:
-    """Human line: ``source: … • ref: YYYY-MM-DD • episode: shortuuid``."""
+    """Human line: ``source: … • ref: YYYY-MM-DD • mutation: shortuuid``."""
     parts: list[str] = []
     refs = row.get("source_refs")
     if isinstance(refs, list) and refs:
@@ -213,11 +213,11 @@ def _format_search_provenance_line(row: dict[str, Any]) -> str | None:
         else:
             date_part = s[:10] if len(s) >= 10 else s
         parts.append(f"ref: {escape(date_part)}")
-    ep = row.get("episode_uuid")
-    if ep:
-        s = str(ep)
+    mid = row.get("mutation_id")
+    if mid:
+        s = str(mid)
         short = s[:8] if len(s) >= 8 else s
-        parts.append(f"episode: {escape(short)}")
+        parts.append(f"mutation: {escape(short)}")
     if not parts:
         return None
     return " • ".join(parts)
@@ -310,27 +310,27 @@ def print_ingest_result(out: dict[str, Any], *, as_json: bool) -> None:
                 _err.print(f"  {row}")
         _err.print(
             "[dim]Hint: widen ontology (see docs/context-graph/graph.md) "
-            "or rephrase the episode.[/dim]"
+            "or rephrase the input.[/dim]"
         )
         return
     if status == "queued":
         event_id = out.get("event_id")
         _out.print(
-            f"[green]Episode queued[/green] (async). event_id={event_id} job_id={out.get('job_id')}"
+            f"[green]Event queued[/green] (async). event_id={event_id} job_id={out.get('job_id')}"
         )
         if event_id:
             _out.print(
                 f"[dim]Next: potpie event wait {event_id}  or  potpie event show {event_id}[/dim]"
             )
         return
-    ep = out.get("episode_uuid")
+    mid = out.get("mutation_id")
     ev = out.get("event_id")
-    if ep:
-        _out.print(f"[green]Episode ingested.[/green] episode_uuid={ep}")
+    if mid:
+        _out.print(f"[green]Mutations applied.[/green] mutation_id={mid}")
     elif ev:
-        _out.print(f"[green]Episode ingested.[/green] event_id={ev}")
+        _out.print(f"[green]Mutations applied.[/green] event_id={ev}")
     else:
-        _out.print("[green]Episode ingested.[/green]")
+        _out.print("[green]Mutations applied.[/green]")
     dgs = out.get("downgrades") or []
     if isinstance(dgs, list) and dgs:
         _out.print(

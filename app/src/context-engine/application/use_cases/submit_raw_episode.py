@@ -1,13 +1,9 @@
 """Submit a raw episode for ingestion.
 
-Two paths:
-
-- With a SQLAlchemy session, the episode is shaped into a
-  :class:`IngestionSubmissionRequest` (kind ``raw_episode``) and admitted
-  through the standard async batch pipeline.
-- Without a session, the episode is written directly through
-  :meth:`ContextGraphPort.write_raw_episode` — used by standalone CLI
-  invocations and by tests that don't run a full Postgres stack.
+The episode is shaped into a :class:`IngestionSubmissionRequest` (kind
+``raw_episode``) and admitted through the standard async batch pipeline.
+A database session is required; the old standalone synchronous direct-write
+path was removed along with the episodic tier.
 """
 
 from __future__ import annotations
@@ -37,7 +33,7 @@ class RawEpisodeSubmissionResult:
         "error",
         "reconciliation_rejected",
     ]
-    episode_uuid: str | None = None
+    mutation_id: str | None = None
     event_id: str | None = None
     job_id: str | None = None
     error: str | None = None
@@ -85,7 +81,7 @@ def _receipt_to_run_result(receipt: EventReceipt) -> RawEpisodeSubmissionResult:
         return RawEpisodeSubmissionResult(
             ok=True,
             status="queued",
-            episode_uuid=r.episode_uuid,
+            mutation_id=r.mutation_id,
             event_id=r.event_id,
             job_id=r.job_id,
             error=None,
@@ -94,7 +90,7 @@ def _receipt_to_run_result(receipt: EventReceipt) -> RawEpisodeSubmissionResult:
     return RawEpisodeSubmissionResult(
         ok=True,
         status="applied",
-        episode_uuid=r.episode_uuid,
+        mutation_id=r.mutation_id,
         event_id=r.event_id,
         job_id=r.job_id,
         error=None,
@@ -116,35 +112,17 @@ def submit_raw_episode(
     source_channel: str = "http",
     actor: Actor | None = None,
 ) -> RawEpisodeSubmissionResult:
-    """Apply or admit a raw Graphiti episode for ``pot_id``.
+    """Admit a raw episode for ``pot_id`` through the async ingest pipeline.
 
     Callers are responsible for authorization — HTTP routes call
     ``PolicyPort.authorize`` once before invoking this verb. The use case
     no longer re-checks ``settings.is_enabled()`` or ``pots.resolve_pot``.
     """
     if db is None:
-        if not sync:
-            return RawEpisodeSubmissionResult(
-                ok=False, status="error", error="async_requires_database"
-            )
-        if container.context_graph is None:
-            return RawEpisodeSubmissionResult(
-                ok=False, status="error", error="context_graph_unavailable"
-            )
-        out = container.context_graph.write_raw_episode(
-            pot_id,
-            name,
-            episode_body,
-            source_description,
-            reference_time,
-            actor=actor,
-        )
-        uid = out.get("episode_uuid")
-        if uid is None:
-            return RawEpisodeSubmissionResult(
-                ok=False, status="error", error="graphiti_returned_no_uuid"
-            )
-        return RawEpisodeSubmissionResult(ok=True, status="applied", episode_uuid=uid)
+        # Raw-episode ingest runs through the async DB pipeline; the standalone
+        # synchronous direct-write path was removed along with the episodic tier.
+        error = "async_requires_database" if not sync else "requires_database"
+        return RawEpisodeSubmissionResult(ok=False, status="error", error=error)
 
     svc = container.ingestion_submission(db)
     # ``IngestionSubmissionService.submit`` requires source_id; raw-episode

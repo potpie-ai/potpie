@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 import pytest
 
 from application.services.reconciliation_validation import validate_reconciliation_plan
@@ -11,7 +9,7 @@ from domain.context_events import EventRef
 from domain.errors import ReconciliationPlanValidationError
 from domain.graph_mutations import EdgeUpsert, EntityUpsert
 from domain.ontology import CANONICAL_EDGE_TYPES, CANONICAL_LABELS, EDGE_TYPES
-from domain.reconciliation import EpisodeDraft, ReconciliationPlan
+from domain.reconciliation import ReconciliationPlan
 
 pytestmark = pytest.mark.unit
 
@@ -20,22 +18,13 @@ def _ref() -> EventRef:
     return EventRef(event_id="evt-1", source_system="test", pot_id="p1")
 
 
-def _episode() -> EpisodeDraft:
-    return EpisodeDraft(
-        name="ep",
-        episode_body="body",
-        source_description="test",
-        reference_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
-    )
-
-
 def test_related_to_is_canonical() -> None:
     assert "RELATED_TO" in EDGE_TYPES
     assert "RELATED_TO" in CANONICAL_EDGE_TYPES
 
 
 def test_canonical_labels_export() -> None:
-    assert "Decision" in CANONICAL_LABELS
+    assert "Service" in CANONICAL_LABELS
 
 
 def test_soft_fail_coerces_adr_like_batch(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -45,7 +34,6 @@ def test_soft_fail_coerces_adr_like_batch(monkeypatch: pytest.MonkeyPatch) -> No
     plan = ReconciliationPlan(
         event_ref=_ref(),
         summary="adr",
-        episodes=[_episode()],
         entity_upserts=[
             EntityUpsert(
                 entity_key="person:alice",
@@ -88,31 +76,6 @@ def test_soft_fail_coerces_adr_like_batch(monkeypatch: pytest.MonkeyPatch) -> No
     assert adr.properties.get("title") == "Migrate ledger"
 
 
-def test_soft_fail_coerces_decision_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL", "1")
-    plan = ReconciliationPlan(
-        event_ref=_ref(),
-        summary="d",
-        episodes=[_episode()],
-        entity_upserts=[
-            EntityUpsert(
-                entity_key="dec:1",
-                labels=("Entity", "Decision"),
-                properties={
-                    "title": "t",
-                    "summary": "s",
-                    "status": "recorded",
-                },
-            ),
-        ],
-        edge_upserts=[],
-    )
-    validate_reconciliation_plan(plan, "p1")
-    ent = plan.entity_upserts[0]
-    assert ent.properties.get("status") == "unknown"
-    assert any(d["kind"] == "lifecycle_status" for d in plan.ontology_downgrades)
-
-
 def test_soft_fail_off_still_rejects(monkeypatch: pytest.MonkeyPatch) -> None:
     # Soft-fail is now ON by default; the legacy reject-on-error behaviour
     # is only available by explicitly opting in to strict mode.
@@ -123,7 +86,6 @@ def test_soft_fail_off_still_rejects(monkeypatch: pytest.MonkeyPatch) -> None:
     plan = ReconciliationPlan(
         event_ref=_ref(),
         summary="x",
-        episodes=[_episode()],
         entity_upserts=[
             EntityUpsert(
                 entity_key="e1",
@@ -145,7 +107,6 @@ def test_strict_overrides_soft_fail(monkeypatch: pytest.MonkeyPatch) -> None:
     plan = ReconciliationPlan(
         event_ref=_ref(),
         summary="x",
-        episodes=[_episode()],
         entity_upserts=[
             EntityUpsert(
                 entity_key="e1",
@@ -163,7 +124,6 @@ def test_duplicate_entity_keys_are_merged_by_canonicalization() -> None:
     plan = ReconciliationPlan(
         event_ref=_ref(),
         summary="dup",
-        episodes=[_episode()],
         entity_upserts=[
             EntityUpsert(
                 entity_key="same",
@@ -188,7 +148,6 @@ def test_invalid_iso_temporal_hard_error() -> None:
     plan = ReconciliationPlan(
         event_ref=_ref(),
         summary="t",
-        episodes=[_episode()],
         entity_upserts=[
             EntityUpsert(
                 entity_key="p:1",

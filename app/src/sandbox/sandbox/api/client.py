@@ -34,6 +34,7 @@ from sandbox.domain.models import (
     CommandKind,
     ExecRequest,
     ExecResult,
+    ExecSessionResult,
     PullRequest,
     PullRequestComment,
     PullRequestCommentResult,
@@ -42,6 +43,8 @@ from sandbox.domain.models import (
     RepoCacheRequest,
     RepoIdentity,
     RuntimeState,
+    SessionExecRequest,
+    SessionInputRequest,
     Workspace,
     WorkspaceMode,
     WorkspaceRequest,
@@ -424,6 +427,85 @@ class SandboxClient:
             shell=shell,
         )
         return await self._service.exec(handle.workspace_id, request)
+
+    # ------------------------------------------------------------------
+    # Unified exec — start a streamable/long-running command, then read its
+    # progress (and optionally feed it stdin) across multiple calls. Modeled
+    # on OpenAI Codex's exec_command / write_stdin. Backends that don't
+    # support sessions raise ``SessionsUnsupported``; check
+    # ``container.runtime_provider.capabilities.interactive_session`` first
+    # if you need to branch.
+    # ------------------------------------------------------------------
+    async def exec_start(
+        self,
+        handle: WorkspaceHandle,
+        cmd: list[str],
+        *,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        shell: bool = True,
+        tty: bool = False,
+        yield_time_ms: int = 10_000,
+        max_output_bytes: int | None = None,
+        command_kind: CommandKind = CommandKind.READ,
+    ) -> ExecSessionResult:
+        """Start a command in a session and collect output for the yield window.
+
+        Returns an :class:`ExecSessionResult`. If ``running`` is true the
+        command is still executing — keep its ``session_id`` and call
+        :meth:`exec_poll` to read more output or :meth:`exec_write_stdin` to
+        feed it input. If ``running`` is false the command finished and
+        ``exit_code`` is set.
+        """
+        request = SessionExecRequest(
+            cmd=tuple(cmd),
+            cwd=cwd,
+            env=dict(env or {}),
+            shell=shell,
+            tty=tty,
+            yield_time_ms=yield_time_ms,
+            max_output_bytes=max_output_bytes,
+            command_kind=command_kind,
+        )
+        return await self._service.exec_session_start(handle.workspace_id, request)
+
+    async def exec_write_stdin(
+        self,
+        handle: WorkspaceHandle,
+        session_id: str,
+        data: str = "",
+        *,
+        yield_time_ms: int = 10_000,
+        max_output_bytes: int | None = None,
+    ) -> ExecSessionResult:
+        """Write ``data`` to a running session's stdin, then collect new output."""
+        request = SessionInputRequest(
+            session_id=session_id,
+            data=data,
+            yield_time_ms=yield_time_ms,
+            max_output_bytes=max_output_bytes,
+        )
+        return await self._service.exec_session_write(handle.workspace_id, request)
+
+    async def exec_poll(
+        self,
+        handle: WorkspaceHandle,
+        session_id: str,
+        *,
+        yield_time_ms: int = 10_000,
+        max_output_bytes: int | None = None,
+    ) -> ExecSessionResult:
+        """Read more output from a running session without writing stdin."""
+        return await self._service.exec_session_poll(
+            handle.workspace_id,
+            session_id,
+            yield_time_ms=yield_time_ms,
+            max_output_bytes=max_output_bytes,
+        )
+
+    async def exec_kill(self, handle: WorkspaceHandle, session_id: str) -> None:
+        """Terminate a session and free its runtime resources."""
+        await self._service.exec_session_kill(handle.workspace_id, session_id)
 
     # ------------------------------------------------------------------
     # File helpers

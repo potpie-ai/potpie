@@ -3,7 +3,7 @@
 Each P9 reader (CodingPreferences, InfraTopology, Timeline, PriorBugs)
 needs a small, well-defined query surface against the Position B
 :RELATES_TO claim store. Rather than coupling every reader to Neo4j /
-Graphiti directly, we expose a port:
+Neo4j directly, we expose a port:
 
     ClaimQueryPort.find_claims(...) -> list[ClaimRow]
 

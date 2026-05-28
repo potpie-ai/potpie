@@ -56,6 +56,28 @@ class IngestionOutcome:
     lifecycle: dict[str, Any] = field(default_factory=dict)
 
 
+def _event_body(
+    pot_id: str, event: ReplayEvent, *, fallback_repo_name: str | None = None
+) -> dict[str, Any]:
+    """The canonical /events/reconcile body for a replay event.
+
+    Shared by the HTTP submit path and the in-process fast path so both bind
+    the event to the pot's repo identically.
+    """
+    repo_name = fallback_repo_name or event.repo_name
+    return {
+        "pot_id": pot_id,
+        "ingestion_kind": "agent_reconciliation",
+        "source_system": event.connector,
+        "event_type": event.event_type,
+        "action": event.action,
+        "source_id": event.source_id,
+        "occurred_at": event.occurred_at.isoformat(),
+        "payload": event.payload,
+        "repo_name": repo_name or "",
+    }
+
+
 def submit_event(
     client: PotpieContextApiClient,
     pot_id: str,
@@ -79,21 +101,16 @@ def submit_event(
     intended monorepo, and the agent extracts org/repo references
     from the payload content regardless.
     """
-    if event.role == "seed":
-        repo_name = fallback_repo_name
-    else:
-        repo_name = event.repo_name or fallback_repo_name
-    body: dict[str, Any] = {
-        "pot_id": pot_id,
-        "ingestion_kind": "agent_reconciliation",
-        "source_system": event.connector,
-        "event_type": event.event_type,
-        "action": event.action,
-        "source_id": event.source_id,
-        "occurred_at": event.occurred_at.isoformat(),
-        "payload": event.payload,
-        "repo_name": repo_name or "",
-    }
+    # Every synthetic fixture references the universe monorepo (e.g.
+    # ``acme/platform``), but the ephemeral pot is bound to
+    # ``POTPIE_BENCH_REPO`` (e.g. ``acme/sandbox``). Bind *all* events —
+    # seeds, signals, and distractors — to the pot's repo so submission
+    # passes the ``repo_not_in_pot`` check. The reconciliation agent still
+    # extracts org/repo references from the payload content regardless, so
+    # the bound repo only satisfies the partition check; it does not change
+    # what gets reconciled. (Previously only ``role == "seed"`` was
+    # rewritten, so every signal/distractor event failed submission.)
+    body = _event_body(pot_id, event, fallback_repo_name=fallback_repo_name)
     response = client.post_context("/events/reconcile", json_body=body)
     client._raise_for_status(response)
     payload = response.json()
@@ -219,6 +236,18 @@ def submit_and_wait(
             lifecycle=snapshot,
         )
 
+    return _outcome_from_terminal(
+        fixture_path=event.fixture_path,
+        event_id=str(event_id),
+        terminal=terminal,
+        duration_s=time.monotonic() - started,
+    )
+
+
+def _outcome_from_terminal(
+    *, fixture_path: str, event_id: str, terminal: dict[str, Any], duration_s: float
+) -> IngestionOutcome:
+    """Build an :class:`IngestionOutcome` from a terminal get_event row."""
     status = str(terminal.get("status") or "").lower()
     success_statuses = {"done", "reconciled"}
     error = (
@@ -233,10 +262,10 @@ def submit_and_wait(
         if snapshot:
             error = (error or "non-success terminal status") + f" [{_format_lifecycle(snapshot)}]"
     return IngestionOutcome(
-        fixture_path=event.fixture_path,
-        event_id=str(event_id),
+        fixture_path=fixture_path,
+        event_id=event_id,
         terminal_status=status or "unknown",
-        duration_s=time.monotonic() - started,
+        duration_s=duration_s,
         error=str(error) if error else None,
         soft_downgrades=soft_downgrades,
         lifecycle=snapshot,
@@ -265,6 +294,11 @@ def replay_all(
     Returns outcomes in the same order as ``events`` so the evaluator
     can correlate by index.
     """
+    if getattr(client, "inprocess", False):
+        return _replay_all_inprocess(
+            client, pot_id, events, fallback_repo_name=fallback_repo_name
+        )
+
     from concurrent.futures import ThreadPoolExecutor
 
     # Phase 1: run parallel-eligible events (seeds + distractors) concurrently.
@@ -305,3 +339,75 @@ def replay_all(
             )
 
     return [outcomes[i] for i in range(len(events))]
+
+
+def _replay_all_inprocess(
+    client: Any,
+    pot_id: str,
+    events: list[ReplayEvent],
+    *,
+    fallback_repo_name: str | None = None,
+) -> list[IngestionOutcome]:
+    """In-process ingestion: submit all events, reconcile once, read back.
+
+    The in-process driver has no worker/flush timer, so we admit every event
+    into the pot's open batch (single-threaded — no asyncio-across-threads
+    race), then reconcile the batch(es) inline in one pass, then read each
+    event's terminal state. Order is preserved by index.
+    """
+    started = time.monotonic()
+    logger.info("in-process: submitting %d events into the batch queue...", len(events))
+    event_ids: list[str] = []
+    for ev in events:
+        body = _event_body(pot_id, ev, fallback_repo_name=fallback_repo_name)
+        try:
+            event_ids.append(str(client.submit_only(pot_id, body)))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("in-process submit failed: %s: %s", ev.fixture_path, exc)
+            event_ids.append("")
+
+    logger.info("in-process: reconciling %d events inline (this is the slow step)...", len(events))
+    try:
+        n = client.process_pending(pot_id)
+        logger.info(
+            "in-process: reconciled %d batch(es) in %.1fs", n, time.monotonic() - started
+        )
+    except Exception:  # noqa: BLE001 — per-event status still read below
+        logger.exception("in-process process_pending failed for pot %s", pot_id)
+
+    dur = time.monotonic() - started
+    outcomes: list[IngestionOutcome] = []
+    for ev, eid in zip(events, event_ids):
+        if not eid:
+            outcomes.append(
+                IngestionOutcome(
+                    fixture_path=ev.fixture_path,
+                    event_id=None,
+                    terminal_status="submit_failed",
+                    duration_s=dur,
+                    error="in-process submit failed",
+                )
+            )
+            continue
+        row = client.get_event(eid)
+        if not row:
+            outcomes.append(
+                IngestionOutcome(
+                    fixture_path=ev.fixture_path,
+                    event_id=eid,
+                    terminal_status="unknown",
+                    duration_s=dur,
+                    error="event row not found after processing",
+                )
+            )
+            continue
+        outcome = _outcome_from_terminal(
+            fixture_path=ev.fixture_path, event_id=eid, terminal=row, duration_s=dur
+        )
+        if outcome.error:
+            logger.warning(
+                "in-process ingest issue: %s status=%s error=%s",
+                ev.fixture_path, outcome.terminal_status, outcome.error,
+            )
+        outcomes.append(outcome)
+    return outcomes

@@ -107,9 +107,9 @@ def context_search(
             "source_refs": [],
             "coverage": {
                 "status": "complete" if rows else "empty",
-                "available": ["semantic_search"] if rows else [],
-                "missing": [] if rows else ["semantic_search"],
-                "missing_reasons": {} if rows else {"semantic_search": "empty_result"},
+                "available": ["context_search"] if rows else [],
+                "missing": [] if rows else ["context_search"],
+                "missing_reasons": {} if rows else {"context_search": "empty_result"},
             },
             "freshness": {
                 "status": "unknown",

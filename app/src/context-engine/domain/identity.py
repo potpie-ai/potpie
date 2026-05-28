@@ -15,7 +15,7 @@ This module defines:
 The alias layer is built on Position B's edge shape: an alias is itself
 a claim ``(:Entity)-[:RELATES_TO {name: 'ALIAS_OF', source_ref, ...}]
 ->(:Entity {canonical})``. No new representation. The alias-claim
-resolver lives at :func:`adapters.outbound.graphiti.aliases.resolve_alias`
+resolver lives at the identity alias resolver
 once the canonical graph is queryable; P0/P1 only defines the contract.
 
 See ``docs/context-graph/rebuild-plan.md`` Phase 1 for design rationale.
@@ -232,14 +232,35 @@ def validate_entity_key(spec: IdentitySpec, key: str) -> bool:
 
 
 _IDENTITY_REGISTRY: dict[str, IdentitySpec] = {}
+_REGISTRY_INITIALIZED = False
+
+
+def _ensure_registry_initialized() -> None:
+    """Lazily import :mod:`domain.ontology` so its sync populates the registry.
+
+    The registry is a view over ``ENTITY_TYPES`` (populated by
+    ``domain.ontology._sync_identity_registry`` at the bottom of that module).
+    Direct importers of :mod:`domain.identity` — tests, isolated tools — may
+    hit a read before anything else has triggered ``domain.ontology``'s
+    import, which would yield an empty registry. Lazy-initializing on first
+    read keeps the registration single-sourced (ontology owns it) without
+    creating an import cycle: by the time this runs, the type imports above
+    have long since resolved, so ``domain.ontology`` can safely import back.
+    """
+    global _REGISTRY_INITIALIZED
+    if _REGISTRY_INITIALIZED:
+        return
+    _REGISTRY_INITIALIZED = True
+    # Import for side effect (runs ``_sync_identity_registry`` at module load).
+    import domain.ontology  # noqa: F401
 
 
 def register_identity(spec: IdentitySpec) -> None:
     """Register the identity spec for one entity label.
 
-    Called by the ontology layer at import time. The canonicalization
-    pipeline consults the registry per entity-upsert to mint the right
-    key (or validate one the LLM produced).
+    Called by :mod:`domain.ontology` at import time. The canonicalization
+    pipeline consults the registry per entity-upsert to mint the right key
+    (or validate one the LLM produced).
     """
     if spec.label in _IDENTITY_REGISTRY:
         existing = _IDENTITY_REGISTRY[spec.label]
@@ -254,87 +275,25 @@ def register_identity(spec: IdentitySpec) -> None:
 
 def get_identity(label: str) -> IdentitySpec | None:
     """Return the registered identity spec for ``label`` (or None)."""
+    _ensure_registry_initialized()
     return _IDENTITY_REGISTRY.get(label)
 
 
 def all_identities() -> Mapping[str, IdentitySpec]:
     """Snapshot of the registered identities (label → spec)."""
+    _ensure_registry_initialized()
     return dict(_IDENTITY_REGISTRY)
 
 
 # ---------------------------------------------------------------------------
-# Default identity specs — covers the canonical ontology labels P3 will
-# refine further. The spec list lives here (not in ontology.py) so the
-# identity contract is a domain concern, not a schema concern; ontology
-# refinements rebind specs without touching the registry plumbing.
+# NOTE: identity specs are no longer declared in this module. The registry is
+# now a *view* over :data:`domain.ontology.ENTITY_TYPES`: each
+# ``EntityTypeSpec`` carries the ``identity_class`` / ``key_prefix`` /
+# ``authoritative_source`` fields that used to live here, and
+# :func:`domain.ontology._sync_identity_registry` registers them at import.
+# This prevents the registry and the ontology drifting apart — to add a new
+# identity, add the entity row in ``domain.ontology``.
 # ---------------------------------------------------------------------------
-
-
-_DEFAULTS: tuple[IdentitySpec, ...] = (
-    # Slug-aliased identity (the bulk of the ontology)
-    IdentitySpec(label="Service", klass=IdentityClass.SLUG_ALIAS, key_prefix="service"),
-    IdentitySpec(
-        label="Component", klass=IdentityClass.SLUG_ALIAS, key_prefix="component"
-    ),
-    IdentitySpec(label="Feature", klass=IdentityClass.SLUG_ALIAS, key_prefix="feature"),
-    IdentitySpec(label="Person", klass=IdentityClass.SLUG_ALIAS, key_prefix="person"),
-    IdentitySpec(label="Team", klass=IdentityClass.SLUG_ALIAS, key_prefix="team"),
-    IdentitySpec(
-        label="Repository", klass=IdentityClass.SLUG_ALIAS, key_prefix="repo"
-    ),
-    IdentitySpec(
-        label="Environment",
-        klass=IdentityClass.SLUG_ALIAS,
-        key_prefix="environment",
-    ),
-    IdentitySpec(
-        label="DataStore", klass=IdentityClass.SLUG_ALIAS, key_prefix="datastore"
-    ),
-    IdentitySpec(label="Project", klass=IdentityClass.SLUG_ALIAS, key_prefix="project"),
-    IdentitySpec(label="Policy", klass=IdentityClass.SLUG_ALIAS, key_prefix="policy"),
-    IdentitySpec(
-        label="BugPattern",
-        klass=IdentityClass.SLUG_ALIAS,
-        key_prefix="bug_pattern",
-    ),
-    # External-id-anchored (the source system supplies a stable identifier)
-    IdentitySpec(
-        label="PullRequest",
-        klass=IdentityClass.EXTERNAL_ID,
-        key_prefix="github:pr",
-        authoritative_source="github",
-    ),
-    IdentitySpec(
-        label="Issue",
-        klass=IdentityClass.EXTERNAL_ID,
-        key_prefix="issue",
-        authoritative_source=None,  # multi-source (Linear, GitHub, Jira)
-    ),
-    IdentitySpec(
-        label="Commit",
-        klass=IdentityClass.EXTERNAL_ID,
-        key_prefix="commit",
-        authoritative_source="github",
-    ),
-    IdentitySpec(
-        label="Deployment",
-        klass=IdentityClass.EXTERNAL_ID,
-        key_prefix="deployment",
-    ),
-    IdentitySpec(
-        label="Activity",
-        klass=IdentityClass.EXTERNAL_ID,
-        key_prefix="activity",
-    ),
-    # Content-hashed identity for free-form documents / notes / decisions
-    IdentitySpec(label="Decision", klass=IdentityClass.CONTENT_HASH, key_prefix="decision"),
-    IdentitySpec(label="Document", klass=IdentityClass.CONTENT_HASH, key_prefix="document"),
-    IdentitySpec(label="Fix", klass=IdentityClass.CONTENT_HASH, key_prefix="fix"),
-)
-
-
-for _spec in _DEFAULTS:
-    register_identity(_spec)
 
 
 __all__ = [

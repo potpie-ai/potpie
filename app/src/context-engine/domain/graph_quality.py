@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Iterable
+from typing import Any, Iterable
 
 from domain.ontology import (
     FACT_FAMILY_FRESHNESS_TTL_HOURS,
@@ -16,8 +16,15 @@ from domain.ontology import (
 )
 from domain.source_references import SourceFallback, SourceReferenceRecord
 
-if TYPE_CHECKING:
-    from domain.intelligence_models import CoverageReport
+
+@dataclass
+class CoverageReport:
+    """Per-resolve coverage: which evidence families were available vs missing."""
+
+    status: str  # "complete", "partial", "empty"
+    available: list[str] = field(default_factory=list)
+    missing: list[str] = field(default_factory=list)
+    missing_reasons: dict[str, str] = field(default_factory=dict)
 
 # Freshness TTL and source-of-truth policy are derived from entity specs in
 # :mod:`domain.ontology`. Edit ``fact_family`` / ``freshness_ttl_hours`` /
@@ -35,7 +42,6 @@ MAINTENANCE_JOB_FAMILIES: tuple[str, ...] = (
     "compact_or_archive_evidence",
     "resolve_alias_candidates",
     "cleanup_orphans",
-    "classify_modified_edges",
 )
 
 

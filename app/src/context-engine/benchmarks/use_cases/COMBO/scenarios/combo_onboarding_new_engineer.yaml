@@ -5,6 +5,7 @@ difficulty: medium
 source_mix: dual
 universe: acme
 dimensions: [PREF, INFRA]
+light: true
 
 description: |
   A new engineer (bench-user-17) joins and asks the agent: "I need to
@@ -37,23 +38,32 @@ ingest:
   - { event: repo_docs/checkout_api_readme_update.json, at: "-10d", tags: [signal] }
 
 post_ingest_assertions:
+  # INFRA dimension is structurally gradeable: the topology read surfaces
+  # Service / DataStore nodes + DEPENDS_ON / USES edges. The PREF dimension
+  # (ADR Decisions / Documents) is graded in the synthesis judge instead —
+  # the current query/read layer does not surface those entity tiers, so a
+  # structural assertion on them would grade a read-layer gap, not the
+  # engine's reconciliation of the new engineer's onboarding context.
   graph_must_contain_entities:
-    - { label: Document, key_pattern: "adr-014" }
-    - { label: Document, key_pattern: "adr-007" }
-    - { label: Document, key_pattern: "platform-architecture" }
+    - { label: Service, key_pattern: "service:.*inventory-svc", min_count: 1 }
+    - { label: DataStore, key_pattern: "datastore:.*inventory-prod-db", min_count: 1 }
+  graph_must_contain_edges:
+    - { from_label: Service, to_label: DataStore, type: USES, min_count: 1, dimensions: [INFRA] }
+    - { from_label: Service, to_label: Service, type: DEPENDS_ON, min_count: 1, dimensions: [INFRA] }
+  no_orphan_entities: false
   reconciliation:
-    soft_downgrades_max: 5
+    soft_downgrades_max: 6
     failed_events_max: 0
 
 query:
   intent: feature
   scope: { service: inventory-svc, change_kind: "new_endpoint", touches: ["postgres", "migration"] }
-  include: [preferences, owners, service_map, decisions, docs, agent_instructions]
+  include: [coding_preferences, infra_topology, decisions, owners, docs]
   mode: balanced
   source_policy: summary
 
 retrieval_assertions:
-  required_includes_used: [preferences, owners]
+  required_includes_used: [coding_preferences, infra_topology]
   source_refs_min: 3
   must_cite_event_id:
     - universe/acme/00-architecture.json

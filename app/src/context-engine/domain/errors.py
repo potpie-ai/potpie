@@ -14,7 +14,7 @@ class AlreadyIngested(ContextEngineError):
 
 
 class UpstreamError(ContextEngineError):
-    """External dependency failed (GitHub, Neo4j, Graphiti, Postgres)."""
+    """External dependency failed (GitHub, Neo4j, Postgres)."""
 
 
 class BridgeError(ContextEngineError):

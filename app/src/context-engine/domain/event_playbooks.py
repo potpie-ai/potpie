@@ -65,7 +65,7 @@ _DEFAULT_PLAYBOOK = EventPlaybook(
         "inventing facts."
     ),
     skip="Do not assume structure that is not present in the payload.",
-    tool_hints=("context_search", "context_recent_changes"),
+    tool_hints=("context_search", "context_timeline"),
     max_tool_calls=15,
 )
 
@@ -165,7 +165,7 @@ _register(
             "github_list_issues",
             "github_get_pull_request",
             "github_get_issue",
-            "context_graph_overview",
+            "context_infra_topology",
             "web_fetch",
         ),
         max_tool_calls=400,
@@ -244,7 +244,7 @@ _register(
             "linear_get_document",
             "linear_list_issues",
             "linear_get_issue",
-            "context_graph_overview",
+            "context_infra_topology",
             "web_fetch",
         ),
         max_tool_calls=400,
@@ -285,7 +285,7 @@ _register(
             "github_get_pull_request_commits",
             "github_get_pull_request_review_comments",
             "github_get_pull_request_issue_comments",
-            "context_recent_changes",
+            "context_timeline",
             "web_fetch",
         ),
         max_tool_calls=20,

@@ -1,85 +1,57 @@
-"""Tests for write methods on the unified Graphiti context graph adapter."""
+"""Tests for write methods on the unified context graph adapter."""
 
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from adapters.outbound.graphiti.canonical_writer import upsert_entities_async
-from adapters.outbound.graphiti.context_graph import GraphitiContextGraphAdapter
-from adapters.outbound.graphiti.episodic import _ensure_graphiti_entity_defaults_async
-from application.services.context_reader_registry import ContextReaderRegistry
+from adapters.outbound.graph.cypher import upsert_entities_async
+from adapters.outbound.graph.context_graph_service import ContextGraphService
+from adapters.outbound.graph.in_memory_reader import InMemoryClaimQueryStore
+from application.services.read_orchestrator import ReadOrchestrator
 from domain.context_events import EventRef
 from domain.graph_mutations import EntityUpsert, ProvenanceRef
 from domain.reconciliation import MutationSummary, ReconciliationPlan, ReconciliationResult
 
 
 def test_context_graph_apply_plan_delegates_to_use_case() -> None:
-    episodic = MagicMock()
-    structural = MagicMock()
-    graph = GraphitiContextGraphAdapter(
-        episodic=episodic,
-        structural=structural,
-        readers=ContextReaderRegistry(),
+    writer = MagicMock()
+    graph = ContextGraphService(
+        graph_writer=writer,
+        orchestrator=ReadOrchestrator(claim_query=InMemoryClaimQueryStore()),
     )
 
     plan = ReconciliationPlan(
         event_ref=EventRef(event_id="e1", source_system="t", pot_id="p1"),
         summary="s",
-        episodes=[],
         entity_upserts=[],
         edge_upserts=[],
         edge_deletes=[],
         invalidations=[],
     )
-    from unittest.mock import patch
 
+    expected = ReconciliationResult(
+        ok=True,
+        mutation_id="u1",
+        mutation_summary=MutationSummary(),
+        error=None,
+    )
     with patch(
-        "adapters.outbound.graphiti.context_graph.apply_reconciliation_plan",
-        return_value=ReconciliationResult(
-            ok=True,
-            episode_uuids=["u1"],
-            mutation_summary=MutationSummary(episodes_written=1),
-            error=None,
-        ),
+        "adapters.outbound.graph.context_graph_service.apply_reconciliation_plan",
+        new=AsyncMock(return_value=expected),
     ) as mock_apply:
         out = graph.apply_plan(plan, expected_pot_id="p1")
-    mock_apply.assert_called_once()
+    mock_apply.assert_awaited_once()
     assert out.ok is True
-    assert out.episode_uuids == ["u1"]
+    assert out.mutation_id == "u1"
 
 
-def test_context_graph_write_raw_episode_delegates() -> None:
-    episodic = MagicMock()
-    episodic.add_episode.return_value = "uuid-1"
-    structural = MagicMock()
-    graph = GraphitiContextGraphAdapter(
-        episodic=episodic,
-        structural=structural,
-        readers=ContextReaderRegistry(),
-    )
-    now = datetime.now(timezone.utc)
-    out = graph.write_raw_episode(
-        "pot1",
-        "n",
-        "body",
-        "src",
-        now,
-    )
-    assert out.get("episode_uuid") == "uuid-1"
-    episodic.add_episode.assert_called_once()
-
-
-def test_context_graph_reset_pot_delegates_to_episodic() -> None:
-    """Phase 1: episodic.reset_pot's full sweep is the only reset call."""
-    episodic = MagicMock()
-    episodic.reset_pot.return_value = {"ok": True}
-    structural = MagicMock()
-    graph = GraphitiContextGraphAdapter(
-        episodic=episodic,
-        structural=structural,
-        readers=ContextReaderRegistry(),
+def test_context_graph_reset_pot_delegates_to_writer() -> None:
+    writer = MagicMock()
+    writer.reset_pot = AsyncMock(return_value={"ok": True})
+    graph = ContextGraphService(
+        graph_writer=writer,
+        orchestrator=ReadOrchestrator(claim_query=InMemoryClaimQueryStore()),
     )
 
     out = graph.reset_pot("pot1")
@@ -87,20 +59,17 @@ def test_context_graph_reset_pot_delegates_to_episodic() -> None:
     assert out == {
         "pot_id": "pot1",
         "ok": True,
-        "episodic": {"ok": True},
+        "graph_writer": {"ok": True},
     }
-    episodic.reset_pot.assert_called_once_with("pot1")
-    structural.reset_pot.assert_not_called()
+    writer.reset_pot.assert_awaited_once_with("pot1")
 
 
-def test_context_graph_reset_pot_stops_on_episodic_failure() -> None:
-    episodic = MagicMock()
-    episodic.reset_pot.return_value = {"ok": False, "error": "bad"}
-    structural = MagicMock()
-    graph = GraphitiContextGraphAdapter(
-        episodic=episodic,
-        structural=structural,
-        readers=ContextReaderRegistry(),
+def test_context_graph_reset_pot_stops_on_writer_failure() -> None:
+    writer = MagicMock()
+    writer.reset_pot = AsyncMock(return_value={"ok": False, "error": "bad"})
+    graph = ContextGraphService(
+        graph_writer=writer,
+        orchestrator=ReadOrchestrator(claim_query=InMemoryClaimQueryStore()),
     )
 
     out = graph.reset_pot("pot1")
@@ -108,10 +77,9 @@ def test_context_graph_reset_pot_stops_on_episodic_failure() -> None:
     assert out == {
         "pot_id": "pot1",
         "ok": False,
-        "episodic": {"ok": False, "error": "bad"},
+        "graph_writer": {"ok": False, "error": "bad"},
         "error": "bad",
     }
-    structural.reset_pot.assert_not_called()
 
 
 class _FakeResult:
@@ -142,7 +110,7 @@ class _FakeDriver:
         return self.session_obj
 
 
-def test_canonical_entity_upsert_sets_graphiti_required_string_defaults() -> None:
+def test_canonical_entity_upsert_sets_non_null_string_defaults() -> None:
     driver = _FakeDriver()
     count = asyncio.run(
         upsert_entities_async(
@@ -163,13 +131,3 @@ def test_canonical_entity_upsert_sets_graphiti_required_string_defaults() -> Non
     props = driver.session_obj.calls[0][1]["props"]
     assert props["name"] == "123"
     assert props["summary"] == ""
-
-
-def test_graphiti_entity_default_repair_covers_existing_null_fields() -> None:
-    driver = _FakeDriver()
-    asyncio.run(_ensure_graphiti_entity_defaults_async(driver, "pot1"))
-
-    query, kwargs = driver.session_obj.calls[0]
-    assert kwargs == {"pot_id": "pot1"}
-    assert "n.summary = coalesce(n.summary, '')" in query
-    assert "n.name = coalesce(n.name, n.entity_key, n.uuid, '')" in query

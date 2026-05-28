@@ -1,10 +1,12 @@
-"""Canonical agent envelope (rebuild plan P8)."""
+"""Canonical agent envelope (rebuild plan P8).
+
+Intent/include vocabulary is the single canonical set in
+``domain.agent_context_port``; the envelope carries plain strings.
+"""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
-
-import pytest
 
 from application.readers._common import ReadResponse
 from application.services.envelope_builder import (
@@ -12,13 +14,8 @@ from application.services.envelope_builder import (
     IncludeResult,
     envelope_to_dict,
 )
-from domain.agent_envelope import (
-    AgentInclude,
-    AgentIntent,
-    INTENT_INCLUDES,
-    derive_overall_confidence,
-    resolve_includes,
-)
+from domain.agent_context_port import CONTEXT_INTENTS, DEFAULT_INTENT_INCLUDES
+from domain.agent_envelope import CoverageReport, derive_overall_confidence
 from domain.ranking import Candidate, RankedItem
 
 
@@ -44,45 +41,18 @@ def _resp(
     )
 
 
-class TestResolveIncludes:
-    def test_default_includes_for_intent(self) -> None:
-        matched, unsupported = resolve_includes(intent=AgentIntent.FEATURE, requested=None)
-        assert unsupported == []
-        assert AgentInclude.CODING_PREFERENCES in matched
-        assert matched == list(INTENT_INCLUDES[AgentIntent.FEATURE])
-
-    def test_unknown_include_produces_unsupported(self) -> None:
-        matched, unsupported = resolve_includes(
-            intent=AgentIntent.FEATURE, requested=["coding_preferences", "bogus_include"]
-        )
-        assert AgentInclude.CODING_PREFERENCES in matched
-        assert len(unsupported) == 1
-        assert unsupported[0].name == "bogus_include"
-        assert unsupported[0].reason == "unknown_include"
-
-    def test_string_request_promoted(self) -> None:
-        matched, _ = resolve_includes(
-            intent=AgentIntent.DEBUGGING, requested=["prior_bugs"]
-        )
-        assert matched == [AgentInclude.PRIOR_BUGS]
-
-
 class TestDeriveOverallConfidence:
     def test_all_complete_gives_high(self) -> None:
-        from domain.agent_envelope import CoverageReport
-
         coverage = [
-            CoverageReport(include=AgentInclude.OWNERS, status="complete"),
-            CoverageReport(include=AgentInclude.DECISIONS, status="complete"),
+            CoverageReport(include="owners", status="complete"),
+            CoverageReport(include="decisions", status="complete"),
         ]
         assert derive_overall_confidence(coverage=coverage) == "high"
 
     def test_one_empty_caps_to_low(self) -> None:
-        from domain.agent_envelope import CoverageReport
-
         coverage = [
-            CoverageReport(include=AgentInclude.OWNERS, status="complete"),
-            CoverageReport(include=AgentInclude.PRIOR_BUGS, status="empty"),
+            CoverageReport(include="owners", status="complete"),
+            CoverageReport(include="prior_bugs", status="empty"),
         ]
         assert derive_overall_confidence(coverage=coverage) == "low"
 
@@ -94,35 +64,47 @@ class TestEnvelopeBuilder:
     def test_cross_include_ranking(self) -> None:
         builder = EnvelopeBuilder()
         prefs_resp = _resp(
-            family="coding_preferences",
+            family="preferences",
             items=[_ranked_item(key="pref-a", score=0.4, payload={"src": "pref"})],
             coverage_status="partial",
         )
         bugs_resp = _resp(
-            family="prior_bugs",
+            family="prior_fixes",
             items=[_ranked_item(key="bug-a", score=0.9, payload={"src": "bug"})],
             coverage_status="complete",
         )
         envelope = builder.build(
             pot_id="pot-1",
-            intent=AgentIntent.DEBUGGING,
+            intent="debugging",
             results=[
-                IncludeResult(include=AgentInclude.CODING_PREFERENCES, response=prefs_resp),
-                IncludeResult(include=AgentInclude.PRIOR_BUGS, response=bugs_resp),
+                IncludeResult(include="preferences", response=prefs_resp),
+                IncludeResult(include="prior_fixes", response=bugs_resp),
             ],
-            requested_includes=["coding_preferences", "prior_bugs"],
+            requested_includes=["preferences", "prior_fixes"],
         )
         # Cross-leg sort: bug (0.9) ahead of preference (0.4)
         assert envelope.items[0].candidate_key == "bug-a"
         assert envelope.items[1].candidate_key == "pref-a"
 
+    def test_default_includes_when_none_requested(self) -> None:
+        builder = EnvelopeBuilder()
+        envelope = builder.build(pot_id="pot-1", intent="feature", results=[])
+        # No requested includes → no unsupported entries for the intent defaults.
+        assert envelope.unsupported_includes == ()
+        assert envelope.intent == "feature"
+
+    def test_unknown_intent_normalizes(self) -> None:
+        builder = EnvelopeBuilder()
+        envelope = builder.build(pot_id="pot-1", intent="not-a-real-intent", results=[])
+        assert envelope.intent == "unknown"
+
     def test_unsupported_includes_propagate(self) -> None:
         builder = EnvelopeBuilder()
         envelope = builder.build(
             pot_id="pot-1",
-            intent=AgentIntent.FEATURE,
+            intent="feature",
             results=[],
-            requested_includes=["coding_preferences", "bogus"],
+            requested_includes=["decisions", "bogus"],
         )
         names = [u.name for u in envelope.unsupported_includes]
         assert names == ["bogus"]
@@ -130,26 +112,22 @@ class TestEnvelopeBuilder:
     def test_serialisation_to_dict(self) -> None:
         builder = EnvelopeBuilder()
         prefs_resp = _resp(
-            family="coding_preferences",
+            family="preferences",
             items=[_ranked_item(key="p", score=0.5, payload={"a": 1})],
             coverage_status="complete",
             pool=3,
         )
         envelope = builder.build(
             pot_id="pot-1",
-            intent=AgentIntent.FEATURE,
-            results=[
-                IncludeResult(
-                    include=AgentInclude.CODING_PREFERENCES,
-                    response=prefs_resp,
-                )
-            ],
+            intent="feature",
+            results=[IncludeResult(include="preferences", response=prefs_resp)],
+            requested_includes=["preferences"],
             as_of=_NOW,
         )
         out = envelope_to_dict(envelope)
         assert out["pot_id"] == "pot-1"
         assert out["intent"] == "feature"
-        assert out["items"][0]["include"] == "coding_preferences"
+        assert out["items"][0]["include"] == "preferences"
         assert out["coverage"][0]["status"] == "complete"
         assert out["overall_confidence"] == "high"
         assert out["as_of"] == _NOW.isoformat()
@@ -158,7 +136,7 @@ class TestEnvelopeBuilder:
         builder = EnvelopeBuilder()
         envelope = builder.build(
             pot_id="pot-1",
-            intent=AgentIntent.FEATURE,
+            intent="feature",
             results=[],
             metadata={"trace_id": "t-1"},
         )
@@ -176,11 +154,12 @@ class TestAgentContractGenerator:
         out = buf.getvalue()
         assert "## Intents" in out
         assert "## Includes" in out
-        # Every intent + include appears
-        for intent in AgentIntent:
-            assert intent.value in out
-        for include in AgentInclude:
-            assert include.value in out
+        # Every canonical intent appears in the generated contract.
+        for intent in CONTEXT_INTENTS:
+            assert f"`{intent}`" in out
+        # A representative default include appears.
+        assert "decisions" in out
+        assert DEFAULT_INTENT_INCLUDES  # sanity: the source table is non-empty
 
     def test_generator_output_is_deterministic(self) -> None:
         import io

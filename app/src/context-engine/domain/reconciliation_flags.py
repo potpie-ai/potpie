@@ -46,16 +46,6 @@ def causal_expand_enabled() -> bool:
     return _truthy(os.getenv("CONTEXT_ENGINE_CAUSAL_EXPAND"), True)
 
 
-def classify_modified_edges_enabled() -> bool:
-    """Allow classify-modified-edges maintenance to apply rewrites (default: on)."""
-    return _truthy(os.getenv("CONTEXT_ENGINE_CLASSIFY_MODIFIED_EDGES"), True)
-
-
-def allow_edge_classify_write_enabled() -> bool:
-    """Allow non-dry-run writes for classify-modified-edges (default: on)."""
-    return _truthy(os.getenv("CONTEXT_ENGINE_ALLOW_EDGE_CLASSIFY_WRITE"), True)
-
-
 def strict_extraction_enabled() -> bool:
     """Strict episodic edge extraction guard (default: on)."""
     return _truthy(os.getenv("CONTEXT_ENGINE_STRICT_EXTRACTION"), True)

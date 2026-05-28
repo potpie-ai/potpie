@@ -3,7 +3,9 @@
 # print every dashboard the bundled compose ships for observability.
 #
 # Requires: docker, docker compose v2, python 3.10+
-# Optional: DAYTONA_REPO_PATH (defaults to /Users/nandan/Desktop/Dev/daytona)
+# Optional: DAYTONA_REPO_PATH — point at a real daytonaio/daytona clone to build
+#           images from source. Unset (the default) uses the compose stack
+#           vendored at <sandbox>/daytona/, so no external clone is needed.
 #           SANDBOX_ENV_FILE  (defaults to <sandbox>/.env.daytona.local)
 #
 # Re-runnable: starts containers if missing, waits for health, mints a fresh
@@ -13,8 +15,13 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 sandbox_dir="$(cd "$here/.." && pwd)"
 
-DAYTONA_REPO_PATH="${DAYTONA_REPO_PATH:-/Users/nandan/Desktop/Dev/daytona}"
-COMPOSE_FILE="$DAYTONA_REPO_PATH/docker/docker-compose.yaml"
+# Default to the vendored compose so the repo is self-contained. Set
+# DAYTONA_REPO_PATH to a daytona clone to build from its source instead.
+if [[ -n "${DAYTONA_REPO_PATH:-}" ]]; then
+  COMPOSE_FILE="$DAYTONA_REPO_PATH/docker/docker-compose.yaml"
+else
+  COMPOSE_FILE="$sandbox_dir/daytona/docker-compose.yaml"
+fi
 OVERRIDE_FILE="$here/daytona-overrides/docker-compose.override.yaml"
 ENV_FILE="${SANDBOX_ENV_FILE:-$sandbox_dir/.env.daytona.local}"
 # Dashboard moved to 3010 to keep host port 3000 free for the potpie frontend.
@@ -25,13 +32,14 @@ export POTPIE_SANDBOX_DIR="$sandbox_dir"
 DASHBOARD_URL="${DAYTONA_DASHBOARD_URL:-http://localhost:${DAYTONA_DASHBOARD_PORT}}"
 
 if [[ ! -f "$COMPOSE_FILE" ]]; then
-  cat >&2 <<EOF
-Daytona compose not found at $COMPOSE_FILE.
-Set DAYTONA_REPO_PATH to your local clone of github.com/daytonaio/daytona, or
-clone it first:
-  git clone https://github.com/daytonaio/daytona "\$HOME/daytona"
-  DAYTONA_REPO_PATH="\$HOME/daytona" $0
-EOF
+  if [[ -n "${DAYTONA_REPO_PATH:-}" ]]; then
+    echo "Daytona compose not found at $COMPOSE_FILE (DAYTONA_REPO_PATH=$DAYTONA_REPO_PATH)." >&2
+    echo "Point DAYTONA_REPO_PATH at a github.com/daytonaio/daytona clone, or unset it" >&2
+    echo "to use the vendored stack at $sandbox_dir/daytona/." >&2
+  else
+    echo "Vendored Daytona compose missing at $COMPOSE_FILE." >&2
+    echo "It ships in the repo — restore it from git or see $sandbox_dir/daytona/README.md." >&2
+  fi
   exit 2
 fi
 

@@ -241,13 +241,6 @@ class PotpieContextApiClient:
         out = r.json()
         return out if isinstance(out, dict) else {}
 
-    def classify_modified_edges(self, body: dict[str, Any]) -> dict[str, Any]:
-        """POST /maintenance/classify-modified-edges (dry-run by default)."""
-        r = self.post_context("/maintenance/classify-modified-edges", json_body=body)
-        self._raise_for_status(r)
-        out = r.json()
-        return out if isinstance(out, dict) else {}
-
     def ingest(self, body: dict[str, Any], *, sync: bool) -> tuple[int, dict[str, Any]]:
         params = {"sync": "true"} if sync else None
         r = self.post_context("/ingest", json_body=body, params=params)
@@ -261,7 +254,7 @@ class PotpieContextApiClient:
                     "status": "reconciliation_rejected",
                     "errors": [],
                     "event_id": None,
-                    "episode_uuid": None,
+                    "mutation_id": None,
                     "downgrades": [],
                 }
             raise IngestRejectedError(payload)
@@ -320,31 +313,6 @@ class PotpieContextApiClient:
 
     def status(self, body: dict[str, Any]) -> dict[str, Any]:
         r = self.post_context("/status", json_body=body)
-        self._raise_for_status(r)
-        out = r.json()
-        return out if isinstance(out, dict) else {}
-
-    def conflicts_list(self, pot_id: str) -> dict[str, Any]:
-        r = self.post_context("/conflicts/list", json_body={"pot_id": pot_id})
-        self._raise_for_status(r)
-        out = r.json()
-        return out if isinstance(out, dict) else {}
-
-    def conflicts_resolve(
-        self,
-        pot_id: str,
-        issue_uuid: str,
-        *,
-        action: str = "supersede_older",
-    ) -> dict[str, Any]:
-        r = self.post_context(
-            "/conflicts/resolve",
-            json_body={
-                "pot_id": pot_id,
-                "issue_uuid": issue_uuid,
-                "action": action,
-            },
-        )
         self._raise_for_status(r)
         out = r.json()
         return out if isinstance(out, dict) else {}

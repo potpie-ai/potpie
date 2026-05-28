@@ -108,7 +108,7 @@ def test_resolve_with_explicit_pot_and_scope(fake: _FakeClient) -> None:
             "--services",
             "api,worker",
             "--include",
-            "decisions,recent_changes",
+            "decisions,timeline",
         ],
     )
     assert result.exit_code == 0, result.stdout
@@ -116,18 +116,18 @@ def test_resolve_with_explicit_pot_and_scope(fake: _FakeClient) -> None:
     assert body["query"] == "what changed?"
     assert body["scope"]["file_path"] == "app/x.py"
     assert body["scope"]["services"] == ["api", "worker"]
-    assert body["include"] == ["decisions", "recent_changes"]
+    assert body["include"] == ["decisions", "timeline"]
 
 
 # --- overview --------------------------------------------------------------------
 
 
-def test_overview_sends_aggregate_and_graph_overview(fake: _FakeClient) -> None:
+def test_overview_sends_retrieve_and_infra_topology(fake: _FakeClient) -> None:
     result = runner.invoke(cli_main.app, ["--json", "overview"])
     assert result.exit_code == 0, result.stdout
     body = fake.graph_query_calls[0]
-    assert body["goal"] == "aggregate"
-    assert body["include"] == ["graph_overview"]
+    assert body["goal"] == "retrieve"
+    assert body["include"] == ["infra_topology"]
     assert body["pot_id"] == "pot-1"
 
 

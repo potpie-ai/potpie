@@ -7,7 +7,7 @@ all converge: any activity whose body mentioned the scope service has
 an outgoing MENTIONS edge linking it back.
 
 This reader is the F4 reader: prior to MENTIONS, an Activity bound to
-``person:alice`` (via ``PERFORMED_BY``) was invisible to a "what
+``person:alice`` (via ``PERFORMED``) was invisible to a "what
 activities touched service:auth-svc this week?" query. With MENTIONS,
 the activity → service link is queryable.
 """
@@ -31,7 +31,7 @@ from domain.ranking import Candidate, RankingService
 _TIMELINE_PREDICATES: tuple[str, ...] = (
     "MENTIONS",
     "TOUCHED",
-    "PERFORMED_BY",
+    "PERFORMED",
     "AUTHORED",
 )
 
@@ -110,7 +110,7 @@ class TimelineReader:
         if not anchors:
             return self.claim_query.find_claims(base)
 
-        # Activity → anchor (MENTIONS) plus anchor → activity (PERFORMED_BY etc).
+        # Activity → anchor (MENTIONS) plus anchor → activity (PERFORMED etc).
         mentioning = self.claim_query.find_claims(
             ClaimQueryFilter(
                 pot_id=base.pot_id,
@@ -126,7 +126,7 @@ class TimelineReader:
         authored = self.claim_query.find_claims(
             ClaimQueryFilter(
                 pot_id=base.pot_id,
-                predicate_in=("PERFORMED_BY", "AUTHORED"),
+                predicate_in=("PERFORMED", "AUTHORED"),
                 subject_key_in=anchors,
                 include_invalidated=base.include_invalidated,
                 as_of=base.as_of,
@@ -186,15 +186,22 @@ def _make_candidate_key(row: ClaimRow) -> str:
 
 
 def _payload_from_row(row: ClaimRow) -> dict[str, Any]:
+    extras = dict(row.properties or {})
     return {
         "predicate": row.predicate,
         "subject_key": row.subject_key,
         "object_key": row.object_key,
+        # For every timeline predicate (TOUCHED / PERFORMED / MENTIONS) the
+        # Activity is the subject, so subject_key is the event identity. The
+        # event kind rides in the claim's extras as ``verb_class``.
+        "activity_key": row.subject_key,
+        "verb_class": extras.get("verb_class"),
         "fact": row.fact,
         "source_ref": row.source_ref,
         "source_system": row.source_system,
         "valid_at": row.valid_at.isoformat() if row.valid_at else None,
         "evidence_strength": row.evidence_strength,
+        "properties": extras,
     }
 
 

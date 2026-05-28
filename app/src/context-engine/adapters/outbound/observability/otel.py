@@ -52,7 +52,7 @@ _OPENAI_INSTRUMENTED = False
 def _instrument_openai_sdk() -> None:
     """Auto-instrument the OpenAI SDK once per process.
 
-    This is the Graphiti blind-spot fix: graphiti-core calls the OpenAI SDK
+    Captures OpenAI SDK calls made by downstream libraries (LLM-backed
     directly for entity/edge extraction + embeddings. Auto-instrumentation
     turns those into spans that nest under our ``graph.add_episode`` span
     (and inherit its pot/event baggage), so the most expensive LLM step is
@@ -66,7 +66,7 @@ def _instrument_openai_sdk() -> None:
 
         OpenAIInstrumentor().instrument()
         _OPENAI_INSTRUMENTED = True
-        logger.info("observability: OpenAI SDK instrumented (Graphiti visible)")
+        logger.info("observability: OpenAI SDK instrumented")
     except Exception as exc:  # noqa: BLE001 — extra may be absent
         logger.debug("observability: OpenAI instrumentation skipped: %r", exc)
 

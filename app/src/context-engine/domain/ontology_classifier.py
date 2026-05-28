@@ -9,7 +9,7 @@ It runs on two paths:
 
 * Reconciliation plan enrichment (``domain.canonical_label_inference``) — runs
   before structural writes so the validator sees canonical labels.
-* Post-Graphiti Neo4j pass (``adapters.outbound.graphiti.ontology_classifier_pass``) —
+* Neo4j classifier pass over the canonical graph —
   runs after episodic extraction so flexible LLM output is pinned to the
   ontology.
 
@@ -40,7 +40,7 @@ from domain.ontology import (
     ENTITY_TYPES,
     inferred_labels_for_episodic_edge_endpoint,
     is_canonical_entity_label,
-    normalize_graphiti_edge_name,
+    normalize_edge_name,
 )
 
 
@@ -64,10 +64,10 @@ def build_signals(
         labels=tuple(labels),
         properties=dict(properties),
         outgoing_edge_names=frozenset(
-            normalize_graphiti_edge_name(n) for n in outgoing_edge_names if n
+            normalize_edge_name(n) for n in outgoing_edge_names if n
         ),
         incoming_edge_names=frozenset(
-            normalize_graphiti_edge_name(n) for n in incoming_edge_names if n
+            normalize_edge_name(n) for n in incoming_edge_names if n
         ),
     )
 

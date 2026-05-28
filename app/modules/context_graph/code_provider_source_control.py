@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Iterator
 
+from adapters.outbound.connectors.github.api_client import PyGithubSourceControl
+
 
 class CodeProviderSourceControl:
     """Delegates to an object exposing get_pull_request, get_client, etc. (GitHubProvider)."""
@@ -47,3 +49,45 @@ class CodeProviderSourceControl:
             return iter(())
         repo = client.get_repo(repo_name)
         return iter(repo.get_pulls(state="closed", sort="updated", direction="desc"))
+
+    def list_pull_requests(
+        self,
+        repo_name: str,
+        *,
+        state: str = "all",
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Compact PR refs, newest-first, bounded by the backfill window/cap.
+
+        Delegates to :class:`PyGithubSourceControl` so the window + item-cap
+        contract (shared by every connector's list tools) lives in one place
+        rather than being re-derived here. Providers without a PyGithub client
+        (local/tunnel) have nothing to enumerate, so we return ``[]`` — the
+        same fail-soft as :meth:`iter_closed_pulls`.
+        """
+        client = self._provider.get_client()
+        if client is None:
+            return []
+        return PyGithubSourceControl(client).list_pull_requests(
+            repo_name, state=state, limit=limit
+        )
+
+    def list_issues(
+        self,
+        repo_name: str,
+        *,
+        state: str = "all",
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Compact issue refs (PRs excluded), newest-first, window/cap bounded.
+
+        See :meth:`list_pull_requests` for why this delegates rather than
+        delegating to the provider's own ``list_issues`` (which honours neither
+        the trailing window nor the hard item cap).
+        """
+        client = self._provider.get_client()
+        if client is None:
+            return []
+        return PyGithubSourceControl(client).list_issues(
+            repo_name, state=state, limit=limit
+        )

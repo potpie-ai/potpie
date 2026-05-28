@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
@@ -19,7 +20,6 @@ from adapters.inbound.http.deps import (
     get_db_optional,
     require_api_key,
 )
-from adapters.outbound.graphiti.episodic import GraphitiEpisodicAdapter
 from adapters.outbound.postgres.ledger import SqlAlchemyIngestionLedger
 from adapters.outbound.postgres.reconciliation_ledger import (
     SqlAlchemyReconciliationLedger,
@@ -33,8 +33,12 @@ from application.use_cases.report_status import report_status
 from application.use_cases.submit_raw_episode import submit_raw_episode
 from bootstrap.container import ContextEngineContainer
 from domain.actor import Actor, ActorSurface, normalize_surface
-from domain.error_redaction import safe_error
-from domain.graph_query import ContextGraphQuery
+from domain.graph_query import (
+    ContextGraphBudget,
+    ContextGraphGoal,
+    ContextGraphQuery,
+    ContextGraphScope,
+)
 from domain.ingestion_event_models import (
     EventListFilters,
     IngestionEventStatus,
@@ -43,11 +47,9 @@ from domain.ingestion_event_models import (
 from domain.ingestion_kinds import INGESTION_KIND_AGENT_RECONCILIATION
 from domain.ports.policy import (
     ACTION_POT_INGEST_EPISODE,
-    ACTION_POT_MAINTENANCE,
     ACTION_POT_READ,
     ACTION_POT_RECORD,
     ACTION_POT_RESET,
-    ACTION_POT_RESOLVE_CONFLICT,
     ACTION_POT_SUBMIT_EVENT,
     RESOURCE_POT,
     REASON_UNKNOWN_POT,
@@ -79,7 +81,7 @@ def _ndjson_line(event: dict[str, Any]) -> bytes:
 _logger = logging.getLogger(__name__)
 
 
-# Operator/admin routes (``/reset``, ``/conflicts/*``, ``/maintenance/*``) are
+# Operator/admin routes (``/reset``, ``/maintenance/*``) are
 # grouped under a distinct OpenAPI tag so product docs and SDKs do not conflate
 # them with everyday agent flows. Every destructive or graph-mutating call goes
 # through ``_audit_operator_action`` so there is a single structured log line
@@ -201,16 +203,16 @@ class HardResetRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     pot_id: str = Field(
-        description="Pot scope id (Graphiti group_id / Neo4j partition)."
+        description="Pot scope id (Neo4j partition / group_id)."
     )
     skip_ledger: bool = Field(
         default=False,
-        description="If true, only clear Graphiti + structural Neo4j; do not delete Postgres ledger rows.",
+        description="If true, only clear the canonical Neo4j graph; do not delete Postgres ledger rows.",
     )
 
 
 class IngestEpisodeRequest(BaseModel):
-    """Raw Graphiti episode (same fields as episodic.add_episode)."""
+    """Raw episode admitted through the async reconciliation pipeline."""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -225,22 +227,6 @@ class IngestEpisodeRequest(BaseModel):
     idempotency_key: Optional[str] = Field(
         default=None,
         description="Optional dedupe key for raw episodic ingest (requires DATABASE_URL).",
-    )
-
-
-class ClassifyModifiedEdgesRequest(BaseModel):
-    """Reclassify vague ``MODIFIED`` episodic edges (Neo4j maintenance)."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    pot_id: str
-    dry_run: bool = Field(
-        default=True,
-        description=(
-            "If false, updates RELATES_TO.name and lifecycle_status. "
-            "Server must set CONTEXT_ENGINE_CLASSIFY_MODIFIED_EDGES=1 and "
-            "CONTEXT_ENGINE_ALLOW_EDGE_CLASSIFY_WRITE=1."
-        ),
     )
 
 
@@ -287,20 +273,6 @@ class ContextStatusRequest(BaseModel):
         default=None,
         description="Optional task intent used to return the recommended context_resolve recipe.",
     )
-
-
-class ConflictListRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    pot_id: str
-
-
-class ConflictResolveRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    pot_id: str
-    issue_uuid: str
-    action: str = "supersede_older"
 
 
 class ContextEventHttpBody(BaseModel):
@@ -386,6 +358,25 @@ def _parse_event_status_filters(
     return tuple(raw)  # type: ignore[return-value]
 
 
+_WINDOW_RE = re.compile(r"^(\d+)\s*([mhdw])$")
+_WINDOW_UNITS = {"m": "minutes", "h": "hours", "d": "days", "w": "weeks"}
+
+
+def _parse_window(window: str | None) -> timedelta | None:
+    """Parse a relative lookback like ``24h`` / ``7d`` / ``2w`` / ``30m``.
+
+    Returns ``None`` for an unparseable value so the caller can fall back to
+    an unbounded (or explicit ``since``) window rather than 500.
+    """
+    if not window:
+        return None
+    match = _WINDOW_RE.match(window.strip().lower())
+    if not match:
+        return None
+    amount = int(match.group(1))
+    return timedelta(**{_WINDOW_UNITS[match.group(2)]: amount})
+
+
 def create_context_router(
     *,
     require_auth: Callable[..., Any],
@@ -448,7 +439,7 @@ def create_context_router(
         "/ingest",
         summary="Add episodic episode",
         description=(
-            "Ingest a raw episode into Graphiti for the pot (group_id). "
+            "Ingest a narrative event for the pot (group_id); routed through the reconciliation agent. "
             "When DATABASE_URL is set, defaults to async (202): event is persisted then applied by a worker. "
             "Use sync=true or header X-Context-Ingest-Sync for inline apply."
         ),
@@ -516,7 +507,7 @@ def create_context_router(
                 payload = {
                     "status": "reconciliation_rejected",
                     "event_id": result.event_id,
-                    "episode_uuid": None,
+                    "mutation_id": None,
                     "errors": list(result.reconciliation_errors or []),
                     "downgrades": list(result.downgrades or []),
                 }
@@ -544,7 +535,7 @@ def create_context_router(
         if result.status == "applied":
             return {
                 "status": "applied",
-                "episode_uuid": result.episode_uuid,
+                "mutation_id": result.mutation_id,
                 "event_id": result.event_id,
                 "job_id": result.job_id,
                 "errors": [],
@@ -566,8 +557,8 @@ def create_context_router(
         description=(
             "**Operator/admin action — destructive and not part of the agent surface.** "
             "Deletes Postgres reconciliation/ingestion rows for the pot first (so async "
-            "workers cannot re-apply after the graph is cleared), then Graphiti episodic data "
-            "and structural Entity/FILE/NODE nodes in the default Neo4j database. "
+            "workers cannot re-apply after the graph is cleared), then the canonical "
+            "Entity nodes and :RELATES_TO edges in the pot's Neo4j partition. "
             "There is no dry-run mode: callers must scope to exactly one ``pot_id``. "
             "Each successful call emits a ``context_engine.operator_audit`` log record."
         ),
@@ -991,6 +982,117 @@ def create_context_router(
         return {
             "items": [ingestion_event_to_payload(ev) for ev in page.items],
             "next_cursor": page.next_cursor,
+        }
+
+    @router.get(
+        "/pots/{pot_id}/timeline",
+        summary="Activity timeline for a pot (what changed, latest first)",
+        description=(
+            "Recent Activity events (PR merged, deploy, alert, discussion, "
+            "decision), newest first. Optionally anchored to one or more "
+            "services and/or restricted to a set of verb_class kinds. Backed "
+            "by the canonical timeline reader over the activity claim graph "
+            "(TOUCHED / PERFORMED / MENTIONS); the window is applied to "
+            "each event's occurred_at (claim valid_at)."
+        ),
+    )
+    async def get_pot_timeline(
+        pot_id: str,
+        actor: Any = Depends(require_auth),
+        container: ContextEngineContainer = Depends(get_container),
+        service: list[str] | None = Query(
+            None,
+            description="Anchor to one or more service names (repeat for multiple).",
+        ),
+        window: str | None = Query(
+            "14d",
+            description="Relative lookback: e.g. '24h', '7d', '14d', '90d'. Ignored when 'since' is set.",
+        ),
+        since: datetime | None = Query(
+            None,
+            description="Only events at/after this ISO 8601 datetime (overrides 'window').",
+        ),
+        until: datetime | None = Query(
+            None, description="Only events at/before this ISO 8601 datetime."
+        ),
+        verb_class: list[str] | None = Query(
+            None,
+            description=(
+                "Restrict to these event kinds "
+                "(code_change/deployment/alert/discussion/decision; repeat for multiple)."
+            ),
+        ),
+        limit: int = Query(30, ge=1, le=50),
+        include_invalidated: bool = Query(False),
+    ) -> dict[str, Any]:
+        _enforce(
+            container,
+            actor=actor,
+            resource=RESOURCE_POT,
+            action=ACTION_POT_READ,
+            pot_id=pot_id,
+        )
+        if container.context_graph is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Unified context graph query port is not configured.",
+            )
+        # An explicit `since` wins; otherwise derive it from the relative
+        # `window`. valid_at is compared as a UTC ISO string downstream, so
+        # anchor the derived bound to UTC.
+        resolved_since = since
+        if resolved_since is None:
+            delta = _parse_window(window)
+            if delta is not None:
+                resolved_since = datetime.now(timezone.utc) - delta
+
+        query = ContextGraphQuery(
+            pot_id=pot_id,
+            goal=ContextGraphGoal.TIMELINE,
+            include=["timeline"],
+            scope=ContextGraphScope(
+                services=[s.strip() for s in (service or []) if s and s.strip()]
+            ),
+            since=resolved_since,
+            until=until,
+            include_invalidated=include_invalidated,
+            budget=ContextGraphBudget(max_items=limit),
+        )
+        result = await container.context_graph.query_async(query)
+        envelope = result.model_dump().get("result") or {}
+
+        wanted = {v.strip().lower() for v in (verb_class or []) if v and v.strip()}
+        items: list[dict[str, Any]] = []
+        for entry in envelope.get("items", []):
+            payload = entry.get("payload") or {}
+            kind = payload.get("verb_class")
+            if wanted and (kind or "").lower() not in wanted:
+                continue
+            items.append(
+                {
+                    "id": entry.get("candidate_key"),
+                    "activity_key": payload.get("activity_key")
+                    or payload.get("subject_key"),
+                    "timestamp": payload.get("valid_at"),
+                    "verb_class": kind,
+                    "title": payload.get("fact"),
+                    "predicate": payload.get("predicate"),
+                    "subject_key": payload.get("subject_key"),
+                    "object_key": payload.get("object_key"),
+                    "source_system": payload.get("source_system"),
+                    "source_ref": payload.get("source_ref"),
+                    "evidence_strength": payload.get("evidence_strength"),
+                    "score": entry.get("score"),
+                }
+            )
+        return {
+            "pot_id": pot_id,
+            "items": items,
+            "coverage": envelope.get("overall_confidence"),
+            "window": {
+                "since": resolved_since.isoformat() if resolved_since else None,
+                "until": until.isoformat() if until else None,
+            },
         }
 
     # ----- Per-pot ingestion config & force flush ------------------------------
@@ -1448,140 +1550,6 @@ def create_context_router(
             )
         result = await container.context_graph.query_async(body)
         return _context_graph_jsonable(result.model_dump())
-
-    @router.post(
-        "/conflicts/list",
-        summary="[operator] List open predicate-family conflicts (QualityIssue)",
-        description=(
-            "Operator/admin read for graph hygiene. Returns open conflicts "
-            "surfaced by predicate-family invariants. Paired with "
-            "``/conflicts/resolve`` for repair workflows."
-        ),
-        tags=[OPERATOR_TAG],
-    )
-    def post_conflicts_list(
-        body: ConflictListRequest,
-        actor: Any = Depends(require_auth),
-        container: ContextEngineContainer = Depends(get_container),
-    ) -> dict[str, Any]:
-        decision = _enforce(
-            container,
-            actor=actor,
-            resource=RESOURCE_POT,
-            action=ACTION_POT_READ,
-            pot_id=body.pot_id,
-        )
-        if not container.episodic.enabled:
-            return {"ok": False, "items": [], "error": "episodic_graph_unavailable"}
-        resolved_pot_id = decision.metadata.get("resolved_pot_id", body.pot_id)
-        try:
-            items = container.episodic.list_open_conflicts(resolved_pot_id)
-        except Exception as exc:
-            _logger.exception("list_open_conflicts failed for pot=%s", body.pot_id)
-            raise HTTPException(
-                status_code=500, detail=safe_error(exc)
-            ) from exc
-        return {"ok": True, "items": items}
-
-    @router.post(
-        "/conflicts/resolve",
-        summary="[operator] Resolve an open predicate-family conflict",
-        description=(
-            "**Operator/admin action — mutates graph state.** Resolves one "
-            "conflict (default action ``supersede_older``). Each call emits "
-            "a ``context_engine.operator_audit`` log record with the actor, "
-            "pot, issue uuid, and action. No dry-run: operators list first "
-            "via ``/conflicts/list`` and resolve targeted rows."
-        ),
-        tags=[OPERATOR_TAG],
-    )
-    def post_conflicts_resolve(
-        body: ConflictResolveRequest,
-        actor: Any = Depends(require_auth),
-        container: ContextEngineContainer = Depends(get_container),
-    ) -> dict[str, Any]:
-        decision = _enforce(
-            container,
-            actor=actor,
-            resource=RESOURCE_POT,
-            action=ACTION_POT_RESOLVE_CONFLICT,
-            pot_id=body.pot_id,
-        )
-        resolved_pot_id = decision.metadata.get("resolved_pot_id", body.pot_id)
-        try:
-            out = container.episodic.resolve_open_conflict(
-                resolved_pot_id, body.issue_uuid, body.action
-            )
-        except Exception as exc:
-            _audit_operator_action(
-                action="resolve_conflict",
-                pot_id=body.pot_id,
-                actor=actor,
-                extra={
-                    "issue_uuid": body.issue_uuid,
-                    "conflict_action": body.action,
-                    "outcome": "error",
-                    "error": safe_error(exc),
-                },
-            )
-            raise HTTPException(
-                status_code=500, detail=safe_error(exc)
-            ) from exc
-        _audit_operator_action(
-            action="resolve_conflict",
-            pot_id=body.pot_id,
-            actor=actor,
-            extra={
-                "issue_uuid": body.issue_uuid,
-                "conflict_action": body.action,
-                "outcome": "ok" if out.get("ok", True) else "failed",
-            },
-        )
-        return out
-
-    @router.post(
-        "/maintenance/classify-modified-edges",
-        summary="[operator] Reclassify vague MODIFIED episodic edges",
-        description=(
-            "**Operator/admin maintenance job.** Dry-run by default "
-            "(``dry_run=true``); the response summarises proposed changes "
-            "without touching Neo4j. Writes require BOTH "
-            "``CONTEXT_ENGINE_CLASSIFY_MODIFIED_EDGES=1`` and "
-            "``CONTEXT_ENGINE_ALLOW_EDGE_CLASSIFY_WRITE=1`` on the server. "
-            "Every invocation emits a ``context_engine.operator_audit`` log "
-            "record carrying the actor, pot, and ``dry_run`` flag."
-        ),
-        tags=[OPERATOR_TAG],
-    )
-    def post_classify_modified_edges(
-        body: ClassifyModifiedEdgesRequest,
-        actor: Any = Depends(require_auth),
-        container: ContextEngineContainer = Depends(get_container),
-    ) -> dict[str, Any]:
-        _enforce(
-            container,
-            actor=actor,
-            resource=RESOURCE_POT,
-            action=ACTION_POT_MAINTENANCE,
-            pot_id=body.pot_id,
-            dry_run=body.dry_run,
-        )
-        if not isinstance(container.episodic, GraphitiEpisodicAdapter):
-            raise HTTPException(
-                status_code=501,
-                detail="Episodic backend does not support this maintenance job.",
-            )
-        result = container.episodic.classify_modified_edges_for_pot(
-            body.pot_id, dry_run=body.dry_run
-        )
-        _audit_operator_action(
-            action="maintenance_classify_modified_edges",
-            pot_id=body.pot_id,
-            actor=actor,
-            dry_run=bool(body.dry_run),
-            extra={"outcome": "ok" if result.get("ok", True) else "failed"},
-        )
-        return result
 
     return router
 

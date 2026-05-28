@@ -1,0 +1,123 @@
+id: infra_data_flow_analytics
+use_case: INFRA
+tier: extended
+difficulty: hard
+source_mix: full
+universe: acme
+
+description: |
+  A data engineer asks for the end-to-end lineage of the analytics-pipeline
+  — where its funnel data comes from, how it is transformed, and where it
+  lands. The agent must trace the full lineage across two upstream
+  producers, the ETL, and the single S3 sink.
+
+  Ground-truth (from `repo_docs/infra_data_flow_analytics.json`, the notion
+  lineage page, consistent with `universe/acme/00-architecture.json` where
+  analytics-pipeline → kafka(orders-topic), kafka(notifications-topic),
+  s3(acme-analytics)):
+    - UPSTREAM (two sources): orders-topic produced by checkout-api
+      (`OrderPlaced`); notifications-topic produced by notifications-svc
+      (`NotificationSent`). analytics-pipeline consumes BOTH in its own
+      consumer groups.
+    - TRANSFORM: Airflow DAGs join placed-vs-delivered, bucket by hour,
+      compute conversion + delivery-latency.
+    - DOWNSTREAM (single sink): s3(acme-analytics) — partitioned Parquet.
+      analytics-pipeline writes to NO Postgres datastore and publishes
+      NOTHING back onto Kafka (read-only on the rest of the system).
+    - inventory-svc and payments-svc are NOT in this lineage.
+
+  Why it's hard: the agent must connect FOUR hops (two distinct producers →
+  two topics → the ETL → one sink) without dropping notifications-topic (a
+  common omission), without adding a phantom Postgres sink, and without
+  pulling in services that aren't on this path. It must also attribute the
+  upstream events to the correct producing services.
+
+  NOTE (read-layer gating): the live snapshot read surfaces only topology
+  entities (Service / DataStore + DEPENDS_ON / USES). The lineage hops are
+  graded in the synthesis judge; the snapshot returns analytics-pipeline as
+  a Service and s3(acme-analytics) as a DataStore. We anchor the structural
+  floor on those and forbid Service nodes minted from topic/event names.
+
+ingest:
+  - { event: repo_docs/infra_data_flow_analytics.json, at: "-19d", tags: [signal] }
+  - { event: notion/data_flow_analytics.json, at: "-15d", tags: [signal] }
+
+distractor_events:
+  - { event: noise/github_chore_noise_template.json, at: "-45d..-3d", count: 12 }
+  - { event: noise/linear_issue_noise_template.json, at: "-35d..-2d", count: 8 }
+  - { event: noise/slack_chatter_noise_template.json, at: "-30d..-2d", count: 6 }
+
+post_ingest_assertions:
+  graph_must_contain_entities:
+    - { label: Service, min_count: 7 }
+    - { label: Service, key_pattern: "service:.*analytics-pipeline", min_count: 1 }
+    - { label: DataStore, key_pattern: "datastore:.*acme-analytics", min_count: 1 }
+  graph_must_not_contain:
+    - { label: Service, key_pattern: "(?i)(orders-topic|notifications-topic|acme-analytics|airflow|parquet)", max_count: 0 }
+    - { label: Service, key_pattern: "NOISE-.*", max_count: 0 }
+  no_orphan_entities: false
+  reconciliation:
+    soft_downgrades_max: 6
+    failed_events_max: 0
+
+query:
+  intent: operations
+  scope: { service: analytics-pipeline }
+  include: [infra_topology, owners, docs]
+  mode: deep
+  source_policy: summary
+
+retrieval_assertions:
+  required_includes_used: [infra_topology]
+  source_refs_min: 2
+  must_cite_event_id:
+    - repo_docs/infra_data_flow_analytics.json
+    - notion/data_flow_analytics.json
+  must_not_cite_event_id:
+    - noise/github_chore_noise_template.json
+    - noise/linear_issue_noise_template.json
+    - noise/slack_chatter_noise_template.json
+
+judge:
+  pass_score: 55
+  criteria:
+    - name: upstream_producers
+      weight: 30
+      pass_threshold: 4
+      dimensions: [INFRA]
+      prompt: |
+        Does the answer name BOTH upstream sources with their producers —
+        orders-topic produced by checkout-api, and notifications-topic
+        produced by notifications-svc — and state that analytics-pipeline
+        consumes both? Dropping notifications-topic, or misattributing a
+        producer, reduces the score.
+    - name: s3_sink
+      weight: 26
+      pass_threshold: 4
+      dimensions: [INFRA]
+      prompt: |
+        Does the answer name the single sink as s3(acme-analytics) and
+        state that analytics-pipeline writes to NO Postgres datastore and
+        publishes NOTHING back onto Kafka? Inventing a Postgres sink or a
+        return Kafka write fails this.
+    - name: end_to_end_lineage
+      weight: 24
+      pass_threshold: 3
+      dimensions: [INFRA]
+      prompt: |
+        Does the answer connect the full chain end to end (checkout-api +
+        notifications-svc → orders-topic + notifications-topic →
+        analytics-pipeline Airflow ETL → s3(acme-analytics)) rather than
+        listing disconnected facts? Mentioning the transform (join
+        placed-vs-delivered / funnel ETL) is a plus.
+    - name: no_invented_services
+      weight: 20
+      pass_threshold: 5
+      dimensions: [INFRA]
+      prompt: |
+        Are all services named drawn from the canonical Acme service list
+        (checkout-api, inventory-svc, payments-svc, notifications-svc,
+        auth-svc, web-app, analytics-pipeline)? Treating a topic, an event
+        type, the S3 bucket, or Airflow as if it were one of Acme's own
+        services — or pulling inventory-svc/payments-svc into this lineage —
+        fails this criterion.

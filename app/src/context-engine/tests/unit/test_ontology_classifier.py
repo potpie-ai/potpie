@@ -1,4 +1,10 @@
-"""Deterministic ontology classifier rules (edge / property / text)."""
+"""Deterministic ontology classifier rules (edge / text / canonical_type hint).
+
+Rewritten for the minimal topology ontology: the classifier now infers only
+the seven topology labels (Repository / Service / Environment / DataStore /
+Cluster / Team / Person) from edge endpoints, text cues, and an explicit
+``canonical_type`` hint.
+"""
 
 from __future__ import annotations
 
@@ -20,199 +26,99 @@ def _labels(signals_labels, properties, *, out=(), incoming=()):
     )
 
 
-# --- Edge-endpoint rules -----------------------------------------------------------
+# --- Edge-endpoint rules ----------------------------------------------------
 
 
-def test_incoming_decides_for_adds_decision() -> None:
-    labels = _labels(("Entity",), {}, incoming=("DECIDES_FOR",))
-    assert "Decision" in labels
+def test_outgoing_deployed_to_marks_source_service() -> None:
+    assert "Service" in _labels(("Entity",), {}, out=("DEPLOYED_TO",))
 
 
-def test_outgoing_affects_marks_source_as_decision() -> None:
-    labels = _labels(("Entity",), {}, out=("AFFECTS",))
-    assert "Decision" in labels
+def test_incoming_deployed_to_marks_target_environment() -> None:
+    assert "Environment" in _labels(("Entity",), {}, incoming=("DEPLOYED_TO",))
 
 
-def test_incoming_has_review_decision_adds_decision() -> None:
-    labels = _labels(("Entity",), {}, incoming=("HAS_REVIEW_DECISION",))
-    assert "Decision" in labels
+def test_outgoing_defined_in_marks_source_service() -> None:
+    assert "Service" in _labels(("Entity",), {}, out=("DEFINED_IN",))
 
 
-def test_outgoing_resolved_marks_source_as_fix() -> None:
-    labels = _labels(("Entity",), {}, out=("RESOLVED",))
-    assert "Fix" in labels
+def test_incoming_defined_in_marks_target_repository() -> None:
+    assert "Repository" in _labels(("Entity",), {}, incoming=("DEFINED_IN",))
 
 
-def test_incoming_matches_pattern_adds_bugpattern() -> None:
-    labels = _labels(("Entity",), {}, incoming=("MATCHES_PATTERN",))
-    assert "BugPattern" in labels
+def test_uses_is_ambiguous_no_inference() -> None:
+    # USES targets are DataStore OR Dependency, so endpoint inference cannot
+    # pick a single label — mirrors the OWNED_BY (Team | Person) case below.
+    assert _labels(("Entity",), {}, incoming=("USES",)) == ()
+
+
+def test_incoming_hosted_on_marks_target_cluster() -> None:
+    assert "Cluster" in _labels(("Entity",), {}, incoming=("HOSTED_ON",))
+
+
+def test_incoming_member_of_marks_target_team() -> None:
+    assert "Team" in _labels(("Entity",), {}, incoming=("MEMBER_OF",))
 
 
 def test_edge_name_is_normalized() -> None:
-    assert "Decision" in _labels(("Entity",), {}, incoming=("decides_for",))
-    assert "Decision" in _labels(("Entity",), {}, incoming=(" Decides-For ",))
+    # Lower/hyphenated edge names normalize to the canonical predicate.
+    assert "Environment" in _labels(("Entity",), {}, incoming=("deployed-to",))
 
 
-def test_ambiguous_edge_emits_no_inference() -> None:
-    assert _labels(("Entity",), {}, out=("FIXES",)) == ()
-    assert _labels(("Entity",), {}, out=("OWNS",)) == ()
+def test_owned_by_is_ambiguous_no_inference() -> None:
+    # OWNED_BY targets are Team OR Person, so no endpoint inference fires.
+    assert _labels(("Entity",), {}, incoming=("OWNED_BY",)) == ()
 
 
-# --- Property signatures -----------------------------------------------------------
+# --- Text cues --------------------------------------------------------------
 
 
-def test_pr_number_forces_pull_request() -> None:
-    assert "PullRequest" in _labels(("Entity",), {"pr_number": 42})
+def test_service_text_cue() -> None:
+    assert "Service" in _labels(("Entity",), {"name": "the auth service"})
 
 
-def test_sha_shaped_value_forces_commit() -> None:
-    assert "Commit" in _labels(("Entity",), {"sha": "a1b2c3d4e5f6"})
+def test_repository_text_cue() -> None:
+    assert "Repository" in _labels(("Entity",), {"summary": "the platform monorepo"})
 
 
-def test_non_sha_string_does_not_force_commit() -> None:
-    assert "Commit" not in _labels(("Entity",), {"sha": "not-a-sha"})
+def test_environment_text_cue() -> None:
+    assert "Environment" in _labels(("Entity",), {"name": "production environment"})
 
 
-def test_fix_type_forces_fix() -> None:
-    assert "Fix" in _labels(("Entity",), {"fix_type": "code"})
+def test_datastore_text_cue() -> None:
+    assert "DataStore" in _labels(("Entity",), {"summary": "the orders postgres database"})
 
 
-def test_signal_type_forces_observation() -> None:
-    # Diagnostic signals collapse into Observation in v2.
-    assert "Observation" in _labels(("Entity",), {"signal_type": "metric"})
+def test_cluster_text_cue() -> None:
+    assert "Cluster" in _labels(("Entity",), {"name": "the eks cluster"})
 
 
-def test_interface_type_forces_api_contract() -> None:
-    # Legacy ``interface_type`` property routes to APIContract.
-    assert "APIContract" in _labels(("Entity",), {"interface_type": "rest"})
+def test_team_text_cue() -> None:
+    assert "Team" in _labels(("Entity",), {"name": "the identity team"})
 
 
-def test_strength_property_forces_policy() -> None:
-    # New Policy entity is signalled by ``strength`` or ``audience``.
-    assert "Policy" in _labels(("Entity",), {"strength": "required"})
+def test_person_text_cue() -> None:
+    assert "Person" in _labels(("Entity",), {"summary": "the code owner"})
 
 
-def test_migration_kind_property_forces_migration() -> None:
-    assert "Migration" in _labels(("Entity",), {"migration_kind": "schema"})
-
-
-def test_risk_text_cue() -> None:
-    assert "Risk" in _labels(
-        ("Entity",), {"summary": "Risk: rate limiting may break webhook retries."}
-    )
-
-
-def test_initiative_text_cue() -> None:
-    assert "Initiative" in _labels(
-        ("Entity",), {"name": "Auth rewrite workstream — Q3 launch"}
-    )
-
-
-def test_feature_flag_text_cue() -> None:
-    assert "FeatureFlag" in _labels(
-        ("Entity",), {"summary": "Gated behind a feature flag for staged rollout."}
-    )
+# --- canonical_type hint ----------------------------------------------------
 
 
 def test_canonical_type_hint_is_respected() -> None:
-    assert "Incident" in _labels(
-        ("Entity",), {"canonical_type": "Incident", "title": "x", "severity": "high", "status": "open"}
-    )
+    assert "Service" in _labels(("Entity",), {"canonical_type": "Service"})
 
 
-def test_canonical_type_hint_ignored_when_non_canonical() -> None:
-    assert _labels(("Entity",), {"canonical_type": "NotAThing"}) == ()
+def test_canonical_type_hint_rejects_unknown() -> None:
+    assert _labels(("Entity",), {"canonical_type": "NotAType"}) == ()
 
 
-# --- Text cues ---------------------------------------------------------------------
-
-
-def test_decision_text_cue() -> None:
-    labels = _labels(
-        ("Entity",),
-        {"summary": "We decided to split the ingestion pipeline into two workers."},
-    )
-    assert "Decision" in labels
-
-
-def test_adr_mention_adds_decision() -> None:
-    assert "Decision" in _labels(("Entity",), {"title": "ADR-0007 background workers"})
-
-
-def test_incident_text_cue() -> None:
-    assert "Incident" in _labels(
-        ("Entity",), {"summary": "Postmortem for the billing outage on 2026-04-10."}
-    )
-
-
-def test_fix_text_cue() -> None:
-    assert "Fix" in _labels(
-        ("Entity",), {"summary": "Hotfix for the webhook retry regression."}
-    )
-
-
-def test_runbook_text_cue() -> None:
-    assert "Runbook" in _labels(("Entity",), {"title": "On-call runbook for ledger"})
-
-
-def test_agent_instruction_text_cue() -> None:
-    # AgentInstruction merged into Policy in v2.
-    assert "Policy" in _labels(
-        ("Entity",), {"title": "AGENTS.md — testing conventions"}
-    )
-
-
-def test_constraint_text_cue() -> None:
-    # Constraint merged into Policy in v2.
-    assert "Policy" in _labels(
-        ("Entity",), {"statement": "Never store access tokens in plaintext."}
-    )
-
-
-def test_preference_text_cue() -> None:
-    # Preference merged into Policy in v2.
-    assert "Policy" in _labels(
-        ("Entity",), {"summary": "The team prefers pytest fixtures over unittest."}
-    )
-
-
-def test_bug_pattern_text_cue() -> None:
-    assert "BugPattern" in _labels(
-        ("Entity",), {"summary": "Flaky tests caused by unordered sets in fixtures."}
-    )
-
-
-def test_non_matching_text_does_not_infer() -> None:
-    assert _labels(("Entity",), {"summary": "Refactored the ingestion pipeline."}) == ()
-
-
-# --- Idempotence and existing labels ----------------------------------------------
-
-
-def test_does_not_readd_existing_label() -> None:
-    labels = _labels(
-        ("Entity", "Decision"),
-        {"summary": "We decided to adopt the new worker model."},
-    )
-    assert "Decision" not in labels
-
-
-def test_classifier_only_returns_canonical_labels() -> None:
-    labels = _labels(("Entity",), {"summary": "We decided to ship v2."})
-    assert all(label in ("Decision",) for label in labels)
-
-
-# --- Integration of multiple signals ----------------------------------------------
+# --- Combination + idempotence ---------------------------------------------
 
 
 def test_multi_signal_classification() -> None:
-    labels = _labels(
-        ("Entity", "Feature"),
-        {
-            "name": "Background worker rewrite",
-            "summary": "We decided to adopt Hatchet over Celery for background jobs.",
-            "canonical_type": "Decision",
-        },
-        out=("AFFECTS",),
-    )
-    assert "Decision" in labels
+    labels = _labels(("Entity",), {"name": "auth service"}, out=("DEPLOYED_TO",))
+    assert "Service" in labels
+
+
+def test_does_not_resuggest_existing_label() -> None:
+    # Service already present → not re-suggested.
+    assert "Service" not in _labels(("Entity", "Service"), {}, out=("DEPLOYED_TO",))

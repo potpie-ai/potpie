@@ -2,27 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 from domain.context_events import EventRef
 from domain.graph_mutations import EdgeDelete, EdgeUpsert, EntityUpsert, InvalidationOp
-from domain.reconciliation import EpisodeDraft, EvidenceRef, ReconciliationPlan
+from domain.reconciliation import EvidenceRef, ReconciliationPlan
 
 from adapters.outbound.reconciliation.llm_plan_schema import (
-    LlmEpisodeDraft,
     LlmInvalidationOp,
     LlmReconciliationPlan,
 )
-
-
-def _episode(d: LlmEpisodeDraft) -> EpisodeDraft:
-    rt = d.reference_time or datetime.now(timezone.utc)
-    return EpisodeDraft(
-        name=d.name,
-        episode_body=d.episode_body,
-        source_description=d.source_description,
-        reference_time=rt,
-    )
 
 
 def _invalidation(op: LlmInvalidationOp) -> InvalidationOp:
@@ -55,7 +42,6 @@ def llm_plan_to_reconciliation_plan(
     return ReconciliationPlan(
         event_ref=event_ref,
         summary=llm.summary,
-        episodes=[_episode(e) for e in llm.episodes],
         entity_upserts=[
             EntityUpsert(
                 entity_key=u.entity_key,

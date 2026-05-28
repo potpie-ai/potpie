@@ -9,16 +9,24 @@ import subprocess
 from pathlib import Path
 from typing import AsyncIterator
 
-from sandbox.domain.errors import RuntimeCommandRejected, RuntimeNotFound, RuntimeUnavailable
+from sandbox.domain.errors import (
+    RuntimeCommandRejected,
+    RuntimeNotFound,
+    RuntimeUnavailable,
+    SessionsUnsupported,
+)
 from sandbox.domain.models import (
     ExecChunk,
     ExecRequest,
     ExecResult,
+    ExecSessionResult,
     NetworkMode,
     Runtime,
     RuntimeCapabilities,
     RuntimeSpec,
     RuntimeState,
+    SessionExecRequest,
+    SessionInputRequest,
     new_id,
     utc_now,
 )
@@ -117,6 +125,39 @@ class DockerRuntimeProvider:
             yield ExecChunk(stream="stdout", data=result.stdout)
         if result.stderr:
             yield ExecChunk(stream="stderr", data=result.stderr)
+
+    # -- Unified exec sessions ------------------------------------------
+    # Not implemented yet for the Docker backend (would need `docker exec -i`
+    # PTY plumbing + an output pump). ``interactive_session=False`` advertises
+    # this; calls fail closed with a clear, typed error rather than silently
+    # degrading. Daytona (prod) and Local (dev/tests) carry the feature.
+    _SESSIONS_MSG = (
+        "DockerRuntimeProvider does not support unified-exec sessions yet; "
+        "use one-shot exec() or the Daytona/Local backends."
+    )
+
+    async def exec_session_start(
+        self, runtime: Runtime, request: SessionExecRequest
+    ) -> ExecSessionResult:
+        raise SessionsUnsupported(self._SESSIONS_MSG)
+
+    async def exec_session_write(
+        self, runtime: Runtime, request: SessionInputRequest
+    ) -> ExecSessionResult:
+        raise SessionsUnsupported(self._SESSIONS_MSG)
+
+    async def exec_session_poll(
+        self,
+        runtime: Runtime,
+        session_id: str,
+        *,
+        yield_time_ms: int,
+        max_output_bytes: int | None = None,
+    ) -> ExecSessionResult:
+        raise SessionsUnsupported(self._SESSIONS_MSG)
+
+    async def exec_session_kill(self, runtime: Runtime, session_id: str) -> None:
+        raise SessionsUnsupported(self._SESSIONS_MSG)
 
     def _create_container(self, runtime: Runtime) -> None:
         spec = runtime.spec

@@ -1,0 +1,140 @@
+id: pref_async_celery_conventions
+use_case: PREF
+tier: extended
+difficulty: medium
+source_mix: dual
+universe: acme
+
+description: |
+  An engineer is writing their first Celery task in checkout-api (to
+  email an order receipt asynchronously) and asks the agent what the
+  team's async-task conventions are. Two sources reinforce the same
+  rules:
+
+    - ADR-050 (`docs/adr/050-async-celery-conventions.md`, a
+      scenario-local fixture) — the canonical decision: tasks must be
+      idempotent (the queue is at-least-once, so re-execution must be a
+      no-op); every task sets `max_retries` and uses exponential backoff
+      with jitter; exhausted retries route to the dead-letter queue
+      (`acme.dlq`), never a silent drop; nothing that could take >30s
+      runs inline in the web request path (enqueue and return); each task
+      binds `job_id` into the structlog context at entry; tasks take
+      serializable args (ids, not ORM objects).
+    - A Slack #eng-standards thread where bench-user-13 (notifications
+      lead) and bench-user-4 (SRE) answer this exact question for the
+      receipt-email task: idempotent on order id (don't send two emails),
+      `max_retries` + `retry_backoff`/`retry_jitter`, DLQ on exhaustion,
+      enqueue-don't-block, bind `job_id`, and just subclass the
+      `acme.worker` base task to inherit the policy.
+
+  Ground truth: make the receipt-email task idempotent (guard on order
+  id so a double-delivery is a no-op); set `max_retries` + exponential
+  backoff with jitter; route exhausted retries to `acme.dlq`; do not
+  await the email send inline in the handler (enqueue and return, nothing
+  >30s in the request path); bind `job_id` into structlog; pass the order
+  id (not the ORM object); the easiest path is subclassing `acme.worker`.
+
+  Why it's hard: the "idempotent" and "DLQ" requirements are the easiest
+  to omit, and the >30s / enqueue-don't-block rule connects this PREF
+  scenario to request-latency concerns the engineer didn't ask about.
+  The ADR is local to this scenario; the Slack thread is the only
+  corroborating signal, so the engine must fuse a policy doc with a
+  conversational reinforcement and translate both into concrete task
+  code shape.
+
+ingest:
+  - { event: repo_docs/pref_adr_050_async_celery.json, at: "-25d", tags: [signal] }
+  - { event: slack/standards_thread__celery_idempotency.json, at: "-22d", tags: [signal] }
+
+distractor_events:
+  - { event: noise/slack_chatter_noise_template.json, at: "-40d..-4d", count: 12 }
+  - { event: noise/github_chore_noise_template.json, at: "-42d..-5d", count: 8 }
+
+post_ingest_assertions:
+  # NOTE (read-layer gating): the scenario-local ADR-050 (Document/
+  # Decision) and the Slack reinforcement thread are reconciled, but the
+  # topology read path surfaces only Service/DataStore + DEPENDS_ON/USES —
+  # not Document/Decision/Discussion nodes. We anchor the structural floor
+  # on the checkout-api Service the new task belongs to and grade the
+  # Celery-convention capability via retrieval + judge.
+  graph_must_contain_entities:
+    - { label: Service, key_pattern: "service:.*checkout-api", min_count: 1 }
+  graph_must_not_contain:
+    - { label: Issue, key_pattern: "NOISE-.*", max_count: 0 }
+  no_orphan_entities: false
+  reconciliation:
+    soft_downgrades_max: 4
+    failed_events_max: 0
+
+query:
+  intent: feature
+  scope: { service: checkout-api }
+  include: [coding_preferences, decisions, docs]
+  mode: balanced
+  source_policy: summary
+
+retrieval_assertions:
+  required_includes_used: [coding_preferences]
+  source_refs_min: 2
+  must_cite_event_id:
+    - repo_docs/pref_adr_050_async_celery.json
+    - slack/standards_thread__celery_idempotency.json
+  must_not_cite_event_id:
+    - noise/slack_chatter_noise_template.json
+    - noise/github_chore_noise_template.json
+  forbid_in_answer:
+    - "I don't have information"
+    - "no async conventions"
+
+judge:
+  pass_score: 65
+  criteria:
+    - name: idempotency_required
+      weight: 25
+      pass_threshold: 4
+      dimensions: [PREF]
+      prompt: |
+        Does the answer require the task to be idempotent — explaining
+        that the queue is at-least-once so re-execution must be a no-op
+        (e.g. guard on the order id so a double-delivery doesn't send two
+        emails), citing ADR-050 §1? Omitting idempotency must not pass.
+    - name: retry_backoff_and_dlq
+      weight: 25
+      pass_threshold: 3
+      dimensions: [PREF]
+      prompt: |
+        Does the answer require an explicit retry policy — `max_retries`
+        + exponential backoff with jitter (`retry_backoff`/`retry_jitter`)
+        — AND routing exhausted retries to the dead-letter queue
+        (`acme.dlq`) rather than a silent drop (ADR-050 §2/§3)? Both the
+        bounded-backoff and the DLQ must be present to pass.
+    - name: no_long_work_in_request_path
+      weight: 20
+      pass_threshold: 3
+      dimensions: [PREF]
+      prompt: |
+        Does the answer state that the email send must NOT be awaited
+        inline in the handler — anything that could take >30s is enqueued
+        and the handler returns immediately (ADR-050 §4)? The enqueue-
+        don't-block principle (and ideally the 30s threshold) must appear.
+    - name: job_id_logging
+      weight: 15
+      pass_threshold: 3
+      dimensions: [PREF]
+      prompt: |
+        Does the answer require binding `job_id` (the Celery task id)
+        into the structlog context at task entry so a task run's logs are
+        correlatable (ADR-050 §5)? Mentioning that subclassing the
+        `acme.worker` base task supplies this + the retry defaults is a
+        bonus.
+    - name: no_invented_rules
+      weight: 15
+      pass_threshold: 5
+      dimensions: [PREF]
+      prompt: |
+        Does every cited rule map to ADR-050 or the #eng-standards Slack
+        thread? Valid identifiers: ADR-050, idempotent, max_retries,
+        retry_backoff, retry_jitter, dead-letter queue / acme.dlq, 30s
+        threshold, job_id, acme.worker, structlog, checkout-api,
+        bench-user-13, bench-user-4. Any other threshold, queue name,
+        decorator, or invented rule must fail this criterion.

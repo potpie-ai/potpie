@@ -26,12 +26,17 @@ from sandbox.api.client import SandboxOpError
 from sandbox.application.services.sandbox_service import SandboxService
 from sandbox.bootstrap.container import SandboxContainer, build_sandbox_container
 from sandbox.bootstrap.settings import SandboxSettings, settings_from_env
+from sandbox.domain.errors import (
+    ExecSessionNotFound,
+    SessionsUnsupported,
+)
 from sandbox.domain.models import (
     Author,
     Capabilities,
     CommandKind,
     ExecRequest,
     ExecResult,
+    ExecSessionResult,
     NetworkMode,
     PullRequest,
     PullRequestComment,
@@ -42,6 +47,8 @@ from sandbox.domain.models import (
     RepoCacheRequest,
     RepoIdentity,
     RuntimeRequest,
+    SessionExecRequest,
+    SessionInputRequest,
     WorkspaceMode,
     WorkspaceRequest,
 )
@@ -59,6 +66,8 @@ __all__ = [
     "EvictionResult",
     "ExecRequest",
     "ExecResult",
+    "ExecSessionNotFound",
+    "ExecSessionResult",
     "FileEntry",
     "GitPlatformProvider",
     "GitStatus",
@@ -81,6 +90,9 @@ __all__ = [
     "SandboxOpError",
     "SandboxService",
     "SandboxSettings",
+    "SessionExecRequest",
+    "SessionInputRequest",
+    "SessionsUnsupported",
     "WorkspaceHandle",
     "WorkspaceMode",
     "WorkspaceRequest",

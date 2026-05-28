@@ -1,14 +1,5 @@
 """Validate ``ReconciliationPlan`` before deterministic apply.
 
-Graphiti episodic ingest runs predicate-family auto-supersede separately (see
-``adapters/outbound/graphiti/temporal_supersede.py`` and
-``domain.ontology.predicate_family_for_episodic_supersede`` for cross-type edges
-such as ``CHOSE`` vs ``MIGRATED_TO``); it is not part of this validation path.
-
-Episodic edge-type collapse and high ``MODIFIED`` regression guards live in
-``adapters/outbound/graphiti/edge_extraction_normalize.py`` (see
-docs/context-graph-improvements/02-edge-type-collapse.md).
-
 When ``CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL=1`` and strict mode is off, unknown
 labels, non-catalog edge types, and invalid lifecycle values are coerced instead
 of failing the batch (see docs/context-graph-fixes/03-graceful-ontology-downgrade.md).
@@ -35,8 +26,6 @@ from domain.ontology import (
     is_canonical_edge_type,
     validate_structural_mutations,
 )
-
-_EDGE_TEMPORAL_BACKFILLS: tuple[str, ...] = ("valid_from", "valid_at", "observed_at")
 from domain.reconciliation import ReconciliationPlan
 from domain.reconciliation_flags import (
     infer_canonical_labels_enabled,
@@ -45,7 +34,8 @@ from domain.reconciliation_flags import (
 )
 from domain.reconciliation_issues import validation_lines_to_issues
 
-MAX_EPISODES = 32
+_EDGE_TEMPORAL_BACKFILLS: tuple[str, ...] = ("valid_from", "valid_at", "observed_at")
+
 MAX_GENERIC_ENTITY_UPSERTS = 5000
 MAX_GENERIC_EDGES = 10000
 MAX_INVALIDATIONS = 2000
@@ -107,9 +97,6 @@ def _validate_hard(plan: ReconciliationPlan, expected_pot_id: str) -> None:
         raise ReconciliationPlanValidationError(
             "plan event_ref.pot_id does not match expected pot"
         )
-
-    if len(plan.episodes) > MAX_EPISODES:
-        raise ReconciliationPlanValidationError("too many episodes in plan")
 
     if len(plan.entity_upserts) > MAX_GENERIC_ENTITY_UPSERTS:
         raise ReconciliationPlanValidationError("entity upsert cap exceeded")
@@ -305,25 +292,13 @@ def _coerce_lifecycle_for_label(
 def _backfill_edge_required_temporal_props(
     plan: ReconciliationPlan, out: list[dict[str, str]]
 ) -> None:
-    """Fill ``valid_from`` / ``valid_at`` / ``observed_at`` from episode time when missing.
+    """Fill ``valid_from`` / ``valid_at`` / ``observed_at`` with apply time when missing.
 
     LLM extractors regularly emit timeline edges (``PERFORMED``, ``TOUCHED``, …)
-    without the required temporal anchor. The activity time is already captured
-    on the source episode's ``reference_time``, so use that (with now() as a
-    final fallback) rather than rejecting the whole batch.
+    without the required temporal anchor. Stamp ``now()`` rather than rejecting
+    the whole batch — the caller can override via explicit edge properties.
     """
-    # Use the first episode's reference_time as the temporal anchor when
-    # available — that's the closest signal we have for *when* the activity
-    # occurred. Fall back to now() for purely synthetic plans.
-    anchor: datetime | None = None
-    for ep in plan.episodes:
-        if isinstance(ep.reference_time, datetime):
-            anchor = ep.reference_time
-            break
-    if anchor is None:
-        anchor = datetime.now(timezone.utc)
-    if anchor.tzinfo is None:
-        anchor = anchor.replace(tzinfo=timezone.utc)
+    anchor = datetime.now(timezone.utc)
     anchor_iso = anchor.isoformat()
 
     for edge in plan.edge_upserts:

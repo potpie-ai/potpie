@@ -27,7 +27,7 @@ def build_standalone_context_engine_container() -> ContextEngineContainer:
     """
     Same dependency wiring as production queue selection; pot list from merged env maps.
 
-    GitHub token is optional for raw episodic ingest (Graphiti-only); PR/backfill flows need a token.
+    GitHub token is optional for narrative ingest; PR/backfill flows need a token.
     """
     mapping = merged_pot_repo_map()
     if not mapping:

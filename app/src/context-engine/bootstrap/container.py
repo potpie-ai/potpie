@@ -19,25 +19,13 @@ from adapters.outbound.connectors._bench_stubs import (
     SlackStubConnector,
 )
 from adapters.outbound.connectors.notion import NotionConnector
-from adapters.outbound.graphiti.context_graph import GraphitiContextGraphAdapter
+from adapters.outbound.graph.context_graph_service import ContextGraphService
 from adapters.outbound.reconciliation.context_graph_tools import (
     ContextGraphReconciliationTools,
 )
-from adapters.outbound.readers import (
-    ChangeHistoryReader,
-    DecisionsReader,
-    GraphOverviewReader,
-    OwnersReader,
-    PrDiffReader,
-    PrReviewContextReader,
-    ProjectGraphReader,
-    ReleaseNotesReader,
-    SemanticSearchReader,
-    TimelineReader,
-)
-from adapters.outbound.graphiti.episodic import GraphitiEpisodicAdapter
-from adapters.outbound.intelligence.hybrid_graph import HybridGraphIntelligenceProvider
-from adapters.outbound.neo4j.structural import Neo4jStructuralAdapter
+from adapters.outbound.graph import GraphWriterPort, Neo4jGraphWriter
+from adapters.outbound.graph.neo4j_reader import Neo4jClaimQueryStore
+from application.services.read_orchestrator import ReadOrchestrator
 from adapters.outbound.policy import DefaultPolicyAdapter
 from adapters.outbound.postgres.agent_checkpoint_store import (
     SqlAlchemyAgentCheckpointStore,
@@ -64,8 +52,6 @@ from adapters.outbound.synthesis.null import NullAnswerSynthesizer
 from adapters.outbound.synthesis.pydantic_ai_answer import (
     PydanticAIAnswerSynthesizer,
 )
-from application.services.context_reader_registry import ContextReaderRegistry
-from application.services.context_resolution import ContextResolutionService
 from application.services.source_connector_registry import SourceConnectorRegistry
 from domain.ports.event_query_service import EventQueryService
 from domain.ports.event_stream import (
@@ -74,8 +60,6 @@ from domain.ports.event_stream import (
 )
 from domain.ports.ingestion_config import IngestionConfigPort
 from domain.ports.context_graph import ContextGraphPort
-from adapters.outbound.graphiti.port import EpisodicGraphPort
-from domain.ports.intelligence_provider import IntelligenceProvider
 from domain.ports.ingestion_submission import IngestionSubmissionService
 from domain.ports.context_graph_job_queue import (
     ContextGraphJobQueuePort,
@@ -88,7 +72,6 @@ from domain.ports.observability import NoOpObservability, ObservabilityPort
 from domain.ports.reconciliation_agent import ReconciliationAgentPort
 from domain.ports.settings import ContextEngineSettingsPort
 from domain.ports.telemetry import TelemetryPort
-from adapters.outbound.neo4j.port import StructuralReadPort
 from domain.source_references import SourceReferenceRecord
 
 
@@ -104,13 +87,9 @@ class ContextEngineContainer:
     """
 
     settings: ContextEngineSettingsPort
-    episodic: EpisodicGraphPort
-    structural: StructuralReadPort
+    graph_writer: GraphWriterPort
     pots: PotResolutionPort
     connectors: SourceConnectorRegistry = field(default_factory=SourceConnectorRegistry)
-    readers: ContextReaderRegistry = field(default_factory=ContextReaderRegistry)
-    intelligence_provider: IntelligenceProvider | None = None
-    resolution_service: ContextResolutionService | None = None
     reconciliation_agent: ReconciliationAgentPort | None = None
     jobs: ContextGraphJobQueuePort | None = None
     context_graph: ContextGraphPort | None = None
@@ -144,7 +123,7 @@ class ContextEngineContainer:
             pots=self.pots,
             reconciliation_agent_available=self.reconciliation_agent is not None,
             context_graph_available=self.context_graph is not None,
-            episodic_available=getattr(self.episodic, "enabled", True),
+            episodic_available=getattr(self.graph_writer, "enabled", True),
         )
 
     def ledger(self, session: Session) -> SqlAlchemyIngestionLedger:
@@ -232,37 +211,11 @@ def _build_query_agent(*, telemetry: TelemetryPort | None = None):
     return NullQueryAgent()
 
 
-def _default_reader_registry(
-    *, episodic: EpisodicGraphPort, structural: StructuralReadPort
-) -> ContextReaderRegistry:
-    """Register every first-party reader.
-
-    Adding a new evidence family means writing one reader module under
-    ``adapters/outbound/readers/`` and adding one ``register()`` call
-    here. No edits to ``application/`` or ``domain/`` are required.
-    """
-    registry = ContextReaderRegistry()
-    registry.register(SemanticSearchReader(episodic=episodic, structural=structural))
-    registry.register(ChangeHistoryReader(episodic=episodic, structural=structural))
-    registry.register(TimelineReader(structural=structural))
-    registry.register(OwnersReader(structural=structural))
-    registry.register(DecisionsReader(episodic=episodic, structural=structural))
-    registry.register(PrReviewContextReader(structural=structural))
-    registry.register(PrDiffReader(structural=structural))
-    registry.register(ProjectGraphReader(structural=structural))
-    registry.register(GraphOverviewReader(episodic=episodic, structural=structural))
-    # Phase 3 smoke test — proves the contract by adding a brand-new
-    # family in a single file with no application/domain edits.
-    registry.register(ReleaseNotesReader(structural=structural))
-    return registry
-
-
 def build_container(
     *,
     settings: ContextEngineSettingsPort | None = None,
     pots: PotResolutionPort,
     connectors: SourceConnectorRegistry | None = None,
-    readers: ContextReaderRegistry | None = None,
     reconciliation_agent: ReconciliationAgentPort | None = None,
     jobs: ContextGraphJobQueuePort | None = None,
     telemetry: TelemetryPort | None = None,
@@ -289,35 +242,19 @@ def build_container(
             telemetry_sink, observability_sink
         )
     stream_publisher = event_stream_publisher or _default_event_stream_publisher()
-    episodic = GraphitiEpisodicAdapter(s)
-    structural = Neo4jStructuralAdapter(s)
-    # Composition-root infra instrumentation: wrap the Neo4j read adapter
-    # so every structural query is a span + latency/error metric, without
-    # editing the adapter. Only when observability is live (zero NoOp cost).
-    if not isinstance(observability_sink, NoOpObservability):
-        from bootstrap.observability_proxy import instrument_adapter
-
-        structural = instrument_adapter(structural, "neo4j", observability_sink)
-    intelligence_provider = HybridGraphIntelligenceProvider(
-        episodic=episodic,
-        structural=structural,
-    )
+    graph_writer = Neo4jGraphWriter(s)
     registry = connectors or SourceConnectorRegistry()
-    reader_registry = readers or _default_reader_registry(
-        episodic=episodic, structural=structural
-    )
-    # Resolution dispatches through the connector registry — the registry
-    # is the post-Phase-2 replacement for ``CompositeSourceResolver``.
-    resolution_service = ContextResolutionService(
-        intelligence_provider,
-        source_resolver=registry,
-        telemetry=telemetry_sink,
-    )
-    context_graph = GraphitiContextGraphAdapter(
-        episodic=episodic,
-        structural=structural,
-        readers=reader_registry,
-        resolution_service=resolution_service,
+    # One read trunk: P9 readers over the canonical claim store → ranking →
+    # AgentEnvelope. Neo4jClaimQueryStore is the production claim surface.
+    orchestrator = ReadOrchestrator(claim_query=Neo4jClaimQueryStore(s))
+    # Fail fast if the orchestrator's reader set has drifted from the
+    # advertised ``READER_BACKED_INCLUDES`` (see domain.coherence).
+    from domain.coherence import assert_runtime_coherence
+
+    assert_runtime_coherence(reader_backed_includes=orchestrator.backed_includes)
+    context_graph = ContextGraphService(
+        graph_writer=graph_writer,
+        orchestrator=orchestrator,
         answer_synthesizer=_build_answer_synthesizer(telemetry=telemetry_sink),
         query_agent=_build_query_agent(telemetry=telemetry_sink),
     )
@@ -327,14 +264,10 @@ def build_container(
     _attach_reconciliation_event_stream(reconciliation_agent, stream_publisher)
     return ContextEngineContainer(
         settings=s,
-        episodic=episodic,
-        structural=structural,
+        graph_writer=graph_writer,
         context_graph=context_graph,
         pots=pots,
         connectors=registry,
-        readers=reader_registry,
-        intelligence_provider=intelligence_provider,
-        resolution_service=resolution_service,
         reconciliation_agent=reconciliation_agent,
         jobs=jobs or NoOpContextGraphJobQueue(),
         telemetry=telemetry_sink,

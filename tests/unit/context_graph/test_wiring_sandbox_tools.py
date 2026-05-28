@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from app.modules.context_graph.wiring import (
-    _attach_sandbox_tools,
+    _attach_agent_tools,
     _build_pot_sandbox_resolver,
 )
 
@@ -125,33 +125,28 @@ class TestPotSandboxResolver:
         assert cfg.repos[0].default_branch == "main"
 
 
-class _RecordingAgent:
-    def __init__(self) -> None:
-        self.calls: list[list] = []
-
-    def add_extra_tools(self, builders: list) -> None:
-        self.calls.append(list(builders))
+def _noop_source_for_repo(_repo_name: str) -> None:
+    return None
 
 
-class TestAttachSandboxTools:
-    def test_attaches_one_builder_to_agent(self) -> None:
-        pytest.importorskip("pydantic_deep")
-        agent = _RecordingAgent()
-        db = _StubDb(rows=[_fake_repo_row()])
-        _attach_sandbox_tools(agent, db)  # type: ignore[arg-type]
-        assert len(agent.calls) == 1
-        assert len(agent.calls[0]) == 1
-        assert callable(agent.calls[0][0])
+class TestAttachAgentTools:
+    """Guard contract of the multi-surface tool attach.
+
+    ``_attach_sandbox_tools`` was superseded by ``_attach_agent_tools``,
+    which assembles sandbox + GitHub + Linear + web builders in a single
+    ``add_extra_tools`` call (the call replaces the agent's builder list).
+    The host-independent contract is its two guards; the multi-surface
+    builder assembly is exercised by the sandbox/connector suites that own
+    those surfaces.
+    """
 
     def test_noop_when_agent_is_none(self) -> None:
-        _attach_sandbox_tools(None, _StubDb(rows=[]))  # type: ignore[arg-type]
-
-    def test_env_flag_disables_attachment(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("CONTEXT_ENGINE_DISABLE_SANDBOX_TOOLS", "1")
-        agent = _RecordingAgent()
-        _attach_sandbox_tools(agent, _StubDb(rows=[]))  # type: ignore[arg-type]
-        assert agent.calls == []
+        _attach_agent_tools(
+            None, _StubDb(rows=[]), source_for_repo=_noop_source_for_repo
+        )  # type: ignore[arg-type]
 
     def test_agent_without_add_extra_tools_is_silent(self) -> None:
         sentinel = SimpleNamespace()
-        _attach_sandbox_tools(sentinel, _StubDb(rows=[]))  # type: ignore[arg-type]
+        _attach_agent_tools(
+            sentinel, _StubDb(rows=[]), source_for_repo=_noop_source_for_repo
+        )  # type: ignore[arg-type]
